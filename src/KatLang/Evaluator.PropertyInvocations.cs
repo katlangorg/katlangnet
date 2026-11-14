@@ -274,7 +274,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalWrittenCalleeCallCounted(
         Expr func, Algorithm callee, OutputBundle args, EvalCtx ctx, ValEnv valEnv, CallDiagnosticName diagnosticName)
         => WithCallCtx(diagnosticName, ctx,
-            EvalOriginCallCounted(CalleeOrigin.Written(func), callee, args, ctx, valEnv, diagnosticName));
+            WithOutputSpreadNotes(args, EvalOriginCallCounted(CalleeOrigin.Written(func), callee, args, ctx, valEnv, diagnosticName)));
 
     /// <summary>
     /// <see cref="EvalResolvedCallCounted"/> for a call whose written arguments may form an empty supply

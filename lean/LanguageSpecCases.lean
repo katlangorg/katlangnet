@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 548
-- excluded parse-level cases (Lean has no surface parser): 76
+- specification surface cases: 567
+- excluded parse-level cases (Lean has no surface parser): 81
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 448
+- Lean-guarded cases: 462
 - probe observations (C#-only by design): 1522
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -2443,7 +2443,79 @@ def case_receiver_expansion_consumed_members_are_no_return : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [publicProp "V" (alg [] [] [] [.num 5])] []), privateProp "B" (alg [] [] [publicProp "M" (.alias none [] [] (.resolve "B")), publicProp "N" (.alias none [] [] (.resolve "Q"))] [.num 0]), privateProp "C" (.alias none [] [] ((.dotCall (.dotCall (.dotCall (.resolve "B") "M" none) "M" none) "N" none)))] [(.dotCall (.resolve "C") "V" none)])
 #guard obs case_receiver_expansion_consumed_members_are_no_return == "ok raw=5 n=1"
 
--- 448 canonical Lean-guarded specification cases.
+-- output-spread-marked-call-spreads-its-rows [item-supply-vs-value]: A(x, y)* = x, y \n A(1, 2) \n A(3, 4)
+def case_output_spread_marked_call_spreads_its_rows : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), (.sequenceSpread (.call (.resolve "A") [.num 3, .num 4]))])
+#guard obs case_output_spread_marked_call_spreads_its_rows == "ok raw=S[1, 2, 3, 4] n=4"
+
+-- output-spread-argument-and-element-slots [item-supply-vs-value]: A(x, y)* = x, y \n Add(x, y) = x + y \n Add(A(1, 2)), [A(1, 2), A(3, 4)]
+def case_output_spread_argument_and_element_slots : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "Add" (alg ["x", "y"] [] [] [(.binary .add (.param "x") (.param "y"))])] [(.call (.resolve "Add") [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2]))]), (.listLiteral [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), (.sequenceSpread (.call (.resolve "A") [.num 3, .num 4]))])])
+#guard obs case_output_spread_argument_and_element_slots == "ok raw=S[3, L[1, 2, 3, 4]] n=2"
+
+-- output-spread-alias-inherits-the-marker [item-supply-vs-value]: A(x, y)* = x, y \n B = A \n [B(3, 4)]
+def case_output_spread_alias_inherits_the_marker : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.listLiteral [(.sequenceSpread (.call (.resolve "B") [.num 3, .num 4]))])])
+#guard obs case_output_spread_alias_inherits_the_marker == "ok raw=L[3, 4] n=1"
+
+-- output-spread-value-positions-keep-one-value [item-supply-vs-value]: A(x, y)* = x, y \n A(1, 2)[0], count({ A(1, 2) }), count([A(1, 2)])
+def case_output_spread_value_positions_keep_one_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.index (.call (.resolve "A") [.num 1, .num 2]) [.num 0]), (.call (.resolve "count") [(.algorithmExpr (alg [] [] [] [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2]))]))]), (.call (.resolve "count") [(.listLiteral [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2]))])])])
+#guard obs case_output_spread_value_positions_keep_one_value == "ok raw=S[1, 2, 2] n=3"
+
+-- output-spread-builtin-argument-is-spread-too [errors]: A(x, y)* = x, y \n count(A(1, 2))
+def case_output_spread_builtin_argument_is_spread_too : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.call (.resolve "count") [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2]))])])
+#guard obs case_output_spread_builtin_argument_is_spread_too == "err arity"
+
+#guard errorObs case_output_spread_builtin_argument_is_spread_too == .matched (some { kind := "arity", names := [], counts := [1, 2] })
+-- output-spread-not-through-a-parameter [item-supply-vs-value]: A(x, y)* = x, y \n Apply(f) = count(f(1, 2)) \n Apply(A)
+def case_output_spread_not_through_a_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "Apply" (alg ["f"] [] [] [(.call (.resolve "count") [(.call (.param "f") [.num 1, .num 2])])])] [(.call (.resolve "Apply") [.resolve "A"])])
+#guard obs case_output_spread_not_through_a_parameter == "ok raw=2 n=1"
+
+-- output-spread-lifted-call-spreads [item-supply-vs-value]: A(x, y)* = x, y \n S = [A] \n S(1, 2)
+def case_output_spread_lifted_call_spreads : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["x", "y"] [] [] [(.listLiteral [(.sequenceSpread (.call (.resolve "A") [.param "x", .param "y"]))])]), privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.call (.resolve "S") [.num 1, .num 2])])
+#guard obs case_output_spread_lifted_call_spreads == "ok raw=L[1, 2] n=1"
+
+-- output-spread-loop-step-through-a-wrapper [item-supply-vs-value]: Fib(a, b)* = b, a + b \n Step(a, b) = Fib(a, b) \n Step(0, 1).repeat(10)
+def case_output_spread_loop_step_through_a_wrapper : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fib" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Step" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "Fib") [.param "a", .param "b"]))])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 1]) "repeat" (some [.num 10]))])
+#guard obs case_output_spread_loop_step_through_a_wrapper == "ok raw=S[55, 89] n=1"
+
+-- output-spread-marked-call-as-loop-receiver [errors]: Fib(a, b)* = b, a + b \n Fib(0, 1).repeat(10)
+def case_output_spread_marked_call_as_loop_receiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Fib" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "repeat") [(.sequenceSpread (.call (.resolve "Fib") [.num 0, .num 1])), .num 10])])
+#guard obs case_output_spread_marked_call_as_loop_receiver == "err arity"
+
+#guard errorObs case_output_spread_marked_call_as_loop_receiver == .matched (some { kind := "arity", names := [], counts := [2, 3] })
+-- output-spread-zero-parameter-only-explicit-calls [item-supply-vs-value]: P* = 1, 2 \n count(P), [P()]
+def case_output_spread_zero_parameter_only_explicit_calls : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2])] [(.call (.resolve "count") [.resolve "P"]), (.listLiteral [(.sequenceSpread (.call (.resolve "P") []))])])
+#guard obs case_output_spread_zero_parameter_only_explicit_calls == "ok raw=S[2, L[1, 2]] n=2"
+
+-- output-spread-argument-runs-at-formation [errors]: D(x, y)* = x / y, y \n FirstOf(a, *rest) = a \n FirstOf(5, D(1, 0))
+def case_output_spread_argument_runs_at_formation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D" (alg ["x", "y"] [] [] [(.binary .div (.param "x") (.param "y")), .param "y"]), privateProp "FirstOf" (algWithParameters [{ name := "a" }, { name := "rest", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "FirstOf") [.num 5, (.sequenceSpread (.call (.resolve "D") [.num 1, .num 0]))])])
+#guard obs case_output_spread_argument_runs_at_formation == "err div0"
+
+-- output-spread-opens-one-level [item-supply-vs-value]: G* = [[1, 2], [3]] \n [G()], (G(), 9)
+def case_output_spread_opens_one_level : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), (.listLiteral [.num 3])])])] [(.listLiteral [(.sequenceSpread (.call (.resolve "G") []))]), (.capture [(.sequenceSpread (.call (.resolve "G") [])), .num 9])])
+#guard obs case_output_spread_opens_one_level == "ok raw=S[L[L[1, 2], L[3]], S[L[1, 2], L[3], 9]] n=2"
+
+-- output-spread-receiver-edge-is-the-lowered-call [item-supply-vs-value]: A(x, y)* = x, y \n Add3(a, b, c) = a + b + c \n H = A(x, y).F(3) \n H(Add3, 1, 2)
+def case_output_spread_receiver_edge_is_the_lowered_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "H" (alg ["F", "x", "y"] [] [] [(.call (.param "F") [(.sequenceSpread (.call (.resolve "A") [.param "x", .param "y"])), .num 3])]), privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "Add3" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.param "a") (.param "b")) (.param "c"))])] [(.call (.resolve "H") [.resolve "Add3", .num 1, .num 2])])
+#guard obs case_output_spread_receiver_edge_is_the_lowered_call == "ok raw=6 n=1"
+
+-- output-spread-lifted-call-ends-known-positions [errors]: P(x)* = [x] \n Add(a, b) = a + b \n Inc(x) = x + 1 \n H = reduce(P, Add, Inc) \n H(1)
+def case_output_spread_lifted_call_ends_known_positions : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [(.sequenceSpread (.call (.resolve "P") [.param "x"])), .resolve "Add", .resolve "Inc"])]), privateProp "P" (alg ["x"] [] [] [(.listLiteral [.param "x"])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [.num 1])])
+#guard obs case_output_spread_lifted_call_ends_known_positions == "err arity"
+
+-- 462 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2898,8 +2970,22 @@ def specCaseIds : List String := [
   "receiver-expansion-return-through-a-reference",
   "receiver-expansion-return-through-a-reference-link",
   "receiver-expansion-return-through-a-self-member",
-  "receiver-expansion-consumed-members-are-no-return"
+  "receiver-expansion-consumed-members-are-no-return",
+  "output-spread-marked-call-spreads-its-rows",
+  "output-spread-argument-and-element-slots",
+  "output-spread-alias-inherits-the-marker",
+  "output-spread-value-positions-keep-one-value",
+  "output-spread-builtin-argument-is-spread-too",
+  "output-spread-not-through-a-parameter",
+  "output-spread-lifted-call-spreads",
+  "output-spread-loop-step-through-a-wrapper",
+  "output-spread-marked-call-as-loop-receiver",
+  "output-spread-zero-parameter-only-explicit-calls",
+  "output-spread-argument-runs-at-formation",
+  "output-spread-opens-one-level",
+  "output-spread-receiver-edge-is-the-lowered-call",
+  "output-spread-lifted-call-ends-known-positions"
 ]
-#guard specCaseIds.length == 448
+#guard specCaseIds.length == 462
 
 end LanguageSpecCases

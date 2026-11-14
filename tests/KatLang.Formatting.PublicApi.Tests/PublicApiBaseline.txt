@@ -328,6 +328,12 @@ public enum KatLang.DiagnosticCode : int
   StaticStructureLimitExceeded = 61
   UnboundLoadReference = 62
   UnsupportedDoubleQuotedString = 63
+  DetachedOutputSpreadMarker = 64
+  RepeatedOutputSpreadMarker = 65
+  OutputSpreadMarkerOnAlias = 66
+  MixedOutputSpreadMarkers = 67
+  OutputSpreadMarkerOnDeconstructionTarget = 68
+  OutputSpreadReferenceNeedsCall = 69
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1461,6 +1467,12 @@ public enum KatLang.KatLangErrorCode : int
   StaticStructureLimitExceeded = 83
   UnboundLoadReference = 84
   UnsupportedDoubleQuotedString = 85
+  DetachedOutputSpreadMarker = 86
+  RepeatedOutputSpreadMarker = 87
+  OutputSpreadMarkerOnAlias = 88
+  MixedOutputSpreadMarkers = 89
+  OutputSpreadMarkerOnDeconstructionTarget = 90
+  OutputSpreadReferenceNeedsCall = 91
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)
@@ -2147,6 +2159,7 @@ public sealed record KatLang.Semantics.PropertyInfo : System.IEquatable<KatLang.
   property public KatLang.Semantics.PropertyCallStyle PreferredCallStyle { get; init; }
   property public KatLang.Semantics.PropertyShape Shape { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Semantics.PropertySignatureInfo> Signatures { get; init; }
+  property public bool SpreadsOutput { get; init; }
   property public bool SupportsLexicalDotCall { get; init; }
   method   public KatLang.Semantics.PropertyInfo <Clone>$()
   method   public bool Equals(KatLang.Semantics.PropertyInfo? other)

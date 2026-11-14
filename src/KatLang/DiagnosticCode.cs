@@ -494,4 +494,50 @@ public enum DiagnosticCode
     /// (<c>'say "hi"'</c>) or a comment is ordinary text.
     /// </summary>
     UnsupportedDoubleQuotedString = 63,
+
+    /// <summary>
+    /// A declaration's output-spreading marker is separated from the name or the <c>)</c> it
+    /// follows (<c>A * = x, y</c>, <c>F(x) * = x, x</c>). The marker is written directly
+    /// attached: <c>A* = x, y</c>, <c>F(x)* = x, x</c>. Recovery keeps the marked declaration.
+    /// </summary>
+    DetachedOutputSpreadMarker = 64,
+
+    /// <summary>
+    /// A declaration head carries more than one output-spreading marker (<c>A** = x, y</c>).
+    /// A declaration is marked with exactly one <c>*</c>; recovery keeps one marker.
+    /// </summary>
+    RepeatedOutputSpreadMarker = 65,
+
+    /// <summary>
+    /// The output-spreading marker is written on a declaration whose callable is declared
+    /// elsewhere: a transparent alias (<c>B* = A</c>), a runtime-target alias (an enclosing
+    /// parameter, an <c>.Algorithm</c> link, a parameter-rooted member path, or an alias of one)
+    /// or a module holder (<c>M* = load('url')</c>). An alias inherits the marker of the
+    /// declaration it denotes; to spread the output of calls to the alias itself, declare a marked
+    /// wrapper (<c>B(x, y)* = A(x, y)</c>).
+    /// </summary>
+    OutputSpreadMarkerOnAlias = 66,
+
+    /// <summary>
+    /// Some clauses of a clause family carry the output-spreading marker and others do not.
+    /// The marker belongs to the whole family: write it on every clause or on none.
+    /// </summary>
+    MixedOutputSpreadMarkers = 67,
+
+    /// <summary>
+    /// An assignment-deconstruction target carries the output-spreading marker
+    /// (<c>a*, b = …</c>). Deconstruction targets are values, not callable declarations;
+    /// the marker is not allowed there.
+    /// </summary>
+    OutputSpreadMarkerOnDeconstructionTarget = 68,
+
+    /// <summary>
+    /// A bare reference to a declaration written with the output-spreading marker stands in an
+    /// argument slot (or as an extension-call receiver) where only parameter inference decides
+    /// whether it becomes a call — the declaration has no required parameter of its own and its
+    /// body could lift one (<c>P* = Q + 0</c>) — and that decision would also change how a later
+    /// argument of the same builtin call is treated (<c>reduce(P, Add, Inc)</c>: after a spread,
+    /// <c>Inc</c> is no longer the initial value). Write the call: <c>P(…)</c>.
+    /// </summary>
+    OutputSpreadReferenceNeedsCall = 69,
 }

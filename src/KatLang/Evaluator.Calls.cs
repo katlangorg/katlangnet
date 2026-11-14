@@ -196,7 +196,7 @@ public static partial class Evaluator
         // META-S3-1: a callee spelled `X.Algorithm` is the call-reference intrinsic on a structural miss
         // (`(R.Algorithm)(x)` is the fresh call `R.Algorithm(x)`), decided out of line.
         if (IsAlgorithmEdgeCallee(func))
-            return EvalAlgorithmCalleeCallCounted((Expr.DotCall)func, args, ctx, valEnv);
+            return WithOutputSpreadNotesInsideFrame(args, EvalAlgorithmCalleeCallCounted((Expr.DotCall)func, args, ctx, valEnv));
 
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveCallee(func, ctx);
@@ -208,17 +208,18 @@ public static partial class Evaluator
             ctx,
             valEnv,
             out var sequencePipelineR))
-            return WithCallCtx(diagnosticName, ctx, sequencePipelineR);
+            return WithCallCtx(diagnosticName, ctx, WithOutputSpreadNotes(args, sequencePipelineR));
 
         // CACHE-PUB-1: a call that may form an EMPTY supply of a publishable callee takes the
         // origin-carrying dispatch (its written callee names the property binding), decided out of line.
         if (MayFormZeroSupply(args) && TakesOriginDispatch(calleeR.Value))
             return EvalWrittenCalleeCallCounted(func, calleeR.Value, args, ctx, valEnv, diagnosticName);
 
+        // Declaration-level output spreading: a note on the call's OWN failure, before its frame (WithOutputSpreadNotes).
         return WithCallCtx(
             diagnosticName,
             ctx,
-            EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName));
+            WithOutputSpreadNotes(args, EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName)));
     }
 
     // ── [HOST] B2c: deferred module regions at the branch-selection boundary ──

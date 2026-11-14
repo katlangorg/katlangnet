@@ -219,28 +219,17 @@ internal sealed partial class StaticStructureQueries
         foreach (var name in syntax.Names)
             if (reader.Read(StaticQueryKey.IsInput(context.Key, name)).Kind == StaticFactKind.Yes) inferred.Add(name);
         if (inferred.Count == 0) return new(StaticFactKind.Inputs, Data: Array.Empty<string>());
-        var order = new List<string>();
-        var ordered = new HashSet<string>(StringComparer.Ordinal);
-        var weights = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
-        var seen = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
-        var pending = new Stack<Expr>(syntax.Rows.Reverse());
-        while (pending.TryPop(out var expression))
+        var order = OccurrenceOrder(context, inferred, reader, undecidedAsLowered: false, out var blocked, out var undecided);
+        if (order is null) return blocked!;
+        // D1: an edge whose marked-receiver verdict is still undecided orders its names either way. The answer is given
+        // only when both ways agree (branch agreement); otherwise it waits for the verdict.
+        if (undecided)
         {
-            Resources.Metadata(0, cancellationToken: _cancellationToken);
-            if (!seen.Add(expression)) continue;
-            if (expression is Expr.Resolve resolve && inferred.Contains(resolve.Name) && ordered.Add(resolve.Name)) order.Add(resolve.Name);
-            var children = syntax.Nodes[expression].Children;
-            for (var i = children.Count - 1; i >= 0; i--)
-            {
-                if (children[i].Guard is { } edge)
-                {
-                    var guard = FallbackUse(context.Key, edge, reader);
-                    if (guard.IsUnknown) return guard;
-                    if (guard.Kind == StaticFactKind.No) continue;
-                }
-                pending.Push(children[i].Node);
-            }
+            var lowered = OccurrenceOrder(context, inferred, reader, undecidedAsLowered: true, out blocked, out _);
+            if (lowered is null) return blocked!;
+            if (!order.SequenceEqual(lowered, StringComparer.Ordinal)) return StaticFact.Unknown;
         }
+        var weights = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
         var multiplicity = new Dictionary<Expr, BigInteger>(ReferenceEqualityComparer.Instance);
         foreach (var row in syntax.Rows) multiplicity[row] = multiplicity.GetValueOrDefault(row) + 1;
         foreach (var node in syntax.Topological)
@@ -264,5 +253,54 @@ internal sealed partial class StaticStructureQueries
         GraceMovement.Apply(order, weights);
         Resources.Metadata(order.Count, cancellationToken: _cancellationToken);
         return new(StaticFactKind.Inputs, Data: order.ToArray());
+    }
+
+    /// <summary>
+    /// The inferred names of a body in first-occurrence order: its rows left to right, depth first, a dot edge's receiver,
+    /// then its selected fallback name, then its written arguments. A MARKED EXTENSION EDGE (declaration-level output
+    /// spreading, D1: <see cref="LoweredReceiver"/>) is the call <c>F(R*, args)</c>, so its fallback name comes first, as
+    /// the callee of the written call does; it is examined only where that can move a name (the fallback is an inferred
+    /// name) and only in a program that admitted a marker. Null with <paramref name="blocked"/> while a fallback's
+    /// selection is undecided; <paramref name="undecided"/> when a marked-receiver verdict was, read as
+    /// <paramref name="undecidedAsLowered"/> says.
+    /// </summary>
+    private List<string>? OccurrenceOrder(BodyContext context, HashSet<string> inferred, StaticQueryReader<StaticQueryKey, StaticFact> reader,
+        bool undecidedAsLowered, out StaticFact? blocked, out bool undecided)
+    {
+        blocked = null;
+        undecided = false;
+        var syntax = context.Syntax;
+        var order = new List<string>();
+        var ordered = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<Expr>(syntax.Rows.Reverse());
+        while (pending.TryPop(out var expression))
+        {
+            Resources.Metadata(0, cancellationToken: _cancellationToken);
+            if (!seen.Add(expression)) continue;
+            if (expression is Expr.Resolve resolve && inferred.Contains(resolve.Name) && ordered.Add(resolve.Name)) order.Add(resolve.Name);
+            var children = syntax.Nodes[expression].Children;
+            var calleeFirst = false;
+            if (AdmittedWithOutputSpreadMarkers && expression is Expr.DotCall dot
+                && children[1].Node.UnwrapGraceOperand() is Expr.Resolve member && inferred.Contains(member.Name))
+            {
+                var verdict = LoweredReceiver(context.Key, dot, reader);
+                undecided |= verdict.IsUnknown;
+                calleeFirst = verdict.IsUnknown ? undecidedAsLowered : verdict.Marker is not null;
+            }
+            for (var i = children.Count - 1; i >= 0; i--)
+            {
+                // The callee (the fallback, child 1) before the receiver (child 0) of a lowered edge.
+                var child = children[calleeFirst && i <= 1 ? 1 - i : i];
+                if (child.Guard is { } edge)
+                {
+                    var guard = FallbackUse(context.Key, edge, reader);
+                    if (guard.IsUnknown) { blocked = guard; return null; }
+                    if (guard.Kind == StaticFactKind.No) continue;
+                }
+                pending.Push(child.Node);
+            }
+        }
+        return order;
     }
 }

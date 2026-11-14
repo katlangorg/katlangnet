@@ -2343,6 +2343,20 @@ internal static class ParameterDetector
                 // reorder the enclosing algorithm's signature. Thus `a.t(b)`
                 // contributes `a, t, b`, while the direct call `t(a)` keeps its
                 // own source order `t, a`.
+                //
+                // A MARKED EXTENSION EDGE (declaration-level output spreading, D1) is no dot edge
+                // here: `A(x, y).F(3)` with `A` marked IS the call `F(A(x, y)*, 3)`, exactly what the
+                // parser builds for the written `A(x, y)*.F(3)`, so it contributes the call's order:
+                // the callee `F`, then the receiver, then the written arguments.
+                if (mode == FreeNameCollection.ImplicitSignature && LoweredReceiverMarker(dotCall, scope) is not null)
+                {
+                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    if (dotCall.Args is { } loweredArgs)
+                        CollectFreeParams(loweredArgs, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    break;
+                }
+
                 CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
 
                 // A statically impossible fallback — a guaranteed structural
@@ -2483,6 +2497,51 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters)
         => (scope.StaticContext ?? throw new InvalidOperationException("Receiver selection requires the admitted operation."))
             .Operation.Receiver(scope.StaticContext.Key, dotCall.Target);
+
+    /// <summary>
+    /// DECLARATION-LEVEL OUTPUT SPREADING, the receiver arm (owner decision D1): the marker of the declaration the receiver
+    /// call of <paramref name="dotCall"/> invokes when the edge is a MARKED EXTENSION EDGE — its lexical fallback is
+    /// certainly selected and its receiver is a written call that resolves statically, through transparent references, to
+    /// a marked declaration — and null for every other edge. Such an edge IS the call <c>F(R*, args)</c> from here on,
+    /// the order of inferred names included, as the parser's lowering of the written <c>R*.F(args)</c> is. ONE decision
+    /// (<see cref="StaticStructureOperation.LoweredReceiverMarker"/>, the reading Q7 orders the names by), made on the
+    /// written edge in its own context: the collection walk and the rewrite read it, and implicit-argument resolution
+    /// receives the call and decides nothing. Only a program whose admission met a marker asks.
+    /// </summary>
+    private static OutputSpreadMarker? LoweredReceiverMarker(Expr.DotCall dotCall, ElaboratedPropertyScope scope)
+        => scope.StaticContext is { Operation.AdmittedWithOutputSpreadMarkers: true } context
+            ? context.Operation.LoweredReceiverMarker(context.Key, dotCall)
+            : null;
+
+    /// <summary>
+    /// The rewrite of a marked extension edge (<see cref="LoweredReceiverMarker"/>): the call the parser builds for the
+    /// written <c>R*.F(args)</c> — the edge's own lexical fallback as the callee (its member token keeps its span, so it
+    /// keeps its editor site), the receiver in a spread as the leading argument, then the written arguments, spanning
+    /// the edge. The spread is the front end's (<see cref="Expr.SequenceSpread.InsertedFor"/>): it takes the receiver's
+    /// span, has no marker span and creates no site. Slots rewrite in the order a written call's do: arguments, then
+    /// the callee (a Grace marker on the member is the callee occurrence's own, judged like any callee's).
+    /// </summary>
+    private static Expr RewriteLoweredReceiver(
+        Expr.DotCall dotCall,
+        OutputSpreadMarker marker,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership parameters,
+        RewriteWalkMemo memo)
+    {
+        var receiver = RewriteParams(dotCall.Target, scope, parameters, memo);
+        var slots = new List<Expr>(1 + (dotCall.Args?.Count ?? 0))
+        {
+            new Expr.SequenceSpread(receiver) { Span = receiver.Span, InsertedFor = marker },
+        };
+        if (dotCall.Args is { } written)
+        {
+            foreach (var slot in written)
+                slots.Add(RewriteParams(slot, scope, parameters, memo));
+        }
+
+        var callee = RewriteParams(dotCall.EffectiveLexicalFallback, scope, parameters, memo);
+        return new Expr.Call(callee, new OutputBundle(slots)) { Span = dotCall.Span };
+    }
 
     /// <summary>
     /// A dot edge's receiver read as WRITTEN — every property its written body, a path through its written members, no
@@ -2993,6 +3052,10 @@ internal static class ParameterDetector
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
+        // A marked extension edge is the call `F(R*, args)` (declaration-level output spreading, D1).
+        if (LoweredReceiverMarker(dotCall, scope) is { } marker)
+            return RewriteLoweredReceiver(dotCall, marker, scope, parameters, memo);
+
         var rewrittenArgs = dotCall.Args is { } dotArgs
             ? RewriteParams(dotArgs, scope, parameters, memo)
             : null;

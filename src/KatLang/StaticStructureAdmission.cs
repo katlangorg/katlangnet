@@ -3,7 +3,8 @@ namespace KatLang;
 /// <summary>Operation admission policy. A resource refusal is terminal and never an inference answer.</summary>
 internal static class StaticStructureAdmission
 {
-    internal readonly record struct Measurement(long Nodes, long Edges, long GraphBytes, StaticQueryLimits Limits, bool HasOpens = true);
+    internal readonly record struct Measurement(long Nodes, long Edges, long GraphBytes, StaticQueryLimits Limits, bool HasOpens = true,
+        bool HasOutputSpreadMarkers = false);
 
     internal static (StaticStructureOperation Operation, Measurement Measurement) Create(Algorithm root, HostOperations? hostOperations = null,
         SourceProcessingLimits? sourceProcessingLimits = null, StaticAstPhase phase = StaticAstPhase.RawSource, IReadOnlyList<Algorithm>? sourceAncestors = null, CancellationToken cancellationToken = default)
@@ -14,6 +15,7 @@ internal static class StaticStructureAdmission
         {
             SharedBodies = SharedBodyCensus.FromSharedNodes(sharedNodes),
             AdmittedWithoutOpens = !measurement.HasOpens,
+            AdmittedWithOutputSpreadMarkers = measurement.HasOutputSpreadMarkers,
         }, measurement);
     }
 
@@ -45,10 +47,12 @@ internal static class StaticStructureAdmission
         if (seen.Count > maxSourceFacts) throw new StaticQueryLimitExceededException("Static source admission exceeded its node-storage envelope.");
         long edges = 0;
         var hasOpens = false;
+        var hasOutputSpreadMarkers = false;
         while (pending.TryPop(out var node))
         {
             cancellationToken.ThrowIfCancellationRequested();
             hasOpens |= node is Algorithm { Opens.Count: > 0 };
+            hasOutputSpreadMarkers |= node is Algorithm { OutputSpread: not null };
             for (var i = 0; AstStructuralPreflight.TryGetChild(node, i, out var child); i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -66,7 +70,7 @@ internal static class StaticStructureAdmission
         var facts = seen.Count + edges;
         var entries = (int)Math.Min(int.MaxValue, Math.Min(graphBytes / 1024, 4096 + 128 * Math.Min(facts, (long.MaxValue - 4096) / 128)));
         var limits = new StaticQueryLimits(16_384 + 1024 * Math.Min(facts, (long.MaxValue - 16_384) / 1024), 4, entries, 65_536 + 4096 * Math.Min(facts, (long.MaxValue - 65_536) / 4096), graphBytes / 64);
-        return new(seen.Count, edges, graphBytes, limits, hasOpens);
+        return new(seen.Count, edges, graphBytes, limits, hasOpens, hasOutputSpreadMarkers);
     }
 
     internal static Diagnostic Rejection(StaticQueryLimitExceededException error)

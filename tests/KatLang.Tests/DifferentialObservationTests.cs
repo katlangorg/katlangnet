@@ -115,7 +115,8 @@ public class DifferentialObservationTests
         Assert.Equal(new[] { "binding-failure-outranks-repeated-name-conflict", "decon-arity-over", "decon-arity-under",
             "fixed-call-preserves-boundaries", "fixed-empty-spread-zero-items", "grouped-runtime-member-value-arity", "need-closed-core-demand-is-runtime",
             "need-container-call-checks-cardinality-first", "need-selected-signature-payload", "need-variadic-minimum-payload",
-            "need-wrong-arity-precedes-cell-demand", "root-row-block-head-is-elaborated", "tick-argument-is-an-arity-error" }, cases.Select(c => c.Id).Order());
+            "need-wrong-arity-precedes-cell-demand", "output-spread-builtin-argument-is-spread-too", "output-spread-marked-call-as-loop-receiver",
+            "root-row-block-head-is-elaborated", "tick-argument-is-an-arity-error" }, cases.Select(c => c.Id).Order());
         foreach (var c in cases)
         {
             var ast = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(c.Source).Root);
@@ -157,6 +158,7 @@ public class DifferentialObservationTests
         foreach (var (kind, minimum) in minimums)
             Assert.True(kinds.GetValueOrDefault(kind) >= minimum, $"Supplementary {kind} guards shrank below {minimum}.");
         var canonical = LanguageSpecArtifactsTests.GenerateArtifact();
-        Assert.Equal(13, canonical.Split('\n').Count(l => l.StartsWith("#guard errorObs ", StringComparison.Ordinal)));
+        // Declaration-level output spreading (2026-11-14): 13 -> 15, the two output-spread-* error-payload cases.
+        Assert.Equal(15, canonical.Split('\n').Count(l => l.StartsWith("#guard errorObs ", StringComparison.Ordinal)));
     }
 }

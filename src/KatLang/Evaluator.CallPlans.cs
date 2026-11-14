@@ -803,7 +803,7 @@ public static partial class Evaluator
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;
         if (plan.Source is Expr.DotCall dot)
-            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, DispatchPlannedDotCounted(plan, dot, byInvocation)));
+            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, WithOutputSpreadNotes(dot, DispatchPlannedDotCounted(plan, dot, byInvocation))));
         var call = (Expr.Call)plan.Source;
         var name = CallDiagnosticName.FromExpression(call.Function);
         if (plan.NeedsRoute)
@@ -817,7 +817,7 @@ public static partial class Evaluator
         var callee = ResolveCallee(call.Function, ctx);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
-        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function))));
+        return WithSpanOf(call, WithCallCtx(name, ctx, WithOutputSpreadNotes(call.Args, DispatchPlannedCounted(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function)))));
     }
 
     /// <summary>
@@ -834,7 +834,7 @@ public static partial class Evaluator
         var callee = ProjectPlannedAlgorithmCallee(plan, edge, spanDecodeFailure: true);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
-        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell))));
+        return WithSpanOf(call, WithCallCtx(name, ctx, WithOutputSpreadNotes(call.Args, DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell)))));
     }
 
     /// <summary>
@@ -1052,7 +1052,7 @@ public static partial class Evaluator
             return nodeWorkError;
         ThrowIfAsyncStrategyPinningViolated(ctx);
         if (plan.Source is Expr.DotCall dot)
-            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, await DispatchPlannedDotAsync(plan, dot, byInvocation).ConfigureAwait(false)));
+            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, WithOutputSpreadNotes(dot, await DispatchPlannedDotAsync(plan, dot, byInvocation).ConfigureAwait(false))));
         var call = (Expr.Call)plan.Source;
         var name = CallDiagnosticName.FromExpression(call.Function);
         if (plan.NeedsRoute)
@@ -1065,16 +1065,16 @@ public static partial class Evaluator
                 var projected = await ProjectPlannedAlgorithmCalleeAsync(plan, (Expr.DotCall)call.Function, spanDecodeFailure: true).ConfigureAwait(false);
                 if (projected.IsError)
                     return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, projected.Error));
-                return WithSpanOf(call, WithCallCtx(name, ctx,
-                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation, CalleeOrigin.Cell(projected.Value.Cell)).ConfigureAwait(false)));
+                return WithSpanOf(call, WithCallCtx(name, ctx, WithOutputSpreadNotes(call.Args,
+                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation, CalleeOrigin.Cell(projected.Value.Cell)).ConfigureAwait(false))));
             }
         }
         // META-S3-0b: the ONE callee law through the async resolution adapter.
         var callee = await ResolveCalleeAsync(call.Function, ctx).ConfigureAwait(false);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
-        return WithSpanOf(call, WithCallCtx(name, ctx,
-            await DispatchPlannedAsync(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function)).ConfigureAwait(false)));
+        return WithSpanOf(call, WithCallCtx(name, ctx, WithOutputSpreadNotes(call.Args,
+            await DispatchPlannedAsync(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function)).ConfigureAwait(false))));
     }
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedDotCounted"/> — keep in lock-step.</summary>

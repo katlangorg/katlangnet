@@ -74,7 +74,8 @@ internal sealed partial class ModuleLoader
             if (ReferenceEquals(patterns, user.ParameterPatterns)
                 && ReferenceEquals(opens, user.Opens)
                 && ReferenceEquals(properties, user.Properties)
-                && ReferenceEquals(output, user.Output))
+                && ReferenceEquals(output, user.Output)
+                && !HasMarkerLocation(user))
             {
                 return user;
             }
@@ -86,8 +87,16 @@ internal sealed partial class ModuleLoader
                 Properties = properties,
                 Output = output,
                 AssignmentDeconstructionTarget = RewriteDeconstructionTarget(user, patterns),
+                OutputSpread = LocationlessMarker(user),
             };
         }
+
+        // A declaration's output-spreading marker crosses as a fact (the module's calls and its
+        // importers' calls still spread) without its written location, like every span of the view.
+        private static bool HasMarkerLocation(Algorithm algorithm) => algorithm.OutputSpread is { Span: not null };
+
+        private static OutputSpreadMarker? LocationlessMarker(Algorithm algorithm)
+            => algorithm.OutputSpread is { Span: not null } marker ? marker with { Span = null } : algorithm.OutputSpread;
 
         // Import views erase pattern locations without changing binding. Rebase the origin once
         // per shared list so imported parser helpers retain O(1) eligibility and one shared bind.
@@ -119,8 +128,9 @@ internal sealed partial class ModuleLoader
             return ReferenceEquals(opens, alias.Opens)
                 && ReferenceEquals(properties, alias.Properties)
                 && ReferenceEquals(target, alias.Target)
+                && !HasMarkerLocation(alias)
                 ? alias
-                : alias with { Opens = opens, Properties = properties, Target = target };
+                : alias with { Opens = opens, Properties = properties, Target = target, OutputSpread = LocationlessMarker(alias) };
         }
 
         private Algorithm RewriteConditional(Algorithm.Conditional conditional)
@@ -128,8 +138,9 @@ internal sealed partial class ModuleLoader
             var opens = RewriteList(conditional.Opens, Rewrite);
             var branches = RewriteList(conditional.Branches, RewriteBranch);
             return ReferenceEquals(opens, conditional.Opens) && ReferenceEquals(branches, conditional.Branches)
+                && !HasMarkerLocation(conditional)
                 ? conditional
-                : conditional with { Opens = opens, Branches = branches };
+                : conditional with { Opens = opens, Branches = branches, OutputSpread = LocationlessMarker(conditional) };
         }
 
         private CondBranch RewriteBranch(CondBranch branch)

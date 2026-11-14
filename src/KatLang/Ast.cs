@@ -1919,6 +1919,26 @@ public closed record Expr
         /// </summary>
         public SourceSpan? SpreadMarkerSpan { get; init; }
 
+        private readonly RuntimeStateSlot<OutputSpreadMarker?> _insertedFor;
+
+        /// <summary>
+        /// The output-spreading marker of the declaration a call to which the FRONT END spread here
+        /// (declaration-level output spreading, <c>A(x, y)* = …</c>): implicit-argument resolution
+        /// inserts this node around an eligible call to a marked declaration exactly where a written
+        /// <c>*</c> would stand, parameter detection inserts it around a written marked call that is
+        /// the receiver of an extension edge when it lowers the edge to the call <c>F(R*, args)</c>
+        /// (where the inferred names are ordered), and no other producer sets it. Null for every written spread and for
+        /// every other synthetic one. Evaluation never reads it to decide anything: the inserted node
+        /// IS the written spread, and only the C# diagnostics name the declaration that put it there.
+        /// Equality-transparent (<see cref="RuntimeStateSlot{T}"/>), not a child, and not encoded for
+        /// Lean, which sees the inserted spread as an ordinary <c>.sequenceSpread</c>.
+        /// </summary>
+        internal OutputSpreadMarker? InsertedFor
+        {
+            get => _insertedFor.Value;
+            init => _insertedFor = new(value);
+        }
+
         protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
 
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Operand"/>.</summary>
@@ -1933,12 +1953,15 @@ public closed record Expr
         internal override bool RecordFieldsEqual(Expr other, int segment)
             => segment == 0
                 ? base.Equals(other)
-                : RecordGraphEquality.FieldEquals(SpreadMarkerSpan, ((SequenceSpread)other).SpreadMarkerSpan);
+                : RecordGraphEquality.FieldEquals(SpreadMarkerSpan, ((SequenceSpread)other).SpreadMarkerSpan)
+                    && RecordGraphEquality.FieldEquals(_insertedFor, ((SequenceSpread)other)._insertedFor);
 
         internal override int RecordHashStart() => base.GetHashCode();
 
         internal override int RecordHashAfterChild(int index, int hash, int childHash)
-            => RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), SpreadMarkerSpan);
+            => RecordGraphEquality.Combine(
+                RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), SpreadMarkerSpan),
+                _insertedFor);
     }
 
     /// <summary>
@@ -3258,7 +3281,26 @@ public closed record Algorithm
         init => _deferredRegion = new(value);
     }
 
-    // Both slots are the ONE equality-transparent storage shape for carried state
+    private readonly RuntimeStateSlot<OutputSpreadMarker?> _outputSpread;
+
+    /// <summary>
+    /// The declaration-level OUTPUT-SPREADING MARKER of the written declaration this algorithm is
+    /// the body of (<c>A(x, y)* = x, y</c>, <c>A* = …</c>, every clause of a family), or null. A
+    /// front-end fact only: implicit-argument resolution spreads every eligible call that statically
+    /// resolves to a marked declaration (<see cref="Expr.SequenceSpread.InsertedFor"/>), so after
+    /// elaboration a marked program IS the program with those stars written, and evaluation never
+    /// reads this. Set by the parser on the body it builds, carried by every <c>with</c> copy and by
+    /// the alias the front end forms from the body (<see cref="Alias(User, Expr)"/>); a host-built
+    /// algorithm has none. Takes no part in record equality, hashing, or printing (Lean has no
+    /// counterpart: it receives the inserted spreads).
+    /// </summary>
+    internal OutputSpreadMarker? OutputSpread
+    {
+        get => _outputSpread.Value;
+        init => _outputSpread = new(value);
+    }
+
+    // All three slots are the ONE equality-transparent storage shape for carried state
     // (RuntimeStateSlot<T>): the record copy constructor copies the one-reference value
     // automatically, and only the PRIVATE SLOT is transparent, never the value exposed
     // above (a declaration token's ordinary Equals, dictionaries, and LINQ all retain
@@ -4143,6 +4185,9 @@ public closed record Algorithm
             Properties = body.Properties;
             Target = target;
             IsModuleElaborated = body.IsModuleElaborated;
+            // The written declaration keeps its own marker: a carrier's is its own, and a marked
+            // reference is the front end's OutputSpreadMarkerOnAlias error, never a silent drop.
+            OutputSpread = body.OutputSpread;
             // Only a bare written reference is transparent: a body that owns a namespace of its own —
             // written braces, its own declarations or opens, or a loaded module's root (a source unit,
             // Q-31) — keeps its structure as a forwarding carrier.
@@ -4522,6 +4567,18 @@ internal sealed class DeclarationIdentity
     public override string ToString()
         => $"declaration#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this):x8}";
 }
+
+/// <summary>
+/// One written declaration-level OUTPUT-SPREADING MARKER: the <c>*</c> directly after a
+/// declaration's name or its parameter list (<c>A* = x, y</c>, <c>A(x, y)* = x, y</c>). It
+/// changes no algorithm — parameters, inference, body and result value stay what they are —
+/// only how the FRONT END elaborates calls to the declaration: every eligible call it resolves
+/// statically to the declaration (through transparent aliases) is spread where a written <c>*</c>
+/// would stand (<see cref="Expr.SequenceSpread.InsertedFor"/>). <see cref="DeclarationName"/> is the
+/// declared name and <see cref="Span"/> the written marker (absent in a module's locationless
+/// import view); both serve diagnostics only. A C#-only front-end fact with no Lean counterpart.
+/// </summary>
+internal sealed record OutputSpreadMarker(string DeclarationName, SourceSpan? Span);
 
 internal sealed record ExplicitParameterOutputViolation(SourceSpan? Span);
 

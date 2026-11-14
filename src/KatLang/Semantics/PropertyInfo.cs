@@ -359,6 +359,14 @@ public sealed record PropertyInfo
     /// </summary>
     internal bool HasUnknownRuntimeSignature { get; init; }
 
+    /// <summary>
+    /// Whether calls to this declaration have their output spread: it is written with the declaration-level
+    /// output-spreading marker (<c>A(x, y)* = x, y</c>, <c>A* = …</c>), or it is a transparent alias of a
+    /// declaration that is. The front end spreads every eligible call that resolves to it statically, exactly
+    /// where a written <c>*</c> would stand; the display signature ends with <c>*</c> (<c>A(x, y)*</c>).
+    /// </summary>
+    public bool SpreadsOutput { get; init; }
+
     public PropertyCallStyle PreferredCallStyle { get; init; } = PropertyCallStyle.Plain;
 
     public IReadOnlyList<PropertySignatureInfo> Signatures
@@ -386,8 +394,12 @@ public sealed record PropertyInfo
         => FindSignature(callStyle)?.Parameters ?? Parameters;
 
     public string GetDisplaySignature(PropertyCallStyle callStyle)
-        => FindSignature(callStyle)?.DisplayText
+    {
+        var text = FindSignature(callStyle)?.DisplayText
             ?? FormatSignature(Name, GetParameters(callStyle));
+        // The output-spreading marker is part of the declaration's written head (`A(x, y)*`).
+        return SpreadsOutput ? text + "*" : text;
+    }
 
     public PropertyInfo WithPreferredCallStyle(PropertyCallStyle callStyle)
     {

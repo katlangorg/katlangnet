@@ -56,6 +56,28 @@ internal sealed partial class StaticStructureOperation
     /// <summary>Admission walked every reachable node of this operation's tree, its prelude included, and met no open list.</summary>
     internal bool AdmittedWithoutOpens { get; init; }
 
+    /// <summary>
+    /// Admission walked every reachable node of this operation's tree — source ancestors, loaded modules and the
+    /// prelude included — and met a declaration carrying the output-spreading marker
+    /// (<see cref="Algorithm.OutputSpread"/>). Only then does implicit-argument resolution ask whether a call is
+    /// spread, so a program without markers elaborates exactly as before, read for read. The queries hold the fact
+    /// (Q7 orders a marked extension edge's names by it, D1).
+    /// </summary>
+    internal bool AdmittedWithOutputSpreadMarkers
+    {
+        get => Queries.AdmittedWithOutputSpreadMarkers;
+        init => Queries.AdmittedWithOutputSpreadMarkers = value;
+    }
+
+    /// <summary>
+    /// D1, the consumer boundary of <see cref="StaticStructureQueries.LoweredReceiver"/>: the marker of the declaration the
+    /// receiver call of the written extension edge <paramref name="edge"/> invokes, when the edge is the call
+    /// <c>F(R*, args)</c>; null for every other edge. Every fact is final here, and a callee whose selection never
+    /// settled has no static identity (R1), so it is not marked.
+    /// </summary>
+    internal OutputSpreadMarker? LoweredReceiverMarker(StaticScopeKey scope, Expr.DotCall edge)
+        => Queries.AdmittedWithOutputSpreadMarkers ? Queries.LoweredReceiver(scope, edge).Marker : null;
+
     internal StaticStructureOperation(Algorithm root, StaticQueryLimits limits, Algorithm? prelude = null, StaticAstPhase phase = StaticAstPhase.RawSource,
         CancellationToken cancellationToken = default)
     {
@@ -520,7 +542,11 @@ internal sealed partial class StaticStructureOperation
         cancellationToken.ThrowIfCancellationRequested();
         Queries.EnsureUsable();
         return new(snapshot, publications.ToImmutable(), views.ToImmutable(), resolvedSources.ToImmutable(), regionAliases.ToImmutable(), detectedAliases.ToImmutable(), _completed,
-            snapshot.RetainedStorageUnits + 16L * publications.Count + 2L * (regionAliases.Count + detectedAliases.Count) + (_completed?.RetainedStorageUnits ?? 0));
+            snapshot.RetainedStorageUnits + 16L * publications.Count + 2L * (regionAliases.Count + detectedAliases.Count) + (_completed?.RetainedStorageUnits ?? 0))
+        {
+            // A deferred unit's calls resolve into the eager tree too, so its operation inherits this admission's fact.
+            AdmittedWithOutputSpreadMarkers = AdmittedWithOutputSpreadMarkers,
+        };
     }
 
     internal sealed class Continuation
@@ -542,8 +568,27 @@ internal sealed partial class StaticStructureOperation
 
         internal Algorithm Prelude => _snapshot.Contexts[_snapshot.Keys.Root].Body;
 
+        /// <summary>
+        /// Whether the eager admission this continuation froze met a declaration-level output-spreading marker
+        /// (<see cref="StaticStructureOperation.AdmittedWithOutputSpreadMarkers"/>).
+        /// </summary>
+        internal bool AdmittedWithOutputSpreadMarkers { get; init; }
+
+        /// <summary>The deferred unit's operation over a loaded unit that holds no output-spreading marker of its own.</summary>
         internal StaticStructureOperation Materialize(StaticScopeKey declaring, Algorithm loadedBody, Pattern pattern,
             StaticQueryLimits limits, CancellationToken cancellationToken = default)
-            => new(_snapshot, _publications, _views, _resolvedSources, _regionAliases, _detectedAliases, declaring, loadedBody, pattern, limits, _completed, _retainedStorageUnits, cancellationToken);
+            => Materialize(declaring, loadedBody, pattern, limits, loadedUnitHasOutputSpreadMarkers: false, cancellationToken);
+
+        /// <summary>
+        /// The deferred unit's operation. It examines calls for output spreading when the eager admission met a marker or
+        /// the loaded unit itself holds one (<paramref name="loadedUnitHasOutputSpreadMarkers"/>, from its measurement): a
+        /// deferred call may resolve to either.
+        /// </summary>
+        internal StaticStructureOperation Materialize(StaticScopeKey declaring, Algorithm loadedBody, Pattern pattern,
+            StaticQueryLimits limits, bool loadedUnitHasOutputSpreadMarkers, CancellationToken cancellationToken = default)
+            => new(_snapshot, _publications, _views, _resolvedSources, _regionAliases, _detectedAliases, declaring, loadedBody, pattern, limits, _completed, _retainedStorageUnits, cancellationToken)
+            {
+                AdmittedWithOutputSpreadMarkers = AdmittedWithOutputSpreadMarkers || loadedUnitHasOutputSpreadMarkers,
+            };
     }
 }

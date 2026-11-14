@@ -367,6 +367,15 @@ public class LanguageSpecRunnerTests
             "open-reference-to-a-calculation-link-reports-the-target-refusal",
             "open-parameterized-fallback-row-is-refused",
             "open-link-over-a-head-only-an-open-provides-is-unresolved",
+            // Declaration-level output spreading (November 2026): the marker's attachment, its family rule, and the
+            // declarations it is not allowed on are front-end rejections, parse-level by construction.
+            "output-spread-marker-on-an-alias-is-an-error",
+            "output-spread-marker-must-be-attached",
+            "output-spread-marker-on-every-clause-or-none",
+            "output-spread-marker-not-on-a-deconstruction-target",
+            // D2: a bare reference to a marked declaration whose lift only parameter inference decides, where a later
+            // builtin slot's role depends on it, is a front-end rejection too.
+            "output-spread-reference-needs-call",
         ];
         string[] expectedModelDivergences =
         [

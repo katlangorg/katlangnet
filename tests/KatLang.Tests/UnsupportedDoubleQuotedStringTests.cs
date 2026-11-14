@@ -450,8 +450,10 @@ public class UnsupportedDoubleQuotedStringTests
     {
         Assert.Equal(63, (int)DiagnosticCode.UnsupportedDoubleQuotedString);
         Assert.Equal(85, (int)KatLangErrorCode.UnsupportedDoubleQuotedString);
-        Assert.Equal(DiagnosticCode.UnsupportedDoubleQuotedString, Enum.GetValues<DiagnosticCode>().Max());
-        Assert.Equal(KatLangErrorCode.UnsupportedDoubleQuotedString, Enum.GetValues<KatLangErrorCode>().Max());
+        // Later codes are appended after it, never renumbered (the declaration-level output-spreading
+        // codes come next; the full registry is pinned by KatLangErrorCodeTests).
+        Assert.Equal(DiagnosticCode.UnsupportedDoubleQuotedString + 1, DiagnosticCode.DetachedOutputSpreadMarker);
+        Assert.Equal(KatLangErrorCode.UnsupportedDoubleQuotedString + 1, KatLangErrorCode.DetachedOutputSpreadMarker);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run("x = 5\n\"Total: {x}\""));
         var error = Assert.Single(failure.Errors);

@@ -296,12 +296,14 @@ public class AlgorithmOwnershipTests
         // value be WRITTEN would have to appear in one of these lists.
         const BindingFlags declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
         var properties = typeof(Algorithm).GetProperties(declared);
+        // OutputSpread is the declaration-level output-spreading marker: a front-end fact carried
+        // by `with` copies, init-only and internal like the deferred-region slot.
         Assert.Equal(
-            ["Declaration", "DeferredRegion", "EqualityContract"],
+            ["Declaration", "DeferredRegion", "EqualityContract", "OutputSpread"],
             properties.Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal));
-        var slot = Assert.Single(properties, p => p.SetMethod is not null);
-        Assert.Equal("DeferredRegion", slot.Name);
-        Assert.True(slot.SetMethod!.IsAssembly, "the deferred-region slot is internal");
+        var slots = properties.Where(p => p.SetMethod is not null).OrderBy(p => p.Name, StringComparer.Ordinal).ToList();
+        Assert.Equal(["DeferredRegion", "OutputSpread"], slots.Select(p => p.Name));
+        Assert.All(slots, slot => Assert.True(slot.SetMethod!.IsAssembly, $"the {slot.Name} slot is internal"));
 
         var publicMethods = typeof(Algorithm)
             .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)

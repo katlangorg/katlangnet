@@ -238,6 +238,13 @@ internal static partial class ImplicitArgumentResolver
         /// </summary>
         public SelectedSignatures? Selected;
 
+        /// <summary>
+        /// Declaration-level output spreading (D2): whether an open body's value-role references could lift, by its
+        /// contextual key (<see cref="HoldsALiftableReference"/>). Final zero-supply signatures and callable roles cannot.
+        /// Read only in a program that admitted a marker.
+        /// </summary>
+        public Dictionary<StaticScopeKey, bool>? LiftableReferenceBodies;
+
         /// <summary>The admitting operation's cancellation token.</summary>
         public CancellationToken CancellationToken => StructuralOperation?.Queries.OperationToken ?? default;
 
@@ -1585,6 +1592,18 @@ internal static partial class ImplicitArgumentResolver
         public HashSet<Expr>? UnliftableFamilyDiagnosticVisits;
 
         /// <summary>
+        /// Declaration-level output spreading (D2): the bare references already reported in this region as needing a
+        /// written call (<see cref="DiagnosticCode.OutputSpreadReferenceNeedsCall"/>), once per reference.
+        /// </summary>
+        public HashSet<Expr>? OutputSpreadReferenceReports;
+
+        /// <summary>
+        /// The region's one rewrite context once its rewrite has started (<see cref="PinRewriteContext"/>); null in the
+        /// analysis and while an open body's dependencies are collected, where no closed list exists.
+        /// </summary>
+        public ImplicitRewriteContext? PinnedRewriteContext => _pinnedRewriteContext;
+
+        /// <summary>
         /// The verdict each MAY edge's roles read in this region (<see cref="MissSelectionOf"/>): one answer per edge, so
         /// the dependency walk and the rewrite never read two.
         /// </summary>
@@ -2165,19 +2184,24 @@ internal static partial class ImplicitArgumentResolver
             foreach (var expr in alg.Output)
             {
                 run.ObserveCancellation(FrontEndCancellationCheckpoint.ResolverRow);
-                newOutput.Add(
+                // A whole output row is an output-spreading position (R2).
+                newOutput.Add(SpreadIfMarked(
+                    expr,
                     RewriteImplicitCalls(
                         expr,
                         visibleParamMap,
                         explicitContext,
                         rowRole,
-                        walkMemos));
+                        walkMemos),
+                    visibleParamMap,
+                    walkMemos));
             }
 
             AstHelpers.RewriteDeconstructionSourceRows(
                 alg,
                 newProperties,
-                expr => RewriteImplicitCalls(expr, visibleParamMap, explicitContext, LiftingRole.Value, walkMemos),
+                expr => SpreadIfMarked(
+                    expr, RewriteImplicitCalls(expr, visibleParamMap, explicitContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
                 (source, view) => run.StructuralOperation!.Publish(
                     run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view));
 
@@ -2232,20 +2256,27 @@ internal static partial class ImplicitArgumentResolver
             rewrittenOutput.Add(
                 ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot, walkMemos)
                     // THE ROOT CLAUSE keeps the ROW unlifted, never its block: a block head (`{ … }.K`, `{ … }.S.K`) is a
-                    // body of its own, elaborated like every other body (the analysis recorded it).
+                    // body of its own, elaborated like every other body (the analysis recorded it). A bare row is a
+                    // read, never a call, so it is never spread.
                     ? WithProcessedBlockHead(expr, visibleParamMap, walkMemos)
-                    : RewriteImplicitCalls(
+                    // A whole output row is an output-spreading position (R2).
+                    : SpreadIfMarked(
                         expr,
+                        RewriteImplicitCalls(
+                            expr,
+                            visibleParamMap,
+                            liftedContext,
+                            rowRole,
+                            walkMemos),
                         visibleParamMap,
-                        liftedContext,
-                        rowRole,
                         walkMemos));
         }
 
         AstHelpers.RewriteDeconstructionSourceRows(
             alg,
             newProperties,
-            expr => RewriteImplicitCalls(expr, visibleParamMap, liftedContext, LiftingRole.Value, walkMemos),
+            expr => SpreadIfMarked(
+                expr, RewriteImplicitCalls(expr, visibleParamMap, liftedContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
             (source, view) => run.StructuralOperation!.Publish(
                 run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view));
 
@@ -2266,9 +2297,17 @@ internal static partial class ImplicitArgumentResolver
         // A RUNTIME-TARGET ALIAS (FWD-02, META-S3-2, Option A): decided only AFTER inference — Q-75's
         // implicit parameters and formula lifting — has completed, so a body that owns a parameter
         // keeps it and stays a formula, exactly as before.
-        return !isRoot && RuntimeAliasRow(lifted, visibleParamMap, walkMemos) is { } runtimeRow
-            ? new Algorithm.Alias(lifted, runtimeRow) { HasRuntimeTarget = true }
-            : lifted;
+        if (isRoot || RuntimeAliasRow(lifted, visibleParamMap, walkMemos) is not { } runtimeRow)
+        {
+            // An `.Algorithm` link that stays a calculation is no static callee of a marker either (R3).
+            if (!isRoot)
+                ReportOutputSpreadMarkerOnLink(alg, walkMemos);
+            return lifted;
+        }
+
+        var runtimeAlias = new Algorithm.Alias(lifted, runtimeRow) { HasRuntimeTarget = true };
+        ReportOutputSpreadMarkerOnAlias(runtimeAlias, targetName: "", target: null, walkMemos);
+        return runtimeAlias;
     }
 
     /// <summary>
@@ -3295,6 +3334,7 @@ internal static partial class ImplicitArgumentResolver
             {
                 ResolvedTargetCell = TargetCellOf(target, memos),
             };
+            ReportOutputSpreadMarkerOnAlias(alias, writtenName, target, memos);
             return alias.IsReference
                 ? alias with { ResolvedStructureCell = StaticStructureOfRow(row, paramMap, memos) }
                 : alias;
@@ -3344,7 +3384,12 @@ internal static partial class ImplicitArgumentResolver
         memos.Run.ChargeImplicitArgumentBundle(arguments.Count);
         memos.Run.Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
         // The callee path's block head is processed like the alias row's, so the call reaches the block this pass elaborated.
-        return alg with { Output = [memos.SynthesizedImplicitCall(LoneRowCall(WithProcessedBlockHead(row, paramMap, memos), arguments))] };
+        // The synthesized call is the body's whole output row: an output-spreading position (R2, R4: a marked call
+        // written — or forwarded — inside a bare-forwarding body spreads where it stands).
+        return alg with
+        {
+            Output = [SpreadIfMarked(row, memos.SynthesizedImplicitCall(LoneRowCall(WithProcessedBlockHead(row, paramMap, memos), arguments)), paramMap, memos)],
+        };
     }
 
     /// <summary>The operation's OD-D formation verdict, with no local cycle walk.</summary>
@@ -4141,7 +4186,7 @@ internal static partial class ImplicitArgumentResolver
                 // B3-5★: a link's class is SELECTED, never processed on demand — the very class the analysis guarded this
                 // edge's slots with. A calculation link declares no member, so its miss is certain; a runtime reference's
                 // is the runtime's.
-                receiver = CertainMissDecidesALift(edge, paramMap, run)
+                receiver = CertainMissDecidesALift(edge, paramMap, memos)
                     ? ReadReceiver(edge.Target, run.Level, paramMap, run, selectedLinks: true)
                     : default;
             }
@@ -4161,8 +4206,9 @@ internal static partial class ImplicitArgumentResolver
     /// either verdict. The callee is read from this pass's input with nothing processed
     /// (<see cref="StaticFallbackCalleeKind"/>), so asking processes nothing.
     /// </summary>
-    private static bool CertainMissDecidesALift(Expr.DotCall edge, SignatureMap paramMap, ResolutionRun run)
+    private static bool CertainMissDecidesALift(Expr.DotCall edge, SignatureMap paramMap, ResolverWalkMemos memos)
     {
+        var run = memos.Run;
         var kind = FormulaLiftingRoles.EdgeKind(edge, LexicalFallbackSelection.Always);
         var callee = kind == DotEdgeKind.Fallback
             ? StaticFallbackCalleeKind(edge.EffectiveLexicalFallback, paramMap, run)
@@ -4171,7 +4217,8 @@ internal static partial class ImplicitArgumentResolver
             return true;
         if (edge.Args is not { } args)
             return false;
-        var roles = FormulaLiftingRoles.DotArgumentRoles(edge, kind, callee);
+        // A MAY edge's receiver is never a marked reference (its stamp is no certain fallback): only its arguments can spread.
+        var roles = DotArgumentRolesWithSpreads(edge, kind, callee, StaticLift.None, paramMap, memos, out _);
         for (var i = 0; i < args.Count; i++)
         {
             if (roles[i] == LiftingRole.Value)
@@ -4489,6 +4536,12 @@ internal static partial class ImplicitArgumentResolver
         }
 
         public LiftingCallee DotEdgeCallee(Expr.DotCall edge, DotEdgeKind kind) => ImplicitArgumentResolver.DotEdgeCallee(edge, kind, paramMap, memo.Walk);
+
+        public LiftingRole[] ArgumentRoles(LiftingCallee callee, OutputBundle args)
+            => ArgumentRolesWithSpreads(callee, args, leadingSlots: 0, leadingPositionsKnown: true, paramMap, memo.Walk, out _);
+
+        public LiftingRole[] DotArgumentRoles(Expr.DotCall edge, DotEdgeKind kind, LiftingCallee callee)
+            => DotArgumentRolesWithSpreads(edge, kind, callee, ReceiverLift(edge, kind, callee, paramMap, memo.Walk), paramMap, memo.Walk, out _);
     }
 
     /// <summary>Adds a value-role reference's callee to the dependencies when it lifts (once per identity).</summary>
@@ -4570,16 +4623,22 @@ internal static partial class ImplicitArgumentResolver
                 Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, LiftingRole.Value, memos),
             },
 
-            // The receiver and every selector slot are VALUE uses (CollectImplicitDeps).
+            // The receiver and every selector slot are VALUE uses (CollectImplicitDeps). A whole selector
+            // slot is an output-spreading position (R2); the receiver is one value.
             Expr.Index index => index with
             {
                 Target = RewriteImplicitCalls(index.Target, paramMap, context, LiftingRole.Value, memos),
-                Selectors = index.Selectors.Select(selector => RewriteImplicitCalls(selector, paramMap, context, LiftingRole.Value, memos)).ToList(),
+                Selectors = index.Selectors.Select(selector => SpreadIfMarked(
+                    selector, RewriteImplicitCalls(selector, paramMap, context, LiftingRole.Value, memos), paramMap, memos)).ToList(),
             },
 
+            // The operand of a written `*` is an output-spreading position (`A(1, 2)*` is `A(1, 2)**`, the
+            // chained-spread law); the operand of a spread the front end inserted is the marked call itself.
             Expr.SequenceSpread spread => spread with
             {
-                Operand = RewriteImplicitCalls(spread.Operand, paramMap, context, LiftingRole.Value, memos),
+                Operand = spread.InsertedFor is null
+                    ? SpreadIfMarked(spread.Operand, RewriteImplicitCalls(spread.Operand, paramMap, context, LiftingRole.Value, memos), paramMap, memos)
+                    : RewriteImplicitCalls(spread.Operand, paramMap, context, LiftingRole.Value, memos),
             },
 
             Expr.SequenceConstruct construct => construct with
@@ -4588,9 +4647,11 @@ internal static partial class ImplicitArgumentResolver
                 Right = RewriteImplicitCalls(construct.Right, paramMap, context, LiftingRole.Value, memos),
             },
 
+            // A list element and an element of a multi-slot group are output-spreading positions (R2).
             Expr.ListLiteral list => list with
             {
-                Items = list.Items.Select(item => RewriteImplicitCalls(item, paramMap, context, LiftingRole.Value, memos)).ToList(),
+                Items = list.Items.Select(item => SpreadIfMarked(
+                    item, RewriteImplicitCalls(item, paramMap, context, LiftingRole.Value, memos), paramMap, memos)).ToList(),
             },
 
             Expr.DotCall dotCall => RewriteDotCall(dotCall, paramMap, context, role, memos),
@@ -4606,7 +4667,7 @@ internal static partial class ImplicitArgumentResolver
             Expr.Capture capture => capture with
             {
                 Body = new OutputBundle(capture.Body
-                    .Select(row => RewriteImplicitCalls(row, paramMap, context, LiftingRole.Value, memos))
+                    .Select(row => SpreadIfMarked(row, RewriteImplicitCalls(row, paramMap, context, LiftingRole.Value, memos), paramMap, memos))
                     .ToList()),
             },
 
@@ -4711,14 +4772,22 @@ internal static partial class ImplicitArgumentResolver
     {
         var newFunc = RewriteImplicitCalls(call.Function, paramMap, context, LiftingRole.Callable, memos);
         var callee = ResolveCalleeKind(call.Function, paramMap, memos);
-        var roles = FormulaLiftingRoles.ArgumentRoles(callee, call.Args);
+        // A slot this pass spreads — a written marked call, or a marked reference formula lifting calls — makes later
+        // positions unknown, as a written `*` does (the role walk reads the same ArgumentRolesWithSpreads, so the analysis
+        // selected the signatures these roles lift); every predicted lift is checked against the call built below.
+        var roles = ArgumentRolesWithSpreads(
+            callee, call.Args, leadingSlots: 0, leadingPositionsKnown: true, paramMap, memos, out var lifts, report: true);
         var newArgs = new List<Expr>(call.Args.Count);
         for (var i = 0; i < call.Args.Count; i++)
         {
             // A LAZY slot (a branch of `if`) is rewritten exactly like any other — lifting is blind
             // to laziness; whether the lifted call ever runs is the evaluator's demand (Q-15). Inline,
-            // so the calibrated recursion adds no frame per argument level.
-            newArgs.Add(RewriteImplicitCalls(call.Args[i], paramMap, context, roles[i], memos));
+            // so the calibrated recursion adds no frame per argument level. A whole argument slot of
+            // any callee is an output-spreading position (no exemption, R2).
+            var processed = RewriteImplicitCalls(call.Args[i], paramMap, context, roles[i], memos);
+            if (lifts is not null)
+                RequirePredictedLift(call.Args[i], processed, lifts[i]);
+            newArgs.Add(SpreadIfMarked(call.Args[i], processed, paramMap, memos));
         }
 
         return new Expr.Call(newFunc, new OutputBundle(newArgs)) { Span = call.Span };
@@ -4753,6 +4822,8 @@ internal static partial class ImplicitArgumentResolver
             memos.Run.Await(provisional);
         }
 
+        // Output spreading decides on the WRITTEN edge (its detector stamp), never on the verdict refined below.
+        var written = dotCall;
         if (dotCall.ElaboratedMissSelection is LexicalFallbackSelection.Conditional
             && MissSelectionOf(dotCall, paramMap, memos) is LexicalFallbackSelection.Always)
         {
@@ -4780,25 +4851,35 @@ internal static partial class ImplicitArgumentResolver
         }
 
         var callee = DotEdgeCallee(dotCall, kind, paramMap, memos);
+        // A receiver formula lifting calls for a marked declaration is a spread slot too (D2): decided on the written edge.
+        var receiverLift = ReceiverLift(written, kind, callee, paramMap, memos);
         OutputBundle? newArgs = null;
         if (dotCall.Args is { } dotArgs)
         {
-            var roles = FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
+            var roles = DotArgumentRolesWithSpreads(dotCall, kind, callee, receiverLift, paramMap, memos, out var lifts, report: true);
             var rewrittenArgs = new List<Expr>(dotArgs.Count);
             for (var i = 0; i < dotArgs.Count; i++)
             {
-                rewrittenArgs.Add(RewriteImplicitCalls(dotArgs[i], paramMap, context, roles[i], memos));
+                var processed = RewriteImplicitCalls(dotArgs[i], paramMap, context, roles[i], memos);
+                if (lifts is not null)
+                    RequirePredictedLift(dotArgs[i], processed, lifts[i]);
+                rewrittenArgs.Add(SpreadIfMarked(dotArgs[i], processed, paramMap, memos));
             }
 
             newArgs = new OutputBundle(rewrittenArgs);
         }
 
-        return dotCall with
+        var rewritten = dotCall with
         {
             Target = RewriteImplicitCalls(
                 dotCall.Target, paramMap, context, FormulaLiftingRoles.ReceiverRole(kind, callee), memos),
             Args = newArgs,
         };
+        RequirePredictedLift(written.Target, rewritten.Target, receiverLift);
+        // The receiver of an extension-call edge is an output-spreading position (R2). A WRITTEN marked call there was
+        // lowered by parameter detection, where the names are ordered (D1); a marked reference this pass lifted makes the
+        // edge the call `F(R(…)*, args)` here, exactly as the parser lowers a written `R*.F(args)`.
+        return LowerLiftedMarkedReceiver(written, rewritten, paramMap, memos) ?? rewritten;
     }
 
     /// <summary>

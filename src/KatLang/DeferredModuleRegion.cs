@@ -730,8 +730,9 @@ internal sealed class DeferredModuleRegion
             var structural = Structure ?? throw new InvalidOperationException("Deferred compilation requires a shared structural context.");
             var completed = structural.Registry.StructuralContinuation
                 ?? throw new InvalidOperationException("A deferred structural unit requires completed eager publications.");
-            var limits = StaticStructureAdmission.Measure(loaded, completed.Prelude, Loader.ProcessingLimits, cancellationToken: cancellationToken).Limits;
-            var operation = completed.Materialize(structural.Declaring, loaded, structural.Pattern, limits, cancellationToken);
+            var measurement = StaticStructureAdmission.Measure(loaded, completed.Prelude, Loader.ProcessingLimits, cancellationToken: cancellationToken);
+            var operation = completed.Materialize(
+                structural.Declaring, loaded, structural.Pattern, measurement.Limits, measurement.HasOutputSpreadMarkers, cancellationToken);
             var detection = new ParameterDetector.DeferredBranchContext(operation.LookupLevel(structural.Declaring),
                 new HashSet<string>(structural.Pattern.BoundNamesExpandingSharedNodesOnce(), StringComparer.Ordinal), structural.BranchName, structural.CapturedParameters);
             var detected = ParameterDetector.ElaborateDeferredBranch(loaded, detection, diagnostics, observations, ImportSite, modules, structural.Pattern);

@@ -1172,6 +1172,86 @@ Data[Order*]
 
 **Result:** `(30, 10)`
 
+### Algorithms Whose Calls Spread
+
+When an algorithm's results are always meant to be used as separate items, you can say so once, in its declaration, instead of writing `*` after every call. Put a star directly after the name or after the parameter list:
+
+```
+Point(x, y)* = x, y
+Add(x, y) = x + y
+
+Point(1, 2)
+Add(Point(3, 4))
+[Point(5, 6), Point(7, 8)]
+```
+
+**Results:**
+```
+1
+2
+7
+[5, 6, 7, 8]
+```
+
+The star does not change the algorithm itself: `Point` still takes two parameters and computes the same value. It changes how calls to it are read: every call that KatLang can see is `Point` is treated as if you had written `*` after it, so `Add(Point(3, 4))` is `Add(Point(3, 4)*)`. That happens exactly where a written `*` would spread — a whole output row, a whole argument of any call, a list element, an item of a sequence, a selection index, and the value before a dot call (`Point(1, 2).Add` is `Add(Point(1, 2)*)`). A zero-parameter algorithm can be marked too (`Origin* = 0, 0`); then only an explicit call `Origin()` spreads, because the bare name `Origin` reads the value and is not a call.
+
+Everywhere else the call stays one value: as an operand of an operator, before a selection, and before `.string`. To keep a marked call's result as one value where it would spread, put it in braces, in a list, or in a property:
+
+```
+Point(x, y)* = x, y
+
+Point(1, 2)[0]
+count({ Point(1, 2) })
+count([Point(1, 2)])
+```
+
+**Results:**
+```
+1
+2
+2
+```
+
+Parentheses do not help here — `(Point(1, 2))` is just `Point(1, 2)` — so `count(Point(1, 2))` and `first(Point(1, 2))` are errors: the call supplies two arguments where `count` and `first` take one. The error message says so and names the declaration that made the call spread.
+
+Like a written `*`, a spreading call in an argument is computed while the call collects its arguments, even when the called algorithm never uses that argument.
+
+The marker belongs to the declaration and to calls KatLang resolves to it before the program runs. An alias such as `Also = Point` calls `Point`, so its calls spread too. A call through a parameter does not: when an algorithm receives `Point` as `f`, `f(1, 2)` is one value, because which algorithm `f` is becomes known only while the program runs. An algorithm that calls a marked one, such as `W(x, y) = Point(x, y)`, is not marked itself: inside it the row `Point(x, y)` spreads into `W`'s outputs, and `W(1, 2)` returns them as one value.
+
+```
+Point(x, y)* = x, y
+Apply(f) = [f(1, 2)]
+Also = Point
+
+Apply(Point)
+[Also(3, 4)]
+```
+
+**Results:**
+```
+[(1, 2)]
+[3, 4]
+```
+
+A marked algorithm cannot be used directly as a loop step: `Fib(0, 1).repeat(10)` with `Fib(a, b)* = b, a + b` is `repeat(Fib(0, 1)*, 10)`, three arguments. Call it through an unmarked wrapper instead — inside the wrapper the row spreads, so each round still produces two state values:
+
+```
+Fib(a, b)* = b, a + b
+Step(a, b) = Fib(a, b)
+
+Fib(0, 1)
+Step(0, 1).repeat(10)
+```
+
+**Results:**
+```
+1
+1
+(55, 89)
+```
+
+The star goes on every clause of a family or on none, it must touch the name or the `)` (`A * = 1` is an error), and an alias, a module holder (`M* = load('…')`) and a deconstruction target (`a*, b = 1, 2`) cannot carry it: to spread the calls of an alias, declare a marked wrapper such as `B(x, y)* = Point(x, y)`.
+
 ### Unpacking an Argument
 
 A parameter written as a parenthesized pattern takes one argument and unpacks its items into names:

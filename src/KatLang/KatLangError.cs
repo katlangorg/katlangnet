@@ -109,7 +109,44 @@ public sealed class KatLangError
     public static KatLangError FromEvalError(EvalError error)
     {
         ArgumentNullException.ThrowIfNull(error);
-        return new(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error.Span, error.Code, error);
+        return new(AppendOutputSpreadNotes(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error), error.Span, error.Code, error);
+    }
+
+    /// <summary>
+    /// Appends the notes of declaration-level output spreading (<see cref="EvalError.OutputSpreadNotes"/>) carried
+    /// by the terminal error: one line per argument slot the front end spread because its callee is declared with
+    /// <c>*</c>, naming the written call, the declaration and its line, and the way to pass the output as one value.
+    /// </summary>
+    private static string AppendOutputSpreadNotes(string message, EvalError error, Func<string, string>? renderFragment = null)
+    {
+        var terminal = error;
+        while (terminal is EvalError.WithContext withContext)
+            terminal = withContext.Inner;
+        if (terminal.OutputSpreadNotes is not { Count: > 0 } notes)
+            return message;
+
+        var builder = new System.Text.StringBuilder(message);
+        foreach (var note in notes)
+            builder.Append('\n').Append(RenderFragment(FormatOutputSpreadNote(note), renderFragment));
+        return builder.ToString();
+    }
+
+    private static string FormatOutputSpreadNote(OutputSpreadNote note)
+    {
+        var call = ExprNameRenderer.BoundName(note.CallText);
+        var declaration = ExprNameRenderer.BoundName(note.DeclarationName);
+        var supplies = note.SuppliedCount switch
+        {
+            null => "is spread into separate arguments",
+            0 => "supplies no arguments",
+            1 => "supplies 1 argument",
+            var count => $"supplies {count.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)} arguments",
+        };
+        var line = note.DeclarationLine is { } at
+            ? $" (line {at.ToString(System.Globalization.CultureInfo.InvariantCulture)})"
+            : "";
+        return $"Note: `{call}` {supplies} here because `{declaration}` is declared with `*`{line}. "
+            + $"To pass its output as one value, write `{{ {call} }}`.";
     }
 
     /// <summary>
@@ -121,7 +158,8 @@ public sealed class KatLangError
     internal string RenderDiagnostic(Func<string, string> renderFragment)
     {
         var message = Source is { } source
-            ? AppendInferredImplicitParameterNotes(FormatEvalError(source, renderFragment), source, renderFragment)
+            ? AppendOutputSpreadNotes(
+                AppendInferredImplicitParameterNotes(FormatEvalError(source, renderFragment), source, renderFragment), source, renderFragment)
             : _diagnostic is { } diagnostic ? diagnostic.RenderMessage(renderFragment) : renderFragment(Message);
         return Span is { } span ? $"[{span.Start.Line}:{span.Start.Column}] {message}" : message;
     }
@@ -204,6 +242,12 @@ public sealed class KatLangError
             DiagnosticCode.StaticStructureLimitExceeded => KatLangErrorCode.StaticStructureLimitExceeded,
             DiagnosticCode.UnboundLoadReference => KatLangErrorCode.UnboundLoadReference,
             DiagnosticCode.UnsupportedDoubleQuotedString => KatLangErrorCode.UnsupportedDoubleQuotedString,
+            DiagnosticCode.DetachedOutputSpreadMarker => KatLangErrorCode.DetachedOutputSpreadMarker,
+            DiagnosticCode.RepeatedOutputSpreadMarker => KatLangErrorCode.RepeatedOutputSpreadMarker,
+            DiagnosticCode.OutputSpreadMarkerOnAlias => KatLangErrorCode.OutputSpreadMarkerOnAlias,
+            DiagnosticCode.MixedOutputSpreadMarkers => KatLangErrorCode.MixedOutputSpreadMarkers,
+            DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget => KatLangErrorCode.OutputSpreadMarkerOnDeconstructionTarget,
+            DiagnosticCode.OutputSpreadReferenceNeedsCall => KatLangErrorCode.OutputSpreadReferenceNeedsCall,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

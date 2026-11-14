@@ -55,6 +55,12 @@ internal static partial class ImplicitArgumentResolver
 
         if (declared is not { } start)
             return null;
+        return InvocationCallable(start, writtenName, run);
+    }
+
+    /// <summary>The common Q3 endpoint and signature identity for either way of locating a declaration.</summary>
+    private static StaticCallable InvocationCallable(StaticDeclaration start, string writtenName, ResolutionRun run)
+    {
         var (end, through) = StaticInvocationTarget(start, run);
         var display = through ?? writtenName;
         if (run.Prelude.IsFinalRegistryAlgorithm(end.Target) || end.Target is Algorithm.Builtin)
@@ -103,6 +109,16 @@ internal static partial class ImplicitArgumentResolver
         DotEdgeKind EdgeKind(Expr.DotCall edge, out DotEdgeKind mayKind, out StaticScopeKey? link);
 
         LiftingCallee DotEdgeCallee(Expr.DotCall edge, DotEdgeKind kind);
+
+        /// <summary>
+        /// The roles of a call's written argument slots, with the slots the front end will spread for a marked declaration
+        /// (declaration-level output spreading) ending the known positions as a written spread does:
+        /// <see cref="ArgumentRolesWithSpreads"/>, one decision for both instantiations and the rewrite.
+        /// </summary>
+        LiftingRole[] ArgumentRoles(LiftingCallee callee, OutputBundle args);
+
+        /// <summary>The roles of a dot edge's written arguments, likewise (<see cref="DotArgumentRolesWithSpreads"/>).</summary>
+        LiftingRole[] DotArgumentRoles(Expr.DotCall edge, DotEdgeKind kind, LiftingCallee callee);
     }
 
     /// <summary>
@@ -131,7 +147,7 @@ internal static partial class ImplicitArgumentResolver
             case Expr.Call(var function, var callArgs):
             {
                 WalkLiftingRoles(function, LiftingRole.Callable, null, ref sink);
-                var roles = FormulaLiftingRoles.ArgumentRoles(sink.CalleeKind(function), callArgs);
+                var roles = sink.ArgumentRoles(sink.CalleeKind(function), callArgs);
                 for (var i = 0; i < callArgs.Count; i++)
                     WalkLiftingRoles(callArgs[i], roles[i], null, ref sink);
                 break;
@@ -194,7 +210,7 @@ internal static partial class ImplicitArgumentResolver
 
                 var callee = sink.DotEdgeCallee(dotCall, kind);
                 var receiverRole = FormulaLiftingRoles.ReceiverRole(kind, callee);
-                var argumentRoles = dotCall.Args is null ? null : FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
+                var argumentRoles = dotCall.Args is null ? null : sink.DotArgumentRoles(dotCall, kind, callee);
                 if (decidingLink is null)
                 {
                     WalkLiftingRoles(dotCall.Target, receiverRole, null, ref sink);
@@ -214,7 +230,7 @@ internal static partial class ImplicitArgumentResolver
                 WalkGuardedSlot(dotCall.Target, receiverRole, mayReceiverRole, decidingLink, ref sink);
                 if (dotCall.Args is { } guardedArgs)
                 {
-                    var mayArgumentRoles = FormulaLiftingRoles.DotArgumentRoles(dotCall, mayKind, mayCallee);
+                    var mayArgumentRoles = sink.DotArgumentRoles(dotCall, mayKind, mayCallee);
                     for (var i = 0; i < guardedArgs.Count; i++)
                         WalkGuardedSlot(guardedArgs[i], argumentRoles![i], mayArgumentRoles[i], decidingLink, ref sink);
                 }
@@ -489,7 +505,7 @@ internal static partial class ImplicitArgumentResolver
             var receiver = ReadReceiver(edge.Target, run.Level, paramMap, run, selectedLinks: false);
             if (receiver.Kind == ReceiverReadingKind.Link)
             {
-                if (!CertainMissDecidesALift(edge, paramMap, run))
+                if (!CertainMissDecidesALift(edge, paramMap, memos))
                     return FormulaLiftingRoles.EdgeKind(edge, LexicalFallbackSelection.Conditional);
                 link = LinkKey(receiver.Link, run);
                 mayKind = FormulaLiftingRoles.EdgeKind(edge, LexicalFallbackSelection.Conditional);
@@ -507,6 +523,12 @@ internal static partial class ImplicitArgumentResolver
                 DotEdgeKind.Fallback => StaticCalleeKindOf(edge.EffectiveLexicalFallback, paramMap, memos),
                 _ => LiftingCallee.Dynamic,
             };
+
+        public LiftingRole[] ArgumentRoles(LiftingCallee callee, OutputBundle args)
+            => ArgumentRolesWithSpreads(callee, args, leadingSlots: 0, leadingPositionsKnown: true, paramMap, memos, out _);
+
+        public LiftingRole[] DotArgumentRoles(Expr.DotCall edge, DotEdgeKind kind, LiftingCallee callee)
+            => DotArgumentRolesWithSpreads(edge, kind, callee, ReceiverLift(edge, kind, callee, paramMap, memos), paramMap, memos, out _);
     }
 
     /// <summary>The context of the link body a receiver reading found (<see cref="ReceiverReadingKind.Link"/>).</summary>

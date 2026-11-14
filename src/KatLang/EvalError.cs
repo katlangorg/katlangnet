@@ -71,6 +71,22 @@ public closed record EvalError
         init => _isProjectionFailure = new(value);
     }
 
+    private readonly RuntimeStateSlot<IReadOnlyList<OutputSpreadNote>?> _outputSpreadNotes;
+
+    /// <summary>
+    /// Declaration-level output spreading (diagnostics only): the argument slots of the failing call that the
+    /// FRONT END spread because their callee is declared with <c>*</c> (<c>Expr.SequenceSpread.InsertedFor</c>),
+    /// when this error is that call's OWN cardinality failure or META refusal. The rendered message appends one
+    /// note per slot (<c>KatLangError</c>), so a program whose calls changed meaning through a marker says why.
+    /// C#-side presentation metadata with no Lean counterpart, carried in an equality-transparent slot that every
+    /// <c>with</c> copy keeps; kind, payload, code and equality are unchanged. Null on every other error.
+    /// </summary>
+    internal IReadOnlyList<OutputSpreadNote>? OutputSpreadNotes
+    {
+        get => _outputSpreadNotes.Value;
+        init => _outputSpreadNotes = new(value);
+    }
+
     private EvalError() { }
 
     /// <summary>

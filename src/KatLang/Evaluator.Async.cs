@@ -1012,7 +1012,7 @@ public static partial class Evaluator
             Expr.Resolve(var name) => await EvalResolveCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
 
             Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
-                await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(false))),
+                WithOutputSpreadNotes(dotCallExpr, await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(false)))),
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(false)),
@@ -2066,7 +2066,7 @@ public static partial class Evaluator
         ThrowIfAsyncStrategyPinningViolated(ctx);
         // META-S3-1: a callee spelled `X.Algorithm` (see the synchronous twin).
         if (IsAlgorithmEdgeCallee(func))
-            return await EvalAlgorithmCalleeCallCountedAsync((Expr.DotCall)func, args, ctx, valEnv).ConfigureAwait(false);
+            return WithOutputSpreadNotesInsideFrame(args, await EvalAlgorithmCalleeCallCountedAsync((Expr.DotCall)func, args, ctx, valEnv).ConfigureAwait(false));
 
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         // META-S3-0b: the ONE callee law through the async resolution adapter.
@@ -2079,12 +2079,14 @@ public static partial class Evaluator
             return WithCallCtx(
                 diagnosticName,
                 ctx,
-                await EvalOriginCallCountedAsync(CalleeOrigin.Written(func), calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+                WithOutputSpreadNotes(args,
+                    await EvalOriginCallCountedAsync(CalleeOrigin.Written(func), calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false)));
 
+        // MIRROR — declaration-level output spreading's note on the call's own failure, before its frame.
         return WithCallCtx(
             diagnosticName,
             ctx,
-            await EvalResolvedCallCountedAsync(calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+            WithOutputSpreadNotes(args, await EvalResolvedCallCountedAsync(calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false)));
     }
 
     /// <summary>

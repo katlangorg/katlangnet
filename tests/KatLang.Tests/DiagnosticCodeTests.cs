@@ -192,6 +192,18 @@ public class DiagnosticCodeTests
         { "double-quoted-interpolation", "x = 1\n\"Total: {x}\"", DiagnosticCode.UnsupportedDoubleQuotedString },
         { "double-quoted-clause-pattern", "F(\"a\") = 1\nF('a')", DiagnosticCode.UnsupportedDoubleQuotedString },
         { "double-quoted-open-target", "open \"https://katlang.org/lib.kat\"\n1", DiagnosticCode.UnsupportedDoubleQuotedString },
+        // Declaration-level output spreading: the marker's attachment, multiplicity and placement.
+        { "output-spread-marker-detached", "A * = 1, 2\nA()", DiagnosticCode.DetachedOutputSpreadMarker },
+        { "output-spread-marker-repeated", "A** = 1, 2\nA()", DiagnosticCode.RepeatedOutputSpreadMarker },
+        { "output-spread-marker-on-alias", "A(x, y)* = x, y\nB* = A\nB(1, 2)", DiagnosticCode.OutputSpreadMarkerOnAlias },
+        { "output-spread-marker-mixed-clauses", "F(0)* = 1, 2\nF(n) = n, n\nF(0)", DiagnosticCode.MixedOutputSpreadMarkers },
+        { "output-spread-marker-on-deconstruction-target", "a*, b = 1, 2\na", DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget },
+        // A bare reference whose lift only inference decides, where a later builtin slot's role depends on it.
+        {
+            "output-spread-reference-needs-call",
+            "Q(x) = [x]\nP* = Q + 0\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(1)",
+            DiagnosticCode.OutputSpreadReferenceNeedsCall
+        },
     };
 
     [Theory]

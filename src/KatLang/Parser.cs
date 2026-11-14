@@ -1226,6 +1226,142 @@ public sealed class Parser
     private static Property PropertyDeclaredAt(string name, Algorithm body, bool isPublic, Token nameToken)
         => new(name, body, IsPublic: isPublic) { DeclarationSpans = [nameToken.Span] };
 
+    // ── The declaration-level output-spreading marker ───────────────────────
+    // `A* = x, y`, `A(x, y)* = x, y`: a postfix `*` directly attached to a declaration's
+    // name or to its parameter list's `)`, before the head's `=` and on the head's line. It
+    // changes no algorithm; implicit-argument resolution spreads every eligible call that
+    // resolves statically to the declaration (Algorithm.OutputSpread). The head lookaheads
+    // admit a detached or repeated run (SkipOutputSpreadMarkerRun) so it is reported here.
+
+    /// <summary>
+    /// Consumes the output-spreading marker run of a recognized declaration head, which stands
+    /// between <paramref name="anchor"/> (the declaration's name, or its parameter list's
+    /// <c>)</c>) and the head's <c>=</c>, and returns the declaration's marker — null when no
+    /// star was written. Exactly one directly attached star is the marker: a detached first
+    /// star is <see cref="DiagnosticCode.DetachedOutputSpreadMarker"/>, any further star
+    /// <see cref="DiagnosticCode.RepeatedOutputSpreadMarker"/> (one report over the run), and
+    /// recovery keeps ONE marker, the declaration the user evidently meant.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private OutputSpreadMarker? ConsumeOutputSpreadMarkers(Token anchor, string name, bool clauseHead)
+    {
+        if (Current.Kind != TokenKind.Star)
+            return null;
+
+        var first = Advance();
+        if (!IsDirectlyAttached(anchor, first))
+            ReportErrorAt(DiagnosticCode.DetachedOutputSpreadMarker, DetachedOutputSpreadMarkerDiagnostic(name, clauseHead), first);
+        if (Current.Kind == TokenKind.Star)
+        {
+            var last = first;
+            while (Current.Kind == TokenKind.Star)
+                last = Advance();
+            ReportErrorAcross(DiagnosticCode.RepeatedOutputSpreadMarker, RepeatedOutputSpreadMarkerDiagnostic(name, clauseHead), first, last);
+        }
+
+        return new OutputSpreadMarker(name, first.Span);
+    }
+
+    /// <summary>
+    /// The marked declaration's body: <paramref name="body"/> carrying <paramref name="marker"/>.
+    /// A body WRITTEN as exactly one <c>load</c> directive (<c>M* = load('url')</c>, and so
+    /// <c>M* = { load('url') }</c>) is a module HOLDER, which load elaboration replaces with the
+    /// module unit — ONE declaration however many holders it has (Q-32 I-U) — so a holder cannot
+    /// mark it: <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/>, and the body keeps no
+    /// marker. The predicate is the loader's one definition-body merge
+    /// (<c>ModuleLoader.MergeLoadDirectiveBody</c>), read from what was written.
+    /// </summary>
+    private Algorithm WithOutputSpreadMarker(Algorithm body, OutputSpreadMarker marker)
+    {
+        if (body is Algorithm.User
+            {
+                IsAssignmentDeconstructionSource: false,
+                HasExplicitParameterList: false,
+                ParameterPatterns.Count: 0,
+                Opens.Count: 0,
+                Properties.Count: 0,
+                Output: [var row],
+            }
+            && row.TryGetUnresolvedLoadArguments(out _))
+        {
+            ReportOutputSpreadMarkerOnModuleHolder(marker);
+            return body;
+        }
+
+        return body with { OutputSpread = marker };
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportOutputSpreadMarkerOnModuleHolder(OutputSpreadMarker marker)
+    {
+        var message = $"'{ExprNameRenderer.BoundName(marker.DeclarationName)}' holds a loaded module, so it cannot carry the output-spreading marker `*`: "
+            + "a module is one declaration, shared by every holder of its URL. Mark the module's own declarations instead.";
+        if (marker.Span is { } span)
+            ReportError(DiagnosticCode.OutputSpreadMarkerOnAlias, message, span);
+        else
+            ReportError(DiagnosticCode.OutputSpreadMarkerOnAlias, message);
+    }
+
+    /// <summary>
+    /// The marker of a whole clause family: every clause marked, or none (null). A family whose
+    /// clauses disagree is <see cref="DiagnosticCode.MixedOutputSpreadMarkers"/>, reported at the
+    /// first clause whose marking differs from the first clause's, and recovers as marked.
+    /// </summary>
+    private OutputSpreadMarker? FamilyOutputSpreadMarker(ClauseGroupBuilder group)
+    {
+        OutputSpreadMarker? marker = null;
+        var marked = 0;
+        foreach (var clauseMarker in group.Markers)
+        {
+            if (clauseMarker is null)
+                continue;
+            marked++;
+            marker ??= clauseMarker;
+        }
+
+        if (marker is not null && marked != group.Markers.Count)
+        {
+            var firstMarked = group.Markers[0] is not null;
+            var differing = group.Markers.FindIndex(clauseMarker => clauseMarker is not null != firstMarked);
+            ReportError(
+                DiagnosticCode.MixedOutputSpreadMarkers,
+                $"Some clauses of '{ExprNameRenderer.BoundName(group.Name)}' carry the output-spreading marker `*` and others do not. "
+                    + "The marker belongs to the whole family: write it on every clause or on none.",
+                group.ClauseSpans[differing]);
+        }
+
+        return marker;
+    }
+
+    /// <summary>
+    /// Reports, once over the run, the postfix star(s) after a deconstruction target
+    /// (<c>a*, b = …</c>) — the output-spreading marker where it is not allowed — and consumes them.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReportOutputSpreadMarkerOnDeconstructionTarget(string name)
+    {
+        var first = Advance();
+        var last = first;
+        while (Current.Kind == TokenKind.Star)
+            last = Advance();
+        ReportErrorAcross(
+            DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget,
+            $"A deconstruction target cannot carry the output-spreading marker `*` ('{ExprNameRenderer.BoundName(name)}*'): "
+                + "deconstruction binds values, and only a callable declaration is marked. Remove the `*`.",
+            first,
+            last);
+    }
+
+    private static string DetachedOutputSpreadMarkerDiagnostic(string name, bool clauseHead)
+        => $"The output-spreading marker `*` must be directly attached to the declaration's {(clauseHead ? "closing ')'" : "name")}: "
+            + $"write `{OutputSpreadHeadText(name, clauseHead)} = …`.";
+
+    private static string RepeatedOutputSpreadMarkerDiagnostic(string name, bool clauseHead)
+        => $"A declaration takes exactly one output-spreading marker: write `{OutputSpreadHeadText(name, clauseHead)} = …`.";
+
+    private static string OutputSpreadHeadText(string name, bool clauseHead)
+        => clauseHead ? $"{ExprNameRenderer.BoundName(name)}(…)*" : $"{ExprNameRenderer.BoundName(name)}*";
+
     /// <summary>
     /// Records a clause spanning its name token through the last consumed token; false for a duplicate
     /// pattern. Duplicate detection observes this parse's source-processing cancellation (SEC-03).
@@ -1337,6 +1473,12 @@ public sealed class Parser
 
         /// <summary>Name-token spans, index-aligned with <see cref="Branches"/> (the property's declaration spans).</summary>
         public List<SourceSpan> NameSpans { get; } = [];
+
+        /// <summary>
+        /// Each clause's output-spreading marker (null when the clause has none), index-aligned with
+        /// <see cref="Branches"/>. The marker belongs to the whole family: on every clause or none.
+        /// </summary>
+        public List<OutputSpreadMarker?> Markers { get; } = [];
 
         /// <summary>
         /// Records one clause in written order. Returns <c>false</c> when an
@@ -1484,8 +1626,11 @@ public sealed class Parser
             }
 
             Advance(); // consume identifier
+            var marker = ConsumeOutputSpreadMarkers(nameToken, name, clauseHead: false);
             Advance(); // consume '='
             var body = ParseOutputLine();
+            if (marker is not null)
+                body = WithOutputSpreadMarker(body, marker);
             properties.Add(PropertyDeclaredAt(name, body, isPublic, nameToken));
             declaredPropertyNames.Add(name);
         }
@@ -1527,6 +1672,8 @@ public sealed class Parser
             pattern = ValidateCollectingParameterDeclarations(pattern, nameToken);
             pattern = ValidateMetaParameterDeclarations(pattern, nameToken);
 
+            // The dispatch lookahead admitted a marker run between the head's `)` and its `=`.
+            var marker = ConsumeOutputSpreadMarkers(Previous, name, clauseHead: true);
             Expect(TokenKind.Equals);
             // A head that needed any recovery keeps its clause (and its declaration) in
             // the family, but its recovered pattern is not evidence about the family's
@@ -1552,6 +1699,7 @@ public sealed class Parser
 
             // The clause is always recorded (recovery keeps a truthful family); an earlier
             // match-equivalent pattern in the same family additionally reports the duplicate.
+            group.Markers.Add(marker);
             if (!AddClauseFrom(group, pattern, body, nameToken, headRecovered))
             {
                 ReportErrorFrom(
@@ -1739,6 +1887,8 @@ public sealed class Parser
             var nameSpans = group.NameSpans;
             var isPublic = group.IsPublic;
             var elaboratedClauseGroup = Algorithm.ElaborateClauseGroup(group.Branches);
+            if (FamilyOutputSpreadMarker(group) is { } familyMarker)
+                elaboratedClauseGroup = WithOutputSpreadMarker(elaboratedClauseGroup, familyMarker);
 
             if (elaboratedClauseGroup is Algorithm.User ordinaryAlg)
             {
@@ -2132,13 +2282,35 @@ public sealed class Parser
     /// <summary>
     /// Index form of <see cref="LookaheadIsEquals"/>: true when the significant
     /// token after the significant token at <paramref name="index"/> is '='
-    /// AND lies on the same physical line (the declaration-head line rule).
+    /// AND lies on the same physical line (the declaration-head line rule). A
+    /// declaration-level output-spreading marker run between the name and the
+    /// '=' (<c>A* =</c>, and the malformed <c>A * =</c> and <c>A** =</c> its
+    /// parser reports) is part of the head and shares its line too.
     /// </summary>
     private bool LookaheadIsEqualsFrom(int index)
     {
-        var equals = NextSignificantIndex(index + 1);
+        var headLine = _tokens[index].Line;
+        var equals = SkipOutputSpreadMarkerRun(NextSignificantIndex(index + 1), headLine);
         return _tokens[equals].Kind == TokenKind.Equals
-            && IsHeadToken(equals, _tokens[index].Line);
+            && IsHeadToken(equals, headLine);
+    }
+
+    /// <summary>
+    /// The significant token after the declaration-level OUTPUT-SPREADING MARKER run that
+    /// starts at <paramref name="index"/> — the stars written between a declaration's name (or
+    /// its parameter list's <c>)</c>) and its <c>=</c> — counting only stars on the head line
+    /// (<paramref name="headLine"/>, <see cref="IsHeadToken"/>); <paramref name="index"/> itself
+    /// when no star stands there. The scan is deliberately TOLERANT of a detached or repeated
+    /// marker, exactly like the collect-marker scan, so the declaration parser can report the
+    /// targeted diagnostic (<see cref="ConsumeOutputSpreadMarkers"/>): validity is enforced
+    /// while parsing, never here. No valid program had a star before a head's <c>=</c> (it was
+    /// a stray-<c>=</c> error), so recognizing the run reinterprets no valid source.
+    /// </summary>
+    private int SkipOutputSpreadMarkerRun(int index, int headLine)
+    {
+        while (_tokens[index].Kind == TokenKind.Star && IsHeadToken(index, headLine))
+            index = NextSignificantIndex(index + 1);
+        return index;
     }
 
     // ── The declaration-head line rule ──────────────────────────────────────
@@ -2320,7 +2492,15 @@ public sealed class Parser
     /// </summary>
     private bool LookaheadIsBindingPatternAssignmentFrom(int start)
     {
-        if (start >= _bindingPatternScanFailStart && start < _bindingPatternScanFailBreak)
+        // The memo below also holds across the postfix stars a scan tolerates after a target
+        // (`a*, b`), with one exception: a scan that STARTS at such a star reads it as a prefix
+        // collect marker — a different parse (`a* b, c = 1` fails from `a`, but `*b, c = 1`
+        // from the star succeeds) — so it is decided afresh and never replaces the region it
+        // lies in. Every other start inside a failed region follows the failed scan's own
+        // transitions, so repeated boundary checks over one long line stay linear.
+        var insideFailedRegion = start >= _bindingPatternScanFailStart && start < _bindingPatternScanFailBreak;
+        var postfixStarStart = insideFailedRegion && IsPostfixStarAt(start);
+        if (insideFailedRegion && !postfixStarStart)
             return false;
 
         // The declaration-head line rule (IsHeadToken): the whole binding-pattern
@@ -2343,11 +2523,14 @@ public sealed class Parser
             }
 
             if (_tokens[index].Kind != TokenKind.Identifier || !IsHeadToken(index, headLine))
-                return FailBindingPatternScan(start, index);
-            index = NextSignificantIndex(index + 1);
+                return FailBindingPatternScan(start, index, postfixStarStart);
+            // A postfix star run after a target (`a*, b = …`) is the output-spreading marker in a
+            // place it is not allowed; tolerated here so the parser can report it (validity is
+            // enforced while parsing). A lone `a* = …` is a marked property, decided before this scan.
+            index = SkipOutputSpreadMarkerRun(NextSignificantIndex(index + 1), headLine);
 
             if (!IsHeadToken(index, headLine))
-                return FailBindingPatternScan(start, index);
+                return FailBindingPatternScan(start, index, postfixStarStart);
 
             switch (_tokens[index].Kind)
             {
@@ -2357,19 +2540,39 @@ public sealed class Parser
                     continue;
                 case TokenKind.Equals:
                     return sawComma || sawCollectMarker
-                        || FailBindingPatternScan(start, index);
+                        || FailBindingPatternScan(start, index, postfixStarStart);
                 default:
-                    return FailBindingPatternScan(start, index);
+                    return FailBindingPatternScan(start, index, postfixStarStart);
             }
         }
     }
 
-    /// <summary>Records the failed scan region for the memo above; always false.</summary>
-    private bool FailBindingPatternScan(int start, int breakIndex)
+    /// <summary>
+    /// Records the failed scan region for the memo above, unless the scan started at a postfix star inside the
+    /// region already recorded (that region stays: its other starts still share its verdict); always false.
+    /// </summary>
+    private bool FailBindingPatternScan(int start, int breakIndex, bool keepRecordedRegion = false)
     {
+        if (keepRecordedRegion)
+            return false;
         _bindingPatternScanFailStart = start;
         _bindingPatternScanFailBreak = breakIndex;
         return false;
+    }
+
+    /// <summary>
+    /// Whether the token at <paramref name="index"/> is a star of a POSTFIX run — the run directly follows a
+    /// target name on the same physical line (`a*`, `a**`) — rather than a prefix collect marker.
+    /// </summary>
+    private bool IsPostfixStarAt(int index)
+    {
+        if (_tokens[index].Kind != TokenKind.Star)
+            return false;
+        var line = _tokens[index].Line;
+        var before = PreviousSignificantIndex(index);
+        while (before >= 0 && _tokens[before].Kind == TokenKind.Star && _tokens[before].Line == line)
+            before = PreviousSignificantIndex(before);
+        return before >= 0 && _tokens[before].Kind == TokenKind.Identifier && _tokens[before].Line == line;
     }
 
     /// <summary>
@@ -2439,6 +2642,12 @@ public sealed class Parser
 
             var kind = isCollectingBinding ? ParameterKind.Collecting : ParameterKind.Normal;
             targets.Add(BindingTargetAt(name, kind, nameToken, collectMarkerToken));
+
+            // A postfix star after a target is the declaration-level output-spreading marker
+            // written where it is not allowed (`a*, b = …`): a deconstruction target is a value,
+            // never a callable declaration. Reported once over the run; recovery drops it.
+            if (Current.Kind == TokenKind.Star)
+                ReportOutputSpreadMarkerOnDeconstructionTarget(name);
 
             if (Current.Kind == TokenKind.Comma)
             {
@@ -2942,6 +3151,9 @@ public sealed class Parser
         var headEnd = TryFindClauseHeadClose(literalIndex, out var closeIndex) ? closeIndex : literalIndex;
         while (NextSignificantIndex(_pos) <= headEnd)
             Advance();
+        // A marker run the head lookahead admitted (`true* = 1`) belongs to the skipped head.
+        while (Current.Kind == TokenKind.Star)
+            Advance();
         if (Current.Kind == TokenKind.Equals)
             Advance();
         OwnSameLineItem(Current);
@@ -3037,8 +3249,10 @@ public sealed class Parser
             break;
         }
 
-        var equals = NextSignificantIndex(next + 1);
-        if (_tokens[equals].Kind != TokenKind.Equals || !IsHeadToken(equals, _tokens[next].Line))
+        // The head's `)`, its optional output-spreading marker run (`F(x)* =`), and its `=` share a line.
+        var closeLine = _tokens[next].Line;
+        var equals = SkipOutputSpreadMarkerRun(NextSignificantIndex(next + 1), closeLine);
+        if (_tokens[equals].Kind != TokenKind.Equals || !IsHeadToken(equals, closeLine))
             return false;
 
         closeIndex = next;

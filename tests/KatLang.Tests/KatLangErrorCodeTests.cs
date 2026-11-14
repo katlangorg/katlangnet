@@ -426,6 +426,12 @@ public class KatLangErrorCodeTests
             ["StaticStructureLimitExceeded"] = 61,
             ["UnboundLoadReference"] = 62,
             ["UnsupportedDoubleQuotedString"] = 63,
+            ["DetachedOutputSpreadMarker"] = 64,
+            ["RepeatedOutputSpreadMarker"] = 65,
+            ["OutputSpreadMarkerOnAlias"] = 66,
+            ["MixedOutputSpreadMarkers"] = 67,
+            ["OutputSpreadMarkerOnDeconstructionTarget"] = 68,
+            ["OutputSpreadReferenceNeedsCall"] = 69,
         };
 
         // The retired STR-02 values are no member's value.
@@ -521,6 +527,12 @@ public class KatLangErrorCodeTests
             ["StaticStructureLimitExceeded"] = 83,
             ["UnboundLoadReference"] = 84,
             ["UnsupportedDoubleQuotedString"] = 85,
+            ["DetachedOutputSpreadMarker"] = 86,
+            ["RepeatedOutputSpreadMarker"] = 87,
+            ["OutputSpreadMarkerOnAlias"] = 88,
+            ["MixedOutputSpreadMarkers"] = 89,
+            ["OutputSpreadMarkerOnDeconstructionTarget"] = 90,
+            ["OutputSpreadReferenceNeedsCall"] = 91,
         };
 
         // The retired STR-02 values (75-79) are no member's value.

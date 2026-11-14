@@ -467,6 +467,11 @@ internal sealed class LeanAstEncoding
         Expr.AlgorithmExpr(var algorithm) => $"(.algorithmExpr {EncodeAlgorithm(algorithm)})",
         Expr.Capture(var captureBody) => $"(.capture [{EncodeList(captureBody, EncodeExpr)}])",
         Expr.ListLiteral(var items) => $"(.listLiteral [{EncodeList(items, EncodeExpr)}])",
+        // Declaration-level output spreading is front-end elaboration with no Lean counterpart, ignored here BY
+        // DESIGN (reviewed): a spread the front end inserted for a marked declaration
+        // (`Expr.SequenceSpread.InsertedFor`) IS the written spread, so it encodes as the ordinary
+        // `.sequenceSpread`, and the declaration's marker (`Algorithm.OutputSpread`) is never encoded — Lean
+        // evaluates the inserted spreads and never checks where they were inserted.
         Expr.SequenceSpread(var operand) => $"(.sequenceSpread {Arg(operand)})",
         Expr.Unary(var op, var operand) => $"(.unary .{EncodeUnaryOp(op)} {Arg(operand)})",
         Expr.Binary(var op, var left, var right) =>

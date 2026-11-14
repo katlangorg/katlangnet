@@ -1028,7 +1028,7 @@ public static partial class Evaluator
             // Lean: eval (.dotMember o n fallback mode argsOpt) => withCtx (CtxMsg.dotCall o n) do evalDotCall
             // (the context — which renders the receiver's name — is built only on error).
             Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
-                EvalDotCall(dotCallExpr, ctx, valEnv))),
+                WithOutputSpreadNotes(dotCallExpr, EvalDotCall(dotCallExpr, ctx, valEnv)))),
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 EvalCallExpr(func, callArgs, ctx, valEnv)),
@@ -1115,7 +1115,7 @@ public static partial class Evaluator
             Expr.Resolve(var name) => EvalResolveCountedOf(expr, name, ctx, valEnv),
 
             Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
-                EvalDotCallCounted(dotCallExpr, ctx, valEnv))),
+                WithOutputSpreadNotes(dotCallExpr, EvalDotCallCounted(dotCallExpr, ctx, valEnv)))),
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
                 EvalCallCountedExpr(func, callArgs, ctx, valEnv)),

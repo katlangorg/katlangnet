@@ -1861,7 +1861,7 @@ public static class SemanticModelBuilder
                 };
             }
 
-            return algorithm switch
+            var info = algorithm switch
             {
                 Algorithm.User user => CreateOrdinaryPropertyInfo(name, user, declaration, isPublic, exposure, documentLocalSpans, templateMetadata),
                 Algorithm.Conditional conditional => CreateConditionalPropertyInfo(
@@ -1877,7 +1877,22 @@ public static class SemanticModelBuilder
                 // reaches this switch (handled above) but the closed hierarchy is named in full.
                 null or Algorithm.Builtin => new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []),
             };
+            return SpreadsOutput(algorithm) ? info with { SpreadsOutput = true } : info;
         }
+
+        /// <summary>
+        /// Whether calls to a declaration with this body have their output spread (declaration-level output
+        /// spreading): a body written with the marker — a carrier's own included — or a TRANSPARENT reference whose
+        /// static structure (the declaration it denotes, <see cref="Algorithm.Alias.ResolvedStructure"/>) is marked,
+        /// as the front end decides for the calls it spreads. A runtime-target alias has no static target.
+        /// </summary>
+        private static bool SpreadsOutput(Algorithm? algorithm)
+            => algorithm switch
+            {
+                Algorithm.Alias { HasRuntimeTarget: true } => false,
+                Algorithm.Alias { IsReference: true } reference => reference.ResolvedStructure?.OutputSpread is not null,
+                _ => algorithm?.OutputSpread is not null,
+            };
 
         /// <summary>
         /// A CALLABLE ALIAS (FWD-02, binding indirection) shows its TARGET's callable surface under

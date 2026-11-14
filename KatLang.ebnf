@@ -111,8 +111,39 @@ ValidatedOpenExpression = ? an Expression not starting with a string token and s
                      Declarations inside parentheses remain illegal; they
                      belong to brace algorithms. *)
 
-PropertyDefinition = [ "public" ] Identifier "=" PropertyBody ;
+PropertyDefinition = [ "public" ] Identifier [ OutputSpreadMarker ] "=" PropertyBody ;
 PropertyBody       = OutputBundle ;
+
+OutputSpreadMarker = "*" ;
+                     (* The DECLARATION-LEVEL OUTPUT-SPREADING MARKER (November
+                        2026): a postfix "*" DIRECTLY attached to a declaration's
+                        name (`A* = x, y`) or to its parameter list's closing ")"
+                        (`A(x, y)* = x, y`), on the head's physical line, before
+                        the head's "=". It changes no algorithm (parameters,
+                        inference, body and result value are unchanged); the front
+                        end spreads every eligible call it resolves statically to
+                        the declaration — through transparent aliases — exactly
+                        where a written postfix "*" would stand: a whole output
+                        row, a whole argument slot of any callee, a whole selector
+                        slot, a list element or an element of a multi-slot group,
+                        the operand of a written "*", and the receiver of an
+                        extension-call edge (`A(1, 2).F(3)` is `F(A(1, 2)*, 3)`,
+                        the order of an inferring body's inferred names included:
+                        `H = A(x, y).F(3)` infers `H(F, x, y)`). A call formula
+                        lifting creates for a marked declaration spreads like a
+                        written one (`reduce(P, Add, Inc)` is
+                        `reduce(P(x)*, Add, Inc)`); a bare reference whose lift
+                        only parameter inference decides is an error where a later
+                        builtin argument's role depends on it (write `P(…)`).
+                        A detached marker (`A * = …`) and a repeated one
+                        (`A** = …`) are targeted errors, as is a marker on a
+                        transparent or runtime-target alias, on a module holder,
+                        on an `.Algorithm` link that stays a calculation
+                        (`A* = Mk.Algorithm`; a call through a link never
+                        spreads), on some clauses of a family but not all, and
+                        on a deconstruction target (`a*, b = …`). A marked
+                        zero-parameter declaration spreads only explicit calls
+                        (`P()`): a bare `P` is a read, never a call. *)
 
 DeconstructionDefinition = CollectingBinding "=" OutputBundle
                          | BindingTarget ( "," BindingTarget )+ "=" OutputBundle ;
@@ -152,8 +183,11 @@ CollectingBinding        = "*" BindingIdentifier ;
                         F(*values) is the degenerate lone-collecting-binding
                         case. *)
 
-ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" "=" OutputBundle ;
+ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" [ OutputSpreadMarker ] "=" OutputBundle ;
                      (* Clause-style definition: Name(pattern) = body.
+                        The output-spreading marker belongs to the whole family:
+                        every clause carries it (`F(0)* = …`, `F(n)* = …`) or none
+                        does; the head's ")", the marker and the "=" share a line.
                         Recognized only in definition position;
                         in expression position Name(...) remains an ordinary call.
                         Public visibility is family-level: every clause in a

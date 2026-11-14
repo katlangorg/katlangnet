@@ -9388,5 +9388,212 @@ public static class LanguageSpecCorpus
             IncludeInGeneratorPrompt = false,
             Explanation = "Reaching `B` again after its pending members were consumed is no return: `B.M.M.N` is `B.N`, a reference to `Q`, so `C.V` is 5.",
         },
+        // ==================== declaration-level output spreading (static form) ====================
+        new()
+        {
+            Id = "output-spread-marked-call-spreads-its-rows",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nA(1, 2)\nA(3, 4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n3\n4",
+            ExpectedRaw = "S[1, 2, 3, 4]",
+            ExpectedEmittedCount = 4,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`A(x, y)* = x, y` marks the declaration: its algorithm is unchanged, but every call the front end resolves to it is spread as if `*` were written after it. Each row `A(1, 2)` is `A(1, 2)*`, so the program prints four rows.",
+        },
+        new()
+        {
+            Id = "output-spread-argument-and-element-slots",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nAdd(x, y) = x + y\nAdd(A(1, 2)), [A(1, 2), A(3, 4)]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3\n[1, 2, 3, 4]",
+            ExpectedRaw = "S[3, L[1, 2, 3, 4]]",
+            ExpectedEmittedCount = 2,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A whole argument slot and a list element are spreading positions: `Add(A(1, 2))` is `Add(A(1, 2)*)`, two arguments, and the list holds four items.",
+        },
+        new()
+        {
+            Id = "output-spread-alias-inherits-the-marker",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nB = A\n[B(3, 4)]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[3, 4]",
+            ExpectedRaw = "L[3, 4]",
+            ExpectedEmittedCount = 1,
+            Explanation = "`B = A` is a transparent alias: a call through it is a call of `A`, so it spreads exactly as `A(3, 4)` does.",
+        },
+        new()
+        {
+            Id = "output-spread-value-positions-keep-one-value",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nA(1, 2)[0], count({ A(1, 2) }), count([A(1, 2)])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n2",
+            ExpectedRaw = "S[1, 2, 2]",
+            ExpectedEmittedCount = 3,
+            Explanation = "A selection receiver is one value (`A(1, 2)[0]` is 1). To pass the output as one value, write a block or a list: the block's row spreads into the block's output, and the list collects the spread items.",
+        },
+        new()
+        {
+            Id = "output-spread-builtin-argument-is-spread-too",
+            Category = "errors",
+            Source = "A(x, y)* = x, y\ncount(A(1, 2))",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [1, 2]),
+            Explanation = "Every whole argument slot spreads, a builtin's included: `count(A(1, 2))` is `count(A(1, 2)*)`, two arguments where `count` takes one. The error carries a note naming `A`.",
+        },
+        new()
+        {
+            Id = "output-spread-not-through-a-parameter",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nApply(f) = count(f(1, 2))\nApply(A)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Explanation = "Only a call the front end resolves statically is spread: `f(1, 2)` calls a parameter, so its result stays one value, and `count` counts its two items.",
+        },
+        new()
+        {
+            Id = "output-spread-lifted-call-spreads",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nS = [A]\nS(1, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1, 2]",
+            ExpectedRaw = "L[1, 2]",
+            ExpectedEmittedCount = 1,
+            Explanation = "Formula lifting makes `S` the algorithm `S(x, y) = [A(x, y)]`, and the lifted call spreads like a written one.",
+        },
+        new()
+        {
+            Id = "output-spread-loop-step-through-a-wrapper",
+            Category = "item-supply-vs-value",
+            Source = "Fib(a, b)* = b, a + b\nStep(a, b) = Fib(a, b)\nStep(0, 1).repeat(10)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(55, 89)",
+            ExpectedRaw = "S[55, 89]",
+            ExpectedEmittedCount = 1,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "The unmarked wrapper `Step` is the loop step; inside it the row `Fib(a, b)` spreads, so each round produces the two state slots.",
+        },
+        new()
+        {
+            Id = "output-spread-marked-call-as-loop-receiver",
+            Category = "errors",
+            Source = "Fib(a, b)* = b, a + b\nFib(0, 1).repeat(10)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [2, 3]),
+            Explanation = "The receiver of an extension call spreads: `Fib(0, 1).repeat(10)` is `repeat(Fib(0, 1)*, 10)`, three arguments. Use an unmarked wrapper as the step.",
+        },
+        new()
+        {
+            Id = "output-spread-zero-parameter-only-explicit-calls",
+            Category = "item-supply-vs-value",
+            Source = "P* = 1, 2\ncount(P), [P()]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2\n[1, 2]",
+            ExpectedRaw = "S[2, L[1, 2]]",
+            ExpectedEmittedCount = 2,
+            Explanation = "A bare `P` is a read, never a call, so it stays one value; the explicit call `P()` spreads.",
+        },
+        new()
+        {
+            Id = "output-spread-argument-runs-at-formation",
+            Category = "errors",
+            Source = "D(x, y)* = x / y, y\nFirstOf(a, *rest) = a\nFirstOf(5, D(1, 0))",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "A spread argument is evaluated once while the supply is formed, whether or not the callee uses it, so the division by zero is raised although `FirstOf` ignores its rest.",
+        },
+        new()
+        {
+            Id = "output-spread-opens-one-level",
+            Category = "item-supply-vs-value",
+            Source = "G* = [[1, 2], [3]]\n[G()], (G(), 9)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[[1, 2], [3]]\n([1, 2], [3], 9)",
+            ExpectedRaw = "S[L[L[1, 2], L[3]], S[L[1, 2], L[3], 9]]",
+            ExpectedEmittedCount = 2,
+            Explanation = "The inserted spread is the ordinary one: it opens one boundary of the call's value, never recursively.",
+        },
+        new()
+        {
+            Id = "output-spread-marker-on-an-alias-is-an-error",
+            Category = "name-resolution",
+            Source = "A(x, y)* = x, y\nB* = A\nB(1, 2)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "so it cannot carry the output-spreading marker",
+            ExpectedDiagnosticCode = DiagnosticCode.OutputSpreadMarkerOnAlias,
+            Notes = "Front-end rule; no elaborated Lean program exists.",
+            Explanation = "An alias inherits the marker of the declaration it denotes, so it cannot carry one of its own; a marked wrapper `B(x, y)* = A(x, y)` is a declaration of its own.",
+        },
+        new()
+        {
+            Id = "output-spread-marker-must-be-attached",
+            Category = "parser-layout",
+            Source = "A * = 1, 2\nA()",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "must be directly attached",
+            ExpectedDiagnosticCode = DiagnosticCode.DetachedOutputSpreadMarker,
+            Notes = "Source-level marker attachment; no elaborated Lean program exists.",
+            Explanation = "The marker is written directly after the declaration's name or its parameter list's `)`: `A* = 1, 2`.",
+        },
+        new()
+        {
+            Id = "output-spread-marker-on-every-clause-or-none",
+            Category = "parser-layout",
+            Source = "F(0)* = 1, 2\nF(n) = n, n\nF(0)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "write it on every clause or on none",
+            ExpectedDiagnosticCode = DiagnosticCode.MixedOutputSpreadMarkers,
+            Notes = "Source-level family rule; no elaborated Lean program exists.",
+            Explanation = "The marker belongs to the whole clause family.",
+        },
+        new()
+        {
+            Id = "output-spread-marker-not-on-a-deconstruction-target",
+            Category = "parser-layout",
+            Source = "a*, b = 1, 2\na",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "A deconstruction target cannot carry the output-spreading marker",
+            ExpectedDiagnosticCode = DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget,
+            Notes = "Source-level rule; no elaborated Lean program exists.",
+            Explanation = "Deconstruction binds values; only a callable declaration is marked.",
+        },
+        new()
+        {
+            Id = "output-spread-receiver-edge-is-the-lowered-call",
+            Category = "item-supply-vs-value",
+            Source = "A(x, y)* = x, y\nAdd3(a, b, c) = a + b + c\nH = A(x, y).F(3)\nH(Add3, 1, 2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Explanation = "A marked call as the receiver of an extension call makes the edge the call `F(A(x, y)*, 3)`, exactly like the written `A(x, y)*.F(3)`. So `H` infers its names in the call's order, `H(F, x, y)`: the callee first.",
+        },
+        new()
+        {
+            Id = "output-spread-lifted-call-ends-known-positions",
+            Category = "errors",
+            Source = "P(x)* = [x]\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Explanation = "Formula lifting turns the bare `P` into the call `P(x)`, and the front end spreads it: `H` is `reduce(P(x)*, Add, Inc)`, like the written `reduce(P*, Add, Inc)`. After a spread the position of `Inc` is unknown, so it is not lifted to the value `Inc(x)`; it stays an algorithm, and `reduce` has no initial value.",
+        },
+        new()
+        {
+            Id = "output-spread-reference-needs-call",
+            Category = "name-resolution",
+            Source = "Q(x) = [[x]]\nP* = Q[0]\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "only parameter inference decides whether `P` is called here",
+            ExpectedDiagnosticCode = DiagnosticCode.OutputSpreadReferenceNeedsCall,
+            Notes = "Front-end rule; no elaborated Lean program exists.",
+            Explanation = "`P` has no parameter of its own, and only inference can give it one (through `Q`). Whether the bare `P` is a call decides whether `Inc` is `reduce`'s initial value, so the front end asks for the written call: `reduce(P(x), Add, Inc)`.",
+        },
     ];
 }

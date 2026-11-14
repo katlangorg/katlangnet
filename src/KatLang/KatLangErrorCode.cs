@@ -360,4 +360,22 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.UnsupportedDoubleQuotedString"/>.</summary>
     UnsupportedDoubleQuotedString = 85,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.DetachedOutputSpreadMarker"/>.</summary>
+    DetachedOutputSpreadMarker = 86,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.RepeatedOutputSpreadMarker"/>.</summary>
+    RepeatedOutputSpreadMarker = 87,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/>.</summary>
+    OutputSpreadMarkerOnAlias = 88,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.MixedOutputSpreadMarkers"/>.</summary>
+    MixedOutputSpreadMarkers = 89,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget"/>.</summary>
+    OutputSpreadMarkerOnDeconstructionTarget = 90,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.OutputSpreadReferenceNeedsCall"/>.</summary>
+    OutputSpreadReferenceNeedsCall = 91,
 }
