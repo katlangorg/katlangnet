@@ -12,6 +12,8 @@ internal sealed class StaticQueryResourceBudget(StaticQueryLimits limits)
     private long _temporary;
     private long _callback;
     internal long AdapterWork { get; private set; }
+    /// <summary>All work charged so far, against the work bound (an observation; it changes no charge).</summary>
+    internal long WorkCharged => _work;
     internal long MetadataUnits { get; private set; }
     internal long PeakStorageUnits { get; private set; }
     internal long StorageUnits => _persistent + _temporary + _callback;

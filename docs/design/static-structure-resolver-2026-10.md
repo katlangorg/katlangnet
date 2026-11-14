@@ -425,11 +425,19 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
 - **Rounds.** `SignatureSelector.Complete` iterates `F^{k+1}_i = C(i, F^k)` from the closed gate. The state is every
   member's pattern tree and X-02 flag, compared structurally (`SamePatterns`), never by object. Brent's rule keeps two
   detector snapshots, so a repetition at distance above one is found without a history table; a composition is a pure
-  function of the state, so that repetition proves non-settling. Round lists still stay in the run's template interner, so
-  each composition is charged, in work and storage, before it runs.
+  function of the state, so that repetition proves non-settling. The rounds are SEMI-NAIVE (2026-11-14, audit of
+  `a4b545e8`): round one recomposes every member, and a later round only the in-component readers of the members whose
+  fact object changed in the round before, in ascending position; every other member keeps its fact, which is exactly what
+  recomposing it would return, since its reads are the same objects and the equation memo returns one fact per exact
+  inputs. Settlement compares only the changed members with their previous facts, and the repetition detector keeps one
+  snapshot and a count of the members that differ from it structurally, updated for changed members alone. So a ring whose
+  names travel one member per round costs its rounds once, not once per member. Each recomposition is charged its
+  composition's work before it runs; the storage of a NEW fact (round lists stay in the run's template interner) is
+  charged before it is composed, and a recomposition that finds its fact retains and is charged no storage.
 - **One object per reading.** `EvaluateEquation` keeps one fact per equation per exact lifted inputs, and `Sealed` keeps
-  one sealed result per exact settled facts. A table or joint region that reads a component again therefore gets the same
-  objects, and a selected reader's composition and the rewrite agree by reference.
+  one sealed result per exact settled facts, both hashed by the identities they compare (a lookup costs its inputs, never
+  the readings already stored). A table or joint region that reads a component again therefore gets the same objects, and
+  a selected reader's composition and the rewrite agree by reference.
 - **Sealing.** `SealCompletion` (`ImplicitArgumentResolver.CycleOrigins.cs`) runs inside `Complete`, before any reader
   composes: readers must lift final records. It derives origins by the first-provider law, builds final lists, recomposes
   every member from them with the real law, and requires the same structure and origin content. `Composition`, including
@@ -512,9 +520,18 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
    group is refused by category (`SignatureSelectionOutcome`: Ambiguous, Contradiction, UngroundedOnly,
    Undetermined, NonSettling; readers of a refused group are Blocked and not reported again). Components are an
    optimization only: a dependency-first local pass, then joint regions — every failed component with the closure of
-   its readers, regions whose dependency cones meet merged — solved over the whole cone by persistent
-   alternative-carrying stratification. All work and storage are charged to the operation's ledger
-   (`StaticQueryResourceBudget`; a table charges its 2^dimensions classifications before evaluating any).
+   its readers, regions whose dependency cones meet merged — solved over their cones by persistent
+   alternative-carrying stratification in two phases (`SolveRegion`, 2026-11-14, audit of `a4b545e8`, finding 1.8).
+   Phase 1 carries every component of the cone the local pass settled by its selected reading alone and enumerates the
+   failed components; phase 2 enumerates the whole cone, reusing phase 1's tables, only when phase 1's outcome is
+   NonSettling or Contradiction and a settled component of the cone has another reading that is not refuted. That is
+   exact: a settled component reads only settled ones, so along their selected readings its table is its local one,
+   whose only grounded row is the selected one and which has no undetermined row; an alternative carrying another of its
+   rows is ungrounded or meaningless for good, so it adds no grounded or undetermined row and can change only a
+   refusal's category, never a selection. A joint region the ledger cannot afford is still refused as
+   `StaticStructureLimitExceeded`; what is no longer paid is the product of the readings of settled components. All work
+   and storage are charged to the operation's ledger (`StaticQueryResourceBudget`; a table charges its 2^dimensions
+   classifications before evaluating any).
 3. **Rewrite**: declarations in their elaborated order over the selected signatures. The rewrite never recomposes a
    signature (`SelectedLifting`); `RequireSelectedComposition` checks, by reference and in O(dependencies), that it
    reads exactly the callees the selection composed from. Its mirror, THE REACH INVARIANT
@@ -555,7 +572,10 @@ preferences, `SettleSoftCycleConsumers`, `CyclicIndices`), and `PropertyProcessi
 **Evidence.** Research outcomes carried forward as tests (`SignatureSelectionTests`): D06 = 5, D15 = 4, ReadQ
 (7, 7, 8, 100, 100, 100), the FU7 example (100, 7, 0), deferred 10/11, case H's module reuse. The independent oracle
 (`SignatureSelectionReviewRegressionTests`): rule G6 applied to whole random equation systems agrees with the
-selector on every system (six seeds × 500); W14u selects jointly in 120 of its 720 declaration orders. Independent
+selector on every system (six seeds × 500, each system also with independent, locally settled self-rings inside its joint
+cones), and two mutation controls show it can fail (guard-blind rounds, and rounds that skip a member whose read changed);
+W14u selects jointly in 120 of its 720 declaration orders, and still with 7, 16 or 32 settled rings read by its reader
+(formerly refused by the ledger from 7). Independent
 read-only reviews (Codex, gpt-6.1-sol at maximum effort): checkpoint 1 (plan) and checkpoint 2 (implementation) each
 required changes, all resolved; their reports are under
 `artifacts/validation/alias-unify-1-b35-production/review/` (git-ignored).

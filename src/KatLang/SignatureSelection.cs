@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 
 namespace KatLang;
 
@@ -117,8 +118,10 @@ internal enum SignatureSelectionOutcome : byte
 /// <para>Components are an optimization only: a dependency-first LOCAL pass settles every component that has a unique
 /// grounded answer given the settled ones below it; a component that fails locally is re-solved JOINTLY with every
 /// reader (a reader may exclude a lower answer), by alternative-carrying stratification over the region's dependency
-/// cone. A link-free component has exactly one vector, so link-free programs cost one evaluation per equation (plus
-/// the closed gate of each cycle). Work and storage are charged to the operation's ledger
+/// cone: the cone's settled components are carried by their selected readings, and the whole cone is enumerated only to
+/// decide a refusal's category (<see cref="SolveRegion"/>). A link-free component has exactly one vector, so a link-free
+/// program costs one evaluation per equation, plus the closed gate of each cycle and the rounds of each genuine lifting
+/// cycle, which recompose only the members whose reads changed. Work and storage are charged to the operation's ledger
 /// (<see cref="StaticQueryResourceBudget"/>): exhaustion is <see cref="StaticQueryLimitExceededException"/>,
 /// cancellation the operation's token, and a failed or cancelled selection publishes nothing.</para>
 /// </summary>
@@ -149,9 +152,12 @@ internal sealed class SignatureSelector
 
     // One fact per equation per exact inputs, and one sealed component per exact settled facts: a table or a joint region
     // that evaluates an equation again from the same callees gets the very same objects. Every read of a selected signature
-    // then sees one list, which the rewrite checks by reference, however many readings computed it.
-    private readonly List<(IReadOnlyList<(int Reference, CallableSignature Signature)> Lifted, SignatureFact Fact)>?[] _composed;
-    private readonly List<(SignatureFact[] Settled, IReadOnlyDictionary<int, SignatureFact> Published)>?[] _sealed;
+    // then sees one list, which the rewrite checks by reference, however many readings computed it. Both memos are hashed
+    // by the identities they compare, so a lookup costs its inputs, never the number of readings already stored.
+    private readonly Dictionary<IReadOnlyList<(int Reference, CallableSignature Signature)>, SignatureFact>?[] _composed;
+    private readonly Dictionary<SignatureFact[], IReadOnlyDictionary<int, SignatureFact>>?[] _sealed;
+    private readonly ExactInputs _exactInputs = new();
+    private readonly ExactFacts _exactFacts = new();
     private readonly Dictionary<IReadOnlyList<ParameterPattern>, long> _patternNodes = new(ReferenceEqualityComparer.Instance);
 
     /// <param name="references">Each equation's ordered references.</param>
@@ -178,8 +184,8 @@ internal sealed class SignatureSelector
         _closed = closed;
         _resources = resources;
         _cancellationToken = cancellationToken;
-        _composed = new List<(IReadOnlyList<(int, CallableSignature)>, SignatureFact)>?[_count];
-        _sealed = new List<(SignatureFact[], IReadOnlyDictionary<int, SignatureFact>)>?[_count];
+        _composed = new Dictionary<IReadOnlyList<(int, CallableSignature)>, SignatureFact>?[_count];
+        _sealed = new Dictionary<SignatureFact[], IReadOnlyDictionary<int, SignatureFact>>?[_count];
     }
 
     /// <summary>
@@ -201,21 +207,73 @@ internal sealed class SignatureSelector
 
     // ─── one equation, one vector ─────────────────────────────────────────────────────────────────
 
-    private SignatureFact EvaluateEquation(int equation, Func<int, SignatureFact> look, Func<int, bool> isOpen)
+    /// <summary>
+    /// One equation's fact under these reads: the stored fact of its exact lifted inputs, or a new composition. A round
+    /// passes <paramref name="storedUnits"/>, its composition's charge, so the storage a NEW fact retains is charged before
+    /// it is composed, and a reading that finds its fact retains nothing.
+    /// </summary>
+    private SignatureFact EvaluateEquation(int equation, Func<int, SignatureFact> look, Func<int, bool> isOpen, long storedUnits = 0)
     {
         _resources.Work(1, _cancellationToken);
         var lifted = Lifted(equation, look, isOpen);
-        var known = _composed[equation] ??= new(1);
-        foreach (var (inputs, fact) in known)
+        var known = _composed[equation] ??= new(1, _exactInputs);
+        // One hashed lookup, charged for the inputs it hashes and compares: the stored fact itself is returned, since a
+        // selected composition and the rewrite are compared by reference.
+        _resources.Work(1 + lifted.Count, _cancellationToken);
+        if (known.TryGetValue(lifted, out var fact))
+            return fact;
+
+        if (storedUnits != 0)
+            _resources.Metadata(storedUnits, work: 0, _cancellationToken);
+        var composed = _compose(equation, lifted);
+        known.Add(lifted, composed);
+        return composed;
+    }
+
+    /// <summary>Exact composition inputs: the same reference positions with the same pattern lists, by reference.</summary>
+    private sealed class ExactInputs : IEqualityComparer<IReadOnlyList<(int Reference, CallableSignature Signature)>>
+    {
+        public bool Equals(IReadOnlyList<(int Reference, CallableSignature Signature)>? left, IReadOnlyList<(int Reference, CallableSignature Signature)>? right)
+            => SameInputs(left!, right!);
+
+        public int GetHashCode(IReadOnlyList<(int Reference, CallableSignature Signature)> inputs)
         {
-            _resources.Work(1 + inputs.Count, _cancellationToken);
-            if (SameInputs(inputs, lifted))
-                return fact;
+            var hash = new HashCode();
+            hash.Add(inputs.Count);
+            for (var index = 0; index < inputs.Count; index++)
+            {
+                hash.Add(inputs[index].Reference);
+                hash.Add(RuntimeHelpers.GetHashCode(inputs[index].Signature.ParameterPatterns));
+            }
+
+            return hash.ToHashCode();
+        }
+    }
+
+    /// <summary>Exact settled facts of one component, member by member, by reference.</summary>
+    private sealed class ExactFacts : IEqualityComparer<SignatureFact[]>
+    {
+        public bool Equals(SignatureFact[]? left, SignatureFact[]? right)
+        {
+            if (left!.Length != right!.Length)
+                return false;
+            for (var index = 0; index < left.Length; index++)
+            {
+                if (!ReferenceEquals(left[index], right[index]))
+                    return false;
+            }
+
+            return true;
         }
 
-        var composed = _compose(equation, lifted);
-        known.Add((lifted, composed));
-        return composed;
+        public int GetHashCode(SignatureFact[] facts)
+        {
+            var hash = new HashCode();
+            hash.Add(facts.Length);
+            foreach (var fact in facts)
+                hash.Add(RuntimeHelpers.GetHashCode(fact));
+            return hash.ToHashCode();
+        }
     }
 
     private static bool SameInputs(
@@ -367,15 +425,24 @@ internal sealed class SignatureSelector
     // ─── recursive completion ─────────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// SIMULTANEOUS COMPLETION (X-04 plain A-agree): round k+1 recomposes every member from round k's facts by the ONE
+    /// SIMULTANEOUS COMPLETION (X-04 plain A-agree): round k+1 is every member composed from round k's facts by the ONE
     /// composition law, with lower and external facts fixed, starting from the closed gate. The state is every member's
     /// full ordered pattern tree and X-02 flag. Two equal successive states settle, and the reached state is the answer: no
     /// other fixed point is sought and an intermediate capture or requirement may disappear. A state equal to an earlier
     /// one at a greater distance proves the rounds never settle (null). Composition is a pure function of the state, so
     /// that is exact; the earlier state is kept by Brent's rule, so the detector holds at most two snapshots however long
-    /// the rounds run. Every round's lists stay in the run's template interner, so each composition is charged, in work and
-    /// storage, before it runs, and each comparison per node. Exhausting the ledger is never non-settling. The settled state
-    /// is sealed (<see cref="SealCompletion"/>) before any reader composes from it.
+    /// the rounds run. Exhausting the ledger is never non-settling. The settled state is sealed (<see cref="SealCompletion"/>)
+    /// before any reader composes from it.
+    ///
+    /// <para>SEMI-NAIVE, and exact: round one recomposes every member; a later round recomposes only the in-component
+    /// readers of the members whose fact OBJECT changed in the round before, in ascending position, and every other member
+    /// carries its fact. A member none of whose active reads changed would read the very facts it read last round, and the
+    /// equation memo returns one fact per exact inputs, so its recomposition would return the fact it carries: every round's
+    /// state is object for object the full round's. Settlement and repetition stay STRUCTURAL: only a changed member can
+    /// differ from its previous fact, or newly differ from (or agree with) the detector's snapshot, so the detector keeps a
+    /// count of the members that differ from its snapshot and updates it for changed members alone. Each recomposition is
+    /// charged its composition's work before it runs, and a composition that retains a NEW fact its storage (round lists
+    /// stay in the run's template interner); each comparison is charged per node.</para>
     /// </summary>
     private IReadOnlyDictionary<int, SignatureFact>? Complete(
         IReadOnlyList<int> component,
@@ -384,68 +451,148 @@ internal sealed class SignatureSelector
         Func<int, SignatureFact> look,
         Func<int, bool> isOpen)
     {
-        var previous = closed;
-        var saved = closed;
+        var count = component.Count;
+        var position = new Dictionary<int, int>(count);
+        for (var index = 0; index < count; index++)
+            position.Add(component[index], index);
+
+        // The in-component readers of each member over the active references; the classification, so every guard, is fixed
+        // during the call. A reader that reads a member twice is listed twice and recomposed once.
+        var edges = 0L;
+        foreach (var key in component)
+        {
+            foreach (var reference in _references[key])
+            {
+                if (reference.Target >= 0 && members.Contains(reference.Target) && (reference.Guard < 0 || isOpen(reference.Guard)))
+                    edges++;
+            }
+        }
+
+        _resources.Work(edges, _cancellationToken);
+        var readers = new List<int>?[count];
+        for (var reader = 0; reader < count; reader++)
+        {
+            foreach (var reference in _references[component[reader]])
+            {
+                if (reference.Target >= 0 && position.TryGetValue(reference.Target, out var read) && (reference.Guard < 0 || isOpen(reference.Guard)))
+                    (readers[read] ??= []).Add(reader);
+            }
+        }
+
+        var state = new SignatureFact[count];
+        for (var index = 0; index < count; index++)
+            state[index] = closed[component[index]];
+        SignatureFact Read(int target) => position.TryGetValue(target, out var at) ? state[at] : look(target);
+
+        // Brent's detector: ONE snapshot, and which members (how many) differ from it structurally.
+        var saved = (SignatureFact[])state.Clone();
+        var differs = new bool[count];
+        var differing = 0;
         var savedAge = 0L;
         var window = 1L;
-        while (true)
+        var recompose = new List<int>(count);
+        for (var index = 0; index < count; index++)
+            recompose.Add(index);
+        var scheduled = new long[count];
+        var changed = new List<(int Position, SignatureFact Fact)>();
+        for (var round = 1L; ; round++)
         {
-            var current = new Dictionary<int, SignatureFact>(component.Count);
-            foreach (var key in component)
+            // Every recomposition reads the previous round's state: changes are applied after the round.
+            changed.Clear();
+            foreach (var at in recompose)
             {
-                ChargeComposition(key, previous, look, isOpen);
-                var read = previous;
-                current[key] = EvaluateEquation(key, target => members.Contains(target) ? read[target] : look(target), isOpen);
+                var key = component[at];
+                var units = CompositionUnits(key, Read, isOpen);
+                _resources.Work(units, _cancellationToken);
+                var fact = EvaluateEquation(key, Read, isOpen, storedUnits: units);
+                if (!ReferenceEquals(fact, state[at]))
+                    changed.Add((at, fact));
             }
 
-            if (SameState(component, previous, current))
-                return Sealed(component, current, members, look, isOpen);
+            var settled = true;
+            foreach (var (at, fact) in changed)
+            {
+                if (!SameFact(state[at], fact))
+                {
+                    settled = false;
+                    break;
+                }
+            }
+
+            foreach (var (at, fact) in changed)
+                state[at] = fact;
+            if (settled)
+                return Sealed(component, state, members, look, isOpen);
 
             savedAge++;
-            if (SameState(component, saved, current))
+            foreach (var (at, fact) in changed)
+            {
+                var differsNow = !SameFact(saved[at], fact);
+                if (differsNow != differs[at])
+                {
+                    differs[at] = differsNow;
+                    differing += differsNow ? 1 : -1;
+                }
+            }
+
+            if (differing == 0)
                 return null;
             if (savedAge == window)
             {
-                saved = current;
+                Array.Copy(state, saved, count);
+                Array.Clear(differs);
+                differing = 0;
                 savedAge = 0;
                 window *= 2;
             }
 
-            previous = current;
+            recompose.Clear();
+            foreach (var (at, _) in changed)
+            {
+                if (readers[at] is not { } list)
+                    continue;
+                foreach (var reader in list)
+                {
+                    if (scheduled[reader] == round)
+                        continue;
+                    scheduled[reader] = round;
+                    recompose.Add(reader);
+                }
+            }
+
+            recompose.Sort();
         }
     }
 
     /// <summary>The sealed facts of a settled state: sealed once for its exact facts, so every reading shares one result.</summary>
     private IReadOnlyDictionary<int, SignatureFact> Sealed(
         IReadOnlyList<int> component,
-        Dictionary<int, SignatureFact> settled,
+        SignatureFact[] state,
         HashSet<int> members,
         Func<int, SignatureFact> look,
         Func<int, bool> isOpen)
     {
-        var known = _sealed[component[0]] ??= new(1);
-        var facts = new SignatureFact[component.Count];
-        for (var index = 0; index < facts.Length; index++)
-            facts[index] = settled[component[index]];
-        foreach (var (inputs, published) in known)
-        {
-            _resources.Work(1 + facts.Length, _cancellationToken);
-            if (inputs.AsSpan().SequenceEqual(facts))
-                return published;
-        }
+        var known = _sealed[component[0]] ??= new(1, _exactFacts);
+        var facts = (SignatureFact[])state.Clone();
+        _resources.Work(1 + facts.Length, _cancellationToken);
+        if (known.TryGetValue(facts, out var published))
+            return published;
 
+        var settled = new Dictionary<int, SignatureFact>(component.Count);
+        for (var index = 0; index < facts.Length; index++)
+            settled.Add(component[index], facts[index]);
         var result = _seal(component, settled, (equation, read) => Lifted(equation,
             target => members.Contains(target) ? read[target] : look(target), isOpen));
-        known.Add((facts, result));
+        known.Add(facts, result);
         return result;
     }
 
     /// <summary>
-    /// Charges one member's composition before it runs, in work and storage: its references and every node of every active
-    /// callee, in this round, lower or fixed, since the merge builds a list from them before anything is filtered. A list's
-    /// nodes are counted once, one charged step per node.
+    /// One member's composition charge: its references and every node of every active callee, in this round, lower or
+    /// fixed, since the merge builds a list from them before anything is filtered. A list's nodes are counted once, one
+    /// charged step per node.
     /// </summary>
-    private void ChargeComposition(int equation, Dictionary<int, SignatureFact> round, Func<int, SignatureFact> look, Func<int, bool> isOpen)
+    private long CompositionUnits(int equation, Func<int, SignatureFact> read, Func<int, bool> isOpen)
     {
         var references = _references[equation];
         var units = 1L + references.Count;
@@ -454,13 +601,11 @@ internal sealed class SignatureSelector
             var reference = references[index];
             if (reference.Guard >= 0 && !isOpen(reference.Guard))
                 continue;
-            var signature = reference.Target < 0 ? reference.External!
-                : round.TryGetValue(reference.Target, out var fact) ? fact.Signature
-                : look(reference.Target).Signature;
+            var signature = reference.Target < 0 ? reference.External! : read(reference.Target).Signature;
             units += NodesOf(signature.ParameterPatterns);
         }
 
-        _resources.Metadata(units, work: units, _cancellationToken);
+        return units;
     }
 
     private long NodesOf(IReadOnlyList<ParameterPattern> patterns)
@@ -485,18 +630,9 @@ internal sealed class SignatureSelector
         return nodes;
     }
 
-    /// <summary>Whether two rounds have the same full state: every member's X-02 flag and exact ordered pattern tree.</summary>
-    private bool SameState(IReadOnlyList<int> component, Dictionary<int, SignatureFact> left, Dictionary<int, SignatureFact> right)
-    {
-        foreach (var key in component)
-        {
-            if (left[key].Violation != right[key].Violation
-                || !SamePatterns(left[key].Patterns, right[key].Patterns))
-                return false;
-        }
-
-        return true;
-    }
+    /// <summary>Whether two facts are the same member state: the X-02 flag and the exact ordered pattern tree.</summary>
+    private bool SameFact(SignatureFact left, SignatureFact right)
+        => left.Violation == right.Violation && SamePatterns(left.Patterns, right.Patterns);
 
     /// <summary>
     /// Structural equality of two pattern lists: node classes, capture names and kinds, grouping and order, one charged
@@ -788,11 +924,13 @@ internal sealed class SignatureSelector
                 componentOf[key] = c;
         }
 
-        // LOCAL pass, dependency-first: each component over its own links, given the settled facts and classes below.
+        // LOCAL pass, dependency-first: each component over its own links, given the settled facts and classes below. A
+        // settled component has OTHER READINGS when its table holds a row besides the selected one that is not refuted.
         var settledFacts = new Dictionary<int, SignatureFact>();
         var settledOpen = new Dictionary<int, bool>();
         var failed = new HashSet<int>();
         var localOutcome = new SignatureSelectionOutcome[components.Count];
+        var otherReadings = new bool[components.Count];
         for (var c = 0; c < components.Count; c++)
         {
             var component = components[c];
@@ -819,7 +957,9 @@ internal sealed class SignatureSelector
                 continue;
             }
 
-            var (outcome, selected) = Rule(Table(component, settledFacts, settledOpen, NoKeys));
+            var rows = Table(component, settledFacts, settledOpen, NoKeys);
+            otherReadings[c] = rows.Count(static row => row.Kind != RowKind.Refuted) >= 2;
+            var (outcome, selected) = Rule(rows);
             localOutcome[c] = outcome;
             if (outcome != SignatureSelectionOutcome.Selected)
             {
@@ -926,7 +1066,7 @@ internal sealed class SignatureSelector
             // component that failed on its own did so because it does not settle — and the joint reading is the same.
             var (outcome, chosen) = dimensions.Count == 0
                 ? (SignatureSelectionOutcome.NonSettling, (Row?)null)
-                : Rule(AlternativeRows(Alternatives(cone.Select(c => (IReadOnlyList<int>)components[c]).ToList()), dimensions));
+                : SolveRegion(members, cone, components, failed, otherReadings, settledFacts, settledOpen, dimensions);
             if (outcome == SignatureSelectionOutcome.Selected)
             {
                 foreach (var c in members)
@@ -964,6 +1104,92 @@ internal sealed class SignatureSelector
     }
 
     /// <summary>
+    /// Rule G6 over one joint region whose cone has a link (<paramref name="dimensions"/>, the cone's links), in two phases
+    /// that share one table per component and exact table inputs. PHASE 1 carries every locally settled component of the
+    /// cone by its selected reading alone and enumerates the failed components (<paramref name="members"/>,
+    /// dependency-first) over it. PHASE 2, only to decide the category of a refusal phase 1 could not decide, enumerates
+    /// the whole cone.
+    ///
+    /// <para>Why phase 1 is exact. A component the local pass settled reads only settled components (a reader of a failed
+    /// one is Blocked, so failed itself), so along the selected readings below it its table is its local table, and the
+    /// equation and seal memos give it the very same facts. Its selected row is its only grounded row and it has no
+    /// undetermined row, so an alternative of the full enumeration that carries another of its rows is ungrounded or
+    /// meaningless, and stays so: Ungrounded never becomes grounded again, and the meaningless set never shrinks. Every
+    /// alternative carried from it adds only an ungrounded or a meaningless row. The full enumeration's grounded rows and
+    /// undetermined rows are therefore exactly phase 1's, and it holds every phase-1 row, so Selected, Ambiguous,
+    /// Undetermined and UngroundedOnly are final. NonSettling and Contradiction are final too when no settled component of
+    /// the cone has another reading at all: then no other alternative exists. Otherwise an ungrounded or meaningless row
+    /// phase 1 did not carry can change that category, and phase 2 decides it.</para>
+    /// </summary>
+    private (SignatureSelectionOutcome Outcome, Row? Chosen) SolveRegion(
+        List<int> members,
+        List<int> cone,
+        List<List<int>> components,
+        HashSet<int> failed,
+        bool[] otherReadings,
+        Dictionary<int, SignatureFact> settledFacts,
+        Dictionary<int, bool> settledOpen,
+        IReadOnlyList<int> dimensions)
+    {
+        var tables = new Dictionary<(int Component, string Key), List<Row>>();
+        var settledCone = cone.Where(c => !failed.Contains(c)).ToList();
+        var settled = SettledReading(settledCone, components, settledFacts, settledOpen);
+        var reading = Rule(AlternativeRows(Alternatives(settled, members, components, tables), dimensions));
+        if (reading.Outcome is not (SignatureSelectionOutcome.NonSettling or SignatureSelectionOutcome.Contradiction)
+            || !settledCone.Any(c => otherReadings[c]))
+            return reading;
+
+        var unclassified = new Alternative
+        {
+            Gamma = ImmutableHashSet<int>.Empty,
+            Dimensions = ImmutableHashSet<int>.Empty,
+            Assigned = ImmutableDictionary<int, bool>.Empty,
+            Facts = ImmutableDictionary<int, SignatureFact>.Empty,
+            Meaningless = ImmutableHashSet<int>.Empty,
+            Grounded = Groundedness.Grounded,
+        };
+        return Rule(AlternativeRows(Alternatives(unclassified, cone, components, tables), dimensions));
+    }
+
+    /// <summary>
+    /// The one alternative that carries settled components by their selected readings: their facts (the very objects the
+    /// local pass settled), their own links as decided dimensions, and those of them that are calculations as the vector
+    /// — what the full enumeration carries along their selected rows, charged as each of those carried alternatives is.
+    /// </summary>
+    private Alternative SettledReading(
+        IReadOnlyList<int> settledCone,
+        List<List<int>> components,
+        Dictionary<int, SignatureFact> settledFacts,
+        Dictionary<int, bool> settledOpen)
+    {
+        var facts = ImmutableDictionary.CreateBuilder<int, SignatureFact>();
+        var gamma = ImmutableHashSet.CreateBuilder<int>();
+        var dimensions = ImmutableHashSet.CreateBuilder<int>();
+        foreach (var c in settledCone)
+        {
+            var component = components[c];
+            var links = LinksIn(component, NoClasses);
+            var calculations = links.Where(link => settledOpen.TryGetValue(link, out var open) && open).ToList();
+            var added = calculations.Count + links.Count + component.Count;
+            _resources.Metadata(4 + added, work: 1 + added, _cancellationToken);
+            foreach (var key in component)
+                facts.Add(key, settledFacts[key]);
+            dimensions.UnionWith(links);
+            gamma.UnionWith(calculations);
+        }
+
+        return new Alternative
+        {
+            Gamma = gamma.ToImmutable(),
+            Dimensions = dimensions.ToImmutable(),
+            Assigned = ImmutableDictionary<int, bool>.Empty,
+            Facts = facts.ToImmutable(),
+            Meaningless = ImmutableHashSet<int>.Empty,
+            Grounded = Groundedness.Grounded,
+        };
+    }
+
+    /// <summary>
     /// One partial classification carried through a region's cone. PERSISTENT: a carried alternative shares the state below
     /// it and pays only for what its component adds, so a long cone costs what it adds, never a copy per step.
     /// </summary>
@@ -979,27 +1205,23 @@ internal sealed class SignatureSelector
     }
 
     /// <summary>
-    /// Alternative-carrying stratification over a region's dependency cone (its components, dependency-first): every
-    /// partial vector that is consistent or meaningless so far is carried; the class of a lower link that is
-    /// meaningless in an alternative is a free choice of the vector, branched once where a later component observes it.
-    /// Every carried alternative is charged for the entries it adds before it is built.
+    /// Alternative-carrying stratification over a region's dependency cone, from <paramref name="initial"/> through the
+    /// components <paramref name="order"/> names (dependency-first; every component they read is in the initial
+    /// alternative or earlier in the order): every partial vector that is consistent or meaningless so far is carried; the
+    /// class of a lower link that is meaningless in an alternative is a free choice of the vector, branched once where a
+    /// later component observes it. A component's table is built once per exact inputs in <paramref name="tables"/>,
+    /// which the region's phases share. Every carried alternative is charged for the entries it adds before it is built.
     /// </summary>
-    private List<Alternative> Alternatives(IReadOnlyList<IReadOnlyList<int>> components)
+    private List<Alternative> Alternatives(
+        Alternative initial,
+        IReadOnlyList<int> order,
+        List<List<int>> components,
+        Dictionary<(int Component, string Key), List<Row>> tables)
     {
-        var alternatives = new List<Alternative>
+        var alternatives = new List<Alternative> { initial };
+        foreach (var c in order)
         {
-            new()
-            {
-                Gamma = ImmutableHashSet<int>.Empty,
-                Dimensions = ImmutableHashSet<int>.Empty,
-                Assigned = ImmutableDictionary<int, bool>.Empty,
-                Facts = ImmutableDictionary<int, SignatureFact>.Empty,
-                Meaningless = ImmutableHashSet<int>.Empty,
-                Grounded = Groundedness.Grounded,
-            },
-        };
-        foreach (var component in components)
-        {
+            var component = components[c];
             var members = new HashSet<int>(component);
             var componentLinks = LinksIn(component, NoClasses);
             var observed = component.SelectMany(key => _references[key])
@@ -1007,7 +1229,6 @@ internal sealed class SignatureSelector
                 .Select(static reference => reference.Guard).Distinct().Order().ToList();
             var reads = component.SelectMany(CandidateSuccessors).Where(target => !members.Contains(target)).Distinct().Order().ToList();
             var next = new List<Alternative>();
-            var tables = new Dictionary<string, List<Row>>(StringComparer.Ordinal);
             foreach (var alternative in alternatives)
             {
                 var free = observed.Where(link => alternative.Meaningless.Contains(link)
@@ -1034,7 +1255,7 @@ internal sealed class SignatureSelector
                             open[link] = choice;
                     }
 
-                    var memoKey = TableKey(reads, alternative, open);
+                    var memoKey = (c, TableKey(reads, alternative, open));
                     if (!tables.TryGetValue(memoKey, out var rows))
                         tables[memoKey] = rows = Table(component, alternative.Facts, open, alternative.Meaningless);
                     foreach (var row in rows)

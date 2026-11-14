@@ -1,3 +1,4 @@
+using System.Numerics;
 using KatLang.Semantics;
 
 namespace KatLang.Tests;
@@ -327,6 +328,72 @@ public sealed class RecursiveParameterInferenceTests
 
         var unhelped = Parser.Parse(C2.Replace("    N = o + L2.repeat(N)", "    N(o) = o + L2.repeat(N)", StringComparison.Ordinal));
         Assert.Contains(unhelped.Diagnostics, static diagnostic => diagnostic.Message.Contains("can be read in more than one consistent way", StringComparison.Ordinal));
+    }
+
+    // ── a long ring: rounds recompose only what changed ─────────────────────────────────────────
+
+    /// <summary>
+    /// A single-source ring of <paramref name="members"/>: <c>F0 = if(c, x, F1 + 1)</c>, each <c>F_i</c> reads the next, and
+    /// the last reads <c>F0</c>. The names travel one member per round, so the rounds run as long as the ring.
+    /// </summary>
+    private static string SingleSourceRing(int members)
+        => string.Join("\n", Enumerable.Range(0, members).Select(i => i == 0 ? "F0 = if(c, x, F1 + 1)" : $"F{i} = F{(i + 1) % members} + 1"))
+            + "\nF0(true, 1)";
+
+    /// <summary>
+    /// Audit of a4b545e8 (2026-11-14), simultaneous rounds: a round recomposes only the readers of what changed, so a ring whose names travel one member per round
+    /// costs its rounds once, not once per member. Every member completes as (c, x), and <c>F0(true, 1)</c> is 1; formerly
+    /// 1,600 members exhausted the work bound and 3,200 also the storage ceiling.
+    /// </summary>
+    [Theory]
+    [InlineData(400)]
+    [InlineData(800)]
+    [InlineData(1600)]
+    [InlineData(3200)]
+    public void ALongSingleSourceRing_Completes(int members)
+    {
+        var parsed = SourceProvenance.ParseValid(SingleSourceRing(members));
+        Assert.Equal(members, parsed.Root.Properties.Count);
+        Assert.All(parsed.Root.Properties, static property => Assert.Equal(["c", "x"], property.Value.Params));
+        var run = Evaluator.RunFlat(new Expr.AlgorithmExpr(parsed.Root));
+        Assert.False(run.IsError, run.IsError ? run.Error.ToString() : "");
+        Assert.Equal([(Decimal128)1], run.Value);
+    }
+
+    /// <summary>The work and storage the ledger records over a selection, from its first composition to its end.</summary>
+    private static (long Work, long Storage) SelectionCharges(string source)
+    {
+        var detected = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        Assert.Empty(detected.Diagnostics);
+        var ledger = detected.Operation!.Queries.Resources;
+        (long Work, long Storage)? first = null;
+        (long Work, long Storage)? last = null;
+        var observations = new FrontEndTraversalObservations
+        {
+            OnSignatureSelectionStep = _ => first ??= (ledger.WorkCharged, ledger.MetadataUnits),
+            OnSignatureSelection = _ =>
+            {
+                Assert.Null(last);
+                last = (ledger.WorkCharged, ledger.MetadataUnits);
+            },
+        };
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
+        Assert.Empty(detected.Diagnostics);
+        return (last!.Value.Work - first!.Value.Work, last.Value.Storage - first.Value.Storage);
+    }
+
+    /// <summary>Doubling the ring at most multiplies the selection's work and its storage by 2.3 (formerly by about 4).</summary>
+    [Fact]
+    public void ALongSingleSourceRing_CostsItsRoundsOnce()
+    {
+        var charges = new[] { 400, 800, 1600, 3200 }.Select(static members => SelectionCharges(SingleSourceRing(members))).ToArray();
+        for (var index = 1; index < charges.Length; index++)
+        {
+            var (smaller, larger) = (charges[index - 1], charges[index]);
+            Assert.True(smaller.Work > 0 && smaller.Storage > 0);
+            Assert.True(larger.Work <= 2.3 * smaller.Work, $"Work grew {(double)larger.Work / smaller.Work:F2}x ({smaller.Work} -> {larger.Work}).");
+            Assert.True(larger.Storage <= 2.3 * smaller.Storage, $"Storage grew {(double)larger.Storage / smaller.Storage:F2}x ({smaller.Storage} -> {larger.Storage}).");
+        }
     }
 
     // ── what recursive inference leaves untouched ───────────────────────────────────────────────

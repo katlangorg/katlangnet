@@ -1056,6 +1056,172 @@ public sealed class SignatureSelectionReviewRegressionTests
         }
     }
 
+    // ── A joint region carries its settled components by their selected readings ───────────────────
+
+    private const string RingPrelude = Prelude + "D(z) = z\n";
+
+    /// <summary>
+    /// W14u, its reader also reading <paramref name="rings"/> independent self-rings: each <c>L</c>/<c>K</c> pair settles
+    /// locally (<c>L</c> a runtime reference, <c>K</c> parameterless), and has a second, self-supporting reading.
+    /// </summary>
+    private static string[] W14uWithRings(int rings)
+        =>
+        [
+            .. W14uDeclarations.Select(row => row.StartsWith("Hf1", StringComparison.Ordinal)
+                ? row + string.Concat(Enumerable.Range(0, rings).Select(static j => $" + K{j}"))
+                : row),
+            .. Enumerable.Range(0, rings).SelectMany(static j => new[] { $"L{j} = Cap(Id(K{j} + 0)).Algorithm", $"K{j} = L{j}.repeat(D) + 0" }),
+        ];
+
+    private static string W14uRingProgram(IEnumerable<string> declarations)
+        => RingPrelude + "Outer(a) = {\n    " + string.Join("\n    ", declarations) + "\n    0\n}\nOuter(1)";
+
+    /// <summary>Six declaration orders: as written, reversed, the rings first, rotated by half, and two seeded shuffles.</summary>
+    private static IEnumerable<string[]> SixOrders(string[] declarations)
+    {
+        yield return declarations;
+        yield return [.. declarations.Reverse()];
+        yield return [.. declarations.Skip(W14uDeclarations.Length), .. declarations.Take(W14uDeclarations.Length)];
+        yield return [.. declarations.Skip(declarations.Length / 2), .. declarations.Take(declarations.Length / 2)];
+        foreach (var seed in new[] { declarations.Length, -declarations.Length })
+        {
+            var shuffled = declarations.ToArray();
+            new Random(seed).Shuffle(shuffled);
+            yield return shuffled;
+        }
+    }
+
+    /// <summary>
+    /// Audit of a4b545e8 (2026-11-14), finding 1.8: a joint region carries each locally settled component of its cone by its selected reading, never by
+    /// every reading. W14u's reader also reads m self-rings, so the whole enumeration carried 2^m readings to the reader,
+    /// and m = 7 was refused by the ledger. The answer is W14u's, in every order: Lx1(p), Hx1(p), Hn1 with one collecting
+    /// <c>p</c>, Hf1(p), Ln1 and Lf1 runtime references, every K parameterless and every L a runtime reference.
+    /// </summary>
+    [Theory]
+    [InlineData(7)]
+    [InlineData(16)]
+    [InlineData(32)]
+    public void AJointRegion_CarriesSettledRingsByTheirSelectedReadings_InEveryOrder(int rings)
+    {
+        var orders = 0;
+        foreach (var declarations in SixOrders(W14uWithRings(rings)))
+        {
+            orders++;
+            var root = SourceProvenance.ParseValid(W14uRingProgram(declarations)).Root;
+            var outer = Assert.Single(root.Properties, property => property.Name == "Outer").Value;
+            Algorithm Member(string name) => Assert.Single(outer.Properties, property => property.Name == name).Value;
+            var context = string.Join(" | ", declarations);
+            Assert.True(Member("Lx1") is Algorithm.User { Params: ["p"] }, context);
+            Assert.True(Member("Hx1") is Algorithm.User { Params: ["p"] }, context);
+            Assert.True(Member("Hn1") is Algorithm.User { Params: ["p"] }, context);
+            Assert.Equal(ParameterKind.Collecting, Assert.Single(Member("Hn1").ParameterPatterns.OfType<CaptureParameterPattern>()).Kind);
+            Assert.True(Member("Hf1") is Algorithm.User { Params: ["p"] }, context);
+            Assert.True(Member("Ln1") is Algorithm.Alias { HasRuntimeTarget: true }, context);
+            Assert.True(Member("Lf1") is Algorithm.Alias { HasRuntimeTarget: true }, context);
+            for (var j = 0; j < rings; j++)
+            {
+                Assert.True(Member($"K{j}") is Algorithm.User { Params: [] }, $"K{j}: {context}");
+                Assert.True(Member($"L{j}") is Algorithm.Alias { HasRuntimeTarget: true }, $"L{j}: {context}");
+            }
+        }
+
+        Assert.Equal(6, orders);
+    }
+
+    /// <summary>The ledger work of resolving a detected program's signatures, from the end of detection.</summary>
+    private static long ResolutionWork(string source)
+    {
+        var detected = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        Assert.Empty(detected.Diagnostics);
+        var ledger = detected.Operation!.Queries.Resources;
+        var before = ledger.WorkCharged;
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        Assert.Empty(detected.Diagnostics);
+        return ledger.WorkCharged - before;
+    }
+
+    /// <summary>Settled rings cost what they add: doubling them (16 → 32) at most multiplies the resolution's work by 2.5.</summary>
+    [Fact]
+    public void SettledRingsInAJointCone_CostWhatTheyAdd()
+    {
+        var (small, large) = (ResolutionWork(W14uRingProgram(W14uWithRings(16))), ResolutionWork(W14uRingProgram(W14uWithRings(32))));
+        Assert.True(small > 0);
+        Assert.True(large <= 2.5 * small, $"Doubling the rings grew the work {(double)large / small:F2}x ({small} -> {large}).");
+    }
+
+    private static void AssertRefusals(string source, params (int Line, int Column, int EndColumn, string Message)[] expected)
+    {
+        var diagnostics = SourceProvenance.ExpectFrontEndError(source);
+        Assert.Equal(expected.Length, diagnostics.Count);
+        for (var index = 0; index < expected.Length; index++)
+        {
+            var (line, column, endColumn, message) = expected[index];
+            Assert.Equal(DiagnosticCode.SelfDependentInferredParameters, diagnostics[index].Code);
+            Assert.Equal(new SourceSpan(line, column, line, endColumn), diagnostics[index].Span);
+            Assert.Equal(message, diagnostics[index].Message);
+        }
+    }
+
+    /// <summary>
+    /// CATEGORY PIN (recorded before the change, at 45f0a2d6). Along <c>L0</c>'s selected reading the A/B pair does not
+    /// settle, but the whole cone also holds <c>L0</c>'s self-supporting reading, under which it does: the category is
+    /// the whole cone's, only self-supporting readings, naming <c>L0</c> — never "does not settle".
+    /// </summary>
+    [Fact]
+    public void ARefusalsCategory_IsTheWholeCones_WhenASettledRingHasAnotherReading()
+    {
+        const string Source = "Cap(meta op) = op\nId(v) = v\nDx(x) = x\nX(x) = x\nY(y) = y\nL0 = Cap(Id(K0 + 0)).Algorithm\n"
+            + "K0 = L0.repeat(Dx) + 0\nA = K0 + B + X\nB = K0 + A + Y\n0";
+        const string Reason = " because every consistent reading of the .Algorithm reference 'L0' supports only itself: it holds only because of "
+            + "the parameters it would give. Declare the parameters explicitly or remove the circular dependency.";
+        AssertRefusals(Source,
+            (8, 1, 2, "Cannot infer parameters for 'A'" + Reason),
+            (9, 1, 2, "Cannot infer parameters for 'B'" + Reason));
+    }
+
+    /// <summary>The non-settling A/B oscillator, both members also reading <paramref name="rings"/> self-rings.</summary>
+    private static string OscillatorCone(int rings)
+    {
+        var declared = string.Concat(Enumerable.Range(0, rings).Select(static j => $"L{j} = Cap(Id(K{j} + 0)).Algorithm\nK{j} = L{j}.repeat(D) + 0\n"));
+        var reads = string.Concat(Enumerable.Range(0, rings).Select(static j => $" + K{j}"));
+        return $"Cap(meta op) = op\nId(v) = v\nD(z) = z\nX(x) = x\nY(y) = y\n{declared}A = B + X{reads}\nB = A + Y{reads}\n0";
+    }
+
+    /// <summary>
+    /// CATEGORY PIN (recorded before the change, at 45f0a2d6, where five rings were the most the default ledger admitted):
+    /// the oscillator does not settle under any reading of its rings, so the whole cone, enumerated to decide the
+    /// category, still reports that it does not settle, at A and B.
+    /// </summary>
+    [Fact]
+    public void AnOscillatorReadingSettledRings_StillDoesNotSettle()
+    {
+        const string Reason = " because they depend on themselves and recursive inference does not settle: 'A' and 'B' use one another by name in "
+            + "formulas, and completing their parameters keeps returning to an earlier signature. Declare the parameters explicitly, or write the "
+            + "calls with their arguments.";
+        AssertRefusals(OscillatorCone(5),
+            (16, 1, 2, "Cannot infer parameters for 'A'" + Reason),
+            (17, 1, 2, "Cannot infer parameters for 'B'" + Reason));
+    }
+
+    /// <summary>
+    /// CATEGORY PIN (recorded before the change, at 45f0a2d6): W14u's pair alone has two grounded readings, and a settled
+    /// ring in its cone changes nothing — the refusal is the ambiguity, and its link list still names every link of the
+    /// cone, the settled <c>L0</c> included (narrowing it is a separate wording decision).
+    /// </summary>
+    [Fact]
+    public void AnAmbiguousRegion_NamesEveryLinkOfItsCone()
+    {
+        const string Source = RingPrelude + "Outer(a) = {\n    Lx1 = Cap(Id(Hx1 + 0)).Algorithm\n    Hx1 = Ln1.repeat(A0) + B + K0\n"
+            + "    Ln1 = Cap(Id(Hn1 + 0)).Algorithm\n    Hn1 = Lx1.repeat(A0) + B\n    L0 = Cap(Id(K0 + 0)).Algorithm\n    K0 = L0.repeat(D) + 0\n    0\n}\n0";
+        const string Reason = " because the .Algorithm references 'Lx1', 'Ln1', and 'L0' can be read in more than one consistent way. Declare the "
+            + "parameters explicitly or remove the circular dependency.";
+        AssertRefusals(Source,
+            (9, 5, 8, "Cannot infer parameters for 'Lx1'" + Reason),
+            (10, 5, 8, "Cannot infer parameters for 'Hx1'" + Reason),
+            (11, 5, 8, "Cannot infer parameters for 'Ln1'" + Reason),
+            (12, 5, 8, "Cannot infer parameters for 'Hn1'" + Reason));
+    }
+
     // ── The independent oracle: rule G6 over a whole system ────────────────────────────────────
 
     /// <summary>A reference of a synthetic equation: an equation target or an external signature, maybe guarded.</summary>
@@ -1106,6 +1272,47 @@ public sealed class SignatureSelectionReviewRegressionTests
         return new SyntheticSystem(own, references, isLink);
     }
 
+    /// <summary>
+    /// The system with one or two INDEPENDENT SELF-RINGS appended — a link <c>L</c> reading <c>K</c>, and <c>K</c> reading
+    /// the requiring external X1 only when <c>L</c> is a calculation — which the local pass settles (both runtime and
+    /// parameterless) while a second, self-supporting reading stays consistent; and about half of the original equations
+    /// read a ring (its <c>K</c> or <c>L</c>, or an external through its guard), so the rings lie inside joint cones.
+    /// </summary>
+    private static SyntheticSystem WithSettledRings(SyntheticSystem system, Random random)
+    {
+        var rings = random.Next(1, 3);
+        var count = system.Count + 2 * rings;
+        var own = new string[count][];
+        var references = new SyntheticReference[count][];
+        var isLink = new bool[count];
+        for (var i = 0; i < system.Count; i++)
+        {
+            own[i] = system.Own[i];
+            isLink[i] = system.IsLink[i];
+            var list = system.References[i].ToList();
+            if (random.NextDouble() < 0.5)
+            {
+                var ring = system.Count + 2 * random.Next(rings);
+                list.Insert(random.Next(list.Count + 1), random.NextDouble() < 0.75 ? new SyntheticReference(ring + 1, -1, -1)
+                    : random.NextDouble() < 0.5 ? new SyntheticReference(ring, -1, -1)
+                    : new SyntheticReference(-1, 2, ring));
+            }
+
+            references[i] = [.. list];
+        }
+
+        for (var j = 0; j < rings; j++)
+        {
+            var link = system.Count + 2 * j;
+            (own[link], own[link + 1]) = ([], []);
+            isLink[link] = true;
+            references[link] = [new SyntheticReference(link + 1, -1, -1)];
+            references[link + 1] = [new SyntheticReference(-1, 1, link)];
+        }
+
+        return new SyntheticSystem(own, references, isLink);
+    }
+
     /// <summary>One equation's composed parameter names: its own, then each first active requiring callee's, by name.</summary>
     private static string[] ComposeNames(SyntheticSystem system, int equation, IReadOnlySet<int> open, Func<int, string[]> read)
     {
@@ -1133,7 +1340,7 @@ public sealed class SignatureSelectionReviewRegressionTests
     /// graph dependency-first, a cyclic one by the closed gate and then simultaneous rounds over this oracle's own
     /// composition and its own record of every state; null for an equation with no meaning.
     /// </summary>
-    private static string[]?[] EvaluateWhole(SyntheticSystem system, IReadOnlySet<int> open, bool guardBlindRounds = false)
+    private static string[]?[] EvaluateWhole(SyntheticSystem system, IReadOnlySet<int> open, bool guardBlindRounds = false, bool skipAChangedReader = false)
     {
         bool Active(SyntheticReference reference) => reference.Target >= 0 && (reference.Guard < 0 || open.Contains(reference.Guard));
         var facts = new string[]?[system.Count];
@@ -1160,7 +1367,8 @@ public sealed class SignatureSelectionReviewRegressionTests
             var reached = closed;
             if (component.Any(key => system.References[key].Any(reference => Active(reference) && members.Contains(reference.Target) && closed[reference.Target].Length > 0)))
             {
-                reached = Rounds(system, component, members, guardBlindRounds ? AllEquations(system) : open, closed, target => facts[target] ?? []);
+                reached = Rounds(system, component, members, guardBlindRounds ? AllEquations(system) : open, closed, target => facts[target] ?? [],
+                    skipAChangedReader);
                 if (reached is null)
                 {
                     foreach (var key in component)
@@ -1178,17 +1386,31 @@ public sealed class SignatureSelectionReviewRegressionTests
 
     private static HashSet<int> AllEquations(SyntheticSystem system) => [.. Enumerable.Range(0, system.Count)];
 
-    /// <summary>Simultaneous rounds with every state remembered: successive equality settles, any other repeat is non-settling.</summary>
+    /// <summary>
+    /// Simultaneous rounds with every state remembered: successive equality settles, any other repeat is non-settling. Every
+    /// member is recomposed in every round. <paramref name="skipAChangedReader"/> is a MUTATION of semi-naive rounds: after
+    /// round one, the last member that reads a member changed in the round before keeps its previous names.
+    /// </summary>
     private static Dictionary<int, string[]>? Rounds(SyntheticSystem system, List<int> component, HashSet<int> members, IReadOnlySet<int> open,
-        Dictionary<int, string[]> closed, Func<int, string[]> lower)
+        Dictionary<int, string[]> closed, Func<int, string[]> lower, bool skipAChangedReader = false)
     {
         string State(Dictionary<int, string[]> round) => string.Join(";", component.Order().Select(key => string.Join(",", round[key])));
         var seen = new HashSet<string> { State(closed) };
         var previous = closed;
+        HashSet<int>? changed = null;
         while (true)
         {
             var read = previous;
             var next = component.ToDictionary(key => key, key => ComposeNames(system, key, open, target => members.Contains(target) ? read[target] : lower(target)));
+            if (skipAChangedReader && changed is not null)
+            {
+                var stale = component.Where(key => system.References[key].Any(reference => reference.Target >= 0 && changed.Contains(reference.Target)
+                    && (reference.Guard < 0 || open.Contains(reference.Guard)))).DefaultIfEmpty(-1).Max();
+                if (stale >= 0)
+                    next[stale] = previous[stale];
+            }
+
+            changed = [.. component.Where(key => !next[key].SequenceEqual(previous[key]))];
             if (State(next) == State(previous))
                 return next;
             if (!seen.Add(State(next)))
@@ -1256,7 +1478,7 @@ public sealed class SignatureSelectionReviewRegressionTests
     }
 
     /// <summary>Rule G6 over every classification of every link of the whole system: the selected facts, or null.</summary>
-    private static string[][]? GlobalRuleG6(SyntheticSystem system, bool guardBlindRounds = false)
+    private static string[][]? GlobalRuleG6(SyntheticSystem system, bool guardBlindRounds = false, bool skipAChangedReader = false)
     {
         var links = Enumerable.Range(0, system.Count).Where(key => system.IsLink[key]).ToArray();
         string[][]? grounded = null;
@@ -1264,7 +1486,7 @@ public sealed class SignatureSelectionReviewRegressionTests
         var undetermined = false;
         foreach (var gamma in AllSubsets(links))
         {
-            var facts = EvaluateWhole(system, gamma, guardBlindRounds);
+            var facts = EvaluateWhole(system, gamma, guardBlindRounds, skipAChangedReader);
             if (links.Any(link => facts[link] is { } fact && fact.Length > 0 != gamma.Contains(link)))
                 continue;
             if (facts.Any(fact => fact is null))
@@ -1275,7 +1497,7 @@ public sealed class SignatureSelectionReviewRegressionTests
             {
                 if (support.Count == 0)
                     continue;
-                var counterfactual = EvaluateWhole(system, gamma.Except(support).ToHashSet(), guardBlindRounds);
+                var counterfactual = EvaluateWhole(system, gamma.Except(support).ToHashSet(), guardBlindRounds, skipAChangedReader);
                 if (support.Any(link => counterfactual[link] is { Length: > 0 }))
                     continue;
                 if (support.All(link => counterfactual[link] is not null))
@@ -1301,11 +1523,68 @@ public sealed class SignatureSelectionReviewRegressionTests
         return groundedCount == 1 && !undetermined ? grounded : null;
     }
 
+    /// <summary>The real selector over a synthetic system, with this oracle's composition law (plain names).</summary>
+    private static SignatureSelector.Selection SelectReal(SyntheticSystem system)
+    {
+        var closed = new SignatureFact([], null, isLifted: false, composition: null, new CallableSignature("", []));
+        var internalIdentities = Enumerable.Range(0, system.Count).Select(_ => new object()).ToArray();
+        var externalIdentities = Externals.Select(_ => new object()).ToArray();
+        var externalSignatures = Externals
+            .Select((names, k) => CallableSignature.FromInferredPatterns($"X{k}", [.. names.Select(name => (ParameterPattern)new CaptureParameterPattern(name))]))
+            .ToArray();
+        var references = system.References
+            .Select(list => (IReadOnlyList<SignatureEquationReference>)list.Select(reference => reference.Target >= 0
+                ? new SignatureEquationReference(reference.Target, null, internalIdentities[reference.Target], reference.Guard, new Expr.Resolve("r"), "r")
+                : new SignatureEquationReference(-1, externalSignatures[reference.External], externalIdentities[reference.External], reference.Guard, new Expr.Resolve("r"), "r"))
+                .ToList())
+            .ToArray();
+        SignatureFact Compose(int equation, IReadOnlyList<(int Reference, CallableSignature Signature)> lifted)
+        {
+            var names = new List<string>(system.Own[equation]);
+            foreach (var (_, signature) in lifted)
+            {
+                foreach (var name in signature.ParameterNames)
+                {
+                    if (!names.Contains(name))
+                        names.Add(name);
+                }
+            }
+
+            IReadOnlyList<ParameterPattern> patterns = [.. names.Select(name => (ParameterPattern)new CaptureParameterPattern(name))];
+            return new SignatureFact(patterns, null, lifted.Count > 0, null, CallableSignature.FromInferredPatterns($"E{equation}", patterns));
+        }
+
+        return new SignatureSelector(references, system.IsLink, Compose, static (_, settled, _) => settled, closed,
+            new StaticQueryResourceBudget(StaticQueryLimits.Default), CancellationToken.None).Solve();
+    }
+
+    /// <summary>Whether the selector agrees with rule G6 over the whole system; asserts the facts when both select.</summary>
+    private static bool AgreesWithRuleG6(SyntheticSystem system, string trial)
+    {
+        var selection = SelectReal(system);
+        var oracle = GlobalRuleG6(system);
+        Assert.True(oracle is not null == selection.Succeeded,
+            $"{trial}: rule G6 over the whole system {(oracle is null ? "selects nothing" : "selects")}, "
+            + $"the selector {(selection.Succeeded ? "selected" : "refused")}: {system}");
+        if (oracle is null)
+            return false;
+        for (var key = 0; key < system.Count; key++)
+        {
+            Assert.True(oracle[key].SequenceEqual(selection.Facts[key].Signature.ParameterNames),
+                $"{trial}, E{key}: rule G6 gives ({string.Join(",", oracle[key])}), the selector "
+                + $"({string.Join(",", selection.Facts[key].Signature.ParameterNames)}): {system}");
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// THE INDEPENDENT ORACLE: the selector — components, a dependency-first local pass, joint regions over dependency
-    /// cones, alternative-carrying tables — must select exactly when rule G6 applied to the whole system at once selects,
-    /// and must select the same facts, on random systems of up to six equations and four links (guarded reads, cycles,
-    /// self reads, links read by their own guards, deduplicated callees).
+    /// cones (settled components carried by their selected readings, the whole cone enumerated only for a refusal's
+    /// category), alternative-carrying tables, semi-naive rounds — must select exactly when rule G6 applied to the whole
+    /// system at once selects, and must select the same facts, on random systems of up to six equations and four links
+    /// (guarded reads, cycles, self reads, links read by their own guards, deduplicated callees), and on each of them again
+    /// with independent, locally settled self-rings inside its joint cones (<see cref="WithSettledRings"/>).
     /// </summary>
     [Theory]
     [InlineData(1)]
@@ -1317,57 +1596,21 @@ public sealed class SignatureSelectionReviewRegressionTests
     public void TheSelector_AgreesWithRuleG6OverTheWholeSystem(int seed)
     {
         var random = new Random(seed);
-        var closed = new SignatureFact([], null, isLifted: false, composition: null, new CallableSignature("", []));
+        var ringRandom = new Random(-seed);
         var selected = 0;
+        var ringedSelected = 0;
         for (var trial = 0; trial < 500; trial++)
         {
             var system = RandomSystem(random);
-            var internalIdentities = Enumerable.Range(0, system.Count).Select(_ => new object()).ToArray();
-            var externalIdentities = Externals.Select(_ => new object()).ToArray();
-            var externalSignatures = Externals
-                .Select((names, k) => CallableSignature.FromInferredPatterns($"X{k}", [.. names.Select(name => (ParameterPattern)new CaptureParameterPattern(name))]))
-                .ToArray();
-            var references = system.References
-                .Select(list => (IReadOnlyList<SignatureEquationReference>)list.Select(reference => reference.Target >= 0
-                    ? new SignatureEquationReference(reference.Target, null, internalIdentities[reference.Target], reference.Guard, new Expr.Resolve("r"), "r")
-                    : new SignatureEquationReference(-1, externalSignatures[reference.External], externalIdentities[reference.External], reference.Guard, new Expr.Resolve("r"), "r"))
-                    .ToList())
-                .ToArray();
-            SignatureFact Compose(int equation, IReadOnlyList<(int Reference, CallableSignature Signature)> lifted)
-            {
-                var names = new List<string>(system.Own[equation]);
-                foreach (var (_, signature) in lifted)
-                {
-                    foreach (var name in signature.ParameterNames)
-                    {
-                        if (!names.Contains(name))
-                            names.Add(name);
-                    }
-                }
-
-                IReadOnlyList<ParameterPattern> patterns = [.. names.Select(name => (ParameterPattern)new CaptureParameterPattern(name))];
-                return new SignatureFact(patterns, null, lifted.Count > 0, null, CallableSignature.FromInferredPatterns($"E{equation}", patterns));
-            }
-
-            var selection = new SignatureSelector(references, system.IsLink, Compose, static (_, settled, _) => settled, closed,
-                new StaticQueryResourceBudget(StaticQueryLimits.Default), CancellationToken.None).Solve();
-            var oracle = GlobalRuleG6(system);
-            Assert.True(oracle is not null == selection.Succeeded,
-                $"seed {seed}, trial {trial}: rule G6 over the whole system {(oracle is null ? "selects nothing" : "selects")}, "
-                + $"the selector {(selection.Succeeded ? "selected" : "refused")}: {system}");
-            if (oracle is null)
-                continue;
-            selected++;
-            for (var key = 0; key < system.Count; key++)
-            {
-                Assert.True(oracle[key].SequenceEqual(selection.Facts[key].Signature.ParameterNames),
-                    $"seed {seed}, trial {trial}, E{key}: rule G6 gives ({string.Join(",", oracle[key])}), the selector "
-                    + $"({string.Join(",", selection.Facts[key].Signature.ParameterNames)}): {system}");
-            }
+            if (AgreesWithRuleG6(system, $"seed {seed}, trial {trial}"))
+                selected++;
+            if (AgreesWithRuleG6(WithSettledRings(system, ringRandom), $"seed {seed}, trial {trial} with settled rings"))
+                ringedSelected++;
         }
 
         // The random systems exercise both outcomes; recursive completion selects most of them.
         Assert.InRange(selected, 50, 499);
+        Assert.InRange(ringedSelected, 50, 499);
     }
 
     /// <summary>A control of the comparison: rounds that ignore their guards answer differently on some system.</summary>
@@ -1385,5 +1628,25 @@ public sealed class SignatureSelectionReviewRegressionTests
         }
 
         Assert.Fail("Guard-blind rounds went unnoticed.");
+    }
+
+    /// <summary>
+    /// A control of the comparison for SEMI-NAIVE rounds: rounds that leave a member whose read changed with its previous
+    /// names answer differently on some system, so a selector whose rounds skipped such a member would fail the oracle.
+    /// </summary>
+    [Fact]
+    public void SkippingAChangedReader_IsExposedByRuleG6()
+    {
+        var random = new Random(78);
+        for (var trial = 0; trial < 20000; trial++)
+        {
+            var system = RandomSystem(random);
+            var (correct, skipped) = (GlobalRuleG6(system), GlobalRuleG6(system, skipAChangedReader: true));
+            if (correct is null != skipped is null
+                || (correct is not null && !correct.Zip(skipped!).All(static pair => pair.First.SequenceEqual(pair.Second))))
+                return;
+        }
+
+        Assert.Fail("Rounds that skip a changed reader went unnoticed.");
     }
 }
