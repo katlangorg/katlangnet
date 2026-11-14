@@ -21,7 +21,10 @@ namespace KatLang;
 /// <para><b>Two forms, depth at most one.</b> A FLAT template stores every pattern. A COMPOSED
 /// owner signature is an owner-local head (the owner's own patterns, a small delta) followed by
 /// one FLAT shared tail template (the lifted signature many owners share): its storage and every
-/// fact derived from it cost the head, never the tail. A tail is never itself composed.</para>
+/// fact derived from it cost the head, never the tail. A tail is never itself composed, so
+/// extending a composed signature copies its local head: a chain of N distinct-name lifting links
+/// is Θ(N²) physical, and <see cref="ImplicitSignatureTemplateInterner.Compose"/> charges each copy to
+/// the operation's static ledger.</para>
 ///
 /// <para><b>No mutation route.</b> Only <see cref="IReadOnlyList{T}"/> is implemented, so a
 /// template shared by many owners cannot be changed through any of them (the baseline's per-owner
@@ -369,9 +372,32 @@ internal sealed class ConcatReadOnlyList<T>(IReadOnlyList<T> head, IReadOnlyList
 /// ordered sequence of pattern RECORD references, so two derivations of the same lifted signature
 /// share one template while two signatures with equal spellings but different declarations (other
 /// capture records, other order, other grouping) never do.
+///
+/// <para><b>Charged where it allocates (B3-5★).</b> Every pattern array the interner builds — a flat
+/// template on an intern MISS, an owner head a composition copies — is charged to the admitting
+/// operation's ledger (<paramref name="resources"/>) BEFORE it is built, at
+/// <see cref="SignatureStorageUnits"/> slots per copied pattern, so storage that grows faster than
+/// the source (a chain of distinct-name lifts copies each callee's local head) is refused as
+/// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> instead of exhausting the host. A
+/// template READ is never charged: K owners sharing one L-wide template stay O(K + L) (FE-3).
+/// <paramref name="resources"/> is null only for a template built outside any resolution (unit
+/// tests of the template shape); every resolution passes its operation's ledger.</para>
 /// </summary>
-internal sealed class ImplicitSignatureTemplateInterner(FrontEndTraversalObservations? observations)
+internal sealed class ImplicitSignatureTemplateInterner(
+    FrontEndTraversalObservations? observations,
+    StaticQueryResourceBudget? resources,
+    CancellationToken cancellationToken)
 {
+    /// <summary>
+    /// Ledger slots (64 B each) charged per signature pattern the interner copies. Measured on the
+    /// distinct-name lifting chain <c>F(i) = F(i-1) + x(i)</c> at N = 3,200 (2026-11-14 audit): about
+    /// 335 B of elaboration memory per LOGICAL lifted item (1.72 GB over N²/2 items), about 5–6
+    /// slots. The signature side — the copied head, its template facts (captures, names, first-capture
+    /// map) and its <c>CallableParameter</c>s — takes 4; the synthesized argument bundle the rewrite
+    /// builds for the same item takes the rest (<see cref="ImplicitArgumentResolver.BundleStorageUnits"/>).
+    /// </summary>
+    internal const long SignatureStorageUnits = 4;
+
     private readonly Dictionary<ContentKey, ImplicitSignatureTemplate> _flat = new();
     private readonly Dictionary<ContentKey, ImplicitSignatureTemplate?> _liftedTails = new();
     private readonly Dictionary<ParameterPattern, ParameterPattern> _groups = new(ReferenceEqualityComparer.Instance);
@@ -401,12 +427,43 @@ internal sealed class ImplicitSignatureTemplateInterner(FrontEndTraversalObserva
         var key = new ContentKey(items);
         if (!_flat.TryGetValue(key, out var template))
         {
+            // A miss retains the array and builds the template's facts over it; a hit retains nothing new.
+            Charge(items.Length, work: items.Length);
             template = ImplicitSignatureTemplate.Flat(items);
             _flat.Add(key, template);
             observations?.RecordSignatureTemplateBuilt(items.Length);
         }
 
         return template;
+    }
+
+    /// <summary>
+    /// <see cref="ImplicitSignatureTemplate.Compose"/>, charged before it allocates: exactly the head
+    /// array the composition builds — <paramref name="head"/> plus a composed
+    /// <paramref name="tail"/>'s local head, which extending copies — and nothing for an empty head,
+    /// whose signature is the tail itself.
+    ///
+    /// <para>The copy is charged as STORAGE, with one unit of work for the composition: its per-pattern
+    /// work is bounded by that storage charge, and a cyclic completion already charges each round's
+    /// composition work node by node (<c>SignatureSelector.ChargeComposition</c>). Charging the copy's
+    /// patterns to the operation-scaled work bound as well would count that work twice and refuse a
+    /// small recursive ring the envelope admits (<c>RecursiveInferenceLifecycleTests</c>' 64-member
+    /// growing ring).</para>
+    /// </summary>
+    public ImplicitSignatureTemplate Compose(ParameterPattern[] head, ImplicitSignatureTemplate tail)
+    {
+        if (head.Length != 0)
+            Charge(head.Length + (tail.IsComposed ? tail.Head.Count : 0), work: 1);
+        return ImplicitSignatureTemplate.Compose(head, tail);
+    }
+
+    private void Charge(int patterns, long work)
+    {
+        if (resources is null)
+            return;
+        var units = SignatureStorageUnits * patterns;
+        resources.Metadata(units, work, cancellationToken);
+        observations?.RecordLiftingStorageCharged(units);
     }
 
     /// <summary>

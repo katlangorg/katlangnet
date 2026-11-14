@@ -73,6 +73,10 @@ public sealed record SourceProcessingLimits
     /// GC memory. <see cref="MaxStaticStructureBytes"/> may request a lower envelope.
     /// It caps query entries at one per KiB and the shared engine/metadata ledger at one slot
     /// per 64 bytes; source admission also bounds distinct nodes and enumerated edges.
+    /// Formula-lifting storage is charged to that ledger where it is allocated, so elaboration
+    /// that grows faster than its source (a long chain of distinct-name implicit lifts) is
+    /// refused with <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> before it can
+    /// exhaust the host.
     /// Operation-scaled work/read limits remain independently active. These conservative
     /// accounting units do not measure total process memory; source, runtime and editor state
     /// need separate headroom. Hosts with tighter memory requirements configure smaller limits.

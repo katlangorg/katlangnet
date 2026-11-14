@@ -171,7 +171,7 @@ public class ParameterPatternGroupSpanTests
 
         Assert.Equal(source, ParameterPattern.GroupSource(ParameterPattern.WithStructuralItems(group, [inner])));
 
-        var frozen = new ImplicitSignatureTemplateInterner(observations: null).Freeze(group);
+        var frozen = new ImplicitSignatureTemplateInterner(observations: null, resources: null, CancellationToken.None).Freeze(group);
         Assert.NotSame(group, frozen);
         Assert.Equal(source, ParameterPattern.GroupSource(frozen));
         Assert.Equal(ExampleList, Written(Items(frozen)[0]));

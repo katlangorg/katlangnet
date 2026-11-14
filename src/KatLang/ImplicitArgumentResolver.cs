@@ -289,10 +289,35 @@ internal static partial class ImplicitArgumentResolver
         public Dictionary<Algorithm, CanonicalNameSet>? FreeReferenceNames;
         /// <summary>
         /// FE-3: the shared signature templates of this run (see <see cref="LiftSignature"/>). Run-local:
-        /// a template is shared by the owners of ONE resolution and never across parses.
+        /// a template is shared by the owners of ONE resolution and never across parses. It charges the
+        /// pattern arrays it builds to the operation's ledger (<see cref="LiftingLedger"/>).
         /// </summary>
-        public ImplicitSignatureTemplateInterner Templates => _templates ??= new(Observations);
+        public ImplicitSignatureTemplateInterner Templates => _templates ??= new(Observations, LiftingLedger, CancellationToken);
         private ImplicitSignatureTemplateInterner? _templates;
+
+        /// <summary>
+        /// The ledger formula lifting charges its storage to where it allocates it (signature templates, owner heads,
+        /// synthesized argument bundles): the admitting operation's. Every resolution entry has one —
+        /// <see cref="ResolvePrevalidated(Algorithm, FrontEndTraversalObservations?, DiagnosticBag?, HostOperations?, ModuleUnits?, StaticStructureOperation?)"/>
+        /// requires it (the eager pipeline's and the standalone host entry's, which admits its own name-resolved
+        /// operation), and <see cref="ElaborateStructuralDeferredBranch"/> is given its materialization's — so there is no
+        /// uncharged source path, and a run without one is an internal defect, never a reason to skip the charge.
+        /// </summary>
+        private StaticQueryResourceBudget LiftingLedger
+            => (StructuralOperation ?? throw new InvalidOperationException(
+                "Formula lifting requires the admitting structural operation's ledger.")).Queries.Resources;
+
+        /// <summary>
+        /// Charges one synthesized argument bundle the resolver just built — <paramref name="slots"/> arguments at
+        /// <see cref="BundleStorageUnits"/> slots each — before it is observed or retained. A shared bundle that is
+        /// reused (FE-2/FE-3) is never charged again.
+        /// </summary>
+        public void ChargeImplicitArgumentBundle(int slots)
+        {
+            var units = BundleStorageUnits * slots;
+            LiftingLedger.Metadata(units, work: slots, CancellationToken);
+            Observations?.RecordLiftingStorageCharged(units);
+        }
 
         /// <summary>The traversal observations of this run (null when none are recorded).</summary>
         public FrontEndTraversalObservations? Observations;
@@ -1476,6 +1501,15 @@ internal static partial class ImplicitArgumentResolver
     private sealed record ConditionalBranchContext(string BranchName, Pattern Pattern);
 
     /// <summary>
+    /// Ledger slots (64 B each) charged per synthesized argument of an implicit-argument bundle the resolver BUILDS
+    /// (<c>ResolverWalkMemos.BuildImplicitArgumentBundle</c> and closed bare forwarding): the argument node and its
+    /// bundle slot. With <see cref="ImplicitSignatureTemplateInterner.SignatureStorageUnits"/> for the signature side, a
+    /// logical lifted item costs 6 slots, the ≈335 B measured on the distinct-name lifting chain. A bundle served from
+    /// the region's or the run's shared memo (FE-2/FE-3) allocates nothing and is never charged.
+    /// </summary>
+    internal const long BundleStorageUnits = 2;
+
+    /// <summary>
     /// Reference-identity memo state for the walks of ONE constant rewrite context region —
     /// either one algorithm's output-rewrite phase (its visible signature map is final once
     /// the property loop completed, and its <see cref="ImplicitRewriteContext"/> is one fixed
@@ -1750,11 +1784,13 @@ internal static partial class ImplicitArgumentResolver
                     Run.SharedBundles.Add(tailKey, tailArguments);
                 }
                 var head = BuildImplicitCallArguments(composed.Head, [], context.SourceBindingKinds, context.Forwardable);
+                Run.ChargeImplicitArgumentBundle(head.Count);
                 Observations?.RecordImplicitArgumentBundleBuilt(head.Count);
                 return OutputBundle.Prepend(head, tailArguments);
             }
             var arguments = OutputBundle.From(BuildImplicitCallArguments(
                 calleePatterns, context.CallerParameterPatterns, context.SourceBindingKinds, context.Forwardable));
+            Run.ChargeImplicitArgumentBundle(arguments.Count);
             Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
             return arguments;
         }
@@ -2567,7 +2603,8 @@ internal static partial class ImplicitArgumentResolver
     /// HEAD) meet the tail only through their capture names: when none is lifted, the head filters
     /// nothing and the signature is exactly <c>head ++ tail</c> — the tail itself for an owner with
     /// no own parameter (K such owners share ONE template), otherwise a composed signature that costs
-    /// the head (<see cref="ImplicitSignatureTemplate.Compose"/>). When an own name IS lifted, the
+    /// the head (<see cref="ImplicitSignatureTemplateInterner.Compose"/>, which charges that copy — and a
+    /// composed tail's local head, which extending copies too — to the operation's static ledger). When an own name IS lifted, the
     /// owner's order is genuinely its own (its capture stays first and the lifted one is filtered),
     /// so that signature is merged per owner exactly as before and held as an immutable template.</para>
     ///
@@ -2622,8 +2659,10 @@ internal static partial class ImplicitArgumentResolver
 
         if (disjoint)
         {
-            var signature = ImplicitSignatureTemplate.Compose(own.Select(run.Templates.Freeze).ToArray(), tail);
-            run.Observations?.RecordOwnerSignatureInstance(own.Count);
+            // Charged where it allocates: the owner's head plus a composed tail's local head, which extending copies — so
+            // a chain of distinct-name links (each owner extending its callee's composed signature) meters its Θ(N²).
+            var signature = run.Templates.Compose(own.Select(run.Templates.Freeze).ToArray(), tail);
+            run.Observations?.RecordOwnerSignatureInstance(ReferenceEquals(signature, tail) ? 0 : signature.Head.Count);
             return new(signature, signature.Facts.BindingKinds, Lifted: true);
         }
 
@@ -3302,6 +3341,7 @@ internal static partial class ImplicitArgumentResolver
             return null;
 
         var arguments = OutputBundle.From(forwarded);
+        memos.Run.ChargeImplicitArgumentBundle(arguments.Count);
         memos.Run.Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
         // The callee path's block head is processed like the alias row's, so the call reaches the block this pass elaborated.
         return alg with { Output = [memos.SynthesizedImplicitCall(LoneRowCall(WithProcessedBlockHead(row, paramMap, memos), arguments))] };

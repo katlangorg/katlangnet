@@ -245,7 +245,10 @@ internal sealed class FrontEndTraversalObservations
     /// </summary>
     public long OwnerSignatureInstances { get; private set; }
 
-    /// <summary>Owner-local head slots copied by <see cref="OwnerSignatureInstances"/> (never the shared tail).</summary>
+    /// <summary>
+    /// Owner-local head slots copied by <see cref="OwnerSignatureInstances"/>: the owner's own patterns plus, when the
+    /// lifted signature it extends is itself composed, that signature's local head (never the shared flat tail).
+    /// </summary>
     public long OwnerSignatureHeadSlots { get; private set; }
 
     internal void RecordOwnerSignatureInstance(int headSlots)
@@ -268,6 +271,19 @@ internal sealed class FrontEndTraversalObservations
         OwnerSignaturesMaterialized = checked(OwnerSignaturesMaterialized + 1);
         OwnerSignatureMaterializedSlots = checked(OwnerSignatureMaterializedSlots + slots);
     }
+
+    /// <summary>
+    /// Ledger slots formula lifting charged to the operation's static ledger for the storage it allocated — signature
+    /// patterns (<c>ImplicitSignatureTemplateInterner.SignatureStorageUnits</c> each: a flat template built on an intern
+    /// miss, an owner head a composition copies) and synthesized arguments
+    /// (<c>ImplicitArgumentResolver.BundleStorageUnits</c> each) — recorded only once the ledger accepted the charge.
+    /// Every allocation site <see cref="SignatureTemplateSlotsBuilt"/>, <see cref="OwnerSignatureHeadSlots"/> and
+    /// <see cref="ImplicitArgumentSlotsBuilt"/> observe is charged, so this equals their slot counts times the weights.
+    /// </summary>
+    public long LiftingStorageUnitsCharged { get; private set; }
+
+    internal void RecordLiftingStorageCharged(long units)
+        => LiftingStorageUnitsCharged = checked(LiftingStorageUnitsCharged + units);
 
     /// <summary>
     /// Conditional branch-body REGIONS the resolver processed (<c>ImplicitArgumentResolver.ProcessAlgorithm</c>

@@ -16,7 +16,7 @@ public class Fe3HostileReviewTests
     [InlineData(true)]
     public void LiftingTemplateWithEmptyGroups_MatchesOrdinaryPatternMerge(bool nested)
     {
-        var interner = new ImplicitSignatureTemplateInterner(null);
+        var interner = new ImplicitSignatureTemplateInterner(null, resources: null, CancellationToken.None);
         ParameterPattern empty = new SequenceValueParameterPattern([]);
         var head = nested ? new SequenceValueParameterPattern([empty, new CaptureParameterPattern("h")]) : empty;
         var tail = interner.InternFlat([new CaptureParameterPattern("v")]);
@@ -185,7 +185,7 @@ public class Fe3HostileReviewTests
     [InlineData(true)]
     public void EditorMetadata_ComposesGroupedAndCollectingHeads(bool grouped)
     {
-        var interner = new ImplicitSignatureTemplateInterner(null);
+        var interner = new ImplicitSignatureTemplateInterner(null, resources: null, CancellationToken.None);
         var tail = interner.InternFlat(Enumerable.Range(0, 32).Select(i => (ParameterPattern)new CaptureParameterPattern($"v{i}")).ToArray());
         var properties = Enumerable.Range(0, 12).Select(i =>
         {
@@ -223,7 +223,7 @@ public class Fe3HostileReviewTests
     public void CollisionBindingLayers_MatchNearestDeclarationDictionary(int width)
     {
         const int levels = 16;
-        var interner = new ImplicitSignatureTemplateInterner(null);
+        var interner = new ImplicitSignatureTemplateInterner(null, resources: null, CancellationToken.None);
         var visible = new Dictionary<string, SourceSpan>(StringComparer.Ordinal);
         var signatures = new IReadOnlyList<ParameterPattern>[levels];
         var probes = new List<(int Level, string Name, SourceSpan Span, SourceSpan? Nearest)>();

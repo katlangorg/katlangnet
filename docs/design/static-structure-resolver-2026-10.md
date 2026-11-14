@@ -188,7 +188,13 @@ ledger slots; operation-scaled limits can be tighter. This retains the measured 
 witnesses; it is not a total-process heap guarantee. Hosts needing less memory set lower limits.
 A numeric, token-free ledger enforces the same envelope in conservative 64-byte bookkeeping
 slots (`MaxStorageUnits`): entries, actual subscriptions, the maximum read buffer, certificate-local graphs
-and simultaneous temporary sets, input indexes, contextual adapters, completed projection and snapshot work.
+and simultaneous temporary sets, input indexes, contextual adapters, completed projection and snapshot work,
+and formula-lifting storage, charged where it is ALLOCATED and never per logical read: 4 slots per signature
+pattern a flat template (on an intern miss) or a composed owner head copies
+(`ImplicitSignatureTemplateInterner.SignatureStorageUnits`), 2 per synthesized argument of a bundle the resolver
+builds (`ImplicitArgumentResolver.BundleStorageUnits`; a shared bundle is charged once). The weights follow the
+≈335 B per logical lifted item measured on a distinct-name lifting chain, whose links each copy their callee's
+local head (Θ(N²) physical); FE-3's K owners over one L-wide tail stay O(K + L) (`LiftingChainAdmissionTests`).
 Slot counts are a conservative accounting policy, not a byte-exact heap theorem; source/runtime/editor work
 has separate policies. Arithmetic clamps before multiplication to prevent Int64 overflow. Resource refusal
 is `StaticStructureLimitExceeded`, never A1. A failed solve/active publication invalidates unsealed facts, cached provider reads and future export.

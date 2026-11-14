@@ -246,7 +246,7 @@ public class InferredSignatureValidityTests
     [Fact]
     public void SharedTemplateFacts_ComposeTheValidatorsVerdict()
     {
-        var interner = new ImplicitSignatureTemplateInterner(observations: null);
+        var interner = new ImplicitSignatureTemplateInterner(observations: null, resources: null, CancellationToken.None);
         ParameterPattern[][] lists =
         [
             [Capture("a")],
