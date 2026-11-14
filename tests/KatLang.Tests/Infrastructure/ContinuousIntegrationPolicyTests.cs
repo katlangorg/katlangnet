@@ -807,6 +807,8 @@ public class ContinuousIntegrationPolicyTests
                 "tests the termination (hang) probe harness with trivial fixture children; no stack workload",
             ["KatLang.Tests.LocalOnlyCachePeakMemoryProcessTests"] =
                 "its children measure peak working set, a memory-retention guard for identity-partitioned run caches; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
+            ["KatLang.Tests.CallReferenceLoopRetentionProcessTests"] =
+                "its children measure peak working set, the flat-memory controls of the call-reference loop-retention pin; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
 
     /// <summary>

@@ -3239,6 +3239,8 @@ Step(0).Loop
 
 The rebuilt call is a new call, but its arguments are the very arguments of the captured one: each is computed at most once, whichever call needs it first. The rebuilding is necessary, because a call reference is a value, not a written call: `operation.while` is an error.
 
+Keep plain values, not call references, in a loop's state: a reference keeps the place where its call was written in memory, including that step's own state, so a step that passes a new reference on to the next step keeps every earlier step in memory — pass `R.Invoke()` results on instead.
+
 A few more rules complete the picture:
 
 - Obtaining `R.Algorithm` does not run the captured call or compute its arguments.

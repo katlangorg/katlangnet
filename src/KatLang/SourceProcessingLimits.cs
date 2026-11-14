@@ -80,6 +80,16 @@ public sealed record SourceProcessingLimits
     /// Operation-scaled work/read limits remain independently active. These conservative
     /// accounting units do not measure total process memory; source, runtime and editor state
     /// need separate headroom. Hosts with tighter memory requirements configure smaller limits.
+    ///
+    /// <para>Because a host can only lower it, the envelope is an absolute PROGRAM-SIZE ceiling.
+    /// Measured 2026-11-14 (method and figures: <c>docs/design/static-structure-resolver-2026-10.md</c>
+    /// § 3): an alias row <c>A1 = A2</c> costs 36 query entries, a call row <c>C1 = F(1)</c> 11 entries
+    /// and about 183 ledger slots, a constant row <c>P1 = 1</c> 3 entries. About 29,100 alias rows
+    /// reach the 1,048,576-entry cap, about 91,700 call rows reach the ledger first, and a ceiling-size
+    /// source of constant rows reaches neither. The entries of one open level grow with its providers
+    /// times the DISTINCT opened names it reads, not with the square of the providers. Near a bound a
+    /// run peaks at about 0.6-1.5 GiB of process memory with the default GC. The refusal says that the
+    /// envelope is at most 1 GiB and that a host may only lower it.</para>
     /// </summary>
     public const long MaxSupportedStaticStructureBytes = 1024L * 1024 * 1024;
 
@@ -96,12 +106,18 @@ public sealed record SourceProcessingLimits
     /// and conditional clause-family duplicate checks bounded by ordered canonical keys and binder
     /// maps, independently of any hash (SEC-03; see PatternMatchEquivalenceIndex). This is a
     /// CHARACTER ceiling, not a memory bound: front-end memory grows with the accepted source and
-    /// depends on its shape. Measured (SEC-S1, October 2026, the isolated <c>fe-mem</c> probe: one
-    /// public <see cref="Parser.Parse(string)"/> per child, Windows x64, .NET 11 RC2 workstation GC,
-    /// peak process commit, medians of three): a ceiling-size source of dense declarations peaks at
-    /// about 417-443 MiB (about 539-653 MiB before SEC-S1 trimmed pass-local retention), retaining about
-    /// 64-80 MiB of result and allocating about 1.8-2.1 GiB; the densest measured shape, a ceiling-size wide
-    /// assignment deconstruction, peaks at about 1.11 GiB (1.82 GiB before). The earlier
+    /// depends on its shape. Measured (2026-11-14 at <c>897887a1</c>, the isolated <c>fe-mem</c> probe
+    /// with its defaults: one public <see cref="Parser.Parse(string)"/> per child under a 2 GiB GC heap
+    /// hard limit, Windows x64, .NET 11.0.0 workstation GC, Release, peak process commit, medians of
+    /// three): a ceiling-size source of dense declarations peaks at about 0.88-1.23 GiB (898 MiB for
+    /// repeated expressions, 1,059 MiB for one-line functions, 1,263 MiB for constant properties),
+    /// retaining about 106-151 MiB of result and allocating about 2.4-2.5 GiB; a ceiling-size wide
+    /// assignment deconstruction now exceeds the static entry bound and is refused with
+    /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> at about 1.07 GiB. Historical (SEC-S1,
+    /// 2026-10-23, .NET 11 RC2, the same probe): the dense declarations then peaked at about 417-443 MiB
+    /// (about 539-653 MiB before SEC-S1 trimmed pass-local retention), retaining about 64-80 MiB and
+    /// allocating about 1.8-2.1 GiB, and the wide deconstruction was accepted at about 1.11 GiB (1.82 GiB
+    /// before); the growth since then is not attributed here. The earlier
     /// "600-900 MB" figure was introduced alongside a probe that also kept a separate raw parse
     /// alive; its original measurement invocation and inputs are not recorded. No default is universally safe: hosts that run concurrent
     /// parses or have a smaller memory envelope configure a lower value. The value matches

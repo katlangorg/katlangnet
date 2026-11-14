@@ -186,6 +186,46 @@ a mutable process-wide budget. The default 1-GiB envelope allows 1,048,576 entri
 ledger slots; operation-scaled limits can be tighter. This retains the measured conservative
 1-KiB entry and 64-byte metadata accounting, with ample room above the 1,000/2,000-property
 witnesses; it is not a total-process heap guarantee. Hosts needing less memory set lower limits.
+
+**Measured program-size ceiling (2026-11-14, `897887a1`).** Because a host can only lower the
+envelope, these two caps are an absolute program-size ceiling; the refusal says so ("The program
+exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it)."). Method:
+a scratch harness outside the repository ran one `KatLangEngine.Run` per fresh process (Release,
+Windows x64, .NET 11.0.0 workstation concurrent GC, no heap limit) and reported peak working set /
+peak commit in MiB (bytes divided by 1,048,576); entry counts came from the same source with a scratch counter on `StaticQueryEngine`
+entry creation. Entries are exactly linear per declaration kind, and the same at `a4b545e8`: an alias
+row `A{i} = A{i + 1}` (closed by `A{N} = 42`, output `A0`) costs 36 entries (36N + 86), a call row
+`C{i} = F({i})` beside `F(x) = x + 1` costs 11 (11N + 77), a constant row `P{i} = {i}` costs 3
+(3N + 73). The audit's figure of about 26 per alias row is not reproduced by this spelling (the
+audit's spelling is not recorded); per-row costs depend on the exact shape.
+- Alias rows reach the entry cap. 29,124 rows (443,782 characters) are accepted at 624 MiB peak
+  working set (605 MiB commit). 29,125 rows are refused with "The static queries exceeded their entry
+  bound (1048576)." at 589 MiB (565 MiB), and 40,000 at 565 MiB (543 MiB).
+- Call rows reach the ledger first, at about 183 slots per row. 91,660 rows (1,627,675 characters)
+  are accepted at 1,325 MiB (1,340 MiB); 91,661 are refused with "The static operation exceeded its
+  metadata storage bound (16777216 slots)." at the same peak. 70,000 rows are accepted at 937 MiB
+  (920 MiB). From 95,319 rows the entry cap refuses first (100,000 rows: 1,068 MiB, 1,075 MiB).
+- Constant rows reach neither bound inside the 2-MiB source ceiling. 136,000 rows (2,089,782
+  characters, about 408,000 entries) are accepted at 1,173 MiB (1,172 MiB), and 120,000 rows at
+  1,062 MiB, so other front-end and run state dominates there.
+
+These witnesses do not contradict the conservative 1-KiB entry and 64-byte slot accounting.
+Under `DOTNET_GCHeapHardLimit` the largest accepted alias program completes with a 512-MiB managed
+heap limit but not with 384 MiB. The largest accepted call-row program and the ceiling-size constant
+program complete with 768 MiB but not with 512 MiB. Default-GC process peaks include heap headroom:
+88,988 call rows peaked at 1,469-1,473 MiB in three runs. These heap-limit experiments establish that
+the measured programs can complete with a smaller managed heap; they neither measure bytes per
+query nor prove a live-memory bound for every program. The envelope remains structural accounting,
+not a process-memory guarantee. A refusal costs about what acceptance costs, because the operation
+has done its work up to the bound.
+
+Open-level entries grow with providers × DISTINCT opened names read (P × D), not P². For one block
+that opens P one-member providers and sums D ≥ 4 distinct opened names, entries are exactly
+73 + 13P + D(2P + 17) (measured for P = 16 to 128 and D = 4 to 64): two per provider and distinct
+name. Reading one name D times adds about 6 entries per occurrence, independently of P. Unread
+provider members add only their own 3 entries each, with no provider-by-member term. A program
+reaches P² only by reading P distinct names through P providers.
+
 A numeric, token-free ledger enforces the same envelope in conservative 64-byte bookkeeping
 slots (`MaxStorageUnits`): entries, actual subscriptions, the maximum read buffer, certificate-local graphs
 and simultaneous temporary sets, input indexes, contextual adapters, completed projection and snapshot work,

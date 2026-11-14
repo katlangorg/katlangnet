@@ -200,6 +200,38 @@ public sealed class StaticStructureConsumerTests
         Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, StaticStructureAdmission.Rejection(refused).Code);
     }
 
+    /// <summary>
+    /// The refusal names the exhausted counter and then says what a host can do: the envelope is at most 1 GiB and a
+    /// host may only lower it. The exact text is pinned on the parser, async parser and engine routes, and on a direct
+    /// rejection; the kind stays <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.
+    /// </summary>
+    [Fact]
+    public async Task Refusal_NamesTheExhaustedCounter_AndThatTheEnvelopeCannotBeRaised()
+    {
+        // Three alias rows need 194 entries (36 per row plus 86); a 64-KiB envelope allows 64.
+        const string source = "A0 = A1\nA1 = A2\nA2 = A3\nA3 = 42\nA0";
+        const string envelope = "The program exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it).";
+        const string expected = "Static structure analysis exceeded its resource bound. The static queries exceeded their entry bound (64). " + envelope;
+        var options = new RunOptions { SourceProcessingLimits = new() { MaxStaticStructureBytes = 64 * 1024 } };
+        foreach (var parsed in new[] { Parser.Parse(source, options), await Parser.ParseAsync(source, options) })
+        {
+            var refusal = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.StaticStructureLimitExceeded);
+            Assert.Equal(DiagnosticSeverity.Error, refusal.Severity);
+            Assert.Equal(expected, refusal.Message);
+        }
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source, options));
+        var error = Assert.Single(failure.Errors, e => e.Code == KatLangErrorCode.StaticStructureLimitExceeded);
+        Assert.Equal(expected, error.Message);
+        Assert.False(Parser.Parse(source).HasErrors);
+
+        // Every counter's own sentence comes first, and the envelope sentence follows it.
+        var direct = StaticStructureAdmission.Rejection(new StaticQueryLimitExceededException("Static source admission exceeded its edge-work envelope."));
+        Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, direct.Code);
+        Assert.Equal("Static structure analysis exceeded its resource bound. Static source admission exceeded its edge-work envelope. " + envelope, direct.Message);
+        Assert.Null(direct.Span);
+    }
+
     [Fact]
     public void PublishedAliasesDoNotRetainTheQueryOperation()
     {
