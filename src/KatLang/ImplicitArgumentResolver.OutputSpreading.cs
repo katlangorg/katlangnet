@@ -525,6 +525,9 @@ internal static partial class ImplicitArgumentResolver
     /// Reports <see cref="DiagnosticCode.OutputSpreadReferenceNeedsCall"/> at the bare reference (inside imported content,
     /// at the import site), once per reference per region. The message gives both spellings: the call, whose result is
     /// spread, and the braced read, which is one value.
+    /// <para>A transparent reference's own refused marker likewise suppresses this report, even when its target carries
+    /// a valid marker. Q3's structural endpoint differs from the selected declaration exactly for such a reference;
+    /// carriers keep their own structure. An unmarked alias still inherits its target's ordinary use-site obligation.</para>
     /// <para>A REFUSED MARKER DECIDES NOTHING AT ITS USES: a reference whose invocation endpoint is a runtime-target body
     /// (<see cref="IsRuntimeTargetEndpoint"/>, the selected class the rewrite forms its alias from, whatever the order
     /// bodies are processed in) names a declaration the rewrite makes a runtime-target alias, whose marker is refused at
@@ -536,7 +539,8 @@ internal static partial class ImplicitArgumentResolver
         if (memos.Diagnostics is not { } diagnostics
             || !(memos.OutputSpreadReferenceReports ??= new(ReferenceEqualityComparer.Instance)).Add(reference))
             return;
-        if (TryResolveCallable(reference, paramMap, memos, out _) is { } endpoint && IsRuntimeTargetEndpoint(endpoint, memos.Run))
+        if (HasRefusedReferenceMarker(reference, paramMap, memos.Run)
+            || TryResolveCallable(reference, paramMap, memos, out _) is { } endpoint && IsRuntimeTargetEndpoint(endpoint, memos.Run))
             return;
 
         var written = ExprNameRenderer.Render(reference, ExprNameMode.Open);
@@ -597,7 +601,16 @@ internal static partial class ImplicitArgumentResolver
         if (!run.StructuralOperation.AdmittedWithOutputSpreadMarkers)
             return null;
 
-        StaticDeclaration? declared = callee switch
+        if (OutputSpreadDeclarationOf(callee, paramMap, run) is not { } start)
+            return null;
+
+        var reading = ReadDeclaration(start, run, selectedLinks: false);
+        return reading.Kind == ReceiverReadingKind.Structure ? reading.Structure!.OutputSpread : null;
+    }
+
+    /// <summary>The written declaration selected before Q3 follows transparent references to its marked structure.</summary>
+    private static StaticDeclaration? OutputSpreadDeclarationOf(Expr callee, SignatureMap paramMap, ResolutionRun run)
+        => callee switch
         {
             Expr.Resolve(var name) => paramMap.TryGetValue(name, out var entry)
                 ? EntryDeclaration(entry, raw: true)
@@ -608,11 +621,21 @@ internal static partial class ImplicitArgumentResolver
                 => StructuralMemberAt(path, run.Level, StaticCycleCheck.Formation),
             _ => null,
         };
-        if (declared is not { } start)
-            return null;
 
-        var reading = ReadDeclaration(start, run, selectedLinks: false);
-        return reading.Kind == ReceiverReadingKind.Structure ? reading.Structure!.OutputSpread : null;
+    /// <summary>
+    /// A marker on a transparent reference is refused at the declaration. Read Q3's existing structural endpoint,
+    /// without a new chase or signature selection: only a reference changes that contextual identity. This guard changes
+    /// diagnostics of an already erroneous program only; spread insertion and argument roles still read the same marker.
+    /// </summary>
+    private static bool HasRefusedReferenceMarker(Expr reference, SignatureMap paramMap, ResolutionRun run)
+    {
+        if (OutputSpreadDeclarationOf(reference, paramMap, run) is not { Target.OutputSpread: not null } start)
+            return false;
+
+        var operation = run.StructuralOperation!;
+        var key = operation.ContextOf(start.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, start.Target);
+        var structure = operation.Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation));
+        return structure.Kind == StaticFactKind.Structure && structure.Scope is { } target && !ReferenceEquals(key, target);
     }
 
     /// <summary>

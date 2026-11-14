@@ -532,6 +532,32 @@ public class DeclarationOutputSpreadingTests
         Assert.Equal(refusal, diagnostic.Code);
     }
 
+    [Theory]
+    [InlineData("P* = A\n", "H = reduce(P, Add, Inc)\n1")]
+    [InlineData("P* = A\n", "H = P.reduce(Add, Inc)\n1")]
+    [InlineData("Lib = { public P* = A }\n", "H = reduce(Lib.P, Add, Inc)\n1")]
+    [InlineData("open Lib\nLib = { public P* = A }\n", "H = reduce(P, Add, Inc)\n1")]
+    public void RefusedAliasMarker_GivesNoUseSiteReport_EvenWhenItsTargetIsMarked(string declarations, string use)
+    {
+        const string target = "Q(x) = [[x]]\nA* = Q[0]\n";
+        var source = declarations + target + Reducers + use;
+        var diagnostic = Assert.Single(SourceProvenance.ParseAllowingDiagnostics(source).Diagnostics);
+        Assert.Equal(DiagnosticCode.OutputSpreadMarkerOnAlias, diagnostic.Code);
+        Assert.Contains("'P' is an alias of 'A'", diagnostic.Message);
+    }
+
+    [Fact]
+    public void RefusedAliasMarker_SuppressesOnlyItsOwnUses_RegardlessOfDeclarationOrder()
+    {
+        const string source = "Q(x) = [[x]]\nA* = Q[0]\n" + Reducers
+            + "H = reduce(P, Add, Inc)\nJ = reduce(A, Add, Inc)\nP* = A\n1";
+        var diagnostics = SourceProvenance.ParseAllowingDiagnostics(source).Diagnostics;
+        Assert.Equal(2, diagnostics.Count);
+        Assert.Single(diagnostics, d => d.Code == DiagnosticCode.OutputSpreadMarkerOnAlias);
+        var genuine = Assert.Single(diagnostics, d => d.Code == DiagnosticCode.OutputSpreadReferenceNeedsCall);
+        Assert.StartsWith("`A` is declared with `*`", genuine.Message);
+    }
+
     [Fact]
     public async Task RefusedMarkerOnAModuleHolder_GivesNoReportAtItsUses()
     {

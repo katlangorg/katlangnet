@@ -134,7 +134,10 @@ OutputSpreadMarker = "*" ;
                         written one (`reduce(P, Add, Inc)` is
                         `reduce(P(x)*, Add, Inc)`); a bare reference whose lift
                         only parameter inference decides is an error where a later
-                        builtin argument's role depends on it (write `P(…)`).
+                        builtin argument's role depends on it (write `P(…)` to
+                        call it, its result spread, or `{ P }` to read it as one
+                        value); a declaration that can never gain a parameter is
+                        read, and is no error.
                         A detached marker (`A * = …`) and a repeated one
                         (`A** = …`) are targeted errors, as is a marker on a
                         transparent or runtime-target alias, on a module holder,
