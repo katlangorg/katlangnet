@@ -73,15 +73,21 @@ internal interface IAsyncZeroArgPropertyResultCache : IZeroArgPropertyResultCach
 /// evaluator entry point routes the run through the async twin family; a run uses one of
 /// the two members throughout (sync entry points use the synchronous member, the async
 /// twin path awaits the asynchronous one), and within the async family each access is
-/// awaited before evaluation continues, so the dictionary is never touched concurrently.
+/// awaited before evaluation continues, so the store is never touched concurrently.
 /// </summary>
 internal sealed class RunScopedAsyncZeroArgPropertyResultCache(RootPropertyObservationSink? observationSink = null)
     : IAsyncZeroArgPropertyResultCache
 {
     private readonly ZeroArgPropertyPublications _results = new(observationSink);
 
-    /// <summary>Number of published entries.</summary>
+    /// <summary>
+    /// Number of entries published in this run (monotonic, <see cref="ZeroArgPropertyPublications.Count"/>:
+    /// local-only entries leave storage with their binding-context identity, never this count).
+    /// </summary>
     internal int PublishedCount => _results.Count;
+
+    /// <summary>TEST SEAM: live binding-context partitions of the published entries.</summary>
+    internal int LivePartitionCount() => _results.LivePartitionCount();
 
     /// <summary>Keys whose owning evaluation is still running (zero between accesses).</summary>
     internal int ActiveOwnerCount => _results.ActiveOwnerCount;

@@ -805,6 +805,8 @@ public class ContinuousIntegrationPolicyTests
                 "tests the probe launcher itself with trivial fixture children; no stack workload",
             ["KatLang.Tests.Infrastructure.TerminationProbeTests"] =
                 "tests the termination (hang) probe harness with trivial fixture children; no stack workload",
+            ["KatLang.Tests.LocalOnlyCachePeakMemoryProcessTests"] =
+                "its children measure peak working set, a memory-retention guard for identity-partitioned run caches; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
 
     /// <summary>

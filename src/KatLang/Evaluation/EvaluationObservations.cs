@@ -55,6 +55,16 @@ internal sealed class EvaluationObservations
         => DeconstructionFullBindCount = checked(DeconstructionFullBindCount + 1);
 
     /// <summary>
+    /// The run's own deconstruction shared-bind memo, recorded once when the run's root context is
+    /// created, so a storage test can read how the memo holds its binds
+    /// (<c>LocalOnlyCacheRetentionTests</c>). Evaluation never reads it back.
+    /// </summary>
+    internal Evaluation.Caching.RunScopedDeconstructionBindingCache? DeconstructionBindingCache { get; private set; }
+
+    internal void RecordDeconstructionBindingCache(Evaluation.Caching.RunScopedDeconstructionBindingCache cache)
+        => DeconstructionBindingCache = cache;
+
+    /// <summary>
     /// Optional observer handed to every runtime duplicate-head index the run's clause-family
     /// preparations build, so a test can read that work across the whole run or cancel at a known
     /// checkpoint through <see cref="PatternComparisonObservations.CheckpointReached"/>. Supplied by

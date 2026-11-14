@@ -2690,12 +2690,14 @@ public static partial class Evaluator
         // configuration's extended prelude (the ordinary prelude plus one ambient
         // wrapper member per operation); the budget carries the configuration, so the
         // prelude choice and the dispatch registry can never disagree within a run.
+        var deconstructionBindingCache = new RunScopedDeconstructionBindingCache();
+        observations?.RecordDeconstructionBindingCache(deconstructionBindingCache);
         return new EvalCtx(
             [budget.HostOperations?.RuntimePreludeAlgorithm ?? PreludeAlg],
             null,
             new RunServices(
                 zeroArgPropertyResultCache,
-                new RunScopedDeconstructionBindingCache(),
+                deconstructionBindingCache,
                 enableLoopOptimization,
                 loopDiagnostics,
                 enableSequencePipelineOptimization,

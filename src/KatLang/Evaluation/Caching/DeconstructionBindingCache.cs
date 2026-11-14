@@ -157,14 +157,21 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
 /// </summary>
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {
-    private readonly Dictionary<DeconstructionBindingExecution, IReadOnlyDictionary<string, NeedCell>> _results =
-        new(DeconstructionBindingCacheKeyComparer.Instance);
+    // Stored binds, partitioned by the binding-context identity of their SOURCE entry
+    // (PartitionedMap): a bind over a local-only source is stored while that identity is reachable, a
+    // bind over an exported source for the run. The comparer compares that identity by reference
+    // (through the source key), so no execution can reach a bind after its identity is gone.
+    private readonly PartitionedMap<DeconstructionBindingExecution, IReadOnlyDictionary<string, NeedCell>> _results =
+        new(DeconstructionBindingCacheKeyComparer.Instance, BindingContextPartitions.OfDeconstruction);
 
-    // Group identity -> number of its binds currently running (absent when none).
+    // Transient: group identity -> number of its binds currently running (absent when none).
     private readonly Dictionary<object, int> _runningBinds = new(ReferenceEqualityComparer.Instance);
 
-    /// <summary>Number of stored binds.</summary>
-    internal int Count => _results.Count;
+    /// <summary>Number of binds stored in this run (monotonic: a stored bind is never removed).</summary>
+    internal int Count => BindingContextPartitions.SaturatedCount(_results.AddedCount);
+
+    /// <summary>TEST SEAM: live binding-context partitions of the stored binds.</summary>
+    internal int LivePartitionCount() => _results.LivePartitionCount();
 
     /// <summary>Number of groups with a bind still running (zero between accesses).</summary>
     internal int RunningGroupCount => _runningBinds.Count;
@@ -216,7 +223,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
     /// MIRROR OF <see cref="GetOrBind"/> — keep in lock-step: same key, same store,
     /// same nested-bind rule, same never-store-errors rule. One run drives evaluation through exactly one of the
     /// sync/async evaluator families, and within the async family each bind is awaited
-    /// before evaluation continues, so the dictionary is never touched concurrently.
+    /// before evaluation continues, so the store is never touched concurrently.
     /// </summary>
     public async ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
