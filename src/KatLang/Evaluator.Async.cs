@@ -1573,7 +1573,7 @@ public static partial class Evaluator
             : EvalResult<Result>.Ok(countedR.Value.Value);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalAlgOutputCountedCore"/> / <see cref="EvalAlgOutputCounted"/> — keep in lock-step.</summary>
+    /// <summary>MIRROR OF <see cref="EvalAlgOutputCountedCore"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalAlgOutputCountedCoreAsync(
         Algorithm alg,
         EvalCtx ctx,
@@ -1586,7 +1586,7 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// MIRROR OF <see cref="EvalAlgOutputCore"/> / <see cref="EvalAlgOutputCore"/> — keep in
+    /// MIRROR OF <see cref="EvalAlgOutputCore"/> — keep in
     /// lock-step. The synchronous wrapper projects <see cref="EvalAlgOutputCountedCore"/>;
     /// this async twin projects the identical counted field from the shared prepared core
     /// directly, avoiding a redundant async wrapper without owning any semantics.
@@ -1998,7 +1998,7 @@ public static partial class Evaluator
             : EvalResult<CountedResult>.Ok(new CountedResult(propertyR.Value.Value, propertyR.Value.EmittedCount));
     }
 
-    /// <summary>MIRROR OF the <see cref="ResolvedLexicalProperty"/> overload of <c>EvalZeroArgPropertyAccessCounted</c> — keep in lock-step.</summary>
+    /// <summary>MIRROR OF <see cref="EvalZeroArgPropertyAccessCounted(ResolvedLexicalProperty, EvalCtx, IReadOnlyList{ValueTuple{string, Result}})"/> — keep in lock-step.</summary>
     private static ValueTask<EvalResult<CountedResult>> EvalZeroArgPropertyAccessCountedAsync(
         ResolvedLexicalProperty resolvedProperty,
         EvalCtx ctx,

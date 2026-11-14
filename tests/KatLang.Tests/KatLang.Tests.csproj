@@ -16,6 +16,10 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- TwinNormalizationTests parse src/KatLang/ with Roslyn syntax trees (the MIRROR OF drift guard).
+         Pinned to the compiler of the .NET 11.0.100 SDK (5.12), so every C# feature the product uses parses;
+         syntax only — no workspace, no compilation, no analyzers. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.12.0" />
   </ItemGroup>
 
   <ItemGroup>

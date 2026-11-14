@@ -88,7 +88,7 @@ internal static class FrontEndPipeline
         PatternComparisonObservations? comparisonObservations,
         FrontEndTraversalObservations? traversalObservations = null)
     {
-        // MIRROR OF Process(string, RunOptions?) — keep in lock-step; only module
+        // MIRROR OF Process(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?) — keep in lock-step; only module
         // elaboration is awaited.
         var allowedHosts = NormalizeAllowedHosts(options?.AllowedHosts);
 

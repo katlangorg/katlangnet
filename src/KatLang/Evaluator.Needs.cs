@@ -1769,7 +1769,7 @@ public static partial class Evaluator
         return new EvalError.NoMatchingBranch(name.Render(ctx));
     }
 
-    /// <summary>MIRROR OF the synchronous family driver; shared operations own every binding rule.</summary>
+    /// <summary>MIRROR OF <see cref="BindNeedFamilySupplyCounted"/>, the synchronous family driver; shared operations own every binding rule.</summary>
     private static async ValueTask<EvalResult<NeedFamilyActivation>> BindNeedFamilySupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
         CallDiagnosticName name, bool asynchronous)
