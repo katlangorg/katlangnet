@@ -2250,7 +2250,7 @@ internal static class PropertyDependencyGraphBuilder
                 // The summary memo alone materializes their known owner-name set.
                 continue;
             }
-            if (node is Expr.DotCall edge && TryGetStaticMemberPath(edge, out var head, out _)) heads.Add(head);
+            if (node is Expr.DotCall edge && TryGetStaticMemberPath(edge, out var head, out _, out _)) heads.Add(head);
             for (var i = 0; AstStructuralPreflight.TryGetChild(node, i, out var child); i++) pending.Push(child);
         }
         // Over-approximate the questions, never a selected binding, alias, receiver or provider.
@@ -2652,19 +2652,13 @@ internal static class PropertyDependencyGraphBuilder
     /// member <c>string</c>, and a receiver the navigation stops at (the member is absent: the
     /// edge is the intrinsic, which reads that receiver's VALUE) charges its output exactly as
     /// the bare target seed would. False for every other receiver shape (a parameter, a block,
-    /// a capture, a call).
+    /// a capture, a call). <paramref name="intermediates"/> are the argumentless edges strictly
+    /// between the head and the final edge (<see cref="MemberPathSpine"/>).
     /// </summary>
-    private static bool TryGetStaticMemberPath(Expr.DotCall dotCall, out string head, out IReadOnlyList<string> members)
+    private static bool TryGetStaticMemberPath(Expr.DotCall dotCall, out string head, out IReadOnlyList<string> members,
+        out IReadOnlyList<Expr.DotCall> intermediates)
     {
-        var reversed = new List<string> { dotCall.Name };
-        var current = dotCall.Target.UnwrapGraceOperand();
-        while (current is Expr.DotCall { Args: null } edge)
-        {
-            reversed.Add(edge.Name);
-            current = edge.Target.UnwrapGraceOperand();
-        }
-
-        if (current is Expr.Resolve(var name))
+        if (MemberPathSpine(dotCall, out var reversed, out intermediates) is Expr.Resolve(var name))
         {
             reversed.Reverse();
             head = name;
@@ -2674,7 +2668,34 @@ internal static class PropertyDependencyGraphBuilder
 
         head = string.Empty;
         members = [];
+        intermediates = [];
         return false;
+    }
+
+    /// <summary>
+    /// The spine both path recognizers share: the head expression of a dot chain, the step names from the final
+    /// edge back to the first (<paramref name="reversed"/>), and the INTERMEDIATE edges, the argumentless edges
+    /// strictly between the head and the final edge, outermost first. Each intermediate edge is a selection of
+    /// its own: where its receiver's structural lookup misses, the evaluator calls that edge's lexical fallback
+    /// (<c>ResolveDotReceiver</c> hands the edge to <c>ResolveAlg</c>) before the path continues by value, so a
+    /// path seed charges every intermediate fallback that may be selected, exactly like the final edge's
+    /// (<see cref="CollectDotCallSummarySeed"/>).
+    /// </summary>
+    private static Expr MemberPathSpine(Expr.DotCall dotCall, out List<string> reversed,
+        out IReadOnlyList<Expr.DotCall> intermediates)
+    {
+        reversed = [dotCall.Name];
+        List<Expr.DotCall>? edges = null;
+        var current = dotCall.Target.UnwrapGraceOperand();
+        while (current is Expr.DotCall { Args: null } edge)
+        {
+            reversed.Add(edge.Name);
+            (edges ??= []).Add(edge);
+            current = edge.Target.UnwrapGraceOperand();
+        }
+
+        intermediates = edges is null ? [] : edges;
+        return current;
     }
 
     /// <summary>
@@ -2682,31 +2703,32 @@ internal static class PropertyDependencyGraphBuilder
     /// <see cref="TryGetStaticMemberPath"/>), with the block's completed context. The evaluator selects the path's
     /// members from the block wired under the reading scope, checking each one's accessibility, and reads the block's
     /// VALUE only when the first step selects nothing, so the path is charged like a name-headed one
-    /// (<see cref="PendingSelection.BlockHead"/>). False without a published completed body for the block (its output
-    /// is then charged as before) and for a loaded module's root, which is rooted at the prelude.
+    /// (<see cref="PendingSelection.BlockHead"/>). A recognized block must have published body facts in this context;
+    /// their absence is an invariant failure, never permission to charge the block's output instead. False for a
+    /// loaded module's root, which is rooted at the prelude. The path's
+    /// <paramref name="intermediates"/> are those of <see cref="MemberPathSpine"/>, as for a name-headed path.
+    /// <para>A block written in a hoisted deconstruction right-hand side is found here too: the source's rows are
+    /// walked with the memos of the level that declares the deconstruction, and that level's completed context is
+    /// the one the static facts declare the block in (the source's own context holds no written expression).</para>
     /// </summary>
     private static bool TryGetBlockMemberPath(Expr.DotCall dotCall, SummaryWalkMemos memos,
-        out CompletedStructureContext block, out string[] members)
+        out CompletedStructureContext block, out string[] members, out IReadOnlyList<Expr.DotCall> intermediates)
     {
         block = null!;
         members = [];
+        intermediates = [];
         if (memos.CompletedContext is not { } parent) return false;
-        var reversed = new List<string> { dotCall.Name };
-        var current = dotCall.Target.UnwrapGraceOperand();
-        while (current is Expr.DotCall { Args: null } edge)
-        {
-            reversed.Add(edge.Name);
-            current = edge.Target.UnwrapGraceOperand();
-        }
-
-        if (current is not Expr.AlgorithmExpr(var body) || body.IsModuleRoot || body is not (Algorithm.User or Algorithm.Alias))
+        if (MemberPathSpine(dotCall, out var reversed, out var edges) is not Expr.AlgorithmExpr(var body)
+            || body.IsModuleRoot || body is not (Algorithm.User or Algorithm.Alias))
             return false;
         var context = memos.SharedMemo.RequirementContext(ChildContext(parent, body), body)!;
-        if (context.Facts.Facts(context.Key) is not { Body: not null }) return false;
+        if (context.Facts.Facts(context.Key) is not { Body: not null })
+            throw new InvalidOperationException("A completed block-head requirement body is unavailable.");
         memos.SharedMemo.UseContext();
         reversed.Reverse();
         block = context;
         members = [.. reversed];
+        intermediates = edges;
         return true;
     }
 
@@ -2994,8 +3016,18 @@ internal static class PropertyDependencyGraphBuilder
     /// its own requirements — so a container reading a captured member through
     /// <c>Inner.X</c> is itself local-only — and a receiver the walk stops at (the member
     /// is absent: the edge falls back) charges its output exactly as the bare target seed
-    /// did. A receiver of any other shape (a parameter, a block, a capture, a call, the
-    /// <c>string</c> intrinsic) is a value and keeps charging its own seed.
+    /// did. An inline-block head is navigated the same way, from the block itself
+    /// (<see cref="TryGetBlockMemberPath"/>). A receiver of any other shape (a parameter, a
+    /// capture, a call, the <c>string</c> intrinsic) is a value and keeps charging its own seed.
+    /// <para>EVERY edge of a recognized path is charged its lexical fallback, not only the
+    /// final one: the path is one pending reference over all its steps, and navigation
+    /// settles the members it selects, so each intermediate edge (<c>Box.S.T</c> inside
+    /// <c>Box.S.T.U</c>) contributes its own fallback seed here whenever that fallback MAY be
+    /// selected. The evaluator calls the fallback <c>T(Box.S)</c> where <c>S</c> lacks
+    /// <c>T</c> and continues by value, so <c>T</c>'s requirements are the path's; a path that
+    /// dropped them left its reader exported and cached run-wide across activations. A
+    /// declared structural hit is stamped NEVER, so an ordinary path (<c>Lib.Sub.Q</c>) charges
+    /// no fallback at all. The cost is one leaf walk per intermediate edge.</para>
     /// <para>The stored lexical-fallback identity is an ordinary elaborated name expression
     /// (Resolve/Param) and participates in dependency analysis EXACTLY like a written
     /// callee name — through this same walk with the enclosing attribution — whenever the
@@ -3019,21 +3051,31 @@ internal static class PropertyDependencyGraphBuilder
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
-        var seed = TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers)
-            ? new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers, [])])
-            : TryGetBlockMemberPath(dotCall, memos, out var block, out var blockMembers)
-                ? new SummarySeed(pendingReferences: [new PendingReference(blockMembers[0], blockMembers[1..], [],
-                    origin: block, selection: PendingSelection.BlockHead)])
-                : CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
+        SummarySeed seed;
+        IReadOnlyList<Expr.DotCall> intermediates;
+        if (TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers, out intermediates))
+            seed = new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers, [])]);
+        else if (TryGetBlockMemberPath(dotCall, memos, out var block, out var blockMembers, out intermediates))
+            seed = new SummarySeed(pendingReferences: [new PendingReference(blockMembers[0], blockMembers[1..], [],
+                origin: block, selection: PendingSelection.BlockHead)]);
+        else
+            // Not a path: the target is walked as an expression, so every inner edge is charged by its own visit.
+            seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
-        if (dotCall.LexicalFallbackMayBeSelected())
+        // The final edge, then each intermediate edge of a recognized path (none otherwise).
+        ChargeFallback(dotCall);
+        foreach (var edge in intermediates)
+            ChargeFallback(edge);
+
+        void ChargeFallback(Expr.DotCall edge)
         {
-            seed.UnionWith(CollectSummarySeed(
-                dotCall.EffectiveLexicalFallback,
-                localPropertySummaries,
-                ownedHere,
-                memos,
-                inTransparentContext));
+            if (edge.LexicalFallbackMayBeSelected())
+                seed.UnionWith(CollectSummarySeed(
+                    edge.EffectiveLexicalFallback,
+                    localPropertySummaries,
+                    ownedHere,
+                    memos,
+                    inTransparentContext));
         }
 
         if (dotCall.Args is { } argsOpt)

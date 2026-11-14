@@ -280,6 +280,7 @@ public static class SemanticModelBuilder
             new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<Algorithm, IReadOnlyList<VisibleSymbol>> _memberSymbolCache =
             new(ReferenceEqualityComparer.Instance);
+        private Dictionary<Algorithm, HashSet<Algorithm>>? _deconstructionSourceAlgorithms;
         private readonly List<ScopeVisibility> _scopeVisibilities = [];
         private readonly List<ScopeRegionBuilder> _regionStack = [];
 
@@ -1677,7 +1678,7 @@ public static class SemanticModelBuilder
         // captured property, an absent required owner proves that the receiver cannot be reached
         // from this site. This is only a static prerequisite: runtime activation checks remain the
         // evaluator's job. Compare contextual owners, never a same-named parameter at another owner.
-        private static bool IsRuntimePropertyReceiver(Property property, StaticScopeKey? key, StaticLookupFacts facts, ScopeFrame scope)
+        private bool IsRuntimePropertyReceiver(Property property, StaticScopeKey? key, StaticLookupFacts facts, ScopeFrame scope)
         {
             if (key is null || facts.Facts(key)?.Receiver.Kind != StaticFactKind.Runtime)
                 return false;
@@ -1689,10 +1690,19 @@ public static class SemanticModelBuilder
 
             foreach (var requirement in requirements)
             {
+                // A capture position counts RUNTIME scope levels. The completed key chain holds no level for a hoisted
+                // deconstruction source, so a body written in such a right-hand side stands two levels below its
+                // declaring key; a position that lands between two keys names no owner.
                 var owner = key.Parent;
-                for (var depth = 0; depth < requirement.OwnerDepth && owner is not null; depth++)
+                var remaining = requirement.OwnerDepth;
+                while (remaining > 0 && owner is not null)
+                {
+                    remaining -= owner.Parent is { } declaring && facts.Facts(owner)?.Body is { } body
+                        && facts.Facts(declaring)?.Body is { } declaringBody
+                        && IsDeconstructionSourceAlgorithm(declaringBody, body) ? 2 : 1;
                     owner = owner.Parent;
-                if (requirement.OwnerDepth < 0 || owner is null
+                }
+                if (remaining != 0 || owner is null
                     || facts.Facts(owner)?.Parameters.Contains(requirement.Name) != true)
                     return false;
                 var available = false;
@@ -1707,6 +1717,14 @@ public static class SemanticModelBuilder
                     return false;
             }
             return true;
+        }
+
+        private bool IsDeconstructionSourceAlgorithm(Algorithm owner, Algorithm body)
+        {
+            var index = _deconstructionSourceAlgorithms ??= new(ReferenceEqualityComparer.Instance);
+            if (!index.TryGetValue(owner, out var algorithms))
+                index.Add(owner, algorithms = AstHelpers.DeconstructionSourceRowAlgorithms(owner, _observations));
+            return algorithms.Contains(body);
         }
 
         private static PropertyInfo? GetLexicalDotFallbackPropertyInfo(SymbolDefinition symbol)

@@ -892,6 +892,12 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSemanticModelExpressionVisit()
         => SemanticModelExpressionVisits = checked(SemanticModelExpressionVisits + 1);
 
+    /// <summary>Owner properties and distinct row nodes inspected to index deconstruction source algorithms.</summary>
+    public long SemanticDeconstructionSourceIndexNodes { get; private set; }
+
+    internal void RecordSemanticDeconstructionSourceIndexNode()
+        => SemanticDeconstructionSourceIndexNodes = checked(SemanticDeconstructionSourceIndexNodes + 1);
+
     /// <summary>
     /// Call and dot-call argument SLOTS the semantic model builder dispatched, memo hits included: one
     /// analysis per (argument bundle, frame, region), so a bundle shared by K lifted call nodes (FE-2)

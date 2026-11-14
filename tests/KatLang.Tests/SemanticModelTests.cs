@@ -4,6 +4,27 @@ namespace KatLang.Tests;
 
 public class SemanticModelTests
 {
+    [Fact]
+    public void RuntimeReferenceInNestedDeconstructionSources_RetainsItsLexicalFallback()
+    {
+        const string source = """
+            Pair(v) = (v, v + 1)
+            F(y) = {
+              a, b = {
+                c, d = { public L = y }.L.Pair
+                c, d
+              }
+              a, b
+            }
+            F(1)
+            """;
+        var model = SemanticModelBuilder.Build(SourceProvenance.ParseValid(source).Parsed);
+        var member = Assert.Single(model.IdentifierResolutions,
+            resolution => resolution.Occurrence is { Kind: OccurrenceKind.DotMemberReference, Name: "Pair" });
+        Assert.Equal(IdentifierClassification.PropertyReference, member.Classification);
+        Assert.Same(Assert.Single(model.FindDeclarations("Pair")), member.ResolvedDeclaration);
+    }
+
     /// <summary>
     /// Final audit (September 2026): the parser's recovery placeholder for a malformed
     /// binding pattern (`F(*) = …` binds a spanless synthetic parameter so the clause keeps

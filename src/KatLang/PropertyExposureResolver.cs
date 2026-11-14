@@ -35,7 +35,8 @@ internal static class PropertyExposureResolver
             ElaboratedPropertyScope propertyScope,
             IReadOnlyDictionary<string, RequirementSet> summaries,
             IReadOnlySet<string>? parameters = null,
-            Algorithm? algorithm = null)
+            Algorithm? algorithm = null,
+            int parentDistance = 1)
         {
             Algorithm = algorithm;
             Parameters = parameters ?? NoParameters;
@@ -44,10 +45,19 @@ internal static class PropertyExposureResolver
             Summaries = summaries;
             Root = parent is null ? this : parent.Root;
             Depth = parent is null ? 0 : parent.Depth + 1;
+            ParentDistance = parentDistance;
         }
 
         /// <summary>The number of levels above this one.</summary>
         public int Depth { get; }
+
+        /// <summary>
+        /// The number of RUNTIME scope levels from this level to <see cref="Parent"/>: 1, or 2 for a level whose
+        /// algorithm is written in a hoisted deconstruction right-hand side (see
+        /// <see cref="ExposureWalkMemos.NestedDistance"/>). Only <see cref="OwnerDepth"/> reads it: the lookup
+        /// chain, <see cref="Depth"/> and every settlement position are those of the written owner.
+        /// </summary>
+        public int ParentDistance { get; }
 
         private static readonly IReadOnlySet<string> NoParameters = new HashSet<string>(StringComparer.Ordinal);
 
@@ -134,11 +144,15 @@ internal static class PropertyExposureResolver
             }
         }
 
-        /// <summary>The distance from this level to the level whose scope is <paramref name="owner"/>; -1 when off the chain.</summary>
+        /// <summary>
+        /// The distance from this level to the level whose scope is <paramref name="owner"/>, in the RUNTIME scope
+        /// levels the evaluators' accessibility law counts (<see cref="ParentDistance"/> per step); -1 when off the
+        /// chain.
+        /// </summary>
         public int OwnerDepth(ElaboratedPropertyScope? owner)
         {
             var depth = 0;
-            for (var level = this; level is not null; level = level.Parent, depth++)
+            for (var level = this; level is not null; depth += level.ParentDistance, level = level.Parent)
                 if (ReferenceEquals(level.PropertyScope, owner))
                     return depth;
             return -1;
@@ -452,11 +466,38 @@ internal static class PropertyExposureResolver
             {
                 var familyScope = ElaboratedScopeLookup.CreateScope(family, Scope.PropertyScope);
                 region = new ExposureWalkMemos(SummaryMemo, Observations,
-                    new SummaryScope(Scope, familyScope, NoSummaries, context.Names, family), Run);
+                    new SummaryScope(Scope, familyScope, NoSummaries, context.Names, family, NestedDistance), Run);
                 byBinders[key] = region;
             }
             return region;
         }
+
+        /// <summary>
+        /// The number of RUNTIME scope levels from an algorithm written in this region's expressions to
+        /// <see cref="Scope"/>: 1, except in the region of a hoisted deconstruction right-hand side
+        /// (<see cref="ForDeconstructionSourceRows"/>), where it is 2.
+        /// </summary>
+        public int NestedDistance { get; private init; } = 1;
+
+        /// <summary>
+        /// The region of this level's hoisted deconstruction right-hand sides (<c>a, b = RHS</c>). Their rows are
+        /// the written owner's for every lookup, so the region keeps this one's <see cref="Scope"/>: same visible
+        /// summaries, same opens, same completed context. But the evaluators evaluate the rows as the output of the
+        /// synthetic source property, a parameterless scope level of its own between the owner and whatever the
+        /// rows nest: a block written there is wired under the source, not under the owner. Capture positions are
+        /// read on that runtime chain (<c>IsAccessibleFrom</c>; Lean: <c>memberAccessible?</c>), so every level
+        /// opened from this region stands one more level away from <see cref="Scope"/>
+        /// (<see cref="SummaryScope.ParentDistance"/>). A position counted on the written chain alone named the
+        /// source's level, which binds nothing, and the access of a captured member selected from such a block was
+        /// refused inside its own owner's call. One region per level: its rows share one context.
+        /// </summary>
+        public ExposureWalkMemos ForDeconstructionSourceRows()
+            => _deconstructionSourceRows ??= new ExposureWalkMemos(SummaryMemo, Observations, Scope, Run)
+            {
+                NestedDistance = NestedDistance + 1,
+            };
+
+        private ExposureWalkMemos? _deconstructionSourceRows;
 
         public readonly PropertyDependencyGraphBuilder.SummaryMemo SummaryMemo = summaryMemo;
 
@@ -473,7 +514,8 @@ internal static class PropertyExposureResolver
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
         FrontEndTraversalObservations? observations,
         ExposureRun run,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext? completedContext = null,
+        int parentDistance = 1)
         => algorithm switch
         {
             // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: its exposure is
@@ -484,7 +526,8 @@ internal static class PropertyExposureResolver
             // A callable alias is a scope body like a user algorithm's — its own opens and
             // declarations, and its one row, the target reference it reads — so its exposure is
             // computed from that read exactly as a body whose one row names its target.
-            Algorithm.User or Algorithm.Alias => ProcessScopeBody(algorithm, parent, summaryMemo, observations, run, completedContext),
+            Algorithm.User or Algorithm.Alias => ProcessScopeBody(algorithm, parent, summaryMemo, observations, run, completedContext,
+                parentDistance),
             // A family reached outside any region (a host root, or a deferred branch's own
             // demand-time elaboration) opens a region of its own.
             Algorithm.Conditional conditional => ProcessConditionalAlgorithm(
@@ -515,7 +558,8 @@ internal static class PropertyExposureResolver
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
         FrontEndTraversalObservations? observations,
         ExposureRun run,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext? completedContext = null,
+        int parentDistance = 1)
     {
         FrontEndStack.Ensure();
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
@@ -552,7 +596,7 @@ internal static class PropertyExposureResolver
         // summary map. That closure can be transitive or cyclic (mutually opening libraries
         // included), so the exposure pass solves the level's least fixed point before rewriting
         // children with the final summaries (FE-4a: dependency-driven, over canonical sets).
-        var finalLevel = new SummaryScope(parent, levelScope, summaries, parameterNames, algorithm);
+        var finalLevel = new SummaryScope(parent, levelScope, summaries, parameterNames, algorithm, parentDistance);
         if (algorithm.Properties.Count > 0)
             new LevelSolver(summaryGraph, finalLevel, summaries,
                     new PendingResolution(walkMemos, run.Requirements, finalLevel, run.Settlements, run.CancellationToken), run.Requirements, observations,
@@ -567,8 +611,10 @@ internal static class PropertyExposureResolver
         for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
         {
             var property = algorithm.Properties[propertyIndex];
+            // A hoisted source's rows are this level's own written rows, rewritten in their own region: what they
+            // nest is wired below the source at runtime (ExposureWalkMemos.ForDeconstructionSourceRows).
             var rewrittenPropertyValue = property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source
-                ? source with { Output = RewriteExprList(source.Output, memos) }
+                ? source with { Output = RewriteExprList(source.Output, memos.ForDeconstructionSourceRows()) }
                 : ProcessSharedNestedAlgorithm(property.Value, memos);
 
             // Equal final summaries are one canonical set, and the run materializes each distinct
@@ -620,7 +666,7 @@ internal static class PropertyExposureResolver
                         memos.Scope,
                         memos.SummaryMemo,
                         memos.Observations,
-                        memos.Run, completedContext);
+                        memos.Run, completedContext, memos.NestedDistance);
                 if (region is not null)
                 {
                     memos.Observations?.RecordExposureSharedRegionExpansion();
@@ -639,23 +685,28 @@ internal static class PropertyExposureResolver
     /// summaries over the body's free names and owner positions RELATIVE to the level, so a name's read is the level
     /// that declares it (the final summaries and members of one exact level), or the relative position of the level that binds
     /// it as a parameter; the depth positions what those summaries carry; and a name no direct level answers reaches the
-    /// opens of the chain, exactly the nearest level with opens onward. Two contexts with equal regions rewrite the body
-    /// to the same metadata, so the second holds the first's rewritten object and retargeting records it (no view of its own).
+    /// opens of the chain, exactly the nearest level with opens onward. The body's runtime distance to that level
+    /// (<see cref="ExposureWalkMemos.NestedDistance"/>) shifts every capture position it records, so it is part of the region:
+    /// one body held by a deconstruction right-hand side and by an ordinary row of the same level is two regions. Two contexts
+    /// with equal regions rewrite the body to the same metadata, so the second holds the first's rewritten object and
+    /// retargeting records it (no view of its own).
     /// </summary>
     private sealed class SharedExposureRegion : IEquatable<SharedExposureRegion>
     {
         private readonly Algorithm _body;
         private readonly int _depth;
+        private readonly int _distance;
         private readonly SummaryScope? _opens;
         private readonly (object? Declaring, int Owner)[] _names;
         private readonly int _hash;
 
-        private SharedExposureRegion(Algorithm body, int depth, SummaryScope? opens, (object?, int)[] names)
+        private SharedExposureRegion(Algorithm body, int depth, int distance, SummaryScope? opens, (object?, int)[] names)
         {
-            (_body, _depth, _opens, _names) = (body, depth, opens, names);
+            (_body, _depth, _distance, _opens, _names) = (body, depth, distance, opens, names);
             var hash = new HashCode();
             hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(body));
             hash.Add(depth);
+            hash.Add(distance);
             hash.Add(opens is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(opens));
             foreach (var (declaring, owner) in names)
             {
@@ -686,12 +737,12 @@ internal static class PropertyExposureResolver
             if (reachesOpens)
                 for (var at = scope; at is not null && opens is null; at = at.Parent)
                     if (at.PropertyScope.Opens.Count > 0) opens = at;
-            return new(body, scope.Depth, opens, names);
+            return new(body, scope.Depth, memos.NestedDistance, opens, names);
         }
 
         public bool Equals(SharedExposureRegion? other)
         {
-            if (other is null || !ReferenceEquals(_body, other._body) || _depth != other._depth
+            if (other is null || !ReferenceEquals(_body, other._body) || _depth != other._depth || _distance != other._distance
                 || !ReferenceEquals(_opens, other._opens) || _names.Length != other._names.Length) return false;
             for (var index = 0; index < _names.Length; index++)
                 if (!ReferenceEquals(_names[index].Declaring, other._names[index].Declaring) || _names[index].Owner != other._names[index].Owner)

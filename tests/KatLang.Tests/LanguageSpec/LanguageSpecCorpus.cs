@@ -4156,6 +4156,63 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "dot-path-fallback-edges-charge-their-callee",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  Box = { public S = 5 }\n  A = Box.S.T.U + 0\n  A\n}\nF(1), F(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6\n7",
+            ExpectedRaw = "S[6, 7]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  T(v) = v + y\n  U(v) = v\n  Box = { public S = 5 }\n  A = Box.S.T.U + 0\n  A\n}\nF(1), F(2), F.A", "err localOnlyProperty"),
+                new SpecProbe("F(y) = {\n  T(v) = v + y\n  U(v) = v\n  Box = { public S = 1\n    5 }\n  A = Box.T.U + 0\n  A\n}\nF(1), F(2)", "ok raw=S[6, 7] n=2"),
+                new SpecProbe("F(y) = {\n  T(v) = v + y\n  Box = { public S = 5 }\n  A = Box.S.T + 0\n  A\n}\nF(1), F(2)", "ok raw=S[6, 7] n=2"),
+                new SpecProbe("F(y) = {\n  Lib = { public Sub = { public Q = 4 } }\n  Sub(v) = v + y\n  Q(v) = v + y\n  A = Lib.Sub.Q + 0\n  A\n}\nF(1), F(2), F.A", "ok raw=S[4, 4, 4] n=3"),
+            ],
+            Notes = "Independent audit 2026-11-14 (inline-block-head-exposure.sibling-intermediate-fallback): a recognized static member path charged only its FINAL edge's lexical fallback. Formerly `6, 6`, and `F(1), F(2), F.A` gave `6, 6, 6`.",
+            Explanation = "A dot path is read step by step. `Box.S` selects the declared member `S`, but `S` declares no `T`, so `.T` falls back to the call `T(Box.S)`, and `.U` then to `U(…)`. Every step that may fall back needs whatever its callee needs: `T` reads `F`'s `y`, so `A = Box.S.T.U + 0` depends on the call of `F` it is read in, and `F(1), F(2)` is `6, 7`. Outside a call of `F` there is no `y` to read, so `F.A` is refused. A step that selects a declared member calls nothing: beside same-named callables that read `y`, `Lib.Sub.Q` is still a plain constant readable as `F.A`.",
+        },
+        new()
+        {
+            Id = "dot-path-fallback-edges-inline-block-head",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  T(v) = v + y\n  U(v) = v\n  A = { public S = 5 }.S.T.U + 0\n  A\n}\nF(1), F(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6\n7",
+            ExpectedRaw = "S[6, 7]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  T(v) = v + y\n  U(v) = v\n  A = { public S = 5 }.S.T.U + 0\n  A\n}\nF(1), F(2), F.A", "err localOnlyProperty"),
+                new SpecProbe("F(y) = {\n  Twice(v) = v * 2\n  A = { public Q = 1\n    y }.Twice + 0\n  A\n}\nF(1), F(2)", "ok raw=S[2, 4] n=2"),
+                new SpecProbe("F(y) = {\n  Twice(v) = v * 2\n  A = { public S = { public Q = 1\n    y } }.S.Twice + 0\n  A\n}\nF(1), F(2)", "ok raw=S[2, 4] n=2"),
+                new SpecProbe("F(y) = {\n  A = { public Q = 5\n    y }.Q + 0\n  A\n}\nF(1), F.A", "ok raw=S[5, 5] n=2"),
+            ],
+            Notes = "Independent audit 2026-11-14: the same law for an inline-block head. `6, 7` before block heads became navigated paths (46bfea4e), `6, 6` after it; the probes pin the block-head values that commit fixed.",
+            Explanation = "The head of a dot path may be a block written in place. Its steps are read exactly like those of a named head: `{ public S = 5 }.S` selects `S`, `.T` falls back to `T(…)`, which reads `F`'s `y`, and `.U` falls back to `U(…)`. So `A` depends on the call of `F` it is read in: `F(1), F(2)` is `6, 7`, and `F.A` outside a call is refused.",
+        },
+        new()
+        {
+            Id = "deconstruction-source-inline-block-member",
+            Category = "deconstruction",
+            Source = "F(y) = {\n  a, b = { public Q = (y, y + 1) }.Q\n  a, b\n}\nF(1), F(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 2)\n(2, 3)",
+            ExpectedRaw = "S[S[1, 2], S[2, 3]]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  Box = { public Q = (y, y + 1) }\n  a, b = Box.Q\n  a, b\n}\nF(1), F(2)", "ok raw=S[S[1, 2], S[2, 3]] n=2"),
+                new SpecProbe("F(y) = {\n  a, b = { public S = { public Q = (y, y + 1) } }.S.Q\n  a, b\n}\nF(1), F(2)", "ok raw=S[S[1, 2], S[2, 3]] n=2"),
+                new SpecProbe("F(y) = {\n  a, b = { public G(z) = (z + y, z) }.G(1)\n  a, b\n}\nF(1), F(2)", "ok raw=S[S[2, 1], S[3, 1]] n=2"),
+                new SpecProbe("F(y) = {\n  a, b = { public Q = (y, y + 1) }.Q\n  a, b\n}\nF.a", "err localOnlyProperty"),
+            ],
+            Notes = "Independent audit 2026-11-14 (d02). Formerly refused inside the call with `localOnlyProperty` naming `Q`: the member's capture position did not count the scope level of the synthetic deconstruction source the evaluators wire the block under.",
+            Explanation = "The right-hand side of a deconstruction is read where it is written. A block written there may select one of its own members, and that member may read the enclosing algorithm's parameter: `a, b = { public Q = (y, y + 1) }.Q` binds `a` and `b` from `F`'s `y`, exactly like the spelling that names the block first (`Box = { … }`, then `a, b = Box.Q`). Each call reads its own `y`, so `F(1), F(2)` is `(1, 2)` then `(2, 3)`. The targets still belong to the call: `F.a` outside one is refused.",
+        },
+        new()
+        {
             Id = "open-distinct-declarations-stay-distinct-providers",
             Category = "name-resolution",
             Source = $"open {new string('N', 520)}A, {new string('N', 520)}B\n{new string('N', 520)}A = {{ public X = 1 }}\n{new string('N', 520)}B = {{ public X = 1 }}\nX",

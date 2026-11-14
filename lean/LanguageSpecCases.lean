@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 567
+- specification surface cases: 570
 - excluded parse-level cases (Lean has no surface parser): 81
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 462
-- probe observations (C#-only by design): 1522
+- Lean-guarded cases: 465
+- probe observations (C#-only by design): 1534
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1301,6 +1301,21 @@ def case_open_exported_runtime_reference : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L", .resolve "Other"] [{ (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "Other" (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] []), privateProp "A" (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
 #guard obs case_open_exported_runtime_reference == "ok raw=S[1, 1] n=2"
 
+-- dot-path-fallback-edges-charge-their-callee [access-boundaries]: F(y) = { \n   T(v) = v + y \n   U(v) = v \n   Box = { public S = 5 } \n   A = Box.S.T.U + 0 \n   A \n } \n F(1), F(2)
+def case_dot_path_fallback_edges_charge_their_callee : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Box" (alg [] [] [publicProp "S" (alg [] [] [] [.num 5])] []), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.dotCall (.resolve "Box") "S" none) "T" none) "U" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "T" (.localCapturedAncestorParams ["y"]) (alg ["v"] [] [] [(.binary .add (.param "v") (.param "y"))])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "U" (alg ["v"] [] [] [.param "v"])] [.resolve "A"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_dot_path_fallback_edges_charge_their_callee == "ok raw=S[6, 7] n=2"
+
+-- dot-path-fallback-edges-inline-block-head [access-boundaries]: F(y) = { \n   T(v) = v + y \n   U(v) = v \n   A = { public S = 5 }.S.T.U + 0 \n   A \n } \n F(1), F(2)
+def case_dot_path_fallback_edges_inline_block_head : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.dotCall (.algorithmExpr (alg [] [] [publicProp "S" (alg [] [] [] [.num 5])] [])) "S" none) "T" none) "U" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "T" (.localCapturedAncestorParams ["y"]) (alg ["v"] [] [] [(.binary .add (.param "v") (.param "y"))])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "U" (alg ["v"] [] [] [.param "v"])] [.resolve "A"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_dot_path_fallback_edges_inline_block_head == "ok raw=S[6, 7] n=2"
+
+-- deconstruction-source-inline-block-member [deconstruction]: F(y) = { \n   a, b = { public Q = (y, y + 1) }.Q \n   a, b \n } \n F(1), F(2)
+def case_deconstruction_source_inline_block_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.capture [.param "y", (.binary .add (.param "y") (.num 1))])])) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Q" none)])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "a", .resolve "b"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_deconstruction_source_inline_block_member == "ok raw=S[S[1, 2], S[2, 3]] n=2"
+
 -- open-two-spellings-one-provider [name-resolution]: Lib = { \n     public Sub = { \n         public X = 1 \n     } \n     public R = { \n         open Sub, Lib.Sub \n         X \n     } \n } \n Lib.R
 def case_open_two_spellings_one_provider : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), publicProp "R" (.alias none [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] (.resolve "X") none false)] [])] [(.dotCall (.resolve "Lib") "R" none)])
@@ -2515,7 +2530,7 @@ def case_output_spread_lifted_call_ends_known_positions : Expr :=
   .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [(.sequenceSpread (.call (.resolve "P") [.param "x"])), .resolve "Add", .resolve "Inc"])]), privateProp "P" (alg ["x"] [] [] [(.listLiteral [.param "x"])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [.num 1])])
 #guard obs case_output_spread_lifted_call_ends_known_positions == "err arity"
 
--- 462 canonical Lean-guarded specification cases.
+-- 465 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2743,6 +2758,9 @@ def specCaseIds : List String := [
   "dot-exported-inline-block-head-member",
   "dot-exported-value-only-reference",
   "open-exported-runtime-reference",
+  "dot-path-fallback-edges-charge-their-callee",
+  "dot-path-fallback-edges-inline-block-head",
+  "deconstruction-source-inline-block-member",
   "open-two-spellings-one-provider",
   "ambiguous-open-unused-overlap-is-valid",
   "dot-chain-structural-member-beats-extension",
@@ -2986,6 +3004,6 @@ def specCaseIds : List String := [
   "output-spread-receiver-edge-is-the-lowered-call",
   "output-spread-lifted-call-ends-known-positions"
 ]
-#guard specCaseIds.length == 462
+#guard specCaseIds.length == 465
 
 end LanguageSpecCases

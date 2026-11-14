@@ -178,6 +178,48 @@ internal static class AstHelpers
         return merged;
     }
 
+    /// <summary>
+    /// The algorithms written directly in hoisted deconstruction right-hand sides of <paramref name="owner"/>
+    /// (not inside another algorithm written there). Such an algorithm
+    /// is declared in <paramref name="owner"/>'s context for every lookup, but the evaluators wire it under the
+    /// synthetic source property, one runtime scope level below <paramref name="owner"/>: a capture position that
+    /// crosses it counts that level (<c>PropertyExposureResolver.SummaryScope.ParentDistance</c>).
+    /// Index once per owner and semantic-model build; capture readers then test membership without rescanning
+    /// the owner's properties or rows. Shared expression nodes are inspected once within this index.
+    /// </summary>
+    internal static HashSet<Algorithm> DeconstructionSourceRowAlgorithms(Algorithm owner,
+        FrontEndTraversalObservations? observations = null)
+    {
+        var algorithms = new HashSet<Algorithm>(ReferenceEqualityComparer.Instance);
+        Stack<object>? pending = null;
+        foreach (var property in owner.Properties)
+        {
+            observations?.RecordSemanticDeconstructionSourceIndexNode();
+            if (property.Value is not Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+                continue;
+            pending ??= new();
+            foreach (var row in source.Output) pending.Push(row);
+        }
+
+        if (pending is null)
+            return algorithms;
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        while (pending.TryPop(out var node))
+        {
+            if (!seen.Add(node)) continue;
+            observations?.RecordSemanticDeconstructionSourceIndexNode();
+            if (node is Algorithm written)
+            {
+                algorithms.Add(written);
+                continue;
+            }
+            for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
+                pending.Push(child);
+        }
+
+        return algorithms;
+    }
+
     /// <summary>Rewrites each shared hoisted source once in its enclosing row context.</summary>
     internal static void RewriteDeconstructionSourceRows(
         Algorithm algorithm, List<Property> processedProperties, Func<Expr, Expr> rewriteRow,
