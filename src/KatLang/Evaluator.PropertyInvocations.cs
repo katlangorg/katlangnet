@@ -403,6 +403,8 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalOriginUserCallCountedAsync(
         CalleeOrigin origin, Algorithm property, Algorithm callee, OutputBundle args, EvalCtx ctx, ValEnv valEnv, CallDiagnosticName name)
     {
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
             return limitError;
 
@@ -432,6 +434,8 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalOriginFamilyCallCountedAsync(
         CalleeOrigin origin, Algorithm callee, OutputBundle args, EvalCtx ctx, ValEnv valEnv, CallDiagnosticName name)
     {
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
             return AtFirstSpanIfMissing(limitError, args);
 

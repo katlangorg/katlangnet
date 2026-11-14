@@ -739,22 +739,27 @@ public static class KatLangEngine
     /// downloader, no asynchronous host operation), the whole run completes synchronously
     /// on the calling thread: this method never schedules work onto another thread and
     /// never yields artificially — thread placement and scheduling remain the host's (and
-    /// the downloader's awaitable's) responsibility.</para>
+    /// the downloader's awaitable's) responsibility. The one exception is the stack hop of
+    /// the async twin path described next.</para>
     ///
     /// <para>A configuration with an asynchronous <see cref="RunOptions.HostOperations"/>
     /// operation evaluates through the async twin path — even when the program never calls
     /// that operation — and so does a program with a clause branch whose modules load on
-    /// demand (a deferred module region), even when that branch is never selected. The twin
-    /// path's larger per-level frames usually reach the host-stack backstop at a
-    /// shallower recursion depth than <see cref="Run(string, RunOptions?)"/>, so a deeply
-    /// recursive program may fail with the structured
-    /// <see cref="KatLangErrorCode.EvaluationStackExhausted"/> error where the synchronous run
-    /// reports <see cref="KatLangErrorCode.EvaluationDepthExceeded"/> or completes; a run that
-    /// genuinely suspends before descending resumes on a fresh stack and can instead go deeper.
-    /// The depth depends on the host and the route, never on which
+    /// demand (a deferred module region), even when that branch is never selected. When a
+    /// deeply recursive program on that path outgrows the current thread's stack, evaluation
+    /// continues on a fresh thread-pool stack (a stack hop) instead of stopping, and the
+    /// returned task then completes asynchronously; invocation recursion is bounded by
+    /// <see cref="EvaluationLimits.MaxDepth"/> and can go deeper than
+    /// <see cref="Run(string, RunOptions?)"/>, which may report
+    /// <see cref="KatLangErrorCode.EvaluationStackExhausted"/> there. Synchronous helpers the
+    /// twin path shares with the synchronous evaluator keep that structured backstop, so a
+    /// twin run can still stop with it, possibly at a shallower depth than the synchronous
+    /// run. Where the backstop fires depends on the host and the route, never on which
     /// <see cref="RunOptions.EvaluationLimits"/> are configured (see
     /// <see cref="EvaluationLimits.MaxDepth"/>); both outcomes are ordinary resource-limit
-    /// failures, never a process crash.</para>
+    /// failures, never a process crash. A host that blocks on the returned task from a
+    /// single-threaded context relies on the thread pool for a hop; where there are no
+    /// worker threads (browser WebAssembly), await the task instead of blocking on it.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>.
@@ -1011,7 +1016,8 @@ public static class KatLangEngine
     /// over <see cref="RunAsync"/> with identical success and failure semantics.
     /// Like <see cref="RunAsync"/>, it completes synchronously unless an incomplete
     /// <see cref="RunOptions.DownloadCode"/> download or asynchronous
-    /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run.
+    /// <see cref="RunOptions.HostOperations"/> awaitable genuinely suspends the run, or the
+    /// async twin path continues a deep recursion on a fresh stack.
     /// </summary>
     /// <exception cref="KatLangException">The program did not succeed (see <see cref="EvaluateToAtoms"/>).</exception>
     /// <exception cref="OperationCanceledException">

@@ -211,6 +211,18 @@ beyond the available headroom still returns a structured resource error.
 > Q-09b no limit selects a strategy, and every strategy charges every budget identically
 > (`docs/design/language-rules/evaluator-and-hosting.md` § Limits observe a run; host-stack
 > headroom is not semantic).
+>
+> *Update, 2026-11-14 (stack hop):* the reduced synchronous-completion capacity above no longer
+> stops twin recursion. Where a twin is about to enter an invocation or argument-evaluation
+> level, a row-loop funnel, or a need cell's asynchronous computation with the host stack below
+> the runtime's reserve, it awaits `StackHop` and continues on a fresh thread-pool stack, so
+> invocation recursion is bounded by the deterministic `MaxDepth` (on a 1 MiB thread, `F(120)`
+> of `F(n) = if(n == 0, 0, F(n - 1) + 1)` completes and `F(200)` reports
+> `EvaluationDepthExceeded`); such a run completes asynchronously. Synchronous helpers keep
+> their backstops. The table above records the twin's capacity WITHOUT a hop, which is what the
+> hop now extends; the renamed
+> `AsyncStackDepthTests.PublicAsyncHostOperationSurface_DeepRecursion_ReachesTheDeterministicDepthVerdict`
+> pins the public overload (`evaluator-and-hosting.md` § Limits observe a run).
 
 ## Divergence pinning
 

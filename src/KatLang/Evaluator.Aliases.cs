@@ -1719,6 +1719,8 @@ public static partial class Evaluator
         if (terminal.IsError)
             return AtSpanIfMissing(terminal.Error, target.Span);
 
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
 

@@ -116,11 +116,17 @@ public sealed record EvaluationLimits
     /// <see cref="Evaluator.RunAsync(Expr, HostOperations, EvaluationLimits?, long?, CancellationToken)"/>
     /// or <see cref="RunOptions.HostOperations"/> on <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>,
     /// or one whose program has a clause branch that loads its modules on demand (a
-    /// deferred module region) — executes larger per-level frames and usually reaches the
-    /// backstop at a SHALLOWER depth than the synchronous evaluator (where that would report
-    /// <see cref="EvalError.EvaluationDepthExceeded"/> or complete), while a twin run that
-    /// genuinely suspends before descending resumes on a fresh stack and can go DEEPER. The
-    /// backstop never depends on which limits are configured. Hosts must not assume any
+    /// deferred module region) — does not stop where its invocation recursion or nested
+    /// rows outgrow the current thread's stack: it continues that evaluation on a fresh
+    /// thread-pool stack (a stack hop) and completes asynchronously, even when nothing else
+    /// suspends, so its invocation recursion is bounded by this deterministic limit and can go
+    /// DEEPER than the synchronous evaluator, which would report
+    /// <see cref="EvalError.EvaluationStackExhausted"/> there. Synchronous helpers the twin
+    /// path shares with the synchronous evaluator (alias chains, receiver and
+    /// <c>open</c> navigation, non-recursive sub-evaluations) keep the backstop, so a twin run
+    /// can still stop with it, possibly at a SHALLOWER depth than the synchronous evaluator
+    /// where such a helper finds less stack. The backstop never depends on which limits are
+    /// configured. Hosts must not assume any
     /// particular depth or ratio between routes; a program that must recurse deeply should be
     /// restructured (<c>repeat</c>, <c>while</c>, or shallower recursion) rather than rely on a
     /// measured depth. A sufficiently low <see cref="MaxDepth"/> can make the deterministic

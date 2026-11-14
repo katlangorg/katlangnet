@@ -328,11 +328,15 @@ public class DeferredCompileStackProcessTests
 
     /// <summary>
     /// The public route: <see cref="KatLangEngine.RunAsync"/> parses AND evaluates on one 1 MiB
-    /// thread with a synchronously completing downloader. The task is complete when the call returns
-    /// (the synchronous-completion contract in-memory and WASM hosts rely on), every outcome is
-    /// structured, a refusal is the module-elaboration stack error — an EvalFailure that is not a
-    /// resource limit and not a clause non-match (the program's catch-all clause never answers) —
-    /// and the same family on a plain <see cref="Task.Run(Func{Task})"/> thread is structured too.
+    /// thread with a synchronously completing downloader. Every outcome is structured, a refusal is
+    /// the module-elaboration stack error — an EvalFailure that is not a resource limit and not a
+    /// clause non-match (the program's catch-all clause never answers) — and the same family on a
+    /// plain <see cref="Task.Run(Func{Task})"/> thread is structured too. The front end and every
+    /// compile complete synchronously with such a downloader; since 2026-11-14 the twin evaluation
+    /// continues on a fresh thread-pool stack where an invocation or row funnel finds this thread's
+    /// stack low (<c>StackHop</c>) instead of stopping there, so the deep members are awaited, not
+    /// required to complete before the call returns (the one documented exception to the
+    /// synchronous-completion contract of <see cref="KatLangEngine.RunAsync"/>).
     /// </summary>
     [Fact]
     public async Task PublicRoute_ProbeChild()
@@ -353,7 +357,12 @@ public class DeferredCompileStackProcessTests
                 foreach (var source in new[] { Reproducer(n), WithCatchAllClause(Reproducer(n)) })
                 {
                     var pending = KatLangEngine.RunAsync(source, options);
-                    Assert.True(pending.IsCompleted, $"R({n}): RunAsync with a synchronous downloader must complete synchronously");
+                    if (!pending.IsCompleted)
+                    {
+                        log.Add($"{n}:hop");
+                        Assert.True(pending.Wait(TimeSpan.FromMinutes(5)), $"R({n}): the run did not complete");
+                    }
+
                     switch (pending.GetAwaiter().GetResult())
                     {
                         case RunResult.Success success:

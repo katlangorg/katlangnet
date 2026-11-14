@@ -199,29 +199,31 @@ public class StructuralNestingStackBackstopProcessTests
             // completes depth 9 and exhausts by 11. So BOTH non-crash outcomes are correct,
             // on every platform and configuration: completion with the right value, or
             // exactly one structured stack error. A depth or step verdict is never correct,
-            // and a crash kills this process before the marker is written.
+            // and a crash kills this process before the marker is written. The twin continues
+            // on a fresh stack where its funnel probe would fire, so it must complete, here
+            // and in every twin check below.
             AssertEngine(AuditMinimalRepro, [0m], strictStackError: false);
             AssertDirect(auditAst, [0m], strictStackError: false);
             AssertDirect(auditAst, [0m], strictStackError: false, new EvaluationLimits { MaxSteps = 1_000_000 });
-            AssertTwin(auditAst, [0m], strictStackError: false);
+            AssertTwinCompletes(auditAst, [0m]);
 
             // The audit's own width, far past that frontier (depth 60, more than five times
             // the deepest completing depth measured in either configuration): the backstop
-            // MUST fire through every one of the same entry points.
+            // MUST fire through every one of the same synchronous entry points.
             AssertEngine(auditDeepSource, [0m], strictStackError: true);
             AssertDirect(auditDeepAst, [0m], strictStackError: true);
             AssertDirect(auditDeepAst, [0m], strictStackError: true, new EvaluationLimits { MaxSteps = 1_000_000 });
-            AssertTwin(auditDeepAst, [0m], strictStackError: true);
+            AssertTwinCompletes(auditDeepAst, [0m]);
 
             // Shapes that cannot fit any 1 MiB stack (thousands of frames per chain): the
-            // backstop MUST fire, identically on both families, through both entry points.
+            // backstop MUST fire on the synchronous family, through both entry points.
             foreach (var kind in new[] { "brace", "capture" })
             {
                 var source = Program(kind, 90, 20);
                 var ast = Ast(source);
                 AssertEngine(source, ExpectedAtoms(kind, 90, 20), strictStackError: true);
                 AssertDirect(ast, ExpectedAtoms(kind, 90, 20), strictStackError: true);
-                AssertTwin(ast, ExpectedAtoms(kind, 90, 20), strictStackError: true);
+                AssertTwinCompletes(ast, ExpectedAtoms(kind, 90, 20));
             }
 
             // The whole family: a structured outcome for every member — never a crash
@@ -250,17 +252,19 @@ public class StructuralNestingStackBackstopProcessTests
         AstStructuralDepthProcessTests.RunOnThreadWithStack(393_216, () =>
         {
             // The exact reproduction sits near the 1 MiB frontier, so on 384 KiB the
-            // structured stack error is the only correct outcome on every platform.
+            // structured stack error is the synchronous family's only correct outcome on
+            // every platform.
             AssertDirect(auditAst, [0m], strictStackError: true);
             AssertDirect(auditAst, [0m], strictStackError: true, new EvaluationLimits { MaxSteps = 1_000_000 });
-            AssertTwin(auditAst, [0m], strictStackError: true);
+            AssertTwinCompletes(auditAst, [0m]);
 
             // The widest preflight-admitted member of every kind at recursion depth 60
-            // (thousands of frames per chain): the backstop must fire on both families.
+            // (thousands of frames per chain): the backstop must fire on the synchronous
+            // family, while the twin hops to fresh stacks and completes.
             foreach (var (kind, width, ast) in widestAtDepth60)
             {
                 AssertDirect(ast, ExpectedAtoms(kind, width, 60), strictStackError: true);
-                AssertTwin(ast, ExpectedAtoms(kind, width, 60), strictStackError: true);
+                AssertTwinCompletes(ast, ExpectedAtoms(kind, width, 60));
             }
 
             foreach (var shape in sweep)
@@ -338,26 +342,21 @@ public class StructuralNestingStackBackstopProcessTests
     }
 
     /// <summary>
-    /// The async twin family on the SAME thread (pass-through async cache: the twin path
-    /// completes synchronously, so the whole spine consumed this thread's stack). The twin's
-    /// larger frames may stop a chain earlier than the synchronous family, never later than
-    /// a structured outcome.
+    /// The async twin family STARTED on the same thread (pass-through async cache) and awaited.
+    /// Every structural level passes a twin row-loop funnel, which continues on a fresh
+    /// thread-pool stack where its probe would fire (<see cref="KatLang.Evaluation.StackHop"/>,
+    /// 2026-11-14), and every recursion level stays far inside the deterministic depth limit,
+    /// so the twin COMPLETES with the program's value even where the synchronous family must
+    /// stop with the structured stack error — and never crashes.
     /// </summary>
-    private static bool AssertTwin(Expr ast, Decimal128[] expectedAtoms, bool strictStackError)
+    private static void AssertTwinCompletes(Expr ast, Decimal128[] expectedAtoms)
     {
-        var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache());
-        Assert.True(pending.IsCompleted, "the pass-through twin path must complete synchronously");
-        var result = pending.GetAwaiter().GetResult();
-        if (result.IsOk)
-        {
-            Assert.False(strictStackError, "expected the structured stack error but the twin path completed");
-            Assert.True(result.Value.Value.TryToHostAtoms(int.MaxValue, out var atoms));
-            Assert.Equal(expectedAtoms, atoms);
-            return false;
-        }
-
-        Assert.Equal("evaluationStackExhausted", SemanticExplorerHarness.ErrorCategory(result.Error));
-        return true;
+        var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache()).AsTask();
+        Assert.True(pending.Wait(TimeSpan.FromMinutes(5)), "the twin run did not complete");
+        var result = pending.Result;
+        Assert.True(result.IsOk, $"expected the twin path to complete, got {(result.IsError ? SemanticExplorerHarness.ErrorCategory(result.Error) : "")}");
+        Assert.True(result.Value.Value.TryToHostAtoms(int.MaxValue, out var atoms));
+        Assert.Equal(expectedAtoms, atoms);
     }
 
     private static async Task RunProbeChild(string childTestName)

@@ -90,7 +90,8 @@ public class StructuralNestingStackBackstopTests
         // Whatever stack the test host gives this thread, the audit reproduction either
         // completes (value 0) or stops with the STACK backstop; the deterministic depth
         // limit (128, recursion depth is 9) and a generous step budget are never the
-        // reported verdict, on either family.
+        // reported verdict, on either family. (The twin continues on a fresh stack where its
+        // funnel probe would fire, so on the twin the stack outcome needs a helper's probe.)
         var ast = AsyncEvaluationHarness.Ast(StructuralNestingStackBackstopProcessTests.AuditMinimalRepro);
 
         foreach (var outcome in new[]
@@ -117,34 +118,47 @@ public class StructuralNestingStackBackstopTests
     public void AllFourRowLoopFunnels_OpenWithTheStackProbe()
     {
         // Mirror pin: the backstop is meaningful only while BOTH synchronous funnels and
-        // BOTH async twins carry it as their first statement. Removing it from any one site
-        // re-opens K2-R1 on that family without changing any ordinary test result.
+        // BOTH async twins carry it before their row loop. Removing it from any one site
+        // re-opens K2-R1 on that family without changing any ordinary test result. The twins
+        // first await the TWIN-ONLY stack hop (StackHop, 2026-11-14), which continues on a fresh
+        // stack where the probe would fire, and then keep the probe for a fresh stack that is
+        // low too; removing the hop would bring back the twin's early stack verdict.
+        const string probe = "if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())";
+        const string hop = "if (StackHop.HostStackIsLow()) await new StackHop();";
         var sourceRoot = Path.Combine(FindRepoRoot(), "src", "KatLang");
-        foreach (var (file, method) in new[]
+        foreach (var (file, method, opening) in new[]
         {
-            ("Evaluator.PatternMatching.cs", "EvalOutputRowsPreparedCore"),
-            ("Evaluator.ParameterBinding.cs", "EvalExplicitSequenceValueRowSlots"),
-            ("Evaluator.Async.cs", "EvalOutputRowsPreparedCoreAsync"),
-            ("Evaluator.Async.cs", "EvalExplicitSequenceValueRowSlotsAsync"),
+            ("Evaluator.PatternMatching.cs", "EvalOutputRowsPreparedCore", new[] { probe }),
+            ("Evaluator.ParameterBinding.cs", "EvalExplicitSequenceValueRowSlots", new[] { probe }),
+            ("Evaluator.Async.cs", "EvalOutputRowsPreparedCoreAsync", new[] { hop, probe }),
+            ("Evaluator.Async.cs", "EvalExplicitSequenceValueRowSlotsAsync", new[] { hop, probe }),
         })
         {
             var text = File.ReadAllText(Path.Combine(sourceRoot, file));
             var match = Regex.Match(
                 text,
-                @"\s" + Regex.Escape(method) + @"\((?:[^{}]|\r|\n)*?\)\s*\{\s*(?<first>[^\r\n]*)",
+                @"\s" + Regex.Escape(method) + @"\((?:[^{}]|\r|\n)*?\)\s*\{(?<body>[^}]*)",
                 RegexOptions.Singleline);
             Assert.True(match.Success, $"{file}: definition of {method} not found");
-            Assert.Equal(
-                "if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())",
-                match.Groups["first"].Value.Trim());
+            var statements = match.Groups["body"].Value
+                .Split('\n')
+                .Select(static line => line.Trim())
+                .Where(static line => line.Length > 0 && !line.StartsWith("//", StringComparison.Ordinal))
+                .Take(opening.Length)
+                .ToArray();
+            Assert.Equal(opening, statements);
         }
     }
 
+    /// <summary>
+    /// The twin family on this thread, awaited: a run that finds the stack low continues on the
+    /// thread pool (<see cref="KatLang.Evaluation.StackHop"/>) and completes there.
+    /// </summary>
     private static EvalResult<Evaluator.CountedResult> RunTwin(Expr ast)
     {
-        var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache());
-        Assert.True(pending.IsCompleted);
-        return pending.GetAwaiter().GetResult();
+        var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache()).AsTask();
+        Assert.True(pending.Wait(TimeSpan.FromSeconds(120)), "the twin run did not complete");
+        return pending.Result;
     }
 
     private static string FindRepoRoot()

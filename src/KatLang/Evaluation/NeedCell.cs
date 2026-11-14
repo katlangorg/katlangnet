@@ -635,6 +635,8 @@ internal sealed class NeedCell : NeedNode
 
     private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node)
     {
+        // TWIN-ONLY (intentional difference from the synchronous ProjectRuntime): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         var previous = Current.Value;
         Current.Value = node;
         try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
@@ -786,6 +788,8 @@ internal sealed class NeedCell : NeedNode
 
     private async ValueTask EvaluateAsync()
     {
+        // TWIN-ONLY (intentional difference from the synchronous Demand): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         var previous = Current.Value;
         Current.Value = this;
         try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()

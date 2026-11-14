@@ -722,7 +722,9 @@ public class ResourceLimitTerminalityTests
     /// fires inside an argument the run fails, and nothing after it runs. WHERE it fires is a
     /// property of the thread, build, and route (PV-07) — so the probe sweeps several small
     /// stacks and pins only terminality, plus that the backstop genuinely fired somewhere. The
-    /// host operations are synchronous so the whole evaluation stays on the controlled stack.
+    /// host operations are synchronous so the synchronous evaluation stays on the controlled
+    /// stack; the twin starts there and may continue on fresh stacks (StackHop), so a twin run
+    /// completes or stops terminally.
     /// </summary>
     [Fact]
     public void HostStackBackstop_IsTerminalWhereverItFires()
@@ -747,12 +749,15 @@ public class ResourceLimitTerminalityTests
                         return;
                     }
 
+                    // The twin STARTS on the controlled stack; where its invocations find that
+                    // stack low it continues on fresh thread-pool stacks (StackHop), so it is
+                    // awaited rather than required to complete on this thread.
                     var pending = Evaluator.RunCountedObservedAsync(
                         program,
                         zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache(),
-                        hostOperations: operations);
-                    Assert.True(pending.IsCompleted, "a non-suspending twin run completes on the controlled stack");
-                    outcome = pending.GetAwaiter().GetResult().Result;
+                        hostOperations: operations).AsTask();
+                    Assert.True(pending.Wait(TimeSpan.FromSeconds(120)), "the twin run did not complete");
+                    outcome = pending.Result.Result;
                 });
 
                 var result = outcome!.Value;

@@ -1142,6 +1142,8 @@ public static partial class Evaluator
 
         if (callee is Algorithm.Conditional)
         {
+            // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+            if (StackHop.HostStackIsLow()) await new StackHop();
             if (ctx.Budget.TryEnterInvocation() is { } limitError)
                 return AtFirstSpanIfMissing(limitError, plan.Args);
             try
@@ -1170,6 +1172,8 @@ public static partial class Evaluator
     {
         var ctx = plan.Caller;
         var args = plan.Args;
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
             return limitError;
         using (level)

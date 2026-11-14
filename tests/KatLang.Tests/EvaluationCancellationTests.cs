@@ -690,6 +690,56 @@ public class EvaluationCancellationTests
         });
     }
 
+    // ── F. Cancellation across the async twin's stack hops ───────────────────
+
+    /// <summary>
+    /// The async twin's stack hop (<see cref="StackHop"/>) moves a deep recursion onto fresh
+    /// thread-pool stacks without moving a chokepoint. Started on a 1 MiB thread with an
+    /// asynchronous host operation configured but never called (the twin route), <c>F(120)</c>
+    /// outgrows that thread's stack and hops; the synchronous <c>check</c> operation, called once
+    /// per level, cancels the token at <c>n = 20</c>, more than a hundred levels deep and below the
+    /// hops. The run escapes as <see cref="OperationCanceledException"/> carrying exactly the
+    /// supplied token, observed at the next invocation chokepoint: no later level runs.
+    /// </summary>
+    [Fact]
+    public async Task CancellationDuringAHopHeavyTwinRecursion_EscapesWithTheSuppliedToken()
+    {
+        using var cts = new CancellationTokenSource();
+        var seen = new List<string>();
+        var levelsOnThePool = 0;
+        var operations = HostOperations.Create(
+            HostOperation.CreateAsync("Ping", (_, _) => ValueTask.FromResult<Result>(new Result.Atom(1))),
+            HostOperation.Create("check", (args, _) =>
+            {
+                var n = SemanticExplorerHarness.Neutral(args[0]);
+                lock (seen)
+                {
+                    seen.Add(n);
+                    if (Thread.CurrentThread.IsThreadPoolThread)
+                        levelsOnThePool++;
+                }
+
+                if (n == "20")
+                    cts.Cancel();
+                return args[0];
+            }, "value"));
+        var parsed = Parser.Parse("F(n) = if(check(n) == 0, 0, F(n - 1) + 1)\nF(120)", new RunOptions { HostOperations = operations });
+        Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(static d => d.Message)));
+        var ast = new Expr.AlgorithmExpr(parsed.Root);
+
+        var pending = AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576,
+            () => Evaluator.RunAsync(ast, operations, limits: null, randomSeed: null, cts.Token));
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(120)));
+
+        Assert.Equal(cts.Token, thrown.CancellationToken);
+        lock (seen)
+        {
+            Assert.Equal(101, seen.Count);
+            Assert.Equal("20", seen[^1]);
+            Assert.True(levelsOnThePool > 0, "the recursion never left the 1 MiB thread, so no hop was exercised");
+        }
+    }
+
     private static EvalError Innermost(EvalError error)
         => error is EvalError.WithContext(_, var inner) ? Innermost(inner) : error;
 }

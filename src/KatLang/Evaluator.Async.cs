@@ -70,14 +70,23 @@ namespace KatLang;
 /// is never converted into an <see cref="EvalError"/> or retained binding value.</para>
 ///
 /// <para><b>Stack.</b> The synchronous family's calibrated stack behavior is untouched.
-/// The twin family runs the same dynamic-depth budget with the same
-/// <c>TryEnsureSufficientExecutionStack</c> backstop, so a synchronously-completing twin
-/// chain that outgrows the host stack fails with the same structured
-/// <see cref="EvalError.EvaluationStackExhausted"/>. A genuine suspension unwinds the
+/// The twin family runs the same dynamic-depth budget and shares the same
+/// <c>TryEnsureSufficientExecutionStack</c> probes, but where a twin is about to enter an
+/// invocation or argument-evaluation level, a row-loop funnel, or a need cell's
+/// asynchronous computation with the host stack below the runtime's reserve (tested a small
+/// fixed margin below the site, <see cref="StackHop.ChokepointMargin"/>, so it covers the
+/// chokepoint helpers that run the probe), it first
+/// awaits a <see cref="StackHop"/> and continues on a fresh thread-pool stack (TWIN-ONLY,
+/// marked at each site beside its <c>// MIRROR OF</c> counterpart). A twin chain that
+/// would have outgrown the host stack therefore completes asynchronously; invocation recursion
+/// is bounded by the deterministic depth budget, like a run that genuinely suspends before descending.
+/// The probes stay after each hop (a fresh stack that is still low fails structurally),
+/// and synchronous helpers the twins call (alias chases, receiver and open navigation,
+/// sync-delegated leaves) keep their own backstops. A genuine suspension unwinds the
 /// evaluator frames that led to the await; the awaitable and runtime decide which thread
-/// and stack later run the continuation, so the twin-only stack probes remain necessary
-/// after resumption too. The async structural-depth probes in the test suite characterize
-/// the twin path's headroom separately.</para>
+/// and stack later run the continuation, so the stack probes remain necessary after
+/// resumption too. The async structural-depth probes in the test suite characterize the
+/// twin path's headroom separately.</para>
 /// </summary>
 public static partial class Evaluator
 {
@@ -205,16 +214,20 @@ public static partial class Evaluator
     /// them: <c>RunAsync(expr, null, null, token)</c> is the four-argument limits-and-seed
     /// overload.</para>
     ///
-    /// <para><b>Recursion depth on the async twin path.</b> The twin path's per-level
-    /// frames are larger than the synchronous frames, so a deeply recursive program that
-    /// does not suspend usually reaches the host-stack backstop — the structured
-    /// <see cref="EvalError.EvaluationStackExhausted"/> — at a SHALLOWER recursion depth
-    /// than the synchronous evaluator, and before the deterministic
-    /// <see cref="EvaluationLimits.MaxDepth"/> verdict; one that genuinely suspends before
-    /// descending resumes on a fresh stack and can go DEEPER. The outcome is always a
-    /// structured resource-limit error, never a process crash; the depth depends on the host
-    /// (thread, build, runtime and JIT state, platform), never on which limits are configured,
-    /// and is not a language guarantee (see <see cref="EvaluationLimits.MaxDepth"/>).</para>
+    /// <para><b>Recursion depth on the async twin path.</b> When a deeply recursive program
+    /// on the twin path outgrows the current thread's stack at an invocation or a nested row,
+    /// evaluation continues on a fresh thread-pool stack instead of stopping (a stack hop):
+    /// the returned task then completes asynchronously even if nothing else suspends, and
+    /// invocation recursion is bounded by the deterministic <see cref="EvaluationLimits.MaxDepth"/>
+    /// verdict, so it can go DEEPER than the synchronous evaluator, as a run that genuinely
+    /// suspends before descending can. Synchronous helpers the twin path shares with the
+    /// synchronous evaluator keep the host-stack backstop — the structured
+    /// <see cref="EvalError.EvaluationStackExhausted"/> — so a twin run can still stop with
+    /// it, possibly at a SHALLOWER depth than the synchronous evaluator. The outcome is always a
+    /// value or a structured resource-limit error, never a process crash; where the backstop
+    /// fires depends on the host (thread, build, runtime and JIT state, platform), never on
+    /// which limits are configured, and is not a language guarantee (see
+    /// <see cref="EvaluationLimits.MaxDepth"/>).</para>
     /// </summary>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="expr"/> is null, or <paramref name="hostOperations"/> is null — a run
@@ -1477,7 +1490,9 @@ public static partial class Evaluator
     /// one does on the same program; like the invocation-chokepoint probe it can only
     /// stop evaluation earlier than a physical overflow with the established structured
     /// error, never change a run that has host stack headroom, and it moves no budget
-    /// counter.
+    /// counter. TWIN-ONLY difference: the probe is preceded by a <see cref="StackHop"/>, so
+    /// on a low host stack the twin continues on a fresh one and the probe fires only if
+    /// that stack is low too.
     /// </summary>
     private static async ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalOutputRowsPreparedCoreAsync(
         IReadOnlyList<Expr> rows,
@@ -1485,6 +1500,8 @@ public static partial class Evaluator
         EvalCtx reserveCtx,
         ValEnv valEnv)
     {
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
@@ -1714,13 +1731,15 @@ public static partial class Evaluator
     /// INCLUDING the structural-nesting stack backstop both families carry (see
     /// <see cref="EvalOutputRowsPreparedCoreAsync"/>): nested written groups recurse
     /// through this family without touching the ordinary dispatch or any invocation
-    /// chokepoint.
+    /// chokepoint. TWIN-ONLY difference: the probe is preceded by a <see cref="StackHop"/>.
     /// </summary>
     private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalExplicitSequenceValueRowSlotsAsync(
         IReadOnlyList<Expr> rows,
         EvalCtx rowCtx,
         ValEnv valEnv)
     {
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
@@ -1922,6 +1941,8 @@ public static partial class Evaluator
         // the SAME enter helper and scoped release as the synchronous twin
         // (Evaluator.BudgetScopes.cs), disposed on every completion path including
         // exceptional unwind through a suspended seam await.
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterDynamicInvocation(ctx, binding.FirstDeclarationSpan, out var level) is { } limitError)
             return limitError;
 
@@ -2040,6 +2061,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
 
@@ -2152,6 +2175,8 @@ public static partial class Evaluator
     {
         // Charged dynamic invocation boundary (see EvaluationBudget) — the SAME enter
         // helper and scoped release as the synchronous twin (Evaluator.BudgetScopes.cs).
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
             return limitError;
 
@@ -2201,6 +2226,8 @@ public static partial class Evaluator
     {
         // Charged dynamic invocation boundary; this counted core owns the
         // boundary for both counted evaluation and its plain projection.
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
             return AtFirstSpanIfMissing(limitError, args);
 
@@ -2390,6 +2417,8 @@ public static partial class Evaluator
     {
         // The SAME enter helper and scoped release as the synchronous twin
         // (Evaluator.BudgetScopes.cs).
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
 
@@ -2675,6 +2704,8 @@ public static partial class Evaluator
             return await EvalAliasCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
 
         // Charged dynamic invocation boundary — the single callback dispatch chokepoint.
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (ctx.Budget.TryEnterInvocation() is { } limitError)
             return limitError;
 
@@ -3112,6 +3143,8 @@ public static partial class Evaluator
         if (resolvedR.Value.ResolvedAlgorithm is Algorithm.Alias)
             return await EvalAliasDotStringLexicalReceiverAsync(target, resolvedR.Value, ctx, valEnv).ConfigureAwait(false);
 
+        // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+        if (StackHop.HostStackIsLow()) await new StackHop();
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
 
@@ -3134,6 +3167,8 @@ public static partial class Evaluator
         var navigated = await ResolveDotReceiverAsync(edge.Target, ctx).ConfigureAwait(false);
         if (navigated.IsOk && LookupPropBinding(navigated.Value.Receiver, edge.Name, ctx.Budget) is { } member)
         {
+            // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
+            if (StackHop.HostStackIsLow()) await new StackHop();
             if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
                 return limitError;
 

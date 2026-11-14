@@ -27,7 +27,10 @@ namespace KatLang.Tests;
 /// several stack sizes. A run is the ordinary result or a structured refusal from
 /// the evaluator's stack/depth backstops or, on deferred routes, a compile-time stack refusal;
 /// each sweep must see both, and where a refusal fires is never
-/// pinned (Q-09a).</para>
+/// pinned (Q-09a). Sweeps with async twin runs require their refusals per family (one link
+/// count, one deferred route) across the stack sizes: since the 2026-11-14 stack hop the twin
+/// refuses only at helper probes, at depths that depend on where its hops land
+/// (<see cref="Tally.AssertCrossesTheFrontier"/>).</para>
 /// </summary>
 public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
 {
@@ -166,8 +169,9 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
 
     /// <summary>
     /// The reproducer family on every swept stack size, recursion depth and link count, through the
-    /// synchronous evaluator and the async twin (pass-through cache: it completes synchronously, so
-    /// the whole chain consumes the same thread). Under stress, the <c>inner</c> deferred sweeps run too.
+    /// synchronous evaluator and the async twin (pass-through cache: it starts on the same thread and,
+    /// since the 2026-11-14 stack hop, continues on fresh thread-pool stacks where an invocation or
+    /// row funnel finds the stack low). Under stress, the <c>inner</c> deferred sweeps run too.
     /// </summary>
     [Fact]
     public void OpenChainWindow_ProbeChild()
@@ -184,25 +188,33 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
              select (Links: links, N: n, Ast: (Expr)new Expr.AlgorithmExpr(SourceProvenance.ParseValid(Program(links, n)).Root)))
             .ToList());
 
+        var sweepsByLinks = LinkCounts.ToDictionary(static links => links, static _ => new List<Tally>());
         foreach (var stack in StackSizes)
         {
             foreach (var links in LinkCounts)
             {
                 var sweep = new Tally($"{stack / 1024} KiB / {links} links");
+                sweepsByLinks[links].Add(sweep);
                 foreach (var (_, n, ast) in asts.Where(a => a.Links == links))
                 {
                     AstStructuralDepthProcessTests.RunOnThreadWithStack(stack, () =>
                     {
                         sweep.Record(n, "sync", Evaluator.RunFlat(ast));
-                        var twin = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache());
-                        Assert.True(twin.IsCompleted, "the pass-through twin path must complete synchronously");
-                        sweep.RecordTwin(n, twin.GetAwaiter().GetResult());
+                        // The twin starts on this thread and continues on a fresh thread-pool stack
+                        // wherever an invocation or row funnel finds it low (StackHop), so it is
+                        // awaited; the open navigation keeps its own probe on whichever stack it runs.
+                        var twin = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache()).AsTask();
+                        Assert.True(twin.Wait(TimeSpan.FromMinutes(5)), "the twin run did not complete");
+                        sweep.RecordTwin(n, twin.Result);
                     });
                 }
 
-                sweep.AssertOutcomes();
+                sweep.AssertOutcomes(requireRefusal: false);
             }
         }
+
+        foreach (var (links, sweeps) in sweepsByLinks)
+            Tally.AssertCrossesTheFrontier($"{links} links", sweeps);
 
         if (load is not null)
         {
@@ -277,9 +289,11 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
         foreach (var route in DeferredRoutes.Where(r => !innerOnly || r.EndsWith("-inner", StringComparison.Ordinal)))
         {
             var module = DeferredModule(route);
+            var routeSweeps = new List<Tally>();
             foreach (var stack in innerBand && route.EndsWith("-inner", StringComparison.Ordinal) ? InnerStackSizes : StackSizes)
             {
                 var sweep = new Tally($"deferred {route} / {stack / 1024} KiB", allowDeferredCompileRefusal: true);
+                routeSweeps.Add(sweep);
                 for (var n = 0; n <= DeferredMaxRecursion; n++)
                 {
                     // A fresh parse per run: every run compiles a fresh region on the thread under test.
@@ -289,8 +303,10 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
                     sweep.Record(n, "deferred", outcome);
                 }
 
-                sweep.AssertOutcomes();
+                sweep.AssertOutcomes(requireRefusal: false);
             }
+
+            Tally.AssertCrossesTheFrontier($"deferred {route}", routeSweeps);
         }
     }
 
@@ -413,12 +429,36 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
             _log.Add($"{point}t:{category}");
         }
 
-        public void AssertOutcomes()
+        /// <summary>Structured refusals recorded so far (stack or depth, or a deferred compile's).</summary>
+        public int Refusals => _refusals;
+
+        /// <summary>
+        /// Every sweep must evaluate some run. A sweep must also be refused somewhere unless
+        /// <paramref name="requireRefusal"/> is false — for a sweep with async twin runs, whose
+        /// refusals the caller requires across the stack sizes instead (see
+        /// <see cref="AssertCrossesTheFrontier"/>).
+        /// </summary>
+        public void AssertOutcomes(bool requireRefusal = true)
         {
             Console.WriteLine($"{label}: {string.Join(" ", _log)}");
             Assert.True(_completions > 0, $"{label}: no run evaluated\n{string.Join(" ", _log)}");
-            Assert.True(_refusals > 0, $"{label}: no run was refused; the sweep no longer crosses the frontier\n{string.Join(" ", _log)}");
+            if (requireRefusal)
+                Assert.True(_refusals > 0, $"{label}: no run was refused; the sweep no longer crosses the frontier\n{string.Join(" ", _log)}");
         }
+
+        /// <summary>
+        /// The frontier requirement of sweeps with async twin runs, over all stack sizes of one family.
+        /// Since the 2026-11-14 stack hop the twin continues on a fresh thread-pool stack where an
+        /// invocation or row funnel would refuse, so its refusals come only from helper probes (the
+        /// open navigation, a deferred compile) and recur once per hop period at depths that depend
+        /// on where the hops land; one stack size may see none within the swept depths (Release,
+        /// November 2026: a deferred <c>branch-inner</c> sweep at 1536 KiB, and under CPU load the
+        /// synchronous frontier at 1280 KiB moved past the window that the twin used to cover). The
+        /// family as a whole must still be refused somewhere.
+        /// </summary>
+        public static void AssertCrossesTheFrontier(string family, IReadOnlyCollection<Tally> sweeps)
+            => Assert.True(sweeps.Sum(static sweep => sweep.Refusals) > 0,
+                $"{family}: no run was refused at any stack size; the sweep no longer crosses the frontier");
     }
 
     private async Task RunProbeChild(string childTestName, bool stress = false)

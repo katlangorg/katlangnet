@@ -7,31 +7,79 @@ namespace KatLang.Tests.AsyncEvaluation;
 /// larger than their synchronous counterparts:
 ///
 /// <list type="bullet">
-///   <item>On the documented supported environment (1 MiB thread), the heaviest
-///   recursion shapes must complete or fail with a STRUCTURED error under the default
-///   deterministic depth ceiling — never a process-terminating overflow. The
-///   <c>TryEnsureSufficientExecutionStack</c> backstop shared with the synchronous
-///   family is what converts an outgrown stack into
-///   <see cref="EvalError.EvaluationStackExhausted"/>.</item>
+///   <item>Where a twin is about to enter an invocation level, a row-loop funnel, or a need
+///   cell's computation with the host stack below the runtime's reserve, it continues on a
+///   fresh thread-pool stack (<see cref="KatLang.Evaluation.StackHop"/>, 2026-11-14) instead of
+///   stopping with <see cref="EvalError.EvaluationStackExhausted"/>. On the documented
+///   minimum 1 MiB thread the heaviest recursion shapes therefore reach the DETERMINISTIC depth
+///   verdict, and recursion the synchronous evaluator stops on that thread completes. Such a
+///   run completes asynchronously, so these tests await it rather than requiring synchronous
+///   completion.</item>
 ///   <item>Pure expression SPINES stay iterative in the twin machine, so a deep flat
 ///   chain evaluates on a 384 KiB thread exactly as the synchronous machine's pin
-///   demonstrates for the synchronous path.</item>
+///   demonstrates for the synchronous path — synchronously, with no hop.</item>
 ///   <item>A reduced dynamic depth ceiling reached before either host-stack backstop
-///   gives the same deterministic verdict. At the default ceiling either route may
-///   instead reach its environmental backstop (Q-09a).</item>
+///   gives the same deterministic verdict.</item>
 /// </list>
 /// </summary>
 public class AsyncStackDepthTests
 {
+    private const int OneMiB = 1_048_576;
+
+    // A hang guard for runs that continue on the thread pool, never a latency claim.
+    private static readonly TimeSpan HopWaitLimit = TimeSpan.FromSeconds(120);
+
+    /// <summary>
+    /// The shape the 2026-11-14 audit measured: at <c>a4b545e8</c> the twin route stopped it with
+    /// the stack backstop from <c>F(42)</c> on a 1 MiB harness thread, where the synchronous
+    /// routes completed up to <c>F(101)</c>.
+    /// </summary>
+    private const string PlainRecursion = "F(n) = if(n == 0, 0, F(n - 1) + 1)\n";
+
     private static EvalResult<Evaluator.CountedResult> RunTwinSynchronouslyCompleting(
         Expr ast, EvaluationLimits? limits = null)
     {
         var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache(), limits);
 
-        // Pass-through seam: the twin path completes synchronously, so the whole spine
-        // consumed the CURRENT thread's stack — which is exactly what these probes measure.
+        // Pass-through seam and a shape that never runs short of stack: the twin path
+        // completes synchronously, so the whole spine consumed the CURRENT thread's stack —
+        // which is exactly what these probes measure.
         Assert.True(pending.IsCompleted);
         return pending.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// The twin path STARTED on the calling thread and awaited to completion: a run that
+    /// outgrows that thread's stack continues on the thread pool and completes there.
+    /// </summary>
+    private static EvalResult<Evaluator.CountedResult> RunTwinToCompletion(
+        Expr ast, EvaluationLimits? limits = null)
+    {
+        var pending = Evaluator.RunCountedAsync(ast, new PassThroughAsyncZeroArgPropertyResultCache(), limits).AsTask();
+        Assert.True(pending.Wait(HopWaitLimit), "the twin run did not complete");
+        return pending.Result;
+    }
+
+    private static HostOperations UnusedAsyncOperation()
+        => HostOperations.Create(
+            HostOperation.CreateAsync("Ping", (_, _) => ValueTask.FromResult<Result>(new Result.Atom(1))));
+
+    private static Expr ParseWith(string source, HostOperations operations)
+    {
+        var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
+        Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(static d => d.Message)));
+        return new Expr.AlgorithmExpr(parsed.Root);
+    }
+
+    /// <summary>
+    /// The public host-operation route, STARTED on a fresh 1 MiB thread (the documented
+    /// minimum) and then awaited: the run is not required to complete on that thread.
+    /// </summary>
+    private static async Task<EvalResult<Result>> RunPublicAsyncFromOneMiBThread(Expr ast, HostOperations operations)
+    {
+        var pending = AstStructuralDepthProcessTests.RunOnThreadWithStack(
+            OneMiB, () => Evaluator.RunAsync(ast, operations, limits: null, randomSeed: null, CancellationToken.None));
+        return await pending.WaitAsync(HopWaitLimit);
     }
 
     [Fact]
@@ -52,30 +100,23 @@ public class AsyncStackDepthTests
     }
 
     [Fact]
-    public void TwinPath_DepthLimitedRecursion_AtDefaultCeilingOnDefaultThread_IsStructured()
+    public void TwinPath_DepthLimitedRecursion_AtDefaultCeilingOnDefaultThread_IsTheDeterministicVerdict()
     {
-        // CHARACTERIZATION FINDING (reported in the Phase 2 notes): the twin family's
-        // synchronously-completing async frames are larger than their synchronous
-        // counterparts, so on a default-sized thread a deep sync-completing chain can
-        // reach the shared TryEnsureSufficientExecutionStack backstop BEFORE the
-        // deterministic 128-level ceiling. The outcome is then the STRUCTURED
-        // stack-exhausted error where the synchronous path reports the deterministic
-        // depth error — both resource-limit verdicts of the same safety envelope,
-        // never a process crash. A genuine suspension unwinds the evaluator frames
-        // leading to the await, but continuation placement remains host/runtime-owned,
-        // so the twin-only stack checks still protect resumed evaluation.
+        // The twin family's synchronously-completing async frames are larger than their
+        // synchronous counterparts, so on a default-sized thread a deep chain can run short
+        // of host stack BEFORE the deterministic 128-level ceiling. Until 2026-11-14 that was
+        // the structured stack-exhausted error; the twin now continues on a fresh stack, so
+        // it reaches the deterministic depth verdict the synchronous path reports.
         const string source = "F(0) = 0\nF(n) = F(n - 1)\nF(500)";
         var ast = AsyncEvaluationHarness.Ast(source);
 
         var sync = Evaluator.RunCounted(ast);
-        var async = RunTwinSynchronouslyCompleting(ast);
+        var async = RunTwinToCompletion(ast);
 
         Assert.True(sync.IsError);
         Assert.True(async.IsError);
         Assert.Equal("evaluationDepthExceeded", SemanticExplorerHarness.ErrorCategory(sync.Error));
-        Assert.Contains(
-            SemanticExplorerHarness.ErrorCategory(async.Error),
-            new[] { "evaluationDepthExceeded", "evaluationStackExhausted" });
+        Assert.Equal("evaluationDepthExceeded", SemanticExplorerHarness.ErrorCategory(async.Error));
     }
 
     /// <summary>
@@ -93,7 +134,7 @@ public class AsyncStackDepthTests
 
     [Theory]
     [MemberData(nameof(HeaviestRecursionShapes))]
-    public void TwinPath_HeaviestShapes_OnOneMiBThread_ProduceStructuredOutcomes(string shapeId, string source)
+    public void TwinPath_HeaviestShapes_OnOneMiBThread_ReachTheDeterministicDepthVerdict(string shapeId, string source)
     {
         _ = shapeId;
         var ast = AsyncEvaluationHarness.Ast(source);
@@ -101,28 +142,27 @@ public class AsyncStackDepthTests
         EvalResult<Evaluator.CountedResult>? syncOutcome = null;
         EvalResult<Evaluator.CountedResult>? asyncOutcome = null;
 
-        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(OneMiB, () =>
         {
             syncOutcome = Evaluator.RunCounted(ast);
         });
 
-        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(OneMiB, () =>
         {
-            asyncOutcome = RunTwinSynchronouslyCompleting(ast);
+            asyncOutcome = RunTwinToCompletion(ast);
         });
 
         // Both paths: a structured outcome, never an unhandled overflow (an overflow
-        // would have terminated the process before these assertions ran). The twin
-        // path's larger frames may legitimately trade a depth verdict for the
-        // structured stack backstop on this minimum-supported stack; both are
-        // resource-limit verdicts of the same run-safety envelope.
+        // would have terminated the process before these assertions ran). The synchronous
+        // path may stop with the stack backstop on this minimum-supported stack (Q-09a);
+        // the twin continues each invocation that finds the stack low on a fresh one, so it
+        // reaches the deterministic depth verdict.
         Assert.True(syncOutcome!.Value.IsError);
         Assert.True(asyncOutcome!.Value.IsError);
 
         var syncCategory = SemanticExplorerHarness.ErrorCategory(syncOutcome.Value.Error);
-        var asyncCategory = SemanticExplorerHarness.ErrorCategory(asyncOutcome.Value.Error);
         Assert.Contains(syncCategory, new[] { "evaluationDepthExceeded", "evaluationStackExhausted" });
-        Assert.Contains(asyncCategory, new[] { "evaluationDepthExceeded", "evaluationStackExhausted" });
+        Assert.Equal("evaluationDepthExceeded", SemanticExplorerHarness.ErrorCategory(asyncOutcome.Value.Error));
     }
 
     [Fact]
@@ -131,7 +171,7 @@ public class AsyncStackDepthTests
         // 250 additions: a flat operator chain at the language's supported chain depth
         // class. The twin spine machine is iterative like the synchronous one, so this
         // must evaluate on the same 384 KiB thread the synchronous iterative-spine pin
-        // uses — one async driver frame, O(1) stack per spine node.
+        // uses — one async driver frame, O(1) stack per spine node, and no stack hop.
         var source = string.Join(" + ", Enumerable.Repeat("1", 250));
         var ast = AsyncEvaluationHarness.Ast(source);
         var sync = Evaluator.RunCounted(ast);
@@ -147,13 +187,14 @@ public class AsyncStackDepthTests
     }
 
     [Fact]
-    public void TwinPath_NestedAlgorithmBodies_OnOneMiBThread_StructuredOrSuccess()
+    public void TwinPath_NestedAlgorithmBodies_OnOneMiBThread_Complete()
     {
         // Nested zero-declaration algorithm bodies at the structural ceiling (2 counted
         // units per level plus an inner unary — the deepest recursive block shape),
         // host-built because the parser's own nesting budget rejects the equivalent
-        // brace source before evaluation is reached. The twin path must either
-        // evaluate it or fail structurally on this minimum-supported stack.
+        // brace source before evaluation is reached. Every body passes through the twin's
+        // row-loop funnel, which continues on a fresh stack when the thread runs low, so the
+        // twin evaluates it on this minimum-supported stack.
         Expr ast = new Expr.Unary(UnaryOp.Minus, new Expr.Num(-42));
         for (var level = 0; level < (EvaluationLimits.MaxSupportedAstDepth - 1) / 2; level++)
         {
@@ -165,68 +206,41 @@ public class AsyncStackDepthTests
         Assert.True(sync.IsOk, AsyncEvaluationHarness.NeutralOf(sync));
 
         EvalResult<Evaluator.CountedResult>? asyncOutcome = null;
-        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(OneMiB, () =>
         {
-            asyncOutcome = RunTwinSynchronouslyCompleting(ast);
+            asyncOutcome = RunTwinToCompletion(ast);
         });
 
-        if (asyncOutcome!.Value.IsOk)
-        {
-            Assert.Equal(
-                AsyncEvaluationHarness.NeutralOf(sync),
-                AsyncEvaluationHarness.NeutralOf(asyncOutcome.Value));
-        }
-        else
-        {
-            Assert.Equal(
-                "evaluationStackExhausted",
-                SemanticExplorerHarness.ErrorCategory(asyncOutcome.Value.Error));
-        }
+        Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(asyncOutcome!.Value));
     }
 
     /// <summary>
     /// F8 — the PUBLIC contract, as documented on <see cref="EvaluationLimits.MaxDepth"/>,
     /// the host-operation <c>Evaluator.RunAsync</c> overload, and
     /// <c>KatLangEngine.RunAsync</c>: a configuration with an asynchronous host operation
-    /// takes the twin path, whose recursion capacity is an implementation characteristic —
-    /// it may stop at a SHALLOWER depth than the synchronous evaluator, but only ever with
-    /// a structured resource-limit error of the same family (the stack backstop or the
-    /// deterministic depth verdict), never a process crash. No exact depth or ratio is
-    /// pinned, deliberately: that number is platform- and runtime-dependent and is not a
-    /// language guarantee.
+    /// takes the twin path even when the operation is never called. Its recursion is not
+    /// shortened by the twin's larger frames: an invocation that finds the stack low continues
+    /// on a fresh one, so an unbounded recursion ends with the deterministic depth verdict —
+    /// never a process crash. The synchronous evaluator's verdict on the same thread is either
+    /// member of the resource-limit family (Q-09a); no host-stack depth is pinned.
     /// </summary>
     [Theory]
     [MemberData(nameof(HeaviestRecursionShapes))]
-    public void PublicAsyncHostOperationSurface_DeepRecursion_FailsStructurallyNeverCrashes(string shapeId, string source)
+    public async Task PublicAsyncHostOperationSurface_DeepRecursion_ReachesTheDeterministicDepthVerdict(string shapeId, string source)
     {
         _ = shapeId;
-        var operations = HostOperations.Create(
-            HostOperation.CreateAsync("Ping", (_, _) => ValueTask.FromResult<Result>(new Result.Atom(1))));
-        var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
-        Assert.False(parsed.HasErrors);
-        var ast = new Expr.AlgorithmExpr(parsed.Root);
+        var operations = UnusedAsyncOperation();
+        var ast = ParseWith(source, operations);
 
-        EvalResult<Result>? asyncOutcome = null;
-        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
-        {
-            // Nothing suspends (the operation is never invoked), so the twin path completes
-            // synchronously on this thread's 1 MiB stack — the minimum supported stack.
-            var pending = Evaluator.RunAsync(ast, operations, limits: null, randomSeed: null, CancellationToken.None);
-            Assert.True(pending.IsCompleted);
-            asyncOutcome = pending.GetAwaiter().GetResult();
-        });
+        var asyncOutcome = await RunPublicAsyncFromOneMiBThread(ast, operations);
 
-        Assert.True(asyncOutcome!.Value.IsError);
-        var asyncError = asyncOutcome.Value.Error;
+        Assert.True(asyncOutcome.IsError);
+        var asyncError = asyncOutcome.Error;
         Assert.True(asyncError.IsResourceLimit);
-        Assert.Contains(
-            asyncError.Code,
-            new[] { KatLangErrorCode.EvaluationStackExhausted, KatLangErrorCode.EvaluationDepthExceeded });
+        Assert.Equal(KatLangErrorCode.EvaluationDepthExceeded, asyncError.Code);
 
-        // The synchronous evaluator's verdict on the same configuration is a resource-limit
-        // verdict of the same family; the twin may only trade one member for the other.
         EvalResult<Result>? syncOutcome = null;
-        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(OneMiB, () =>
         {
             syncOutcome = Evaluator.Run(
                 ast,
@@ -241,4 +255,138 @@ public class AsyncStackDepthTests
             syncOutcome.Value.Error.Code,
             new[] { KatLangErrorCode.EvaluationStackExhausted, KatLangErrorCode.EvaluationDepthExceeded });
     }
+
+    // ── The stack hop on the documented minimum stack (2026-11-14) ───────────
+
+    [Fact]
+    public async Task UnusedAsyncHostOperation_PlainRecursionPastTheSynchronousStack_OnOneMiBThread_Completes()
+    {
+        // F(120) is beyond what the synchronous routes complete on this thread (the audit
+        // measured F(101)) and far beyond the twin's own synchronously-completing frames
+        // (F(41)); the twin now continues on fresh stacks and completes it.
+        var operations = UnusedAsyncOperation();
+        var outcome = await RunPublicAsyncFromOneMiBThread(ParseWith(PlainRecursion + "F(120)", operations), operations);
+
+        Assert.True(outcome.IsOk, outcome.IsError ? outcome.Error.ToString() : null);
+        Assert.Equal(new Result.Atom(120), outcome.Value);
+    }
+
+    [Fact]
+    public async Task UnusedAsyncHostOperation_RunawayPlainRecursion_OnOneMiBThread_StopsAtTheDeterministicDepthLimit()
+    {
+        var operations = UnusedAsyncOperation();
+        var outcome = await RunPublicAsyncFromOneMiBThread(ParseWith(PlainRecursion + "F(200)", operations), operations);
+
+        Assert.True(outcome.IsError);
+        var leaf = outcome.Error;
+        while (leaf is EvalError.WithContext(_, var inner))
+            leaf = inner;
+        var depth = Assert.IsType<EvalError.EvaluationDepthExceeded>(leaf);
+        Assert.Equal(EvaluationLimits.MaxSupportedDepth, depth.Limit);
+        Assert.Equal(KatLangErrorCode.EvaluationDepthExceeded, outcome.Error.Code);
+    }
+
+    /// <summary>
+    /// A host operation awaited AFTER each descent (<c>wait(F(n - 1)) + 1</c>) cannot give the
+    /// descent a fresh stack — the audit measured the twin failing it at <c>F(30)</c> — and one
+    /// awaited BEFORE each descent (<c>if(wait(n == 0), …)</c>) already resumed on one when it
+    /// genuinely suspended. With the stack hop both complete, whether the operation completes
+    /// synchronously or genuinely yields. The waiting-after shape holds TWO dynamic invocations
+    /// per level — the operation's wrapper, and the recursive call its argument makes inside it —
+    /// so the deterministic 128-level limit admits <c>F(63)</c> on every route; <c>F(60)</c> is
+    /// past both the twin's former stack stop and the synchronous route's stop on this thread.
+    /// </summary>
+    [Theory]
+    [InlineData("F(n) = if(n == 0, 0, wait(F(n - 1)) + 1)", 60, false)]
+    [InlineData("F(n) = if(n == 0, 0, wait(F(n - 1)) + 1)", 60, true)]
+    [InlineData("F(n) = if(wait(n == 0), 0, F(n - 1) + 1)", 120, false)]
+    [InlineData("F(n) = if(wait(n == 0), 0, F(n - 1) + 1)", 120, true)]
+    public async Task WaitingRecursion_OnOneMiBThread_Completes(string definition, int n, bool yielding)
+    {
+        var operations = WaitOperation(yielding);
+
+        var outcome = await RunPublicAsyncFromOneMiBThread(ParseWith($"{definition}\nF({n})", operations), operations);
+
+        Assert.True(outcome.IsOk, outcome.IsError ? outcome.Error.ToString() : null);
+        Assert.Equal(new Result.Atom(n), outcome.Value);
+    }
+
+    /// <summary>
+    /// <c>wait(F(n - 1)) + 1</c> at <c>F(120)</c> needs about 240 nested invocations (two per
+    /// level, see above): on the documented minimum stack the twin reaches the DETERMINISTIC
+    /// depth verdict, as every route does with enough stack — never the stack backstop.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WaitingAfterEachDescent_PastTheDepthLimit_OnOneMiBThread_IsTheDeterministicVerdict(bool yielding)
+    {
+        var operations = WaitOperation(yielding);
+
+        var outcome = await RunPublicAsyncFromOneMiBThread(
+            ParseWith("F(n) = if(n == 0, 0, wait(F(n - 1)) + 1)\nF(120)", operations), operations);
+
+        Assert.True(outcome.IsError);
+        var leaf = outcome.Error;
+        while (leaf is EvalError.WithContext(_, var inner))
+            leaf = inner;
+        Assert.Equal(EvaluationLimits.MaxSupportedDepth, Assert.IsType<EvalError.EvaluationDepthExceeded>(leaf).Limit);
+    }
+
+    /// <summary>
+    /// The hop's check must hold wherever the probe after it would fail. At an invocation
+    /// chokepoint that probe runs two helper frames deeper than the twin that tests
+    /// <see cref="KatLang.Evaluation.StackHop.HostStackIsLow"/>; an exact test left a window of a
+    /// few hundred bytes where the check passed and the probe failed (a full-suite run reported
+    /// <see cref="EvalError.EvaluationStackExhausted"/> at <c>wait(F(n - 1))</c>), which
+    /// <see cref="KatLang.Evaluation.StackHop.ChokepointMargin"/> closes. Starting the same run at
+    /// every 48-byte offset across 64 KiB — more than one recursion level's stack on this shape —
+    /// lands every chokepoint of a level in any such window at some offset; every start completes.
+    /// </summary>
+    [Fact]
+    public void WaitingRecursion_FromEveryStackOffset_OnOneMiBThread_Completes()
+    {
+        var operations = WaitOperation(yielding: false);
+        var ast = ParseWith("F(n) = if(n == 0, 0, wait(F(n - 1)) + 1)\nF(60)", operations);
+        var expected = new Result.Atom(60);
+        var wrong = new List<string>();
+        var starts = 0;
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(OneMiB, () =>
+        {
+            for (var offset = 0; offset <= 64 * 1024; offset += 48)
+            {
+                starts++;
+                var pending = StartBelow(offset,
+                    () => Evaluator.RunAsync(ast, operations, limits: null, randomSeed: null, CancellationToken.None));
+                Assert.True(pending.Wait(HopWaitLimit), $"offset {offset}: the run did not complete");
+                var outcome = pending.Result;
+                if (outcome.IsError)
+                    wrong.Add($"{offset}: {outcome.Error.Code}");
+                else if (!expected.Equals(outcome.Value))
+                    wrong.Add($"{offset}: {outcome.Value}");
+            }
+        });
+
+        Assert.True(starts > 1000);
+        Assert.True(wrong.Count == 0, $"{wrong.Count} of {starts} starts did not complete with 60: {string.Join("; ", wrong.Take(10))}");
+    }
+
+    // Starts a run `offset` bytes lower on the current thread's stack.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static T StartBelow<T>(int offset, Func<T> start)
+    {
+        Span<byte> padding = stackalloc byte[offset];
+        return StartOnPadding(padding, start);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static T StartOnPadding<T>(Span<byte> padding, Func<T> start) => start();
+
+    private static HostOperations WaitOperation(bool yielding)
+        => HostOperations.Create(HostOperation.CreateAsync("wait", async (args, _) =>
+        {
+            if (yielding)
+                await Task.Yield();
+            return args[0];
+        }, "value"));
 }
