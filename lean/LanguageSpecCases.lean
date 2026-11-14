@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 570
+- specification surface cases: 571
 - excluded parse-level cases (Lean has no surface parser): 81
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 465
+- Lean-guarded cases: 466
 - probe observations (C#-only by design): 1534
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -2530,7 +2530,12 @@ def case_output_spread_lifted_call_ends_known_positions : Expr :=
   .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [(.sequenceSpread (.call (.resolve "P") [.param "x"])), .resolve "Add", .resolve "Inc"])]), privateProp "P" (alg ["x"] [] [] [(.listLiteral [.param "x"])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [.num 1])])
 #guard obs case_output_spread_lifted_call_ends_known_positions == "err arity"
 
--- 465 canonical Lean-guarded specification cases.
+-- output-spread-reference-certainly-read [item-supply-vs-value]: Q = [[1, 2], 3] \n P* = Q[0] \n Add(a, b) = a + b \n Inc(x) = x + 1 \n H = reduce(P, Add, Inc) \n H(-3)
+def case_output_spread_reference_certainly_read : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "P" (alg [] [] [] [(.index (.resolve "Q") [.num 0])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [.resolve "P", .resolve "Add", (.call (.resolve "Inc") [.param "x"])])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [(.unary .minus (.num 3))])])
+#guard obs case_output_spread_reference_certainly_read == "ok raw=1 n=1"
+
+-- 466 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3002,8 +3007,9 @@ def specCaseIds : List String := [
   "output-spread-argument-runs-at-formation",
   "output-spread-opens-one-level",
   "output-spread-receiver-edge-is-the-lowered-call",
-  "output-spread-lifted-call-ends-known-positions"
+  "output-spread-lifted-call-ends-known-positions",
+  "output-spread-reference-certainly-read"
 ]
-#guard specCaseIds.length == 465
+#guard specCaseIds.length == 466
 
 end LanguageSpecCases

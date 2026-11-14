@@ -390,7 +390,8 @@ public class DeclarationOutputSpreadingTests
         Assert.Equal(new SourcePosition(line, column), diagnostic.Span!.Value.Start);
         Assert.Equal(new SourcePosition(line, column + reference.Length), diagnostic.Span!.Value.End);
         Assert.Contains("only parameter inference decides whether `" + reference + "` is called here", diagnostic.Message);
-        Assert.Contains("Write the call: `" + reference + "(…)`.", diagnostic.Message);
+        // Both spellings (follow-up E2): the call, which is spread, and the braced read.
+        Assert.Contains("Write `" + reference + "(…)` to call it (its result is spread), or `{ " + reference + " }` to read it without arguments as one value.", diagnostic.Message);
         Assert.Contains(reference == "P" ? "`P` is declared with `*`" : "`R` is `P`, which is declared with `*`", diagnostic.Message);
 
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(SelectionDependent + program));
@@ -429,6 +430,268 @@ public class DeclarationOutputSpreadingTests
     [InlineData("Q(x) = [x]\nP = Q + 0\n" + Reducers + "H = reduce(P, Add, Inc)\nH(1)")]
     public void StaticallySettledReference_IsNeverReported(string source)
         => Assert.DoesNotContain(SourceProvenance.ParseAllowingDiagnostics(source).Diagnostics, d => d.Code == DiagnosticCode.OutputSpreadReferenceNeedsCall);
+
+    // ── A CERTAIN READ: "can lift" is decided recursively (the follow-up's E1) ──
+
+    private const string ZeroArgumentSource = "Q = [[1, 2], 3]\nP* = Q[0]";
+
+    /// <summary>
+    /// A marked declaration with no required parameter of its own whose rows reach nothing that could lift: no closed
+    /// callee, no inferred name, no link. Selection can give it no parameter, so a bare reference to it is a READ (D2):
+    /// accepted, elaborated as the unmarked program, with its result on every route.
+    /// </summary>
+    public static TheoryData<string, string, string> CertainReads => new()
+    {
+        // The host check's c01: `Q` takes nothing and holds nothing that lifts.
+        { ZeroArgumentSource, "H = reduce(P, Add, Inc)\nH(-3)", "ok 1" },
+        // A chain of open bodies, none of which can lift.
+        { "P* = Q[0]\nQ = R[0]\nR = [[[1, 2], 3]]", "H = reduce(P, Add, Inc)\nH(-3)", "ok 1" },
+        // A group of bodies that read only each other reaches no source, however long the cycle.
+        { "P* = if(false, Q, [1, 2])\nQ = if(false, P, [3])", "H = reduce(P, Add, Inc)\nH(-3)", "ok 1" },
+        { "P* = if(false, Q, [1, 2])\nQ = if(false, S, [3])\nS = if(false, P, [4])", "H = reduce(P, Add, Inc)\nH(-3)", "ok 1" },
+        // A block in a row is a level of its own: what it holds is not this body's to lift.
+        { "P* = [count({ 5, 6 }), 2]", "H = reduce(P, Add, Inc)\nH(-3)", "ok 2" },
+        // The reference through a transparent alias, and through a member path.
+        { ZeroArgumentSource + "\nR = P", "H = reduce(R, Add, Inc)\nH(-3)", "ok 1" },
+        { "Lib = {\npublic Q = [[1, 2], 3]\npublic P* = Q[0]\n}", "H = reduce(Lib.P, Add, Inc)\nH(-3)", "ok 1" },
+        // The other uses: no later slot, a literal initial value, the receiver spelling.
+        { ZeroArgumentSource, "H = count(P)\nH", "ok 2" },
+        { ZeroArgumentSource, "H = reduce(P, Add, 0)\nH", "ok 3" },
+        { ZeroArgumentSource, "H = P.reduce(Add, Inc)\nH(-3)", "ok 1" },
+    };
+
+    [Theory]
+    [MemberData(nameof(CertainReads))]
+    public async Task CertainRead_IsAccepted_AsItsUnmarkedCounterpart(string declarations, string formula, string expected)
+    {
+        var marked = declarations + "\n" + Reducers + formula;
+        var unmarked = marked.Replace("P* =", "P =");
+        Assert.NotEqual(marked, unmarked);
+        Assert.Equal(expected, await SummaryOnEveryRoute(marked));
+        await AssertOneProgram(unmarked, marked);
+    }
+
+    [Theory]
+    // An inferred source: `Q` infers `x`, a required parameter of its own.
+    [InlineData("Q = [[x]]\nP* = Q[0]\n")]
+    // A source two levels down.
+    [InlineData("R(x) = [[[x]]]\nQ = R[0]\nP* = Q[0]\n")]
+    // A group with one source.
+    [InlineData("S(x) = [x]\nP* = if(false, Q, [1, 2])\nQ = if(false, P, S)\n")]
+    // A builtin, and a link, which stays conservative.
+    [InlineData("Q = [abs + 0]\nP* = Q[0]\n")]
+    [InlineData("Mk(t) = [[t]]\nLink = Mk.Algorithm\nQ = Link[0]\nP* = Q[0]\n")]
+    public void ReferenceThatCanLift_StaysASelectionResult(string declarations)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(declarations + Reducers + "H = reduce(P, Add, Inc)\n1");
+        var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.OutputSpreadReferenceNeedsCall, diagnostic.Code);
+        Assert.Contains("whether `P` is called here", diagnostic.Message);
+    }
+
+    [Theory]
+    [InlineData("H = reduce(P, Add, Inc)\nH(1)", "P", "`P` is declared with `*`")]
+    [InlineData("R = P\nH = reduce(R, Add, Inc)\nH(1)", "R", "`R` is `P`, which is declared with `*`")]
+    public void SelectionDependentReference_NamesBothSpellings_AndBothAreAccepted(string program, string reference, string subject)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(SelectionDependent + program);
+        var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(
+            subject + ", and only parameter inference decides whether `" + reference + "` is called here, which also decides how the later arguments are treated." + Environment.NewLine
+            + "Write `" + reference + "(…)` to call it (its result is spread), or `{ " + reference + " }` to read it without arguments as one value.",
+            diagnostic.Message);
+
+        // Each spelling the message offers is a program the front end accepts.
+        var use = "reduce(" + reference + ", Add, Inc)";
+        Assert.Contains(use, program);
+        _ = SourceProvenance.ParseValid(SelectionDependent + program.Replace(use, "reduce(" + reference + "(1), Add, Inc)"));
+        _ = SourceProvenance.ParseValid(SelectionDependent + program.Replace(use, "reduce({ " + reference + " }, Add, Inc)"));
+    }
+
+    // ── A refused marker decides nothing at its uses (the follow-up's E3) ──
+
+    private const string RoleDependentUse = "H = reduce(P, Add, Inc)\n1";
+
+    [Theory]
+    // The parser's refusals: mixed clause markers, a deconstruction target.
+    [InlineData("P(0)* = [0]\nP(n) = [n]\n" + Reducers + RoleDependentUse, DiagnosticCode.MixedOutputSpreadMarkers)]
+    [InlineData("P*, Z = [1, 2], 3\n" + Reducers + RoleDependentUse, DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget)]
+    // A transparent alias: of a declaration that takes an argument, and of one that can lift one.
+    [InlineData("Q(x) = [x]\nP* = Q\n" + Reducers + RoleDependentUse, DiagnosticCode.OutputSpreadMarkerOnAlias)]
+    [InlineData("S(x) = [[x]]\nQ = S[0]\nP* = Q\n" + Reducers + RoleDependentUse, DiagnosticCode.OutputSpreadMarkerOnAlias)]
+    // A runtime-target alias: the host check's l08 (only selection reveals it), a carrier of a runtime link, a parameter row.
+    [InlineData("Mk = [7]\nP* = { Mk.Algorithm }\n" + Reducers + RoleDependentUse, DiagnosticCode.OutputSpreadMarkerOnAlias)]
+    [InlineData("Mk = [7]\nLink = Mk.Algorithm\nP* = { Link }\n" + Reducers + RoleDependentUse, DiagnosticCode.OutputSpreadMarkerOnAlias)]
+    [InlineData(Reducers + "Use(f) = {\nP* = f\n" + RoleDependentUse + "\n}\n1", DiagnosticCode.OutputSpreadMarkerOnAlias)]
+    // A link that stays a calculation.
+    [InlineData("Mk(t) = [t]\nP* = Mk.Algorithm\n" + Reducers + RoleDependentUse, DiagnosticCode.OutputSpreadMarkerOnAlias)]
+    public void RefusedMarker_IsTheOneDiagnostic_AndItsUsesGetNone(string source, DiagnosticCode refusal)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+        var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(refusal, diagnostic.Code);
+    }
+
+    [Fact]
+    public async Task RefusedMarkerOnAModuleHolder_GivesNoReportAtItsUses()
+    {
+        // Supply the module: an unavailable load would make elaboration provisional and withhold use-site diagnostics.
+        const string source = "P* = load('https://katlang.org/lib.kat')\n" + Reducers + RoleDependentUse;
+        var downloads = 0;
+        var options = new RunOptions
+        {
+            AllowedHosts = ["katlang.org"],
+            DownloadCode = (url, cancellationToken) =>
+            {
+                Assert.Equal("https://katlang.org/lib.kat", url);
+                downloads++;
+                return ValueTask.FromResult("[1, 2]");
+            },
+        };
+        var control = await SourceProvenance.ParseValidAsync(source.Replace("P* =", "P ="), options);
+        Assert.Equal(1, downloads);
+
+        var parsed = await Parser.ParseAsync(source, options);
+        Assert.Equal(2, downloads);
+        var diagnostic = Assert.Single(parsed.Diagnostics);
+        Assert.Equal(DiagnosticCode.OutputSpreadMarkerOnAlias, diagnostic.Code);
+        // The parser drops the refused marker; it changes neither the tree nor any use's role.
+        Assert.Equal(LeanAstEncoder.EncodeProgram(control.Root), LeanAstEncoder.EncodeProgram(parsed.Root));
+    }
+
+    [Theory]
+    // A detached or repeated marker is a misspelled one: the declaration is marked, so a use-site report is genuine.
+    [InlineData("Q(x) = [[x]]\nP * = Q[0]\n", DiagnosticCode.DetachedOutputSpreadMarker)]
+    [InlineData("Q(x) = [[x]]\nP** = Q[0]\n", DiagnosticCode.RepeatedOutputSpreadMarker)]
+    public void MisspelledMarker_Stands_SoItsUseSiteReportIsGenuine(string declarations, DiagnosticCode spelling)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(declarations + Reducers + RoleDependentUse);
+        Assert.Equal(
+            [spelling, DiagnosticCode.OutputSpreadReferenceNeedsCall],
+            parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Code).Order());
+    }
+
+    // ── The generated family: small dependency shapes, a source or none at each position ──
+
+    /// <summary>What a body's own row holds beside the reference to the next body of its shape.</summary>
+    public enum LiftSource
+    {
+        None,
+        OwnInferredName,
+        ClosedCallee,
+        Builtin,
+        ClauseFamily,
+        AlgorithmLink,
+        EnclosingParameter,
+        ClosedZeroSupplyList,
+    }
+
+    // A source the certificate must find: selection can give its reader a parameter through it. An enclosing parameter
+    // is a lexical capture and a closed collector-only list is a final zero-supply signature: neither can lift.
+    private static bool CanLift(LiftSource source)
+        => source is LiftSource.OwnInferredName or LiftSource.ClosedCallee or LiftSource.Builtin or LiftSource.ClauseFamily or LiftSource.AlgorithmLink;
+
+    private static string SourceElement(LiftSource source, int body) => source switch
+    {
+        LiftSource.None => "7",
+        LiftSource.OwnInferredName => $"v{body} + 0",
+        LiftSource.ClosedCallee => "count(Closed)",
+        LiftSource.Builtin => "abs + 0",
+        LiftSource.ClauseFamily => "count(Fam)",
+        LiftSource.AlgorithmLink => "count(Link)",
+        LiftSource.EnclosingParameter => "p + 0",
+        LiftSource.ClosedZeroSupplyList => "count(Zero)",
+        _ => throw new ArgumentOutOfRangeException(nameof(source)),
+    };
+
+    private const string FamilyDeclarations =
+        "Closed(x) = [x]\nFam(0) = [0]\nFam(n) = [n]\nMk(t) = [t]\nLink = Mk.Algorithm\nZero(*xs) = [7]\n" + Reducers;
+
+    /// <summary>
+    /// One generated program: the bodies <c>P</c>, <c>B1</c>, <c>B2</c> of a chain (the last reads nothing) or of a
+    /// cycle (the last reads <c>P</c>), each holding its source element, then the use. Inside <c>Outer(p)</c> when a
+    /// body reads the enclosing parameter.
+    /// </summary>
+    private static string GeneratedProgram(IReadOnlyList<LiftSource> sources, bool cycle, string use, bool marked)
+    {
+        var bodies = new System.Text.StringBuilder();
+        for (var body = 0; body < sources.Count; body++)
+        {
+            var name = body == 0 ? (marked ? "P*" : "P") : $"B{body}";
+            var next = body + 1 < sources.Count ? $"count(B{body + 1})" : cycle ? "count(P)" : "0";
+            bodies.Append($"{name} = [{next}, {SourceElement(sources[body], body)}]\n");
+        }
+        var program = bodies + "H = " + use + "\n0\n";
+        return FamilyDeclarations + (sources.Contains(LiftSource.EnclosingParameter)
+            ? "Outer(p) = {\n" + program + "}\nOuter(5)\n"
+            : program);
+    }
+
+    private static IEnumerable<(LiftSource[] Sources, bool Cycle)> GeneratedShapes()
+    {
+        var kinds = Enum.GetValues<LiftSource>().Where(kind => kind != LiftSource.None).ToArray();
+        foreach (var (size, cycle) in new[] { (1, false), (2, false), (3, false), (2, true), (3, true) })
+        {
+            yield return (Enumerable.Repeat(LiftSource.None, size).ToArray(), cycle);
+            for (var position = 0; position < size; position++)
+                foreach (var kind in kinds)
+                {
+                    var sources = Enumerable.Repeat(LiftSource.None, size).ToArray();
+                    sources[position] = kind;
+                    yield return (sources, cycle);
+                }
+            // Something that cannot lift near the marked body must not hide a source farther away.
+            if (size > 1)
+            {
+                var mixed = Enumerable.Repeat(LiftSource.None, size).ToArray();
+                (mixed[0], mixed[^1]) = (LiftSource.EnclosingParameter, LiftSource.ClosedCallee);
+                yield return (mixed, cycle);
+            }
+        }
+    }
+
+    [Fact]
+    public void GeneratedDependencyShapes_AreReadOrReported_ExactlyAsReachabilityDecides()
+    {
+        var (programs, reads, reports, certainLifts) = (0, 0, 0, 0);
+        foreach (var (sources, cycle) in GeneratedShapes())
+            foreach (var use in new[] { "reduce(P, Add, Inc)", "count(P)", "reduce(P, Add, 0)" })
+            {
+                programs++;
+                var label = $"{(cycle ? "cycle" : "chain")} [{string.Join(", ", sources)}] {use}";
+                var marked = GeneratedProgram(sources, cycle, use, marked: true);
+                // Elaboration never throws: a wrong "read" certificate is the prediction invariant's exception.
+                var parsed = SourceProvenance.ParseAllowingDiagnostics(marked);
+                var errors = parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+
+                // The oracle, from the shape alone: every body of a chain or a cycle is reachable from P.
+                var certainLift = sources[0] == LiftSource.OwnInferredName;
+                var canLift = sources.Any(CanLift);
+                if (!canLift)
+                {
+                    // A read: accepted, and the very tree of the unmarked program.
+                    reads++;
+                    Assert.True(errors.Length == 0, $"{label}: {string.Join(" | ", errors.Select(e => e.Code))}");
+                    Assert.True(Encoding(GeneratedProgram(sources, cycle, use, marked: false)) == Encoding(marked), label);
+                }
+                else if (!certainLift && use == "reduce(P, Add, Inc)")
+                {
+                    // A selection result where a later slot depends on it: the one report, at the reference.
+                    reports++;
+                    Assert.True(errors.Length == 1 && errors[0].Code == DiagnosticCode.OutputSpreadReferenceNeedsCall,
+                        $"{label}: {string.Join(" | ", errors.Select(e => e.Code))}");
+                }
+                else
+                {
+                    // Certainly lifted, or nothing later depends on the reference: no report.
+                    if (certainLift) certainLifts++;
+                    Assert.True(errors.Length == 0, $"{label}: {string.Join(" | ", errors.Select(e => e.Code))}");
+                }
+            }
+
+        // 86 shapes by 3 uses; 27 shapes reach no source; 59 reach one, 5 of them through P's own inferred name.
+        Assert.Equal((258, 81, 54, 15), (programs, reads, reports, certainLifts));
+    }
 
     // ── A marked extension edge is the lowered call from parameter detection on (owner decision D1) ──
 

@@ -9650,7 +9650,18 @@ public static class LanguageSpecCorpus
             ExpectedParseDiagnosticFragment = "only parameter inference decides whether `P` is called here",
             ExpectedDiagnosticCode = DiagnosticCode.OutputSpreadReferenceNeedsCall,
             Notes = "Front-end rule; no elaborated Lean program exists.",
-            Explanation = "`P` has no parameter of its own, and only inference can give it one (through `Q`). Whether the bare `P` is a call decides whether `Inc` is `reduce`'s initial value, so the front end asks for the written call: `reduce(P(x), Add, Inc)`.",
+            Explanation = "`P` has no parameter of its own, and only inference can give it one (through `Q`). Whether the bare `P` is a call decides whether `Inc` is `reduce`'s initial value, so the front end asks which is meant: the written call `reduce(P(x), Add, Inc)`, whose result is spread, or the read `reduce({ P }, Add, Inc)`, one value.",
+        },
+        new()
+        {
+            Id = "output-spread-reference-certainly-read",
+            Category = "item-supply-vs-value",
+            Source = "Q = [[1, 2], 3]\nP* = Q[0]\nAdd(a, b) = a + b\nInc(x) = x + 1\nH = reduce(P, Add, Inc)\nH(-3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Explanation = "`Q` takes no argument and holds nothing that could lift one, so `P` can never gain a parameter: the bare `P` is certainly a read, one value, and its marker changes nothing here. `Inc` stays `reduce`'s initial value, so `H` is `H(x)` and `H(-3)` is `Inc(-3) + 1 + 2`.",
         },
     ];
 }

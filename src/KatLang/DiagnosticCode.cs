@@ -535,9 +535,12 @@ public enum DiagnosticCode
     /// A bare reference to a declaration written with the output-spreading marker stands in an
     /// argument slot (or as an extension-call receiver) where only parameter inference decides
     /// whether it becomes a call — the declaration has no required parameter of its own and its
-    /// body could lift one (<c>P* = Q + 0</c>) — and that decision would also change how a later
-    /// argument of the same builtin call is treated (<c>reduce(P, Add, Inc)</c>: after a spread,
-    /// <c>Inc</c> is no longer the initial value). Write the call: <c>P(…)</c>.
+    /// body could lift one (<c>P* = Q + 0</c> over a <c>Q</c> that takes or can itself lift an
+    /// argument; a body that reaches no such declaration is certainly read, and is no error) — and
+    /// that decision would also change how a later argument of the same builtin call is treated
+    /// (<c>reduce(P, Add, Inc)</c>: after a spread, <c>Inc</c> is no longer the initial value).
+    /// Write <c>P(…)</c> to call it (its result is spread), or <c>{ P }</c> to read it without
+    /// arguments as one value.
     /// </summary>
     OutputSpreadReferenceNeedsCall = 69,
 }

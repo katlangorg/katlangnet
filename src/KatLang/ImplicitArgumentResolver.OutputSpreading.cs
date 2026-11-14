@@ -285,11 +285,25 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Whether the written rows of the open body <paramref name="body"/> hold a VALUE-role reference that could lift.
-    /// Uses the production role walk and Q3 endpoints in the body's OWN context: a callback is never a value use, and a
-    /// final zero-supply signature is certainly a read. Open dependencies and undecided dot routes stay conservative;
-    /// nothing reads a selected signature or depends on the order bodies are analyzed in. Blocks are their own levels.
-    /// Once per contextual body per resolution, charged to the operation's ledger.
+    /// Whether the written rows of the open body <paramref name="body"/> hold a VALUE-role reference that could lift
+    /// (D2's "potentially liftable", decided RECURSIVELY). Uses the production role walk and Q3 endpoints in the body's
+    /// OWN context: a callback is never a value use, and a final zero-supply signature is certainly a read. A value-role
+    /// reference can lift when its callee is
+    /// <list type="bullet">
+    ///   <item>a final signature that requires a supplied argument;</item>
+    ///   <item>an open body of this resolution with a required parameter of its own (written, or inferred by parameter
+    ///   detection);</item>
+    ///   <item>an open body of this resolution whose own rows hold a reference that can lift, by this same rule in THAT
+    ///   body's context;</item>
+    ///   <item>a runtime fact (an <c>.Algorithm</c> link, whose signature can gain its target's parameters), which stays
+    ///   conservative, as an undecided dot route does (the walk takes its fallback).</item>
+    /// </list>
+    /// So the verdict is REACHABILITY over contextual bodies: a body can lift exactly when a chain of such references
+    /// leads from it to one of the first two or the last. A required parameter of a selected signature comes only from an
+    /// own inferred name, from a lifted reference to a callee that requires arguments, or from a link class selection
+    /// decides; a body that reaches none of them is given none, and a group of open bodies that read only each other
+    /// reaches none. Nothing reads a selected signature or depends on the order bodies are analyzed in. Blocks are their
+    /// own levels. Once per contextual body per resolution, charged to the operation's ledger.
     /// </summary>
     private static bool HoldsALiftableReference(StaticScopeKey scope, Algorithm.User body, ResolutionRun run)
     {
@@ -297,25 +311,85 @@ internal static partial class ImplicitArgumentResolver
         if (known.TryGetValue(scope, out var holds))
             return holds;
 
-        var sink = new PotentialLiftSink(scope, run);
-        foreach (var row in AstHelpers.WrittenRows(body))
-            WalkLiftingRoles(row, LiftingRole.Value, null, ref sink);
+        // Forward: every open body this one reaches through value-role references, each walked once. A body that holds a
+        // direct source is liftable and is explored no further; every other body's dependencies are all explored, so the
+        // bodies left unmarked form a set closed under the relation, none of which reaches a source.
+        var resources = run.StructuralOperation!.Queries.Resources;
+        var explored = new List<StaticScopeKey>();
+        var liftable = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
+        var reached = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance) { scope };
+        Dictionary<StaticScopeKey, List<StaticScopeKey>>? readers = null;
+        var pending = new Stack<(StaticScopeKey Scope, Algorithm.User Body)>();
+        pending.Push((scope, body));
+        while (pending.TryPop(out var current))
+        {
+            explored.Add(current.Scope);
+            var sink = new PotentialLiftSink(current.Scope, run);
+            foreach (var row in AstHelpers.WrittenRows(current.Body))
+                WalkLiftingRoles(row, LiftingRole.Value, null, ref sink);
 
-        run.StructuralOperation!.Queries.Resources.Metadata(2, cancellationToken: run.CancellationToken);
-        known.Add(scope, sink.Found);
-        return sink.Found;
+            resources.Metadata(2, cancellationToken: run.CancellationToken);
+            if (sink.Found)
+            {
+                liftable.Add(current.Scope);
+                continue;
+            }
+
+            if (sink.OpenDependencies is not { } dependencies)
+                continue;
+            foreach (var (dependency, dependencyBody) in dependencies)
+            {
+                resources.Work(1, run.CancellationToken);
+                if (known.TryGetValue(dependency, out var settled))
+                {
+                    if (settled)
+                        liftable.Add(current.Scope);
+                    continue;
+                }
+
+                readers ??= new(ReferenceEqualityComparer.Instance);
+                if (!readers.TryGetValue(dependency, out var readersOfDependency))
+                    readers.Add(dependency, readersOfDependency = []);
+                readersOfDependency.Add(current.Scope);
+                if (reached.Add(dependency))
+                    pending.Push((dependency, dependencyBody));
+            }
+        }
+
+        // Backward: a body that reads a liftable body is liftable.
+        if (readers is not null && liftable.Count > 0)
+        {
+            var sources = new Stack<StaticScopeKey>(liftable);
+            while (sources.TryPop(out var source))
+            {
+                if (!readers.TryGetValue(source, out var readersOfSource))
+                    continue;
+                foreach (var reader in readersOfSource)
+                    if (liftable.Add(reader))
+                        sources.Push(reader);
+            }
+        }
+
+        foreach (var key in explored)
+            known[key] = liftable.Contains(key);
+        return liftable.Contains(scope);
     }
 
     /// <summary>
     /// The preselection instantiation of the ONE role walk. Its value roles are a safe superset: an undecided dot edge
     /// may take its fallback, and an automatic spread may only turn a later value role into a callable role. Thus finding
-    /// no potentially lifted reference proves a read without solving any signature equations.
+    /// no potentially lifted reference proves a read without solving any signature equations. A reference whose callee is
+    /// an open body with no required parameter of its own decides nothing here: the body is recorded
+    /// (<see cref="OpenDependencies"/>) and <see cref="HoldsALiftableReference"/> follows it.
     /// </summary>
     private struct PotentialLiftSink(StaticScopeKey scope, ResolutionRun run) : ILiftingWalkSink
     {
         private readonly HashSet<Expr> _values = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<Expr> _callables = new(ReferenceEqualityComparer.Instance);
         public bool Found;
+
+        /// <summary>The open bodies the value-role references of the walked rows name, each in its own context.</summary>
+        public List<(StaticScopeKey Scope, Algorithm.User Body)>? OpenDependencies;
 
         public bool Enter(Expr expr, LiftingRole role, StaticScopeKey? guard)
         {
@@ -333,21 +407,35 @@ internal static partial class ImplicitArgumentResolver
 
         public void Reference(Expr reference, StaticScopeKey? guard)
         {
-            if (CallableAt(reference) is not { } callable)
+            if (CallableAt(reference, out var runtime) is not { } callable)
                 return;
             var operation = run.StructuralOperation!;
-            // An open dependency may acquire parameters during selection. Every other signature is already final.
-            Found = callable.Key is { } key && operation.EarlierResolvedView(key) is null
-                && (operation.DetectedView(key) ?? callable.Written) is Algorithm.User { HasExplicitParameterList: false }
-                || FinalLiftingSignature(callable, callable.DisplayName, run).Signature is { } signature
-                    && RequiresSuppliedArguments(signature);
+            if (callable.Key is { } key && operation.EarlierResolvedView(key) is null
+                && (operation.DetectedView(key) ?? callable.Written) is Algorithm.User { HasExplicitParameterList: false } open)
+            {
+                // An open dependency may acquire parameters during selection: certainly when its own patterns require a
+                // supplied argument, and through a runtime fact, which stays conservative. Otherwise only through what its
+                // own rows can lift, which reachability decides.
+                if (runtime || !ParameterPattern.AcceptsZeroSuppliedSlots(open.ParameterPatterns))
+                    Found = true;
+                else
+                    (OpenDependencies ??= []).Add((key, open));
+                return;
+            }
+
+            // Every other signature is already final.
+            Found = FinalLiftingSignature(callable, callable.DisplayName, run).Signature is { } signature
+                && RequiresSuppliedArguments(signature);
         }
 
-        private StaticCallable? CallableAt(Expr reference)
+        private StaticCallable? CallableAt(Expr reference) => CallableAt(reference, out _);
+
+        private StaticCallable? CallableAt(Expr reference, out bool runtime)
         {
             var operation = run.StructuralOperation!;
             var selected = operation.Read(StaticQueryKey.Project(
                 StaticQueryKind.TargetWalk, scope, StaticQueryProjection.Receiver, node: reference.UnwrapGraceOperand()));
+            runtime = selected.Kind == StaticFactKind.Runtime;
             // Runtime structure is not absence of a declaration: a link's signature can still gain parameters.
             return selected.Kind is StaticFactKind.Structure or StaticFactKind.Runtime && selected.Scope is { } target
                 ? InvocationCallable(operation.Declaration(target), reference switch
@@ -435,12 +523,20 @@ internal static partial class ImplicitArgumentResolver
 
     /// <summary>
     /// Reports <see cref="DiagnosticCode.OutputSpreadReferenceNeedsCall"/> at the bare reference (inside imported content,
-    /// at the import site), once per reference per region.
+    /// at the import site), once per reference per region. The message gives both spellings: the call, whose result is
+    /// spread, and the braced read, which is one value.
+    /// <para>A REFUSED MARKER DECIDES NOTHING AT ITS USES: a reference whose invocation endpoint is a runtime-target body
+    /// (<see cref="IsRuntimeTargetEndpoint"/>, the selected class the rewrite forms its alias from, whatever the order
+    /// bodies are processed in) names a declaration the rewrite makes a runtime-target alias, whose marker is refused at
+    /// the declaration (<see cref="ReportOutputSpreadMarkerOnAlias"/>). That report is the one diagnostic of the one
+    /// problem, so none is added here: such a program has a front-end error and never runs.</para>
     /// </summary>
     private static void ReportOutputSpreadReferenceNeedsCall(Expr reference, SignatureMap paramMap, ResolverWalkMemos memos)
     {
         if (memos.Diagnostics is not { } diagnostics
             || !(memos.OutputSpreadReferenceReports ??= new(ReferenceEqualityComparer.Instance)).Add(reference))
+            return;
+        if (TryResolveCallable(reference, paramMap, memos, out _) is { } endpoint && IsRuntimeTargetEndpoint(endpoint, memos.Run))
             return;
 
         var written = ExprNameRenderer.Render(reference, ExprNameMode.Open);
@@ -450,7 +546,7 @@ internal static partial class ImplicitArgumentResolver
                 ? $"`{written}` is declared with `*`"
                 : $"`{written}` is `{declared}`, which is declared with `*`")
                 + $", and only parameter inference decides whether `{written}` is called here, which also decides how the later arguments are treated.",
-            $"Write the call: `{written}(…)`.");
+            $"Write `{written}(…)` to call it (its result is spread), or `{{ {written} }}` to read it without arguments as one value.");
         var span = reference.Span ?? memos.Run.ImportSite;
         diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span) { Code = DiagnosticCode.OutputSpreadReferenceNeedsCall });
         memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.OutputSpreadReferenceNeedsCall, _ => message, span));
