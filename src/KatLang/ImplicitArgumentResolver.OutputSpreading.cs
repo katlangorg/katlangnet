@@ -56,7 +56,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Expr SpreadIfMarked(Expr input, Expr processed, SignatureMap paramMap, ResolverWalkMemos memos)
-        => memos.Run.StructuralOperation is { AdmittedWithOutputSpreadMarkers: true }
+        => memos.Run.StructuralOperation.AdmittedWithOutputSpreadMarkers
             && MarkedSlotOf(input, processed, paramMap, memos.Run) is { } marker
                 ? new Expr.SequenceSpread(processed) { Span = processed.Span, InsertedFor = marker }
                 : processed;
@@ -85,7 +85,7 @@ internal static partial class ImplicitArgumentResolver
     private static Expr? LowerLiftedMarkedReceiver(
         Expr.DotCall written, Expr.DotCall processed, SignatureMap paramMap, ResolverWalkMemos memos)
     {
-        if (memos.Run.StructuralOperation is not { AdmittedWithOutputSpreadMarkers: true }
+        if (!memos.Run.StructuralOperation.AdmittedWithOutputSpreadMarkers
             || StampedEdgeKind(written) != DotEdgeKind.Fallback
             || !IsBareReference(written.Target)
             || !IsCall(processed.Target)
@@ -155,7 +155,7 @@ internal static partial class ImplicitArgumentResolver
         SignatureMap paramMap, ResolverWalkMemos memos, out StaticLift[]? lifts, bool report = false)
     {
         lifts = null;
-        if (memos.Run.StructuralOperation is not { AdmittedWithOutputSpreadMarkers: true })
+        if (!memos.Run.StructuralOperation.AdmittedWithOutputSpreadMarkers)
             return FormulaLiftingRoles.ArgumentRoles(callee, args, leadingSlots, leadingPositionsKnown);
 
         var roles = new LiftingRole[args.Count];
@@ -197,7 +197,7 @@ internal static partial class ImplicitArgumentResolver
         Expr.DotCall edge, DotEdgeKind kind, LiftingCallee callee, StaticLift receiverLift,
         SignatureMap paramMap, ResolverWalkMemos memos, out StaticLift[]? lifts, bool report = false)
     {
-        if (memos.Run.StructuralOperation is not { AdmittedWithOutputSpreadMarkers: true })
+        if (!memos.Run.StructuralOperation.AdmittedWithOutputSpreadMarkers)
         {
             lifts = null;
             return FormulaLiftingRoles.DotArgumentRoles(edge, kind, callee);
@@ -231,7 +231,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static StaticLift ReceiverLift(Expr.DotCall written, DotEdgeKind kind, LiftingCallee callee, SignatureMap paramMap, ResolverWalkMemos memos)
         => kind == DotEdgeKind.Fallback
-            && memos.Run.StructuralOperation is { AdmittedWithOutputSpreadMarkers: true }
+            && memos.Run.StructuralOperation.AdmittedWithOutputSpreadMarkers
             && StampedEdgeKind(written) == DotEdgeKind.Fallback
                 ? MarkedReferenceLift(written.Target, FormulaLiftingRoles.ReceiverRole(kind, callee), paramMap, memos)
                 : StaticLift.None;
@@ -265,7 +265,7 @@ internal static partial class ImplicitArgumentResolver
         if (ResolveStaticCallable(reference, paramMap, memos, out _) is not { } callable)
             return StaticLift.NotLifted;
 
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         if (callable.Key is { } key && operation.EarlierResolvedView(key) is null
             && (operation.DetectedView(key) ?? callable.Written) is Algorithm.User { HasExplicitParameterList: false } open)
         {
@@ -314,7 +314,7 @@ internal static partial class ImplicitArgumentResolver
         // Forward: every open body this one reaches through value-role references, each walked once. A body that holds a
         // direct source is liftable and is explored no further; every other body's dependencies are all explored, so the
         // bodies left unmarked form a set closed under the relation, none of which reaches a source.
-        var resources = run.StructuralOperation!.Queries.Resources;
+        var resources = run.StructuralOperation.Queries.Resources;
         var explored = new List<StaticScopeKey>();
         var liftable = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
         var reached = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance) { scope };
@@ -395,7 +395,7 @@ internal static partial class ImplicitArgumentResolver
         {
             if (Found)
                 return false;
-            var resources = run.StructuralOperation!.Queries.Resources;
+            var resources = run.StructuralOperation.Queries.Resources;
             resources.Work(1, run.CancellationToken);
             if (!(role == LiftingRole.Value ? _values : _callables).Add(expr))
                 return false;
@@ -409,7 +409,7 @@ internal static partial class ImplicitArgumentResolver
         {
             if (CallableAt(reference, out var runtime) is not { } callable)
                 return;
-            var operation = run.StructuralOperation!;
+            var operation = run.StructuralOperation;
             if (callable.Key is { } key && operation.EarlierResolvedView(key) is null
                 && (operation.DetectedView(key) ?? callable.Written) is Algorithm.User { HasExplicitParameterList: false } open)
             {
@@ -432,7 +432,7 @@ internal static partial class ImplicitArgumentResolver
 
         private StaticCallable? CallableAt(Expr reference, out bool runtime)
         {
-            var operation = run.StructuralOperation!;
+            var operation = run.StructuralOperation;
             var selected = operation.Read(StaticQueryKey.Project(
                 StaticQueryKind.TargetWalk, scope, StaticQueryProjection.Receiver, node: reference.UnwrapGraceOperand()));
             runtime = selected.Kind == StaticFactKind.Runtime;
@@ -456,7 +456,7 @@ internal static partial class ImplicitArgumentResolver
         {
             mayKind = default;
             link = null;
-            var miss = edge.ElaboratedMissSelection ?? run.StructuralOperation!.Miss(scope, edge);
+            var miss = edge.ElaboratedMissSelection ?? run.StructuralOperation.Miss(scope, edge);
             return FormulaLiftingRoles.EdgeKind(edge,
                 miss == LexicalFallbackSelection.Conditional ? LexicalFallbackSelection.Always : miss);
         }
@@ -567,7 +567,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static OutputSpreadMarker? MarkedCalleeOf(Expr call, SignatureMap paramMap, ResolutionRun run)
     {
-        if (run.StructuralOperation is not { AdmittedWithOutputSpreadMarkers: true })
+        if (!run.StructuralOperation.AdmittedWithOutputSpreadMarkers)
             return null;
 
         var callee = call switch
@@ -594,7 +594,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static OutputSpreadMarker? MarkedDeclarationOf(Expr callee, SignatureMap paramMap, ResolutionRun run)
     {
-        if (run.StructuralOperation is not { AdmittedWithOutputSpreadMarkers: true })
+        if (!run.StructuralOperation.AdmittedWithOutputSpreadMarkers)
             return null;
 
         StaticDeclaration? declared = callee switch

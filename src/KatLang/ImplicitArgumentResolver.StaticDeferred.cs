@@ -7,7 +7,7 @@ internal static partial class ImplicitArgumentResolver
         StaticStructureOperation operation, DiagnosticBag diagnostics, FrontEndTraversalObservations? observations,
         SourceSpan? importSite, ModuleUnits modules)
     {
-        var run = new ResolutionRun(importSite, structuralOperation: operation)
+        var run = new ResolutionRun(operation, importSite)
         {
             Observations = observations,
             Prelude = PreludeContext.For(null, (Algorithm.User)operation.SourceOf(operation.Queries.Keys.Root)),
@@ -42,7 +42,7 @@ internal static partial class ImplicitArgumentResolver
 
     private static SignatureMap CompletedSignatureMap(StaticScopeKey declaring, ResolutionRun run)
     {
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         var chain = new Stack<StaticScopeKey>();
         for (var at = declaring; !ReferenceEquals(at, operation.Queries.Keys.Root); at = at.Parent!) chain.Push(at);
         // These are views of completed Q8 publications, not structural decisions. Canonicalize only the names

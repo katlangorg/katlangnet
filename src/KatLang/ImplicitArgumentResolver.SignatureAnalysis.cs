@@ -65,7 +65,7 @@ internal static partial class ImplicitArgumentResolver
         var display = through ?? writtenName;
         if (run.Prelude.IsFinalRegistryAlgorithm(end.Target) || end.Target is Algorithm.Builtin)
             return new StaticCallable(null, end.Target, display, IsRegistry: true);
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         var key = operation.ContextOf(end.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, end.Target);
         return new StaticCallable(key, operation.SourceOf(key), display, IsRegistry: false);
     }
@@ -73,7 +73,8 @@ internal static partial class ImplicitArgumentResolver
     /// <summary>
     /// The KIND of the callee a call or dot edge names (never a signature), read statically like its identity
     /// (<see cref="ResolveStaticCallable"/>): an alias's kind is its endpoint's, so a call through it takes the target's
-    /// argument roles (X-45). A written block is a user callee; a callee with no static identity is dynamic.
+    /// argument roles (X-45) whatever was processed before — nothing is ever processed to learn a kind. A written block is
+    /// a user callee; a callee with no static identity is dynamic. The analysis and the rewrite both read it.
     /// </summary>
     private static LiftingCallee StaticCalleeKindOf(Expr callee, SignatureMap paramMap, ResolverWalkMemos memos)
     {
@@ -478,7 +479,7 @@ internal static partial class ImplicitArgumentResolver
 
         public void Reference(Expr reference, StaticScopeKey? guard)
         {
-            memos.Run.StructuralOperation!.Queries.Resources.Work(1, memos.Run.CancellationToken);
+            memos.Run.StructuralOperation.Queries.Resources.Work(1, memos.Run.CancellationToken);
             if (ResolveStaticCallable(reference, paramMap, memos, out var writtenName) is not { } callee)
                 return;
             // An occurrence after an unguarded one of the same callee, or after one under the same guard, can never be
@@ -534,7 +535,7 @@ internal static partial class ImplicitArgumentResolver
     /// <summary>The context of the link body a receiver reading found (<see cref="ReceiverReadingKind.Link"/>).</summary>
     private static StaticScopeKey LinkKey(StaticDeclaration link, ResolutionRun run)
     {
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         return operation.ContextOf(link.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, link.Target);
     }
 
@@ -623,8 +624,9 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static void RequireEveryAnalyzedBodyRewritten(ResolutionRun run)
     {
-        if (run.Selected is not { Succeeded: true } selected || run.StructuralOperation is not { } operation)
+        if (run.Selected is not { Succeeded: true } selected)
             return;
+        var operation = run.StructuralOperation;
         foreach (var body in selected.Analyzed)
         {
             operation.Queries.Resources.Work(cancellationToken: run.CancellationToken);
@@ -649,7 +651,7 @@ internal static partial class ImplicitArgumentResolver
         ConditionalBranchContext? branchContext,
         ResolutionRun run)
     {
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         var aliases = new SignatureKeyAliases(operation);
         var analysis = run.Analysis = new SignatureAnalysis { Aliases = aliases };
         try
@@ -843,20 +845,18 @@ internal static partial class ImplicitArgumentResolver
     /// <summary>
     /// The lifted signature of the open body the rewrite is completing at <paramref name="level"/> (B3-5★): the one its
     /// selection composed, read once and never recomposed — so K owners of one L-wide callee keep FE-3's O(K + L) — and an
-    /// X-02 violation of it reported here, at the reference the rewrite names, in declaration order. Without a selection
-    /// (a resolution with no structural operation) the composition law applies directly.
+    /// X-02 violation of it reported here, at the reference the rewrite names, in declaration order (the selection recovered
+    /// it once; this is its one report, <see cref="ReportInvalidLiftedSignature"/>). Every rewrite runs after its resolution's
+    /// selection, in an admitted context, so a missing selection or context is an internal defect of this pass and fails loudly.
     /// </summary>
     private static LiftedSignature SelectedLifting(ResolverLevel level, IReadOnlyList<ParameterPattern> own, List<LiftedDependency> deps,
         ForwardableParameters forwardable, ResolverWalkMemos memos)
     {
         var run = memos.Run;
-        if (run.Selected is not { } selected || level.StaticContext?.Key is not { } key)
-        {
-            var direct = LiftSignature(own, deps, forwardable, run);
-            return direct.Lifted && ParameterPattern.FindSignatureViolation(direct.Patterns) is { } found
-                ? RejectInvalidLiftedSignature(direct, found, deps, memos)
-                : direct;
-        }
+        var selected = run.Selected ?? throw new InvalidOperationException(
+            "Implicit-argument resolution rewrote an open body before its resolution selected the signatures.");
+        var key = level.StaticContext?.Key ?? throw new InvalidOperationException(
+            "Implicit-argument resolution rewrote an open body outside the admitted structural operation's contexts.");
 
         if (!selected.TryGetFact(key, out var fact))
             throw new InvalidOperationException(
@@ -911,7 +911,7 @@ internal static partial class ImplicitArgumentResolver
 
     /// <summary>The name a body is defined under, for its signature's display (the property name; a block or branch is anonymous).</summary>
     private static string DefinitionName(StaticScopeKey key, ResolutionRun run)
-        => run.StructuralOperation!.DefinitionOf(key).Name;
+        => run.StructuralOperation.DefinitionOf(key).Name;
 
     /// <summary>
     /// The FINAL lifting signature of an endpoint the selection does not decide: a registry member's declared one, a clause
@@ -921,14 +921,14 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static LiftingSignature FinalLiftingSignature(StaticCallable endpoint, string name, ResolutionRun run)
     {
-        if (endpoint.Key is { } key && run.StructuralOperation!.EarlierResolvedView(key) is { } completed)
+        if (endpoint.Key is { } key && run.StructuralOperation.EarlierResolvedView(key) is { } completed)
             return completed is Algorithm.Alias { ResolvedTarget: { } target } ? target.Signature : LiftingSignatureOf(name, completed, run);
         return LiftingSignatureOf(name, endpoint.Written, run);
     }
 
     /// <summary>Whether a link an earlier operation completed is a calculation (its resolved body declares a parameter).</summary>
     private static bool FinalLinkIsCalculation(StaticScopeKey link, ResolutionRun run)
-        => run.StructuralOperation!.EarlierResolvedView(link) is Algorithm.User { ParameterPatterns.Count: > 0 };
+        => run.StructuralOperation.EarlierResolvedView(link) is Algorithm.User { ParameterPatterns.Count: > 0 };
 
     /// <summary>Whether a body is an unbraced lone <c>.Algorithm</c> row, the one shape whose class Q8 decides (META-S3-1/2).</summary>
     private static bool IsAlgorithmLinkBody(Algorithm.User body)
@@ -982,7 +982,7 @@ internal static partial class ImplicitArgumentResolver
     {
         FrontEndStack.Ensure();
         AnalyzeOpenTargets(conditional.Opens, run);
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         var familyOwners = conditional.Opens.Count == 0 ? run.Owners : run.Owners.Inside(conditional);
         var familyLevel = conditional.Opens.Count == 0 ? run.Level : new ResolverLevel(
             conditional, familyOwners, run.Level,
@@ -1010,7 +1010,7 @@ internal static partial class ImplicitArgumentResolver
     {
         FrontEndStack.Ensure();
         var analysis = run.Analysis!;
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         var key = operation.ContextOf(run.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, alg, branchContext?.Pattern);
         if (analysis.Bodies.ContainsKey(key) || analysis.Aliases!.IsAliased(key))
             return;

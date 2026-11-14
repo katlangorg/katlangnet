@@ -71,7 +71,7 @@ internal static partial class ImplicitArgumentResolver
             _references = references;
             _analysis = analysis;
             _run = run;
-            _resources = run.StructuralOperation!.Queries.Resources;
+            _resources = run.StructuralOperation.Queries.Resources;
             _lease = _resources.Temporary();
             _lease.Add(2, run.CancellationToken);
             _memberSets = new(new MemberSetComparer(this));

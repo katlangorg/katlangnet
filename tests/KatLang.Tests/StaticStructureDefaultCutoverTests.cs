@@ -100,4 +100,22 @@ public sealed class StaticStructureDefaultCutoverTests
         Assert.DoesNotContain("unifiedStructure", pipeline);
         Assert.DoesNotContain("ProcessStaticStructureCandidate", pipeline);
     }
+
+    [Fact]
+    public void ResolutionWithoutAnAdmittedOperationIsPhysicallyAbsent()
+    {
+        // Every resolution runs under ONE admitted operation, so the resolver models no run without one: no nullable or
+        // reassignable operation, no outer run's bodies, and no second X-02 recover-and-report path (the selection
+        // recovers a violation once and the rewrite reports it once).
+        var root = RepoRoot.Find();
+        var partials = Directory.GetFiles(Path.Combine(root, "src/KatLang"), "ImplicitArgumentResolver*.cs");
+        Assert.True(partials.Length >= 2, "The resolver's partial files were not found.");
+        foreach (var path in partials)
+        {
+            var source = File.ReadAllText(path);
+            foreach (var obsolete in new[] { "StaticStructureOperation? StructuralOperation", "StructuralOperation?.", "StructuralOperation!",
+                         "StructuralOperation is", "outerBodies", "ProcessedBodies? outer", "RejectInvalidLiftedSignature" })
+                Assert.False(source.Contains(obsolete, StringComparison.Ordinal), $"{Path.GetFileName(path)} still contains '{obsolete}'.");
+        }
+    }
 }

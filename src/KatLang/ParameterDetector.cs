@@ -228,10 +228,10 @@ internal static class ParameterDetector
         return level;
     }
 
-    private static bool CollectsStructuralName(string name, ElaboratedPropertyScope scope, ParameterOwnership parameters, FreeNameCollection mode)
+    private static bool CollectsStructuralName(string name, ElaboratedPropertyScope scope, FreeNameCollection mode)
         => scope.StaticContext is { } context && mode == FreeNameCollection.ImplicitSignature
             ? context.Operation.Read(StaticQueryKey.IsInput(context.Key, name)).Kind == StaticFactKind.Yes
-            : !IsBoundName(name, scope, parameters);
+            : !IsBoundName(name, scope);
 
     private static ImplicitParameterOccurrenceRecorder CollectStructuralInputs(IReadOnlyList<Expr> rows, ElaboratedPropertyScope scope,
         ParameterOwnership bindings, IReadOnlyList<string> written, HashSet<string> names, List<string> order,
@@ -1283,8 +1283,8 @@ internal static class ParameterDetector
     /// Static-open ownership (SYN-03 / F2): classifies the HEAD NAME of every open target in
     /// one algorithm's open list by THE owner walk
     /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>) from the opening
-    /// algorithm's own level outward, exactly as <see cref="ShouldRewriteAsParam"/> classifies
-    /// every other bare-name occurrence. The head is the innermost name of a core open form —
+    /// algorithm's own level outward, in the owner-walk order in which <see cref="ShouldRewriteAsParam"/>
+    /// classifies every other bare-name occurrence. The head is the innermost name of a core open form —
     /// the bare name of <c>open Lib</c>, or <c>Root</c> in <c>open Root.Sub.Leaf</c>; every
     /// other form (an inline block, a capture, a spread, a call-like dot edge) has no lexical
     /// head and passes through unchanged to its own validation.
@@ -1354,8 +1354,8 @@ internal static class ParameterDetector
             var rewritten = open;
             if (headName is not null)
             {
-                // The membership test is the same pure fast path ShouldRewriteAsParam uses: the
-                // walk can only select a parameter for a name some level binds.
+                // The membership test is a pure fast path of this walk: it can only select a
+                // parameter for a name some level binds.
                 var parameterOwned = parameters.Contains(headName)
                     && ElaboratedScopeLookup.SelectOwnedDeclaration(scope, headName, callableBindings).Kind
                         == OwnedDeclarationKind.Parameter;
@@ -2263,7 +2263,7 @@ internal static class ParameterDetector
 
                 if (gracedCore is Expr.Resolve(var gracedName))
                 {
-                    if (CollectsStructuralName(gracedName, scope, boundParameters, mode) && gracedName.Length > 0)
+                    if (CollectsStructuralName(gracedName, scope, mode) && gracedName.Length > 0)
                     {
                         if (paramNames.Add(gracedName))
                         {
@@ -2284,7 +2284,7 @@ internal static class ParameterDetector
             }
 
             case Expr.Resolve(var name):
-                if (CollectsStructuralName(name, scope, boundParameters, mode) && name.Length > 0)
+                if (CollectsStructuralName(name, scope, mode) && name.Length > 0)
                 {
                     if (paramNames.Add(name))
                     {
@@ -2373,10 +2373,9 @@ internal static class ParameterDetector
                 // use: the runtime receiver may supply the member (see
                 // FreeNameCollection).
                 {
-                    var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope, boundParameters);
-                    var fallbackSelection = scope.StaticContext is { } context
-                        ? dotCall.LexicalFallbackSelectionOf(context.Operation.Miss(context.Key, dotCall))
-                        : dotCall.GetLexicalFallbackSelection(receiverProvider);
+                    var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope);
+                    var fallbackSelection = dotCall.LexicalFallbackSelectionOf(
+                        scope.StaticContext!.Operation.Miss(scope.StaticContext.Key, dotCall));
                     if (mode == FreeNameCollection.DeclaredNameCheck && fallbackSelection == LexicalFallbackSelection.Conditional)
                     {
                         // A MAY fallback is checked once resolution decided its miss (DeferredUndeclaredNames): as a MUST
@@ -2470,31 +2469,22 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// The receiver provider of one dot edge at implicit-signature collection
-    /// time, resolving a lexical-reference receiver through the SAME
-    /// elaborated scope the collection itself uses; the caller applies the
-    /// shared MAY-selection law to it. The receiver's provider mirrors the
-    /// receiver occurrence's own elaboration fate, and it must do so through the
-    /// SAME owner walk that decides it: a name the walk selects a parameter for —
-    /// or one nothing declares and no open provides, which is therefore about to
-    /// be inferred as a parameter — is a runtime value; a name the walk selects a
-    /// property for, or exactly one open provides, is that property's statically
-    /// known algorithm; an ambiguous opened name stays an unresolved reference.
-    /// Reusing <see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/> here is
-    /// what keeps receiver classification from drifting away from
-    /// <see cref="ShouldRewriteAsParam"/>. The Never/Conditional/Always mapping
-    /// itself is the shared <see cref="AstHelpers.GetLexicalFallbackSelection"/>
-    /// law, and a chained receiver (<c>Lib.Sub</c> in <c>Lib.Sub.Q</c>) is
-    /// navigated structurally by the shared compositional classification
-    /// (<see cref="AstHelpers.ResolveStaticStructuralMemberProvider"/>, the
-    /// static twin of the evaluator's receiver resolution) — this method only
-    /// supplies the detector's resolution power for the bare names it meets,
-    /// exactly like the editor's provider resolution.
+    /// The receiver provider of one dot edge at free-name collection time: the admitted
+    /// operation's receiver selection (<see cref="StaticStructureOperation.Receiver"/>) of the
+    /// written receiver in the scope's own context. A bare-name receiver is classified by the
+    /// SAME binding fact that decides the receiver occurrence's own elaboration
+    /// (<see cref="ShouldRewriteAsParam"/>, <see cref="IsBoundName"/>), so receiver
+    /// classification cannot drift from parameter classification: a name bound as a parameter —
+    /// or one nothing binds, which is therefore about to be inferred as a parameter — is a
+    /// runtime value, and a name bound to a declaration (owned or opened) is the structure the
+    /// operation selects for it. A chained receiver (<c>Lib.Sub</c> in <c>Lib.Sub.Q</c>) is
+    /// navigated through the selected structures' members. The edge's fallback selection is the
+    /// operation's miss verdict (<see cref="StaticStructureOperation.Miss"/>); the caller uses
+    /// this provider to word checked fallbacks and provenance claims.
     /// </summary>
     private static StaticStructuralMemberProvider ResolveDotCallReceiverProvider(
         Expr.DotCall dotCall,
-        ElaboratedPropertyScope scope,
-        ParameterOwnership boundParameters)
+        ElaboratedPropertyScope scope)
         => (scope.StaticContext ?? throw new InvalidOperationException("Receiver selection requires the admitted operation."))
             .Operation.Receiver(scope.StaticContext.Key, dotCall.Target);
 
@@ -2733,25 +2723,20 @@ internal static class ParameterDetector
     /// elaborates to <see cref="Expr.Param"/> (a runtime parameter read) rather
     /// than staying an <see cref="Expr.Resolve"/> lexical property reference.
     ///
-    /// <para>It is exactly the shared owner walk
-    /// (<see cref="ElaboratedScopeLookup.SelectOwnedDeclaration"/>) reading
-    /// <see cref="OwnedDeclarationKind.Parameter"/>: the first owning scope that
-    /// declares the name decides; invalid same-owner ties select the parameter for
+    /// <para>It is the admitted operation's binding fact in the scope's own context
+    /// (<see cref="StaticStructureOperation.Binding"/>) reading
+    /// <see cref="StaticFactKind.Parameter"/> — the static owner walk: the first owning
+    /// scope that binds the name decides; invalid same-owner ties select the parameter for
     /// recovery. A parameter of the algorithm being rewritten decides at once (it
     /// owns the walk's first level), a captured ancestor parameter beats a
     /// property owned by any FARTHER scope — the root, the prelude, or any level
     /// beyond the capturing one — and a nearer property still wins in invalid recovery source.
-    /// Nothing here consults <c>open</c>: a name the walk leaves undecided is
+    /// <c>open</c> never selects a parameter: a name the walk leaves undecided is
     /// handed to the ordinary open/prelude fallback by staying a Resolve.</para>
-    ///
-    /// <para>The membership test is a pure fast path — the walk can only answer
-    /// Parameter for a name some level binds — and keeps the common
-    /// non-parameter occurrence at one dictionary probe.</para>
     /// </summary>
     private static bool ShouldRewriteAsParam(
         string name,
-        ElaboratedPropertyScope scope,
-        ParameterOwnership parameters)
+        ElaboratedPropertyScope scope)
         => scope.StaticContext!.Operation.Binding(scope.StaticContext.Key, name).Kind == StaticFactKind.Parameter;
 
     /// <summary>
@@ -2805,7 +2790,7 @@ internal static class ParameterDetector
         {
             Expr.Grace grace => RewriteGrace(grace, scope, parameters, memo),
 
-            Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope, parameters)
+            Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope)
                 => RewriteResolveAsParam(name, expr.Span, memo),
 
             Expr.Resolve resolve => StampOpenedMathMember(ReportAmbiguousOpenUse(resolve, scope, memo), scope, parameters),
@@ -3067,9 +3052,7 @@ internal static class ParameterDetector
         // (AstHelpers.LexicalFallbackMayBeSelected), and the formula-lifting roles
         // classify a `.string` edge as the declared member or the intrinsic by its
         // receiver (FormulaLiftingRoles.EdgeKind).
-        var missSelection = scope.StaticContext is { } structuralContext
-            ? structuralContext.Operation.Miss(structuralContext.Key, dotCall)
-            : dotCall.GetStructuralMissSelection(ResolveDotCallReceiverProvider(dotCall, scope, parameters));
+        var missSelection = scope.StaticContext!.Operation.Miss(scope.StaticContext.Key, dotCall);
 
         // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
         // is eligible only when that occurrence joined this level's inferred
@@ -3313,12 +3296,8 @@ internal static class ParameterDetector
     /// </summary>
     private static bool IsBoundName(
         string name,
-        ElaboratedPropertyScope scope,
-        ParameterOwnership boundParameters)
+        ElaboratedPropertyScope scope)
         => scope.StaticContext!.Operation.Binding(scope.StaticContext.Key, name).Kind != StaticFactKind.Missing;
-
-    private static bool HasVisiblePropertyName(ElaboratedPropertyScope scope, string name)
-        => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name).Count > 0;
 
     /// <summary>
     /// The first written occurrence of an undeclared name: its span, and — when that occurrence is
