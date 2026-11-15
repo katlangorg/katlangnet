@@ -79,6 +79,10 @@ public class UnifiedFormulaLiftingTests
         { "if-condition", "Pos(x) = x > 0\nG = if(Pos, 1, 2)", "x", "G(-3)", "ok 2" },
         { "if-branch", Inc + "G = if(true, Inc, 0)", "x", "G(4)", "ok 5" },
         { "math-argument", Inc + "G = abs(Inc)", "x", "G(-9)", "ok 8" },
+        // Every spelling of the member gives its argument the VALUE role, decided by the identity the
+        // reference resolves to (the opened `Abs` included), never by its spelling or shape.
+        { "math-qualified-argument", Inc + "G = Math.Abs(Inc)", "x", "G(-9)", "ok 8" },
+        { "math-opened-argument", Inc + "G = {\n    open Math\n    Abs(Inc)\n}", "x", "G(-9)", "ok 8" },
         { "host-argument", Inc + "G = trace(Inc)", "x", "G(4)", "ok 5 [trace(5)]" },
         { "family-argument", Inc + "E(0) = 100\nE(n) = n\nG = E(Inc)", "x", "G(-1), G(4)", "ok S[100, 5]" },
         { "string-receiver", Inc + "G = Inc.string", "x", "G(4)", "ok '5'" },
@@ -108,6 +112,10 @@ public class UnifiedFormulaLiftingTests
         { "reducer", "Add(e, a) = e + a\nG = reduce([1, 2], Add, 0)", "", "G", "ok 3" },
         { "dynamic-callee-argument", Inc + "Apply(g) = g(1)\nG = f(Inc)", "f", "G(Apply)", "ok 2" },
         { "navigated-receiver", "Obj(x) = {\n    public V = 7\n    x\n}\nG = Obj.V + 0", "", "G", "ok 7" },
+        // A user-defined `Math` shadows the prelude module: the same spellings now resolve to a user
+        // callable, whose whole argument stays neutral, so nothing lifts.
+        { "user-math-qualified-argument", Inc + "Math = {\n    public Abs(f) = f(1)\n}\nG = Math.Abs(Inc)", "", "G", "ok 2" },
+        { "user-math-opened-argument", Inc + "Math = {\n    public Abs(f) = f(1)\n}\nG = {\n    open Math\n    Abs(Inc)\n}", "", "G", "ok 2" },
     };
 
     [Theory]

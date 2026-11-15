@@ -2793,7 +2793,7 @@ internal static class ParameterDetector
             Expr.Resolve(var name) when ShouldRewriteAsParam(name, scope)
                 => RewriteResolveAsParam(name, expr.Span, memo),
 
-            Expr.Resolve resolve => StampOpenedMathMember(ReportAmbiguousOpenUse(resolve, scope, memo), scope, parameters),
+            Expr.Resolve resolve => ReportAmbiguousOpenUse(resolve, scope, memo),
 
             Expr.Binary binary => binary with
             {
@@ -2944,23 +2944,6 @@ internal static class ParameterDetector
         return $"'{shown}' is ambiguous: {providers.Count} different opened algorithms provide it at the same open level ({written}), " +
             "so it names no single declaration. Qualify it with the algorithm you mean, or open only one of them.";
     }
-
-    /// <summary>
-    /// A Resolve that failed the guarded parameter test stays an ordinary lexical reference.
-    /// When it IS a Math member through <c>open Math</c> — the canonical spelling, one
-    /// callable with the alias and the qualified <c>Math.X</c>
-    /// (<see cref="AstHelpers.ResolveOpenedMathMemberFacts"/>) — the verdict is stamped for
-    /// the scope-free static consumers (<see cref="Expr.Resolve.ElaboratedMathMember"/>),
-    /// which recognize the other two spellings by shape; it is decided HERE because only this
-    /// walk holds the elaborated owner chain and its opens.
-    /// </summary>
-    private static Expr StampOpenedMathMember(
-        Expr.Resolve resolve,
-        ElaboratedPropertyScope scope,
-        ParameterOwnership parameters)
-        => AstHelpers.ResolveOpenedMathMemberFacts(resolve.Name, scope, parameters) is { } facts
-            ? resolve with { ElaboratedMathMember = facts }
-            : resolve;
 
     private static Expr RewriteCall(
         Expr.Call call,

@@ -266,42 +266,34 @@ public class MathAliasRegistryTests
     }
 
     [Fact]
-    public void MathCallableFacts_ShareCanonicalIdentityAcrossSpellings()
+    public void MathCallableFacts_ExistForCanonicalFunctionNamesOnly()
     {
         foreach (var member in BuiltinRegistry.MathMembers)
         {
             if (member.Kind == MathMemberKind.Constant)
             {
                 Assert.False(BuiltinRegistry.TryGetMathMemberFacts(member.Name, out _));
-                Assert.False(BuiltinRegistry.TryGetMathAliasFacts(member.PreludeAlias, out _));
                 continue;
             }
 
             Assert.True(BuiltinRegistry.TryGetMathMemberFacts(member.Name, out var canonicalFacts));
-            Assert.True(BuiltinRegistry.TryGetMathAliasFacts(member.PreludeAlias, out var aliasFacts));
 
             Assert.Equal($"Math.{member.Name}", canonicalFacts!.CanonicalKey);
-            Assert.Equal(canonicalFacts.CanonicalKey, aliasFacts!.CanonicalKey);
             Assert.Equal(member.Name, canonicalFacts.SpelledName);
-            Assert.Equal(member.PreludeAlias, aliasFacts.SpelledName);
-            Assert.Equal(
-                canonicalFacts.Signature.ParameterNames,
-                aliasFacts.Signature.ParameterNames);
-            Assert.True(canonicalFacts.HasStrictValueArguments);
-            Assert.True(aliasFacts.HasStrictValueArguments);
 
-            // The alias spelling never looks up canonical facts and vice versa.
+            // The facts are keyed by the canonical member name only: the alias
+            // spelling never looks up callable facts.
             Assert.False(BuiltinRegistry.TryGetMathMemberFacts(member.PreludeAlias, out _));
-            Assert.False(BuiltinRegistry.TryGetMathAliasFacts(member.Name, out _));
         }
 
-        Assert.Equal("round(value, digits)", GetAliasFacts("round").Signature.DisplayText);
-        Assert.Equal("exp(x)", GetAliasFacts("exp").Signature.DisplayText);
-        Assert.Equal("sin(radians)", GetAliasFacts("sin").Signature.DisplayText);
-        Assert.Equal("atan2(y, x)", GetAliasFacts("atan2").Signature.DisplayText);
-        Assert.Equal("log(value, base)", GetAliasFacts("log").Signature.DisplayText);
-        Assert.Equal("random(start, end)", GetAliasFacts("random").Signature.DisplayText);
-        Assert.Equal("randomInt(start, end)", GetAliasFacts("randomInt").Signature.DisplayText);
+        // The descriptor's parameter names, in order (atan2 takes y before x).
+        Assert.Equal("Round(value, digits)", GetCanonicalFacts("Round").Signature.DisplayText);
+        Assert.Equal("Exp(x)", GetCanonicalFacts("Exp").Signature.DisplayText);
+        Assert.Equal("Sin(radians)", GetCanonicalFacts("Sin").Signature.DisplayText);
+        Assert.Equal("Atan2(y, x)", GetCanonicalFacts("Atan2").Signature.DisplayText);
+        Assert.Equal("Log(value, base)", GetCanonicalFacts("Log").Signature.DisplayText);
+        Assert.Equal("Random(start, end)", GetCanonicalFacts("Random").Signature.DisplayText);
+        Assert.Equal("RandomInt(start, end)", GetCanonicalFacts("RandomInt").Signature.DisplayText);
     }
 
     [Fact]
@@ -322,9 +314,9 @@ public class MathAliasRegistryTests
         Assert.False(BuiltinRegistry.TryGetMathMemberByPreludeAlias("notAMathAlias", out _));
     }
 
-    private static MathCallableFacts GetAliasFacts(string alias)
+    private static MathCallableFacts GetCanonicalFacts(string memberName)
     {
-        Assert.True(BuiltinRegistry.TryGetMathAliasFacts(alias, out var facts));
+        Assert.True(BuiltinRegistry.TryGetMathMemberFacts(memberName, out var facts));
         return facts!;
     }
 

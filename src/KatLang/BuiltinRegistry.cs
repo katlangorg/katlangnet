@@ -141,8 +141,8 @@ internal readonly record struct MathMemberDescriptor(
     /// The member's canonical qualified spelling (<c>"Math.Sin"</c>, <c>"Math.Pi"</c>):
     /// the ONE identity string every consumer keys on. It is derived exactly once,
     /// here at descriptor construction, from <see cref="BuiltinRegistry.MathModuleName"/>
-    /// and <see cref="Name"/>; <see cref="MathCallableFacts.CanonicalKey"/> (both
-    /// spellings' callable facts) and the editor's alias-target metadata carry THIS
+    /// and <see cref="Name"/>; <see cref="MathCallableFacts.CanonicalKey"/> (the
+    /// canonical callable facts) and the editor's alias-target metadata carry THIS
     /// instance rather than re-joining the two names, so the relation has one owner.
     /// It can never collide with a user property name because identifiers cannot
     /// contain <c>'.'</c>.
@@ -151,12 +151,13 @@ internal readonly record struct MathMemberDescriptor(
 }
 
 /// <summary>
-/// Registry-derived callable facts for ONE spelling of a Math function member:
-/// the canonical structural spelling (<c>Math.Sin</c>) or its predefined
-/// prelude alias (<c>sin</c>). Both spellings project the SAME descriptor, so
-/// every consumer that lifts bare references, rewrites implicit calls,
-/// processes value-demanding arguments, or orders sibling dependencies through
-/// these facts observes identical behavior for the two surfaces.
+/// Registry-derived callable facts for the canonical structural spelling
+/// (<c>Math.Sin</c>) of a Math function member: its canonical key and its
+/// signature, projected from the member's descriptor and read by
+/// <see cref="BuiltinRegistry.TryGetBuiltinCallableSignature"/>. No consumer
+/// classifies a written reference through these facts: the Math VALUE role of
+/// every spelling is decided by the identity the resolver reaches
+/// (<c>ImplicitArgumentResolver.PreludeContext.IsStrictValue</c>).
 ///
 /// <para>The facts are binding-NEUTRAL: they say nothing about whether a
 /// particular written name actually resolves to the prelude. Each consumer must
@@ -177,25 +178,14 @@ internal sealed class MathCallableFacts
     public string SpelledName { get; }
 
     /// <summary>
-    /// Stable canonical identity shared by both spellings (<c>"Math.Sin"</c>) —
-    /// the descriptor's own <see cref="MathMemberDescriptor.CanonicalQualifiedName"/>
-    /// instance, never reconstructed here. Dependency deduplication keys on this
-    /// so a body referencing both <c>Math.Pow</c> and <c>pow</c> lifts ONE
-    /// dependency.
+    /// Stable canonical identity (<c>"Math.Sin"</c>) — the descriptor's own
+    /// <see cref="MathMemberDescriptor.CanonicalQualifiedName"/> instance, never
+    /// reconstructed here.
     /// </summary>
     public string CanonicalKey { get; }
 
     /// <summary>Callable signature named by <see cref="SpelledName"/>, with the descriptor's parameter names.</summary>
     public CallableSignature Signature { get; }
-
-    /// <summary>
-    /// Math members consume strictly numeric VALUES — the registry proves no
-    /// higher-order argument channel exists — so written argument slots are
-    /// ordinary value positions (implicit lifting applies). Consumers must
-    /// check this rather than assume it, so a future non-strict fact can slot
-    /// into the same abstraction.
-    /// </summary>
-    public bool HasStrictValueArguments => true;
 }
 
 internal sealed class BuiltinDescriptor
@@ -517,16 +507,13 @@ internal static class BuiltinRegistry
 
     /// <summary>
     /// Callable facts for Math FUNCTION members keyed by canonical member name
-    /// (<c>"Sin"</c>) and by prelude alias (<c>"sin"</c>). Constants have no
-    /// callable facts (zero parameters: nothing lifts and no arguments exist).
+    /// (<c>"Sin"</c>). Constants have no callable facts (zero parameters:
+    /// nothing lifts and no arguments exist).
     /// </summary>
     private static readonly IReadOnlyDictionary<string, MathCallableFacts> MathFunctionFactsByCanonicalName =
-        CreateMathFunctionFacts(byAlias: false);
+        CreateMathFunctionFacts();
 
-    private static readonly IReadOnlyDictionary<string, MathCallableFacts> MathFunctionFactsByAliasName =
-        CreateMathFunctionFacts(byAlias: true);
-
-    private static IReadOnlyDictionary<string, MathCallableFacts> CreateMathFunctionFacts(bool byAlias)
+    private static IReadOnlyDictionary<string, MathCallableFacts> CreateMathFunctionFacts()
     {
         var facts = new Dictionary<string, MathCallableFacts>(StringComparer.Ordinal);
         foreach (var member in MathMemberDescriptors)
@@ -534,7 +521,7 @@ internal static class BuiltinRegistry
             if (member.Kind == MathMemberKind.Constant)
                 continue;
 
-            var spelledName = byAlias ? member.PreludeAlias : member.Name;
+            var spelledName = member.Name;
             facts[spelledName] = new MathCallableFacts(
                 spelledName,
                 canonicalKey: member.CanonicalQualifiedName,
@@ -617,7 +604,7 @@ internal static class BuiltinRegistry
     /// <summary>
     /// Resolves a predefined prelude-alias spelling (<c>sin</c>, <c>pi</c>, ...)
     /// to its Math member descriptor. Covers constants and functions alike,
-    /// unlike the function-only <see cref="TryGetMathAliasFacts"/>.
+    /// unlike the function-only callable facts (<see cref="TryGetMathMemberFacts"/>).
     /// Binding-neutral: the caller must first establish through ordinary
     /// resolution that the written name actually reaches the prelude alias.
     /// </summary>
@@ -662,17 +649,6 @@ internal static class BuiltinRegistry
         string memberName,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MathCallableFacts? facts)
         => MathFunctionFactsByCanonicalName.TryGetValue(memberName, out facts);
-
-    /// <summary>
-    /// Callable facts for the prelude-alias spelling (<c>sin</c>, <c>pow</c>,
-    /// ...) of a Math FUNCTION member. The constant (<c>pi</c>) yields no
-    /// facts. Binding-neutral: the caller must first establish through ordinary
-    /// resolution that the written name actually reaches the prelude alias.
-    /// </summary>
-    internal static bool TryGetMathAliasFacts(
-        string aliasName,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MathCallableFacts? facts)
-        => MathFunctionFactsByAliasName.TryGetValue(aliasName, out facts);
 
     public static bool TryGetBuiltinCallableSignature(
         string ownerName,
