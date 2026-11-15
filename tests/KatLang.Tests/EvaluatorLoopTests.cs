@@ -485,31 +485,40 @@ public class EvaluatorLoopTests
         Assert.Equal("LessOrEqual(TempCall(A), Const(5))", continuation.PlanSummary);
     }
 
+    // The repeat count is a LONG from its validation to the last round: the META entry (EvalMetaLoop)
+    // narrows it into its one long local, the loop entry (EvalNeedLoop) passes it on, and the ONE generic
+    // round kernel (RunGenericLoopRounds) — which runs the generic route's rounds and a planned handover's
+    // generic continuation alike, where two hand-kept mirror loops once did — counts its long `remaining`
+    // parameter down in place, with no counter local of its own that could be an `int`.
     [Theory]
-    [InlineData("RepeatLoopGenericCounted")]
+    [InlineData("RunGenericLoopRounds")]
     [InlineData("EvalNeedLoop")]
     [InlineData("EvalMetaLoop")]
     public void RepeatLoopGenericCounter_IsLongAtBothMirrorSites(string methodName)
     {
         var method = typeof(Evaluator).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
-        if (methodName == "RepeatLoopGenericCounted")
-            Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "count").ParameterType);
-        // META-S3-3: the kernel receives the validated count as its `remaining` parameter; the META entry
-        // (EvalMetaLoop) computes it into its one long local.
-        if (methodName == "EvalNeedLoop")
-        {
-            Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "remaining").ParameterType);
-            return;
-        }
         var stateMachine = method.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType;
-        var numericLocals = stateMachine is null
+        var numericLocals = (stateMachine is null
             ? method.GetMethodBody()!.LocalVariables.Select(local => local.LocalType)
             : stateMachine.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
                 .Where(field => field.Name != "<>1__state"
                     && !method.GetParameters().Any(parameter => parameter.Name == field.Name))
-                .Select(field => field.FieldType);
+                .Select(field => field.FieldType))
+            .Where(type => type == typeof(int) || type == typeof(long))
+            .ToList();
 
-        Assert.Equal(typeof(long), Assert.Single(numericLocals, type => type == typeof(int) || type == typeof(long)));
+        // META-S3-3: the loop entry and the round kernel receive the validated count as their `remaining`
+        // parameter.
+        if (methodName is "RunGenericLoopRounds" or "EvalNeedLoop")
+        {
+            Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "remaining").ParameterType);
+            // The kernel counts that parameter down in place: no counter local, so none that is an `int`.
+            if (methodName == "RunGenericLoopRounds")
+                Assert.Empty(numericLocals);
+            return;
+        }
+
+        Assert.Equal(typeof(long), Assert.Single(numericLocals));
     }
 
     [Fact]

@@ -458,17 +458,6 @@ public static partial class Evaluator
         _ => null,
     };
 
-    private static EvalResult<IReadOnlyList<Result>?> RunStepSlots(
-        Algorithm step,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        IReadOnlyList<Result> stateSlots,
-        string loopName,
-        CallDiagnosticName stepName,
-        PreparedGenericLoopStep prepared,
-        bool conditionFirst)
-        => RunReadyNeedStepSlots(step, stateSlots, ctx, valEnv, loopName, stepName, prepared, conditionFirst, asynchronous: false).GetAwaiter().GetResult();
-
     /// <summary>
     /// Split a COMPLETE loop step supply into next state slots and the continuation flag
     /// (<see cref="ContinuationFlag"/>): the supply's LAST item is the flag, and a
@@ -544,70 +533,8 @@ public static partial class Evaluator
     // family plus the value projection. (Lean keeps the named projection
     // `applyBuiltin` because CoreTests guards address it directly; the C#
     // equivalent would have no caller at all.)
-
-    /// <summary>
-    /// The generic continuation of a planned <c>while</c> after a handover (its only caller). It
-    /// binds the step head the planner ADMITTED (<paramref name="admittedHead"/>), never a fresh read
-    /// of the step's caller-owned head, so the continued iterations bind exactly as the planned ones
-    /// did. A host that rewrote the head during the planned iterations therefore changes nothing,
-    /// just as on the generic route, which binds its once-per-invocation snapshot.
-    /// </summary>
-    private static EvalResult<CountedResult> WhileLoopGenericCounted(
-        Algorithm step,
-        IReadOnlyList<ParameterPattern> admittedHead,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        CallDiagnosticName stepName)
-    {
-        // `while` always invokes its step at least once (its first round binds the step and reads its flag),
-        // so the loop-invariant step binding is prepared unconditionally — once per loop invocation, not per
-        // iteration.
-        var prepared = PrepareAdmittedLoopStep(step, admittedHead, ctx);
-        IReadOnlyList<Result> stateSlots = initialStateSlots.ToList();
-        while (true)
-        {
-            // A condition-first round (LOOP-06): `null` is a false verdict, the round's state stays.
-            var roundR = RunStepSlots(step, ctx, valEnv, stateSlots, "while", stepName, prepared, conditionFirst: true);
-            if (roundR.IsError) return roundR.Error;
-            if (roundR.Value is not { } nextStateSlots) return MakeCheckedLoopStateResult(ctx, stateSlots);
-            stateSlots = nextStateSlots;
-        }
-    }
-
-    /// <summary>
-    /// The generic continuation of a planned <c>repeat</c> after a handover (its only caller). It
-    /// binds the step head the planner ADMITTED (<paramref name="admittedHead"/>), as
-    /// <see cref="WhileLoopGenericCounted"/> does.
-    /// </summary>
-    private static EvalResult<CountedResult> RepeatLoopGenericCounted(
-        Algorithm step,
-        IReadOnlyList<ParameterPattern> admittedHead,
-        long count,
-        IReadOnlyList<Result> initialStateSlots,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        CallDiagnosticName stepName)
-    {
-        var stateSlots = initialStateSlots.ToList();
-        // A zero-iteration repeat never binds its step, so it must not gain step
-        // preparation either (every current caller already short-circuits count 0
-        // before reaching this loop; the guard keeps that contract local).
-        if (count <= 0)
-            return MakeCheckedLoopStateResult(ctx, stateSlots);
-
-        var prepared = PrepareAdmittedLoopStep(step, admittedHead, ctx);
-        // The counter is a LONG like `count` itself. An `int` counter silently wraps past
-        // int.MaxValue and never satisfies `k < count` again, so a repeat count above
-        // 2^31 - 1 (legal: the count is narrowed from Decimal128 to long) would spin
-        // forever instead of finishing. Pinned structurally at both mirror sites by
-        // EvaluatorLoopTests.RepeatLoopGenericCounter_IsLongAtBothMirrorSites.
-        for (var k = 0L; k < count; k++)
-        {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", stepName, prepared, conditionFirst: false);
-            if (outputSlotsR.IsError) return outputSlotsR.Error;
-            stateSlots = outputSlotsR.Value!.ToList();
-        }
-        return MakeCheckedLoopStateResult(ctx, stateSlots);
-    }
+    //
+    // There is likewise NO generic loop of its own for a planned loop's handover: its generic
+    // continuation runs in the one round kernel (RunGenericLoopRounds, Evaluator.Needs.cs),
+    // prepared from the head the planner admitted (PrepareAdmittedLoopStep).
 }

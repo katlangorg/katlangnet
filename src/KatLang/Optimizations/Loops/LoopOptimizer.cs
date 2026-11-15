@@ -40,7 +40,7 @@ internal static partial class LoopOptimizer
         while (true)
         {
             // ONE step per iteration, charged first — exactly where the generic loop charges
-            // its iteration step (Evaluator.EvalNeedLoop / RunReadyNeedStepSlots), before
+            // its iteration step (the one round kernel, Evaluator.RunGenericLoopRounds), before
             // anything of the iteration is evaluated. It is what bounds a runaway planned loop
             // under a finite MaxSteps, and (with the planned expressions' checkpoints) what
             // makes a planned run's step count identical to the generic one (Q-09b). It also

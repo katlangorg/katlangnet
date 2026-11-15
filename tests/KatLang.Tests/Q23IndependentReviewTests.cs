@@ -20,7 +20,7 @@ public partial class LoopStepCallableDispatchTests
             () => throw new InvalidOperationException("unused step VALUE"),
             () => throw new InvalidOperationException("unused step VALUE"),
             () => { projections++; return EvalResult<Algorithm?>.Ok(new Algorithm.Builtin(BuiltinId.count)); });
-        // META-S3-3: the native kernel takes its logical components — the step argument (a captured
+        // META-S3-3: the native loop entry takes its logical components — the step argument (a captured
         // plan's callee cell), the validated remaining count, the initial state cells and the slots
         // written for them in the captured call (none here: the state is a Ready cell).
         var stepArgument = new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = step };

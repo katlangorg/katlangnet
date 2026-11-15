@@ -360,7 +360,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalNeedCallbackBody", 2, "a1733cfe57da7715", AC, "the user callback's driver"),
         new("Evaluator.EvalNeedLoop", 0, "c613b240dc6307dc", RA, "the asynchronous step projection takes ctx for its adapter"),
         new("Evaluator.EvalNeedLoop", 1, "83cadc7942d61e81", AC, "the alias step's target"),
-        new("Evaluator.EvalNeedLoop", 2, "aabad8df74d12744", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step)"),
+        new("Evaluator.EvalNeedLoop", 2, "70563d5fe6206b30", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step); its handover continues, synchronously, in the one round kernel"),
         new("Evaluator.EvalNeedLoop", 3, "c3141958221e536e", OP, "the loop diagnostics report the pinned strategy for the asynchronous run"),
     ];
 

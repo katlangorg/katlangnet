@@ -1274,21 +1274,6 @@ public static partial class Evaluator
         => WithNeedBindings(ctx, names.Select((name, index) => (name, cells[index])).ToArray(), names);
 
     /// <summary>
-    /// One iteration of the generic continuation a planned loop hands over to (and of nothing else):
-    /// the iteration's step charge, then the ONE loop-step invocation over the established state slots
-    /// (<see cref="InvokeLoopStepSupply"/>), exactly as <see cref="EvalNeedLoop"/> performs it.
-    /// </summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> RunReadyNeedStepSlots(
-        Algorithm step, IReadOnlyList<Result> state, EvalCtx ctx, ValEnv values, string loopName,
-        CallDiagnosticName stepName, PreparedGenericLoopStep prepared, bool conditionFirst, bool asynchronous)
-    {
-        if (ctx.Budget.TryChargeStep() is { } limit) return limit;
-        var cells = state.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
-        // Ready cells have no written slot: only the captured call's own cells do (EvalNeedLoop, round 1).
-        return await InvokeLoopStepSupply(step, prepared, cells, stateSources: null, ctx, values, loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
-    }
-
-    /// <summary>
     /// A LOOP STEP IS AN ORDINARY CALLABLE INVOKED OVER THE CURRENT STATE SUPPLY (LOOP-08, Q-23 decided
     /// October 2026). The state slots are already a formed supply — Model-C cells, never re-opened,
     /// re-counted or demanded here — and the step is invoked on them by the callable's OWN ordinary
@@ -1320,10 +1305,11 @@ public static partial class Evaluator
     /// </list>
     /// A family's or builtin's failure is its ordinary invocation failure under the step's own call
     /// frame; the loop adds only its outer frame. Nothing here charges a step or enters an invocation
-    /// level: the caller charges one step per iteration, and a loop-step invocation stays outside the
-    /// depth protocol for every callable shape, as it always was for user steps. A binder and the family
-    /// dispatcher read the cells alone, so the written slots cost a user or family step nothing. Lean:
-    /// <c>runNeedStepSlots</c> over a sourced supply (<c>runNeedStepWith</c>).
+    /// level: the round kernel (<see cref="RunGenericLoopRounds"/>) charges one step per round, and a
+    /// loop-step invocation stays outside the depth protocol for every callable shape, as it always was
+    /// for user steps. A binder and the family dispatcher read the cells alone, so the written slots cost
+    /// a user or family step nothing. Lean: <c>runNeedStepSlots</c> over a sourced supply
+    /// (<c>runNeedStepWith</c>).
     /// </summary>
     private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> InvokeLoopStepSupply(
         Algorithm step, PreparedGenericLoopStep prepared, IReadOnlyList<NeedCell> state, IReadOnlyList<Expr?>? stateSources,
@@ -1826,14 +1812,17 @@ public static partial class Evaluator
             argument.Source?.Span, source: argument.Source, budget: ctx.Budget, token: ctx.Budget.CancellationToken);
 
     /// <summary>
-    /// THE NATIVE LOOP KERNEL of <c>while</c>/<c>repeat</c> over its logical components (META-S3-3): the
+    /// THE NATIVE LOOP ENTRY of <c>while</c>/<c>repeat</c> over its logical components (META-S3-3): the
     /// step argument (the captured plan's canonical callee cell), the remaining iteration count of a
     /// <c>repeat</c> (already demanded and validated, RP-1; ignored by <c>while</c>), and the initial
     /// state cells (the captured plan's ONE sticky supply, possibly empty, OD-1) with the slots written for
     /// them in the captured call (<paramref name="initialSources"/>, parallel to the cells, or <c>null</c>).
-    /// The step's CALLABLE is projected only when an iteration needs it; <c>while</c> rounds read their flag
-    /// condition first (LOOP-CF1); the optimizer (<see cref="LoopOptimizer"/>) is tried once the step is
-    /// projected; the final state is materialized at the one result site
+    /// It owns what happens ONCE per loop, and only when a round will run: the step's CALLABLE is projected
+    /// only when an iteration needs it, the optimizer (<see cref="LoopOptimizer"/>) is tried once the step
+    /// is projected, and the step's binding is prepared once. Every generic round then runs in the ONE round
+    /// kernel (<see cref="RunGenericLoopRounds"/>) — this route's rounds and, after a planned handover, the
+    /// generic continuation's: <c>while</c> rounds read their flag condition first (LOOP-CF1), and the final
+    /// state is materialized at the one result site
     /// (<see cref="MakeCheckedLoopStateResult"/>). ROUND 1 KEEPS THE WRITTEN SLOTS: the first round runs over
     /// the captured call's own cells and passes their slots to the step invocation, so a builtin step's
     /// failure there is the direct call's; every later round runs over Ready cells, which have none. The
@@ -1847,76 +1836,117 @@ public static partial class Evaluator
         var repeat = builtin == BuiltinId.@repeat;
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
-        // The written slots of the CURRENT state: the captured call's for the first round, none afterwards.
-        var stateSources = initialSources;
         Algorithm? step = null;
         PreparedGenericLoopStep prepared = default;
-        var loopName = repeat ? "repeat" : "while";
         // The step's written spelling names its own call frame (LOOP-08): a family's or builtin's
         // ordinary failure is reported under it, exactly as the ordinary call reports it.
-        var stepName = StepDiagnosticName(stepArgument, loopName);
+        var stepName = StepDiagnosticName(stepArgument, repeat ? "repeat" : "while");
+        // The loop's setup runs exactly when a round will. Otherwise nothing is projected, planned or
+        // prepared, and the kernel, running no round, never reads the null step.
+        if (!repeat || remaining > 0)
+        {
+            // CALLABLE projection only now, when an iteration needs the step: a zero-iteration
+            // `repeat` never projects or validates it (LOOP-05), and a step argument with no
+            // CALLABLE identity is NotAnAlgorithm (Q-06, LOOP-08), never a VALUE demand.
+            // META-S3-0b: the async loop consumes the awaited projection outcome through the
+            // async resolution adapter (same slot, same point, same diagnostics).
+            var projection = asynchronous
+                ? await ProjectLoopStepAsync(stepArgument, builtin, ctx).ConfigureAwait(false)
+                : ProjectLoopStep(stepArgument, builtin);
+            if (projection.IsError) return projection.Error;
+            step = projection.Value;
+            // A step projected as a STRUCTURE (M4★: a supplied or captured carrier) invokes its
+            // INVOCATION target: the forwarding hop adds no step, depth or activation, so the loop
+            // runs — and the optimizer plans — the target itself, normalized once here.
+            if (step is Algorithm.Alias aliasStep)
+            {
+                var target = asynchronous
+                    ? await ResolveAliasTargetAsync(aliasStep, ctx).ConfigureAwait(false)
+                    : ResolveAliasTarget(aliasStep, ctx);
+                if (target.IsError) return target.Error;
+                step = target.Value;
+            }
+            var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);
+            if (!asynchronous && ctx.EnableLoopOptimization && eligible)
+            {
+                // A handover continues in the SAME round kernel as the generic route, over the handed-over
+                // state as Ready cells (no written slot) and the binding of the head the planner ADMITTED
+                // (PrepareAdmittedLoopStep), never a fresh read of the step's caller-owned head: the
+                // continued rounds bind exactly as the planned ones did. That binding is prepared once per
+                // handover, and never for a continuation of zero rounds.
+                EvalResult<CountedResult> optimized;
+                var taken = repeat
+                    ? LoopOptimizer.TryEvaluateRepeat(step, remaining, state, ctx, values,
+                        (admittedHead, count, slots) => RunGenericLoopRounds(step, count > 0 ? PrepareAdmittedLoopStep(step, admittedHead, ctx) : default,
+                            repeat: true, count, ReadyStateCells(slots), stateSources: null, ctx, values, stepName, asynchronous: false).GetAwaiter().GetResult(), out optimized)
+                    : LoopOptimizer.TryEvaluateWhile(step, state, ctx, values,
+                        (admittedHead, slots) => RunGenericLoopRounds(step, PrepareAdmittedLoopStep(step, admittedHead, ctx),
+                            repeat: false, remaining: long.MaxValue, ReadyStateCells(slots), stateSources: null, ctx, values, stepName, asynchronous: false).GetAwaiter().GetResult(), out optimized);
+                if (taken)
+                {
+                    // The shape gate lets every non-user step through, but the planner takes USER steps
+                    // only (LoopOptimizer.TryBuildLoopPlanTemplate refuses any other shape). A planned
+                    // loop therefore never runs a builtin's first round, the one round that reads the
+                    // written slots; its generic continuation runs over Ready cells, which have none.
+                    System.Diagnostics.Debug.Assert(step is Algorithm.User,
+                        "The loop planner took a non-user step; a builtin step's first round must keep the captured call's written slots.");
+                    return optimized;
+                }
+                // The planner refused the step and already recorded that ONE fallback under
+                // its own reason (OPT-FB-1); it is not recorded again here.
+            }
+            else
+            {
+                // No plan was attempted: this loop entry owns the fallback.
+                ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(asynchronous || !ctx.EnableLoopOptimization ? "loop optimization disabled" : shapeFallback ?? "loop plan unsupported step shape");
+            }
+            prepared = PrepareUserLoopStep(step, ctx);
+        }
+        return await RunGenericLoopRounds(step, prepared, repeat, remaining, state, initialSources, ctx, values, stepName, asynchronous).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// THE ONE GENERIC ROUND KERNEL of <c>while</c>/<c>repeat</c>: every round the generic strategy runs is
+    /// a round of this loop — the generic route's (<see cref="EvalNeedLoop"/>) and, after a planned loop
+    /// hands over, the generic continuation's — so the two cannot drift, and a planned run's step count stays
+    /// the generic one (Q-09b). A round charges ONE step first, before anything of it is evaluated (the
+    /// charge also observes host cancellation), and then makes the ONE step invocation over the current
+    /// state cells (<see cref="InvokeLoopStepSupply"/>). A <c>while</c> round reads its flag condition first
+    /// (LOOP-06): a <c>false</c> verdict ends the loop with the state that entered the round. A
+    /// <c>repeat</c> runs <paramref name="remaining"/> rounds (<c>while</c> ignores the count). An accepted
+    /// round's next state is Ready cells, which have no written slot, so <paramref name="stateSources"/> —
+    /// the slots written for the INITIAL cells, or <c>null</c> — reaches the first round only. The final
+    /// state is materialized at the one result site (<see cref="MakeCheckedLoopStateResult"/>).
+    /// <para>The caller owns what happens once per loop — projecting the step, attempting the optimizer,
+    /// the loop's diagnostics — and PREPARES the step's binding (<paramref name="prepared"/>): the step's
+    /// own head on the generic route (<see cref="PrepareUserLoopStep"/>), the head the planner admitted
+    /// after a handover (<see cref="PrepareAdmittedLoopStep"/>). Beyond that binding the callers differ only
+    /// in the first round's cells: the captured call's own, or the handed-over state as Ready cells. A loop
+    /// of zero rounds — a <c>repeat</c> with nothing remaining — projects and prepares nothing, so
+    /// <paramref name="step"/> is <c>null</c> exactly then.</para>
+    /// <para>The count is a LONG, like the validated count it comes from, and it counts down in place. An
+    /// <c>int</c> counter silently wraps past <c>int.MaxValue</c>, so a repeat count above 2^31 - 1 (legal:
+    /// the count is narrowed from Decimal128 to long) would spin forever instead of finishing. Pinned
+    /// structurally by <c>EvaluatorLoopTests.RepeatLoopGenericCounter_IsLongAtBothMirrorSites</c>.</para>
+    /// Lean: <c>EvalBody.whileLoop</c> and the <c>repeatLoop</c> of the <c>repeat</c> arm.
+    /// </summary>
+    private static async ValueTask<EvalResult<CountedResult>> RunGenericLoopRounds(
+        Algorithm? step, PreparedGenericLoopStep prepared, bool repeat, long remaining,
+        IReadOnlyList<NeedCell> state, IReadOnlyList<Expr?>? stateSources,
+        EvalCtx ctx, ValEnv values, CallDiagnosticName stepName, bool asynchronous)
+    {
+        var loopName = repeat ? "repeat" : "while";
         while (!repeat || remaining > 0)
         {
-            if (step is null)
-            {
-                // CALLABLE projection only now, when an iteration needs the step: a zero-iteration
-                // `repeat` never projects or validates it (LOOP-05), and a step argument with no
-                // CALLABLE identity is NotAnAlgorithm (Q-06, LOOP-08), never a VALUE demand.
-                // META-S3-0b: the async loop consumes the awaited projection outcome through the
-                // async resolution adapter (same slot, same point, same diagnostics).
-                var projection = asynchronous
-                    ? await ProjectLoopStepAsync(stepArgument, builtin, ctx).ConfigureAwait(false)
-                    : ProjectLoopStep(stepArgument, builtin);
-                if (projection.IsError) return projection.Error;
-                step = projection.Value;
-                // A step projected as a STRUCTURE (M4★: a supplied or captured carrier) invokes its
-                // INVOCATION target: the forwarding hop adds no step, depth or activation, so the loop
-                // runs — and the optimizer plans — the target itself, normalized once here.
-                if (step is Algorithm.Alias aliasStep)
-                {
-                    var target = asynchronous
-                        ? await ResolveAliasTargetAsync(aliasStep, ctx).ConfigureAwait(false)
-                        : ResolveAliasTarget(aliasStep, ctx);
-                    if (target.IsError) return target.Error;
-                    step = target.Value;
-                }
-                var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);
-                if (!asynchronous && ctx.EnableLoopOptimization && eligible)
-                {
-                    EvalResult<CountedResult> optimized;
-                    var taken = repeat
-                        ? LoopOptimizer.TryEvaluateRepeat(step, remaining, state, ctx, values,
-                            (admittedHead, count, slots) => RepeatLoopGenericCounted(step, admittedHead, count, slots, ctx, values, stepName), out optimized)
-                        : LoopOptimizer.TryEvaluateWhile(step, state, ctx, values,
-                            (admittedHead, slots) => WhileLoopGenericCounted(step, admittedHead, slots, ctx, values, stepName), out optimized);
-                    if (taken)
-                    {
-                        // The shape gate lets every non-user step through, but the planner takes USER steps
-                        // only (LoopOptimizer.TryBuildLoopPlanTemplate refuses any other shape). A planned
-                        // loop therefore never runs a builtin's first round, the one round that reads the
-                        // written slots; its generic continuation runs over Ready cells, which have none.
-                        System.Diagnostics.Debug.Assert(step is Algorithm.User,
-                            "The loop planner took a non-user step; a builtin step's first round must keep the captured call's written slots.");
-                        return optimized;
-                    }
-                    // The planner refused the step and already recorded that ONE fallback under
-                    // its own reason (OPT-FB-1); it is not recorded again here.
-                }
-                else
-                {
-                    // No plan was attempted: this loop entry owns the fallback.
-                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(asynchronous || !ctx.EnableLoopOptimization ? "loop optimization disabled" : shapeFallback ?? "loop plan unsupported step shape");
-                }
-                prepared = PrepareUserLoopStep(step, ctx);
-            }
             if (ctx.Budget.TryChargeStep() is { } limit) return limit;
             // A `while` round reads its step condition first (LOOP-06): `null` is a false verdict,
             // and the state that entered the round is the loop's final state.
-            var output = await InvokeLoopStepSupply(step, prepared, state, stateSources, ctx, values, loopName, stepName,
-                conditionFirst: !repeat, asynchronous).ConfigureAwait(false);
+            var output = await InvokeLoopStepSupply(
+                step ?? throw new InvalidOperationException("A loop round ran without its step: only a loop of zero rounds leaves the step unprojected."),
+                prepared, state, stateSources, ctx, values, loopName, stepName, conditionFirst: !repeat, asynchronous).ConfigureAwait(false);
             if (output.IsError) return output.Error;
             if (output.Value is not { } next) break;
-            state = next.Select(item => NeedCell.Ready(new(item, item.ValueCount()))).ToArray();
+            state = ReadyStateCells(next);
             // The next state is Ready cells: no slot was written for them.
             stateSources = null;
             if (repeat) remaining--;
@@ -1930,4 +1960,11 @@ public static partial class Evaluator
         }
         return MakeCheckedLoopStateResult(ctx, materialized);
     }
+
+    /// <summary>
+    /// A PRODUCED loop state as cells — an accepted round's next state, or the state a planned loop hands
+    /// over: Ready data, which has no written slot and no callable identity.
+    /// </summary>
+    private static NeedCell[] ReadyStateCells(IReadOnlyList<Result> slots)
+        => slots.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
 }

@@ -12239,7 +12239,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     it is its own evaluator call: every round costs one fuel unit (R7). The state is a SOURCED
     supply: the first round's cells are the captured call's, with their written slots; the Ready
     cells of an accepted transition have none (`retainedSourced`). Reached only from the
-    `while` arm of `applyBuiltinCounted`'s META branch. C#: the `while` loop of `Evaluator.EvalNeedLoop`. -/
+    `while` arm of `applyBuiltinCounted`'s META branch. C#: `Evaluator.RunGenericLoopRounds`, entered
+    from `Evaluator.EvalNeedLoop`. -/
 def EvalBody.whileLoop (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (stepName : String) (cells : List NeedSupply.Sourced) : EvalM (List NeedSupply.Sourced) := do
   let algorithm <- projectInvokingSlot (invokingSlotRole .whileBuiltin) (<- rec.invokeNeed step)
