@@ -684,7 +684,7 @@ public static class KatLangEngine
         evaluationCancellationToken.ThrowIfCancellationRequested();
 
         var observationSink = CreateObservationSink(frontEndResult, options);
-        var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache(observationSink);
+        var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache(observationSink, collectStatistics: false);
 
         // One budget for the whole run: the program output and the root's own
         // MinDecimalPlaces and MaxDecimalPlaces properties (the source decimal-places

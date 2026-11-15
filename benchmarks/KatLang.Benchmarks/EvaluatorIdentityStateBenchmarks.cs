@@ -125,7 +125,7 @@ internal static class EvaluatorIdentityStateScenarios
 	{
 		var result = Evaluator.Run(
 			new Expr.AlgorithmExpr(root),
-			new RunScopedZeroArgPropertyResultCache(),
+			new RunScopedZeroArgPropertyResultCache(collectStatistics: false),
 			enableLoopOptimization: true,
 			loopDiagnostics: null);
 		if (result.IsError)

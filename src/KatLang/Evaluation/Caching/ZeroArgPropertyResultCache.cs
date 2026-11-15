@@ -657,50 +657,76 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
     internal int LivePartitionCount() => _seenKeys?.LivePartitionCount() ?? 0;
 }
 
+/// <summary>
+/// The synchronous run-scoped zero-argument property cache: the published entries of the run under
+/// the one publication law (<see cref="ZeroArgPropertyPublications"/>) and, optionally, snapshot
+/// STATISTICS (<see cref="GetSnapshot"/>) for tests and diagnostics harnesses.
+/// <para><b>Statistics are opt-out (implementation-only, unobservable).</b> Nothing a run computes
+/// reads them: the evaluator, the engine and the public results never consult a snapshot. They cost
+/// every read a second key probe (the seen-key set, whose equality walks the owner identity's scope
+/// chain once the key has been seen), every miss a third and every store a fourth, and their two key
+/// sets hold keys for as long as the published store does. Every cache that <c>src/KatLang</c>
+/// constructs — the public evaluator entries, the engine, the internal harness entries and the
+/// cache-pairing factory — therefore passes <c>collectStatistics: false</c>; a cache a test or
+/// harness constructs to read statistics keeps the default. The flag decides only that
+/// bookkeeping: with or without it the cache computes the same keys, serves the same hits, runs the
+/// same misses, publishes the same entries and returns the same results, so no value, charge,
+/// diagnostic or limit verdict depends on it.</para>
+/// </summary>
 internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResultCache
 {
-    // The published entries and the two statistics key sets are partitioned by binding-context
-    // identity in ONE shared table, one weak entry per identity (slots: published, seen, missed). A
-    // local-only key leaves the statistics sets only when no key can name its identity again, so the
-    // distinct-key count (the seen set's monotonic AddedCount) and the repeated-miss count are unchanged.
+    // With statistics, the published entries and the two statistics key sets are partitioned by
+    // binding-context identity in ONE shared table, one weak entry per identity (slots: published, seen,
+    // missed). A local-only key leaves the statistics sets only when no key can name its identity again,
+    // so the distinct-key count (the seen set's monotonic AddedCount) and the repeated-miss count are
+    // unchanged. Without statistics the published entries keep a one-slot table of their own.
     private const int PublishedStore = 0;
     private const int SeenKeysStore = 1;
     private const int MissedKeysStore = 2;
     private const int PartitionStoreCount = 3;
 
     private readonly ZeroArgPropertyPublications _results;
-    private readonly PartitionedSet<ZeroArgPropertyCacheKey> _seenKeys;
-    private readonly PartitionedSet<ZeroArgPropertyCacheKey> _missedKeysWithoutStore;
-    private readonly ZeroArgPropertyResultCacheStatsCollector _stats = new();
-    private int _repeatedMissRequests;
-    private int _maxCacheSize;
+    // Null when the cache was constructed without statistics.
+    private readonly Statistics? _statistics;
 
-    public RunScopedZeroArgPropertyResultCache(RootPropertyObservationSink? observationSink = null)
+    /// <param name="observationSink">The engine run's optional passive root-property observer.</param>
+    /// <param name="collectStatistics">
+    /// Whether to keep the snapshot statistics (<see cref="GetSnapshot"/>). The default keeps them for
+    /// the tests and harnesses that read them; production construction sites pass <c>false</c>.
+    /// </param>
+    public RunScopedZeroArgPropertyResultCache(
+        RootPropertyObservationSink? observationSink = null,
+        bool collectStatistics = true)
     {
+        if (!collectStatistics)
+        {
+            _results = new ZeroArgPropertyPublications(observationSink);
+            return;
+        }
+
         var partitions = new BindingContextPartitionTable(PartitionStoreCount);
         _results = new ZeroArgPropertyPublications(observationSink, partitions, PublishedStore);
-        _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, partitions, SeenKeysStore);
-        _missedKeysWithoutStore = new(
-            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, partitions, MissedKeysStore);
+        _statistics = new Statistics(partitions);
     }
+
+    /// <summary>Whether this cache keeps snapshot statistics (<see cref="GetSnapshot"/>).</summary>
+    internal bool CollectsStatistics => _statistics is not null;
 
     public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
         ZeroArgPropertyExecution execution,
         Func<EvalResult<ZeroArgPropertyResult>> evaluate)
     {
         var key = ZeroArgPropertyCacheKey.FromExecution(execution);
-        _stats.RecordRequest(execution.AccessKind);
-        _seenKeys.Add(key);
+        var statistics = _statistics;
+        statistics?.RecordRequest(execution.AccessKind, key);
 
         if (_results.TryGetPublished(key, out var cached))
         {
-            _stats.RecordHit(execution.AccessKind);
+            statistics?.RecordHit(execution.AccessKind);
             return EvalResult<ZeroArgPropertyResult>.Ok(cached);
         }
 
-        _stats.RecordMiss(execution.AccessKind);
-        if (!_missedKeysWithoutStore.Add(key))
-            _repeatedMissRequests++;
+        statistics?.RecordMiss(execution.AccessKind, key);
 
         // A re-entrant miss (an outer evaluation of this key is still running) evaluates
         // but never publishes; the outermost successful evaluation publishes (Q-37).
@@ -709,12 +735,7 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
             return result.Error;
 
         if (published)
-        {
-            _stats.RecordStore(execution.AccessKind);
-            _missedKeysWithoutStore.Remove(key);
-            if (_results.Count > _maxCacheSize)
-                _maxCacheSize = _results.Count;
-        }
+            statistics?.RecordStore(execution.AccessKind, key, _results.Count);
 
         return result;
     }
@@ -731,12 +752,7 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
         var key = ZeroArgPropertyCacheKey.FromExecution(execution);
         var result = _results.Invoke(key, evaluate, out var published);
         if (published)
-        {
-            _stats.RecordStore(ZeroArgPropertyAccessKind.Invocation);
-            _missedKeysWithoutStore.Remove(key);
-            if (_results.Count > _maxCacheSize)
-                _maxCacheSize = _results.Count;
-        }
+            _statistics?.RecordStore(ZeroArgPropertyAccessKind.Invocation, key, _results.Count);
 
         return result;
     }
@@ -751,14 +767,63 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
 
     /// <summary>
     /// TEST SEAM: the live binding-context partitions of each identity-partitioned store (published
-    /// entries, seen keys, keys missed without a store).
+    /// entries, seen keys, keys missed without a store). The two statistics stores count zero when the
+    /// cache keeps no statistics.
     /// </summary>
     internal (int Published, int SeenKeys, int MissedWithoutStore) LivePartitionCounts()
-        => (_results.LivePartitionCount(), _seenKeys.LivePartitionCount(), _missedKeysWithoutStore.LivePartitionCount());
+        => (_results.LivePartitionCount(),
+            _statistics?.SeenKeys.LivePartitionCount() ?? 0,
+            _statistics?.MissedKeysWithoutStore.LivePartitionCount() ?? 0);
 
+    /// <summary>
+    /// The run's statistics so far.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The cache was constructed without statistics.</exception>
     public ZeroArgPropertyResultCacheSnapshot GetSnapshot()
-        => _stats.CreateSnapshot(
-            distinctKeysCreated: BindingContextPartitions.SaturatedCount(_seenKeys.AddedCount),
-            repeatedMissRequests: _repeatedMissRequests,
-            maxCacheSize: _maxCacheSize);
+        => (_statistics ?? throw new InvalidOperationException(
+                "This zero-argument property cache was constructed without statistics (collectStatistics: false)."))
+            .CreateSnapshot();
+
+    /// <summary>The snapshot statistics of one cache: request, hit, miss and store counters and their key sets.</summary>
+    private sealed class Statistics(BindingContextPartitionTable partitions)
+    {
+        private readonly ZeroArgPropertyResultCacheStatsCollector _counters = new();
+        private int _repeatedMissRequests;
+        private int _maxCacheSize;
+
+        internal PartitionedSet<ZeroArgPropertyCacheKey> SeenKeys { get; } = new(
+            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, partitions, SeenKeysStore);
+
+        internal PartitionedSet<ZeroArgPropertyCacheKey> MissedKeysWithoutStore { get; } = new(
+            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, partitions, MissedKeysStore);
+
+        internal void RecordRequest(ZeroArgPropertyAccessKind accessKind, ZeroArgPropertyCacheKey key)
+        {
+            _counters.RecordRequest(accessKind);
+            SeenKeys.Add(key);
+        }
+
+        internal void RecordHit(ZeroArgPropertyAccessKind accessKind) => _counters.RecordHit(accessKind);
+
+        internal void RecordMiss(ZeroArgPropertyAccessKind accessKind, ZeroArgPropertyCacheKey key)
+        {
+            _counters.RecordMiss(accessKind);
+            if (!MissedKeysWithoutStore.Add(key))
+                _repeatedMissRequests++;
+        }
+
+        internal void RecordStore(ZeroArgPropertyAccessKind accessKind, ZeroArgPropertyCacheKey key, int publishedCount)
+        {
+            _counters.RecordStore(accessKind);
+            MissedKeysWithoutStore.Remove(key);
+            if (publishedCount > _maxCacheSize)
+                _maxCacheSize = publishedCount;
+        }
+
+        internal ZeroArgPropertyResultCacheSnapshot CreateSnapshot()
+            => _counters.CreateSnapshot(
+                distinctKeysCreated: BindingContextPartitions.SaturatedCount(SeenKeys.AddedCount),
+                repeatedMissRequests: _repeatedMissRequests,
+                maxCacheSize: _maxCacheSize);
+    }
 }

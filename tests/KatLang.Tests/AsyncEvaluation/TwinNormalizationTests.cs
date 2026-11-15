@@ -294,7 +294,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("FrontEndPipeline.ProcessAsync(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?)",
             "FrontEndPipeline.Process(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?)", "f7a108499ab61e4d", ER,
             "the synchronous entry rejects a downloader; the asynchronous one elaborates modules with it"),
-        new("KatLangEngine.RunAsync", "KatLangEngine.Run", "8a0a878c46fbd132", ER,
+        new("KatLangEngine.RunAsync", "KatLangEngine.Run", "26fc82dd959da295", ER,
             "the synchronous entry rejects asynchronous host operations; the asynchronous one decides the tree route once and pairs the cache with it"),
         new("ModuleLoader.ProcessAlgorithmAsync", "ModuleLoader.ProcessAlgorithm", "980aaac8c5d757ee", DW,
             "the ordinary-body part of ProcessAlgorithm on the load-bearing async walk"),

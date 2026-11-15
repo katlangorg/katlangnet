@@ -2517,7 +2517,7 @@ public static partial class Evaluator
     public static EvalResult<Result> Run(Expr expr, EvaluationLimits? limits)
     {
         ArgumentNullException.ThrowIfNull(expr);
-        return Run(expr, new RunScopedZeroArgPropertyResultCache(), limits);
+        return Run(expr, new RunScopedZeroArgPropertyResultCache(collectStatistics: false), limits);
     }
 
     /// <summary>
@@ -2570,7 +2570,7 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(expr);
         return Run(
             expr,
-            new RunScopedZeroArgPropertyResultCache(),
+            new RunScopedZeroArgPropertyResultCache(collectStatistics: false),
             enableLoopOptimization: true,
             loopDiagnostics: null,
             enableSequencePipelineOptimization: true,
@@ -2634,7 +2634,7 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(hostOperations);
         return Run(
             expr,
-            new RunScopedZeroArgPropertyResultCache(),
+            new RunScopedZeroArgPropertyResultCache(collectStatistics: false),
             enableLoopOptimization: true,
             loopDiagnostics: null,
             enableSequencePipelineOptimization: true,
@@ -3079,7 +3079,7 @@ public static partial class Evaluator
         long? randomSeed = null)
         => Run(
             expr,
-            new RunScopedZeroArgPropertyResultCache(),
+            new RunScopedZeroArgPropertyResultCache(collectStatistics: false),
             enableLoopOptimization: enableOptimizations,
             loopDiagnostics: null,
             enableSequencePipelineOptimization: enableOptimizations,
@@ -3089,7 +3089,7 @@ public static partial class Evaluator
             randomSeed: randomSeed);
 
     internal static EvalResult<CountedResult> RunCounted(Expr expr)
-        => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
+        => RunCounted(expr, new RunScopedZeroArgPropertyResultCache(collectStatistics: false));
 
     /// <summary>
     /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, bool?, CancellationToken)"/>
@@ -3126,7 +3126,7 @@ public static partial class Evaluator
     {
         using var preparation = PrepareSynchronousRun(
             expr,
-            zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
+            zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(collectStatistics: false),
             enableLoopOptimization: enableOptimizations,
             loopDiagnostics,
             enableSequencePipelineOptimization: enableOptimizations,

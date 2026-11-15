@@ -445,7 +445,7 @@ public static partial class Evaluator
             // so pairs with the async-capable cache by the same rule.
             || (treeRequiresAsyncEvaluation ?? DeferredModuleRegion.RequiresAsyncEvaluation(expr))
             ? new RunScopedAsyncZeroArgPropertyResultCache(observationSink)
-            : new RunScopedZeroArgPropertyResultCache(observationSink);
+            : new RunScopedZeroArgPropertyResultCache(observationSink, collectStatistics: false);
 
     /// <summary>
     /// Run-entry preparation for the ASYNC TWIN family — the twin-path counterpart of
