@@ -3849,6 +3849,51 @@ public class SemanticModelTests
     }
 
     [Fact]
+    public void DotIntrinsicCatalog_IsTheEditorsOneMissRouteTable()
+    {
+        // The editor declares each dot intrinsic once: the catalog names exactly the spellings whose
+        // miss route the front end treats as an intrinsic, and both of the editor's miss routes — a
+        // value receiver's and a known receiver's structural miss — resolve to the catalog entry's
+        // own PropertyInfo.
+        foreach (var intrinsic in PreludeCatalog.DotIntrinsicSymbols)
+            Assert.True(new Expr.DotCall(new Expr.Resolve("x"), intrinsic.Name).UsesDotMissIntrinsic(), intrinsic.Name);
+        foreach (var nearMiss in new[] { "String", "Strings", "invoke", "Invokes", "arguments", "Argument", "algorithm", "Algorithms" })
+            Assert.False(new Expr.DotCall(new Expr.Resolve("x"), nearMiss).UsesDotMissIntrinsic(), nearMiss);
+
+        var model = BuildModel(
+            """
+            String(v) = v
+            invoke(v) = v
+            Box = { other = 1 }
+            5.Algorithm, 5.Arguments, 5.Invoke(), 5.string
+            Box.Algorithm, Box.Arguments, Box.Invoke(), Box.string
+            5.String, Box.invoke
+            """);
+        List<IdentifierResolution> MemberSites(int line) => model.IdentifierResolutions
+            .Where(resolution => resolution.Occurrence.Span.Start.Line == line && resolution.Occurrence.Name != "Box")
+            .OrderBy(static resolution => resolution.Occurrence.Span.Start.Column)
+            .ToList();
+
+        foreach (var line in new[] { 4, 5 })
+        {
+            var sites = MemberSites(line);
+            Assert.Equal(PreludeCatalog.DotIntrinsicSymbols.Select(static symbol => symbol.Name), sites.Select(static site => site.Occurrence.Name));
+            for (var index = 0; index < sites.Count; index++)
+            {
+                Assert.Equal(IdentifierClassification.Builtin, sites[index].Classification);
+                Assert.Null(sites[index].ResolvedDeclaration);
+                Assert.Same(PreludeCatalog.DotIntrinsicSymbols[index].Property, sites[index].ResolvedProperty);
+            }
+        }
+
+        // A near-miss spelling is an ordinary member: its miss takes the extension call to the declared function.
+        var nearMisses = MemberSites(6);
+        Assert.Equal(["String", "invoke"], nearMisses.Select(static site => site.Occurrence.Name));
+        Assert.Equal([1, 2], nearMisses.Select(static site => site.ResolvedDeclaration!.Span.Start.Line));
+        Assert.All(nearMisses, static site => Assert.NotEqual(IdentifierClassification.Builtin, site.Classification));
+    }
+
+    [Fact]
     public void GetVisibleSymbolsAt_NamesAreUnique()
     {
         var model = BuildModel(

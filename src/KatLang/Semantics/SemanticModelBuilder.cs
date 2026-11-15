@@ -196,9 +196,8 @@ public static class SemanticModelBuilder
         => Builder.CreatePreludeCatalog();
 
     /// <summary>
-    /// Builds <see cref="PreludeCatalog.DotIntrinsicSymbols"/> (the receiver-only
-    /// <c>.string</c> value intrinsic and the call-reference intrinsics <c>.Algorithm</c>,
-    /// <c>.Arguments</c> and <c>.Invoke</c>).
+    /// Builds <see cref="PreludeCatalog.DotIntrinsicSymbols"/> from the builder's one table of
+    /// dot-only intrinsics (<c>Builder.DotIntrinsics</c>).
     /// </summary>
     internal static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalogSymbols()
         => Builder.CreateDotIntrinsicCatalog();
@@ -208,42 +207,27 @@ public static class SemanticModelBuilder
         private static readonly Algorithm.User MathAlgorithm = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly);
         private static readonly Algorithm.User PreludeAlgorithm = BuiltinRegistry.CreateSemanticPreludeAlgorithm(MathAlgorithm);
         private static readonly ScopeFrame PreludeScope = CreatePreludeScope();
-        private static readonly PropertyInfo StringIntrinsicPropertyInfo = CreateStringIntrinsicPropertyInfo();
-        private static readonly SymbolDefinition StringIntrinsicSymbol = new(
-            "string",
-            SymbolKind.Builtin,
-            AlgorithmValue: null,
-            Declaration: null,
-            IsPublic: true,
-            StringIntrinsicPropertyInfo,
-            StringIntrinsicPropertyInfo);
-        private static readonly PropertyInfo InvokeIntrinsicPropertyInfo = CreateInvokeIntrinsicPropertyInfo();
-        private static readonly SymbolDefinition InvokeIntrinsicSymbol = new(
-            AstHelpers.InvokeIntrinsicName,
-            SymbolKind.Builtin,
-            AlgorithmValue: null,
-            Declaration: null,
-            IsPublic: true,
-            InvokeIntrinsicPropertyInfo,
-            InvokeIntrinsicPropertyInfo);
-        private static readonly PropertyInfo ArgumentsIntrinsicPropertyInfo = CreateArgumentsIntrinsicPropertyInfo();
-        private static readonly SymbolDefinition ArgumentsIntrinsicSymbol = new(
-            AstHelpers.ArgumentsIntrinsicName,
-            SymbolKind.Builtin,
-            AlgorithmValue: null,
-            Declaration: null,
-            IsPublic: true,
-            ArgumentsIntrinsicPropertyInfo,
-            ArgumentsIntrinsicPropertyInfo);
-        private static readonly PropertyInfo AlgorithmIntrinsicPropertyInfo = CreateAlgorithmIntrinsicPropertyInfo();
-        private static readonly SymbolDefinition AlgorithmIntrinsicSymbol = new(
-            AstHelpers.AlgorithmIntrinsicName,
-            SymbolKind.Builtin,
-            AlgorithmValue: null,
-            Declaration: null,
-            IsPublic: true,
-            AlgorithmIntrinsicPropertyInfo,
-            AlgorithmIntrinsicPropertyInfo);
+
+        // The editor's dot-only intrinsics, the ONE place each is declared: the miss-route classifier
+        // (`DotMissIntrinsic`) selects a row by its name, and the dot-intrinsic catalog lists the rows,
+        // so resolution, hover and completion share one PropertyInfo per intrinsic. Name-ordered
+        // (ordinal), like every other catalog. The names are the front end's (`AstHelpers`, whose
+        // `UsesDotMissIntrinsic` every static consumer reads); what an intrinsic does is the
+        // evaluator's. Each is receiver-only, so its one signature surface is the dot style.
+        private static readonly ImmutableArray<PropertyInfo> DotIntrinsics =
+        [
+            // `.Algorithm` (META-S3-1): bare, it reads the captured callee's value; with an argument
+            // list, it calls the captured callee afresh with exactly those arguments.
+            CreateDotIntrinsicPropertyInfo(AstHelpers.AlgorithmIntrinsicName, "reference.Algorithm(arguments)"),
+            // `.Arguments` (CallReference S2) has no argument list: it reads the lazy argument view of
+            // the call reference that is the receiver's value.
+            CreateDotIntrinsicPropertyInfo(AstHelpers.ArgumentsIntrinsicName, "reference.Arguments"),
+            // `.Invoke()` (CallReference S1) has an explicit empty argument list: it executes the call
+            // reference that is the receiver's value.
+            CreateDotIntrinsicPropertyInfo(AstHelpers.InvokeIntrinsicName, "reference.Invoke()"),
+            // `.string` (DOT-08) has no plain-call form and no written arguments.
+            CreateDotIntrinsicPropertyInfo(AstHelpers.StringIntrinsicName, "value.string"),
+        ];
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
         private readonly List<DeclarationOccurrence> _declarations = [];
@@ -1496,16 +1480,10 @@ public static class SemanticModelBuilder
                 if (IsDeferredModulePlaceholder(targetAlgorithm))
                     return (IdentifierClassification.DeferredModuleReference, null, null);
 
-                // A structural miss: `.string`, `.Invoke`, `.Arguments` and `.Algorithm` are the
-                // intrinsics, every other member the fallback.
-                if (dotCall.UsesOrdinaryDotStringIntrinsic())
-                    return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
-                if (dotCall.UsesDotArgumentsIntrinsic())
-                    return (IdentifierClassification.Builtin, null, ArgumentsIntrinsicSymbol.PropertyInfo);
-                if (dotCall.UsesDotAlgorithmIntrinsic())
-                    return (IdentifierClassification.Builtin, null, AlgorithmIntrinsicSymbol.PropertyInfo);
-                return dotCall.UsesDotInvokeIntrinsic()
-                    ? (IdentifierClassification.Builtin, null, InvokeIntrinsicSymbol.PropertyInfo)
+                // A structural miss: a dot intrinsic's name selects the intrinsic, every other member
+                // the fallback.
+                return DotMissIntrinsic(dotCall) is { } missIntrinsic
+                    ? (IdentifierClassification.Builtin, null, missIntrinsic)
                     : ResolveDotMemberFallbackBinding(dotCall, scope);
             }
 
@@ -1514,17 +1492,11 @@ public static class SemanticModelBuilder
             if (provider.Kind == StaticStructuralMemberProviderKind.KnownFailure)
                 return (IdentifierClassification.Unresolved, null, null);
 
-            // A value receiver, or one only the runtime knows: the one statically nameable route of a
-            // `.string` edge is the intrinsic (a runtime receiver that declares `string` is not knowable
-            // here, exactly as its other members are not).
-            if (dotCall.UsesOrdinaryDotStringIntrinsic())
-                return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
-            if (dotCall.UsesDotInvokeIntrinsic())
-                return (IdentifierClassification.Builtin, null, InvokeIntrinsicSymbol.PropertyInfo);
-            if (dotCall.UsesDotArgumentsIntrinsic())
-                return (IdentifierClassification.Builtin, null, ArgumentsIntrinsicSymbol.PropertyInfo);
-            if (dotCall.UsesDotAlgorithmIntrinsic())
-                return (IdentifierClassification.Builtin, null, AlgorithmIntrinsicSymbol.PropertyInfo);
+            // A value receiver, or one only the runtime knows: the one statically nameable route of an
+            // edge spelled like a dot intrinsic (`.string`, say) is the intrinsic (a runtime receiver
+            // that declares `string` is not knowable here, exactly as its other members are not).
+            if (DotMissIntrinsic(dotCall) is { } valueIntrinsic)
+                return (IdentifierClassification.Builtin, null, valueIntrinsic);
 
             var fallbackSelection = dotCall.GetLexicalFallbackSelection(provider);
             return fallbackSelection switch
@@ -3628,37 +3600,34 @@ public static class SemanticModelBuilder
         }
 
         public static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalog()
+            // The table's rows in its (name) order, each entry sharing its row's PropertyInfo with
+            // resolution.
+            => [.. ImmutableArray.CreateRange(DotIntrinsics, static intrinsic => new VisibleSymbol(
+                intrinsic.Name,
+                IdentifierClassification.Builtin,
+                Declaration: null,
+                intrinsic))];
+
+        /// <summary>
+        /// The miss-route classifier: the <see cref="DotIntrinsics"/> row an edge's MISS ROUTE selects,
+        /// or <see langword="null"/> when that route is the extension call. It reads the spelling
+        /// only; the caller decides that the miss route applies (after a known receiver's own
+        /// members, which win over an intrinsic of the same name, DOT-01).
+        /// </summary>
+        private static PropertyInfo? DotMissIntrinsic(Expr.DotCall dotCall)
         {
-            // Name-ordered, like every other catalog: `Algorithm`, `Arguments` and `Invoke` (ordinal)
-            // sort before `string`.
-            return [
-                new VisibleSymbol(
-                    AstHelpers.AlgorithmIntrinsicName,
-                    IdentifierClassification.Builtin,
-                    Declaration: null,
-                    AlgorithmIntrinsicPropertyInfo),
-                new VisibleSymbol(
-                    AstHelpers.ArgumentsIntrinsicName,
-                    IdentifierClassification.Builtin,
-                    Declaration: null,
-                    ArgumentsIntrinsicPropertyInfo),
-                new VisibleSymbol(
-                    AstHelpers.InvokeIntrinsicName,
-                    IdentifierClassification.Builtin,
-                    Declaration: null,
-                    InvokeIntrinsicPropertyInfo),
-                new VisibleSymbol(
-                    "string",
-                    IdentifierClassification.Builtin,
-                    Declaration: null,
-                    StringIntrinsicPropertyInfo)];
+            foreach (var intrinsic in DotIntrinsics)
+            {
+                if (string.Equals(intrinsic.Name, dotCall.Name, StringComparison.Ordinal))
+                    return intrinsic;
+            }
+
+            return null;
         }
 
-        private static PropertyInfo CreateInvokeIntrinsicPropertyInfo()
-            // `.Invoke()` (CallReference S1) is receiver-only with an explicit empty argument list:
-            // it executes the call reference that is the receiver's value.
+        private static PropertyInfo CreateDotIntrinsicPropertyInfo(string name, string signature)
             => new(
-                AstHelpers.InvokeIntrinsicName,
+                name,
                 Declaration: null,
                 PropertyShape.Builtin,
                 IsPublic: true,
@@ -3667,58 +3636,7 @@ public static class SemanticModelBuilder
                 ConditionalBranches: [])
             {
                 PreferredCallStyle = PropertyCallStyle.Dot,
-                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Invoke()", [])],
-                SupportsLexicalDotCall = false,
-            };
-
-        private static PropertyInfo CreateArgumentsIntrinsicPropertyInfo()
-            // `.Arguments` (CallReference S2) is a receiver-only property with no argument list: it
-            // reads the lazy argument view of the call reference that is the receiver's value.
-            => new(
-                AstHelpers.ArgumentsIntrinsicName,
-                Declaration: null,
-                PropertyShape.Builtin,
-                IsPublic: true,
-                PropertyExposure.Exported,
-                Parameters: [],
-                ConditionalBranches: [])
-            {
-                PreferredCallStyle = PropertyCallStyle.Dot,
-                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Arguments", [])],
-                SupportsLexicalDotCall = false,
-            };
-
-        private static PropertyInfo CreateAlgorithmIntrinsicPropertyInfo()
-            // `.Algorithm` (META-S3-1) is a receiver-only member: bare, it reads the captured callee's
-            // value; with an argument list, it calls the captured callee afresh with exactly those arguments.
-            => new(
-                AstHelpers.AlgorithmIntrinsicName,
-                Declaration: null,
-                PropertyShape.Builtin,
-                IsPublic: true,
-                PropertyExposure.Exported,
-                Parameters: [],
-                ConditionalBranches: [])
-            {
-                PreferredCallStyle = PropertyCallStyle.Dot,
-                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Algorithm(arguments)", [])],
-                SupportsLexicalDotCall = false,
-            };
-
-        private static PropertyInfo CreateStringIntrinsicPropertyInfo()
-            // `.string` is receiver-only — no plain-call form exists — so its one
-            // signature surface is the dot style with no written arguments.
-            => new(
-                "string",
-                Declaration: null,
-                PropertyShape.Builtin,
-                IsPublic: true,
-                PropertyExposure.Exported,
-                Parameters: [],
-                ConditionalBranches: [])
-            {
-                PreferredCallStyle = PropertyCallStyle.Dot,
-                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "value.string", [])],
+                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, signature, [])],
                 SupportsLexicalDotCall = false,
             };
 

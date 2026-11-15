@@ -334,7 +334,10 @@ internal static class AstHelpers
     /// <c>x.string</c>; Grace only affects inferred name order.
     /// </summary>
     internal static bool UsesOrdinaryDotStringIntrinsic(this Expr.DotCall dotCall)
-        => string.Equals(dotCall.Name, "string", StringComparison.Ordinal);
+        => string.Equals(dotCall.Name, StringIntrinsicName, StringComparison.Ordinal);
+
+    /// <summary>The number-to-text value intrinsic's member name.</summary>
+    internal const string StringIntrinsicName = "string";
 
     /// <summary>
     /// Whether this edge's MISS ROUTE is the call-reference intrinsic <c>Invoke</c> (CallReference S1,
