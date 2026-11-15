@@ -666,6 +666,11 @@ public sealed class KatLangError
 
         // Legacy host prose compatibility: each recognized text context maps to
         // the structured shape above and renders through that shape's builder.
+        // The prose carries no blame provenance, so these arms apply neither the
+        // IsOwnForBlame gate nor IsSelectedMemberOutput: a host-wrapped nested
+        // missing output still names the subject, and a selected member named
+        // `string` renders as the intrinsic (pinned by KatLangErrorLegacyContextTests;
+        // deliberate, see structured-error-codes-2026-08.md).
         if (!TryGetTextContext(error, out var context, out var inner)
             || inner is not EvalError.MissingOutput)
             return false;
@@ -909,8 +914,10 @@ public sealed class KatLangError
     // ── Per-shape message builders ──────────────────────────────────────────
     // ONE builder per semantic error shape. The structured-context branches and
     // the legacy host-prose compatibility branches above both funnel through
-    // these, so the two construction paths can never render one shape
-    // differently (pinned by KatLangErrorLegacyContextTests). Recognition of a
+    // these, so the two construction paths can never spell one shape
+    // differently (pinned by KatLangErrorLegacyContextTests); which shape a
+    // frame is recognized as may still differ where the structured arm reads
+    // provenance the prose lacks (missing-output blame). Recognition of a
     // legacy prose context yields the shape's PAYLOAD (names, descriptions) and
     // nothing else: a builder never re-parses a message.
 

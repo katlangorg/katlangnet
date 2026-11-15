@@ -176,3 +176,43 @@ built-in structured contexts or free text, never a context type of its own.)
 The ~288 existing message-substring
 test assertions continue to pass and continue protecting wording; migrating
 them to codes is deliberate follow-up work, not part of M5.
+
+### Host prose contexts (retained compatibility, re-verified 2026-11-15)
+
+- **Arbitrary text** in a `TextErrorContext` remains supported host context.
+  The ordinary fallback is `{text}: {inner message}`; tailored error shapes can
+  take precedence. Text never changes the code.
+- **Three prose shapes are special.** `KatLangError.FromEvalError` (and so
+  `ToTerminalSafeString`) recognizes text that starts exactly with
+  `while evaluating property `, `while evaluating call to ` or
+  `while evaluating dotCall .` (then `{member} of {receiver}`). For these it
+  uses the same per-shape message builders as structured contexts. This covers
+  an immediate inner missing output or arity mismatch, and dot-call unknown name
+  when the missing name matches the member. For example,
+  `WithContext("while evaluating call to F", new MissingOutput())` renders
+  `Cannot call 'F' because it has no defined output.` followed by the output hint.
+- **Evaluator production appears migrated to structured contexts.** The current
+  source search found no evaluator producer of these prefixes as text. Runs use
+  structured `PropertyEvaluationContext`, `CallContext` and `DotCallContext`. The
+  evaluator's own text contexts (map/reduce/filter callbacks, empty-collection
+  selection, sequence metadata, binary operands, meta binding) use other text.
+  The inherited 2026-11-15 probe recorded only test callers constructing these
+  frames. That intentionally failing run (some chain tests caught the probe
+  exceptions) and the source search are evidence, not a proof over all programs
+  or green validation. The route remains live: public
+  `EvalError.WithContext(string, …)` / `TextErrorContext(string)` plus public
+  `FromEvalError` reach it, and `KatLangErrorLegacyContextTests` pins it.
+- **The two forms are not interchangeable for every inner error.** Structured
+  call rendering requires `Evaluator.IsOwnForBlame`; dot-call rendering requires
+  that or the `.string` intrinsic case (`string` with `IsSelectedMemberOutput`
+  false). The legacy arms skip the blame gate and the legacy dot-call arm passes
+  `isSelectedMemberOutput: false`; neither fact is recovered from prose. A
+  run-produced nested missing output under call or non-intrinsic dot-call prose
+  still names the callee or member, where the structured frame renders
+  `{context}: Algorithm has no defined output.` followed by the output hint.
+  A selected member named `string` under `.string` prose gets the intrinsic's receiver-only
+  wording, where the structured frame names the member.
+- **Signature checks do not guard this.** The recognizers are private and change
+  only message text, so `PublicApiBaseline.txt` would not change if they were
+  removed or altered. The rendering tests are the guard. Retiring the route would
+  be a release-noted public behaviour change, not a dead-code cleanup.

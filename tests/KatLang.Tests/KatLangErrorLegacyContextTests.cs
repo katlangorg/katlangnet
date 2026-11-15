@@ -4,15 +4,22 @@ namespace KatLang.Tests;
 /// Batch 3 / L8 — legacy host prose contexts render through the SAME per-shape
 /// message builders as structured contexts.
 ///
-/// <para>Source evaluation always emits structured <see cref="ErrorContext"/>s. Hosts,
+/// <para>Source evaluation emits structured contexts for these three frames. Hosts,
 /// however, may still construct <see cref="EvalError.WithContext"/> with the historical
 /// prose (<c>"while evaluating property P"</c>, <c>"while evaluating call to F"</c>,
 /// <c>"while evaluating dotCall .M of R"</c>), and <see cref="KatLangError.FromEvalError"/>
 /// recognizes exactly those three prefixes for the unknown-name, missing-output, and
 /// arity-mismatch shapes. Recognition yields only the shape's payload; the message
 /// comes from the one builder that shape has, so the structured and the legacy
-/// construction can never drift. Structured classification (<see cref="KatLangError.Code"/>,
+/// construction can never spell a shape differently. Structured classification (<see cref="KatLangError.Code"/>,
 /// <see cref="KatLangError.Source"/>) is untouched by the text form.</para>
+///
+/// <para>They are not interchangeable for every inner error: the structured call and
+/// dot-call missing-output arms also consult blame provenance the prose does not carry
+/// (<c>Evaluator.IsOwnForBlame</c>, <c>IsSelectedMemberOutput</c>), so a run-produced
+/// nested or selected-member missing output renders differently under the two forms
+/// (pinned below). The source search found no evaluator producer of these prefixes as text;
+/// the route is host compatibility (docs/design/structured-error-codes-2026-08.md).</para>
 ///
 /// <para>The former <c>"Builtin '..."</c> arm, which echoed such a context verbatim,
 /// had no producer (builtin arity is a parser diagnostic, never an evaluation
@@ -204,6 +211,94 @@ public class KatLangErrorLegacyContextTests
         Assert.Same(legacy, legacyFacade.Source);
         Assert.NotEqual(KatLangErrorCode.Unspecified, legacyFacade.Code);
         Assert.NotEmpty(shape);
+    }
+
+    // ── Host prose around a RUN-PRODUCED missing output ─────────────────────
+    // A structured call or member frame claims only its own missing output (IsOwnForBlame).
+    // The dot-call arm also reads IsSelectedMemberOutput to distinguish the `string` intrinsic,
+    // which names its receiver even for nested failures. The legacy arms ignore those facts,
+    // rendering the subject-naming message whatever the origin. These pin today's host-facing text for
+    // the hybrid case; they are NOT parity rows: the two constructions differ by design.
+
+    private const string GenericMissingOutput =
+        "Algorithm has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended.";
+
+    private static EvalError.MissingOutput RunNestedMissingOutput()
+    {
+        // `{}` is the + operand's: its missing output is nested once the operator consumes it.
+        var missing = SourceProvenance.ParseValid("H2 = {} + 1\nH2").ExpectEvaluationError<EvalError.MissingOutput>();
+        Assert.True(missing.IsNested);
+        Assert.False(Evaluator.IsOwnForBlame(missing));
+        return missing;
+    }
+
+    [Fact]
+    public void RunNestedMissingOutput_UnderCallProse_NamesTheCallee_WhileTheStructuredFrameDoesNot()
+    {
+        var missing = RunNestedMissingOutput();
+        var legacySource = new EvalError.WithContext("while evaluating call to F", missing);
+        var structuredSource = new EvalError.WithContext(new CallContext("F"), missing);
+        var legacy = KatLangError.FromEvalError(legacySource);
+        var structured = KatLangError.FromEvalError(structuredSource);
+        const string expectedLegacy =
+            "Cannot call 'F' because it has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To call one of its properties, use property access instead.";
+
+        Assert.Equal(expectedLegacy, legacy.Message);
+        Assert.Equal("while evaluating call to F: " + GenericMissingOutput, structured.Message);
+        Assert.Equal(KatLangErrorCode.MissingOutput, legacy.Code);
+        Assert.Equal(KatLangErrorCode.MissingOutput, structured.Code);
+        Assert.Same(legacySource, legacy.Source);
+        Assert.Same(structuredSource, structured.Source);
+        // The host frames have no span: the facade does not invent one from the inner error.
+        Assert.Null(legacy.Span);
+        Assert.Null(structured.Span);
+        Assert.Equal(expectedLegacy, legacy.ToTerminalSafeString());
+    }
+
+    [Fact]
+    public void RunNestedMissingOutput_UnderDotCallProse_NamesTheMember_WhileTheStructuredFrameDoesNot()
+    {
+        var missing = RunNestedMissingOutput();
+
+        Assert.Equal(
+            "The value `Obj.M` has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To use one of its properties, access it explicitly.",
+            Render(new EvalError.WithContext("while evaluating dotCall .M of Obj", missing)));
+        Assert.Equal(
+            "while evaluating dotCall .M of Obj: " + GenericMissingOutput,
+            Render(new EvalError.WithContext(new DotCallContext("Obj", "M"), missing)));
+    }
+
+    [Fact]
+    public void RunNestedMissingOutput_UnderPropertyProse_AgreesWithTheStructuredFrame()
+    {
+        // Genuine parity: the formatter's property arm has no blame gate in either form (the
+        // evaluator decides whether to write a property frame around a nested failure).
+        var missing = RunNestedMissingOutput();
+        const string expected =
+            "Property 'P' has no defined output.\nAdd an output expression to 'P', or use `()` if the empty sequence value was intended. To use one of its properties, write `P.X`.";
+
+        Assert.Equal(expected, Render(new EvalError.WithContext("while evaluating property P", missing)));
+        Assert.Equal(expected, Render(new EvalError.WithContext(new PropertyEvaluationContext("P"), missing)));
+    }
+
+    [Fact]
+    public void SelectedStringMember_UnderDotCallProse_RendersAsTheStringIntrinsic()
+    {
+        // A declared member named `string` is selected like any member; the run marks its missing
+        // output (IsSelectedMemberOutput) and the structured frame names the member. The prose
+        // cannot say which `.string` it was, so the legacy arm keeps the intrinsic's
+        // receiver-only wording.
+        var provenance = SourceProvenance.ParseValid("R = { string = { Q = 1 } }\nR.string");
+        var missing = provenance.ExpectEvaluationError<EvalError.MissingOutput>();
+        Assert.True(missing.IsSelectedMemberOutput);
+        const string member =
+            "The value `R.string` has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To use one of its properties, access it explicitly.";
+
+        Assert.Equal(member, Render(provenance.Evaluate().Error));
+        Assert.Equal(member, Render(new EvalError.WithContext(new DotCallContext("R", "string"), missing)));
+        Assert.Equal(
+            "Property 'R' has no defined output.\nAdd an output expression to 'R', or use `()` if the empty sequence value was intended. To use one of its properties, write `R.X`.",
+            Render(new EvalError.WithContext("while evaluating dotCall .string of R", missing)));
     }
 
     // ── The compatibility parser does not broaden ────────────────────────────
