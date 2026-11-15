@@ -2850,30 +2850,9 @@ public static partial class Evaluator
             // MIRROR — a member that is an alias is read and called as its target.
             if (wired is Algorithm.Alias)
                 return MarkNestedMemberInvocationOutput(await EvalAliasMemberCountedAsync(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false));
+            // MIRROR — a member read with NO argument list is the ONE structural member read.
             if (argsOpt is null)
-            {
-                // See the synchronous twin: the ONE law decides, and the rejection names
-                // the member's true minimum supply.
-                var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-                if (simpleCallee is not null)
-                {
-                    return AcceptsZeroArgumentValueDemand(simpleCallee)
-                        ? MarkSelectedMemberOutput(ReCountValueBoundary(
-                            await EvalZeroArgPropertyAccessCountedAsync(
-                                targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false)))
-                        : ZeroArgumentDemandArityMismatch(simpleCallee);
-                }
-
-                if (AcceptsZeroArgumentValueDemand(wired))
-                    return MarkSelectedMemberOutput(ReCountValueBoundary(
-                        await EvalZeroArgPropertyAccessCountedAsync(
-                            targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)));
-
-                if (wired is Algorithm.Conditional)
-                    return new EvalError.NoMatchingBranch(name);
-
-                return ZeroArgumentDemandArityMismatch(wired);
-            }
+                return await EvalStructuralMemberReadAsync(targetAlg!, prop, wired, name, ctx, valEnv).ConfigureAwait(false);
 
             // MIRROR — CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
             if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))

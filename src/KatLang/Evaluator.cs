@@ -1146,9 +1146,9 @@ public static partial class Evaluator
     /// other, so the halves cannot disagree, and stating it directly keeps the sites that
     /// only need the DECISION from building (and discarding) a report. It differs from
     /// <see cref="AcceptsZeroSuppliedArguments"/> only for a BUILTIN, which the law
-    /// deliberately passes through to its own arity rejection. Used by the structurally
-    /// navigated member arm of the dot-call twins and by the collection builtins' value
-    /// slots. Lean: <c>acceptsZeroArgumentValueDemand</c>.
+    /// deliberately passes through to its own arity rejection. Used by the zero-argument
+    /// structural member read (<see cref="EvalStructuralMemberRead"/> and its twin) and by
+    /// the collection builtins' value slots. Lean: <c>acceptsZeroArgumentValueDemand</c>.
     /// </summary>
     internal static bool AcceptsZeroArgumentValueDemand(Algorithm algorithm)
         => algorithm is Algorithm.Builtin || AcceptsZeroSuppliedArguments(algorithm);

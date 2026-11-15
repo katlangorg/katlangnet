@@ -628,28 +628,10 @@ public static partial class Evaluator
             var wired = ChildOfInContext(targetAlg!, prop!.Value, ctx);
             if (wired is Algorithm.Alias)
                 return MarkNestedMemberInvocationOutput(EvalAliasMemberCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv));
+            // A structurally navigated member read with NO argument list is an ordinary
+            // zero-argument value demand: the ONE structural member read decides it.
             if (argsOpt is null)
-            {
-                // A structurally navigated member read with NO argument list is an
-                // ordinary zero-argument value demand, so the ONE law decides
-                // (AcceptsZeroArgumentValueDemand) and the rejection names the member's
-                // true minimum supply, never its flattened declared capture count.
-                var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-                if (simpleCallee is not null)
-                {
-                    return AcceptsZeroArgumentValueDemand(simpleCallee)
-                        ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv)))
-                        : ZeroArgumentDemandArityMismatch(simpleCallee);
-                }
-
-                if (AcceptsZeroArgumentValueDemand(wired))
-                    return MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)));
-
-                if (wired is Algorithm.Conditional)
-                    return new EvalError.NoMatchingBranch(name);
-
-                return ZeroArgumentDemandArityMismatch(wired);
-            }
+                return EvalStructuralMemberRead(targetAlg!, prop, wired, name, ctx, valEnv);
 
             // CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
             if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))

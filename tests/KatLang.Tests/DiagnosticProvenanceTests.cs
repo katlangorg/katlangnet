@@ -293,4 +293,62 @@ public class DiagnosticProvenanceTests
         Assert.Equal(2, arity.Expected);
         Assert.Equal(0, arity.Actual);
     }
+
+    /// <summary>
+    /// The same prebuilt flat-binder family read as a STRUCTURAL MEMBER with no argument
+    /// list — <c>Obj.F</c>, and <c>Obj.G</c> through an alias member <c>G</c> naming
+    /// <c>F</c> — takes the one zero-argument structural member read
+    /// (<c>EvalStructuralMemberRead</c>), whose rejection is the flat-binder arm of
+    /// <c>ConditionalValueAccessError</c>: <c>ArityMismatch(2, 0)</c> with no
+    /// inferred-implicit-parameter notes, identically on the synchronous route and on
+    /// the async twin route (forced by an asynchronous property cache).
+    /// </summary>
+    [Theory]
+    [InlineData("F")]
+    [InlineData("G")]
+    public async Task FlatBinderConditionalMemberRead_ReportsItsCallArity_OnBothRoutes(string member)
+    {
+        var body = new Algorithm.User(
+            Parent: null, ParameterPatterns: [], Opens: [], Properties: [],
+            Output: [new Expr.Binary(BinaryOp.Add, new Expr.Param("a"), new Expr.Param("b"))]);
+
+        var conditional = new Algorithm.Conditional(
+            Parent: null,
+            Opens: [],
+            Branches: [new CondBranch(
+                new Pattern.SequenceValue([new Pattern.Bind("a"), new Pattern.Bind("b")]),
+                body)]);
+
+        var obj = new Algorithm.User(
+            Parent: null, ParameterPatterns: [], Opens: [],
+            Properties:
+            [
+                new Property("F", conditional, IsPublic: true),
+                new Property("G", new Algorithm.Alias(null, [], [], new Expr.Resolve("F")), IsPublic: true),
+            ],
+            Output: [new Expr.Num(0)]);
+
+        var program = new Expr.AlgorithmExpr(new Algorithm.User(
+            Parent: null, ParameterPatterns: [], Opens: [],
+            Properties: [new Property("Obj", obj)],
+            Output: [new Expr.DotCall(new Expr.Resolve("Obj"), member, null)]));
+
+        var sync = Evaluator.Run(program);
+        var twin = await AsyncEvaluation.AsyncEvaluationHarness.Complete(
+            Evaluator.RunAsync(program, new KatLang.Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache()));
+
+        foreach (var result in new[] { sync, twin })
+        {
+            Assert.True(result.IsError);
+            var error = result.Error;
+            while (error is EvalError.WithContext context)
+                error = context.Inner;
+
+            var arity = Assert.IsType<EvalError.ArityMismatch>(error);
+            Assert.Equal((2, 0), (arity.Expected, arity.Actual));
+            Assert.Null(arity.InferredImplicitParameters);
+        }
+
+        Assert.Equal(KatLangError.FromEvalError(sync.Error).Message, KatLangError.FromEvalError(twin.Error).Message);
+    }
 }

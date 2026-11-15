@@ -1372,7 +1372,7 @@ public static partial class Evaluator
             }
             PropertyDeclaringOwner owner = terminal.Binding is { } hop ? hop.Owner : targetAlg;
             var binding = terminal.Binding is { } bound ? bound.Binding : prop;
-            var memberRead = EvalAliasMemberRead(owner, binding, terminal.Algorithm, name, ctx, valEnv);
+            var memberRead = EvalStructuralMemberRead(owner, binding, terminal.Algorithm, name, ctx, valEnv);
             return terminal.CrossesCarrier ? NestCarrierCrossing(memberRead) : memberRead;
         }
 
@@ -1389,26 +1389,25 @@ public static partial class Evaluator
         return EvalResolvedCallCounted(wired, argsOpt, ctx, valEnv, CallDiagnosticName.FromKnown(name));
     }
 
-    // MIRROR OF the member arm of EvalDotCallCounted (zero-argument read), over the VALUE terminal.
-    private static EvalResult<CountedResult> EvalAliasMemberRead(
+    /// <summary>
+    /// THE zero-argument structural member read — <c>Obj.M</c> with no argument list (Lean: the
+    /// argumentless member arm of <c>evalDotCallCounted</c>) — shared by the member arm of
+    /// <see cref="EvalDotCallCounted"/> (a selected member that is no alias, under the receiver) and the alias read of
+    /// <see cref="EvalAliasMemberCounted"/> (the member's VALUE terminal, under the terminal binding's
+    /// owner and key). It is an ordinary zero-argument value demand, so the ONE law decides
+    /// (<see cref="AcceptsZeroArgumentValueDemand"/>): an accepted member is its cached structural read
+    /// (<c>CountedStructural</c> over <paramref name="owner"/> and <paramref name="prop"/>); a rejected
+    /// conditional reports <see cref="ConditionalValueAccessError"/> (a host-built flat-binder family its
+    /// ordinary call arity, any other family <c>NoMatchingBranch</c>), and every other rejection names
+    /// the member's true minimum supply (<see cref="ZeroArgumentDemandArityMismatch"/>), never its
+    /// flattened declared capture count. A flat-binder family needs no accept arm of its own: its core
+    /// equivalent has at least two fixed parameters, so it never accepts. No span is attached here.
+    /// </summary>
+    private static EvalResult<CountedResult> EvalStructuralMemberRead(
         PropertyDeclaringOwner owner, Property prop, Algorithm wired, string name, EvalCtx ctx, ValEnv valEnv)
-    {
-        var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-        if (simpleCallee is not null)
-        {
-            return AcceptsZeroArgumentValueDemand(simpleCallee)
-                ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(owner, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv)))
-                : ZeroArgumentDemandArityMismatch(simpleCallee);
-        }
-
-        if (AcceptsZeroArgumentValueDemand(wired))
-            return MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(owner, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)));
-
-        if (wired is Algorithm.Conditional)
-            return new EvalError.NoMatchingBranch(name);
-
-        return ZeroArgumentDemandArityMismatch(wired);
-    }
+        => AcceptsZeroArgumentValueDemand(wired)
+            ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(owner, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)))
+            : ConditionalValueAccessError(name, wired) ?? ZeroArgumentDemandArityMismatch(wired);
 
     /// <summary>
     /// The <c>.string</c> intrinsic on a receiver that resolved to an alias (<c>A.string</c>,
@@ -1674,7 +1673,7 @@ public static partial class Evaluator
             }
             PropertyDeclaringOwner owner = terminal.Binding is { } hop ? hop.Owner : targetAlg;
             var binding = terminal.Binding is { } bound ? bound.Binding : prop;
-            var memberRead = await EvalAliasMemberReadAsync(owner, binding, terminal.Algorithm, name, ctx, valEnv).ConfigureAwait(false);
+            var memberRead = await EvalStructuralMemberReadAsync(owner, binding, terminal.Algorithm, name, ctx, valEnv).ConfigureAwait(false);
             return terminal.CrossesCarrier ? NestCarrierCrossing(memberRead) : memberRead;
         }
 
@@ -1687,30 +1686,14 @@ public static partial class Evaluator
         return await EvalResolvedCallCountedAsync(wiredR.Value, argsOpt, ctx, valEnv, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalAliasMemberRead"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalAliasMemberReadAsync(
+    /// <summary>MIRROR OF <see cref="EvalStructuralMemberRead"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalStructuralMemberReadAsync(
         PropertyDeclaringOwner owner, Property prop, Algorithm wired, string name, EvalCtx ctx, ValEnv valEnv)
-    {
-        var simpleCallee = TryGetFlatBinderUserEquivalent(wired);
-        if (simpleCallee is not null)
-        {
-            return AcceptsZeroArgumentValueDemand(simpleCallee)
-                ? MarkSelectedMemberOutput(ReCountValueBoundary(
-                    await EvalZeroArgPropertyAccessCountedAsync(
-                        owner, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false)))
-                : ZeroArgumentDemandArityMismatch(simpleCallee);
-        }
-
-        if (AcceptsZeroArgumentValueDemand(wired))
-            return MarkSelectedMemberOutput(ReCountValueBoundary(
+        => AcceptsZeroArgumentValueDemand(wired)
+            ? MarkSelectedMemberOutput(ReCountValueBoundary(
                 await EvalZeroArgPropertyAccessCountedAsync(
-                    owner, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)));
-
-        if (wired is Algorithm.Conditional)
-            return new EvalError.NoMatchingBranch(name);
-
-        return ZeroArgumentDemandArityMismatch(wired);
-    }
+                    owner, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)))
+            : ConditionalValueAccessError(name, wired) ?? ZeroArgumentDemandArityMismatch(wired);
 
     /// <summary>MIRROR OF <see cref="EvalAliasDotStringLexicalReceiver"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> EvalAliasDotStringLexicalReceiverAsync(Expr target, ResolvedLexicalProperty resolved, EvalCtx ctx, ValEnv valEnv)

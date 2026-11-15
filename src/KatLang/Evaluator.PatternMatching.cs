@@ -82,7 +82,8 @@ public static partial class Evaluator
     /// <summary>
     /// Report a conditional algorithm's rejected zero-argument demand. Callers
     /// first route zero-accepting families through ordinary branch dispatch.
-    /// Mirrors the no-argument dot-call dispatch: a flat
+    /// It is also the conditional rejection of the no-argument structural member
+    /// read (<see cref="EvalStructuralMemberRead"/>): a flat
     /// multi-binder core equivalent reports its ordinary call arity, and any
     /// other conditional reports NoMatchingBranch. Returns null for
     /// non-conditional algorithms. Lean: <c>conditionalValueAccessError?</c>.

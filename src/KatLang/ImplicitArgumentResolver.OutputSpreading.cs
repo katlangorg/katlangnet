@@ -632,7 +632,7 @@ internal static partial class ImplicitArgumentResolver
         if (OutputSpreadDeclarationOf(reference, paramMap, run) is not { Target.OutputSpread: not null } start)
             return false;
 
-        var operation = run.StructuralOperation!;
+        var operation = run.StructuralOperation;
         var key = operation.ContextOf(start.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, start.Target);
         var structure = operation.Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation));
         return structure.Kind == StaticFactKind.Structure && structure.Scope is { } target && !ReferenceEquals(key, target);
