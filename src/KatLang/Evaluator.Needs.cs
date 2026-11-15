@@ -1340,7 +1340,7 @@ public static partial class Evaluator
             case Algorithm.Conditional:
             {
                 var matched = asynchronous
-                    ? await BindNeedFamilySupply(step, state, ctx, values, stepName, asynchronous: true).ConfigureAwait(false)
+                    ? await BindNeedFamilySupply(step, state, ctx, values, stepName).ConfigureAwait(false)
                     : BindNeedFamilySupplyCounted(step, state, ctx, values, stepName);
                 if (matched.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, matched.Error);
                 var activation = matched.Value;
@@ -1561,20 +1561,19 @@ public static partial class Evaluator
             : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
     }
 
+    /// <summary>MIRROR OF <see cref="EvalNeedUserBodyCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserBody(
-        Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous)
+        Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
         var occurrences = MetaOccurrenceSlots(callee, arguments, ctx, out var sources);
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous, sources, callee).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous: true, sources, callee).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, asynchronous, variadicArityStyle: true, occurrences).ConfigureAwait(false);
+        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, variadicArityStyle: true, occurrences).ConfigureAwait(false);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserSupply(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous, bool variadicArityStyle, IReadOnlyList<Expr?>? occurrences = null,
-        bool valueBoundary = true)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle,
+        IReadOnlyList<Expr?>? occurrences = null, bool valueBoundary = true)
     {
         // MIRROR OF EvalNeedUserSupplyCounted — keep in lock-step, the flat direct path included.
         var env = BindFlatCaptureHead(callee.ParameterPatterns, supply);
@@ -1582,20 +1581,16 @@ public static partial class Evaluator
         {
             var patterns = NeedParameterPatterns(callee.ParameterPatterns);
             if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-            var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
+            var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: true, family: false, occurrences).ConfigureAwait(false);
             // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             env = bindings.Value!;
         }
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
-        var boundCtx = WithNeedBindings(ctx, env, names);
-        var boundValues = ShadowValEnv(values, names);
         var output = ValueViewCell(callee, ctx) is { } viewCell
-            ? await DemandCell(viewCell, asynchronous).ConfigureAwait(false)
-            : asynchronous
-                ? await EvalBoundUserBodyCountedAsync(callee, boundCtx, boundValues, names).ConfigureAwait(false)
-                : EvalBoundUserBodyCounted(callee, boundCtx, boundValues, names);
+            ? await viewCell.DemandAsync().ConfigureAwait(false)
+            : await EvalBoundUserBodyCountedAsync(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names).ConfigureAwait(false);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 
@@ -1609,7 +1604,10 @@ public static partial class Evaluator
     /// builtin uses that value whole: map stores it as one element, reduce passes it as the next
     /// accumulator, filter reads its Boolean. A callback's arity failure keeps the plain
     /// <c>ArityMismatch</c> shape (<c>variadicArityStyle: false</c>), its only difference from an
-    /// ordinary call. Lean: <c>evalUserCallbackCallCounted</c> / <c>evalConditionalCallbackCallCounted</c>.
+    /// ordinary call. The synchronous route runs the ordinary call's own synchronous drivers
+    /// (<see cref="EvalNeedFamilySupplyCounted"/>, <see cref="EvalNeedUserSupplyCounted"/>), the
+    /// asynchronous route their twins: one implementation of each driver per family. Lean:
+    /// <c>evalUserCallbackCallCounted</c> / <c>evalConditionalCallbackCallCounted</c>.
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackBody(
         Algorithm callee, IReadOnlyList<CountedResult> arguments, EvalCtx ctx, ValEnv values,
@@ -1623,9 +1621,15 @@ public static partial class Evaluator
             return NestMissingOutput(asynchronous ? await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false)
                 : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values));
         }
-        return callee is Algorithm.Conditional
-            ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous).ConfigureAwait(false)
-            : await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, variadicArityStyle: false).ConfigureAwait(false);
+        if (callee is Algorithm.Conditional)
+        {
+            return asynchronous
+                ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false)
+                : EvalNeedFamilySupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name));
+        }
+        return asynchronous
+            ? await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false).ConfigureAwait(false)
+            : EvalNeedUserSupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false);
     }
 
     // One Ready cell per already-evaluated value, in order (a callback's supply).
@@ -1637,13 +1641,13 @@ public static partial class Evaluator
         return cells;
     }
 
+    /// <summary>MIRROR OF <see cref="EvalNeedFamilyBodyCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilyBody(
-        Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous)
+        Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous, boundCallee: callee).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous: true, boundCallee: callee).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name, asynchronous).ConfigureAwait(false);
+        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name).ConfigureAwait(false);
     }
 
     private readonly record struct NeedFamilyActivation(Algorithm Body, EvalCtx Context, ValEnv Values);
@@ -1659,25 +1663,25 @@ public static partial class Evaluator
 
     // The family twins of the user drivers above: ONE dispatch (BindNeedFamilySupply*), then the
     // selected body's counted output at the call's value boundary — for an ordinary call and a
-    // callback invocation alike (HO-03, PAT-11). Lean: evalNeedFamilySupply.
+    // callback invocation alike (HO-03, PAT-11). The selected body is read by the shared core
+    // EvalAlgOutputCountedCore directly (EvalAlgOutputCounted only forwards to it), as the twin
+    // reads EvalAlgOutputCountedCoreAsync. Lean: evalNeedFamilySupply.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedFamilySupplyCounted(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
         var matched = BindNeedFamilySupplyCounted(callee, supply, ctx, values, name);
         if (matched.IsError) return matched.Error;
-        return ReCountValueBoundary(EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
+        return ReCountValueBoundary(EvalAlgOutputCountedCore(matched.Value.Body, matched.Value.Context, matched.Value.Values));
     }
 
+    /// <summary>MIRROR OF <see cref="EvalNeedFamilySupplyCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilySupply(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var matched = await BindNeedFamilySupply(callee, supply, ctx, values, name, asynchronous).ConfigureAwait(false);
+        var matched = await BindNeedFamilySupply(callee, supply, ctx, values, name).ConfigureAwait(false);
         if (matched.IsError) return matched.Error;
-        return ReCountValueBoundary(asynchronous
-            ? await EvalAlgOutputCountedCoreAsync(matched.Value.Body, matched.Value.Context, matched.Value.Values).ConfigureAwait(false)
-            : EvalAlgOutputCounted(matched.Value.Body, matched.Value.Context, matched.Value.Values));
+        return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(matched.Value.Body, matched.Value.Context, matched.Value.Values).ConfigureAwait(false));
     }
 
     // The FAMILY-level decision before any clause (Lean: selectNeedFamilyBranch). First come the
@@ -1771,8 +1775,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="BindNeedFamilySupplyCounted"/>, the synchronous family driver; shared operations own every binding rule.</summary>
     private static async ValueTask<EvalResult<NeedFamilyActivation>> BindNeedFamilySupply(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
         var prepared = PrepareNeedFamilyHeads(callee, supply.Count, ctx);
         if (prepared.IsError) return prepared.Error;
@@ -1787,18 +1790,14 @@ public static partial class Evaluator
             // keep this state machine's frame closest to its former size.
             EvalResult<NeedEnv?> bindings;
             if (!IsFlatLiteralHead(head, supply))
-                bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous, family: true).ConfigureAwait(false);
-            else if (asynchronous)
-                bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(false);
+                bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: true, family: true).ConfigureAwait(false);
             else
-                bindings = BindFlatLiteralHead(head, supply, in ctx);
+                bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(false);
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
-            var selected = asynchronous
-                ? await SelectedBranchBodyAsync(family.BranchAt(i), ctx).ConfigureAwait(false)
-                : SelectedBranchBody(family.BranchAt(i), ctx);
+            var selected = await SelectedBranchBodyAsync(family.BranchAt(i), ctx).ConfigureAwait(false);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }

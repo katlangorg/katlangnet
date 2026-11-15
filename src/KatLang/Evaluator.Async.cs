@@ -2155,7 +2155,7 @@ public static partial class Evaluator
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
             && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(false) is { } projected)
             return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
-        return await EvalNeedUserBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
+        return await EvalNeedUserBody(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="TryProjectSharedDeconstructionTarget"/> — keep in lock-step.</summary>
@@ -2207,7 +2207,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        return await EvalNeedFamilyBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
+        return await EvalNeedFamilyBody(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
     }
 
 

@@ -37,7 +37,7 @@ namespace KatLang.Tests.AsyncEvaluation;
 /// 2026-11-14 after an entry-by-entry review of each normalized difference against its helpers; the acceptance covers
 /// exactly the pinned entries (pair, classes, hash) and grants no new exception.</para>
 ///
-/// <para><b>Second pattern.</b> About two dozen methods are ONE body with a <c>bool asynchronous</c> flag (the
+/// <para><b>Second pattern.</b> About eighteen methods are ONE body with a <c>bool asynchronous</c> flag (the
 /// synchronous family completes them with <c>.GetAwaiter().GetResult()</c>). They have no twin to compare, so
 /// <see cref="FlagBranchPoints"/> pins every read of the flag that selects behavior, with a reason; an await-or-call
 /// branch (<c>asynchronous ? await XAsync(..) : X(..)</c>) is additionally checked to have arms that normalize
@@ -159,10 +159,10 @@ public class TwinNormalizationTests(ITestOutputHelper output)
     }
 
     /// <summary>The allowlist size; it may only go DOWN (see the class documentation).</summary>
-    internal const int AllowlistCeiling = 69;
+    internal const int AllowlistCeiling = 66;
 
     /// <summary>The owner-accepted number of entries with a class beyond <see cref="AuditClasses"/>; it may only go DOWN.</summary>
-    internal const int AcceptedBeyondAuditCeiling = 40;
+    internal const int AcceptedBeyondAuditCeiling = 33;
 
     private const TwinDifference FS = TwinDifference.FrameSplit;
     private const TwinDifference OP = TwinDifference.OptimizerPinned;
@@ -236,11 +236,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalResolvedCallCountedAsync", "Evaluator.EvalResolvedCallCounted", "ea3891606b59e41f", FB,
             "ResolveArgAlgsWithSequenceSpread is the flag body ResolveNeedSupply(asynchronous: true)"),
         new("Evaluator.EvalUserCallCountedAsync", "Evaluator.EvalUserCallCounted", "0b0e833d5882c87d", SH, HopReason),
-        new("Evaluator.EvalUserCallCountedCoreAsync", "Evaluator.EvalUserCallCountedCore", "7fec1d9ff285d7bd", FB,
-            "EvalNeedUserBodyCounted is the flag body EvalNeedUserBody(asynchronous: true)"),
         new("Evaluator.EvalConditionalCallCountedAsync", "Evaluator.EvalConditionalCallCounted", "0b0e833d5882c87d", SH, HopReason),
-        new("Evaluator.EvalConditionalCallCountedCoreAsync", "Evaluator.EvalConditionalCallCountedCore", "36c3e49a32d6ff09", FB,
-            "EvalNeedFamilyBodyCounted is the flag body EvalNeedFamilyBody(asynchronous: true)"),
         new("Evaluator.EvalResolvedArgumentValueAsync", "Evaluator.EvalResolvedArgument", "6c99463f11b8d9c4", IH,
             "ProjectCountedValue(...) is applied inline to the awaited counted result"),
         new("Evaluator.EvalArgumentAlgOutputCountedAsync", "Evaluator.EvalArgumentAlgOutputCounted", "bc79101f8c8e0ddd", SH, HopReason),
@@ -281,26 +277,20 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "strategy pin asserted; EvalPlannedAlgorithmCalleeCallCounted's body (projection, failure report, planned dispatch) is inline"),
         new("Evaluator.DispatchPlannedDotAsync", "Evaluator.DispatchPlannedDotCounted", "cd2e50b33c7d4271", RA,
             "the stored fallback identity's callee lookups go through ResolveAsync"),
-        new("Evaluator.DispatchPlannedAsync", "Evaluator.DispatchPlannedCounted", "9530b2b440fad578", SH | FB,
-            "EvalNeedFamilySupplyCounted is the flag body EvalNeedFamilySupply(asynchronous: true); " + HopReason),
-        new("Evaluator.DispatchPlannedUserAsync", "Evaluator.DispatchPlannedUserCounted", "d1e0aef18fda8ab6", SH | FB,
-            "EvalNeedUserSupplyCounted is the flag body EvalNeedUserSupply(asynchronous: true); " + HopReason),
+        new("Evaluator.DispatchPlannedAsync", "Evaluator.DispatchPlannedCounted", "a9529f6698a6a52f", SH, HopReason),
+        new("Evaluator.DispatchPlannedUserAsync", "Evaluator.DispatchPlannedUserCounted", "f50c64803cb8a749", SH, HopReason),
         new("Evaluator.PreparePlanSupplyAsync", "Evaluator.PreparePlanSupplyCounted", "13339c88037ad478", AJ,
             "a concurrent preparation is joined by awaiting its waiters (reentrancy is a DemandCycle) instead of JoinPlanPreparationCounted's blocking join"),
         new("Evaluator.SelectedBranchBodyAsync", "Evaluator.SelectedBranchBody", "196591982fbfe597", DR,
             "a deferred region is materialized by MaterializeRequiredRegionAsync"),
         new("Evaluator.BindFlatLiteralHeadAsync", "Evaluator.BindFlatLiteralHead", "5a12adf396077700", AL,
             "no in parameter on an async member"),
-        new("Evaluator.EvalNeedUserSupply", "Evaluator.EvalNeedUserSupplyCounted", "d7fc95830ea06655", FB,
-            "the flag body: the view cell is demanded through DemandCell and the bound body by an await-or-call branch; the bound context and values (WithNeedBindings, ShadowValEnv: allocation only, no budget charge or published identity) are formed before that branch, so a value view discards them unused"),
-        new("Evaluator.BindNeedFamilySupply", "Evaluator.BindNeedFamilySupplyCounted", "650b6c0060364788", FB | DR | AL,
-            "the flag driver: binder, flat-literal head (no in ctx when asynchronous) and selected branch body (deferred region) by flag branches"),
+        new("Evaluator.BindNeedFamilySupply", "Evaluator.BindNeedFamilySupplyCounted", "3e6daea7a4089cf0", AL,
+            "the flat-literal head is bound without in ctx, and the binder-or-literal-head conditional is restated as an if/else with one await site per arm"),
         new("Evaluator.EvalPublishedZeroSupplyInvocationAsync", "Evaluator.EvalPublishedZeroSupplyInvocation", "505987f55c715633", ACG | AL,
             "the run's cache must be an IAsyncZeroArgPropertyResultCache; the delegate returns ValueTask<...>"),
-        new("Evaluator.EvalOriginUserCallCountedAsync", "Evaluator.EvalOriginUserCallCounted", "142009967a3b74cb", SH | FB,
-            "EvalNeedUserSupplyCounted is the flag body EvalNeedUserSupply(asynchronous: true); " + HopReason),
-        new("Evaluator.EvalOriginFamilyCallCountedAsync", "Evaluator.EvalOriginFamilyCallCounted", "1c93d2a24df855b6", SH | FB,
-            "EvalNeedFamilySupplyCounted is the flag body EvalNeedFamilySupply(asynchronous: true); " + HopReason),
+        new("Evaluator.EvalOriginUserCallCountedAsync", "Evaluator.EvalOriginUserCallCounted", "6dfac2030aaf9993", SH, HopReason),
+        new("Evaluator.EvalOriginFamilyCallCountedAsync", "Evaluator.EvalOriginFamilyCallCounted", "bf2d3c3f7cdf2749", SH, HopReason),
         new("FrontEndPipeline.ProcessAsync(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?)",
             "FrontEndPipeline.Process(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?)", "f7a108499ab61e4d", ER,
             "the synchronous entry rejects a downloader; the asynchronous one elaborates modules with it"),
@@ -360,18 +350,14 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.BindAcceptedNeedPatterns", 2, "d775df5d15a0b8bc", AC, "a cell's value demand"),
         new("Evaluator.BindAcceptedNeedPatterns", 3, "bb47338a61a1de33", AC, "an earlier cell's value demand"),
         new("Evaluator.BindAcceptedNeedPatterns", 4, "d775df5d15a0b8bc", AC, "a cell's value demand"),
-        new("Evaluator.InvokeLoopStepSupply", 0, "f6b6727d3385d89f", FB,
-            "the asynchronous arm runs the flag driver BindNeedFamilySupply, the synchronous arm its specialization (pinned as a pair)"),
+        new("Evaluator.InvokeLoopStepSupply", 0, "91e8f32c0ef5602b", AC, "the family step's dispatch"),
         new("Evaluator.InvokeLoopStepSupply", 1, "0c4a64796b4f56f6", AC, "the builtin step"),
         new("Evaluator.InvokeLoopStepSupply", 2, "08985556eb02434b", AC, "the alias step's target"),
         new("Evaluator.ReadLoopStepRows", 0, "ccc8e5cf06970882", AC, "the while verdict rows"),
         new("Evaluator.ReadLoopStepRows", 1, "c71d04fc631fff1f", AC, "the output rows"),
-        new("Evaluator.EvalNeedUserSupply", 0, "80c66e51a1467fec", AC, "the bound user body"),
         new("Evaluator.EvalNeedCallbackBody", 0, "5a5cdc57a0ea488a", AC, "the builtin callback"),
-        new("Evaluator.EvalNeedFamilySupply", 0, "af2e335ff3bf93a9", IH,
-            "the synchronous arm calls the one-line wrapper EvalAlgOutputCounted of EvalAlgOutputCountedCore"),
-        new("Evaluator.BindNeedFamilySupply", 0, "f16e809c71c90be8", AL, "the synchronous arm passes ctx by in"),
-        new("Evaluator.BindNeedFamilySupply", 1, "107db45913a9f3e2", AC, "the selected branch body (deferred region)"),
+        new("Evaluator.EvalNeedCallbackBody", 1, "40eee9248c95941d", AC, "the family callback's driver"),
+        new("Evaluator.EvalNeedCallbackBody", 2, "a1733cfe57da7715", AC, "the user callback's driver"),
         new("Evaluator.EvalNeedLoop", 0, "c613b240dc6307dc", RA, "the asynchronous step projection takes ctx for its adapter"),
         new("Evaluator.EvalNeedLoop", 1, "83cadc7942d61e81", AC, "the alias step's target"),
         new("Evaluator.EvalNeedLoop", 2, "10720252dd093ced", OP, "only the synchronous run attempts the loop optimizer"),
@@ -421,7 +407,9 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.EvalCollectingPropertyOwnerBodyCountedAsync ~ Evaluator.EvalCollectingPropertyOwnerBodyCounted",
         "Evaluator.EvalZeroArgPropertyAccessCountedAsync(PropertyDeclaringOwner, Property, ZeroArgPropertyAccessKind, Algorithm, EvalCtx, ValEnv) ~ Evaluator.EvalZeroArgPropertyAccessCounted(PropertyDeclaringOwner, Property, ZeroArgPropertyAccessKind, Algorithm, EvalCtx, ValEnv)",
         "Evaluator.EvalZeroArgPropertyAccessCountedAsync(ResolvedLexicalProperty, EvalCtx, ValEnv) ~ Evaluator.EvalZeroArgPropertyAccessCounted(ResolvedLexicalProperty, EvalCtx, ValEnv)",
+        "Evaluator.EvalUserCallCountedCoreAsync ~ Evaluator.EvalUserCallCountedCore",
         "Evaluator.TryProjectSharedDeconstructionTargetAsync ~ Evaluator.TryProjectSharedDeconstructionTarget",
+        "Evaluator.EvalConditionalCallCountedCoreAsync ~ Evaluator.EvalConditionalCallCountedCore",
         "Evaluator.RejectDotStringIntrinsicArgumentsAsync ~ Evaluator.RejectDotStringIntrinsicArguments",
         "Evaluator.ApplyBuiltinCountedResolvedAsync ~ Evaluator.ApplyBuiltinCountedResolved",
         "Evaluator.EvalBuiltinRangeArgumentsAsync ~ Evaluator.EvalBuiltinRangeArguments",
@@ -445,6 +433,10 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.RunPlanPreparationAsync ~ Evaluator.RunPlanPreparationCounted",
         "Evaluator.EvalSuspendedValueAsync ~ Evaluator.EvalSuspendedValue",
         "Evaluator.EvalBoundUserBodyCountedAsync ~ Evaluator.EvalBoundUserBodyCounted",
+        "Evaluator.EvalNeedUserBody ~ Evaluator.EvalNeedUserBodyCounted",
+        "Evaluator.EvalNeedUserSupply ~ Evaluator.EvalNeedUserSupplyCounted",
+        "Evaluator.EvalNeedFamilyBody ~ Evaluator.EvalNeedFamilyBodyCounted",
+        "Evaluator.EvalNeedFamilySupply ~ Evaluator.EvalNeedFamilySupplyCounted",
         "Evaluator.EvalOriginCallCountedAsync ~ Evaluator.EvalOriginCallCounted",
         "KatLangEngine.EvaluateToAtomsAsync ~ KatLangEngine.EvaluateToAtoms",
     ];
@@ -461,7 +453,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         Assert.True(inventory.Files.Length >= 100, $"only {inventory.Files.Length} source files found under src/KatLang/");
         Assert.True(inventory.Pairs.Length >= 120, $"only {inventory.Pairs.Length} MIRROR OF pairs resolved");
         Assert.True(inventory.Comparisons.Count(static c => c.IsIdentical) >= 50, "fewer than 50 pairs normalize identically");
-        Assert.True(inventory.FlagMethods.Length >= 20, $"only {inventory.FlagMethods.Length} `bool asynchronous` methods found");
+        Assert.True(inventory.FlagMethods.Length >= 15, $"only {inventory.FlagMethods.Length} `bool asynchronous` methods found");
     }
 
     /// <summary>
