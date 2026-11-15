@@ -454,6 +454,7 @@ public class ContinuousIntegrationPolicyTests
         Assert.DoesNotContain(toolchain, source + installScript, StringComparison.Ordinal);
         Assert.Contains("$(<lean/lean-toolchain)", installScript, StringComparison.Ordinal);
         Assert.Contains("https://api.github.com/repos/leanprover/lean4/releases", installScript, StringComparison.Ordinal);
+        Assert.Contains("Authorization: Bearer $GH_TOKEN", installScript, StringComparison.Ordinal);
         Assert.Contains("Accept: application/octet-stream", installScript, StringComparison.Ordinal);
         Assert.Contains("sha256sum -c -", installScript, StringComparison.Ordinal);
     }
@@ -461,13 +462,16 @@ public class ContinuousIntegrationPolicyTests
     [Theory]
     [InlineData(ValidatePath)]
     [InlineData(ReleasePath)]
-    public void LeanValidation_InstallsToolchainBeforeBuilding(string workflow)
+    public void LeanValidation_AuthenticatesToolchainInstallBeforeBuilding(string workflow)
     {
-        var source = Text(workflow);
+        var source = JobSection(Text(workflow), "lean-validation");
+        var installStep = source.IndexOf("- name: Install repository-pinned Lean toolchain", StringComparison.Ordinal);
         var install = source.IndexOf($"bash {LeanInstallPath}", StringComparison.Ordinal);
         var validation = source.IndexOf("validate-all.ps1 -Phase Lean", StringComparison.Ordinal);
-        Assert.True(install >= 0 && install < validation,
+        Assert.True(installStep >= 0 && installStep < install && install < validation,
             $"{workflow} must install the Lean toolchain before running Lean validation.");
+        Assert.Contains("\n        env:\n          GH_TOKEN: ${{ github.token }}\n",
+            source[installStep..install], StringComparison.Ordinal);
     }
 
     [Fact]

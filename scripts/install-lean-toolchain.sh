@@ -11,6 +11,11 @@ asset_name="lean-${tag#v}-linux.tar.zst"
 release_api=https://api.github.com/repos/leanprover/lean4/releases
 curl_options=(--proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location --retry 2 --retry-delay 10)
 
+# Authenticate both API requests to avoid the shared runner IP's anonymous quota.
+if [[ -n ${GH_TOKEN:-} ]]; then
+    curl_options+=(--header "Authorization: Bearer $GH_TOKEN")
+fi
+
 # The public release download redirects have returned 504s on GitHub-hosted runners.
 printf 'Resolving %s via the GitHub releases API.\n' "$asset_name"
 release=$(curl "${curl_options[@]}" --header 'Accept: application/vnd.github+json' "$release_api/tags/$tag")

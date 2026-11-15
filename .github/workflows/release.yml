@@ -110,6 +110,8 @@ jobs:
 
       - name: Install repository-pinned Lean toolchain
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash scripts/install-lean-toolchain.sh
 
       - name: Validate the release commit with Lean

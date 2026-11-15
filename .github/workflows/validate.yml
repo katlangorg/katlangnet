@@ -54,6 +54,8 @@ jobs:
 
       - name: Install repository-pinned Lean toolchain
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p artifacts/validation
           bash scripts/install-lean-toolchain.sh 2>&1 | tee artifacts/validation/lean-toolchain-install.log
