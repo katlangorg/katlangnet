@@ -326,6 +326,12 @@ theorem finite_bind {α β : Type} {B : EvalRec → EvalM α} {K : EvalRec → �
     simp only [h1]
     exact h2.trans hm₂
 
+/-- A DERIVED answer that is one call's projection (`rec.eval …`, `rec.evalArgumentValue …`: the
+    plain value of a counted call) is finite, like the call. -/
+theorem finite_value (c : EvalCall) {β : Type} (k : c.Ret → β) :
+    Finite (fun rec => rec c >>= fun out => pure (k out)) :=
+  finite_bind (finite_call c) (fun _ => finite_const _)
+
 /-- A row-forming capability over the evaluator answer whose every row is finite. -/
 def FiniteForm (form : EvalRec → Expr → EvalM (List Result)) : Prop := ∀ e, Finite (fun rec => form rec e)
 

@@ -36,6 +36,21 @@ namespace KatLang.AddressInvariant
 theorem production_sound_all (c : EvalCall) : SoundOver Inv (CallPre c) (evalUnbounded c) (CallPost c) :=
   production_sound evalStep_sound c
 
+/-- The VALUE of an operation that returns a valid counted result is a valid result: how a derived
+    plain operation (`eval`, `evalProgramOutput`, … — its counted twin's value, not a call of the core)
+    takes its contract from its twin's. -/
+theorem SoundOver.value {pre : Array NeedCell → Prop} {m : EvalM CountedResult}
+    (hm : SoundOver Inv pre m (fun r h => CRV h r)) :
+    SoundOver Inv pre (m >>= fun out => pure out.fst) (fun r h => RV h r) := by
+  intro s vs ps
+  obtain ⟨v, g, r⟩ := hm s vs ps
+  rw [EvalM.bind_runState]
+  rcases hr : m.runState s with ⟨o, t⟩
+  rw [hr] at v g r
+  cases o with
+  | error e => exact ⟨v, g, fun _ h => by cases h⟩
+  | ok out => exact ⟨v, g, fun x hx => by cases hx; exact r out rfl⟩
+
 /-- The production answer keeps the call contract (`RecSound` form). -/
 theorem production_recSound_all : RecSound evalUnbounded := production_recSound evalStep_sound
 
@@ -304,13 +319,14 @@ theorem entry_ctx_valid (h : Array NeedCell) : ValidCtx h { callStack := [prelud
 theorem production_entry_program (wired : Algorithm) :
     SoundOver Inv (fun _ => True) (evalProgramOutput wired { callStack := [preludeAlg] } [])
       (fun r h => RV h r) :=
-  fun s vs _ => production_sound_all (.evalProgramOutput wired { callStack := [preludeAlg] } []) s vs
+  fun s vs _ => SoundOver.value
+    (production_sound_all (.evalZeroArgumentDemandOutputCounted wired { callStack := [preludeAlg] } [])) s vs
     ⟨entry_ctx_valid _, VEV.nil⟩
 
 /-- **Entry (expression).** -/
 theorem production_entry_eval (e : Expr) :
     SoundOver Inv (fun _ => True) (eval e { callStack := [preludeAlg] } []) (fun r h => RV h r) :=
-  fun s vs _ => production_sound_all (.eval e { callStack := [preludeAlg] } []) s vs
+  fun s vs _ => SoundOver.value (production_sound_all (.evalCounted e { callStack := [preludeAlg] } [])) s vs
     ⟨entry_ctx_valid _, VEV.nil⟩
 
 /-- Both entries from the empty state. -/

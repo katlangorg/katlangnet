@@ -411,7 +411,7 @@ def nestedPayload : Result := .listValue [.sequenceValue [.callRef 0, .argView 0
 /-- The incomplete outcome of the fuel core returns `EvalState.empty` (it retains nothing, and
     `Inv` holds of it: `incomplete_core_state`), whatever the entry state. -/
 theorem incomplete_core_empty :
-    (evalFuel 0 (.eval (.num 1) rootCtx [])).runState HeapAddressValidityGuards.oneReady =
+    (evalFuel 0 (.evalCounted (.num 1) rootCtx [])).runState HeapAddressValidityGuards.oneReady =
       (.error .fuelExhausted, {}) := rfl
 
 #guard invOk {}

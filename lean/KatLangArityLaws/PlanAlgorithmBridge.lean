@@ -121,7 +121,7 @@ namespace KatLang.PlanAlgorithmBridge
 
 open KatLang.HeapInsertion KatLang.PlanRouteBridge
 open KatLang.PlanConservativity (Keeps BodyKeeps keeps_fuel ObliviousOn withPlan_empty)
-open KatLang.WhileRoundProduction (Finite finite_const finite_call finite_bind production_eq_of_finite
+open KatLang.WhileRoundProduction (Finite finite_const finite_call finite_value finite_bind production_eq_of_finite
   production_completes_iff_body)
 open KatLang.FiniteLoop (finite_evalAttempt finite_nested finite_calleeCell ctxOutcome ctx_run ctxOutcome_fuel)
 
@@ -757,7 +757,7 @@ theorem finite_invocationReceiverValue (receiver : Expr) (ctx : EvalCtx) (env : 
   unfold EvalBody.invocationReceiverValue
   refine finite_bind (B := fun rec : EvalRec => rec (.resolveDotReceiver? receiver ctx)) (finite_call _) (fun alg? => ?_)
   cases alg? with
-  | none => exact finite_nested (B := fun rec : EvalRec => rec (.eval receiver ctx env)) (finite_call _)
+  | none => exact finite_nested (B := fun rec : EvalRec => rec.eval receiver ctx env) (finite_value _ _)
   | some targetAlg => exact finite_call _
 
 theorem finite_evalSuppliedAt (address : Nat) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
@@ -847,8 +847,10 @@ theorem disciplined_invocationReceiverValue (receiver : Expr) (ctx : EvalCtx) (e
     (fun alg? => ?_)
   cases alg? with
   | none =>
+    -- `eval` is the value of the one call `evalCounted` (a derived operation).
     exact Disciplined.withNestedMissingOutput
-      (KatLang.EvaluatorDiscipline.evalUnbounded_disciplined (.eval receiver ctx env))
+      (Disciplined.bind (KatLang.EvaluatorDiscipline.evalUnbounded_disciplined (.evalCounted receiver ctx env))
+        (fun _ => disciplined_pure _))
   | some targetAlg =>
     exact KatLang.EvaluatorDiscipline.evalUnbounded_disciplined (.referenceReceiverValue receiver targetAlg ctx env)
 
@@ -2573,13 +2575,14 @@ theorem keeps_nested {α : Type} {P : EvalState → Prop} {m : EvalM α} (h : Ke
 
 /-- **The operations the `.Algorithm` bridge shares between its two sides, as a call domain** —
     SCOPED to what the production side runs from `P`: the receiver's identity probe; the value read
-    `eval` when a REACHED probe answers `none`, the reference read over `g` when a REACHED probe
-    answers `some g`; and the intrinsic over each receiver VALUE the receiver read REACHES. Nothing
-    is asked of an arbitrary expression, context, algorithm or value. -/
+    `eval` — its ONE call, `evalCounted`, whose value it is — when a REACHED probe answers `none`, the
+    reference read over `g` when a REACHED probe answers `some g`; and the intrinsic over each receiver
+    VALUE the receiver read REACHES. Nothing is asked of an arbitrary expression, context, algorithm
+    or value. -/
 def AlgorithmCalls (Q : EvalCall → Prop) (P : EvalState → Prop) (receiver : Expr) (args : OutputBundle)
     (ctx : EvalCtx) (env : ValEnv) : Prop :=
   Q (.resolveDotReceiver? receiver ctx) ∧
-  (∀ t, After P (resolveDotReceiver? receiver ctx) none t → Q (.eval receiver ctx env)) ∧
+  (∀ t, After P (resolveDotReceiver? receiver ctx) none t → Q (.evalCounted receiver ctx env)) ∧
   (∀ g t, After P (resolveDotReceiver? receiver ctx) (some g) t → Q (.referenceReceiverValue receiver g ctx env)) ∧
   (∀ v t, After P (invocationReceiverValue receiver ctx env) v t → Q (.algorithmOfValue v (some args) ctx env))
 
@@ -2607,7 +2610,15 @@ theorem keeps_receiver_read (hkeep : BodyKeeps Q P) (hQ : AlgorithmCalls Q P rec
     dsimp only at hne hk ⊢
     have hPt : P t := hk (by nofun)
     cases alg? with
-    | none => exact keeps_nested (keeps_production Q P hkeep _ (hQ.2.1 t ⟨s, hP, hr⟩)) t hPt hne
+    | none =>
+      -- `eval` is the value of the one call `evalCounted` (a derived operation).
+      have hcounted : Keeps P (evalUnbounded (.evalCounted receiver ctx env)) :=
+        keeps_production Q P hkeep (.evalCounted receiver ctx env) (hQ.2.1 t ⟨s, hP, hr⟩)
+      have heval : Keeps P (eval receiver ctx env) := by
+        show Keeps P (evalUnbounded (.evalCounted receiver ctx env) >>= fun out => pure out.fst)
+        exact KatLang.PlanConservativity.Keeps.bind hcounted
+          (fun _ => KatLang.PlanConservativity.keeps_pure P _)
+      exact keeps_nested heval t hPt hne
     | some g => exact keeps_production Q P hkeep _ (hQ.2.2.1 g t ⟨s, hP, hr⟩) t hPt hne
 
 /-- **The tail keeps `P`**, from each admissible tail entry of its VALUE. -/
@@ -2655,11 +2666,24 @@ theorem inserted_receiver_read (Q : EvalCall → Prop) (P : EvalState → Prop) 
   cases alg? with
   | none =>
     intro ι s hb hc hp hs
-    have heval : InsertedOn P base count plan shiftResult (eval receiver ctx env) (eval receiver ctx env) :=
-      insertedOn_of_simulates (fun σ => eval receiver (shiftCtx σ ctx) (shiftValEnv σ env))
+    have hcounted : InsertedOn P base count plan shiftCounted
+        (evalCounted receiver ctx env) (evalCounted receiver ctx env) :=
+      insertedOn_of_simulates (fun σ => evalCounted receiver (shiftCtx σ ctx) (shiftValEnv σ env))
         (fun ι hb hc hp =>
-          inserted_production Q P base count plan hkeep hbody (.eval receiver ctx env) (hQ.2.1 s hs) ι hb hc hp)
+          inserted_production Q P base count plan hkeep hbody (.evalCounted receiver ctx env) (hQ.2.1 s hs) ι hb hc hp)
         (by simp only [hctx, henv])
+    -- `eval` is the VALUE of `evalCounted`, and the shift of a counted result shifts its value.
+    have heval : InsertedOn P base count plan shiftResult (eval receiver ctx env) (eval receiver ctx env) :=
+      InsertedOn.bindAfter (fp := fun out => pure out.fst) (fo := fun out => pure out.fst) hcounted
+        (fun out ι t hb hc _ _ => by
+          have hsite : ι.site = ⟨base, count⟩ := site_of ι hb hc
+          show ((Except.ok (shiftCounted ⟨base, count⟩ out).fst : Except Error Result) = .error .fuelExhausted ↔
+              (Except.ok out.fst : Except Error Result) = .error .fuelExhausted) ∧
+            ((Except.ok out.fst : Except Error Result) ≠ .error .fuelExhausted →
+              ((Except.ok (shiftCounted ⟨base, count⟩ out).fst : Except Error Result), embed ι t) =
+                (shiftExcept (shiftResult ι.site) (Except.ok out.fst), embed ι t))
+          rw [hsite]
+          exact ⟨⟨nofun, nofun⟩, fun _ => rfl⟩)
     exact InsertedOn.nested heval ι s hb hc hp (hs.keeps hkprobe)
   | some targetAlg =>
     intro ι s hb hc hp hs

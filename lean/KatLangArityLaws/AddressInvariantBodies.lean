@@ -6,7 +6,9 @@ open KatLang.CallPlan (bind_run get_run pure_run modify_run throw_run lift_run e
 /-!
 # FG-H1-FU-01 (M3): the per-body obligation
 
-For EVERY evaluator body `EvalBody.X` (one per `EvalCall` constructor, 102 in all), from an answer
+For EVERY evaluator body `EvalBody.X` (one per `EvalCall` constructor, 84 in all; a DERIVED answer —
+a plain value projection or pure forward such as `rec.eval …` — has no body, only the projected
+contract `SoundI.rec_<name>` below), from an answer
 `rec` that keeps the call contract (`RecSound rec`), the body keeps the contract of its own call:
 `SoundI (CallPre c) (EvalBody.X rec …) (CallPost c)` (`EvalBody.X_sound`), hence
 `evalStep_sound : BodySound`. The proofs are the syntax-directed procedure `ht_tac`
@@ -28,8 +30,146 @@ set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact callPre_mono _ _ _ $g ‹_›)
 set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact callPost_mono _ _ _ _ $g ‹_›)
+
+/-! ## The derived answers under their contracts
+
+A derived answer (`rec.eval …`, `rec.applyBuiltin …`, `rec.evalProgramOutput …`: its twin's value or
+its twin) is not an `EvalCall`, so `RecSound rec` does not mention it. Its contract is its twin's,
+projected: one lemma each, with the precondition and postcondition the removed constructor's
+`CallPre` / `CallPost` arms stated. The procedure keeps each atomic (`ht_unfold_rec` does not unfold
+it) and applies these, exactly as it applies `SoundI.rec_call` to a call. -/
+
+section DerivedAnswers
+variable {rec : EvalRec}
+
+theorem SoundI.rec_evalAlgOutputCore (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalAlgOutputCore a ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalAlgOutputCore; ht_tac
+attribute [ht_spec] SoundI.rec_evalAlgOutputCore
+
+theorem SoundI.rec_evalAlgOutput (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalAlgOutput a ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalAlgOutput; ht_tac
+attribute [ht_spec] SoundI.rec_evalAlgOutput
+
+theorem SoundI.rec_evalAlgOutputCounted (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalAlgOutputCounted a ctx env) (fun r h => CRV h r) := by
+  unfold EvalRec.evalAlgOutputCounted; ht_tac
+attribute [ht_spec] SoundI.rec_evalAlgOutputCounted
+
+theorem SoundI.rec_evalCapturePreparedCore (hrec : RecSound rec) {rows : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalCapturePreparedCore rows ctx env) (fun r h => PreparedV h r) := by
+  unfold EvalRec.evalCapturePreparedCore; ht_tac
+attribute [ht_spec] SoundI.rec_evalCapturePreparedCore
+
+theorem SoundI.rec_evalCaptureValue (hrec : RecSound rec) {rows : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalCaptureValue rows ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalCaptureValue; ht_tac
+attribute [ht_spec] SoundI.rec_evalCaptureValue
+
+theorem SoundI.rec_evalZeroArgumentDemandOutput (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalZeroArgumentDemandOutput a ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalZeroArgumentDemandOutput; ht_tac
+attribute [ht_spec] SoundI.rec_evalZeroArgumentDemandOutput
+
+theorem SoundI.rec_evalProgramOutput (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalProgramOutput a ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalProgramOutput; ht_tac
+attribute [ht_spec] SoundI.rec_evalProgramOutput
+
+theorem SoundI.rec_evalArgumentValue (hrec : RecSound rec) {arg : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → RAV h arg ∧ ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalArgumentValue arg ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalArgumentValue; ht_tac
+attribute [ht_spec] SoundI.rec_evalArgumentValue
+
+theorem SoundI.rec_evalZeroArgPropertyAccess (hrec : RecSound rec) {accessKind : ZeroArgPropertyAccessKind} {owner : Algorithm} {binding : PropDef} {resolvedAlgorithm : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalZeroArgPropertyAccess; ht_tac
+attribute [ht_spec] SoundI.rec_evalZeroArgPropertyAccess
+
+theorem SoundI.rec_evalResolvedCallbackCall (hrec : RecSound rec) {callee : Algorithm} {args : List CountedResult} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → CRLV h args ∧ ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalResolvedCallbackCall callee args ctx env calleeName) (fun r h => RV h r) := by
+  unfold EvalRec.evalResolvedCallbackCall; ht_tac
+attribute [ht_spec] SoundI.rec_evalResolvedCallbackCall
+
+theorem SoundI.rec_evalSequenceCallbackCall (hrec : RecSound rec) {callee : Algorithm} {item : CountedResult} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → CRV h item ∧ ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalSequenceCallbackCall callee item ctx env calleeName) (fun r h => RV h r) := by
+  unfold EvalRec.evalSequenceCallbackCall; ht_tac
+attribute [ht_spec] SoundI.rec_evalSequenceCallbackCall
+
+theorem SoundI.rec_evalSequenceCallbackCallCounted (hrec : RecSound rec) {callee : Algorithm} {item : CountedResult} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → CRV h item ∧ ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalSequenceCallbackCallCounted callee item ctx env calleeName) (fun r h => CRV h r) := by
+  unfold EvalRec.evalSequenceCallbackCallCounted; ht_tac
+attribute [ht_spec] SoundI.rec_evalSequenceCallbackCallCounted
+
+theorem SoundI.rec_applyBuiltin (hrec : RecSound rec) {b : Builtin} {args : List ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → RALV h args ∧ ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.applyBuiltin b args ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.applyBuiltin; ht_tac
+attribute [ht_spec] SoundI.rec_applyBuiltin
+
+theorem SoundI.rec_applyBuiltinCountedResolved (hrec : RecSound rec) {b : Builtin} {args : List ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → RALV h args ∧ ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.applyBuiltinCountedResolved b args ctx env) (fun r h => CRV h r) := by
+  unfold EvalRec.applyBuiltinCountedResolved; ht_tac
+attribute [ht_spec] SoundI.rec_applyBuiltinCountedResolved
+
+theorem SoundI.rec_evalUserCall (hrec : RecSound rec) {callee : Algorithm} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalUserCall callee args ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalUserCall; ht_tac
+attribute [ht_spec] SoundI.rec_evalUserCall
+
+theorem SoundI.rec_evalConditionalCall (hrec : RecSound rec) {callee : Algorithm} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalConditionalCall callee args ctx env calleeName) (fun r h => RV h r) := by
+  unfold EvalRec.evalConditionalCall; ht_tac
+attribute [ht_spec] SoundI.rec_evalConditionalCall
+
+theorem SoundI.rec_evalResolvedCall (hrec : RecSound rec) {callee : Algorithm} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalResolvedCall callee args ctx env calleeName) (fun r h => RV h r) := by
+  unfold EvalRec.evalResolvedCall; ht_tac
+attribute [ht_spec] SoundI.rec_evalResolvedCall
+
+theorem SoundI.rec_evalCallExpr (hrec : RecSound rec) {f : Expr} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalCallExpr f args ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalCallExpr; ht_tac
+attribute [ht_spec] SoundI.rec_evalCallExpr
+
+theorem SoundI.rec_evalDotCall (hrec : RecSound rec) {target : Expr} {name : Ident} {fallback : Expr} {argsOpt : Option OutputBundle} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.evalDotCall target name fallback argsOpt ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.evalDotCall; ht_tac
+attribute [ht_spec] SoundI.rec_evalDotCall
+
+theorem SoundI.rec_eval (hrec : RecSound rec) {e : Expr} {ctx : EvalCtx} {env : ValEnv}
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (rec.eval e ctx env) (fun r h => RV h r) := by
+  unfold EvalRec.eval; ht_tac
+attribute [ht_spec] SoundI.rec_eval
+
+end DerivedAnswers
+
 set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact ExcV.mono (callPost_mono _) _ _ _ $g ‹_›)
+-- An ATTEMPTED derived answer (`evalAttempt (rec.evalSequenceCallbackCall …)`, `evalAttempt (rec.eval …)`):
+-- its postcondition is the explicit `RV` of its contract, not a `CallPost`.
+set_option hygiene false in
+macro_rules | `(tactic| mono_atom $g) => `(tactic| exact ExcV.mono (Q := fun r h => RV h r) (fun _ _ _ g' v => RV.mono g' v) _ _ _ $g ‹_›)
 
 theorem ItemLV.head' {h : Array NeedCell} {x : CallableCallItem} {xs : List CallableCallItem}
     (v : ItemLV h (x :: xs)) : ItemV h x := v x List.mem_cons_self
@@ -597,18 +737,6 @@ theorem EvalBody.runNeedWhileRound_sound (rec : EvalRec) (hrec : RecSound rec) (
     SoundI (CallPre (.runNeedWhileRound step ctx env cells stepName)) (EvalBody.runNeedWhileRound rec step ctx env cells stepName) (CallPost (.runNeedWhileRound step ctx env cells stepName)) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; ht_tac
 
-theorem EvalBody.evalAlgOutputCore_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalAlgOutputCore a ctx env)) (EvalBody.evalAlgOutputCore rec a ctx env) (CallPost (.evalAlgOutputCore a ctx env)) := by
-  unfold EvalBody.evalAlgOutputCore; ht_tac
-
-theorem EvalBody.evalAlgOutput_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalAlgOutput a ctx env)) (EvalBody.evalAlgOutput rec a ctx env) (CallPost (.evalAlgOutput a ctx env)) := by
-  unfold EvalBody.evalAlgOutput; ht_tac
-
-theorem EvalBody.evalProgramOutput_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalProgramOutput a ctx env)) (EvalBody.evalProgramOutput rec a ctx env) (CallPost (.evalProgramOutput a ctx env)) := by
-  unfold EvalBody.evalProgramOutput; ht_tac
-
 theorem EvalBody.evalAlgOutputSlots_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalAlgOutputSlots a ctx env)) (EvalBody.evalAlgOutputSlots rec a ctx env) (CallPost (.evalAlgOutputSlots a ctx env)) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; ht_tac
@@ -621,14 +749,6 @@ theorem EvalBody.whileVerdictSlots_sound (rec : EvalRec) (hrec : RecSound rec) (
     SoundI (CallPre (.whileVerdictSlots a ctx env)) (EvalBody.whileVerdictSlots rec a ctx env) (CallPost (.whileVerdictSlots a ctx env)) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; ht_tac
 
-theorem EvalBody.evalSequenceCallbackCall_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    SoundI (CallPre (.evalSequenceCallbackCall callee item ctx env calleeName)) (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) (CallPost (.evalSequenceCallbackCall callee item ctx env calleeName)) := by
-  unfold EvalBody.evalSequenceCallbackCall; ht_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    SoundI (CallPre (.evalSequenceCallbackCallCounted callee item ctx env calleeName)) (EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) (CallPost (.evalSequenceCallbackCallCounted callee item ctx env calleeName)) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; ht_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalAlgOutputPreparedCore a ctx env)) (EvalBody.evalAlgOutputPreparedCore rec a ctx env) (CallPost (.evalAlgOutputPreparedCore a ctx env)) := by
   unfold EvalBody.evalAlgOutputPreparedCore; ht_tac
@@ -637,45 +757,21 @@ theorem EvalBody.evalOutputRowsPreparedCore_sound (rec : EvalRec) (hrec : RecSou
     SoundI (CallPre (.evalOutputRowsPreparedCore rows rowCtx env)) (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) (CallPost (.evalOutputRowsPreparedCore rows rowCtx env)) := by
   unfold EvalBody.evalOutputRowsPreparedCore; ht_tac
 
-theorem EvalBody.evalCapturePreparedCore_sound (rec : EvalRec) (hrec : RecSound rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalCapturePreparedCore rows ctx env)) (EvalBody.evalCapturePreparedCore rec rows ctx env) (CallPost (.evalCapturePreparedCore rows ctx env)) := by
-  unfold EvalBody.evalCapturePreparedCore; ht_tac
-
 theorem EvalBody.evalCaptureCountedCore_sound (rec : EvalRec) (hrec : RecSound rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalCaptureCountedCore rows ctx env)) (EvalBody.evalCaptureCountedCore rec rows ctx env) (CallPost (.evalCaptureCountedCore rows ctx env)) := by
   unfold EvalBody.evalCaptureCountedCore; ht_tac
-
-theorem EvalBody.evalCaptureValue_sound (rec : EvalRec) (hrec : RecSound rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalCaptureValue rows ctx env)) (EvalBody.evalCaptureValue rec rows ctx env) (CallPost (.evalCaptureValue rows ctx env)) := by
-  unfold EvalBody.evalCaptureValue; ht_tac
 
 theorem EvalBody.evalAlgOutputCountedCore_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalAlgOutputCountedCore a ctx env)) (EvalBody.evalAlgOutputCountedCore rec a ctx env) (CallPost (.evalAlgOutputCountedCore a ctx env)) := by
   unfold EvalBody.evalAlgOutputCountedCore; ht_tac
 
-theorem EvalBody.evalAlgOutputCounted_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalAlgOutputCounted a ctx env)) (EvalBody.evalAlgOutputCounted rec a ctx env) (CallPost (.evalAlgOutputCounted a ctx env)) := by
-  unfold EvalBody.evalAlgOutputCounted; ht_tac
-
 theorem EvalBody.evalZeroArgumentDemandOutputCounted_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalZeroArgumentDemandOutputCounted a ctx env)) (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) (CallPost (.evalZeroArgumentDemandOutputCounted a ctx env)) := by
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; ht_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalZeroArgumentDemandOutput a ctx env)) (EvalBody.evalZeroArgumentDemandOutput rec a ctx env) (CallPost (.evalZeroArgumentDemandOutput a ctx env)) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; ht_tac
-
 theorem EvalBody.evalArgumentValueCounted_sound (rec : EvalRec) (hrec : RecSound rec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalArgumentValueCounted arg ctx env)) (EvalBody.evalArgumentValueCounted rec arg ctx env) (CallPost (.evalArgumentValueCounted arg ctx env)) := by
   unfold EvalBody.evalArgumentValueCounted; ht_tac
-
-theorem EvalBody.evalArgumentValue_sound (rec : EvalRec) (hrec : RecSound rec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalArgumentValue arg ctx env)) (EvalBody.evalArgumentValue rec arg ctx env) (CallPost (.evalArgumentValue arg ctx env)) := by
-  unfold EvalBody.evalArgumentValue; ht_tac
-
-theorem EvalBody.evalZeroArgPropertyAccess_sound (rec : EvalRec) (hrec : RecSound rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)) (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) (CallPost (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; ht_tac
 
 theorem EvalBody.evalConditionalCallbackCallCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     SoundI (CallPre (.evalConditionalCallbackCallCounted callee args ctx env calleeName)) (EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) (CallPost (.evalConditionalCallbackCallCounted callee args ctx env calleeName)) := by
@@ -688,10 +784,6 @@ theorem EvalBody.evalUserCallbackCallCounted_sound (rec : EvalRec) (hrec : RecSo
 theorem EvalBody.evalResolvedCallbackCallCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     SoundI (CallPre (.evalResolvedCallbackCallCounted callee args ctx env calleeName)) (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) (CallPost (.evalResolvedCallbackCallCounted callee args ctx env calleeName)) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; ht_tac
-
-theorem EvalBody.evalResolvedCallbackCall_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    SoundI (CallPre (.evalResolvedCallbackCall callee args ctx env calleeName)) (EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) (CallPost (.evalResolvedCallbackCall callee args ctx env calleeName)) := by
-  unfold EvalBody.evalResolvedCallbackCall; ht_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     SoundI (CallPre (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)) (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) (CallPost (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)) := by
@@ -825,14 +917,6 @@ theorem EvalBody.applyBuiltinCounted_sound (rec : EvalRec) (hrec : RecSound rec)
     SoundI (CallPre (.applyBuiltinCounted b args ctx env)) (EvalBody.applyBuiltinCounted rec b args ctx env) (CallPost (.applyBuiltinCounted b args ctx env)) := by
   unfold EvalBody.applyBuiltinCounted; ht_tac
 
-theorem EvalBody.applyBuiltin_sound (rec : EvalRec) (hrec : RecSound rec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.applyBuiltin b args ctx env)) (EvalBody.applyBuiltin rec b args ctx env) (CallPost (.applyBuiltin b args ctx env)) := by
-  unfold EvalBody.applyBuiltin; ht_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_sound (rec : EvalRec) (hrec : RecSound rec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.applyBuiltinCountedResolved b args ctx env)) (EvalBody.applyBuiltinCountedResolved rec b args ctx env) (CallPost (.applyBuiltinCountedResolved b args ctx env)) := by
-  unfold EvalBody.applyBuiltinCountedResolved; ht_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalExplicitSequenceValueItems a ctx env)) (EvalBody.evalExplicitSequenceValueItems rec a ctx env) (CallPost (.evalExplicitSequenceValueItems a ctx env)) := by
   unfold EvalBody.evalExplicitSequenceValueItems; ht_tac
@@ -852,10 +936,6 @@ theorem EvalBody.evalUserCallCounted_sound (rec : EvalRec) (hrec : RecSound rec)
 theorem EvalBody.evalConditionalCallCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     SoundI (CallPre (.evalConditionalCallCounted callee args ctx env calleeName)) (EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) (CallPost (.evalConditionalCallCounted callee args ctx env calleeName)) := by
   unfold EvalBody.evalConditionalCallCounted; ht_tac
-
-theorem EvalBody.evalResolvedCall_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    SoundI (CallPre (.evalResolvedCall callee args ctx env calleeName)) (EvalBody.evalResolvedCall rec callee args ctx env calleeName) (CallPost (.evalResolvedCall callee args ctx env calleeName)) := by
-  unfold EvalBody.evalResolvedCall; ht_tac
 
 theorem EvalBody.evalResolvedCallCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     SoundI (CallPre (.evalResolvedCallCounted callee args ctx env calleeName origin)) (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) (CallPost (.evalResolvedCallCounted callee args ctx env calleeName origin)) := by
@@ -973,26 +1053,6 @@ theorem EvalBody.evalCounted_sound (rec : EvalRec) (hrec : RecSound rec) (e : Ex
     SoundI (CallPre (.evalCounted e ctx env)) (EvalBody.evalCounted rec e ctx env) (CallPost (.evalCounted e ctx env)) := by
   unfold EvalBody.evalCounted; ht_tac
 
-theorem EvalBody.evalUserCall_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalUserCall callee args ctx env)) (EvalBody.evalUserCall rec callee args ctx env) (CallPost (.evalUserCall callee args ctx env)) := by
-  unfold EvalBody.evalUserCall; ht_tac
-
-theorem EvalBody.evalConditionalCall_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    SoundI (CallPre (.evalConditionalCall callee args ctx env calleeName)) (EvalBody.evalConditionalCall rec callee args ctx env calleeName) (CallPost (.evalConditionalCall callee args ctx env calleeName)) := by
-  unfold EvalBody.evalConditionalCall; ht_tac
-
-theorem EvalBody.evalCallExpr_sound (rec : EvalRec) (hrec : RecSound rec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalCallExpr f args ctx env)) (EvalBody.evalCallExpr rec f args ctx env) (CallPost (.evalCallExpr f args ctx env)) := by
-  unfold EvalBody.evalCallExpr; ht_tac
-
-theorem EvalBody.evalDotCall_sound (rec : EvalRec) (hrec : RecSound rec) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalDotCall target name fallback argsOpt ctx env)) (EvalBody.evalDotCall rec target name fallback argsOpt ctx env) (CallPost (.evalDotCall target name fallback argsOpt ctx env)) := by
-  unfold EvalBody.evalDotCall; ht_tac
-
-theorem EvalBody.eval_sound (rec : EvalRec) (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.eval e ctx env)) (EvalBody.eval rec e ctx env) (CallPost (.eval e ctx env)) := by
-  unfold EvalBody.eval; ht_tac
-
 /-- **The property-cache publication write point** (`evalZeroArgPropertyAccessCounted`): a published
     counted result is valid in the heap at its publication; marking a key active changes no address. -/
 theorem EvalBody.evalZeroArgPropertyAccessCounted_sound (rec : EvalRec) (hrec : RecSound rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
@@ -1091,31 +1151,19 @@ theorem evalStep_sound : BodySound := by
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_sound rec hrec arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_sound rec hrec step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_sound rec hrec step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_sound rec hrec a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_sound rec hrec a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_sound rec hrec a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_sound rec hrec a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_sound rec hrec ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_sound rec hrec a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_sound rec hrec callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_sound rec hrec callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_sound rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_sound rec hrec rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_sound rec hrec rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_sound rec hrec rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_sound rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_sound rec hrec a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_sound rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_sound rec hrec a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_sound rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_sound rec hrec arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_sound rec hrec arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_sound rec hrec accessKind owner binding resolvedAlgorithm ctx env request
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_sound rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_sound rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_sound rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_sound rec hrec callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_sound rec hrec callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_sound rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_sound rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_sound rec hrec b metadata args ctx env
@@ -1124,14 +1172,11 @@ theorem evalStep_sound : BodySound := by
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_sound rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_sound rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_sound rec hrec b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_sound rec hrec b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_sound rec hrec b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_sound rec hrec a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_sound rec hrec rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_sound rec hrec expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_sound rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_sound rec hrec callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_sound rec hrec callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_sound rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_sound rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_sound rec hrec name receiver fallback extraArgs ctx env
@@ -1152,10 +1197,5 @@ theorem evalStep_sound : BodySound := by
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_sound rec hrec first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_sound rec hrec previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_sound rec hrec e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_sound rec hrec callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_sound rec hrec callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_sound rec hrec f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_sound rec hrec target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_sound rec hrec e ctx env
 
 end KatLang.AddressInvariant

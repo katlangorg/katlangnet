@@ -443,14 +443,13 @@ theorem finite_prepared (a : Algorithm) (ha : NotBuiltin a) (ctx : EvalCtx) (env
 
 theorem counted_eq_prepared (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     evalAlgOutputCounted a ctx env = evalAlgOutputPreparedCore a ctx env >>= fun out => pure out.counted := by
-  have h₁ : evalAlgOutputCounted a ctx env = evalAlgOutputCountedCore a ctx env >>= pure :=
-    delegation_equation (.evalAlgOutputCounted a ctx env) (.evalAlgOutputCountedCore a ctx env) pure
-      (fun rec => (bind_pure_eq _).symm) (fun _ _ => nofun)
+  -- `evalAlgOutputCounted` IS `evalAlgOutputCountedCore` (a derived operation: `rfl`).
+  have h₁ : evalAlgOutputCounted a ctx env = evalAlgOutputCountedCore a ctx env := rfl
   have h₂ : evalAlgOutputCountedCore a ctx env =
       evalAlgOutputPreparedCore a ctx env >>= fun out => pure out.counted :=
     delegation_equation (.evalAlgOutputCountedCore a ctx env) (.evalAlgOutputPreparedCore a ctx env) _
       (fun _ => rfl) (fun _ _ => nofun)
-  rw [h₁, bind_pure_eq, h₂]
+  rw [h₁, h₂]
 
 /-- What the ordinary reading observes of a row supply. -/
 structure ReaderAgreement (L : Except Error (List Result) × EvalState)
@@ -670,9 +669,9 @@ theorem monotone_read_slots (p : Activation) :
 theorem monotone_read_counted (p : Activation) :
     monotone (fun rec : EvalRec => rec.evalAlgOutputCounted p.1 p.2.1 p.2.2 >>= fun r =>
       pure (reCountValueBoundary r)) :=
-  (finite_bind (B := fun rec => rec (.evalAlgOutputCounted p.1 p.2.1 p.2.2))
+  (finite_bind (B := fun rec => rec (.evalAlgOutputCountedCore p.1 p.2.1 p.2.2))
     (K := fun _ r => pure (reCountValueBoundary r))
-    (finite_call (.evalAlgOutputCounted p.1 p.2.1 p.2.2)) (fun _ => finite_const _)).1
+    (finite_call (.evalAlgOutputCountedCore p.1 p.2.1 p.2.2)) (fun _ => finite_const _)).1
 
 theorem completedAt_slots (p : Activation) (t : EvalState) (r : Except Error (List Result) × EvalState) :
     CompletedAt (fun rec => rec.evalAlgOutputSlots p.1 p.2.1 p.2.2) t r ↔
@@ -682,7 +681,7 @@ theorem completedAt_slots (p : Activation) (t : EvalState) (r : Except Error (Li
 theorem completedAt_counted (p : Activation) (t : EvalState) (r : Except Error CountedResult × EvalState) :
     CompletedAt (fun rec => rec.evalAlgOutputCounted p.1 p.2.1 p.2.2) t r ↔
       ((evalAlgOutputCounted p.1 p.2.1 p.2.2).runState t = r ∧ r.1 ≠ .error .fuelExhausted) :=
-  completedAt_call (.evalAlgOutputCounted p.1 p.2.1 p.2.2) t r
+  completedAt_call (.evalAlgOutputCountedCore p.1 p.2.1 p.2.2) t r
 
 theorem completedAt_recounted (p : Activation) (t u : EvalState) (o : Except Error CountedResult)
     (h : CompletedAt (fun rec => rec.evalAlgOutputCounted p.1 p.2.1 p.2.2) t (o, u)) :
@@ -1050,12 +1049,12 @@ theorem builtin_step_run (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : L
         builtinStepOutcome s!"while evaluating call to {name}"
           ((applyBuiltinCountedResolved b (stepArguments cells) ctx env).runState s)) := by
   have hb : Finite (fun rec : EvalRec => withCtx s!"while evaluating call to {name}"
-      (rec (.applyBuiltinCountedResolved b (stepArguments cells) ctx env) >>= fun out =>
+      (rec (.applyBuiltinCounted b (stepArguments cells) ctx env) >>= fun out =>
         pure (loopStepBuiltinRows out))) :=
     finite_withCtx _ (finite_bind (finite_call _) (fun _ => finite_const _))
   have hstep : ∀ rec, evalStep rec (.runNeedStepSlots (.builtin b) ctx env cells name) =
       withCtx s!"while evaluating call to {name}"
-        (rec (.applyBuiltinCountedResolved b (stepArguments cells) ctx env) >>= fun out =>
+        (rec (.applyBuiltinCounted b (stepArguments cells) ctx env) >>= fun out =>
           pure (loopStepBuiltinRows out)) := fun _ => rfl
   have hbody : (withCtx s!"while evaluating call to {name}"
       (applyBuiltinCountedResolved b (stepArguments cells) ctx env >>= fun out =>
@@ -1092,7 +1091,7 @@ theorem ordinary_builtin_is_step_application (origin : CalleeOrigin) (b : Builti
       applyBuiltinCountedResolved b (stepArguments cells) ctx env := by
   have h := delegation_equation
     (.evalSuppliedCallCounted origin (.builtin b) cells ctx env name)
-    (.applyBuiltinCountedResolved b (stepArguments cells) ctx env) pure
+    (.applyBuiltinCounted b (stepArguments cells) ctx env) pure
     (fun rec => by
       refine Eq.trans ?_ (bind_pure_eq _).symm
       show EvalBody.evalSuppliedCallCounted rec origin (.builtin b) cells ctx env name = _
@@ -1796,7 +1795,7 @@ theorem finite_countDemand (c : ResolvedArgumentAlgorithm) (bindings : NeedEnv) 
     Finite (fun rec => countDemand rec c bindings ctx env) := by
   unfold countDemand
   refine finite_bind (finite_const _) (fun address => ?_)
-  exact finite_bind (finite_call _) (fun _ => finite_const _)
+  exact finite_bind (finite_value _ _) (fun _ => finite_const _)
 
 theorem finite_finishLoop (D : EvalRec → EvalM (List NeedSupply.Sourced)) (hD : Finite D) :
     Finite (fun rec => finishLoop rec (D rec)) := by

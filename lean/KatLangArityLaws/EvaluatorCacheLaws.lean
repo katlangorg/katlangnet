@@ -1031,18 +1031,6 @@ theorem EvalBody.runNeedWhileRound_pres (rec : EvalRec) (hrec : ∀ c, Preserves
     Preserves R (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; pres_tac
 
-theorem EvalBody.evalAlgOutputCore_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalAlgOutputCore rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCore; pres_tac
-
-theorem EvalBody.evalAlgOutput_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalAlgOutput rec a ctx env) := by
-  unfold EvalBody.evalAlgOutput; pres_tac
-
-theorem EvalBody.evalProgramOutput_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalProgramOutput rec a ctx env) := by
-  unfold EvalBody.evalProgramOutput; pres_tac
-
 theorem EvalBody.evalAlgOutputSlots_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalAlgOutputSlots rec a ctx env) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; pres_tac
@@ -1055,14 +1043,6 @@ theorem EvalBody.whileVerdictSlots_pres (rec : EvalRec) (hrec : ∀ c, Preserves
     Preserves R (EvalBody.whileVerdictSlots rec a ctx env) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; pres_tac
 
-theorem EvalBody.evalSequenceCallbackCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCall; pres_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; pres_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalAlgOutputPreparedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputPreparedCore; pres_tac
@@ -1071,25 +1051,13 @@ theorem EvalBody.evalOutputRowsPreparedCore_pres (rec : EvalRec) (hrec : ∀ c, 
     Preserves R (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; pres_tac
 
-theorem EvalBody.evalCapturePreparedCore_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalCapturePreparedCore rec rows ctx env) := by
-  unfold EvalBody.evalCapturePreparedCore; pres_tac
-
 theorem EvalBody.evalCaptureCountedCore_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalCaptureCountedCore rec rows ctx env) := by
   unfold EvalBody.evalCaptureCountedCore; pres_tac
 
-theorem EvalBody.evalCaptureValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalCaptureValue rec rows ctx env) := by
-  unfold EvalBody.evalCaptureValue; pres_tac
-
 theorem EvalBody.evalAlgOutputCountedCore_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCountedCore; pres_tac
-
-theorem EvalBody.evalAlgOutputCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalAlgOutputCounted rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCounted; pres_tac
 
 /-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
     reads one, so those bodies never unfold it inline (M4★). -/
@@ -1101,27 +1069,15 @@ theorem EvalBody.evalZeroArgumentDemandOutputCounted_pres (rec : EvalRec) (hrec 
     Preserves R (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; pres_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalZeroArgumentDemandOutput rec a ctx env) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; pres_tac
-
 theorem EvalBody.evalArgumentValueCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalArgumentValueCounted rec arg ctx env) := by
   unfold EvalBody.evalArgumentValueCounted; pres_tac
-
-theorem EvalBody.evalArgumentValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalArgumentValue rec arg ctx env) := by
-  unfold EvalBody.evalArgumentValue; pres_tac
 
 /-- CACHE-PUB-1: a property request's calculation — a read's demand or an invocation's fresh
     zero-supply call — preserves every write-framed relation its recursive answer does. -/
 theorem EvalBody.zeroArgPropertyCalculation_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
   unfold EvalBody.zeroArgPropertyCalculation; pres_tac
-
-theorem EvalBody.evalZeroArgPropertyAccess_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; pres_tac
 
 theorem EvalBody.evalConditionalCallbackCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Preserves R (EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by
@@ -1134,10 +1090,6 @@ theorem EvalBody.evalUserCallbackCallCounted_pres (rec : EvalRec) (hrec : ∀ c,
 theorem EvalBody.evalResolvedCallbackCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Preserves R (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; pres_tac
-
-theorem EvalBody.evalResolvedCallbackCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCallbackCall; pres_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Preserves R (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
@@ -1202,14 +1154,6 @@ theorem EvalBody.applyBuiltinCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserv
     Preserves R (EvalBody.applyBuiltinCounted rec b args ctx env) := by
   unfold EvalBody.applyBuiltinCounted; pres_tac
 
-theorem EvalBody.applyBuiltin_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.applyBuiltin rec b args ctx env) := by
-  unfold EvalBody.applyBuiltin; pres_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.applyBuiltinCountedResolved rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCountedResolved; pres_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalExplicitSequenceValueItems rec a ctx env) := by
   unfold EvalBody.evalExplicitSequenceValueItems; pres_tac
@@ -1229,10 +1173,6 @@ theorem EvalBody.evalUserCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserv
 theorem EvalBody.evalConditionalCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Preserves R (EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallCounted; pres_tac
-
-theorem EvalBody.evalResolvedCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCall; pres_tac
 
 theorem EvalBody.evalResolvedCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     Preserves R (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
@@ -1319,26 +1259,6 @@ theorem EvalBody.evalCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (re
     Preserves R (EvalBody.evalCounted rec e ctx env) := by
   unfold EvalBody.evalCounted; pres_tac
 
-theorem EvalBody.evalUserCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalUserCall rec callee args ctx env) := by
-  unfold EvalBody.evalUserCall; pres_tac
-
-theorem EvalBody.evalConditionalCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalConditionalCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalConditionalCall; pres_tac
-
-theorem EvalBody.evalCallExpr_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalCallExpr rec f args ctx env) := by
-  unfold EvalBody.evalCallExpr; pres_tac
-
-theorem EvalBody.evalDotCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalDotCall rec target name fallback argsOpt ctx env) := by
-  unfold EvalBody.evalDotCall; pres_tac
-
-theorem EvalBody.eval_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.eval rec e ctx env) := by
-  unfold EvalBody.eval; pres_tac
-
 /-- The per-body step of every write-framed whole-run invariant, given its step for the one
     body that writes the property cache and its owner set. -/
 theorem evalStep_preserves
@@ -1385,31 +1305,19 @@ theorem evalStep_preserves
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_pres rec hrec arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_pres rec hrec step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_pres rec hrec step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_pres rec hrec a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_pres rec hrec a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_pres rec hrec a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_pres rec hrec a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_pres rec hrec ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_pres rec hrec a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_pres rec hrec callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_pres rec hrec callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_pres rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_pres rec hrec rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_pres rec hrec rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_pres rec hrec rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_pres rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_pres rec hrec a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_pres rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_pres rec hrec a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_pres rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_pres rec hrec arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_pres rec hrec arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact hprop rec hrec accessKind owner binding resolvedAlgorithm ctx env request
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_pres rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pres rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pres rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_pres rec hrec callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_pres rec hrec callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_pres rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pres rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pres rec hrec b metadata args ctx env
@@ -1418,14 +1326,11 @@ theorem evalStep_preserves
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pres rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pres rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_pres rec hrec b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_pres rec hrec b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_pres rec hrec b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_pres rec hrec a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_pres rec hrec rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_pres rec hrec expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_pres rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_pres rec hrec callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_pres rec hrec callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_pres rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_pres rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_pres rec hrec name receiver fallback extraArgs ctx env
@@ -1446,11 +1351,6 @@ theorem evalStep_preserves
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_pres rec hrec first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_pres rec hrec previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_pres rec hrec e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_pres rec hrec callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_pres rec hrec callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_pres rec hrec f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_pres rec hrec target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_pres rec hrec e ctx env
 
 /-- The one body that writes the property cache and its owner set. -/
 def isPropertyAccessCall : EvalCall → Bool
@@ -1499,31 +1399,19 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_pres rec hrec arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_pres rec hrec step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_pres rec hrec step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_pres rec hrec a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_pres rec hrec a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_pres rec hrec a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_pres rec hrec a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_pres rec hrec ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_pres rec hrec a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_pres rec hrec callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_pres rec hrec callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_pres rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_pres rec hrec rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_pres rec hrec rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_pres rec hrec rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_pres rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_pres rec hrec a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_pres rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_pres rec hrec a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_pres rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_pres rec hrec arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_pres rec hrec arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => cases hc
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_pres rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pres rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pres rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_pres rec hrec callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_pres rec hrec callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_pres rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pres rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pres rec hrec b metadata args ctx env
@@ -1532,14 +1420,11 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pres rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pres rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_pres rec hrec b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_pres rec hrec b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_pres rec hrec b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_pres rec hrec a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_pres rec hrec rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_pres rec hrec expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_pres rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_pres rec hrec callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_pres rec hrec callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_pres rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_pres rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_pres rec hrec name receiver fallback extraArgs ctx env
@@ -1560,11 +1445,6 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_pres rec hrec first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_pres rec hrec previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_pres rec hrec e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_pres rec hrec callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_pres rec hrec callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_pres rec hrec f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_pres rec hrec target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_pres rec hrec e ctx env
 
 end Bodies
 

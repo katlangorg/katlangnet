@@ -7016,6 +7016,11 @@ Lean checks them as total definitions with their own laws. A new recursive opera
 `EvalCall` constructor, `EvalCall.Ret` arm, `EvalRec` helper, body and `evalStep` arm (and its
 production wrapper below the core); `KatLangArityLaws/EvaluatorCore.lean` then needs its
 monotonicity lemma and `KatLangArityLaws/EvaluatorDiscipline.lean` its discipline lemma.
+An operation that only returns another operation's answer, or that answer's value, is NOT a
+call: write it as a DERIVED answer (`EvalRec.<name>` over its twin, § Derived answers) with its
+derived production operation. It needs no constructor, body or per-body lemma — every whole-run
+law reaches it through its twin (November 2026: the twenty plain projections and pure forwards
+that used to be constructors).
 
 PLAIN/COUNTED OWNERSHIP: for every plain/counted evaluator pair the COUNTED
 implementation is canonical and the plain implementation is its value
@@ -7023,7 +7028,9 @@ projection (`.fst` of the counted result) — `eval` projects `evalCounted`,
 `evalUserCall`/`evalConditionalCall`/`evalResolvedCall`/`evalCallExpr`/
 `evalDotCall`/`applyBuiltin`/`evalAlgOutputCore`/
 `evalCaptureValue`/`evalZeroArgPropertyAccess`/`evalResolvedCallbackCall`
-project their counted twins. `evalCounted` therefore matches EVERY `Expr`
+project their counted twins — by DEFINITION: each is a derived answer, the
+ordinary function `do let out <- <counted twin>; pure out.fst` of the
+evaluator answer, with no `EvalCall` of its own. `evalCounted` therefore matches EVERY `Expr`
 variant explicitly, with no default arm delegating back to `eval`: the
 exhaustive match is the structural guard that a new variant cannot silently
 reintroduce reverse (plain-owned) semantics. Plain projections may still be
@@ -8345,11 +8352,14 @@ of `EvalCall`, whose result type is `EvalCall.Ret`. An `EvalRec` answers every c
 operation's body (`EvalBody.*`) is an ordinary, non-recursive definition that reaches every
 other operation ONLY through the `EvalRec` it is given (`rec.evalCounted …`,
 `rec.demandNeedRecursive …`), and `evalStep` dispatches a call to its body. So the evaluator is
-the functional `evalStep`, and the kernel sees every body.
+the functional `evalStep`, and the kernel sees every body. An operation that is only another
+operation's answer or that answer's value (`eval`, `applyBuiltin`, `evalProgramOutput`, …) is not
+a constructor: it is a DERIVED answer, an ordinary function of the `EvalRec` (§ Derived answers).
 
 FUEL. `evalFuel n` iterates `evalStep` `n` times from the everywhere-incomplete answer: every
 recursive `EvalCall` edge costs one unit, so `n` bounds the nesting of those calls (one `while`
-round is one call, `EvalBody.whileLoop`). Finite structural helpers, including `repeatLoop`,
+round is one call, `EvalBody.whileLoop`; a derived answer is no edge — `rec.eval e …` is the one
+`evalCounted` edge). Finite structural helpers, including `repeatLoop`,
 can make many sibling calls at one index; fuel is not a bound on all work or all helper recursion.
 Fuel is a proof index only: it is not a KatLang
 argument, not a C# budget, not a language error and not a bound on terminating programs. Running
@@ -8362,7 +8372,8 @@ answers are ordered by `EvalM.Approx` (incomplete below everything, a completed 
 below itself), `evalStep` is monotone, so the iterates form a chain.
 
 PRODUCTION. The production operations (`evalCounted`, `demandNeedRecursive`, …, defined after the
-core) are `evalUnbounded` at their call: it runs the SAME total core with `initialFuel` and, should
+core) are `evalUnbounded` at their call (a derived one is the same function of those that its
+`EvalRec.<name>` is of an answer): it runs the SAME total core with `initialFuel` and, should
 that be incomplete, with ever more fuel from the same entry state (`searchFuel`, a
 `partial_fixpoint`, so its unfolding equation is a kernel theorem). A completed production outcome
 is therefore exactly the outcome of the total core at some fuel; a divergent program still
@@ -8530,31 +8541,19 @@ inductive EvalCall : Type where
   | argumentNeed (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String)
   | runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String)
-  | evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalAlgOutputSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | formOutputRow (ctx : EvalCtx) (env : ValEnv) (e : Expr)
   | whileVerdictSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalSequenceCallbackCall (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-  | evalSequenceCallbackCallCounted (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalAlgOutputPreparedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalOutputRowsPreparedCore (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv)
-  | evalCapturePreparedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | evalCaptureCountedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-  | evalCaptureValue (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | evalAlgOutputCountedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalZeroArgumentDemandOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalZeroArgumentDemandOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalArgumentValue (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalZeroArgPropertyAccessCounted (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest)
-  | evalZeroArgPropertyAccess (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalConditionalCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalUserCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv)
   | evalResolvedCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-  | evalResolvedCallbackCall (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalSequenceReduceStepCounted (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | demandSequenceBuiltinCallItemValue (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv)
   | bindSequenceBuiltinArguments (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -8563,14 +8562,11 @@ inductive EvalCall : Type where
   | evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | applyBuiltinCountedSequence (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | applyBuiltinCounted (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-  | applyBuiltin (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-  | applyBuiltinCountedResolved (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalExplicitSequenceValueItems (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalExplicitSequenceValueRowSlots (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv)
   | evalExplicitSequenceValueExprSlots (expr : Expr) (ctx : EvalCtx) (env : ValEnv)
   | evalUserCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-  | evalResolvedCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin)
   | evalCallCountedExpr (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | callLexicalWithReceiverCounted (name : Ident) (receiver : Expr) (fallback : Expr) (extraArgs : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv)
@@ -8591,11 +8587,6 @@ inductive EvalCall : Type where
   | evalComparisonCounted (first : Expr) (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv)
   | evalComparisonLinksCounted (previousExpr : Expr) (previous : Result) (holds : Bool) (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv)
   | evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
-  | evalUserCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-  | evalConditionalCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-  | evalCallExpr (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-  | evalDotCall (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-  | eval (e : Expr) (ctx : EvalCtx) (env : ValEnv)
 
 @[reducible] def EvalCall.Ret : EvalCall → Type
   | .whileLoop .. => (List NeedSupply.Sourced)
@@ -8636,31 +8627,19 @@ inductive EvalCall : Type where
   | .argumentNeed .. => Nat
   | .runNeedStepSlots .. => (List Result)
   | .runNeedWhileRound .. => (Option (List Result))
-  | .evalAlgOutputCore .. => Result
-  | .evalAlgOutput .. => Result
-  | .evalProgramOutput .. => Result
   | .evalAlgOutputSlots .. => (List Result)
   | .formOutputRow .. => (List Result)
   | .whileVerdictSlots .. => (Option (List Result))
-  | .evalSequenceCallbackCall .. => Result
-  | .evalSequenceCallbackCallCounted .. => CountedResult
   | .evalAlgOutputPreparedCore .. => PreparedAlgorithmOutput
   | .evalOutputRowsPreparedCore .. => PreparedAlgorithmOutput
-  | .evalCapturePreparedCore .. => PreparedAlgorithmOutput
   | .evalCaptureCountedCore .. => CountedResult
-  | .evalCaptureValue .. => Result
   | .evalAlgOutputCountedCore .. => CountedResult
-  | .evalAlgOutputCounted .. => CountedResult
   | .evalZeroArgumentDemandOutputCounted .. => CountedResult
-  | .evalZeroArgumentDemandOutput .. => Result
   | .evalArgumentValueCounted .. => CountedResult
-  | .evalArgumentValue .. => Result
   | .evalZeroArgPropertyAccessCounted .. => CountedResult
-  | .evalZeroArgPropertyAccess .. => Result
   | .evalConditionalCallbackCallCounted .. => CountedResult
   | .evalUserCallbackCallCounted .. => CountedResult
   | .evalResolvedCallbackCallCounted .. => CountedResult
-  | .evalResolvedCallbackCall .. => Result
   | .evalSequenceReduceStepCounted .. => CountedResult
   | .demandSequenceBuiltinCallItemValue .. => CallableCallItem
   | .bindSequenceBuiltinArguments .. => BoundSequenceBuiltinArguments
@@ -8669,14 +8648,11 @@ inductive EvalCall : Type where
   | .evalMapCounted .. => CountedResult
   | .applyBuiltinCountedSequence .. => CountedResult
   | .applyBuiltinCounted .. => CountedResult
-  | .applyBuiltin .. => Result
-  | .applyBuiltinCountedResolved .. => CountedResult
   | .evalExplicitSequenceValueItems .. => (List Result)
   | .evalExplicitSequenceValueRowSlots .. => (List Result)
   | .evalExplicitSequenceValueExprSlots .. => (List Result)
   | .evalUserCallCounted .. => CountedResult
   | .evalConditionalCallCounted .. => CountedResult
-  | .evalResolvedCall .. => Result
   | .evalResolvedCallCounted .. => CountedResult
   | .evalCallCountedExpr .. => CountedResult
   | .callLexicalWithReceiverCounted .. => CountedResult
@@ -8697,11 +8673,6 @@ inductive EvalCall : Type where
   | .evalComparisonCounted .. => CountedResult
   | .evalComparisonLinksCounted .. => CountedResult
   | .evalCounted .. => CountedResult
-  | .evalUserCall .. => Result
-  | .evalConditionalCall .. => Result
-  | .evalCallExpr .. => Result
-  | .evalDotCall .. => Result
-  | .eval .. => Result
 
 abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
 
@@ -8781,56 +8752,32 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.runNeedStepSlots step ctx env cells stepName)
 @[inline] def EvalRec.runNeedWhileRound (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (Option (List Result)) :=
   rec (.runNeedWhileRound step ctx env cells stepName)
-@[inline] def EvalRec.evalAlgOutputCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalAlgOutputCore a ctx env)
-@[inline] def EvalRec.evalAlgOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalAlgOutput a ctx env)
-@[inline] def EvalRec.evalProgramOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalProgramOutput a ctx env)
 @[inline] def EvalRec.evalAlgOutputSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
   rec (.evalAlgOutputSlots a ctx env)
 @[inline] def EvalRec.formOutputRow (rec : EvalRec) (ctx : EvalCtx) (env : ValEnv) (e : Expr) : EvalM (List Result) :=
   rec (.formOutputRow ctx env e)
 @[inline] def EvalRec.whileVerdictSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) :=
   rec (.whileVerdictSlots a ctx env)
-@[inline] def EvalRec.evalSequenceCallbackCall (rec : EvalRec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  rec (.evalSequenceCallbackCall callee item ctx env calleeName)
-@[inline] def EvalRec.evalSequenceCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-  rec (.evalSequenceCallbackCallCounted callee item ctx env calleeName)
 @[inline] def EvalRec.evalAlgOutputPreparedCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   rec (.evalAlgOutputPreparedCore a ctx env)
 @[inline] def EvalRec.evalOutputRowsPreparedCore (rec : EvalRec) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   rec (.evalOutputRowsPreparedCore rows rowCtx env)
-@[inline] def EvalRec.evalCapturePreparedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
-  rec (.evalCapturePreparedCore rows ctx env)
 @[inline] def EvalRec.evalCaptureCountedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalCaptureCountedCore rows ctx env)
-@[inline] def EvalRec.evalCaptureValue (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalCaptureValue rows ctx env)
 @[inline] def EvalRec.evalAlgOutputCountedCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalAlgOutputCountedCore a ctx env)
-@[inline] def EvalRec.evalAlgOutputCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  rec (.evalAlgOutputCounted a ctx env)
 @[inline] def EvalRec.evalZeroArgumentDemandOutputCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalZeroArgumentDemandOutputCounted a ctx env)
-@[inline] def EvalRec.evalZeroArgumentDemandOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalZeroArgumentDemandOutput a ctx env)
 @[inline] def EvalRec.evalArgumentValueCounted (rec : EvalRec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalArgumentValueCounted arg ctx env)
-@[inline] def EvalRec.evalArgumentValue (rec : EvalRec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalArgumentValue arg ctx env)
 @[inline] def EvalRec.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest := .read) : EvalM CountedResult :=
   rec (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)
-@[inline] def EvalRec.evalZeroArgPropertyAccess (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)
 @[inline] def EvalRec.evalConditionalCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   rec (.evalConditionalCallbackCallCounted callee args ctx env calleeName)
 @[inline] def EvalRec.evalUserCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalUserCallbackCallCounted callee args ctx env)
 @[inline] def EvalRec.evalResolvedCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   rec (.evalResolvedCallbackCallCounted callee args ctx env calleeName)
-@[inline] def EvalRec.evalResolvedCallbackCall (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  rec (.evalResolvedCallbackCall callee args ctx env calleeName)
 @[inline] def EvalRec.evalSequenceReduceStepCounted (rec : EvalRec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   rec (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)
 @[inline] def EvalRec.demandSequenceBuiltinCallItemValue (rec : EvalRec) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem :=
@@ -8847,10 +8794,6 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.applyBuiltinCountedSequence b metadata args ctx env)
 @[inline] def EvalRec.applyBuiltinCounted (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.applyBuiltinCounted b args ctx env)
-@[inline] def EvalRec.applyBuiltin (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.applyBuiltin b args ctx env)
-@[inline] def EvalRec.applyBuiltinCountedResolved (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  rec (.applyBuiltinCountedResolved b args ctx env)
 @[inline] def EvalRec.evalExplicitSequenceValueItems (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
   rec (.evalExplicitSequenceValueItems a ctx env)
 @[inline] def EvalRec.evalExplicitSequenceValueRowSlots (rec : EvalRec) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
@@ -8861,8 +8804,6 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalUserCallCounted callee args ctx env)
 @[inline] def EvalRec.evalConditionalCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   rec (.evalConditionalCallCounted callee args ctx env calleeName)
-@[inline] def EvalRec.evalResolvedCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  rec (.evalResolvedCall callee args ctx env calleeName)
 @[inline] def EvalRec.evalResolvedCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") (origin : CalleeOrigin := .none) : EvalM CountedResult :=
   rec (.evalResolvedCallCounted callee args ctx env calleeName origin)
 @[inline] def EvalRec.evalCallCountedExpr (rec : EvalRec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
@@ -8903,16 +8844,185 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalComparisonLinksCounted previousExpr previous holds links ctx env)
 @[inline] def EvalRec.evalCounted (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalCounted e ctx env)
-@[inline] def EvalRec.evalUserCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalUserCall callee args ctx env)
-@[inline] def EvalRec.evalConditionalCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  rec (.evalConditionalCall callee args ctx env calleeName)
-@[inline] def EvalRec.evalCallExpr (rec : EvalRec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalCallExpr f args ctx env)
-@[inline] def EvalRec.evalDotCall (rec : EvalRec) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.evalDotCall target name fallback argsOpt ctx env)
-@[inline] def EvalRec.eval (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  rec (.eval e ctx env)
+
+/-! Derived answers. Each operation below is its twin's value (`.fst`) or its twin itself: an
+    ORDINARY FUNCTION of an evaluator answer, not a call of the core. It has no `EvalCall`
+    constructor, no `evalStep` arm and no body, so reading one costs no fuel and adds no case
+    to a whole-run law; a law about it follows from its twin's by its defining equation.
+    The counted twin stays canonical (plain/counted ownership): a derived answer never has a
+    body of its own. C#: where the plain operation exists it is an ordinary method over its counted
+    twin (`ProjectCountedValue`), never a second implementation. -/
+
+/-- Evaluate an algorithm's output expressions and collect into a single Result:
+    the value projection of `evalAlgOutputPreparedCore`, so the plain and counted
+    evaluators can never disagree on an output value. Each NON-spread output
+    expression contributes exactly one visible slot, even when it evaluates to
+    the empty sequence value `()` (counted output `0`); an explicit spread
+    `expr*` contributes its expanded items, so a spread of `()` contributes
+    zero items and `(A*, 99)` splices `A`'s items before `99`. The slots are
+    combined with `combineOutputSlots`, which preserves singleton slot
+    structure and deliberately does NOT apply the general `Result.normalize`,
+    which would recursively erase useful one-item sequence structure.
+    (Loop-step state reads the same rows as a SUPPLY through
+    `evalAlgOutputSlots`, not as this one combined value.)
+
+    A user-defined algorithm value may exist structurally without output, but
+    forcing it in value position raises `missingOutput`. A root program is
+    also forced in value position when a result is requested; explicit empty
+    output is written as `()`, the empty sequence value.
+
+    Forcing a conditional algorithm in value position fails through
+    `conditionalValueAccessError?`: branch selection requires call arguments,
+    so a conditional must never silently force its empty output list.
+    C#: `EvalAlgOutputCore`. -/
+@[inline] def EvalRec.evalAlgOutputCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalAlgOutputCountedCore a ctx env
+  pure out.fst
+
+/-- Force a user-defined algorithm value to produce output. -/
+@[inline] def EvalRec.evalAlgOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  rec.evalAlgOutputCore a ctx env
+
+/-- Counted forcing variant of `evalAlgOutput`. -/
+@[inline] def EvalRec.evalAlgOutputCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  rec.evalAlgOutputCountedCore a ctx env
+
+/-- Evaluates a `Expr.capture` body's rows in the surrounding context (a
+    capture owns no scope, so nothing is pushed) through the shared
+    output-row supply loop. The multi-item emitted count is preserved here;
+    value-position consumers re-count at the capture's value boundary
+    (`Result.valueCount`). An empty bundle captures the empty sequence value.
+    C#: `EvalCapturePreparedCore`. -/
+@[inline] def EvalRec.evalCapturePreparedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
+  rec.evalOutputRowsPreparedCore rows ctx env
+
+/-- Evaluates a capture body to its single canonical captured value. -/
+@[inline] def EvalRec.evalCaptureValue (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalCaptureCountedCore rows ctx env
+  pure out.fst
+
+/-- Value projection of `evalZeroArgumentDemandOutputCounted`.
+    C#: `EvalZeroArgumentDemandOutput`. -/
+@[inline] def EvalRec.evalZeroArgumentDemandOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalZeroArgumentDemandOutputCounted a ctx env
+  pure out.fst
+
+/-- Evaluate a root program algorithm when a result is requested. The root is
+    demanded for its value with NOTHING supplied, so it goes through the ONE
+    zero-argument demand funnel: a root declaring no parameter pattern is its
+    output exactly as before, and a root whose parameter list accepts an EMPTY
+    supply (a collecting-only host-built root) binds that supply first. -/
+@[inline] def EvalRec.evalProgramOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  rec.evalZeroArgumentDemandOutput a ctx env
+
+/-- Value projection of `evalArgumentValueCounted`. C#: `EvalResolvedArgument`. -/
+@[inline] def EvalRec.evalArgumentValue (rec : EvalRec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalArgumentValueCounted arg ctx env
+  pure out.fst
+
+/-- Value projection of `evalZeroArgPropertyAccessCounted` at its default `.read` request. -/
+@[inline] def EvalRec.evalZeroArgPropertyAccess (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env
+  pure out.fst
+
+/-- Non-counted wrapper for callback calls (the value projection of
+    `evalResolvedCallbackCallCounted`). -/
+@[inline] def EvalRec.evalResolvedCallbackCall (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+  let out <- rec.evalResolvedCallbackCallCounted callee args ctx env calleeName
+  pure out.fst
+
+/-- Evaluate a higher-order sequence callback on one collected iteration
+    item (the `filter` predicate). C#: `EvalSequenceCallbackCall`. -/
+@[inline] def EvalRec.evalSequenceCallbackCall (rec : EvalRec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
+  rec.evalResolvedCallbackCall callee [countedSequenceCallbackItem item] ctx env calleeName
+
+/-- Counted variant of `evalSequenceCallbackCall` used by `map`: the transform's
+    ordinary call result (HO-03). C#: `EvalSequenceCallbackCallCounted`. -/
+@[inline] def EvalRec.evalSequenceCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
+  rec.evalResolvedCallbackCallCounted callee [countedSequenceCallbackItem item] ctx env calleeName
+
+/-- Builtin application with plain Result output.
+    This is the Result projection of `applyBuiltinCounted`: the counted twin
+    owns the builtin dispatch and semantics, and the non-counted path only
+    discards the emitted-count metadata. The CoreTests builtin projection
+    parity guards pin this equivalence (values, error diagnostics, and
+    evaluator state) case by case. -/
+@[inline] def EvalRec.applyBuiltin (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.applyBuiltinCounted b args ctx env
+  pure out.fst
+
+/-- The builtin application of a resolved call and of a builtin loop step (C#:
+    `ApplyBuiltinCountedResolved`, the ONE builtin dispatch switch, which a builtin
+    callback reaches too; Lean's callback route calls `applyBuiltinCounted`
+    directly): `applyBuiltinCounted` over the arguments as received — supplied
+    cells, a call's explicit spreads already opened at supply formation
+    (`formNeedSupplySourced`). *(Until 2026-10-13 it first expanded spread-marked
+    arguments, which no evaluator-built argument had been since Model C; only
+    CoreTests fixtures wrote them.)* -/
+@[inline] def EvalRec.applyBuiltinCountedResolved (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  rec.applyBuiltinCounted b args ctx env
+
+/-- User-defined call evaluation with plain Result output.
+    This is the Result projection of `evalUserCallCounted`: the counted twin
+    owns argument binding (dual-view ABI, patterned/deconstruction/flat
+    dispatch) and body evaluation, and the non-counted path only discards
+    the emitted-count metadata (`reCountValueBoundary` is value-preserving).
+    The CoreTests call projection parity guards pin this equivalence. -/
+@[inline] def EvalRec.evalUserCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalUserCallCounted callee args ctx env
+  pure out.fst
+
+/-- Conditional call evaluation with plain Result output.
+    This is the Result projection of `evalConditionalCallCounted`: the
+    counted twin owns argument assembly, clause matching, and branch body
+    evaluation, and the non-counted path only discards the emitted-count
+    metadata (`reCountValueBoundary` is value-preserving). The CoreTests
+    call projection parity guards pin this equivalence. -/
+@[inline] def EvalRec.evalConditionalCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+  let out <- rec.evalConditionalCallCounted callee args ctx env calleeName
+  pure out.fst
+
+/-- Dispatch an already-resolved callee with plain Result output.
+    This is the Result projection of `evalResolvedCallCounted`: the counted
+    twin owns the builtin/flat-binder/conditional/user dispatch, and each of
+    its arms already ends in a projected family, so the projection is
+    compositional. -/
+@[inline] def EvalRec.evalResolvedCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+  let out <- rec.evalResolvedCallCounted callee args ctx env calleeName
+  pure out.fst
+
+/-- Context-aware direct call evaluation for expression position with plain
+    Result output. This is the Result projection of `evalCallCountedExpr`:
+    the counted twin owns callee resolution and dispatch, including the
+    `CtxMsg.call` error-context attachment, so contexts cannot drift between
+    the plain and counted spellings. -/
+@[inline] def EvalRec.evalCallExpr (rec : EvalRec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalCallCountedExpr f args ctx env
+  pure out.fst
+
+/-- Dot-call evaluation with plain Result output.
+    This is the Result projection of `evalDotCallCounted`: the counted twin
+    owns the dot-call dispatch (receiver resolution, structural lookup,
+    lexical fallback with receiver injection, zero-arg property access,
+    conditional dispatch, and receiver-spread rules), and the non-counted
+    path only discards the emitted-count metadata. The CoreTests dot-call
+    projection parity guards pin this equivalence (values, error
+    diagnostics, and evaluator state) case by case. -/
+@[inline] def EvalRec.evalDotCall (rec : EvalRec) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalDotCallCounted target name fallback argsOpt ctx env
+  pure out.fst
+
+/-- Expression evaluation with plain Result output.
+    This is the TOTAL Result projection of `evalCounted`: the counted
+    evaluator owns the per-variant dispatch for every `Expr` constructor
+    (leaves included), and this projection only discards the emitted-count
+    metadata. Counted code calls it wherever a subexpression is read at a
+    value boundary; that recursion is into strictly smaller work, never a
+    same-node ownership cycle, because `evalCounted` has no arm that
+    delegates back here. -/
+@[inline] def EvalRec.eval (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- rec.evalCounted e ctx env
+  pure out.fst
 
 /-- META-S3-4: what a dot edge `target.name` selects on a structural MISS: one of the receiver
     intrinsics (`string`, DOT-08; `Invoke`, CallReference S1; `Arguments`, S2; `Algorithm`, CR-14)
@@ -9227,18 +9337,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).runNeedWhileRound step ctx env cells stepName) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputCore a ctx env) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutput_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutput a ctx env) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalProgramOutput_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalProgramOutput a ctx env) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputSlots_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputSlots a ctx env) :=
@@ -9251,14 +9349,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).whileVerdictSlots a ctx env) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalSequenceCallbackCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalSequenceCallbackCall callee item ctx env calleeName) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalSequenceCallbackCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalSequenceCallbackCallCounted callee item ctx env calleeName) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputPreparedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputPreparedCore a ctx env) :=
@@ -9267,49 +9357,25 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalOutputRowsPreparedCore rows rowCtx env) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalCapturePreparedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalCapturePreparedCore rows ctx env) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalCaptureCountedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalCaptureCountedCore rows ctx env) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalCaptureValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalCaptureValue rows ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCountedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputCountedCore a ctx env) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputCounted a ctx env) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgumentDemandOutputCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgumentDemandOutputCounted a ctx env) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgumentDemandOutput_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgumentDemandOutput a ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalArgumentValueCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalArgumentValueCounted arg ctx env) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalArgumentValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalArgumentValue arg ctx env) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgPropertyAccessCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgPropertyAccess_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalConditionalCallbackCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
@@ -9322,10 +9388,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
 @[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCallbackCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCallbackCallCounted callee args ctx env calleeName) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCallbackCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCallbackCall callee args ctx env calleeName) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalSequenceReduceStepCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
@@ -9359,14 +9421,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).applyBuiltinCounted b args ctx env) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.applyBuiltin_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).applyBuiltin b args ctx env) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.applyBuiltinCountedResolved_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).applyBuiltinCountedResolved b args ctx env) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalExplicitSequenceValueItems_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalExplicitSequenceValueItems a ctx env) :=
@@ -9386,10 +9440,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
 @[partial_fixpoint_monotone] theorem EvalRec.evalConditionalCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalConditionalCallCounted callee args ctx env calleeName) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCall callee args ctx env calleeName) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
@@ -9471,26 +9521,86 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalCounted e ctx env) :=
   fun _ _ h => hrec _ _ h _
+@[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputCore a ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalAlgOutputCountedCore_mono recOf hrec a ctx env _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutput_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutput a ctx env) :=
+  EvalRec.evalAlgOutputCore_mono recOf hrec a ctx env
+@[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputCounted a ctx env) :=
+  EvalRec.evalAlgOutputCountedCore_mono recOf hrec a ctx env
+@[partial_fixpoint_monotone] theorem EvalRec.evalCapturePreparedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalCapturePreparedCore rows ctx env) :=
+  EvalRec.evalOutputRowsPreparedCore_mono recOf hrec rows ctx env
+@[partial_fixpoint_monotone] theorem EvalRec.evalCaptureValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalCaptureValue rows ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalCaptureCountedCore_mono recOf hrec rows ctx env _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgumentDemandOutput_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgumentDemandOutput a ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalZeroArgumentDemandOutputCounted_mono recOf hrec a ctx env _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalProgramOutput_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalProgramOutput a ctx env) :=
+  EvalRec.evalZeroArgumentDemandOutput_mono recOf hrec a ctx env
+@[partial_fixpoint_monotone] theorem EvalRec.evalArgumentValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalArgumentValue arg ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalArgumentValueCounted_mono recOf hrec arg ctx env _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgPropertyAccess_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalZeroArgPropertyAccessCounted_mono recOf hrec accessKind owner binding resolvedAlgorithm ctx env .read _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCallbackCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCallbackCall callee args ctx env calleeName) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalResolvedCallbackCallCounted_mono recOf hrec callee args ctx env calleeName _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalSequenceCallbackCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalSequenceCallbackCall callee item ctx env calleeName) :=
+  EvalRec.evalResolvedCallbackCall_mono recOf hrec callee [countedSequenceCallbackItem item] ctx env calleeName
+@[partial_fixpoint_monotone] theorem EvalRec.evalSequenceCallbackCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalSequenceCallbackCallCounted callee item ctx env calleeName) :=
+  EvalRec.evalResolvedCallbackCallCounted_mono recOf hrec callee [countedSequenceCallbackItem item] ctx env calleeName
+@[partial_fixpoint_monotone] theorem EvalRec.applyBuiltin_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).applyBuiltin b args ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.applyBuiltinCounted_mono recOf hrec b args ctx env _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.applyBuiltinCountedResolved_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).applyBuiltinCountedResolved b args ctx env) :=
+  EvalRec.applyBuiltinCounted_mono recOf hrec b args ctx env
 @[partial_fixpoint_monotone] theorem EvalRec.evalUserCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalUserCall callee args ctx env) :=
-  fun _ _ h => hrec _ _ h _
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalUserCallCounted_mono recOf hrec callee args ctx env _ _ h)
 @[partial_fixpoint_monotone] theorem EvalRec.evalConditionalCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalConditionalCall callee args ctx env calleeName) :=
-  fun _ _ h => hrec _ _ h _
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalConditionalCallCounted_mono recOf hrec callee args ctx env calleeName _ _ h)
+@[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCall callee args ctx env calleeName) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalResolvedCallCounted_mono recOf hrec callee args ctx env calleeName .none _ _ h)
 @[partial_fixpoint_monotone] theorem EvalRec.evalCallExpr_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalCallExpr f args ctx env) :=
-  fun _ _ h => hrec _ _ h _
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalCallCountedExpr_mono recOf hrec f args ctx env _ _ h)
 @[partial_fixpoint_monotone] theorem EvalRec.evalDotCall_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalDotCall target name fallback argsOpt ctx env) :=
-  fun _ _ h => hrec _ _ h _
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalDotCallCounted_mono recOf hrec target name fallback argsOpt ctx env _ _ h)
 @[partial_fixpoint_monotone] theorem EvalRec.eval_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).eval e ctx env) :=
-  fun _ _ h => hrec _ _ h _
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalCounted_mono recOf hrec e ctx env _ _ h)
 
 -- META-S3-1: the identity resolvers live in the evaluator recursion core, so a RUNTIME
 -- projection (a `.Algorithm` link) can demand VALUE (`demandNeedRecursive`).
@@ -10285,44 +10395,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   -- Evaluation
   --------------------------------------------------------------------------
 
-  /-- Evaluate an algorithm's output expressions and collect into a single Result:
-      the value projection of `evalAlgOutputPreparedCore`, so the plain and counted
-      evaluators can never disagree on an output value. Each NON-spread output
-      expression contributes exactly one visible slot, even when it evaluates to
-      the empty sequence value `()` (counted output `0`); an explicit spread
-      `expr*` contributes its expanded items, so a spread of `()` contributes
-      zero items and `(A*, 99)` splices `A`'s items before `99`. The slots are
-      combined with `combineOutputSlots`, which preserves singleton slot
-      structure and deliberately does NOT apply the general `Result.normalize`,
-      which would recursively erase useful one-item sequence structure.
-      (Loop-step state reads the same rows as a SUPPLY through
-      `evalAlgOutputSlots`, not as this one combined value.)
-
-      A user-defined algorithm value may exist structurally without output, but
-      forcing it in value position raises `missingOutput`. A root program is
-      also forced in value position when a result is requested; explicit empty
-      output is written as `()`, the empty sequence value.
-
-      Forcing a conditional algorithm in value position fails through
-      `conditionalValueAccessError?`: branch selection requires call arguments,
-      so a conditional must never silently force its empty output list.
-      C#: `EvalAlgOutputCore`. -/
-  def EvalBody.evalAlgOutputCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.evalAlgOutputCountedCore a ctx env
-    pure out.fst
-
-  /-- Force a user-defined algorithm value to produce output. -/
-  def EvalBody.evalAlgOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-    rec.evalAlgOutputCore a ctx env
-
-  /-- Evaluate a root program algorithm when a result is requested. The root is
-      demanded for its value with NOTHING supplied, so it goes through the ONE
-      zero-argument demand funnel: a root declaring no parameter pattern is its
-      output exactly as before, and a root whose parameter list accepts an EMPTY
-      supply (a collecting-only host-built root) binds that supply first. -/
-  def EvalBody.evalProgramOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-    rec.evalZeroArgumentDemandOutput a ctx env
-
   /-- The ROW SUPPLY of an algorithm's output (LOOP-03, VAL-07 applied to a loop
       step; the `repeat` receiver's reading — a `while` round reads the same rows condition
       first, `whileVerdictSlots`): every output row is formed once, left to right
@@ -10365,16 +10437,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   def EvalBody.whileVerdictSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) :=
     ActivatedBody.readRows rec.formOutputRow WhileRound.conditionFirst
       (fun out => WhileRound.ofSupply [out.fst]) a ctx env
-
-  /-- Evaluate a higher-order sequence callback on one collected iteration
-      item (the `filter` predicate). C#: `EvalSequenceCallbackCall`. -/
-  def EvalBody.evalSequenceCallbackCall (rec : EvalRec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-    rec.evalResolvedCallbackCall callee [countedSequenceCallbackItem item] ctx env calleeName
-
-  /-- Counted variant of `evalSequenceCallbackCall` used by `map`: the transform's
-      ordinary call result (HO-03). C#: `EvalSequenceCallbackCallCounted`. -/
-  def EvalBody.evalSequenceCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-    rec.evalResolvedCallbackCallCounted callee [countedSequenceCallbackItem item] ctx env calleeName
 
   /-- Evaluate an algorithm's output expressions once, retaining both the combined counted
       value and the explicit evaluated output-slot view. The slot list is the accumulator
@@ -10434,32 +10496,14 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
               collect rest (out.fst :: acc) (emitted + slotCount)
     collect rows [] 0
 
-  /-- Evaluates a `Expr.capture` body's rows in the surrounding context (a
-      capture owns no scope, so nothing is pushed) through the shared
-      output-row supply loop. The multi-item emitted count is preserved here;
-      value-position consumers re-count at the capture's value boundary
-      (`Result.valueCount`). An empty bundle captures the empty sequence value.
-      C#: `EvalCapturePreparedCore`. -/
-  def EvalBody.evalCapturePreparedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
-    rec.evalOutputRowsPreparedCore rows ctx env
-
   def EvalBody.evalCaptureCountedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let out <- rec.evalCapturePreparedCore rows ctx env
     pure out.counted
-
-  /-- Evaluates a capture body to its single canonical captured value. -/
-  def EvalBody.evalCaptureValue (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.evalCaptureCountedCore rows ctx env
-    pure out.fst
 
   /-- Counted projection of the shared prepared algorithm-output evaluation. -/
   def EvalBody.evalAlgOutputCountedCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let out <- rec.evalAlgOutputPreparedCore a ctx env
     pure out.counted
-
-  /-- Counted forcing variant of `evalAlgOutput`. -/
-  def EvalBody.evalAlgOutputCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    rec.evalAlgOutputCountedCore a ctx env
 
   /-- THE BARE READ AT A VALUE TERMINAL (OD-E, M4★): a runtime-target alias is its binding cell's VALUE
       (`aliasValue`); the TERMINAL binding of a static alias chain is that binding's own bare read — the
@@ -10520,12 +10564,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         let newCtx <- needBindingContext ctx bindings
         rec.evalAlgOutputCounted a newCtx (ValEnv.shadow env (Algorithm.params a))
 
-  /-- Value projection of `evalZeroArgumentDemandOutputCounted`.
-      C#: `EvalZeroArgumentDemandOutput`. -/
-  def EvalBody.evalZeroArgumentDemandOutput (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let counted <- rec.evalZeroArgumentDemandOutputCounted a ctx env
-    pure counted.fst
-
   /-- Demand a builtin argument slot for its VALUE. A supplied cell is its one VALUE
       demand (`demandNeedRecursive`) — every argument the evaluator builds. An argument WITHOUT
       a cell (the hand-built fixture seam) is judged by the ONE zero-argument
@@ -10543,11 +10581,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     match zeroArgumentDemandError? arg.source? arg.algorithm with
     | some err => .error err
     | none => rec.evalZeroArgumentDemandOutputCounted arg.algorithm ctx env
-
-  /-- Value projection of `evalArgumentValueCounted`. C#: `EvalResolvedArgument`. -/
-  def EvalBody.evalArgumentValue (rec : EvalRec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let counted <- rec.evalArgumentValueCounted arg ctx env
-    pure counted.fst
 
   /-- A property-style READ's zero-argument demand (CACHE-OWNER-D1, owner decision October 23
       2026): DECLARING-CONTEXT INHERITANCE. A parameterless user owner is checked and entered
@@ -10667,10 +10700,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     else
       EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env
 
-  def EvalBody.evalZeroArgPropertyAccess (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let counted <- rec.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env
-    pure counted.fst
-
   /-- A clause-family callback invocation: the ordinary family dispatch over Ready
       cells, whose result is the ordinary call result (HO-03, PAT-11). -/
   def EvalBody.evalConditionalCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
@@ -10719,12 +10748,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         let target <- rec.resolveAliasTarget callee ctx
         rec.evalResolvedCallbackCallCounted target args ctx env calleeName
     | _ => rec.evalUserCallbackCallCounted callee args ctx env
-
-  /-- Non-counted wrapper for callback calls (the value projection of
-      `evalResolvedCallbackCallCounted`). -/
-  def EvalBody.evalResolvedCallbackCall (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
-    let out <- rec.evalResolvedCallbackCallCounted callee args ctx env calleeName
-    pure out.fst
 
   /-- Evaluate a `reduce` step on one collected iteration item. The reducer is
       an ordinary two-argument callback (THE CALLBACK LAW): it receives the
@@ -11255,27 +11278,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         | _, _ =>
             .error (builtinArityError b args.length)
 
-  /-- Builtin application with plain Result output.
-      This is the Result projection of `applyBuiltinCounted`: the counted twin
-      owns the builtin dispatch and semantics, and the non-counted path only
-      discards the emitted-count metadata. The CoreTests builtin projection
-      parity guards pin this equivalence (values, error diagnostics, and
-      evaluator state) case by case. -/
-  def EvalBody.applyBuiltin (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.applyBuiltinCounted b args ctx env
-    pure out.fst
-
-  /-- The builtin application of a resolved call and of a builtin loop step (C#:
-      `ApplyBuiltinCountedResolved`, the ONE builtin dispatch switch, which a builtin
-      callback reaches too; Lean's callback route calls `applyBuiltinCounted`
-      directly): `applyBuiltinCounted` over the arguments as received — supplied
-      cells, a call's explicit spreads already opened at supply formation
-      (`formNeedSupplySourced`). *(Until 2026-10-13 it first expanded spread-marked
-      arguments, which no evaluator-built argument had been since Model C; only
-      CoreTests fixtures wrote them.)* -/
-  def EvalBody.applyBuiltinCountedResolved (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    rec.applyBuiltinCounted b args ctx env
-
   def EvalBody.evalExplicitSequenceValueItems (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) := do
     match a with
     | .builtin b => do
@@ -11381,15 +11383,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   def EvalBody.evalConditionalCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
     let cells <- NeedSupply.addresses rec.evalSupplySpread ctx env args
     rec.evalNeedFamilySupply callee cells ctx env calleeName
-
-  /-- Dispatch an already-resolved callee with plain Result output.
-      This is the Result projection of `evalResolvedCallCounted`: the counted
-      twin owns the builtin/flat-binder/conditional/user dispatch, and each of
-      its arms already ends in a projected family, so the projection is
-      compositional. -/
-  def EvalBody.evalResolvedCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
-    let out <- rec.evalResolvedCallCounted callee args ctx env calleeName
-    pure out.fst
 
   /-- Dispatch an already-resolved callee in counted evaluation — the
       CANONICAL resolved-callee dispatch (`evalResolvedCall` is its value
@@ -12179,59 +12172,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     | .comparison first links =>
         withNestedMissingOutput (rec.evalComparisonCounted first links ctx env)
 
-  /-- User-defined call evaluation with plain Result output.
-      This is the Result projection of `evalUserCallCounted`: the counted twin
-      owns argument binding (dual-view ABI, patterned/deconstruction/flat
-      dispatch) and body evaluation, and the non-counted path only discards
-      the emitted-count metadata (`reCountValueBoundary` is value-preserving).
-      The CoreTests call projection parity guards pin this equivalence. -/
-  def EvalBody.evalUserCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.evalUserCallCounted callee args ctx env
-    pure out.fst
-
-  /-- Conditional call evaluation with plain Result output.
-      This is the Result projection of `evalConditionalCallCounted`: the
-      counted twin owns argument assembly, clause matching, and branch body
-      evaluation, and the non-counted path only discards the emitted-count
-      metadata (`reCountValueBoundary` is value-preserving). The CoreTests
-      call projection parity guards pin this equivalence. -/
-  def EvalBody.evalConditionalCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
-    let out <- rec.evalConditionalCallCounted callee args ctx env calleeName
-    pure out.fst
-
-  /-- Context-aware direct call evaluation for expression position with plain
-      Result output. This is the Result projection of `evalCallCountedExpr`:
-      the counted twin owns callee resolution and dispatch, including the
-      `CtxMsg.call` error-context attachment, so contexts cannot drift between
-      the plain and counted spellings. -/
-  def EvalBody.evalCallExpr (rec : EvalRec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.evalCallCountedExpr f args ctx env
-    pure out.fst
-
-  /-- Dot-call evaluation with plain Result output.
-      This is the Result projection of `evalDotCallCounted`: the counted twin
-      owns the dot-call dispatch (receiver resolution, structural lookup,
-      lexical fallback with receiver injection, zero-arg property access,
-      conditional dispatch, and receiver-spread rules), and the non-counted
-      path only discards the emitted-count metadata. The CoreTests dot-call
-      projection parity guards pin this equivalence (values, error
-      diagnostics, and evaluator state) case by case. -/
-  def EvalBody.evalDotCall (rec : EvalRec) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.evalDotCallCounted target name fallback argsOpt ctx env
-    pure out.fst
-
-  /-- Expression evaluation with plain Result output.
-      This is the TOTAL Result projection of `evalCounted`: the counted
-      evaluator owns the per-variant dispatch for every `Expr` constructor
-      (leaves included), and this projection only discards the emitted-count
-      metadata. Counted code calls it wherever a subexpression is read at a
-      value boundary; that recursion is into strictly smaller work, never a
-      same-node ownership cycle, because `evalCounted` has no arm that
-      delegates back here. -/
-  def EvalBody.eval (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    let out <- rec.evalCounted e ctx env
-    pure out.fst
-
 
 /-- One condition-first `while` round and, on a true verdict, the next round (LOOP-06,
     `WhileRound.advance`): a false verdict finishes with the cells that entered the round (R1: zero
@@ -12288,31 +12228,19 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .argumentNeed arg ctx env => EvalBody.argumentNeed rec arg ctx env
   | .runNeedStepSlots step ctx env cells stepName => EvalBody.runNeedStepSlots rec step ctx env cells stepName
   | .runNeedWhileRound step ctx env cells stepName => EvalBody.runNeedWhileRound rec step ctx env cells stepName
-  | .evalAlgOutputCore a ctx env => EvalBody.evalAlgOutputCore rec a ctx env
-  | .evalAlgOutput a ctx env => EvalBody.evalAlgOutput rec a ctx env
-  | .evalProgramOutput a ctx env => EvalBody.evalProgramOutput rec a ctx env
   | .evalAlgOutputSlots a ctx env => EvalBody.evalAlgOutputSlots rec a ctx env
   | .formOutputRow ctx env e => EvalBody.formOutputRow rec ctx env e
   | .whileVerdictSlots a ctx env => EvalBody.whileVerdictSlots rec a ctx env
-  | .evalSequenceCallbackCall callee item ctx env calleeName => EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName
-  | .evalSequenceCallbackCallCounted callee item ctx env calleeName => EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName
   | .evalAlgOutputPreparedCore a ctx env => EvalBody.evalAlgOutputPreparedCore rec a ctx env
   | .evalOutputRowsPreparedCore rows rowCtx env => EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env
-  | .evalCapturePreparedCore rows ctx env => EvalBody.evalCapturePreparedCore rec rows ctx env
   | .evalCaptureCountedCore rows ctx env => EvalBody.evalCaptureCountedCore rec rows ctx env
-  | .evalCaptureValue rows ctx env => EvalBody.evalCaptureValue rec rows ctx env
   | .evalAlgOutputCountedCore a ctx env => EvalBody.evalAlgOutputCountedCore rec a ctx env
-  | .evalAlgOutputCounted a ctx env => EvalBody.evalAlgOutputCounted rec a ctx env
   | .evalZeroArgumentDemandOutputCounted a ctx env => EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env
-  | .evalZeroArgumentDemandOutput a ctx env => EvalBody.evalZeroArgumentDemandOutput rec a ctx env
   | .evalArgumentValueCounted arg ctx env => EvalBody.evalArgumentValueCounted rec arg ctx env
-  | .evalArgumentValue arg ctx env => EvalBody.evalArgumentValue rec arg ctx env
   | .evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request
-  | .evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env
   | .evalConditionalCallbackCallCounted callee args ctx env calleeName => EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName
   | .evalUserCallbackCallCounted callee args ctx env => EvalBody.evalUserCallbackCallCounted rec callee args ctx env
   | .evalResolvedCallbackCallCounted callee args ctx env calleeName => EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName
-  | .evalResolvedCallbackCall callee args ctx env calleeName => EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName
   | .evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName
   | .demandSequenceBuiltinCallItemValue item ctx env => EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env
   | .bindSequenceBuiltinArguments b metadata args ctx env => EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env
@@ -12321,14 +12249,11 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .evalMapCounted collection transformAlg ctx env => EvalBody.evalMapCounted rec collection transformAlg ctx env
   | .applyBuiltinCountedSequence b metadata args ctx env => EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env
   | .applyBuiltinCounted b args ctx env => EvalBody.applyBuiltinCounted rec b args ctx env
-  | .applyBuiltin b args ctx env => EvalBody.applyBuiltin rec b args ctx env
-  | .applyBuiltinCountedResolved b args ctx env => EvalBody.applyBuiltinCountedResolved rec b args ctx env
   | .evalExplicitSequenceValueItems a ctx env => EvalBody.evalExplicitSequenceValueItems rec a ctx env
   | .evalExplicitSequenceValueRowSlots rows rowCtx env => EvalBody.evalExplicitSequenceValueRowSlots rec rows rowCtx env
   | .evalExplicitSequenceValueExprSlots expr ctx env => EvalBody.evalExplicitSequenceValueExprSlots rec expr ctx env
   | .evalUserCallCounted callee args ctx env => EvalBody.evalUserCallCounted rec callee args ctx env
   | .evalConditionalCallCounted callee args ctx env calleeName => EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName
-  | .evalResolvedCall callee args ctx env calleeName => EvalBody.evalResolvedCall rec callee args ctx env calleeName
   | .evalResolvedCallCounted callee args ctx env calleeName origin => EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin
   | .evalCallCountedExpr f args ctx env => EvalBody.evalCallCountedExpr rec f args ctx env
   | .callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => EvalBody.callLexicalWithReceiverCounted rec name receiver fallback extraArgs ctx env
@@ -12349,11 +12274,6 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .evalComparisonCounted first links ctx env => EvalBody.evalComparisonCounted rec first links ctx env
   | .evalComparisonLinksCounted previousExpr previous holds links ctx env => EvalBody.evalComparisonLinksCounted rec previousExpr previous holds links ctx env
   | .evalCounted e ctx env => EvalBody.evalCounted rec e ctx env
-  | .evalUserCall callee args ctx env => EvalBody.evalUserCall rec callee args ctx env
-  | .evalConditionalCall callee args ctx env calleeName => EvalBody.evalConditionalCall rec callee args ctx env calleeName
-  | .evalCallExpr f args ctx env => EvalBody.evalCallExpr rec f args ctx env
-  | .evalDotCall target name fallback argsOpt ctx env => EvalBody.evalDotCall rec target name fallback argsOpt ctx env
-  | .eval e ctx env => EvalBody.eval rec e ctx env
 
 /-- R7: the evaluator at fuel `n`: `n` iterations of `evalStep` from the everywhere-incomplete
     answer. Every incomplete outcome is normalized to THE incomplete outcome. -/
@@ -12495,15 +12415,6 @@ def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : 
 def runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (Option (List Result)) :=
   evalUnbounded (.runNeedWhileRound step ctx env cells stepName)
 
-def evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalAlgOutputCore a ctx env)
-
-def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalAlgOutput a ctx env)
-
-def evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalProgramOutput a ctx env)
-
 def evalAlgOutputSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
   evalUnbounded (.evalAlgOutputSlots a ctx env)
 
@@ -12513,50 +12424,26 @@ def formOutputRow (ctx : EvalCtx) (env : ValEnv) (e : Expr) : EvalM (List Result
 def whileVerdictSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) :=
   evalUnbounded (.whileVerdictSlots a ctx env)
 
-def evalSequenceCallbackCall (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  evalUnbounded (.evalSequenceCallbackCall callee item ctx env calleeName)
-
-def evalSequenceCallbackCallCounted (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-  evalUnbounded (.evalSequenceCallbackCallCounted callee item ctx env calleeName)
-
 def evalAlgOutputPreparedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   evalUnbounded (.evalAlgOutputPreparedCore a ctx env)
 
 def evalOutputRowsPreparedCore (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   evalUnbounded (.evalOutputRowsPreparedCore rows rowCtx env)
 
-def evalCapturePreparedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
-  evalUnbounded (.evalCapturePreparedCore rows ctx env)
-
 def evalCaptureCountedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalCaptureCountedCore rows ctx env)
-
-def evalCaptureValue (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalCaptureValue rows ctx env)
 
 def evalAlgOutputCountedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalAlgOutputCountedCore a ctx env)
 
-def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  evalUnbounded (.evalAlgOutputCounted a ctx env)
-
 def evalZeroArgumentDemandOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalZeroArgumentDemandOutputCounted a ctx env)
-
-def evalZeroArgumentDemandOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalZeroArgumentDemandOutput a ctx env)
 
 def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalArgumentValueCounted arg ctx env)
 
-def evalArgumentValue (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalArgumentValue arg ctx env)
-
 def evalZeroArgPropertyAccessCounted (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest := .read) : EvalM CountedResult :=
   evalUnbounded (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)
-
-def evalZeroArgPropertyAccess (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)
 
 def evalConditionalCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   evalUnbounded (.evalConditionalCallbackCallCounted callee args ctx env calleeName)
@@ -12566,9 +12453,6 @@ def evalUserCallbackCallCounted (callee : Algorithm) (args : List CountedResult)
 
 def evalResolvedCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   evalUnbounded (.evalResolvedCallbackCallCounted callee args ctx env calleeName)
-
-def evalResolvedCallbackCall (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  evalUnbounded (.evalResolvedCallbackCall callee args ctx env calleeName)
 
 def evalSequenceReduceStepCounted (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   evalUnbounded (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)
@@ -12594,12 +12478,6 @@ def applyBuiltinCountedSequence (b : Builtin) (metadata : SequenceBuiltinMetadat
 def applyBuiltinCounted (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.applyBuiltinCounted b args ctx env)
 
-def applyBuiltin (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.applyBuiltin b args ctx env)
-
-def applyBuiltinCountedResolved (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  evalUnbounded (.applyBuiltinCountedResolved b args ctx env)
-
 def evalExplicitSequenceValueItems (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
   evalUnbounded (.evalExplicitSequenceValueItems a ctx env)
 
@@ -12614,9 +12492,6 @@ def evalUserCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCt
 
 def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   evalUnbounded (.evalConditionalCallCounted callee args ctx env calleeName)
-
-def evalResolvedCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  evalUnbounded (.evalResolvedCall callee args ctx env calleeName)
 
 def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") (origin : CalleeOrigin := .none) : EvalM CountedResult :=
   evalUnbounded (.evalResolvedCallCounted callee args ctx env calleeName origin)
@@ -12678,20 +12553,82 @@ def evalComparisonLinksCounted (previousExpr : Expr) (previous : Result) (holds 
 def evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalCounted e ctx env)
 
-def evalUserCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalUserCall callee args ctx env)
+/-! The derived production operations: the SAME functions of the production operations that
+    `EvalRec.<name>` is of an evaluator answer (`<name> … = EvalRec.<name> evalUnbounded …`, by
+    `rfl`). Each is its twin's value or its twin; none is a call of the core. -/
 
-def evalConditionalCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
-  evalUnbounded (.evalConditionalCall callee args ctx env calleeName)
+def evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalAlgOutputCountedCore a ctx env
+  pure out.fst
 
-def evalCallExpr (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalCallExpr f args ctx env)
+def evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  evalAlgOutputCore a ctx env
 
-def evalDotCall (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.evalDotCall target name fallback argsOpt ctx env)
+def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  evalAlgOutputCountedCore a ctx env
 
-def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
-  evalUnbounded (.eval e ctx env)
+def evalCapturePreparedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
+  evalOutputRowsPreparedCore rows ctx env
+
+def evalCaptureValue (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalCaptureCountedCore rows ctx env
+  pure out.fst
+
+def evalZeroArgumentDemandOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalZeroArgumentDemandOutputCounted a ctx env
+  pure out.fst
+
+def evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  evalZeroArgumentDemandOutput a ctx env
+
+def evalArgumentValue (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalArgumentValueCounted arg ctx env
+  pure out.fst
+
+def evalZeroArgPropertyAccess (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env
+  pure out.fst
+
+def evalResolvedCallbackCall (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+  let out <- evalResolvedCallbackCallCounted callee args ctx env calleeName
+  pure out.fst
+
+def evalSequenceCallbackCall (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
+  evalResolvedCallbackCall callee [countedSequenceCallbackItem item] ctx env calleeName
+
+def evalSequenceCallbackCallCounted (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
+  evalResolvedCallbackCallCounted callee [countedSequenceCallbackItem item] ctx env calleeName
+
+def applyBuiltin (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- applyBuiltinCounted b args ctx env
+  pure out.fst
+
+def applyBuiltinCountedResolved (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  applyBuiltinCounted b args ctx env
+
+def evalUserCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalUserCallCounted callee args ctx env
+  pure out.fst
+
+def evalConditionalCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+  let out <- evalConditionalCallCounted callee args ctx env calleeName
+  pure out.fst
+
+def evalResolvedCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result := do
+  let out <- evalResolvedCallCounted callee args ctx env calleeName
+  pure out.fst
+
+def evalCallExpr (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalCallCountedExpr f args ctx env
+  pure out.fst
+
+def evalDotCall (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalDotCallCounted target name fallback argsOpt ctx env
+  pure out.fst
+
+def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let out <- evalCounted e ctx env
+  pure out.fst
 
 
 /-- The invocation receiver read over the production operations

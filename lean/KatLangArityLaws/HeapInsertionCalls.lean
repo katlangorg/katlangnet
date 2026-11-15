@@ -9,7 +9,8 @@ The non-observation contract of `PlanAlgorithmBridge.lean` relates the plan-side
 computation with its production-side run. For the PER-BODY obligations — every evaluator body
 simulates whenever its recursive answer does — the two sides run DIFFERENT calls: the plan side's
 arguments are the production side's with every need address shifted past the inserted cells. This
-module is that shift, for all 104 operations of the total core:
+module is that shift, for all 84 calls of the total core (a derived answer — `eval`, `applyBuiltin`, … —
+is no call: its shift is its twin's, and the shift of a counted result shifts its value):
 
 * the address-bearing auxiliary types of the evaluator — a resolved builtin argument's supplied
   cell (`shiftArgument`), a callee origin (`shiftOrigin`: a written callee's caller context, a
@@ -108,31 +109,19 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .argumentNeed arg ctx env => .argumentNeed (shiftArgument σ arg) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .runNeedStepSlots step ctx env cells stepName => .runNeedStepSlots step (shiftCtx σ ctx) (shiftValEnv σ env) (shiftSourced σ cells) stepName
   | .runNeedWhileRound step ctx env cells stepName => .runNeedWhileRound step (shiftCtx σ ctx) (shiftValEnv σ env) (shiftSourced σ cells) stepName
-  | .evalAlgOutputCore a ctx env => .evalAlgOutputCore a (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalAlgOutput a ctx env => .evalAlgOutput a (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalProgramOutput a ctx env => .evalProgramOutput a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalAlgOutputSlots a ctx env => .evalAlgOutputSlots a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .formOutputRow ctx env e => .formOutputRow (shiftCtx σ ctx) (shiftValEnv σ env) e
   | .whileVerdictSlots a ctx env => .whileVerdictSlots a (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalSequenceCallbackCall callee item ctx env calleeName => .evalSequenceCallbackCall callee (shiftCounted σ item) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
-  | .evalSequenceCallbackCallCounted callee item ctx env calleeName => .evalSequenceCallbackCallCounted callee (shiftCounted σ item) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .evalAlgOutputPreparedCore a ctx env => .evalAlgOutputPreparedCore a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalOutputRowsPreparedCore rows rowCtx env => .evalOutputRowsPreparedCore rows (shiftCtx σ rowCtx) (shiftValEnv σ env)
-  | .evalCapturePreparedCore rows ctx env => .evalCapturePreparedCore rows (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalCaptureCountedCore rows ctx env => .evalCaptureCountedCore rows (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalCaptureValue rows ctx env => .evalCaptureValue rows (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalAlgOutputCountedCore a ctx env => .evalAlgOutputCountedCore a (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalAlgOutputCounted a ctx env => .evalAlgOutputCounted a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalZeroArgumentDemandOutputCounted a ctx env => .evalZeroArgumentDemandOutputCounted a (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalZeroArgumentDemandOutput a ctx env => .evalZeroArgumentDemandOutput a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalArgumentValueCounted arg ctx env => .evalArgumentValueCounted (shiftArgument σ arg) (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalArgumentValue arg ctx env => .evalArgumentValue (shiftArgument σ arg) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => .evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm (shiftCtx σ ctx) (shiftValEnv σ env) request
-  | .evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => .evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalConditionalCallbackCallCounted callee args ctx env calleeName => .evalConditionalCallbackCallCounted callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .evalUserCallbackCallCounted callee args ctx env => .evalUserCallbackCallCounted callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalResolvedCallbackCallCounted callee args ctx env calleeName => .evalResolvedCallbackCallCounted callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
-  | .evalResolvedCallbackCall callee args ctx env calleeName => .evalResolvedCallbackCall callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => .evalSequenceReduceStepCounted callee (shiftCounted σ element) (shiftResult σ accumulator) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .demandSequenceBuiltinCallItemValue item ctx env => .demandSequenceBuiltinCallItemValue (shiftItem σ item) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .bindSequenceBuiltinArguments b metadata args ctx env => .bindSequenceBuiltinArguments b metadata (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -141,14 +130,11 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .evalMapCounted collection transformAlg ctx env => .evalMapCounted (collection.map (shiftCounted σ)) transformAlg (shiftCtx σ ctx) (shiftValEnv σ env)
   | .applyBuiltinCountedSequence b metadata args ctx env => .applyBuiltinCountedSequence b metadata (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .applyBuiltinCounted b args ctx env => .applyBuiltinCounted b (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .applyBuiltin b args ctx env => .applyBuiltin b (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .applyBuiltinCountedResolved b args ctx env => .applyBuiltinCountedResolved b (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalExplicitSequenceValueItems a ctx env => .evalExplicitSequenceValueItems a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalExplicitSequenceValueRowSlots rows rowCtx env => .evalExplicitSequenceValueRowSlots rows (shiftCtx σ rowCtx) (shiftValEnv σ env)
   | .evalExplicitSequenceValueExprSlots expr ctx env => .evalExplicitSequenceValueExprSlots expr (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalUserCallCounted callee args ctx env => .evalUserCallCounted callee args (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalConditionalCallCounted callee args ctx env calleeName => .evalConditionalCallCounted callee args (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
-  | .evalResolvedCall callee args ctx env calleeName => .evalResolvedCall callee args (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .evalResolvedCallCounted callee args ctx env calleeName origin => .evalResolvedCallCounted callee args (shiftCtx σ ctx) (shiftValEnv σ env) calleeName (shiftOrigin σ origin)
   | .evalCallCountedExpr f args ctx env => .evalCallCountedExpr f args (shiftCtx σ ctx) (shiftValEnv σ env)
   | .callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => .callLexicalWithReceiverCounted name receiver fallback extraArgs (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -169,11 +155,6 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .evalComparisonCounted first links ctx env => .evalComparisonCounted first links (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalComparisonLinksCounted previousExpr previous holds links ctx env => .evalComparisonLinksCounted previousExpr (shiftResult σ previous) holds links (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalCounted e ctx env => .evalCounted e (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalUserCall callee args ctx env => .evalUserCall callee args (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalConditionalCall callee args ctx env calleeName => .evalConditionalCall callee args (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
-  | .evalCallExpr f args ctx env => .evalCallExpr f args (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalDotCall target name fallback argsOpt ctx env => .evalDotCall target name fallback argsOpt (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .eval e ctx env => .eval e (shiftCtx σ ctx) (shiftValEnv σ env)
 
 /-- The plan-side result of a production-side result of the call `c`. -/
 def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
@@ -215,31 +196,19 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .argumentNeed .., r => σ.addr r
   | .runNeedStepSlots .., r => r.map (shiftResult σ)
   | .runNeedWhileRound .., r => r.map (fun xs => xs.map (shiftResult σ))
-  | .evalAlgOutputCore .., r => shiftResult σ r
-  | .evalAlgOutput .., r => shiftResult σ r
-  | .evalProgramOutput .., r => shiftResult σ r
   | .evalAlgOutputSlots .., r => r.map (shiftResult σ)
   | .formOutputRow .., r => r.map (shiftResult σ)
   | .whileVerdictSlots .., r => r.map (fun xs => xs.map (shiftResult σ))
-  | .evalSequenceCallbackCall .., r => shiftResult σ r
-  | .evalSequenceCallbackCallCounted .., r => shiftCounted σ r
   | .evalAlgOutputPreparedCore .., r => shiftPrepared σ r
   | .evalOutputRowsPreparedCore .., r => shiftPrepared σ r
-  | .evalCapturePreparedCore .., r => shiftPrepared σ r
   | .evalCaptureCountedCore .., r => shiftCounted σ r
-  | .evalCaptureValue .., r => shiftResult σ r
   | .evalAlgOutputCountedCore .., r => shiftCounted σ r
-  | .evalAlgOutputCounted .., r => shiftCounted σ r
   | .evalZeroArgumentDemandOutputCounted .., r => shiftCounted σ r
-  | .evalZeroArgumentDemandOutput .., r => shiftResult σ r
   | .evalArgumentValueCounted .., r => shiftCounted σ r
-  | .evalArgumentValue .., r => shiftResult σ r
   | .evalZeroArgPropertyAccessCounted .., r => shiftCounted σ r
-  | .evalZeroArgPropertyAccess .., r => shiftResult σ r
   | .evalConditionalCallbackCallCounted .., r => shiftCounted σ r
   | .evalUserCallbackCallCounted .., r => shiftCounted σ r
   | .evalResolvedCallbackCallCounted .., r => shiftCounted σ r
-  | .evalResolvedCallbackCall .., r => shiftResult σ r
   | .evalSequenceReduceStepCounted .., r => shiftCounted σ r
   | .demandSequenceBuiltinCallItemValue .., r => shiftItem σ r
   | .bindSequenceBuiltinArguments .., r => shiftBound σ r
@@ -248,14 +217,11 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .evalMapCounted .., r => shiftCounted σ r
   | .applyBuiltinCountedSequence .., r => shiftCounted σ r
   | .applyBuiltinCounted .., r => shiftCounted σ r
-  | .applyBuiltin .., r => shiftResult σ r
-  | .applyBuiltinCountedResolved .., r => shiftCounted σ r
   | .evalExplicitSequenceValueItems .., r => r.map (shiftResult σ)
   | .evalExplicitSequenceValueRowSlots .., r => r.map (shiftResult σ)
   | .evalExplicitSequenceValueExprSlots .., r => r.map (shiftResult σ)
   | .evalUserCallCounted .., r => shiftCounted σ r
   | .evalConditionalCallCounted .., r => shiftCounted σ r
-  | .evalResolvedCall .., r => shiftResult σ r
   | .evalResolvedCallCounted .., r => shiftCounted σ r
   | .evalCallCountedExpr .., r => shiftCounted σ r
   | .callLexicalWithReceiverCounted .., r => shiftCounted σ r
@@ -276,11 +242,6 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .evalComparisonCounted .., r => shiftCounted σ r
   | .evalComparisonLinksCounted .., r => shiftCounted σ r
   | .evalCounted .., r => shiftCounted σ r
-  | .evalUserCall .., r => shiftResult σ r
-  | .evalConditionalCall .., r => shiftResult σ r
-  | .evalCallExpr .., r => shiftResult σ r
-  | .evalDotCall .., r => shiftResult σ r
-  | .eval .., r => shiftResult σ r
 
 /-- The result type of a shifted call is the call's. -/
 theorem shiftCall_ret (σ : Site) (c : EvalCall) : (shiftCall σ c).Ret = c.Ret := by

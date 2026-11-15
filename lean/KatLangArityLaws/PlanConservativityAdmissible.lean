@@ -35,7 +35,7 @@ under them. Nothing here changes a definition of `KatLang.lean`.
   the old theorem from the new one.
 * **The active mark, discharged for all bodies.** `Active a` (the plan's cell is `evaluating`) is
   kept by EVERY production operation (`keeps_active_production`, from
-  `ActiveCells.evalUnbounded_actDisc`, a per-body proof over all 104 `EvalCall` bodies).
+  `ActiveCells.evalUnbounded_actDisc`, a per-body proof over all 84 `EvalCall` bodies).
   `keeps_production_active` therefore reduces `Keeps (Active a ∧ R)` to the body obligation
   `BodyKeepsGiven Q (Active a) R`, in which a body may assume the mark at both ends;
   `oblivious_production_of_keeps` takes the keeping fact at fuel level instead of `BodyKeeps`.
@@ -556,7 +556,7 @@ theorem active_of_actHeapKept {a : Nat} {s t : EvalState}
   obtain ⟨c', hc', kc⟩ := k a c hc
   exact ⟨c', hc', kc.active hs⟩
 
-/-- **Every production operation keeps the active mark**, from every state (all 104 bodies,
+/-- **Every production operation keeps the active mark**, from every state (all 84 bodies,
     `ActiveCells.evalStep_actDisc`). -/
 theorem keeps_active_production (a : Nat) (c : EvalCall) : Keeps (Active a) (evalUnbounded c) :=
   fun s h _ => active_of_actHeapKept (KatLang.ActiveCells.evalUnbounded_actDisc c s) h

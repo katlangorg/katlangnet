@@ -760,31 +760,19 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .argumentNeed arg ctx env => fun h => RAV h arg ∧ ValidCtx h ctx ∧ VEV h env
   | .runNeedStepSlots _ ctx env cells _ => fun h => ValidCtx h ctx ∧ VEV h env ∧ ValidSourced h cells
   | .runNeedWhileRound _ ctx env cells _ => fun h => ValidCtx h ctx ∧ VEV h env ∧ ValidSourced h cells
-  | .evalAlgOutputCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalAlgOutput _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalProgramOutput _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalAlgOutputSlots _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .formOutputRow ctx env _ => fun h => ValidCtx h ctx ∧ VEV h env
   | .whileVerdictSlots _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalSequenceCallbackCall _ item ctx env _ => fun h => CRV h item ∧ ValidCtx h ctx ∧ VEV h env
-  | .evalSequenceCallbackCallCounted _ item ctx env _ => fun h => CRV h item ∧ ValidCtx h ctx ∧ VEV h env
   | .evalAlgOutputPreparedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalOutputRowsPreparedCore _ rowCtx env => fun h => ValidCtx h rowCtx ∧ VEV h env
-  | .evalCapturePreparedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalCaptureCountedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalCaptureValue _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalAlgOutputCountedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalAlgOutputCounted _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalZeroArgumentDemandOutputCounted _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalZeroArgumentDemandOutput _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalArgumentValueCounted arg ctx env => fun h => RAV h arg ∧ ValidCtx h ctx ∧ VEV h env
-  | .evalArgumentValue arg ctx env => fun h => RAV h arg ∧ ValidCtx h ctx ∧ VEV h env
   | .evalZeroArgPropertyAccessCounted _ _ _ _ ctx env _ => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalZeroArgPropertyAccess _ _ _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalConditionalCallbackCallCounted _ args ctx env _ => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalUserCallbackCallCounted _ args ctx env => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalResolvedCallbackCallCounted _ args ctx env _ => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
-  | .evalResolvedCallbackCall _ args ctx env _ => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalSequenceReduceStepCounted _ element accumulator ctx env _ => fun h =>
       CRV h element ∧ RV h accumulator ∧ ValidCtx h ctx ∧ VEV h env
   | .demandSequenceBuiltinCallItemValue item ctx env => fun h => ItemV h item ∧ ValidCtx h ctx ∧ VEV h env
@@ -795,14 +783,11 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .evalMapCounted collection _ ctx env => fun h => CRLV h collection ∧ ValidCtx h ctx ∧ VEV h env
   | .applyBuiltinCountedSequence _ _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .applyBuiltinCounted _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
-  | .applyBuiltin _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
-  | .applyBuiltinCountedResolved _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalExplicitSequenceValueItems _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalExplicitSequenceValueRowSlots _ rowCtx env => fun h => ValidCtx h rowCtx ∧ VEV h env
   | .evalExplicitSequenceValueExprSlots _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalUserCallCounted _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalConditionalCallCounted _ _ ctx env _ => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalResolvedCall _ _ ctx env _ => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalResolvedCallCounted _ _ ctx env _ origin => fun h => OriginV h origin ∧ ValidCtx h ctx ∧ VEV h env
   | .evalCallCountedExpr _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .callLexicalWithReceiverCounted _ _ _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
@@ -823,11 +808,6 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .evalComparisonCounted _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalComparisonLinksCounted _ previous _ _ ctx env => fun h => RV h previous ∧ ValidCtx h ctx ∧ VEV h env
   | .evalCounted _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalUserCall _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalConditionalCall _ _ ctx env _ => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalCallExpr _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .evalDotCall _ _ _ _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .eval _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
 
 /-- The result contract of an evaluator call. -/
 def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
@@ -869,31 +849,19 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .argumentNeed .., a, h => a < h.size
   | .runNeedStepSlots .., rs, h => RLV h rs
   | .runNeedWhileRound .., o, h => OptRLV h o
-  | .evalAlgOutputCore .., r, h => RV h r
-  | .evalAlgOutput .., r, h => RV h r
-  | .evalProgramOutput .., r, h => RV h r
   | .evalAlgOutputSlots .., rs, h => RLV h rs
   | .formOutputRow .., rs, h => RLV h rs
   | .whileVerdictSlots .., o, h => OptRLV h o
-  | .evalSequenceCallbackCall .., r, h => RV h r
-  | .evalSequenceCallbackCallCounted .., r, h => CRV h r
   | .evalAlgOutputPreparedCore .., p, h => PreparedV h p
   | .evalOutputRowsPreparedCore .., p, h => PreparedV h p
-  | .evalCapturePreparedCore .., p, h => PreparedV h p
   | .evalCaptureCountedCore .., r, h => CRV h r
-  | .evalCaptureValue .., r, h => RV h r
   | .evalAlgOutputCountedCore .., r, h => CRV h r
-  | .evalAlgOutputCounted .., r, h => CRV h r
   | .evalZeroArgumentDemandOutputCounted .., r, h => CRV h r
-  | .evalZeroArgumentDemandOutput .., r, h => RV h r
   | .evalArgumentValueCounted .., r, h => CRV h r
-  | .evalArgumentValue .., r, h => RV h r
   | .evalZeroArgPropertyAccessCounted .., r, h => CRV h r
-  | .evalZeroArgPropertyAccess .., r, h => RV h r
   | .evalConditionalCallbackCallCounted .., r, h => CRV h r
   | .evalUserCallbackCallCounted .., r, h => CRV h r
   | .evalResolvedCallbackCallCounted .., r, h => CRV h r
-  | .evalResolvedCallbackCall .., r, h => RV h r
   | .evalSequenceReduceStepCounted .., r, h => CRV h r
   | .demandSequenceBuiltinCallItemValue .., item, h => ItemV h item
   | .bindSequenceBuiltinArguments .., b, h => BoundV h b
@@ -902,14 +870,11 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .evalMapCounted .., r, h => CRV h r
   | .applyBuiltinCountedSequence .., r, h => CRV h r
   | .applyBuiltinCounted .., r, h => CRV h r
-  | .applyBuiltin .., r, h => RV h r
-  | .applyBuiltinCountedResolved .., r, h => CRV h r
   | .evalExplicitSequenceValueItems .., rs, h => RLV h rs
   | .evalExplicitSequenceValueRowSlots .., rs, h => RLV h rs
   | .evalExplicitSequenceValueExprSlots .., rs, h => RLV h rs
   | .evalUserCallCounted .., r, h => CRV h r
   | .evalConditionalCallCounted .., r, h => CRV h r
-  | .evalResolvedCall .., r, h => RV h r
   | .evalResolvedCallCounted .., r, h => CRV h r
   | .evalCallCountedExpr .., r, h => CRV h r
   | .callLexicalWithReceiverCounted .., r, h => CRV h r
@@ -930,11 +895,6 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .evalComparisonCounted .., r, h => CRV h r
   | .evalComparisonLinksCounted .., r, h => CRV h r
   | .evalCounted .., r, h => CRV h r
-  | .evalUserCall .., r, h => RV h r
-  | .evalConditionalCall .., r, h => RV h r
-  | .evalCallExpr .., r, h => RV h r
-  | .evalDotCall .., r, h => RV h r
-  | .eval .., r, h => RV h r
 
 open Lean Meta Elab Tactic in
 /-- Destructs every conjunction hypothesis (recursively), clearing it. -/

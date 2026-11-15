@@ -199,7 +199,7 @@ theorem pilot_evalNeedUserSupply (callee : Algorithm) (cells : List Nat) (ctx : 
       (fun _ _ => True))
     (vcView : ∀ t, Agree K t (valueViewCell? callee) (valueViewCell? callee) (fun _ _ => True))
     (vcDemand : ∀ address t, K.inv t → K.pre (.demandNeedRecursive address) t)
-    (vcOutput : ∀ next values t, K.inv t → K.pre (.evalAlgOutputCounted callee next values) t) :
+    (vcOutput : ∀ next values t, K.inv t → K.pre (.evalAlgOutputCountedCore callee next values) t) :
     Agree K s (EvalBody.evalNeedUserSupply rec callee cells ctx env)
       (EvalBody.evalNeedUserSupply (K.guard rec) callee cells ctx env) (fun _ _ => True) := by
   unfold EvalBody.evalNeedUserSupply EvalBody.evalNeedUserSupplyOutput
@@ -215,7 +215,7 @@ theorem pilot_evalNeedFamilySupply (callee : Algorithm) (cells : List Nat) (ctx 
       (withNestedMissingOutput (selectNeedFamilyBranch rec.bindingChannels callee cells ctx env calleeName))
       (withNestedMissingOutput (selectNeedFamilyBranch (K.guard rec).bindingChannels callee cells ctx env calleeName))
       (fun _ _ => True))
-    (vcOutput : ∀ body next values t, K.inv t → K.pre (.evalAlgOutputCounted body next values) t) :
+    (vcOutput : ∀ body next values t, K.inv t → K.pre (.evalAlgOutputCountedCore body next values) t) :
     Agree K s (EvalBody.evalNeedFamilySupply rec callee cells ctx env calleeName)
       (EvalBody.evalNeedFamilySupply (K.guard rec) callee cells ctx env calleeName) (fun _ _ => True) := by
   unfold EvalBody.evalNeedFamilySupply

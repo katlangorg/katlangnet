@@ -508,17 +508,11 @@ theorem supplied_builtin_production (o : CalleeOrigin) (b : Builtin) (cells : Li
     (ctx : EvalCtx) (env : ValEnv) (name : String) :
     evalSuppliedCallCounted o (.builtin b) cells ctx env name =
       applyBuiltinCounted b (cells.map sourcedArgument) ctx env := by
-  have h1 : evalSuppliedCallCounted o (.builtin b) cells ctx env name =
-      applyBuiltinCountedResolved b (cells.map sourcedArgument) ctx env :=
-    (delegation_equation (.evalSuppliedCallCounted o (.builtin b) cells ctx env name)
-      (.applyBuiltinCountedResolved b (cells.map sourcedArgument) ctx env) pure
-      (fun rec => Eq.trans rfl (bind_pure_eq _).symm) (fun _ _ => nofun)).trans (bind_pure_eq _)
-  have h2 : applyBuiltinCountedResolved b (cells.map sourcedArgument) ctx env =
-      applyBuiltinCounted b (cells.map sourcedArgument) ctx env :=
-    (delegation_equation (.applyBuiltinCountedResolved b (cells.map sourcedArgument) ctx env)
-      (.applyBuiltinCounted b (cells.map sourcedArgument) ctx env) pure
-      (fun rec => Eq.trans rfl (bind_pure_eq _).symm) (fun _ _ => nofun)).trans (bind_pure_eq _)
-  exact h1.trans h2
+  -- `rec.applyBuiltinCountedResolved` IS `rec.applyBuiltinCounted` (a derived answer), so the arm's
+  -- one recursive call is `applyBuiltinCounted` itself.
+  exact (delegation_equation (.evalSuppliedCallCounted o (.builtin b) cells ctx env name)
+    (.applyBuiltinCounted b (cells.map sourcedArgument) ctx env) pure
+    (fun rec => Eq.trans rfl (bind_pure_eq _).symm) (fun _ _ => nofun)).trans (bind_pure_eq _)
 
 /-- **A resolved builtin over plain slots** is the ordinary supply and then the builtin's
     `applyBuiltinCounted` arm: both incomplete, or the same run. -/

@@ -9,7 +9,9 @@ open Lean.Order
 
 `lean/KatLang.lean` § The fuel-indexed evaluator core defines the recursive evaluator as the
 functional `evalStep : EvalRec → EvalRec` over the call universe `EvalCall` (one constructor per
-evaluator operation plus the `while` round, 102 in all), iterated by `evalFuel n`, and runs production as the fuel search
+recursive evaluator operation plus the `while` round, 84 in all; an operation that is only another
+call's answer or its value is a DERIVED answer `EvalRec.<name>`, not a constructor), iterated by
+`evalFuel n`, and runs production as the fuel search
 `evalUnbounded` over the same core. This module proves, with standard axioms only:
 
 * **Monotonicity** `evalStep_monotone` (in `EvalM.Approx`: the incomplete outcome below every
@@ -32,7 +34,9 @@ evaluator operation plus the `while` round, 102 in all), iterated by `evalFuel n
   (discharging `ProductionDiscipline`), `EvaluatorCacheLaws` for the property cache (Q-37).
 * **Delegation equations** `delegation_equation`: an operation whose body is one recursive call
   and a non-recursive continuation EQUALS its delegate under production, with no completion
-  premise — every plain operation is its counted twin's value (`*_is_counted_projection`, FORMAL-05).
+  premise. Every plain operation is its counted twin's value (`*_is_counted_projection`, FORMAL-05):
+  since the plain projections are derived answers these thirteen equations are DEFINITIONAL (`rfl`);
+  the equation remains the tool for a call whose body delegates and then continues.
 
 Not claimed: anything about C# (concurrency, cancellation, budgets, Decimal128, host effects); the
 converse unfolding of production in general; a kernel proof that a specific program diverges.
@@ -864,18 +868,6 @@ theorem EvalBody.runNeedWhileRound_mono (step : Algorithm) (ctx : EvalCtx) (env 
     monotone (fun rec : EvalRec => EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; mono_tac
 
-theorem EvalBody.evalAlgOutputCore_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalAlgOutputCore rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCore; mono_tac
-
-theorem EvalBody.evalAlgOutput_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalAlgOutput rec a ctx env) := by
-  unfold EvalBody.evalAlgOutput; mono_tac
-
-theorem EvalBody.evalProgramOutput_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalProgramOutput rec a ctx env) := by
-  unfold EvalBody.evalProgramOutput; mono_tac
-
 theorem EvalBody.evalAlgOutputSlots_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalAlgOutputSlots rec a ctx env) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; mono_tac
@@ -888,14 +880,6 @@ theorem EvalBody.whileVerdictSlots_mono (a : Algorithm) (ctx : EvalCtx) (env : V
     monotone (fun rec : EvalRec => EvalBody.whileVerdictSlots rec a ctx env) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; mono_tac
 
-theorem EvalBody.evalSequenceCallbackCall_mono (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    monotone (fun rec : EvalRec => EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCall; mono_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_mono (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    monotone (fun rec : EvalRec => EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; mono_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalAlgOutputPreparedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputPreparedCore; mono_tac
@@ -904,25 +888,13 @@ theorem EvalBody.evalOutputRowsPreparedCore_mono (rows : OutputBundle) (rowCtx :
     monotone (fun rec : EvalRec => EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; mono_tac
 
-theorem EvalBody.evalCapturePreparedCore_mono (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalCapturePreparedCore rec rows ctx env) := by
-  unfold EvalBody.evalCapturePreparedCore; mono_tac
-
 theorem EvalBody.evalCaptureCountedCore_mono (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalCaptureCountedCore rec rows ctx env) := by
   unfold EvalBody.evalCaptureCountedCore; mono_tac
 
-theorem EvalBody.evalCaptureValue_mono (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalCaptureValue rec rows ctx env) := by
-  unfold EvalBody.evalCaptureValue; mono_tac
-
 theorem EvalBody.evalAlgOutputCountedCore_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCountedCore; mono_tac
-
-theorem EvalBody.evalAlgOutputCounted_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalAlgOutputCounted rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCounted; mono_tac
 
 -- OD-E (M4★): the bare read at a VALUE terminal, a plain helper over evaluator answers.
 theorem EvalBody.terminalAccess_mono (t : AliasTerminal) (ctx : EvalCtx) (env : ValEnv) :
@@ -934,17 +906,9 @@ theorem EvalBody.evalZeroArgumentDemandOutputCounted_mono (a : Algorithm) (ctx :
   have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; mono_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalZeroArgumentDemandOutput rec a ctx env) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; mono_tac
-
 theorem EvalBody.evalArgumentValueCounted_mono (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalArgumentValueCounted rec arg ctx env) := by
   unfold EvalBody.evalArgumentValueCounted; mono_tac
-
-theorem EvalBody.evalArgumentValue_mono (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalArgumentValue rec arg ctx env) := by
-  unfold EvalBody.evalArgumentValue; mono_tac
 
 theorem EvalBody.evalPropertyDemandCounted_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalPropertyDemandCounted rec a ctx env) := by
@@ -961,10 +925,6 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_mono (accessKind : ZeroArgProp
   have := EvalBody.zeroArgPropertyCalculation_mono request resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; mono_tac
 
-theorem EvalBody.evalZeroArgPropertyAccess_mono (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; mono_tac
-
 theorem EvalBody.evalConditionalCallbackCallCounted_mono (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallbackCallCounted; mono_tac
@@ -976,10 +936,6 @@ theorem EvalBody.evalUserCallbackCallCounted_mono (callee : Algorithm) (args : L
 theorem EvalBody.evalResolvedCallbackCallCounted_mono (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; mono_tac
-
-theorem EvalBody.evalResolvedCallbackCall_mono (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    monotone (fun rec : EvalRec => EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCallbackCall; mono_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_mono (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
@@ -1041,14 +997,6 @@ theorem EvalBody.applyBuiltinCounted_mono (b : Builtin) (args : List ResolvedArg
     monotone (fun rec : EvalRec => EvalBody.applyBuiltinCounted rec b args ctx env) := by
   have := planRoute_classify_mono; unfold EvalBody.applyBuiltinCounted; mono_tac
 
-theorem EvalBody.applyBuiltin_mono (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.applyBuiltin rec b args ctx env) := by
-  unfold EvalBody.applyBuiltin; mono_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_mono (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.applyBuiltinCountedResolved rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCountedResolved; mono_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalExplicitSequenceValueItems rec a ctx env) := by
   unfold EvalBody.evalExplicitSequenceValueItems; mono_tac
@@ -1068,10 +1016,6 @@ theorem EvalBody.evalUserCallCounted_mono (callee : Algorithm) (args : OutputBun
 theorem EvalBody.evalConditionalCallCounted_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallCounted; mono_tac
-
-theorem EvalBody.evalResolvedCall_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    monotone (fun rec : EvalRec => EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCall; mono_tac
 
 theorem EvalBody.evalResolvedCallCounted_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     monotone (fun rec : EvalRec => EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
@@ -1165,26 +1109,6 @@ theorem EvalBody.evalCounted_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
   have := EvalBody.writtenCollectorSlice_mono
   unfold EvalBody.evalCounted; mono_tac
 
-theorem EvalBody.evalUserCall_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalUserCall rec callee args ctx env) := by
-  unfold EvalBody.evalUserCall; mono_tac
-
-theorem EvalBody.evalConditionalCall_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    monotone (fun rec : EvalRec => EvalBody.evalConditionalCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalConditionalCall; mono_tac
-
-theorem EvalBody.evalCallExpr_mono (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalCallExpr rec f args ctx env) := by
-  unfold EvalBody.evalCallExpr; mono_tac
-
-theorem EvalBody.evalDotCall_mono (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalDotCall rec target name fallback argsOpt ctx env) := by
-  unfold EvalBody.evalDotCall; mono_tac
-
-theorem EvalBody.eval_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.eval rec e ctx env) := by
-  unfold EvalBody.eval; mono_tac
-
 theorem evalStep_monotone : monotone evalStep := by
   intro r₁ r₂ h c
   cases c with
@@ -1226,31 +1150,19 @@ theorem evalStep_monotone : monotone evalStep := by
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_mono arg ctx env _ _ h
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_mono step ctx env cells stepName _ _ h
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_mono step ctx env cells stepName _ _ h
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_mono a ctx env _ _ h
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_mono a ctx env _ _ h
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_mono a ctx env _ _ h
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_mono a ctx env _ _ h
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_mono ctx env e _ _ h
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_mono a ctx env _ _ h
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_mono callee item ctx env calleeName _ _ h
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_mono callee item ctx env calleeName _ _ h
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_mono a ctx env _ _ h
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_mono rows rowCtx env _ _ h
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_mono rows ctx env _ _ h
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_mono rows ctx env _ _ h
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_mono rows ctx env _ _ h
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_mono a ctx env _ _ h
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_mono a ctx env _ _ h
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_mono a ctx env _ _ h
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_mono a ctx env _ _ h
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_mono arg ctx env _ _ h
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_mono arg ctx env _ _ h
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_mono accessKind owner binding resolvedAlgorithm ctx env request _ _ h
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_mono accessKind owner binding resolvedAlgorithm ctx env _ _ h
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_mono callee args ctx env calleeName _ _ h
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_mono callee args ctx env _ _ h
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_mono callee args ctx env calleeName _ _ h
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_mono callee args ctx env calleeName _ _ h
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_mono callee element accumulator ctx env calleeName _ _ h
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_mono item ctx env _ _ h
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_mono b metadata args ctx env _ _ h
@@ -1259,14 +1171,11 @@ theorem evalStep_monotone : monotone evalStep := by
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_mono collection transformAlg ctx env _ _ h
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_mono b metadata args ctx env _ _ h
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_mono b args ctx env _ _ h
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_mono b args ctx env _ _ h
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_mono b args ctx env _ _ h
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_mono a ctx env _ _ h
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_mono rows rowCtx env _ _ h
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_mono expr ctx env _ _ h
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_mono callee args ctx env _ _ h
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_mono callee args ctx env calleeName _ _ h
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_mono callee args ctx env calleeName _ _ h
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_mono callee args ctx env calleeName origin _ _ h
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_mono f args ctx env _ _ h
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_mono name receiver fallback extraArgs ctx env _ _ h
@@ -1287,11 +1196,6 @@ theorem evalStep_monotone : monotone evalStep := by
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_mono first links ctx env _ _ h
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_mono previousExpr previous holds links ctx env _ _ h
   | evalCounted e ctx env => exact EvalBody.evalCounted_mono e ctx env _ _ h
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_mono callee args ctx env _ _ h
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_mono callee args ctx env calleeName _ _ h
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_mono f args ctx env _ _ h
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_mono target name fallback argsOpt ctx env _ _ h
-  | eval e ctx env => exact EvalBody.eval_mono e ctx env _ _ h
 /-! ## Fuel laws
 
 `evalFuel n` is `n` iterations of `evalStep` from the everywhere-incomplete answer; `evalStep` is
@@ -1642,8 +1546,10 @@ theorem production_preserves (R : EvalState → EvalState → Prop) (hrefl : ∀
 
 A body that runs exactly ONE recursive call and then a non-recursive, never-incomplete
 continuation gives an exact production EQUATION (no completion premise: a divergent callee makes
-both sides the same non-completing outcome). This turns every plain/counted projection of the
-evaluator (FORMAL-05) into a kernel theorem about the production operations. -/
+both sides the same non-completing outcome). It is how a call that delegates and then continues
+is rewritten to its delegate (e.g. `evalAlgOutputCountedCore` to the prepared core). The
+plain/counted projections of the evaluator (FORMAL-05) no longer need it: they are derived
+answers, so their equations below hold by definition. -/
 
 theorem production_incomplete_state (c : EvalCall) (s : EvalState)
     (hc : ¬ ProductionCompletes (evalUnbounded c) s) :
@@ -1726,87 +1632,78 @@ theorem forwarding_equation (c c' : EvalCall) (hty : c'.Ret = c.Ret)
     evalUnbounded c = evalUnbounded c' >>= (fun x => pure (cast hty x)) :=
   delegation_equation c c' _ hstep (fun _ _ => nofun)
 
-/-! ### FORMAL-05 at the evaluator level: every plain operation is its counted twin's VALUE -/
+/-! ### FORMAL-05 at the evaluator level: every plain operation is its counted twin's VALUE
+
+By definition: a plain operation is a derived answer (`lean/KatLang.lean` § Derived answers), the
+function `do let out <- <counted twin>; pure out.fst` of the production operations. Until the
+projection-only constructors were removed these were consequences of `delegation_equation`. -/
 
 theorem eval_is_counted_projection (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     eval e ctx env = evalCounted e ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.eval e ctx env) (.evalCounted e ctx env) _ (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalCallExpr_is_counted_projection (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     evalCallExpr f args ctx env = evalCallCountedExpr f args ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalCallExpr f args ctx env) (.evalCallCountedExpr f args ctx env) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalDotCall_is_counted_projection (target : Expr) (name : Ident) (fallback : Expr)
     (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     evalDotCall target name fallback argsOpt ctx env =
       evalDotCallCounted target name fallback argsOpt ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalDotCall target name fallback argsOpt ctx env)
-    (.evalDotCallCounted target name fallback argsOpt ctx env) _ (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalUserCall_is_counted_projection (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx)
     (env : ValEnv) :
     evalUserCall callee args ctx env = evalUserCallCounted callee args ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalUserCall callee args ctx env) (.evalUserCallCounted callee args ctx env) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalConditionalCall_is_counted_projection (callee : Algorithm) (args : OutputBundle)
     (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     evalConditionalCall callee args ctx env calleeName =
       evalConditionalCallCounted callee args ctx env calleeName >>= fun out => pure out.fst :=
-  delegation_equation (.evalConditionalCall callee args ctx env calleeName)
-    (.evalConditionalCallCounted callee args ctx env calleeName) _ (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalResolvedCall_is_counted_projection (callee : Algorithm) (args : OutputBundle)
     (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     evalResolvedCall callee args ctx env calleeName =
       evalResolvedCallCounted callee args ctx env calleeName >>= fun out => pure out.fst :=
-  delegation_equation (.evalResolvedCall callee args ctx env calleeName)
-    (.evalResolvedCallCounted callee args ctx env calleeName .none) _ (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalResolvedCallbackCall_is_counted_projection (callee : Algorithm) (args : List CountedResult)
     (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     evalResolvedCallbackCall callee args ctx env calleeName =
       evalResolvedCallbackCallCounted callee args ctx env calleeName >>= fun out => pure out.fst :=
-  delegation_equation (.evalResolvedCallbackCall callee args ctx env calleeName)
-    (.evalResolvedCallbackCallCounted callee args ctx env calleeName) _ (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem applyBuiltin_is_counted_projection (b : Builtin) (args : List ResolvedArgumentAlgorithm)
     (ctx : EvalCtx) (env : ValEnv) :
     applyBuiltin b args ctx env = applyBuiltinCounted b args ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.applyBuiltin b args ctx env) (.applyBuiltinCounted b args ctx env) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalAlgOutputCore_is_counted_projection (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     evalAlgOutputCore a ctx env = evalAlgOutputCountedCore a ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalAlgOutputCore a ctx env) (.evalAlgOutputCountedCore a ctx env) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalZeroArgPropertyAccess_is_counted_projection (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env =
       evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env >>=
         fun out => pure out.fst :=
-  delegation_equation (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)
-    (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env .read) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalZeroArgumentDemandOutput_is_counted_projection (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     evalZeroArgumentDemandOutput a ctx env =
       evalZeroArgumentDemandOutputCounted a ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalZeroArgumentDemandOutput a ctx env)
-    (.evalZeroArgumentDemandOutputCounted a ctx env) _ (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalArgumentValue_is_counted_projection (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     (env : ValEnv) :
     evalArgumentValue arg ctx env = evalArgumentValueCounted arg ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalArgumentValue arg ctx env) (.evalArgumentValueCounted arg ctx env) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 theorem evalCaptureValue_is_counted_projection (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     evalCaptureValue rows ctx env = evalCaptureCountedCore rows ctx env >>= fun out => pure out.fst :=
-  delegation_equation (.evalCaptureValue rows ctx env) (.evalCaptureCountedCore rows ctx env) _
-    (fun _ => rfl) (fun _ _ => nofun)
+  rfl
 
 
 

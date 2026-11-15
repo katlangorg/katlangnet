@@ -1380,18 +1380,6 @@ theorem EvalBody.runNeedWhileRound_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDis
     PubDisc (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; pub_tac
 
-theorem EvalBody.evalAlgOutputCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalAlgOutputCore rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCore; pub_tac
-
-theorem EvalBody.evalAlgOutput_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalAlgOutput rec a ctx env) := by
-  unfold EvalBody.evalAlgOutput; pub_tac
-
-theorem EvalBody.evalProgramOutput_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalProgramOutput rec a ctx env) := by
-  unfold EvalBody.evalProgramOutput; pub_tac
-
 theorem EvalBody.evalAlgOutputSlots_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalAlgOutputSlots rec a ctx env) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; pub_tac
@@ -1404,14 +1392,6 @@ theorem EvalBody.whileVerdictSlots_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDis
     PubDisc (EvalBody.whileVerdictSlots rec a ctx env) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; pub_tac
 
-theorem EvalBody.evalSequenceCallbackCall_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    PubDisc (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCall; pub_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    PubDisc (EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; pub_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalAlgOutputPreparedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputPreparedCore; pub_tac
@@ -1420,25 +1400,13 @@ theorem EvalBody.evalOutputRowsPreparedCore_pubDisc (rec : EvalRec) (hrec : ∀ 
     PubDisc (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; pub_tac
 
-theorem EvalBody.evalCapturePreparedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalCapturePreparedCore rec rows ctx env) := by
-  unfold EvalBody.evalCapturePreparedCore; pub_tac
-
 theorem EvalBody.evalCaptureCountedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalCaptureCountedCore rec rows ctx env) := by
   unfold EvalBody.evalCaptureCountedCore; pub_tac
 
-theorem EvalBody.evalCaptureValue_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalCaptureValue rec rows ctx env) := by
-  unfold EvalBody.evalCaptureValue; pub_tac
-
 theorem EvalBody.evalAlgOutputCountedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCountedCore; pub_tac
-
-theorem EvalBody.evalAlgOutputCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalAlgOutputCounted rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCounted; pub_tac
 
 /-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
     reads one, so those bodies never unfold it inline (M4★). -/
@@ -1450,17 +1418,9 @@ theorem EvalBody.evalZeroArgumentDemandOutputCounted_pubDisc (rec : EvalRec) (hr
     PubDisc (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; pub_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalZeroArgumentDemandOutput rec a ctx env) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; pub_tac
-
 theorem EvalBody.evalArgumentValueCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalArgumentValueCounted rec arg ctx env) := by
   unfold EvalBody.evalArgumentValueCounted; pub_tac
-
-theorem EvalBody.evalArgumentValue_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalArgumentValue rec arg ctx env) := by
-  unfold EvalBody.evalArgumentValue; pub_tac
 
 /-- CACHE-PUB-1: a property request's calculation (a read's demand, an invocation's fresh call) is
     link-disciplined whenever its recursive answer is. -/
@@ -1474,10 +1434,6 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_pubDisc (rec : EvalRec) (hrec 
     fun q => EvalBody.zeroArgPropertyCalculation_pubDisc rec hrec hres q resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; pub_tac
 
-theorem EvalBody.evalZeroArgPropertyAccess_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; pub_tac
-
 theorem EvalBody.evalConditionalCallbackCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     PubDisc (EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallbackCallCounted; pub_tac
@@ -1489,10 +1445,6 @@ theorem EvalBody.evalUserCallbackCallCounted_pubDisc (rec : EvalRec) (hrec : ∀
 theorem EvalBody.evalResolvedCallbackCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     PubDisc (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; pub_tac
-
-theorem EvalBody.evalResolvedCallbackCall_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    PubDisc (EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCallbackCall; pub_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     PubDisc (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
@@ -1557,14 +1509,6 @@ theorem EvalBody.applyBuiltinCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubD
     PubDisc (EvalBody.applyBuiltinCounted rec b args ctx env) := by
   unfold EvalBody.applyBuiltinCounted; pub_tac
 
-theorem EvalBody.applyBuiltin_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.applyBuiltin rec b args ctx env) := by
-  unfold EvalBody.applyBuiltin; pub_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.applyBuiltinCountedResolved rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCountedResolved; pub_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalExplicitSequenceValueItems rec a ctx env) := by
   unfold EvalBody.evalExplicitSequenceValueItems; pub_tac
@@ -1584,10 +1528,6 @@ theorem EvalBody.evalUserCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubD
 theorem EvalBody.evalConditionalCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     PubDisc (EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallCounted; pub_tac
-
-theorem EvalBody.evalResolvedCall_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    PubDisc (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCall; pub_tac
 
 theorem EvalBody.evalResolvedCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     PubDisc (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
@@ -1674,26 +1614,6 @@ theorem EvalBody.evalCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec
     PubDisc (EvalBody.evalCounted rec e ctx env) := by
   unfold EvalBody.evalCounted; pub_tac
 
-theorem EvalBody.evalUserCall_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalUserCall rec callee args ctx env) := by
-  unfold EvalBody.evalUserCall; pub_tac
-
-theorem EvalBody.evalConditionalCall_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    PubDisc (EvalBody.evalConditionalCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalConditionalCall; pub_tac
-
-theorem EvalBody.evalCallExpr_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalCallExpr rec f args ctx env) := by
-  unfold EvalBody.evalCallExpr; pub_tac
-
-theorem EvalBody.evalDotCall_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalDotCall rec target name fallback argsOpt ctx env) := by
-  unfold EvalBody.evalDotCall; pub_tac
-
-theorem EvalBody.eval_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.eval rec e ctx env) := by
-  unfold EvalBody.eval; pub_tac
-
 theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) :
     ∀ c, PubDisc (evalStep rec c) := by
   intro c
@@ -1736,31 +1656,19 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_pubDisc rec hrec hres arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_pubDisc rec hrec hres step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_pubDisc rec hrec hres step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_pubDisc rec hrec hres a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_pubDisc rec hrec hres a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_pubDisc rec hrec hres a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_pubDisc rec hrec hres a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_pubDisc rec hrec hres ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_pubDisc rec hrec hres a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_pubDisc rec hrec hres callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_pubDisc rec hrec hres callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_pubDisc rec hrec hres a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_pubDisc rec hrec hres rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_pubDisc rec hrec hres rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_pubDisc rec hrec hres rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_pubDisc rec hrec hres rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_pubDisc rec hrec hres a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_pubDisc rec hrec hres a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_pubDisc rec hrec hres a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_pubDisc rec hrec hres a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_pubDisc rec hrec hres arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_pubDisc rec hrec hres arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_pubDisc rec hrec hres accessKind owner binding resolvedAlgorithm ctx env request
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_pubDisc rec hrec hres accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pubDisc rec hrec hres callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pubDisc rec hrec hres callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_pubDisc rec hrec hres callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_pubDisc rec hrec hres callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_pubDisc rec hrec hres callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pubDisc rec hrec hres item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pubDisc rec hrec hres b metadata args ctx env
@@ -1769,14 +1677,11 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pubDisc rec hrec hres collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pubDisc rec hrec hres b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_pubDisc rec hrec hres b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_pubDisc rec hrec hres b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_pubDisc rec hrec hres b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_pubDisc rec hrec hres a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_pubDisc rec hrec hres rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_pubDisc rec hrec hres expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_pubDisc rec hrec hres callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_pubDisc rec hrec hres callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_pubDisc rec hrec hres callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_pubDisc rec hrec hres callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_pubDisc rec hrec hres f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_pubDisc rec hrec hres name receiver fallback extraArgs ctx env
@@ -1797,11 +1702,6 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_pubDisc rec hrec hres first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_pubDisc rec hrec hres previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_pubDisc rec hrec hres e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_pubDisc rec hrec hres callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_pubDisc rec hrec hres callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_pubDisc rec hrec hres f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_pubDisc rec hrec hres target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_pubDisc rec hrec hres e ctx env
 
 /-! ## Normal heaps -/
 

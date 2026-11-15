@@ -816,18 +816,6 @@ theorem EvalBody.runNeedWhileRound_disciplined (rec : EvalRec) (hrec : ∀ c, Di
     Disciplined (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; disc_tac
 
-theorem EvalBody.evalAlgOutputCore_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalAlgOutputCore rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCore; disc_tac
-
-theorem EvalBody.evalAlgOutput_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalAlgOutput rec a ctx env) := by
-  unfold EvalBody.evalAlgOutput; disc_tac
-
-theorem EvalBody.evalProgramOutput_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalProgramOutput rec a ctx env) := by
-  unfold EvalBody.evalProgramOutput; disc_tac
-
 theorem EvalBody.evalAlgOutputSlots_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalAlgOutputSlots rec a ctx env) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; disc_tac
@@ -840,14 +828,6 @@ theorem EvalBody.whileVerdictSlots_disciplined (rec : EvalRec) (hrec : ∀ c, Di
     Disciplined (EvalBody.whileVerdictSlots rec a ctx env) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; disc_tac
 
-theorem EvalBody.evalSequenceCallbackCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCall; disc_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; disc_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalAlgOutputPreparedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputPreparedCore; disc_tac
@@ -856,25 +836,13 @@ theorem EvalBody.evalOutputRowsPreparedCore_disciplined (rec : EvalRec) (hrec : 
     Disciplined (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; disc_tac
 
-theorem EvalBody.evalCapturePreparedCore_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalCapturePreparedCore rec rows ctx env) := by
-  unfold EvalBody.evalCapturePreparedCore; disc_tac
-
 theorem EvalBody.evalCaptureCountedCore_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalCaptureCountedCore rec rows ctx env) := by
   unfold EvalBody.evalCaptureCountedCore; disc_tac
 
-theorem EvalBody.evalCaptureValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalCaptureValue rec rows ctx env) := by
-  unfold EvalBody.evalCaptureValue; disc_tac
-
 theorem EvalBody.evalAlgOutputCountedCore_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCountedCore; disc_tac
-
-theorem EvalBody.evalAlgOutputCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalAlgOutputCounted rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCounted; disc_tac
 
 /-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
     reads one, so those bodies never unfold it inline (M4★). -/
@@ -886,17 +854,9 @@ theorem EvalBody.evalZeroArgumentDemandOutputCounted_disciplined (rec : EvalRec)
     Disciplined (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; disc_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalZeroArgumentDemandOutput rec a ctx env) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; disc_tac
-
 theorem EvalBody.evalArgumentValueCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalArgumentValueCounted rec arg ctx env) := by
   unfold EvalBody.evalArgumentValueCounted; disc_tac
-
-theorem EvalBody.evalArgumentValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalArgumentValue rec arg ctx env) := by
-  unfold EvalBody.evalArgumentValue; disc_tac
 
 /-- CACHE-PUB-1: a property request's calculation (a read's demand, an invocation's fresh call) is
     disciplined whenever its recursive answer is. -/
@@ -910,10 +870,6 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_disciplined (rec : EvalRec) (h
     fun q => EvalBody.zeroArgPropertyCalculation_disciplined rec hrec q resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; disc_tac
 
-theorem EvalBody.evalZeroArgPropertyAccess_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; disc_tac
-
 theorem EvalBody.evalConditionalCallbackCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Disciplined (EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallbackCallCounted; disc_tac
@@ -925,10 +881,6 @@ theorem EvalBody.evalUserCallbackCallCounted_disciplined (rec : EvalRec) (hrec :
 theorem EvalBody.evalResolvedCallbackCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Disciplined (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; disc_tac
-
-theorem EvalBody.evalResolvedCallbackCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCallbackCall; disc_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Disciplined (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
@@ -993,14 +945,6 @@ theorem EvalBody.applyBuiltinCounted_disciplined (rec : EvalRec) (hrec : ∀ c, 
     Disciplined (EvalBody.applyBuiltinCounted rec b args ctx env) := by
   unfold EvalBody.applyBuiltinCounted; disc_tac
 
-theorem EvalBody.applyBuiltin_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.applyBuiltin rec b args ctx env) := by
-  unfold EvalBody.applyBuiltin; disc_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.applyBuiltinCountedResolved rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCountedResolved; disc_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalExplicitSequenceValueItems rec a ctx env) := by
   unfold EvalBody.evalExplicitSequenceValueItems; disc_tac
@@ -1020,10 +964,6 @@ theorem EvalBody.evalUserCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, 
 theorem EvalBody.evalConditionalCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Disciplined (EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallCounted; disc_tac
-
-theorem EvalBody.evalResolvedCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCall; disc_tac
 
 theorem EvalBody.evalResolvedCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     Disciplined (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
@@ -1110,26 +1050,6 @@ theorem EvalBody.evalCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Discipli
     Disciplined (EvalBody.evalCounted rec e ctx env) := by
   unfold EvalBody.evalCounted; disc_tac
 
-theorem EvalBody.evalUserCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalUserCall rec callee args ctx env) := by
-  unfold EvalBody.evalUserCall; disc_tac
-
-theorem EvalBody.evalConditionalCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalConditionalCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalConditionalCall; disc_tac
-
-theorem EvalBody.evalCallExpr_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalCallExpr rec f args ctx env) := by
-  unfold EvalBody.evalCallExpr; disc_tac
-
-theorem EvalBody.evalDotCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalDotCall rec target name fallback argsOpt ctx env) := by
-  unfold EvalBody.evalDotCall; disc_tac
-
-theorem EvalBody.eval_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.eval rec e ctx env) := by
-  unfold EvalBody.eval; disc_tac
-
 theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) :
     ∀ c, Disciplined (evalStep rec c) := by
   intro c
@@ -1172,31 +1092,19 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_disciplined rec hrec arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_disciplined rec hrec step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_disciplined rec hrec step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_disciplined rec hrec a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_disciplined rec hrec a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_disciplined rec hrec a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_disciplined rec hrec a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_disciplined rec hrec ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_disciplined rec hrec a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_disciplined rec hrec callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_disciplined rec hrec callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_disciplined rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_disciplined rec hrec rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_disciplined rec hrec rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_disciplined rec hrec rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_disciplined rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_disciplined rec hrec a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_disciplined rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_disciplined rec hrec a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_disciplined rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_disciplined rec hrec arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_disciplined rec hrec arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_disciplined rec hrec accessKind owner binding resolvedAlgorithm ctx env request
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_disciplined rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_disciplined rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_disciplined rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_disciplined rec hrec callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_disciplined rec hrec callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_disciplined rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_disciplined rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_disciplined rec hrec b metadata args ctx env
@@ -1205,14 +1113,11 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_disciplined rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_disciplined rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_disciplined rec hrec b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_disciplined rec hrec b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_disciplined rec hrec b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_disciplined rec hrec a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_disciplined rec hrec rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_disciplined rec hrec expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_disciplined rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_disciplined rec hrec callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_disciplined rec hrec callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_disciplined rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_disciplined rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_disciplined rec hrec name receiver fallback extraArgs ctx env
@@ -1233,11 +1138,6 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_disciplined rec hrec first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_disciplined rec hrec previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_disciplined rec hrec e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_disciplined rec hrec callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_disciplined rec hrec callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_disciplined rec hrec f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_disciplined rec hrec target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_disciplined rec hrec e ctx env
 
 /-! ## Whole-run heap discipline and the discharge of `ProductionDiscipline` -/
 

@@ -44,7 +44,7 @@ def supplied (grouped : Bool) : EvalState := ((supplyNeed (source grouped) calle
 def entry (grouped : Bool) : EvalState := withState 2 .evaluating (supplied grouped)
 def probed (grouped : Bool) : EvalState := ((evalFuel 40 (.resolveDotReceiver? receiver caller)).runState (entry grouped)).2
 def x (grouped : Bool) : EvalState := withRoute 2 .algorithm (probed grouped)
-def x₄ (grouped : Bool) : EvalState := ((evalFuel 40 (.eval receiver caller [])).runState (x grouped)).2
+def x₄ (grouped : Bool) : EvalState := ((evalFuel 40 (.evalCounted receiver caller [])).runState (x grouped)).2
 def ca (grouped : Bool) : NeedCell :=
   { suspension := .expression (source grouped) caller [], state := .evaluating, route := some .algorithm }
 def ι (grouped : Bool) : Insertion := paramInsertion (x grouped).needs.size 2 edge caller [] 1
@@ -112,7 +112,7 @@ theorem inv_x (g : Bool) : Inv (x g) := by
 theorem probe_x (g : Bool) : (resolveDotReceiver? receiver caller).runState (x g) = (.ok none, x g) :=
   prod_of_fuel 40 (.resolveDotReceiver? receiver caller) (x g) _ (by cases g <;> kernel_rfl) (ok_complete _)
 theorem value_x (g : Bool) : (eval receiver caller []).runState (x g) = (.ok (.callRef 0), x₄ g) :=
-  prod_of_fuel 40 (.eval receiver caller []) (x g) _ (by cases g <;> kernel_rfl) (ok_complete _)
+  eval_of_fuel 40 receiver caller [] (x g) _ (by cases g <;> kernel_rfl) (ok_complete _)
 theorem read_x (g : Bool) : (invocationReceiverValue receiver caller []).runState (x g) = (.ok (.callRef 0), x₄ g) :=
   irv_value receiver caller [] (x g) (x g) (x₄ g) (.ok (.callRef 0)) (probe_x g) (value_x g)
 theorem probe_plan (g : Bool) :
@@ -120,7 +120,7 @@ theorem probe_plan (g : Bool) :
   prod_of_fuel 40 (.resolveDotReceiver? receiver caller) (embed (ι g) (x g)) _ (by cases g <;> kernel_rfl) (ok_complete _)
 theorem value_plan (g : Bool) : (eval receiver caller []).runState (embed (ι g) (x g)) =
     (.ok (.callRef 0), embed (ι g) (x₄ g)) :=
-  prod_of_fuel 40 (.eval receiver caller []) (embed (ι g) (x g)) _ (by cases g <;> kernel_rfl) (ok_complete _)
+  eval_of_fuel 40 receiver caller [] (embed (ι g) (x g)) _ (by cases g <;> kernel_rfl) (ok_complete _)
 theorem read_plan (g : Bool) : (invocationReceiverValue receiver caller []).runState (embed (ι g) (x g)) =
     (.ok (.callRef 0), embed (ι g) (x₄ g)) :=
   irv_value receiver caller [] _ _ _ (.ok (.callRef 0)) (probe_plan g) (value_plan g)
@@ -137,7 +137,7 @@ theorem repeated_read (g : Bool) :
   apply irv_value receiver caller [] (x₄ g) (x₄ g) (x₄ g) (.ok (.callRef 0))
   · exact prod_of_fuel 40 (.resolveDotReceiver? receiver caller) (x₄ g) _
       (by cases g <;> kernel_rfl) (ok_complete _)
-  · exact prod_of_fuel 40 (.eval receiver caller []) (x₄ g) _
+  · exact eval_of_fuel 40 receiver caller [] (x₄ g) _
       (by cases g <;> kernel_rfl) (ok_complete _)
 theorem shifted_callee (g : Bool) :
     ((x₅ g).needs[0]?).bind NeedCell.callee = some (x g).needs.size ∧

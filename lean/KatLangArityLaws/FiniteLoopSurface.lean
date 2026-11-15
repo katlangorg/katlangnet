@@ -716,9 +716,7 @@ theorem production_ok_of_body (c : EvalCall) (B : EvalRec → EvalM c.Ret)
 theorem resolved_builtin_eq (b : Builtin) (args : List ResolvedArgumentAlgorithm)
     (ctx : EvalCtx) (env : ValEnv) :
     applyBuiltinCountedResolved b args ctx env = applyBuiltinCounted b args ctx env :=
-  (delegation_equation (.applyBuiltinCountedResolved b args ctx env)
-    (.applyBuiltinCounted b args ctx env) pure
-    (fun _ => (Eq.trans (by rfl) (bind_pure_eq _).symm)) (fun _ _ => nofun)).trans (bind_pure_eq _)
+  rfl
 
 /-- `count` of a prepared ordinary collection is its top-level length, with no additional work
     after argument binding. Views and retained collectors have separate selective routes. -/
@@ -772,25 +770,26 @@ theorem count_one_count_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     about the unselected branch; it is never evaluated by this equation. -/
 theorem if_application_value (cond yes no : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (s s₁ t : EvalState) (flag : Bool) (out : CountedResult)
-    (hc : (evalUnbounded (.evalArgumentValue cond ctx env)).runState s = (.ok (.bool flag), s₁))
+    (hc : (evalArgumentValue cond ctx env).runState s = (.ok (.bool flag), s₁))
     (hb : (evalUnbounded (.evalArgumentValueCounted (if flag then yes else no) ctx env)).runState s₁ = (.ok out, t)) :
     (applyBuiltinCountedResolved .ifBuiltin [cond, yes, no] ctx env).runState s =
       (.ok (reCountValueBoundary out), t) := by
-  let B := fun rec : EvalRec => withNestedMissingOutput (rec (.evalArgumentValue cond ctx env) >>= fun r =>
+  let B := fun rec : EvalRec => withNestedMissingOutput (rec.evalArgumentValue cond ctx env >>= fun r =>
     match r.asBool? with
     | some false => rec (.evalArgumentValueCounted no ctx env) >>= fun out => pure (reCountValueBoundary out)
     | some true => rec (.evalArgumentValueCounted yes ctx env) >>= fun out => pure (reCountValueBoundary out)
     | none => EvalM.error (.typeMismatch (booleanRequiredMessage "if condition" r)))
   have hf : Finite B := by
-    refine finite_nested (finite_bind (finite_call _) fun r => ?_)
+    refine finite_nested (finite_bind (finite_value _ _) fun r => ?_)
     cases r.asBool? with
     | none => exact finite_const _
     | some b => cases b <;> exact finite_bind (finite_call _) (fun _ => finite_const _)
   rw [resolved_builtin_eq]
   exact production_ok_of_body (.applyBuiltinCounted .ifBuiltin [cond, yes, no] ctx env) B
     (fun _ => rfl) hf s t _ (by
+      have hc' : (EvalRec.evalArgumentValue evalUnbounded cond ctx env).runState s = (.ok (.bool flag), s₁) := hc
       change (withNestedMissingOutput _).runState s = _
-      rw [nested_run, EvalM.bind_runState, hc]
+      rw [nested_run, EvalM.bind_runState, hc']
       cases flag with
       | false =>
         have hno : (evalUnbounded (.evalArgumentValueCounted no ctx env)).runState s₁ = (.ok out, t) := by
@@ -815,7 +814,7 @@ def stepCellArgument (c : NeedSupply.Sourced) : ResolvedArgumentAlgorithm :=
 theorem count_one_if_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (name : String) (c y n : NeedSupply.Sourced) (s s₁ s₂ t : EvalState) (flag : Bool) (out : CountedResult)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .ifBuiltin)), s₁))
-    (hc : (evalUnbounded (.evalArgumentValue (stepCellArgument c) ctx env)).runState s₁ = (.ok (.bool flag), s₂))
+    (hc : (evalArgumentValue (stepCellArgument c) ctx env).runState s₁ = (.ok (.bool flag), s₂))
     (hb : (evalUnbounded (.evalArgumentValueCounted (stepCellArgument (if flag then y else n)) ctx env)).runState s₂ = (.ok out, t))
     (hcan : out.fst.normalize = out.fst) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 [c, y, n]).runState s =

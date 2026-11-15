@@ -168,11 +168,22 @@ theorem rootRun_shape (e : Expr) :
   by_cases ha : ∃ a, e = .algorithmExpr a
   · obtain ⟨a, rfl⟩ := ha
     by_cases hz : Algorithm.acceptsZeroSuppliedArguments (wireToCaller { callStack := [preludeAlg] } a) = true
-    · exact .inr ⟨.evalProgramOutput (wireToCaller { callStack := [preludeAlg] } a) { callStack := [preludeAlg] } [],
-        exportRunValue, fun _ => by simp only [rootRun, hz, ite_true]; rfl⟩
+    -- `rec.evalProgramOutput` is the VALUE of the one call `evalZeroArgumentDemandOutputCounted`
+    -- (a derived answer), so the projection joins the continuation.
+    · exact .inr ⟨.evalZeroArgumentDemandOutputCounted (wireToCaller { callStack := [preludeAlg] } a)
+          { callStack := [preludeAlg] } [],
+        fun out => pure out.fst >>= exportRunValue,
+        fun rec => by
+          simp only [rootRun, hz, ite_true]
+          exact EvalM.bind_assoc (rec (.evalZeroArgumentDemandOutputCounted _ _ _)) (fun out => pure out.fst)
+            exportRunValue⟩
     · exact .inl (fun _ _ => by simp only [rootRun, hz]; rfl)
-  · refine .inr ⟨.eval e { callStack := [preludeAlg] } [], exportRunValue, fun _ => ?_⟩
-    cases e <;> first | rfl | exact absurd ⟨_, rfl⟩ ha
+  -- likewise `rec.eval` is the value of the one call `evalCounted`.
+  · refine .inr ⟨.evalCounted e { callStack := [preludeAlg] } [], fun out => pure out.fst >>= exportRunValue,
+      fun rec => ?_⟩
+    cases e <;> first
+      | exact EvalM.bind_assoc (rec (.evalCounted _ _ _)) (fun out => pure out.fst) exportRunValue
+      | exact absurd ⟨_, rfl⟩ ha
 
 /-- `runResultWith` is one-call at every entry state, for every expression: the prefix's outcome
     and state are case-split, never computed. -/

@@ -19,7 +19,7 @@ per-body tactic, adapted to this relation) over the relation
 * `ActDisc m`: `m` relates EVERY entry heap to its exit heap by `ActHeapKept` (successful and
   ordinary-error runs alike: `EvalM.runState` keeps the state of both).
 
-`evalStep_actDisc` proves `ActDisc` for every one of the 104 `EvalCall` bodies given its recursive
+`evalStep_actDisc` proves `ActDisc` for every one of the 84 `EvalCall` bodies given its recursive
 answer; `evalFuel_actDisc` / `evalUnbounded_actDisc` transfer it through `invariant_transfer` /
 `production_preserves`. The ONE writer of `NeedCell.state` is the completion shell
 `NeedDemand.step`, and it writes only from an entry cell it read as `suspended` (an `evaluating`
@@ -1326,18 +1326,6 @@ theorem EvalBody.runNeedWhileRound_actDisc (rec : EvalRec) (hrec : ∀ c, ActDis
     ActDisc (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; act_tac
 
-theorem EvalBody.evalAlgOutputCore_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalAlgOutputCore rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCore; act_tac
-
-theorem EvalBody.evalAlgOutput_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalAlgOutput rec a ctx env) := by
-  unfold EvalBody.evalAlgOutput; act_tac
-
-theorem EvalBody.evalProgramOutput_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalProgramOutput rec a ctx env) := by
-  unfold EvalBody.evalProgramOutput; act_tac
-
 theorem EvalBody.evalAlgOutputSlots_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     ActDisc (EvalBody.evalAlgOutputSlots rec a ctx env) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; act_tac
@@ -1350,14 +1338,6 @@ theorem EvalBody.whileVerdictSlots_actDisc (rec : EvalRec) (hrec : ∀ c, ActDis
     ActDisc (EvalBody.whileVerdictSlots rec a ctx env) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; act_tac
 
-theorem EvalBody.evalSequenceCallbackCall_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    ActDisc (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCall; act_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    ActDisc (EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; act_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     ActDisc (EvalBody.evalAlgOutputPreparedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputPreparedCore; act_tac
@@ -1366,25 +1346,13 @@ theorem EvalBody.evalOutputRowsPreparedCore_actDisc (rec : EvalRec) (hrec : ∀ 
     ActDisc (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; act_tac
 
-theorem EvalBody.evalCapturePreparedCore_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalCapturePreparedCore rec rows ctx env) := by
-  unfold EvalBody.evalCapturePreparedCore; act_tac
-
 theorem EvalBody.evalCaptureCountedCore_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     ActDisc (EvalBody.evalCaptureCountedCore rec rows ctx env) := by
   unfold EvalBody.evalCaptureCountedCore; act_tac
 
-theorem EvalBody.evalCaptureValue_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalCaptureValue rec rows ctx env) := by
-  unfold EvalBody.evalCaptureValue; act_tac
-
 theorem EvalBody.evalAlgOutputCountedCore_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     ActDisc (EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCountedCore; act_tac
-
-theorem EvalBody.evalAlgOutputCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalAlgOutputCounted rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCounted; act_tac
 
 /-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
     reads one, so those bodies never unfold it inline (M4★). -/
@@ -1396,17 +1364,9 @@ theorem EvalBody.evalZeroArgumentDemandOutputCounted_actDisc (rec : EvalRec) (hr
     ActDisc (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; act_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalZeroArgumentDemandOutput rec a ctx env) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; act_tac
-
 theorem EvalBody.evalArgumentValueCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     ActDisc (EvalBody.evalArgumentValueCounted rec arg ctx env) := by
   unfold EvalBody.evalArgumentValueCounted; act_tac
-
-theorem EvalBody.evalArgumentValue_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalArgumentValue rec arg ctx env) := by
-  unfold EvalBody.evalArgumentValue; act_tac
 
 /-- CACHE-PUB-1: a property request's calculation (a read's demand, an invocation's fresh call) is
     mark-preserving whenever its recursive answer is. -/
@@ -1420,10 +1380,6 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_actDisc (rec : EvalRec) (hrec 
     fun q => EvalBody.zeroArgPropertyCalculation_actDisc rec hrec q resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; act_tac
 
-theorem EvalBody.evalZeroArgPropertyAccess_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; act_tac
-
 theorem EvalBody.evalConditionalCallbackCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     ActDisc (EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallbackCallCounted; act_tac
@@ -1435,10 +1391,6 @@ theorem EvalBody.evalUserCallbackCallCounted_actDisc (rec : EvalRec) (hrec : ∀
 theorem EvalBody.evalResolvedCallbackCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     ActDisc (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; act_tac
-
-theorem EvalBody.evalResolvedCallbackCall_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    ActDisc (EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCallbackCall; act_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     ActDisc (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
@@ -1503,14 +1455,6 @@ theorem EvalBody.applyBuiltinCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActD
     ActDisc (EvalBody.applyBuiltinCounted rec b args ctx env) := by
   unfold EvalBody.applyBuiltinCounted; act_tac
 
-theorem EvalBody.applyBuiltin_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.applyBuiltin rec b args ctx env) := by
-  unfold EvalBody.applyBuiltin; act_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.applyBuiltinCountedResolved rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCountedResolved; act_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     ActDisc (EvalBody.evalExplicitSequenceValueItems rec a ctx env) := by
   unfold EvalBody.evalExplicitSequenceValueItems; act_tac
@@ -1530,10 +1474,6 @@ theorem EvalBody.evalUserCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActD
 theorem EvalBody.evalConditionalCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     ActDisc (EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallCounted; act_tac
-
-theorem EvalBody.evalResolvedCall_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    ActDisc (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCall; act_tac
 
 theorem EvalBody.evalResolvedCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     ActDisc (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
@@ -1620,26 +1560,6 @@ theorem EvalBody.evalCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec
     ActDisc (EvalBody.evalCounted rec e ctx env) := by
   unfold EvalBody.evalCounted; act_tac
 
-theorem EvalBody.evalUserCall_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalUserCall rec callee args ctx env) := by
-  unfold EvalBody.evalUserCall; act_tac
-
-theorem EvalBody.evalConditionalCall_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    ActDisc (EvalBody.evalConditionalCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalConditionalCall; act_tac
-
-theorem EvalBody.evalCallExpr_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalCallExpr rec f args ctx env) := by
-  unfold EvalBody.evalCallExpr; act_tac
-
-theorem EvalBody.evalDotCall_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.evalDotCall rec target name fallback argsOpt ctx env) := by
-  unfold EvalBody.evalDotCall; act_tac
-
-theorem EvalBody.eval_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    ActDisc (EvalBody.eval rec e ctx env) := by
-  unfold EvalBody.eval; act_tac
-
 theorem evalStep_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) :
     ∀ c, ActDisc (evalStep rec c) := by
   intro c
@@ -1682,31 +1602,19 @@ theorem evalStep_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) :
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_actDisc rec hrec arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_actDisc rec hrec step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_actDisc rec hrec step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_actDisc rec hrec a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_actDisc rec hrec a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_actDisc rec hrec a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_actDisc rec hrec a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_actDisc rec hrec ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_actDisc rec hrec a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_actDisc rec hrec callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_actDisc rec hrec callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_actDisc rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_actDisc rec hrec rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_actDisc rec hrec rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_actDisc rec hrec rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_actDisc rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_actDisc rec hrec a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_actDisc rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_actDisc rec hrec a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_actDisc rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_actDisc rec hrec arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_actDisc rec hrec arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_actDisc rec hrec accessKind owner binding resolvedAlgorithm ctx env request
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_actDisc rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_actDisc rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_actDisc rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_actDisc rec hrec callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_actDisc rec hrec callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_actDisc rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_actDisc rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_actDisc rec hrec b metadata args ctx env
@@ -1715,14 +1623,11 @@ theorem evalStep_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) :
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_actDisc rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_actDisc rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_actDisc rec hrec b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_actDisc rec hrec b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_actDisc rec hrec b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_actDisc rec hrec a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_actDisc rec hrec rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_actDisc rec hrec expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_actDisc rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_actDisc rec hrec callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_actDisc rec hrec callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_actDisc rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_actDisc rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_actDisc rec hrec name receiver fallback extraArgs ctx env
@@ -1743,11 +1648,6 @@ theorem evalStep_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) :
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_actDisc rec hrec first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_actDisc rec hrec previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_actDisc rec hrec e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_actDisc rec hrec callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_actDisc rec hrec callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_actDisc rec hrec f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_actDisc rec hrec target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_actDisc rec hrec e ctx env
 
 /-! ## Whole-run preservation of `evaluating` marks by the production evaluator -/
 

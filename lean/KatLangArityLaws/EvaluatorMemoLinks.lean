@@ -1355,18 +1355,6 @@ theorem EvalBody.runNeedWhileRound_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkD
     LinkDisc (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; link_tac
 
-theorem EvalBody.evalAlgOutputCore_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalAlgOutputCore rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCore; link_tac
-
-theorem EvalBody.evalAlgOutput_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalAlgOutput rec a ctx env) := by
-  unfold EvalBody.evalAlgOutput; link_tac
-
-theorem EvalBody.evalProgramOutput_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalProgramOutput rec a ctx env) := by
-  unfold EvalBody.evalProgramOutput; link_tac
-
 theorem EvalBody.evalAlgOutputSlots_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalAlgOutputSlots rec a ctx env) := by
   unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; link_tac
@@ -1379,14 +1367,6 @@ theorem EvalBody.whileVerdictSlots_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkD
     LinkDisc (EvalBody.whileVerdictSlots rec a ctx env) := by
   unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; link_tac
 
-theorem EvalBody.evalSequenceCallbackCall_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    LinkDisc (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCall; link_tac
-
-theorem EvalBody.evalSequenceCallbackCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    LinkDisc (EvalBody.evalSequenceCallbackCallCounted rec callee item ctx env calleeName) := by
-  unfold EvalBody.evalSequenceCallbackCallCounted; link_tac
-
 theorem EvalBody.evalAlgOutputPreparedCore_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalAlgOutputPreparedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputPreparedCore; link_tac
@@ -1395,25 +1375,13 @@ theorem EvalBody.evalOutputRowsPreparedCore_linkDisc (rec : EvalRec) (hrec : ∀
     LinkDisc (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; link_tac
 
-theorem EvalBody.evalCapturePreparedCore_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalCapturePreparedCore rec rows ctx env) := by
-  unfold EvalBody.evalCapturePreparedCore; link_tac
-
 theorem EvalBody.evalCaptureCountedCore_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalCaptureCountedCore rec rows ctx env) := by
   unfold EvalBody.evalCaptureCountedCore; link_tac
 
-theorem EvalBody.evalCaptureValue_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalCaptureValue rec rows ctx env) := by
-  unfold EvalBody.evalCaptureValue; link_tac
-
 theorem EvalBody.evalAlgOutputCountedCore_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCountedCore; link_tac
-
-theorem EvalBody.evalAlgOutputCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalAlgOutputCounted rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputCounted; link_tac
 
 /-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
     reads one, so those bodies never unfold it inline (M4★). -/
@@ -1425,17 +1393,9 @@ theorem EvalBody.evalZeroArgumentDemandOutputCounted_linkDisc (rec : EvalRec) (h
     LinkDisc (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; link_tac
 
-theorem EvalBody.evalZeroArgumentDemandOutput_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalZeroArgumentDemandOutput rec a ctx env) := by
-  unfold EvalBody.evalZeroArgumentDemandOutput; link_tac
-
 theorem EvalBody.evalArgumentValueCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalArgumentValueCounted rec arg ctx env) := by
   unfold EvalBody.evalArgumentValueCounted; link_tac
-
-theorem EvalBody.evalArgumentValue_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalArgumentValue rec arg ctx env) := by
-  unfold EvalBody.evalArgumentValue; link_tac
 
 /-- CACHE-PUB-1: a property request's calculation (a read's demand, an invocation's fresh call) is
     link-disciplined whenever its recursive answer is. -/
@@ -1449,10 +1409,6 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_linkDisc (rec : EvalRec) (hrec
     fun q => EvalBody.zeroArgPropertyCalculation_linkDisc rec hrec q resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; link_tac
 
-theorem EvalBody.evalZeroArgPropertyAccess_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccess; link_tac
-
 theorem EvalBody.evalConditionalCallbackCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     LinkDisc (EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallbackCallCounted; link_tac
@@ -1464,10 +1420,6 @@ theorem EvalBody.evalUserCallbackCallCounted_linkDisc (rec : EvalRec) (hrec : �
 theorem EvalBody.evalResolvedCallbackCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     LinkDisc (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; link_tac
-
-theorem EvalBody.evalResolvedCallbackCall_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    LinkDisc (EvalBody.evalResolvedCallbackCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCallbackCall; link_tac
 
 theorem EvalBody.evalSequenceReduceStepCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     LinkDisc (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
@@ -1532,14 +1484,6 @@ theorem EvalBody.applyBuiltinCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, Lin
     LinkDisc (EvalBody.applyBuiltinCounted rec b args ctx env) := by
   unfold EvalBody.applyBuiltinCounted; link_tac
 
-theorem EvalBody.applyBuiltin_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.applyBuiltin rec b args ctx env) := by
-  unfold EvalBody.applyBuiltin; link_tac
-
-theorem EvalBody.applyBuiltinCountedResolved_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.applyBuiltinCountedResolved rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCountedResolved; link_tac
-
 theorem EvalBody.evalExplicitSequenceValueItems_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalExplicitSequenceValueItems rec a ctx env) := by
   unfold EvalBody.evalExplicitSequenceValueItems; link_tac
@@ -1559,10 +1503,6 @@ theorem EvalBody.evalUserCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, Lin
 theorem EvalBody.evalConditionalCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     LinkDisc (EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalConditionalCallCounted; link_tac
-
-theorem EvalBody.evalResolvedCall_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    LinkDisc (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalResolvedCall; link_tac
 
 theorem EvalBody.evalResolvedCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
     LinkDisc (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
@@ -1649,26 +1589,6 @@ theorem EvalBody.evalCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (r
     LinkDisc (EvalBody.evalCounted rec e ctx env) := by
   unfold EvalBody.evalCounted; link_tac
 
-theorem EvalBody.evalUserCall_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalUserCall rec callee args ctx env) := by
-  unfold EvalBody.evalUserCall; link_tac
-
-theorem EvalBody.evalConditionalCall_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    LinkDisc (EvalBody.evalConditionalCall rec callee args ctx env calleeName) := by
-  unfold EvalBody.evalConditionalCall; link_tac
-
-theorem EvalBody.evalCallExpr_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalCallExpr rec f args ctx env) := by
-  unfold EvalBody.evalCallExpr; link_tac
-
-theorem EvalBody.evalDotCall_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalDotCall rec target name fallback argsOpt ctx env) := by
-  unfold EvalBody.evalDotCall; link_tac
-
-theorem EvalBody.eval_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.eval rec e ctx env) := by
-  unfold EvalBody.eval; link_tac
-
 theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
     ∀ c, LinkDisc (evalStep rec c) := by
   intro c
@@ -1711,31 +1631,19 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   | argumentNeed arg ctx env => exact EvalBody.argumentNeed_linkDisc rec hrec arg ctx env
   | runNeedStepSlots step ctx env cells stepName => exact EvalBody.runNeedStepSlots_linkDisc rec hrec step ctx env cells stepName
   | runNeedWhileRound step ctx env cells stepName => exact EvalBody.runNeedWhileRound_linkDisc rec hrec step ctx env cells stepName
-  | evalAlgOutputCore a ctx env => exact EvalBody.evalAlgOutputCore_linkDisc rec hrec a ctx env
-  | evalAlgOutput a ctx env => exact EvalBody.evalAlgOutput_linkDisc rec hrec a ctx env
-  | evalProgramOutput a ctx env => exact EvalBody.evalProgramOutput_linkDisc rec hrec a ctx env
   | evalAlgOutputSlots a ctx env => exact EvalBody.evalAlgOutputSlots_linkDisc rec hrec a ctx env
   | formOutputRow ctx env e => exact EvalBody.formOutputRow_linkDisc rec hrec ctx env e
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_linkDisc rec hrec a ctx env
-  | evalSequenceCallbackCall callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCall_linkDisc rec hrec callee item ctx env calleeName
-  | evalSequenceCallbackCallCounted callee item ctx env calleeName => exact EvalBody.evalSequenceCallbackCallCounted_linkDisc rec hrec callee item ctx env calleeName
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_linkDisc rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_linkDisc rec hrec rows rowCtx env
-  | evalCapturePreparedCore rows ctx env => exact EvalBody.evalCapturePreparedCore_linkDisc rec hrec rows ctx env
   | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_linkDisc rec hrec rows ctx env
-  | evalCaptureValue rows ctx env => exact EvalBody.evalCaptureValue_linkDisc rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_linkDisc rec hrec a ctx env
-  | evalAlgOutputCounted a ctx env => exact EvalBody.evalAlgOutputCounted_linkDisc rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_linkDisc rec hrec a ctx env
-  | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_linkDisc rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_linkDisc rec hrec arg ctx env
-  | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_linkDisc rec hrec arg ctx env
   | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_linkDisc rec hrec accessKind owner binding resolvedAlgorithm ctx env request
-  | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_linkDisc rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_linkDisc rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_linkDisc rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_linkDisc rec hrec callee args ctx env calleeName
-  | evalResolvedCallbackCall callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCall_linkDisc rec hrec callee args ctx env calleeName
   | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_linkDisc rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_linkDisc rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_linkDisc rec hrec b metadata args ctx env
@@ -1744,14 +1652,11 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_linkDisc rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_linkDisc rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_linkDisc rec hrec b args ctx env
-  | applyBuiltin b args ctx env => exact EvalBody.applyBuiltin_linkDisc rec hrec b args ctx env
-  | applyBuiltinCountedResolved b args ctx env => exact EvalBody.applyBuiltinCountedResolved_linkDisc rec hrec b args ctx env
   | evalExplicitSequenceValueItems a ctx env => exact EvalBody.evalExplicitSequenceValueItems_linkDisc rec hrec a ctx env
   | evalExplicitSequenceValueRowSlots rows rowCtx env => exact EvalBody.evalExplicitSequenceValueRowSlots_linkDisc rec hrec rows rowCtx env
   | evalExplicitSequenceValueExprSlots expr ctx env => exact EvalBody.evalExplicitSequenceValueExprSlots_linkDisc rec hrec expr ctx env
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_linkDisc rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_linkDisc rec hrec callee args ctx env calleeName
-  | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_linkDisc rec hrec callee args ctx env calleeName
   | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_linkDisc rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_linkDisc rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_linkDisc rec hrec name receiver fallback extraArgs ctx env
@@ -1772,11 +1677,6 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   | evalComparisonCounted first links ctx env => exact EvalBody.evalComparisonCounted_linkDisc rec hrec first links ctx env
   | evalComparisonLinksCounted previousExpr previous holds links ctx env => exact EvalBody.evalComparisonLinksCounted_linkDisc rec hrec previousExpr previous holds links ctx env
   | evalCounted e ctx env => exact EvalBody.evalCounted_linkDisc rec hrec e ctx env
-  | evalUserCall callee args ctx env => exact EvalBody.evalUserCall_linkDisc rec hrec callee args ctx env
-  | evalConditionalCall callee args ctx env calleeName => exact EvalBody.evalConditionalCall_linkDisc rec hrec callee args ctx env calleeName
-  | evalCallExpr f args ctx env => exact EvalBody.evalCallExpr_linkDisc rec hrec f args ctx env
-  | evalDotCall target name fallback argsOpt ctx env => exact EvalBody.evalDotCall_linkDisc rec hrec target name fallback argsOpt ctx env
-  | eval e ctx env => exact EvalBody.eval_linkDisc rec hrec e ctx env
 
 /-! ## Whole-run link discipline of the production evaluator -/
 

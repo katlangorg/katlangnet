@@ -75,6 +75,29 @@ theorem prod_of_fuel (m : Nat) (c : EvalCall) (s : EvalState) (r : Except Error 
     (evalUnbounded c).runState s = r :=
   ((production_completes_iff c s r).2 ⟨m, h, (evalFuel_completes_iff m c s).2 (by rw [h]; exact hc)⟩).1
 
+/-- The value run of a counted run: its outcome projected, its state kept. -/
+def valueRun (p : Except Error CountedResult × EvalState) : Except Error Result × EvalState :=
+  (Except.map Prod.fst p.1, p.2)
+
+/-- **A completed core run of `evalCounted` IS the production run of `eval`**, projected: `eval` is
+    the VALUE of `evalCounted` (a derived operation, not a call of the core). -/
+theorem eval_of_fuel (m : Nat) (e : Expr) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
+    (r : Except Error Result × EvalState)
+    (h : valueRun ((evalFuel m (.evalCounted e ctx env)).runState s) = r) (hc : r.1 ≠ .error .fuelExhausted) :
+    (eval e ctx env).runState s = r := by
+  subst h
+  have hne : ((evalFuel m (.evalCounted e ctx env)).runState s).1 ≠ .error .fuelExhausted := by
+    intro he
+    apply hc
+    show Except.map Prod.fst ((evalFuel m (.evalCounted e ctx env)).runState s).1 = _
+    rw [he]
+    rfl
+  have hp := prod_of_fuel m (.evalCounted e ctx env) s _ rfl hne
+  show (evalUnbounded (.evalCounted e ctx env) >>= fun out => pure out.fst).runState s = _
+  rw [EvalM.bind_runState, hp]
+  rcases (evalFuel m (.evalCounted e ctx env)).runState s with ⟨o, t⟩
+  cases o <;> rfl
+
 def completeB {α : Type} (o : Except Error α) : Bool :=
   match o with
   | .error .fuelExhausted => false
@@ -275,12 +298,12 @@ theorem probe_x : (resolveDotReceiver? five ctx).runState x = (.ok none, x) :=
 
 /-- The receiver's VALUE (computed by the kernel: the number 5). -/
 def value : Result :=
-  match ((evalFuel 20 (.eval five ctx [])).runState x).1 with
+  match (valueRun ((evalFuel 20 (.evalCounted five ctx [])).runState x)).1 with
   | .ok v => v
   | .error _ => .atom 0
 
 theorem eval_x : (eval five ctx []).runState x = (.ok value, x) :=
-  prod_of_fuel 20 (.eval five ctx []) x _ (by kernel_rfl) (ok_complete _)
+  eval_of_fuel 20 five ctx [] x _ (by kernel_rfl) (ok_complete _)
 
 /-- PRODUCTION's receiver read from the flight. -/
 theorem read_x : (invocationReceiverValue five ctx []).runState x = (.ok value, x) :=
@@ -297,7 +320,7 @@ theorem probe_plan : (resolveDotReceiver? five ctx).runState (embed ιe x) = (.o
   prod_of_fuel 20 (.resolveDotReceiver? five ctx) (embed ιe x) _ (by kernel_rfl) (ok_complete _)
 
 theorem eval_plan : (eval five ctx []).runState (embed ιe x) = (.ok value, embed ιe x) :=
-  prod_of_fuel 20 (.eval five ctx []) (embed ιe x) _ (by kernel_rfl) (ok_complete _)
+  eval_of_fuel 20 five ctx [] (embed ιe x) _ (by kernel_rfl) (ok_complete _)
 
 /-- THE PLAN SIDE's receiver read, from the plan-side state: production's, under the insertion. -/
 theorem read_plan : (invocationReceiverValue five ctx []).runState (embed ιe x) =
@@ -398,7 +421,7 @@ theorem probe_xG : (resolveDotReceiver? five ctx).runState xG = (.ok none, xG) :
   prod_of_fuel 20 (.resolveDotReceiver? five ctx) xG _ (by kernel_rfl) (ok_complete _)
 
 theorem eval_xG : (eval five ctx []).runState xG = (.ok value, xG) :=
-  prod_of_fuel 20 (.eval five ctx []) xG _ (by kernel_rfl) (ok_complete _)
+  eval_of_fuel 20 five ctx [] xG _ (by kernel_rfl) (ok_complete _)
 
 theorem read_xG : (invocationReceiverValue five ctx []).runState xG = (.ok value, xG) :=
   irv_value five ctx [] xG xG xG (.ok value) probe_xG eval_xG
@@ -413,7 +436,7 @@ theorem probe_planG : (resolveDotReceiver? five ctx).runState (embed ιeG xG) = 
   prod_of_fuel 20 (.resolveDotReceiver? five ctx) (embed ιeG xG) _ (by kernel_rfl) (ok_complete _)
 
 theorem eval_planG : (eval five ctx []).runState (embed ιeG xG) = (.ok value, embed ιeG xG) :=
-  prod_of_fuel 20 (.eval five ctx []) (embed ιeG xG) _ (by kernel_rfl) (ok_complete _)
+  eval_of_fuel 20 five ctx [] (embed ιeG xG) _ (by kernel_rfl) (ok_complete _)
 
 theorem read_planG : (invocationReceiverValue five ctx []).runState (embed ιeG xG) =
     (shiftExcept (shiftResult ⟨xG.needs.size, 2⟩) (.ok value), embed ιeG xG) := by
