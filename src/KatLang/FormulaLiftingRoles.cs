@@ -122,7 +122,7 @@ internal enum DotEdgeKind
 /// slot of a call or dot edge gives the reference that fills it. Every other consumer's slots are
 /// VALUE slots (operators, comparisons, index parts, spread operands, list and capture elements,
 /// rows), a block is its own inferring level, and a call's callee is CALLABLE. Implicit-argument
-/// resolution's signature analysis, dependency collection and rewrite all read THIS through one role walk (B3-5★), so
+/// resolution's signature analysis (through one role walk, B3-5★) and its rewrite both read THIS, so
 /// what a formula's equation records, what it lifts and how it is rewritten cannot drift: each reads ONE verdict per dot
 /// edge (a miss implicit-argument resolution refines is decided once per region from resolution's input, an
 /// <c>.Algorithm</c> link receiver by its SELECTED class, read only where a certain miss would give a slot a VALUE role).

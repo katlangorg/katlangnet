@@ -44,10 +44,23 @@ public sealed class FrontEndCancellationCheckpointTests
         return source.ToString();
     }
 
+    /// <summary>
+    /// Formulas that lift structural dotted references (<c>K{i} = Lib.Inc + Lib.Twice + i</c>): resolving each site reads
+    /// the static structure queries, which observe the operation's token and meter its ledger.
+    /// </summary>
+    private static string DottedCalls(int count = 200)
+    {
+        var source = new StringBuilder("Lib = {\n    public Inc(x) = x + 1\n    public Twice(y) = y * 2\n}\n");
+        for (var i = 0; i < count; i++)
+            source.Append($"K{i} = Lib.Inc + Lib.Twice + Lib.Inc(0) + {i}\n");
+        return source.Append($"K{count - 1}(1, 2)\n").ToString();
+    }
+
     private static string Source(string shape) => shape switch
     {
         "chain" => Chain(),
         "wide" => WideProperties(),
+        "dotted" => DottedCalls(),
         _ => throw new ArgumentOutOfRangeException(nameof(shape)),
     };
 
@@ -312,6 +325,50 @@ public sealed class FrontEndCancellationCheckpointTests
         Assert.Equal(uncancelled, Snapshot(SourceProvenance.ParseValid(source).Parsed));
     }
 
+    /// <summary>
+    /// Resolution of dotted-call formulas: the rewrite reads each open body's lifted dependencies from its selection
+    /// (no second walk of its rows), so its cancellation is observed at its own checkpoints and at the static queries the
+    /// analysis and the rewrite still make. Cancelled at a resolver checkpoint, it escapes with the source token, nothing
+    /// runs after the cancelling checkpoint, and nothing it touched survives: a fresh parse is the uncancelled one.
+    /// </summary>
+    [Theory]
+    [InlineData("ResolverAlgorithm", 20)]
+    [InlineData("ResolverRow", 20)]
+    [InlineData("ResolverRow", 150)]
+    public void DottedCallFormulas_CancelledInResolution_StopAtTheCancellingCheckpoint_AndLeaveNoState(string kindName, long ordinal)
+    {
+        var kind = Enum.Parse<FrontEndCancellationCheckpoint>(kindName);
+        var source = DottedCalls();
+        var uncancelled = Snapshot(SourceProvenance.ParseValid(source).Parsed);
+        using var cancellation = new CancellationTokenSource();
+        var cancel = new CancelAt(cancellation, kind, ordinal);
+
+        var error = Assert.Throws<OperationCanceledException>(() => Parser.ParseObserved(
+            source, new RunOptions { SourceProcessingCancellationToken = cancellation.Token }, cancel.Observations));
+
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Equal(ordinal, cancel.Observations.CancellationCheckpointsOf(kind));
+        Assert.Equal(cancel.CheckpointsAtCancel, cancel.Observations.CancellationCheckpoints);
+        AssertNothingAfterTheCancellingCheckpoint(cancel);
+        Assert.Equal(uncancelled, Snapshot(Parser.Parse(source)));
+    }
+
+    /// <summary>A live token changes neither the resolved dotted-call formulas nor one ledger charge.</summary>
+    [Fact]
+    public void DottedCallResolutionWithALiveToken_ChargesTheLedgerExactlyAsWithout()
+    {
+        using var live = new CancellationTokenSource();
+        var (withToken, withOperation) = Resolved(DottedCalls(), live.Token);
+        var (without, withoutOperation) = Resolved(DottedCalls(), CancellationToken.None);
+
+        Assert.Equal(LeanAstEncoder.EncodeProgram(without), LeanAstEncoder.EncodeProgram(withToken));
+        var a = withOperation.Queries.Resources;
+        var b = withoutOperation.Queries.Resources;
+        Assert.Equal((b.WorkCharged, b.AdapterWork, b.MetadataUnits, b.PeakStorageUnits, b.StorageUnits, b.IsFailed),
+            (a.WorkCharged, a.AdapterWork, a.MetadataUnits, a.PeakStorageUnits, a.StorageUnits, a.IsFailed));
+        Assert.True(a.MetadataUnits > 0);
+    }
+
     // ── 3. Public route parity ──────────────────────────────────────────────
 
     [Fact]
@@ -470,6 +527,7 @@ public sealed class FrontEndCancellationCheckpointTests
     [Theory]
     [InlineData("chain")]
     [InlineData("wide")]
+    [InlineData("dotted")]
     public void LiveNeverCancelledToken_ChangesNoTreeDiagnosticOrCounter(string shape)
     {
         var source = Source(shape);

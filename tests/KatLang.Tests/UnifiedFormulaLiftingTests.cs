@@ -569,4 +569,43 @@ public class UnifiedFormulaLiftingTests
         Assert.Equal("ok 2", await Outcome("C = count + 0\nC((1, 2))"));
         Assert.Equal("ok 2", await Outcome("Lib = {\n    public Inc(x) = x + 1\n}\nB = Lib.Inc + 0\nB(1)"));
     }
+
+    // ── 10. The rewrite lifts in the order the selection composed ─────────────────────────
+
+    /// <summary>
+    /// (id, definitions, formula, F's inferred signature, call, outcome on every route): shapes where the rewrite reaches
+    /// the lifted references in another order than the role walk the selection composed from — an argument-bearing dot
+    /// edge rewrites its arguments before its receiver, and a hoisted deconstruction right-hand side is rewritten after the
+    /// output rows — so THE SELECTION INVARIANT's lift log must restore the role-walk order
+    /// (<c>ImplicitArgumentResolver.OpenBodyLiftLog</c>, negative cases in <see cref="SelectionInvariantLiftLogTests"/>).
+    /// The calls tell the orders apart: the reversed signature gives another value.
+    /// </summary>
+    public static TheoryData<string, string, string, string, string, string> RewriteOrderShapes => new()
+    {
+        { "edge-receiver-before-arguments", "A = p + 1\nB = q + 1\n", "F = A.pow(B)", "p, q", "F(1, 2)", "ok 8" },
+        { "edge-in-edge-arguments", "A = p + 1\nB = q + 1\nC = r + 1\n", "F = A.pow(B.pow(C))", "p, q, r", "F(1, 2, 0)", "ok 8" },
+        { "edge-beside-a-later-operand", "A = p + 1\nB = q + 1\nC = r + 1\n", "F = A.pow(B) - C", "p, q, r", "F(1, 2, 0)", "ok 7" },
+        { "right-hand-side-before-its-row", "A = p + 1\nB = q + 1\n", "F = {\n    x, y = B, 0\n    A - x\n}", "q, p", "F(5, 1)", "ok -4" },
+    };
+
+    [Theory]
+    [MemberData(nameof(RewriteOrderShapes))]
+    public async Task TheRewritesLifts_AreTheSelectionsInItsOrder(
+        string id, string definitions, string formula, string signature, string call, string outcome)
+    {
+        var source = definitions + formula + "\n" + call;
+        Assert.True(SignatureOf(source, "F") == signature, $"{id}: {SignatureOf(source, "F")}");
+        Assert.Equal(outcome, await Outcome(source));
+    }
+
+    [Theory]
+    [InlineData("pow", "Math.Pow")]
+    [InlineData("atan2", "Math.Atan2")]
+    public void TwoSpellingsOfOneCallee_LiftItOnce_InEitherOrder(string alias, string qualified)
+    {
+        // One callee identity, one signature object per spelling: the composition keeps the first spelling's.
+        var once = SignatureOf($"F = {alias} + 0\n0", "F");
+        Assert.Equal(once, SignatureOf($"F = {alias} + {qualified} + {alias}\n0", "F"));
+        Assert.Equal(once, SignatureOf($"F = {qualified} + {alias} + {qualified}\n0", "F"));
+    }
 }

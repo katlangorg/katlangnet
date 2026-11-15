@@ -3,8 +3,8 @@ namespace KatLang.Tests;
 /// <summary>
 /// Traversal-semantics pins for the hand-written <see cref="Expr"/> walks of the
 /// front-end elaboration passes: ParameterDetector, ImplicitArgumentResolver (its one
-/// formula-lifting role walk serves both the B3-5★ signature analysis and dependency
-/// collection), PropertyExposureResolver, PropertyDependencyGraphBuilder, and ModuleLoader,
+/// formula-lifting role walk serves the B3-5★ signature analysis and the preselection
+/// potential-lift reachability), PropertyExposureResolver, PropertyDependencyGraphBuilder, and ModuleLoader,
 /// together with the semantic model visitor. (The parser's former branch-body Grace scan,
 /// <c>Parser.ScanPendingForGraceSpan</c>, was deleted by Q-16 G-O, 2026-10-07: Grace
 /// eligibility is the parameter detector's per-owner decision.)
@@ -64,8 +64,8 @@ public class FrontEndTraversalTests
 
     private static Task RunImplicitWalkLiftingRoles(Expr sample)
     {
-        // B3-5★: the sample — in the root's own row, and in a nested body's — is walked by BOTH instantiations of the one
-        // role walk: the signature analysis (equation recording) before anything is rewritten, then dependency collection.
+        // B3-5★: the sample — in the root's own row, and in a nested body's — is walked by the signature analysis's
+        // instantiation of the one role walk (equation recording) before anything is rewritten, then by the rewrite.
         Assert.NotNull(ImplicitArgumentResolver.ResolveNameResolved(EmptyAlgorithm(sample)));
         var root = new Algorithm.User(
             Parent: null,

@@ -644,10 +644,12 @@ public class FrontEndDagComplexityTests
             Assert.Equal("F", Assert.IsType<Expr.Resolve>(liftedCall.Function).Name);
             Assert.Equal("x", Assert.IsType<Expr.Param>(Assert.Single(liftedCall.Args)).Name);
 
-            // The diamond's `depth` interior nodes expand once per walk. F's explicitly
-            // parameterized body skips dependency collection entirely but its one Binary is
-            // rewritten, so the rewrite counter carries exactly one extra expansion.
-            Assert.Equal(depth, observations.ResolverCollectExpansions);
+            // The diamond's `depth` interior nodes expand once per walk: the signature analysis's
+            // equation walk and the rewrite, which reads the root's lifted dependencies from the
+            // selection instead of walking its rows again to collect them. F's explicitly
+            // parameterized body records no equation but its one Binary is rewritten, so the
+            // rewrite counter carries exactly one extra expansion.
+            Assert.Equal(depth, observations.SignatureAnalysisExpansions);
             Assert.Equal(depth + 1, observations.ResolverRewriteExpansions);
         });
 
@@ -671,7 +673,7 @@ public class FrontEndDagComplexityTests
             var shallow = Observe(ShallowDepth);
             var deep = Observe(DeepDepth);
 
-            Assert.Equal(DeepDepth - ShallowDepth, deep.ResolverCollectExpansions - shallow.ResolverCollectExpansions);
+            Assert.Equal(DeepDepth - ShallowDepth, deep.SignatureAnalysisExpansions - shallow.SignatureAnalysisExpansions);
             Assert.Equal(DeepDepth - ShallowDepth, deep.ResolverRewriteExpansions - shallow.ResolverRewriteExpansions);
         });
 

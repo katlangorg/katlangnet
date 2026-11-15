@@ -409,6 +409,72 @@ public class InferredSignatureValidityTests
         return Evaluator.Run(new Expr.AlgorithmExpr(root));
     }
 
+    // ── 6. The report reads the selection's dependencies: names, order, first references ──
+
+    /// <summary>
+    /// The X-02 report is worded and positioned from the dependencies the SELECTION composed the signature from (the
+    /// rewrite reads them, never collects them again): each collector is named by the first callee whose own top level
+    /// collects it, in signature order; the position is the FIRST reference of the callee that adds the second collector,
+    /// written as the program spells it (an alias by its own name, a structural member by its dotted path); and every
+    /// definition's report comes in declaration order.
+    /// </summary>
+    private static List<Diagnostic> Errors(string source)
+        => [.. SourceProvenance.ExpectFrontEndError(source).Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)];
+
+    private static string CollectorMessage(string collectors, string callee)
+        => string.Join(
+            Environment.NewLine,
+            $"Formula lifting cannot complete this definition's signature: it would need the collecting parameters {collectors} "
+                + "at the same pattern level, but a signature may declare at most one collecting parameter per pattern level.",
+            $"Call '{callee}' with explicit arguments, or declare this definition's parameters explicitly.");
+
+    private static SourceSpan At(int line, int column, int length)
+        => new(new SourcePosition(line, column), new SourcePosition(line, column + length));
+
+    public static TheoryData<string, string, string, string, int, int, int> ReportProvenance => new()
+    {
+        // The FIRST reference of the callee that adds the second collector, not a later one.
+        { "first-reference", Callees + "K = C1 + C2 + C2 + C1\n0", "'*p' (needed by 'C1') and '*q' (needed by 'C2')", "C2", 3, 10, 2 },
+        // The written order decides which collector comes second.
+        { "reversed", Callees + "K = C2 + C1 + C2\n0", "'*q' (needed by 'C2') and '*p' (needed by 'C1')", "C1", 3, 10, 2 },
+        { "three-collectors", Callees + "C3(c, *r) = c\nK = C3 + C1 + C2\n0",
+            "'*r' (needed by 'C3'), '*p' (needed by 'C1'), and '*q' (needed by 'C2')", "C1", 4, 10, 2 },
+        // An alias is named and positioned as written.
+        { "alias", Callees + "A = C2\nK = C1 + A\n0", "'*p' (needed by 'C1') and '*q' (needed by 'A')", "A", 4, 10, 1 },
+        // A structural member by its dotted path, positioned at the whole path.
+        { "structural-member", "Lib = {\n    public C2(b, *q) = b\n}\nC1(a, *p) = a\nK = C1 + Lib.C2\n0",
+            "'*p' (needed by 'C1') and '*q' (needed by 'Lib.C2')", "Lib.C2", 5, 10, 6 },
+    };
+
+    [Theory]
+    [MemberData(nameof(ReportProvenance))]
+    public void TheReport_NamesAndPositionsTheSelectionsDependencies(
+        string id, string source, string collectors, string callee, int line, int column, int length)
+    {
+        var error = Assert.Single(Errors(source));
+        Assert.True(error.Code == DiagnosticCode.InvalidCollectingBinding, $"{id}: {error.Code}: {error.Message}");
+        Assert.Equal(CollectorMessage(collectors, callee), error.Message);
+        Assert.Equal(At(line, column, length), error.Span);
+    }
+
+    [Fact]
+    public void EveryDefinitionsReport_ComesInDeclarationOrder_AndEachRecoversItsOwnSignature()
+    {
+        const string Source = Callees + "K1 = C1 + C2\nK2 = C2 + C1\n0";
+        var errors = Errors(Source);
+        Assert.Equal(2, errors.Count);
+        Assert.All(errors, static error => Assert.Equal(DiagnosticCode.InvalidCollectingBinding, error.Code));
+        Assert.Equal(CollectorMessage("'*p' (needed by 'C1') and '*q' (needed by 'C2')", "C2"), errors[0].Message);
+        Assert.Equal(At(3, 11, 2), errors[0].Span);
+        Assert.Equal(CollectorMessage("'*q' (needed by 'C2') and '*p' (needed by 'C1')", "C1"), errors[1].Message);
+        Assert.Equal(At(4, 11, 2), errors[1].Span);
+
+        // The recovery keeps each definition's first collector per level, in its own composed order.
+        var parsed = Parser.Parse(Source);
+        Assert.Equal("a, *p, b, q", Signature(Owner(parsed.Root, "K1")));
+        Assert.Equal("b, *q, a, p", Signature(Owner(parsed.Root, "K2")));
+    }
+
     private static CaptureParameterPattern Capture(string name) => new(name);
 
     private static CaptureParameterPattern Collecting(string name) => new(name, Kind: ParameterKind.Collecting);

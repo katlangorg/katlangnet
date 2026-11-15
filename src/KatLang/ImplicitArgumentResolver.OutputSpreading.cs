@@ -139,8 +139,8 @@ internal static partial class ImplicitArgumentResolver
     /// positions when it is a written spread, a written call to a marked declaration (<see cref="MarkedCalleeOf"/>), or a
     /// bare reference to one that static facts show formula lifting will call (<see cref="StaticLift.Lifted"/>): so
     /// <c>reduce(P, Add, Inc)</c>, <c>reduce(P(x), Add, Inc)</c> with a marked <c>P(x)</c>, and <c>reduce(P*, Add, Inc)</c>
-    /// with an unmarked one all classify <c>Inc</c> alike, and elaborate to the same tree. The B3-5★ signature analysis,
-    /// dependency collection and the rewrite all read THIS (the role walk's sinks, <see cref="RewriteCall"/>,
+    /// with an unmarked one all classify <c>Inc</c> alike, and elaborate to the same tree. The B3-5★ signature analysis and
+    /// the rewrite both read THIS (the role walk's sinks, <see cref="RewriteCall"/>,
     /// <see cref="RewriteDotCall"/>, <see cref="CertainMissDecidesALift"/>), so what an equation records, what is lifted and
     /// how a call is rewritten cannot drift; the rewrite then checks every prediction against the call it actually built
     /// (<see cref="RequirePredictedLift"/>, <paramref name="lifts"/>).

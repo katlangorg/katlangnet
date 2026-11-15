@@ -162,12 +162,6 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordExposureSharedRegionHit()
         => ExposureSharedRegionHits = checked(ExposureSharedRegionHits + 1);
 
-    /// <summary>Implicit-dependency collection expansions (<c>ImplicitArgumentResolver.CollectImplicitDeps</c>).</summary>
-    public long ResolverCollectExpansions { get; private set; }
-
-    internal void RecordResolverCollectExpansion()
-        => ResolverCollectExpansions = checked(ResolverCollectExpansions + 1);
-
     /// <summary>
     /// Rewrite expansions of the resolver's rewriting walks
     /// (<c>RewriteImplicitCalls</c>, <c>ProcessExprNested</c>, <c>ProcessOpenExpr</c>).

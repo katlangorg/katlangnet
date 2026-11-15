@@ -68,8 +68,8 @@ internal static partial class ImplicitArgumentResolver
     /// </exception>
     /// <remarks>
     /// Shared subtrees (acyclic DAGs) are legal and DAG-safe: a node referenced from several
-    /// parents resolves exactly like the equivalent duplicated tree (dependency collection is
-    /// name-deduplicated, so multiplicities never mattered), while every walk of this pass is
+    /// parents resolves exactly like the equivalent duplicated tree (a formula's lifted callees are
+    /// deduplicated by identity, so multiplicities never mattered), while every walk of this pass is
     /// reference-identity memoized per constant-context region — traversal work is bounded by
     /// the DISTINCT reachable nodes, never the number of root-to-node paths, and the rewritten
     /// output preserves the input's sharing. Memos are run-local (created per resolution,
@@ -1591,15 +1591,23 @@ internal static partial class ImplicitArgumentResolver
 
         /// <summary>
         /// The region's one rewrite context once its rewrite has started (<see cref="PinRewriteContext"/>); null in the
-        /// analysis and while an open body's dependencies are collected, where no closed list exists.
+        /// analysis, where no closed list exists.
         /// </summary>
         public ImplicitRewriteContext? PinnedRewriteContext => _pinnedRewriteContext;
 
         /// <summary>
         /// The verdict each MAY edge's roles read in this region (<see cref="MissSelectionOf"/>): one answer per edge, so
-        /// the dependency walk and the rewrite never read two.
+        /// every read of the rewrite reads the same.
         /// </summary>
         public Dictionary<Expr.DotCall, LexicalFallbackSelection>? LiftMissSelections;
+
+        /// <summary>
+        /// The callees an OPEN body's rewrite lifted in this region, in role-walk order (<see cref="TryGetLiftArguments"/>,
+        /// <see cref="OpenBodyLiftLog"/>): THE SELECTION INVARIANT compares them with the dependencies the body's selected
+        /// signature was composed from (<see cref="RequireSelectedComposition"/>). Set by the open-body rewrite before its
+        /// first row; null in every other region (a closed list composes nothing).
+        /// </summary>
+        public OpenBodyLiftLog? Lifts;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
@@ -1822,27 +1830,6 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Reference-identity memo for ONE implicit-dependency collection region (one algorithm's
-    /// output rows; the signature map and the shared seen/deps accumulators are constant).
-    /// Every contribution is seen-set deduplicated, so a revisit of a completed node — split
-    /// by call position, which changes what a node contributes — adds nothing and is skipped.
-    /// </summary>
-    private sealed class DepsWalkMemo(FrontEndTraversalObservations? observations, ResolverWalkMemos walk)
-    {
-        public readonly HashSet<Expr> ValueVisited = new(ReferenceEqualityComparer.Instance);
-
-        public HashSet<Expr>? CalleeVisited;
-
-        public readonly FrontEndTraversalObservations? Observations = observations;
-
-        /// <summary>
-        /// The owner's rewrite region: the dependency walk resolves callees exactly as its rewrite
-        /// will (a block receiver of a dotted callee is processed once, through this region's memo).
-        /// </summary>
-        public readonly ResolverWalkMemos Walk = walk;
-    }
-
-    /// <summary>
     /// The INPUT entries of one level's properties, per declaration index and by name (a later
     /// declaration of a name wins the map, as ownership-first lookup reads one declaration).
     /// </summary>
@@ -1873,7 +1860,7 @@ internal static partial class ImplicitArgumentResolver
 
     /// <summary>
     /// Processes an algorithm: processes each of its properties (in declaration order: every signature it reads is
-    /// selected beforehand, B3-5★), then collects implicit deps and rewrites the algorithm's own output. Every NESTED
+    /// selected beforehand, B3-5★), then reads its selected signature and rewrites the algorithm's own output. Every NESTED
     /// algorithm — a property value, a block literal, an open target, a conditional branch
     /// body — goes through the run's region memo (M4): one rewrite per
     /// <see cref="AlgorithmRegionKey"/>, sharing preserved in the output, and a branch body's
@@ -2205,26 +2192,15 @@ internal static partial class ImplicitArgumentResolver
             };
         }
 
-        // Collect implicit dependencies from the algorithm's output and lift
-        // them into its parameter list. One deps memo spans all rows (they share
-        // the seen/deps accumulators, so the walk context is one region).
-        var deps = new List<LiftedDependency>();
-        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        var depsMemo = new DepsWalkMemo(observations, walkMemos);
-        foreach (var expr in AstHelpers.WrittenRows(
-            alg, isRoot ? expr => !ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot: true, walkMemos) : null))
-        {
-            CollectImplicitDeps(expr, visibleParamMap, seen, deps, rowRole, depsMemo);
-        }
-
-        // The lifted parameter patterns: existing patterns first, then new dependency captures with
-        // their recursive shape preserved — as a SHARED signature template (FE-3, see LiftSignature),
-        // composed once by the signature selection (B3-5★). A capture an enclosing parameter binding
-        // supplies is reused, never lifted (Q-04). X-02: an inferred signature satisfies the rules a
-        // written one is held to — a lift that would compose an invalid contract (two collecting
-        // parameters at one pattern level) is this definition's front-end error, reported here at
-        // elaboration, never at a later call.
-        var lifting = SelectedLifting(level, alg.ParameterPatterns, deps, ownForwarding, walkMemos);
+        // The lifted parameter patterns: existing patterns first, then the captures of the callees the
+        // rows lift, with their recursive shape preserved — as a SHARED signature template (FE-3, see
+        // LiftSignature), composed once by the signature selection (B3-5★) from the body's lifted
+        // dependencies and read from it here, never collected or composed again. A capture an
+        // enclosing parameter binding supplies is reused, never lifted (Q-04). X-02: an inferred
+        // signature satisfies the rules a written one is held to — a lift that would compose an
+        // invalid contract (two collecting parameters at one pattern level) is this definition's
+        // front-end error, reported here at elaboration, never at a later call.
+        var lifting = SelectedLifting(level, alg.ParameterPatterns, ownForwarding, walkMemos, out var selectedFact);
         var finalPatterns = lifting.Patterns;
 
         // Rewrite output expressions. Source binding kinds come from the
@@ -2241,10 +2217,14 @@ internal static partial class ImplicitArgumentResolver
             FinalSignature = finalPatterns,
             Forwardable = ownForwarding,
         };
+        // The callees the rows lift, in role-walk order, for THE SELECTION INVARIANT below (OpenBodyLiftLog).
+        var lifts = new OpenBodyLiftLog(run.StructuralOperation.Queries.Resources, run.CancellationToken);
+        walkMemos.Lifts = lifts;
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
         {
             run.ObserveCancellation(FrontEndCancellationCheckpoint.ResolverRow);
+            lifts.BeginRow();
             rewrittenOutput.Add(
                 ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot, walkMemos)
                     // THE ROOT CLAUSE keeps the ROW unlifted, never its block: a block head (`{ … }.K`, `{ … }.S.K`) is a
@@ -2264,13 +2244,21 @@ internal static partial class ImplicitArgumentResolver
                         walkMemos));
         }
 
+        lifts.EndRows();
         AstHelpers.RewriteDeconstructionSourceRows(
             alg,
             newProperties,
             expr => SpreadIfMarked(
                 expr, RewriteImplicitCalls(expr, visibleParamMap, liftedContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
             (source, view) => run.StructuralOperation.Publish(
-                run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view));
+                run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view),
+            source => lifts.EnterSource(source.AssignmentDeconstructionRowIndex!.Value));
+        lifts.EndSources();
+
+        // Every written row is rewritten: the callees it lifted are exactly the ones the selected signature was composed from.
+        RequireSelectedComposition(selectedFact, level.StaticContext!.Key, lifts, run);
+        // Completed memos/continuations keep no guard trace, ledger or cancellation token.
+        walkMemos.Lifts = null;
 
         // Lean: withParameterPatterns on the rewritten body — the lifted list replaces the
         // stored channel; Parameters/Params follow it. The patterns forwarding appended are
@@ -2587,7 +2575,8 @@ internal static partial class ImplicitArgumentResolver
 
     /// <summary>
     /// THE implicit-lifting eligibility rule (Q-03, decided September 28 2026), consulted for
-    /// every value-role reference whatever its category (<see cref="CollectImplicitDeps"/>,
+    /// every value-role reference whatever its category (the signature selection's lifting rule,
+    /// <see cref="SignatureSelector"/>, which reads the same <see cref="CallableSignature.AcceptsZeroSuppliedArguments"/>;
     /// <see cref="RewriteBareReference"/>, <see cref="RewriteDotCall"/>) and by root-row
     /// preservation (<see cref="ShouldPreserveBareRootRow"/>): a value-role reference lifts to an
     /// implicit forwarding call ONLY when its callee's lifting signature REQUIRES supplied
@@ -2610,12 +2599,12 @@ internal static partial class ImplicitArgumentResolver
         => !signature.AcceptsZeroSuppliedArguments;
 
     /// <summary>
-    /// One callee a formula lifts: its name (a Math function's canonical key), its signature, and the
-    /// FIRST reference that lifts it, in traversal order — the position a report about the lifted
-    /// signature names. Held as the node itself, never a span copy, so the collecting walk's frames
-    /// stay span-free.
+    /// One callee a formula lifts, as the signature selection composed it (<see cref="SelectSignatures"/>): its name (a
+    /// Math function's canonical key), its signature, the FIRST reference that lifts it, in written order — the
+    /// position a report about the lifted signature names, held as the node itself, never a span copy — and the static
+    /// callable identity the formula's lifted callees are deduplicated by (<see cref="StaticCallable.Identity"/>).
     /// </summary>
-    private readonly record struct LiftedDependency(string Name, CallableSignature Signature, Expr Reference);
+    internal readonly record struct LiftedDependency(string Name, CallableSignature Signature, Expr Reference, object Identity);
 
     /// <summary>The outcome of <see cref="LiftSignature"/> for one open owner.</summary>
     private readonly record struct LiftedSignature(
@@ -4139,7 +4128,7 @@ internal static partial class ImplicitArgumentResolver
     /// tells MAY from MUST — they read NEVER against the rest). A
     /// parameter's member, a runtime reference's and an unresolved name's stay MAY, with nothing read. Never NEVER:
     /// detection's inference reads MAY and MUST alike, and the refinement must not contradict it. ONE answer per edge and
-    /// region (<see cref="ResolverWalkMemos.LiftMissSelections"/>), so the dependency walk and the rewrite read the same.
+    /// region (<see cref="ResolverWalkMemos.LiftMissSelections"/>), so every read of the rewrite reads the same.
     /// The reports a certain miss makes are decided once resolution has processed every body
     /// (<see cref="ResolutionRun.CommitDeferredChecks"/>).
     /// </summary>
@@ -4435,86 +4424,6 @@ internal static partial class ImplicitArgumentResolver
         });
     }
 
-    /// <summary>
-    /// Collects the implicit dependencies of a formula's rows: every VALUE-role reference
-    /// (<see cref="FormulaLiftingRoles"/>) whose resolved callable has a lifting signature that
-    /// REQUIRES supplied arguments (<see cref="RequiresSuppliedArguments"/>), once per resolved
-    /// identity. A reference in a CALLABLE role, one to a callable that accepts zero supplied
-    /// arguments (a cached read, Q-03), and one to an unnameable family contribute nothing. The walk
-    /// is the shared role walk (<see cref="WalkLiftingRoles{TSink}"/>), the one the analysis phase
-    /// records equations with.
-    /// </summary>
-    private static void CollectImplicitDeps(
-        Expr expr,
-        SignatureMap paramMap,
-        HashSet<object> seen,
-        List<LiftedDependency> deps,
-        LiftingRole role,
-        DepsWalkMemo memo)
-    {
-        var sink = new DependencySink(paramMap, seen, deps, memo);
-        WalkLiftingRoles(expr, role, guard: null, ref sink);
-    }
-
-    /// <summary>
-    /// The rewrite's instantiation of the role walk: a value-role reference lifts its callee's FINAL signature; a dot edge
-    /// reads its refined verdict (<see cref="MissSelectionOf"/>, a link's selected class). DAG-safety: every contribution is
-    /// identity deduplicated, so a completed node reached again under the same role — the one context dimension that
-    /// changes what a node contributes — adds nothing and is skipped; childless leaves decide in place.
-    /// </summary>
-    private readonly struct DependencySink(SignatureMap paramMap, HashSet<object> seen, List<LiftedDependency> deps, DepsWalkMemo memo)
-        : ILiftingWalkSink
-    {
-        public bool Enter(Expr expr, LiftingRole role, StaticScopeKey? guard)
-        {
-            if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
-                return true;
-            var visited = role == LiftingRole.Callable
-                ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
-                : memo.ValueVisited;
-            if (visited.Contains(expr))
-                return false;
-            memo.Observations?.RecordResolverCollectExpansion();
-            return true;
-        }
-
-        public void Exit(Expr expr, LiftingRole role, StaticScopeKey? guard)
-        {
-            if (AstTraversalDagSafety.HasTraversableExprChildren(expr))
-                (role == LiftingRole.Callable ? memo.CalleeVisited! : memo.ValueVisited).Add(expr);
-        }
-
-        public void Reference(Expr reference, StaticScopeKey? guard) => AddLiftedDependency(reference, paramMap, seen, deps, memo);
-
-        public LiftingCallee CalleeKind(Expr callee) => StaticCalleeKindOf(callee, paramMap, memo.Walk);
-
-        public DotEdgeKind EdgeKind(Expr.DotCall edge, out DotEdgeKind mayKind, out StaticScopeKey? link)
-        {
-            mayKind = default;
-            link = null;
-            return EdgeKindOf(edge, paramMap, memo.Walk);
-        }
-
-        public LiftingCallee DotEdgeCallee(Expr.DotCall edge, DotEdgeKind kind) => ImplicitArgumentResolver.DotEdgeCallee(edge, kind, paramMap, memo.Walk);
-
-        public LiftingRole[] ArgumentRoles(LiftingCallee callee, OutputBundle args)
-            => ArgumentRolesWithSpreads(callee, args, leadingSlots: 0, leadingPositionsKnown: true, paramMap, memo.Walk, out _);
-
-        public LiftingRole[] DotArgumentRoles(Expr.DotCall edge, DotEdgeKind kind, LiftingCallee callee)
-            => DotArgumentRolesWithSpreads(edge, kind, callee, ReceiverLift(edge, kind, callee, paramMap, memo.Walk), paramMap, memo.Walk, out _);
-    }
-
-    /// <summary>Adds a value-role reference's callee to the dependencies when it lifts (once per identity).</summary>
-    private static void AddLiftedDependency(Expr reference, SignatureMap paramMap, HashSet<object> seen, List<LiftedDependency> deps, DepsWalkMemo memo)
-    {
-        if (TryResolveLiftable(reference, paramMap, memo.Walk) is { Signature.Signature: { } signature } liftable
-            && RequiresSuppliedArguments(signature)
-            && seen.Add(liftable.Identity))
-        {
-            deps.Add(new LiftedDependency(liftable.DisplayName, signature, reference));
-        }
-    }
-
     /// <summary>The callee whose slots a non-reference dot edge's receiver and arguments fill.</summary>
     private static LiftingCallee DotEdgeCallee(Expr.DotCall dotCall, DotEdgeKind kind, SignatureMap paramMap, ResolverWalkMemos memos)
         => kind switch
@@ -4541,9 +4450,16 @@ internal static partial class ImplicitArgumentResolver
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr) && expr is not Expr.Resolve)
             return RewriteImplicitCallsCore(expr, paramMap, context, role, memos);
         var rewriteMap = memos.RewriteMapFor(role);
-        if (rewriteMap.TryGetValue(expr, out var rewritten)) return rewritten;
+        if (rewriteMap.TryGetValue(expr, out var rewritten))
+        {
+            memos.Lifts?.NoteMemoHit(expr, role);
+            return rewritten;
+        }
+
         if (AstTraversalDagSafety.HasTraversableExprChildren(expr)) memos.Observations?.RecordResolverRewriteExpansion();
+        memos.Lifts?.BeginNode();
         rewritten = RewriteImplicitCallsCore(expr, paramMap, context, role, memos);
+        memos.Lifts?.EndNode(expr, role);
         rewriteMap[expr] = rewritten;
         return rewritten;
     }
@@ -4583,7 +4499,7 @@ internal static partial class ImplicitArgumentResolver
                 Operand = RewriteImplicitCalls(unary.Operand, paramMap, context, LiftingRole.Value, memos),
             },
 
-            // The receiver and every selector slot are VALUE uses (CollectImplicitDeps). A whole selector
+            // The receiver and every selector slot are VALUE uses (WalkLiftingRoles). A whole selector
             // slot is an output-spreading position (R2); the receiver is one value.
             Expr.Index index => index with
             {
@@ -4705,6 +4621,11 @@ internal static partial class ImplicitArgumentResolver
             return null;
         }
 
+        // An inferring body's lift forwards a callee its selected signature must have been composed from (THE SELECTION
+        // INVARIANT, checked once its rows are rewritten).
+        if (context.ClosedParameterNames is null)
+            memos.Lifts?.Record(liftable.Identity, signature.ParameterPatterns, liftable.DisplayName);
+
         return memos.ImplicitArguments(signature.ParameterPatterns, context);
     }
 
@@ -4816,6 +4737,9 @@ internal static partial class ImplicitArgumentResolver
         OutputBundle? newArgs = null;
         if (dotCall.Args is { } dotArgs)
         {
+            // The arguments are rewritten before the receiver, which the role walk reads first: the open body's lift log
+            // inserts the receiver's lifts before theirs (OpenBodyLiftLog).
+            memos.Lifts?.BeginEdgeArguments();
             var roles = DotArgumentRolesWithSpreads(dotCall, kind, callee, receiverLift, paramMap, memos, out var lifts, report: true);
             var rewrittenArgs = new List<Expr>(dotArgs.Count);
             for (var i = 0; i < dotArgs.Count; i++)
@@ -4827,6 +4751,7 @@ internal static partial class ImplicitArgumentResolver
             }
 
             newArgs = new OutputBundle(rewrittenArgs);
+            memos.Lifts?.BeginEdgeReceiver();
         }
 
         var rewritten = dotCall with
@@ -4835,6 +4760,8 @@ internal static partial class ImplicitArgumentResolver
                 dotCall.Target, paramMap, context, FormulaLiftingRoles.ReceiverRole(kind, callee), memos),
             Args = newArgs,
         };
+        if (newArgs is not null)
+            memos.Lifts?.EndEdgeReceiver();
         RequirePredictedLift(written.Target, rewritten.Target, receiverLift);
         // The receiver of an extension-call edge is an output-spreading position (R2). A WRITTEN marked call there was
         // lowered by parameter detection, where the names are ordered (D1); a marked reference this pass lifted makes the

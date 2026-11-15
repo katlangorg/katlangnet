@@ -128,8 +128,8 @@ internal static partial class ImplicitArgumentResolver
     /// consume the role they receive. A GUARD rides with a value role into exactly those consumers: a slot whose role a
     /// link's class decides (a value under a calculation link, callable under a runtime reference) is a value read only
     /// when its link is a calculation. Every other node resets the guard — its children's roles are their consumers' own
-    /// under either class. Dependency collection and Q8 equation recording are its two instantiations, so role
-    /// propagation is written once.
+    /// under either class. Q8 equation recording and the preselection potential-lift reachability
+    /// (<see cref="PotentialLiftSink"/>) are its two instantiations, so role propagation is written once.
     /// </summary>
     private static void WalkLiftingRoles<TSink>(Expr expr, LiftingRole role, StaticScopeKey? guard, ref TSink sink)
         where TSink : struct, ILiftingWalkSink
@@ -715,7 +715,7 @@ internal static partial class ImplicitArgumentResolver
             for (var i = 0; i < lifted.Count; i++)
             {
                 var reference = references[equation][lifted[i].Reference];
-                dependencies.Add(new LiftedDependency(reference.DisplayName, lifted[i].Signature, reference.Reference));
+                dependencies.Add(new LiftedDependency(reference.DisplayName, lifted[i].Signature, reference.Reference, reference.Identity));
             }
 
             var own = body.Written.ParameterPatterns;
@@ -846,11 +846,14 @@ internal static partial class ImplicitArgumentResolver
     /// The lifted signature of the open body the rewrite is completing at <paramref name="level"/> (B3-5★): the one its
     /// selection composed, read once and never recomposed — so K owners of one L-wide callee keep FE-3's O(K + L) — and an
     /// X-02 violation of it reported here, at the reference the rewrite names, in declaration order (the selection recovered
-    /// it once; this is its one report, <see cref="ReportInvalidLiftedSignature"/>). Every rewrite runs after its resolution's
-    /// selection, in an admitted context, so a missing selection or context is an internal defect of this pass and fails loudly.
+    /// it once; this is its one report, <see cref="ReportInvalidLiftedSignature"/>, read from the dependencies the selection
+    /// composed it from). The body's own patterns and reusable bindings must be the ones the selection composed from; the
+    /// callees its rows lift are checked against the composition once they are rewritten (<paramref name="fact"/>,
+    /// <see cref="RequireSelectedComposition"/>). Every rewrite runs after its resolution's selection, in an admitted
+    /// context, so a missing selection or context is an internal defect of this pass and fails loudly.
     /// </summary>
-    private static LiftedSignature SelectedLifting(ResolverLevel level, IReadOnlyList<ParameterPattern> own, List<LiftedDependency> deps,
-        ForwardableParameters forwardable, ResolverWalkMemos memos)
+    private static LiftedSignature SelectedLifting(ResolverLevel level, IReadOnlyList<ParameterPattern> own,
+        ForwardableParameters forwardable, ResolverWalkMemos memos, out SignatureFact fact)
     {
         var run = memos.Run;
         var selected = run.Selected ?? throw new InvalidOperationException(
@@ -858,52 +861,53 @@ internal static partial class ImplicitArgumentResolver
         var key = level.StaticContext?.Key ?? throw new InvalidOperationException(
             "Implicit-argument resolution rewrote an open body outside the admitted structural operation's contexts.");
 
-        if (!selected.TryGetFact(key, out var fact))
+        if (!selected.TryGetFact(key, out var found))
             throw new InvalidOperationException(
                 $"Implicit-argument resolution rewrote the open body '{DefinitionName(key, run)}', which its signature selection never analyzed.");
-        RequireSelectedComposition(fact, own, deps, forwardable, key, run);
+        fact = found;
+        if (fact.Composition is not SignatureComposition composition)
+            throw SelectionInvariantViolation(fact, key, "no composition", run);
+        if (!ReferenceEquals(composition.Own, own))
+            throw SelectionInvariantViolation(fact, key, "its own parameters", run);
+        if (!composition.Forwardable.Names.Equals(forwardable.Names)
+            || !composition.Forwardable.CollectingNames.Equals(forwardable.CollectingNames))
+            throw SelectionInvariantViolation(fact, key, "the bindings it reuses", run);
         if (!fact.IsLifted)
             return new(own, SourceBindingKindsOf(own), Lifted: false);
         if (fact.Violation is { } violation)
-            ReportInvalidLiftedSignature(((SignatureComposition)fact.Composition!).Unrecovered!, violation, deps, memos);
+            ReportInvalidLiftedSignature(composition.Unrecovered!, violation, composition.Dependencies, memos);
         var template = (ImplicitSignatureTemplate)fact.Patterns;
         return new(template, template.Facts.BindingKinds, Lifted: true);
     }
 
     /// <summary>
     /// THE SELECTION INVARIANT (B3-5★): the rewrite completes an open body from exactly what its selected signature was
-    /// composed from — the same own patterns, the same reusable bindings, and the same lifted callee signatures in the same
-    /// order (each by reference, so the check costs the dependencies, never the signatures' width). A difference means the
-    /// analysis and the rewrite read different callees — an internal defect of this pass, never a program's error — so it
-    /// fails loudly instead of publishing two answers.
+    /// composed from — the same own patterns and the same reusable bindings (<see cref="SelectedLifting"/>), and, once its
+    /// rows are rewritten, the same lifted callees in the same order with the same signatures: the FIRST lift of every
+    /// callee, in role-walk order, is the composed dependency at the same position — the same static callee identity and
+    /// the very signature object it was composed with — and no lifted callee is missing or extra
+    /// (<see cref="OpenBodyLiftLog.Disagreement"/>). The rewrite decides every lift on its own (the reference's static
+    /// callee identity, the callee's final signature, the selected class of a link that decides its role), never from the
+    /// composition, and <paramref name="lifts"/> records each where the rewrite makes it, so the check walks nothing and
+    /// costs the distinct recorded rewrite segments and dependencies, never logical paths or a signature's width. Memo
+    /// hits link the already recorded segment at their own position, so sharing preserves the ordered check too.
+    /// A difference means the analysis and the rewrite read
+    /// different callees — a synthesized call forwarding a capture the signature does not bind, a parameter nothing
+    /// forwards, a signature in another order than the calls supply it, or a composition from a signature the rewrite does
+    /// not read — an internal defect of this pass, never a program's error, so it fails loudly instead of publishing two
+    /// answers.
     /// </summary>
-    private static void RequireSelectedComposition(SignatureFact fact, IReadOnlyList<ParameterPattern> own, List<LiftedDependency> deps,
-        ForwardableParameters forwardable, StaticScopeKey key, ResolutionRun run)
+    private static void RequireSelectedComposition(SignatureFact fact, StaticScopeKey key, OpenBodyLiftLog lifts, ResolutionRun run)
     {
-        var disagreement = fact.Composition is not SignatureComposition composition ? "no composition"
-            : !ReferenceEquals(composition.Own, own) ? "its own parameters"
-            : !composition.Forwardable.Names.Equals(forwardable.Names)
-                || !composition.Forwardable.CollectingNames.Equals(forwardable.CollectingNames) ? "the bindings it reuses"
-            : composition.Dependencies.Count != deps.Count ? $"{composition.Dependencies.Count} versus {deps.Count} lifted callees"
-            : FirstDifferentDependency(composition.Dependencies, deps) is { } index ? $"the lifted callee '{deps[index].Name}'"
-            : null;
-        if (disagreement is not null)
-            throw new InvalidOperationException(
-                $"Implicit-argument resolution completed the open body '{DefinitionName(key, run)}' from other inputs than its "
-                + $"selected signature {fact.Signature.DisplayText} was composed from ({disagreement}): the analysis and the rewrite "
-                + "read different callees.");
-
-        static int? FirstDifferentDependency(List<LiftedDependency> analyzed, List<LiftedDependency> rewritten)
-        {
-            for (var i = 0; i < analyzed.Count; i++)
-            {
-                if (!ReferenceEquals(analyzed[i].Signature.ParameterPatterns, rewritten[i].Signature.ParameterPatterns))
-                    return i;
-            }
-
-            return null;
-        }
+        if (lifts.Disagreement(((SignatureComposition)fact.Composition!).Dependencies) is { } disagreement)
+            throw SelectionInvariantViolation(fact, key, disagreement, run);
     }
+
+    /// <summary>The internal defect <see cref="RequireSelectedComposition"/> reports, naming the input that differs.</summary>
+    private static InvalidOperationException SelectionInvariantViolation(SignatureFact fact, StaticScopeKey key, string disagreement, ResolutionRun run)
+        => new($"Implicit-argument resolution completed the open body '{DefinitionName(key, run)}' from other inputs than its "
+            + $"selected signature {fact.Signature.DisplayText} was composed from ({disagreement}): the analysis and the rewrite "
+            + "read different callees.");
 
     /// <summary>The selected signature of the open body <paramref name="key"/>, when this resolution selected one.</summary>
     private static CallableSignature? SelectedSignatureOf(StaticScopeKey key, string name, ResolutionRun run)
@@ -1101,7 +1105,7 @@ internal static partial class ImplicitArgumentResolver
             // A lone bare row is never formula-lifted: it is a callable alias or bare forwarding (FWD-02), so its reference
             // takes the CALLABLE role; the root keeps its bare rows as their own zero-argument demands, and such a row
             // never lifts (BareRootRowCallable: a preserved row's own references are not walked; one whose callee requires
-            // nothing contributes nothing either way, which the selection invariant checks against the rewrite's walk of it).
+            // nothing contributes nothing either way, which the selection invariant checks against the rewrite's lifts).
             // A block written in a preserved row is still a body: the loop below analyzes it, and the rewrite
             // processes it as the row's block head (THE ROOT CLAUSE keeps the row unlifted, never its block).
             var rowRole = !isRoot && HasLoneBareRowShape(alg) ? LiftingRole.Callable : LiftingRole.Value;
@@ -1129,8 +1133,9 @@ internal static partial class ImplicitArgumentResolver
     /// cannot yet read). The rows in between name a callee that accepts zero supplied arguments: the rewrite walks and
     /// rewrites them as ordinary rows, and they lift nothing there either. A value-role reference to such a callee is never
     /// lifted (<see cref="RequiresSuppliedArguments"/>), and a structural member path's receivers are callable-role
-    /// navigation, which contributes nothing. <see cref="RequireSelectedComposition"/> enforces this on every run: a lifted callee such a row
-    /// added first would make the rewrite's dependency list differ from the composed one and fail loudly.
+    /// navigation, which contributes nothing. <see cref="RequireSelectedComposition"/> enforces this on every run: a callee such a row
+    /// lifted would be one the composition does not hold, or a first contribution out of its composed order, and the
+    /// rewrite would fail loudly.
     /// <c>BareRootRowPredicateTests</c> pins it across categories and routes.</para>
     /// </summary>
     private static StaticCallable? BareRootRowCallable(Expr expr, SignatureMap paramMap, ResolverWalkMemos memos)

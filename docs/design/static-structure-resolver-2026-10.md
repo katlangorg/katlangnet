@@ -552,8 +552,9 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
    patterns and its value-role references in written order, each with its static callee identity
    (`ResolveStaticCallable`, every reference row followed to its Q3 endpoint) and, where a link's class decides
    whether the read is a value read, that link as its guard. The walk is the ONE formula-lifting role walk
-   (`WalkLiftingRoles<TSink>`), instantiated by the analysis (`EquationSink`) and by the rewrite's dependency
-   collection (`DependencySink`). DAG safety: regions are memoized by `AnalysisRegionKey` (node, free-name
+   (`WalkLiftingRoles<TSink>`), instantiated by the analysis (`EquationSink`) and by the preselection
+   potential-lift reachability of output spreading (`PotentialLiftSink`); the rewrite reads each body's lifted
+   dependencies from its selected composition and never walks its rows again to collect them. DAG safety: regions are memoized by `AnalysisRegionKey` (node, free-name
    identities, forwardable and collecting names, closed spec, opens), which refines the rewrite's region key, and a
    path-sensitive context the analysis served from another context's analysis is mapped to that counterpart
    (`SignatureKeyAliases`).
@@ -579,8 +580,16 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
    and storage are charged to the operation's ledger (`StaticQueryResourceBudget`; a table charges its 2^dimensions
    classifications before evaluating any).
 3. **Rewrite**: declarations in their elaborated order over the selected signatures. The rewrite never recomposes a
-   signature (`SelectedLifting`); `RequireSelectedComposition` checks, by reference and in O(dependencies), that it
-   reads exactly the callees the selection composed from. Its mirror, THE REACH INVARIANT
+   signature (`SelectedLifting`); `RequireSelectedComposition` checks, by reference and in O(recorded rewrite DAG + dependencies),
+   that the body's rows, once rewritten, lifted exactly the callees the selection composed from, each callee's FIRST
+   lift in the composed order and with the composed signature object (each lift is decided by the rewrite itself,
+   never read from the composition). The rewrite logs its lifts where it makes them (`OpenBodyLiftLog`), inserting a
+   dot edge's receiver lifts before its argument lifts and a hoisted deconstruction right-hand side's before its
+   row. Memo hits link the already recorded segment at their own position; comparison visits each segment once in
+   role-walk order, so sharing never disables order or first-signature checks and never expands logical paths. The
+   log charges its allocated storage and comparison work to the static ledger. No AST is walked again and no wide
+   signature is flattened (`SelectionInvariantLiftLogTests`, negative cases, exact DAG-work pins and host-DAG/tree
+   comparisons across receivers and hoisted sources). Its mirror, THE REACH INVARIANT
    (`RequireEveryAnalyzedBodyRewritten`, S-10), checks the other direction once the rewrite (eager, or a deferred
    unit's) completes: every body the analysis recorded, open or closed, has a resolved view — processed in that
    context or served through a region alias — so "the same recursion the rewrite makes" (item 1) is enforced, not

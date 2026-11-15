@@ -220,10 +220,13 @@ internal static class AstHelpers
         return algorithms;
     }
 
-    /// <summary>Rewrites each shared hoisted source once in its enclosing row context.</summary>
+    /// <summary>
+    /// Rewrites each shared hoisted source once in its enclosing row context, in property order;
+    /// <paramref name="enterSource"/> observes each source just before its rows are rewritten.
+    /// </summary>
     internal static void RewriteDeconstructionSourceRows(
         Algorithm algorithm, List<Property> processedProperties, Func<Expr, Expr> rewriteRow,
-        Action<Algorithm.User, Algorithm.User>? publishSource = null)
+        Action<Algorithm.User, Algorithm.User>? publishSource = null, Action<Algorithm.User>? enterSource = null)
     {
         Dictionary<Algorithm.User, Algorithm.User>? rewrittenSources = null;
         for (var index = 0; index < algorithm.Properties.Count; index++)
@@ -234,6 +237,7 @@ internal static class AstHelpers
             rewrittenSources ??= new(ReferenceEqualityComparer.Instance);
             if (!rewrittenSources.TryGetValue(source, out var rewritten))
             {
+                enterSource?.Invoke(source);
                 rewritten = source with { Output = source.Output.Select(rewriteRow).ToList() };
                 publishSource?.Invoke(source, rewritten);
                 rewrittenSources[source] = rewritten;
