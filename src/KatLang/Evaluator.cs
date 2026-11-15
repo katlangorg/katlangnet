@@ -3052,7 +3052,7 @@ public static partial class Evaluator
 
         var ctx = preparation.Ctx;
         var result = expr is Expr.AlgorithmExpr(var alg)
-            ? EvalRootProgram(alg, expr.Span, ctx)
+            ? ProjectCountedValue(EvalRootProgramCounted(alg, expr.Span, ctx))
             : Eval(expr, ctx, []);
 
         // The run result boundary (CallReference S1): a call reference never leaves its run.
@@ -3252,35 +3252,33 @@ public static partial class Evaluator
             ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyNames[i], nameof(topLevelPropertyNames));
     }
 
-    private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
-    {
-        var wired = WireToCaller(ctx, alg);
-        if (AcceptsZeroSuppliedArguments(wired))
-        {
-            var result = EvalProgramOutput(wired, ctx, []);
-            if (result.IsError
-                && result.Error is EvalError.MissingOutput
-                && wired is Algorithm.User { Output.Count: 0 })
-            {
-                return new EvalError.WithContext(new ProgramEvaluationContext(), result.Error)
-                {
-                    Span = result.Error.Span ?? span,
-                };
-            }
-
-            return result;
-        }
-
-        var blockSpan = span ?? FirstSpan(wired.Output);
-        return MissingImplicitArguments<Result>(wired, blockSpan);
-    }
-
+    /// <summary>
+    /// The root program of a run, wired to its caller and then evaluated by the ONE root body
+    /// <see cref="EvalWiredRootProgramCounted"/>. The plain run reads it through
+    /// <see cref="ProjectCountedValue"/>, so the root has no independent plain body.
+    /// </summary>
     private static EvalResult<CountedResult> EvalRootProgramCounted(Algorithm alg, SourceSpan? span, EvalCtx ctx)
+        => EvalWiredRootProgramCounted(WireToCaller(ctx, alg), span, ctx);
+
+    /// <summary>
+    /// Evaluate a WIRED root program algorithm when a result is requested: the ONE body of the
+    /// root-program contract, which every root route (plain, counted, and with top-level
+    /// properties) reaches. The root is demanded for its value with NOTHING supplied, so it goes
+    /// through the ONE zero-argument demand funnel (<see cref="EvalZeroArgumentDemandOutputCounted"/>):
+    /// a root declaring no parameter pattern is its output exactly as before, and a root whose
+    /// parameter list accepts an EMPTY supply (a collecting-only host-built root) binds that
+    /// supply first. A root whose parameter list still REQUIRES a supplied argument has
+    /// unresolved implicit parameters, reported at <paramref name="span"/>, else at its first
+    /// output row. A <see cref="EvalError.MissingOutput"/> of a user root with no output row
+    /// gains the C#-only <see cref="ProgramEvaluationContext"/> frame, at the error's own span,
+    /// else at <paramref name="span"/>. Lean: <c>evalProgramOutput</c> (the acceptance check is
+    /// <c>runResultM</c>'s).
+    /// </summary>
+    private static EvalResult<CountedResult> EvalWiredRootProgramCounted(Algorithm wired, SourceSpan? span, EvalCtx ctx)
     {
-        var wired = WireToCaller(ctx, alg);
         if (AcceptsZeroSuppliedArguments(wired))
         {
-            var result = EvalProgramOutputCounted(wired, ctx, []);
+            var result = EvalZeroArgumentDemandOutputCounted(wired, ctx, []);
             if (result.IsError
                 && result.Error is EvalError.MissingOutput
                 && wired is Algorithm.User { Output.Count: 0 })
@@ -3304,27 +3302,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<string> topLevelPropertyNames)
     {
+        // ONE wired instance feeds the output and every property read (the property cache's owner identity).
         var wired = WireToCaller(ctx, alg);
-        if (!AcceptsZeroSuppliedArguments(wired))
-        {
-            var blockSpan = span ?? FirstSpan(wired.Output);
-            return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
-        }
-
-        var outputR = EvalProgramOutputCounted(wired, ctx, []);
+        var outputR = EvalWiredRootProgramCounted(wired, span, ctx);
         if (outputR.IsError)
-        {
-            if (outputR.Error is EvalError.MissingOutput
-                && wired is Algorithm.User { Output.Count: 0 })
-            {
-                return new EvalError.WithContext(new ProgramEvaluationContext(), outputR.Error)
-                {
-                    Span = outputR.Error.Span ?? span,
-                };
-            }
-
             return outputR.Error;
-        }
 
         // In the given order; the first failing read is the run's failure and no later name is read.
         var properties = new CountedResult?[topLevelPropertyNames.Count];

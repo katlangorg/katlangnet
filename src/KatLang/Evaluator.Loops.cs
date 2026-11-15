@@ -35,20 +35,6 @@ public static partial class Evaluator
         => ProjectCountedValue(EvalAlgOutputCountedCore(alg, ctx, valEnv));
 
     /// <summary>
-    /// Evaluate a root program algorithm when a result is requested. The root is demanded
-    /// for its value with NOTHING supplied, so it goes through the ONE zero-argument
-    /// demand funnel (<see cref="EvalZeroArgumentDemandOutput"/>): a root declaring no
-    /// parameter pattern is its output exactly as before, and a root whose parameter list
-    /// accepts an EMPTY supply (a collecting-only host-built root) binds that supply
-    /// first. Lean: <c>evalProgramOutput</c>.
-    /// </summary>
-    private static EvalResult<Result> EvalProgramOutput(
-        Algorithm alg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-        => EvalZeroArgumentDemandOutput(alg, ctx, valEnv);
-
-    /// <summary>
     /// The ROW SUPPLY of an algorithm's output — what a loop step's rows make the next
     /// state (LOOP-03, VAL-07 applied to a step). Every output row is formed once, left
     /// to right (<see cref="AddOutputRowItems"/>, the one row rule): a NON-spread row supplies

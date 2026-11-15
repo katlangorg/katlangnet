@@ -308,13 +308,6 @@ public static partial class Evaluator
         ValEnv valEnv)
         => EvalAlgOutputCountedCore(alg, ctx, valEnv);
 
-    /// <summary>Counted twin of <see cref="EvalProgramOutput"/>.</summary>
-    private static EvalResult<CountedResult> EvalProgramOutputCounted(
-        Algorithm alg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-        => EvalZeroArgumentDemandOutputCounted(alg, ctx, valEnv);
-
     // No builtin is valid as a bare zero-argument value; every builtin requires
     // a call. (The empty sequence value is written `()`, not a builtin.) A builtin whose
     // arity IS zero (`tick`) is refused as an INVOCATION-REQUIRED demand, never with the

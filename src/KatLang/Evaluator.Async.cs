@@ -552,7 +552,7 @@ public static partial class Evaluator
         EvalResult<Result> result;
         if (expr is Expr.AlgorithmExpr(var alg))
         {
-            result = await EvalRootProgramValueAsync(alg, expr.Span, ctx).ConfigureAwait(false);
+            result = ProjectCountedValue(await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false));
         }
         else
         {
@@ -719,40 +719,15 @@ public static partial class Evaluator
     // ── Root program twins ──────────────────────────────────────────────────
 
     /// <summary>
-    /// MIRROR OF <see cref="EvalRootProgram"/> — keep in lock-step. The value is the
-    /// counted program output's value (the synchronous plain path is exactly that
-    /// projection: <c>EvalProgramOutput → EvalAlgOutputCore → EvalAlgOutputCountedCore</c>).
+    /// MIRROR OF <see cref="EvalRootProgramCounted"/> — keep in lock-step. The async plain route
+    /// reads it through <see cref="ProjectCountedValue"/>, exactly as the synchronous one does.
     /// </summary>
-    private static async ValueTask<EvalResult<Result>> EvalRootProgramValueAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
+    private static ValueTask<EvalResult<CountedResult>> EvalRootProgramCountedAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
+        => EvalWiredRootProgramCountedAsync(WireToCaller(ctx, alg), span, ctx);
+
+    /// <summary>MIRROR OF <see cref="EvalWiredRootProgramCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalWiredRootProgramCountedAsync(Algorithm wired, SourceSpan? span, EvalCtx ctx)
     {
-        var wired = WireToCaller(ctx, alg);
-        if (AcceptsZeroSuppliedArguments(wired))
-        {
-            var countedR = await EvalZeroArgumentDemandOutputCountedAsync(wired, ctx, []).ConfigureAwait(false);
-            var result = countedR.IsError
-                ? countedR.Error
-                : EvalResult<Result>.Ok(countedR.Value.Value);
-            if (result.IsError
-                && result.Error is EvalError.MissingOutput
-                && wired is Algorithm.User { Output.Count: 0 })
-            {
-                return new EvalError.WithContext(new ProgramEvaluationContext(), result.Error)
-                {
-                    Span = result.Error.Span ?? span,
-                };
-            }
-
-            return result;
-        }
-
-        var blockSpan = span ?? FirstSpan(wired.Output);
-        return MissingImplicitArguments<Result>(wired, blockSpan);
-    }
-
-    /// <summary>MIRROR OF <see cref="EvalRootProgramCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalRootProgramCountedAsync(Algorithm alg, SourceSpan? span, EvalCtx ctx)
-    {
-        var wired = WireToCaller(ctx, alg);
         if (AcceptsZeroSuppliedArguments(wired))
         {
             var result = await EvalZeroArgumentDemandOutputCountedAsync(wired, ctx, []).ConfigureAwait(false);
@@ -780,27 +755,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<string> topLevelPropertyNames)
     {
+        // ONE wired instance feeds the output and every property read (the property cache's owner identity).
         var wired = WireToCaller(ctx, alg);
-        if (!AcceptsZeroSuppliedArguments(wired))
-        {
-            var blockSpan = span ?? FirstSpan(wired.Output);
-            return MissingImplicitArguments<CountedRootProgramResult>(wired, blockSpan);
-        }
-
-        var outputR = await EvalZeroArgumentDemandOutputCountedAsync(wired, ctx, []).ConfigureAwait(false);
+        var outputR = await EvalWiredRootProgramCountedAsync(wired, span, ctx).ConfigureAwait(false);
         if (outputR.IsError)
-        {
-            if (outputR.Error is EvalError.MissingOutput
-                && wired is Algorithm.User { Output.Count: 0 })
-            {
-                return new EvalError.WithContext(new ProgramEvaluationContext(), outputR.Error)
-                {
-                    Span = outputR.Error.Span ?? span,
-                };
-            }
-
             return outputR.Error;
-        }
 
         // In the given order; the first failing read is the run's failure and no later name is read.
         var properties = new CountedResult?[topLevelPropertyNames.Count];

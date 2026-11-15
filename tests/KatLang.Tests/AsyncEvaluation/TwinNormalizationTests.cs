@@ -116,7 +116,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
 
         /// <summary>The same computation spelled through an equivalent one-line helper on one side and inline on the
         /// other (<c>ProjectCountedValue</c>, <c>CountValue</c>, a wrapper such as
-        /// <c>EvalProgramOutputCounted</c>), usually because the helper takes a result the twin only has after an
+        /// <c>EvalAlgOutputCounted</c>), usually because the helper takes a result the twin only has after an
         /// await.</summary>
         InlinedHelper = 1 << 13,
 
@@ -159,10 +159,10 @@ public class TwinNormalizationTests(ITestOutputHelper output)
     }
 
     /// <summary>The allowlist size; it may only go DOWN (see the class documentation).</summary>
-    internal const int AllowlistCeiling = 72;
+    internal const int AllowlistCeiling = 69;
 
     /// <summary>The owner-accepted number of entries with a class beyond <see cref="AuditClasses"/>; it may only go DOWN.</summary>
-    internal const int AcceptedBeyondAuditCeiling = 43;
+    internal const int AcceptedBeyondAuditCeiling = 40;
 
     private const TwinDifference FS = TwinDifference.FrameSplit;
     private const TwinDifference OP = TwinDifference.OptimizerPinned;
@@ -207,12 +207,6 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalAliasMemberCountedAsync", "Evaluator.EvalAliasMemberCounted", "f69d41094bf4d0e4", FS,
             "the out-of-line EvalBoundMemberCallCounted is its body EvalOriginCallCounted(CalleeOrigin.Bound(...), ..., CallDiagnosticName.FromKnown(name))"),
         new("Evaluator.EvalAliasDotStringLexicalReceiverAsync", "Evaluator.EvalAliasDotStringLexicalReceiver", "d6f787076c0b5369", SH, HopReason),
-        new("Evaluator.EvalRootProgramValueAsync", "Evaluator.EvalRootProgram", "629f0f6fed99ade1", CO | IH,
-            "the plain EvalProgramOutput is the counted EvalZeroArgumentDemandOutputCounted with its value projected inline"),
-        new("Evaluator.EvalRootProgramCountedAsync", "Evaluator.EvalRootProgramCounted", "6af5cb56ca1abe5b", IH,
-            "the one-line wrapper EvalProgramOutputCounted is called as its body EvalZeroArgumentDemandOutputCounted"),
-        new("Evaluator.EvalRootProgramCountedWithTopLevelPropertiesAsync", "Evaluator.EvalRootProgramCountedWithTopLevelProperties", "535dcc9004db2f1d", IH,
-            "the one-line wrapper EvalProgramOutputCounted is called as its body EvalZeroArgumentDemandOutputCounted"),
         new("Evaluator.EvalTopLevelZeroArgPropertyCountedAsync", "Evaluator.EvalTopLevelZeroArgPropertyCounted", "d0924c6fd1535640", FS,
             "the sync hot path bypasses ReadValueBindingCounted for a non-alias, non-carrier binding (exactly its EvalZeroArgPropertyAccessCounted arm)"),
         new("Evaluator.EvalParamCountedAsync", "Evaluator.EvalParamCounted", "d60561c473cb67d6", SD,
@@ -406,6 +400,9 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.EvalAliasZeroArgumentDemandCountedAsync ~ Evaluator.EvalAliasZeroArgumentDemandCounted",
         "Evaluator.EvalAliasMemberReadAsync ~ Evaluator.EvalAliasMemberRead",
         "Evaluator.EvalAliasDotStringCountedAsync ~ Evaluator.EvalAliasDotStringCounted",
+        "Evaluator.EvalRootProgramCountedAsync ~ Evaluator.EvalRootProgramCounted",
+        "Evaluator.EvalWiredRootProgramCountedAsync ~ Evaluator.EvalWiredRootProgramCounted",
+        "Evaluator.EvalRootProgramCountedWithTopLevelPropertiesAsync ~ Evaluator.EvalRootProgramCountedWithTopLevelProperties",
         "Evaluator.LookupNativeArgumentAsync ~ Evaluator.LookupNativeArgument",
         "Evaluator.CollectMathNativeArgumentsAsync ~ Evaluator.CollectMathNativeArguments",
         "Evaluator.CollectHostOperationArgumentsAsync ~ Evaluator.CollectHostOperationArguments",
