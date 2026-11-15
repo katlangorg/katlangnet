@@ -2522,24 +2522,11 @@ public static partial class Evaluator
         if (boundR.Value.RetainedSlice is { } retainedSlice)
             return await EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: true).ConfigureAwait(false);
 
-        // Deconstructed before the local functions capture them — see the synchronous twin.
+        // An ordinary call: the view and slice routes have returned above.
         var (preparedInput, iterationItems, suffixArgs, _, _) = boundR.Value;
 
-        // The pure per-builtin execution helpers are shared with the synchronous twin;
-        // only the callback-driven builtins (filter, map, reduce) await.
-        EvalResult<CountedResult> WithPreparedFlatItems(
-            Func<IReadOnlyList<Result>, EvalResult<CountedResult>> handler)
-            => handler(preparedInput.FlattenedItems);
-
-        EvalResult<CountedResult> WithPreparedNumericItems(
-            Func<IReadOnlyList<Decimal128>, EvalResult<CountedResult>> handler)
-        {
-            var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
-            if (numbersR.IsError) return numbersR.Error;
-
-            return handler(numbersR.Value);
-        }
-
+        // Only the callback-driven builtins (filter, map, reduce) await. Every other builtin is the
+        // synchronous ApplyValueSequenceBuiltinCounted, shared with the synchronous twin.
         switch (builtin)
         {
             case BuiltinId.@filter:
@@ -2561,65 +2548,6 @@ public static partial class Evaluator
 
                     return await EvalMapCountedAsync(iterationItems, transformR.Value, ctx, valEnv).ConfigureAwait(false);
                 }
-
-            case BuiltinId.@order:
-                return WithPreparedNumericItems(numbers => EvalOrderCounted(ctx, numbers));
-            case BuiltinId.@orderDesc:
-                return WithPreparedNumericItems(numbers => EvalOrderDescCounted(ctx, numbers));
-            case BuiltinId.@count:
-                return WithPreparedFlatItems(EvalCountCounted);
-
-            case BuiltinId.@contains:
-                {
-                    var searchedItemR = ExpectPreparedValueSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        0);
-                    if (searchedItemR.IsError) return searchedItemR.Error;
-
-                    return WithPreparedFlatItems(items => EvalContainsCounted(ctx, items, searchedItemR.Value));
-                }
-
-            case BuiltinId.@distinct:
-                return WithPreparedFlatItems(items => EvalDistinctCounted(ctx, items));
-            case BuiltinId.@first:
-                return WithPreparedFlatItems(EvalFirstCounted);
-            case BuiltinId.@last:
-                return WithPreparedFlatItems(EvalLastCounted);
-
-            case BuiltinId.@take:
-                {
-                    var countR = ExpectPreparedWholeNumberSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        0);
-                    if (countR.IsError) return countR.Error;
-
-                    return WithPreparedFlatItems(items => EvalTakeCounted(ctx, items, countR.Value));
-                }
-
-            case BuiltinId.@skip:
-                {
-                    var countR = ExpectPreparedWholeNumberSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        0);
-                    if (countR.IsError) return countR.Error;
-
-                    return WithPreparedFlatItems(items => EvalSkipCounted(ctx, items, countR.Value));
-                }
-
-            case BuiltinId.@min:
-                return WithPreparedNumericItems(EvalMinCounted);
-            case BuiltinId.@max:
-                return WithPreparedNumericItems(EvalMaxCounted);
-            case BuiltinId.@sum:
-                return WithPreparedNumericItems(EvalSumCounted);
-            case BuiltinId.@avg:
-                return WithPreparedNumericItems(EvalAvgCounted);
 
             case BuiltinId.@reduce:
                 {
@@ -2644,7 +2572,7 @@ public static partial class Evaluator
                 }
 
             default:
-                return WrongBuiltinArity(builtin, args.Count);
+                return ApplyValueSequenceBuiltinCounted(builtin, metadata.SuffixArgs, preparedInput, suffixArgs, args.Count, ctx);
         }
     }
 

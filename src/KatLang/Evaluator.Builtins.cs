@@ -2495,128 +2495,164 @@ public static partial class Evaluator
             return EvalArgumentViewBuiltin(builtin, argumentView, ctx);
         if (boundR.Value.RetainedSlice is { } retainedSlice)
             return EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: false).GetAwaiter().GetResult();
-        // Deconstructed before the local functions capture them, so their closure holds exactly these
-        // three references (the view and slice fields never enlarge an ordinary collection-builtin call).
+        // An ordinary call: the view and slice routes have returned above.
         var (preparedInput, iterationItems, suffixArgs, _, _) = boundR.Value;
 
-        EvalResult<CountedResult> WithPreparedFlatItems(
-            Func<IReadOnlyList<Result>, EvalResult<CountedResult>> handler)
-            => handler(preparedInput.FlattenedItems);
-
-        EvalResult<CountedResult> WithPreparedNumericItems(
-            Func<IReadOnlyList<Decimal128>, EvalResult<CountedResult>> handler)
+        // Only the callback-driven builtins (filter, map, reduce) are dispatched here, because the
+        // asynchronous twin awaits exactly these. Every other builtin goes to the shared
+        // ApplyValueSequenceBuiltinCounted, which both twins call.
+        switch (builtin)
         {
-            var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
-            if (numbersR.IsError) return numbersR.Error;
+            case BuiltinId.@filter:
+                {
+                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    var predicateR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
+                    if (predicateR.IsError) return predicateR.Error;
 
-            return handler(numbersR.Value);
+                    return EvalFilterCounted(iterationItems, predicateR.Value, ctx, valEnv);
+                }
+
+            case BuiltinId.@map:
+                {
+                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    var transformR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
+                    if (transformR.IsError) return transformR.Error;
+
+                    return EvalMapCounted(iterationItems, transformR.Value, ctx, valEnv);
+                }
+
+            case BuiltinId.@reduce:
+                {
+                    var initialR = ExpectPreparedValueSuffixArg(
+                        builtin,
+                        metadata.SuffixArgs,
+                        suffixArgs,
+                        1);
+                    if (initialR.IsError) return initialR.Error;
+                    if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+
+                    var stepR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
+                    if (stepR.IsError) return stepR.Error;
+
+                    return EvalReduceCounted(
+                        iterationItems,
+                        stepR.Value,
+                        initialR.Value,
+                        ctx,
+                        valEnv);
+                }
+
+            default:
+                return ApplyValueSequenceBuiltinCounted(builtin, metadata.SuffixArgs, preparedInput, suffixArgs, args.Count, ctx);
         }
+    }
 
-        EvalResult<CountedResult> WithPreparedSuffixArgs(
-            Func<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>, EvalResult<CountedResult>> handler)
-            => handler(suffixArgs);
-
-        return builtin switch
+    /// <summary>
+    /// The sequence builtins that take no callback (<c>order</c>, <c>orderDesc</c>, <c>count</c>,
+    /// <c>contains</c>, <c>distinct</c>, <c>first</c>, <c>last</c>, <c>take</c>, <c>skip</c>,
+    /// <c>min</c>, <c>max</c>, <c>sum</c>, <c>avg</c>) over an ordinary bound call, and the arity
+    /// error of any other builtin. None of them suspends, so <see cref="ApplyBuiltinCountedSequence"/>
+    /// and its asynchronous twin both call this ONE switch and keep only their callback arms
+    /// (<c>filter</c>, <c>map</c>, <c>reduce</c>). A numeric builtin checks its prepared numeric
+    /// items before its handler runs. A builtin with a control checks it before reading the items.
+    /// Out of line so that these arms' locals stay out of the twins' frames.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> ApplyValueSequenceBuiltinCounted(
+        BuiltinId builtin,
+        IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
+        PreparedSequenceBuiltinInput preparedInput,
+        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> suffixArgs,
+        int argumentCount,
+        EvalCtx ctx)
+    {
+        switch (builtin)
         {
-            BuiltinId.@filter => WithPreparedSuffixArgs(
-                    preparedSuffixArgs =>
-                    {
-                        if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                        var predicateR = ExpectPreparedAlgorithmSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (predicateR.IsError) return predicateR.Error;
+            case BuiltinId.@order:
+                {
+                    var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
+                    if (numbersR.IsError) return numbersR.Error;
 
-                        return EvalFilterCounted(iterationItems, predicateR.Value, ctx, valEnv);
-                    }),
-            BuiltinId.@map => WithPreparedSuffixArgs(
-                    preparedSuffixArgs =>
-                    {
-                        if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                        var transformR = ExpectPreparedAlgorithmSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (transformR.IsError) return transformR.Error;
+                    return EvalOrderCounted(ctx, numbersR.Value);
+                }
 
-                        return EvalMapCounted(iterationItems, transformR.Value, ctx, valEnv);
-                    }),
-            BuiltinId.@order => WithPreparedNumericItems(numbers => EvalOrderCounted(ctx, numbers)),
-            BuiltinId.@orderDesc => WithPreparedNumericItems(numbers => EvalOrderDescCounted(ctx, numbers)),
-            BuiltinId.@count => WithPreparedFlatItems(EvalCountCounted),
-            BuiltinId.@contains => WithPreparedSuffixArgs(
-                    preparedSuffixArgs =>
-                    {
-                        var searchedItemR = ExpectPreparedValueSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (searchedItemR.IsError) return searchedItemR.Error;
+            case BuiltinId.@orderDesc:
+                {
+                    var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
+                    if (numbersR.IsError) return numbersR.Error;
 
-                        return WithPreparedFlatItems(items => EvalContainsCounted(ctx, items, searchedItemR.Value));
-                    }),
-            BuiltinId.@distinct => WithPreparedFlatItems(items => EvalDistinctCounted(ctx, items)),
-            BuiltinId.@first => WithPreparedFlatItems(EvalFirstCounted),
-            BuiltinId.@last => WithPreparedFlatItems(EvalLastCounted),
-            BuiltinId.@take => WithPreparedSuffixArgs(
-                    preparedSuffixArgs =>
-                    {
-                        var countR = ExpectPreparedWholeNumberSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (countR.IsError) return countR.Error;
+                    return EvalOrderDescCounted(ctx, numbersR.Value);
+                }
 
-                        return WithPreparedFlatItems(items => EvalTakeCounted(ctx, items, countR.Value));
-                    }),
-            BuiltinId.@skip => WithPreparedSuffixArgs(
-                    preparedSuffixArgs =>
-                    {
-                        var countR = ExpectPreparedWholeNumberSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (countR.IsError) return countR.Error;
+            case BuiltinId.@count:
+                return EvalCountCounted(preparedInput.FlattenedItems);
 
-                        return WithPreparedFlatItems(items => EvalSkipCounted(ctx, items, countR.Value));
-                    }),
-            BuiltinId.@min => WithPreparedNumericItems(EvalMinCounted),
-            BuiltinId.@max => WithPreparedNumericItems(EvalMaxCounted),
-            BuiltinId.@sum => WithPreparedNumericItems(EvalSumCounted),
-            BuiltinId.@avg => WithPreparedNumericItems(EvalAvgCounted),
-            BuiltinId.@reduce => WithPreparedSuffixArgs(
-                    preparedSuffixArgs =>
-                    {
-                        var initialR = ExpectPreparedValueSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            1);
-                        if (initialR.IsError) return initialR.Error;
-                        if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+            case BuiltinId.@contains:
+                {
+                    var searchedItemR = ExpectPreparedValueSuffixArg(builtin, descriptors, suffixArgs, 0);
+                    if (searchedItemR.IsError) return searchedItemR.Error;
 
-                        var stepR = ExpectPreparedAlgorithmSuffixArg(
-                            builtin,
-                            metadata.SuffixArgs,
-                            preparedSuffixArgs,
-                            0);
-                        if (stepR.IsError) return stepR.Error;
+                    return EvalContainsCounted(ctx, preparedInput.FlattenedItems, searchedItemR.Value);
+                }
 
-                        return EvalReduceCounted(
-                            iterationItems,
-                            stepR.Value,
-                            initialR.Value,
-                            ctx,
-                            valEnv);
-                    }),
-            _ => WrongBuiltinArity(builtin, args.Count),
-        };
+            case BuiltinId.@distinct:
+                return EvalDistinctCounted(ctx, preparedInput.FlattenedItems);
+            case BuiltinId.@first:
+                return EvalFirstCounted(preparedInput.FlattenedItems);
+            case BuiltinId.@last:
+                return EvalLastCounted(preparedInput.FlattenedItems);
+
+            case BuiltinId.@take:
+                {
+                    var countR = ExpectPreparedWholeNumberSuffixArg(builtin, descriptors, suffixArgs, 0);
+                    if (countR.IsError) return countR.Error;
+
+                    return EvalTakeCounted(ctx, preparedInput.FlattenedItems, countR.Value);
+                }
+
+            case BuiltinId.@skip:
+                {
+                    var countR = ExpectPreparedWholeNumberSuffixArg(builtin, descriptors, suffixArgs, 0);
+                    if (countR.IsError) return countR.Error;
+
+                    return EvalSkipCounted(ctx, preparedInput.FlattenedItems, countR.Value);
+                }
+
+            case BuiltinId.@min:
+                {
+                    var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
+                    if (numbersR.IsError) return numbersR.Error;
+
+                    return EvalMinCounted(numbersR.Value);
+                }
+
+            case BuiltinId.@max:
+                {
+                    var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
+                    if (numbersR.IsError) return numbersR.Error;
+
+                    return EvalMaxCounted(numbersR.Value);
+                }
+
+            case BuiltinId.@sum:
+                {
+                    var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
+                    if (numbersR.IsError) return numbersR.Error;
+
+                    return EvalSumCounted(numbersR.Value);
+                }
+
+            case BuiltinId.@avg:
+                {
+                    var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
+                    if (numbersR.IsError) return numbersR.Error;
+
+                    return EvalAvgCounted(numbersR.Value);
+                }
+
+            default:
+                return WrongBuiltinArity(builtin, argumentCount);
+        }
     }
 
     /// <summary>

@@ -162,7 +162,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
     internal const int AllowlistCeiling = 66;
 
     /// <summary>The owner-accepted number of entries with a class beyond <see cref="AuditClasses"/>; it may only go DOWN.</summary>
-    internal const int AcceptedBeyondAuditCeiling = 33;
+    internal const int AcceptedBeyondAuditCeiling = 32;
 
     private const TwinDifference FS = TwinDifference.FrameSplit;
     private const TwinDifference OP = TwinDifference.OptimizerPinned;
@@ -244,8 +244,8 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "BindSequenceBuiltinCollectionValue's body (demand, then SequenceBuiltinValueDemandError ?? BadArity) is inline; the retained collector's slice is read through RetainedCellSliceAsync(cell, ctx), the ResolveAsync adapter of RetainedCellSlice"),
         new("Evaluator.PrepareSequenceBuiltinControlsAsync", "Evaluator.PrepareSequenceBuiltinControls", "912751df2fbcb68d", RA,
             "a VALUE control is demanded asynchronously before the shared synchronous preparer reads it"),
-        new("Evaluator.ApplyBuiltinCountedSequenceAsync", "Evaluator.ApplyBuiltinCountedSequence", "b7a21a8048e58335", AL | RA,
-            "the switch expression over WithPreparedSuffixArgs lambdas is a switch statement so arms can await; algorithm controls are projected through ExpectPreparedAlgorithmSuffixArgAsync(..., ctx)"),
+        new("Evaluator.ApplyBuiltinCountedSequenceAsync", "Evaluator.ApplyBuiltinCountedSequence", "7671fa81e47769f6", RA,
+            "algorithm controls are projected through ExpectPreparedAlgorithmSuffixArgAsync(..., ctx)"),
         new("Evaluator.EvalResolvedCallbackCallCountedAsync", "Evaluator.EvalResolvedCallbackCallCounted", "380c1a7f233a624c", SH, HopReason),
         new("Evaluator.EvalFilterPredicateTruthAsync", "Evaluator.EvalFilterPredicateTruth", "2e702caf4ca5d95a", CO,
             "the plain EvalSequenceCallbackCall is the counted twin with its value projected"),
