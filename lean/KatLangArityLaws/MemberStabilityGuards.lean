@@ -30,10 +30,10 @@ conclusion of `member_bridge_param_stable`, with no `NavInert` condition. These 
 guards, not applications of the final theorems; no quantified `NavStable` instance is proved here.
 THEOREM applications — every premise proved, on genuine source programs — are
 `MemberBridgeSourceInstances` and its companions (`member_bridge_settled` over every receiver class
-and bundle kind) and `MemberSettledInstances` (the quantified `NavSettled` DERIVED from the probe,
-for references to a named target, opened names, nested paths and parameters); since the M1
-completion pass `MemberRereadInstances` applies the general `member_bridge_of_probe` to every
-receiver class, runtime-target aliases and path-row references included.
+and bundle kind) and, since the M1 completion pass, `MemberRereadInstances` (the quantified
+`NavSettled` DERIVED from the probe and the general `member_bridge_of_probe`, for every receiver
+class: references to a named target, opened names, nested paths and parameters, runtime-target
+aliases and path-row references included).
 
 `memberOriginRemintsRuntimeIdentity` is the PERMANENT WITNESS that the settledness premise is
 necessary: over `MTA`, an empty and a spread-first bundle make the plan's final state differ from

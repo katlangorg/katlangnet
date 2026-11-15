@@ -54,7 +54,15 @@ and the structure chase of the binding it selects. From it:
 * `navSettled_member` — a member step over a settled receiver (nested and parameter-rooted paths);
 * `member_bridge_of_settled` — the member bridge for EVERY bundle from settledness assembled so.
 
-`MemberSettledInstances` applies them to genuine source programs.
+Application to genuine source programs is `MemberRereadInstances`, through the general theorem of
+the M1 completion pass: `NavigationSettled.member_bridge_of_probe` rests on `navSettled_of`,
+`headSettled_name`, `headSettled_block`, `structSettled_normal`, `navSettled_member` and
+`member_bridge_of_settled` of this module, and is applied there to every receiver class — the
+name-row references, opened names, nested paths, parameters and parameter-rooted path these
+theorems were written for included. The shape-specific probe theorems
+(`navSettled_plain_name_of_probe`, `member_bridge_name_of_probe`, `navSettled_reference_of_probe`,
+`member_bridge_reference_of_probe`, `navSettled_param_of_probe`) have no instance application of
+their own.
 
 ## What is NOT derived here
 

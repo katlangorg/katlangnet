@@ -72,8 +72,10 @@ is state-free (so a name selected through `open` is derived like a declared one)
 reference whose row is a name selecting a non-alias target has its alias chase unfolded, and
 member steps and parameter heads compose (nested member paths, parameter-rooted paths);
 `MemberBridgeSourceInstances` (and three companions) apply `member_bridge_settled` to genuine
-source programs over every class and bundle kind, and `MemberSettledInstances` applies the derived
-theorems. M1 STAYS PARTIAL on what is still missing: the unfolding of the chase of a RUNTIME-TARGET
+source programs over every class and bundle kind (from the probe, the instances are
+`MemberRereadInstances`, by the completion pass's general theorem below; the shape-specific probe
+theorems of `MemberSettled.lean` have no instance application of their own). M1 STAYS PARTIAL on
+what is still missing: the unfolding of the chase of a RUNTIME-TARGET
 alias (`aliasStepIsRuntime`, `aliasBindingCell`, the binding cell's CALLABLE) and of a reference
 whose row is a member path or whose chase has several steps, to the statement that a completed
 first navigation is read back from every navigation extension — the guards decide the settledness

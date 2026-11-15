@@ -104,12 +104,13 @@ The MEMBER route's closing pass: `MemberBridgeSourceInstances` (and three compan
 `MemberStability.member_bridge_settled` to genuine source programs over every receiver class and
 bundle kind, and `MemberSettled` DERIVES settled navigation from the production probe — the lexical
 lookup is state-free (opened names included), a transparent reference's chase to a named target
-is unfolded, member steps and parameter heads compose (`MemberSettledInstances` applies it).
+is unfolded, member steps and parameter heads compose.
 The M1 completion pass replaces the shape-by-shape unfolding by ONE theorem:
 `NavigationReread.navigation_reread` (a completed, non-minting identity navigation is re-read from
 every navigation extension) and `NavigationSettled.member_bridge_of_probe` — the member bridge from
 the production probe over runtime-target aliases, path-row references, chains, nested and
-parameter-rooted paths (`MemberRereadInstances` applies it to 26 source instances).
+parameter-rooted paths (`MemberRereadInstances` applies it to 26 source instances, the name-row
+reference, opened-name, nested-path and parameter programs of the shape-by-shape pass included).
 
 ## Boundary
 
