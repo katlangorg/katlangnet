@@ -53,7 +53,11 @@ internal static class RegenerationFlags
         Prefix + "SEMANTIC_GENERATED",
         "lean/CoreTests/SemanticGeneratedCases.lean");
 
-    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated];
+    public static readonly RegenerationFlag FrontEndDecisions = new(
+        Prefix + "FRONT_END_DECISIONS",
+        "lean/CoreTests/FrontEndDecisionCases.lean");
+
+    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated, FrontEndDecisions];
 }
 
 /// <summary>

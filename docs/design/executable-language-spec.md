@@ -130,11 +130,26 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   paths remain C# evidence. Partition, case and member coverage ratchets,
   case/program/byte caps sized from the measured Lean build cost, and the
   injective `case_…` name mangling (with `_alpha`/`_reorder` member
-  suffixes) are pinned by the test class.
-  Regenerate with
+  suffixes) are pinned by the test class. Regenerate with
   `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact`
+- `lean/CoreTests/FrontEndDecisionCases.lean` (imported by the canonical
+  `CoreTests` target) — the FRONT-END DECISION differential. The corpora
+  above evaluate a tree C# already elaborated; this artifact guards the
+  elaboration decisions themselves against the Lean front-end
+  specification functions, on every program of `SemanticExplorerCorpus`
+  and `LanguageSpecCorpus` the parser accepts: `selectOwnedDeclaration`,
+  `elaboratesToParameter`, `elaborateOpenHead` and
+  `familyLiftingSignature?` per occurrence, and the whole
+  `liftingSlotRole` table. `FrontEndDecisionCorpus` runs the real stages
+  one at a time (raw parse, parameter detection, implicit-argument
+  resolution), rebuilds each owner chain from the detected tree's nesting
+  and reads C#'s verdict from the detected node and from the detection's
+  own binding fact; the partition, the skip reasons, the coverage ratchet
+  and the (empty) exact-id map of reviewed disagreements are pinned by
+  `FrontEndDecisionLeanArtifactTests`. Regenerate with
+  `$env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"; dotnet test .\KatLang.slnx --filter FrontEndDecisionLeanArtifact`
 
-The four Lean artifacts embed the same observation machinery (`neutral`,
+The four evaluation artifacts above embed the same observation machinery (`neutral`,
 `errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
 emitted from the single C# constant `LeanObsTemplate.SharedDefinitions`. When
 adding an error kind, extend `errCategory` and `sharedError` there AND
@@ -142,7 +157,9 @@ adding an error kind, extend `errCategory` and `sharedError` there AND
 `SemanticExplorerHarness.ErrorCategory` delegates to) together, record its
 reviewed policy (a constructor-projection golden in `DifferentialErrorContracts`,
 or the host-only inventory of `DifferentialObservationTests` for a C#-only
-kind), then regenerate all four Lean artifacts with their registered flags.
+kind), then regenerate all four evaluation artifacts with their registered flags.
+The front-end decision artifact calls the model's specification functions directly
+and does not embed those evaluation helpers.
 
 Q-67 adds a separate structured-error projection (`DifferentialErrors` /
 `sharedError`, guarded by `errorObs`), while preserving the FORMAL-06 neutral
