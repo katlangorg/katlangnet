@@ -5793,9 +5793,12 @@ def WhileRound.ofSupply (supply : List Result) : EvalM (Option (List Result)) :=
     `false` verdict FINISHES the loop (`.inl`) with exactly the cells that entered the round — on
     the first round the original initial cells (R1: zero accepted transitions), still lazy, whose
     VALUE materialization is the loop's separate final boundary (LOOP-07) — and a `true` verdict's
-    next slots become Ready cells (`.inr`). Law: `cf3_false_round_keeps_entering_cells`. -/
-def WhileRound.advance (round : List Nat → EvalM (Option (List Result))) (cells : List Nat) :
-    EvalM (Sum (List Nat) (List Nat)) := do
+    next slots become Ready cells (`.inr`). The state is a SOURCED supply (`NeedSupply.Sourced`:
+    each cell with its written slot, which only the captured call's own cells have), so the
+    entering cells are returned with their sources and the fresh Ready cells have none.
+    Law: `cf3_false_round_keeps_entering_cells`. -/
+def WhileRound.advance (round : List (Nat × Option Expr) → EvalM (Option (List Result)))
+    (cells : List (Nat × Option Expr)) : EvalM (Sum (List (Nat × Option Expr)) (List Nat)) := do
   match ← round cells with
   | none => pure (.inl cells)
   | some next => pure (.inr (← next.mapM (fun value => readyNeed (value, Result.valueCount value))))
@@ -8057,17 +8060,35 @@ def decodeCallRef (val : Result) : EvalM Nat :=
     captured call and demanding no argument VALUE) — the loop's initial state, the ORIGINAL argument
     cells, never re-formed (an empty supply is the ordinary zero-slot state, OD-1); then the plan's
     canonical callee cell (`NeedPlan.calleeCell`, CR-13, inert) — the step, projected only when an
-    iteration runs. The captured call itself is never dispatched. Laws: `KatLangArityLaws.MetaLoop`. -/
-def metaLoopCapture (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    iteration runs. The captured call itself is never dispatched.
+
+    The initial state is the plan's SOURCED supply, exactly as `view` returns it: each ORIGINAL
+    cell with the slot written for it in the captured call (`NeedSupply.Sourced`). The loop arms
+    hand it to the first round, so a builtin step's arguments keep the written slots the direct
+    call `Step(args)` gives them and a failing VALUE demand is the direct call's failure
+    (`zeroArgumentDemandError?` reads the slot: a block's own `unresolvedImplicitParams`, a family
+    named by its reference, a property's arity context). Later rounds run over Ready cells, which
+    have no written slot. C#: `Evaluator.PrepareLoopInitialState`. Laws:
+    `KatLangArityLaws.MetaLoop`. -/
+def metaLoopCaptureSourced (classify : NeedPlan.CallShape → EvalM PlanRoute)
     (read : Nat → EvalM CountedResult) (view : Nat → EvalM (List NeedSupply.Sourced))
-    (adapter : Nat) : EvalM (Nat × List Nat) := do
+    (adapter : Nat) : EvalM (Nat × List NeedSupply.Sourced) := do
   let (reference, _) ← read adapter
   let plan ← decodeCallRef reference
-  let initialCells := (← view plan).map Prod.fst
+  let initialCells ← view plan
   let stepCell ← NeedPlan.calleeCell classify plan
   pure (stepCell, initialCells)
 
-/-- THE `repeat` SETUP ORDER (META-S3-3, RP-1): the captured step's setup (`metaLoopCapture`,
+/-- The captured step's loop setup as cell ADDRESSES: `metaLoopCaptureSourced` with the written
+    slots projected away. The step, the cells, their order and every effect are the sourced
+    setup's; the loop arms run the sourced one. -/
+def metaLoopCapture (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (read : Nat → EvalM CountedResult) (view : Nat → EvalM (List NeedSupply.Sourced))
+    (adapter : Nat) : EvalM (Nat × List Nat) := do
+  let (stepCell, initialCells) ← metaLoopCaptureSourced classify read view adapter
+  pure (stepCell, initialCells.map Prod.fst)
+
+/-- THE `repeat` SETUP ORDER (META-S3-3, RP-1): the captured step's setup (`metaLoopCaptureSourced`,
     which prepares the captured supply) runs BEFORE the count — the outer call's own VALUE
     argument, demanded and validated once by `count` — so a captured spread's failure or effect
     precedes the count's, exactly as LOOP-01/05 ordered the retired surface; a failing setup never
@@ -8471,7 +8492,7 @@ instance : Lean.Order.MonoBind EvalM where
 /-! The fuel-indexed evaluator core: the call universe, its answers and the bodies. -/
 
 inductive EvalCall : Type where
-  | whileLoop (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat)
+  | whileLoop (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced)
   | aliasStepIsRuntime (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String)
   | aliasValue (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | resolveAliasChase (followCarriers projectRuntime : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (last : Option (Algorithm × PropDef))
@@ -8507,8 +8528,8 @@ inductive EvalCall : Type where
   | evalNeedFamilySupply (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | invokeNeed (arg : ResolvedArgumentAlgorithm)
   | argumentNeed (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-  | runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String)
-  | runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String)
+  | runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String)
+  | runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String)
   | evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalAlgOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalProgramOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -8577,7 +8598,7 @@ inductive EvalCall : Type where
   | eval (e : Expr) (ctx : EvalCtx) (env : ValEnv)
 
 @[reducible] def EvalCall.Ret : EvalCall → Type
-  | .whileLoop .. => List Nat
+  | .whileLoop .. => (List NeedSupply.Sourced)
   | .aliasStepIsRuntime .. => Bool
   | .aliasValue .. => CountedResult
   | .resolveAliasChase .. => AliasChaseEnd
@@ -8684,7 +8705,7 @@ inductive EvalCall : Type where
 
 abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
 
-@[inline] def EvalRec.whileLoop (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) : EvalM (List Nat) :=
+@[inline] def EvalRec.whileLoop (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) : EvalM (List NeedSupply.Sourced) :=
   rec (.whileLoop step ctx env stepName cells)
 @[inline] def EvalRec.aliasStepIsRuntime (rec : EvalRec) (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) : EvalM Bool :=
   rec (.aliasStepIsRuntime step target ctx visited)
@@ -8756,9 +8777,9 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.invokeNeed arg)
 @[inline] def EvalRec.argumentNeed (rec : EvalRec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Nat :=
   rec (.argumentNeed arg ctx env)
-@[inline] def EvalRec.runNeedStepSlots (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM (List Result) :=
+@[inline] def EvalRec.runNeedStepSlots (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (List Result) :=
   rec (.runNeedStepSlots step ctx env cells stepName)
-@[inline] def EvalRec.runNeedWhileRound (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM (Option (List Result)) :=
+@[inline] def EvalRec.runNeedWhileRound (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (Option (List Result)) :=
   rec (.runNeedWhileRound step ctx env cells stepName)
 @[inline] def EvalRec.evalAlgOutputCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   rec (.evalAlgOutputCore a ctx env)
@@ -9055,7 +9076,7 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
   NeedChannels.shell rec.evalSuppliedAt rec.planRoute rec.demandNeedRecursive rec.projectNeedWrittenAt
 
 @[partial_fixpoint_monotone] theorem EvalRec.whileLoop_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     Lean.Order.monotone (fun ρ => (recOf ρ).whileLoop step ctx env stepName cells) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.aliasStepIsRuntime_mono {γ : Type} [Lean.Order.PartialOrder γ]
@@ -9199,11 +9220,11 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     Lean.Order.monotone (fun ρ => (recOf ρ).argumentNeed arg ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.runNeedStepSlots_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).runNeedStepSlots step ctx env cells stepName) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.runNeedWhileRound_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).runNeedWhileRound step ctx env cells stepName) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
@@ -10216,39 +10237,46 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       reads the supply left to right (`runNeedStepSlots`); a `while` round reads condition first
       (`runNeedWhileRound`, LOOP-06). There is ONE dispatch: the binder, family dispatch,
       builtin roles and alias resolution are this definition's for both receivers.
+
+      The state is a SOURCED supply (`NeedSupply.Sourced`), as the ordinary dispatch
+      `evalSuppliedCallCounted` receives it: a BUILTIN's arguments keep each cell's written slot
+      (`source?`), so its VALUE-demand failures are judged by the slot the direct call judges
+      (`zeroArgumentDemandError?`); a binder and the family dispatcher read the cell addresses
+      only. The first round's state is the captured call's own supply (`metaLoopCaptureSourced`);
+      a later round's Ready cells have no written slot (`retainedSourced`).
       C#: `Evaluator.InvokeLoopStepSupply`. -/
-  def EvalBody.runNeedStepWith (rec : EvalRec) {α : Type} (read : Algorithm → EvalCtx → ValEnv → EvalM α) (atomic : CountedResult → EvalM α) (again : Algorithm → EvalM α) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM α := do
+  def EvalBody.runNeedStepWith (rec : EvalRec) {α : Type} (read : Algorithm → EvalCtx → ValEnv → EvalM α) (atomic : CountedResult → EvalM α) (again : Algorithm → EvalM α) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM α := do
     match step with
     | .builtin b =>
         withCtx s!"while evaluating call to {stepName}" do
-          let supplied := cells.map fun address =>
-            ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm)
+          let supplied := cells.map fun (address, source?) =>
+            ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
           let out <- rec.applyBuiltinCountedResolved b supplied ctx env
           atomic out
     | .conditional _ _ _ _ =>
         withCtx s!"while evaluating call to {stepName}" do
-          let (body, next, values) <- selectNeedFamilyBranch (rec.bindingChannels) step cells ctx env stepName
+          let (body, next, values) <- selectNeedFamilyBranch (rec.bindingChannels) step (cells.map Prod.fst) ctx env stepName
           read body next values
     | .alias _ _ _ _ _ _ => do
         let target <- rec.resolveAliasTarget step ctx
         again target
     | .mk _ _ _ _ _ _ => do
         let some bindings <- bindNeedPatterns (rec.bindingChannels)
-            ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
+            ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) (cells.map Prod.fst)
           | throw Error.badArity
         let next <- needBindingContext ctx bindings
         read step next (ValEnv.shadow env (Algorithm.params step))
 
   /-- A `repeat` round: the step's row supply, left to right (`evalAlgOutputSlots`); a builtin's
       one result is one row (`loopStepBuiltinRows`). -/
-  def EvalBody.runNeedStepSlots (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM (List Result) :=
+  def EvalBody.runNeedStepSlots (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (List Result) :=
     EvalBody.runNeedStepWith rec rec.evalAlgOutputSlots (fun out => pure (loopStepBuiltinRows out))
       (fun target => rec.runNeedStepSlots target ctx env cells stepName) step ctx env cells stepName
 
   /-- A `while` round (LOOP-06, condition first): the step's rows read by `whileVerdictSlots`; a
       builtin's one result row is both the flag and the candidate state (`WhileRound.ofSupply`).
       `none` is a false verdict. C#: `Evaluator.InvokeLoopStepSupply` with `conditionFirst`. -/
-  def EvalBody.runNeedWhileRound (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM (Option (List Result)) :=
+  def EvalBody.runNeedWhileRound (rec : EvalRec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (Option (List Result)) :=
     EvalBody.runNeedStepWith rec rec.whileVerdictSlots (fun out => WhileRound.ofSupply (loopStepBuiltinRows out))
       (fun target => rec.runNeedWhileRound target ctx env cells stepName) step ctx env cells stepName
 
@@ -11143,8 +11171,12 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         -- an empty supply is the ordinary zero-slot state (OD-1) -- and the plan's canonical
         -- callee cell (`NeedPlan.calleeCell`, inert) is the step, projected only when an
         -- iteration runs. The captured call itself is never dispatched.
-        let capture : EvalM (ResolvedArgumentAlgorithm × List Nat) := do
-          let (stepCell, initialCells) <- metaLoopCapture rec.planRoute.classify rec.demandNeedRecursive rec.argumentViewCells (<- bound "step")
+        -- The state is the plan's SOURCED supply (`metaLoopCaptureSourced`): the first round hands
+        -- the step each ORIGINAL cell with its written slot, so a builtin step's failure there is
+        -- the direct call's; every later round runs over Ready cells, which have none
+        -- (`retainedSourced`).
+        let capture : EvalM (ResolvedArgumentAlgorithm × List NeedSupply.Sourced) := do
+          let (stepCell, initialCells) <- metaLoopCaptureSourced rec.planRoute.classify rec.demandNeedRecursive rec.argumentViewCells (<- bound "step")
           pure ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some stepCell }, initialCells)
         match b, args with
         | .whileBuiltin, _ => do
@@ -11154,7 +11186,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             -- verdict finishes with the cells that entered the round (R1: zero accepted
             -- transitions return the initial cells), materialized below (LOOP-07).
             let finalCells <- rec.whileLoop step ctx env stepName initialCells
-            let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
+            let finalSlots <- (finalCells.map Prod.fst).mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
             pure (loopResultCounted finalSlots)
         | .repeatBuiltin, [_, countAlg] => do
             -- RP-1: capture, then the captured supply, THEN the count -- the outer call's own
@@ -11166,15 +11198,15 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
               .error (Error.illegalInEval "Repeat count must be >= 0")
             else
               let stepName <- loopStepName "repeat" step
-              let rec repeatLoop : Nat → List Nat → EvalM (List Nat)
+              let rec repeatLoop : Nat → List NeedSupply.Sourced → EvalM (List NeedSupply.Sourced)
                 | 0, cells => pure cells
                 | remaining + 1, cells => do
                   let algorithm <- projectInvokingSlot (invokingSlotRole .repeatBuiltin) (<- rec.invokeNeed step)
                   let outputSlots <- rec.runNeedStepSlots algorithm ctx env cells stepName
                   let next <- outputSlots.mapM (fun value => readyNeed (value, Result.valueCount value))
-                  repeatLoop remaining next
+                  repeatLoop remaining (retainedSourced next)
               let finalCells <- repeatLoop n.toNat initialCells
-              let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
+              let finalSlots <- (finalCells.map Prod.fst).mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
               pure (loopResultCounted finalSlots)
         | _, _ => .error (builtinArityError b args.length)
       else
@@ -12204,14 +12236,16 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
 /-- One condition-first `while` round and, on a true verdict, the next round (LOOP-06,
     `WhileRound.advance`): a false verdict finishes with the cells that entered the round (R1: zero
     accepted transitions return the initial cells). The round loop is not structurally bounded, so
-    it is its own evaluator call: every round costs one fuel unit (R7). Reached only from the
+    it is its own evaluator call: every round costs one fuel unit (R7). The state is a SOURCED
+    supply: the first round's cells are the captured call's, with their written slots; the Ready
+    cells of an accepted transition have none (`retainedSourced`). Reached only from the
     `while` arm of `applyBuiltinCounted`'s META branch. C#: the `while` loop of `Evaluator.EvalNeedLoop`. -/
 def EvalBody.whileLoop (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (stepName : String) (cells : List Nat) : EvalM (List Nat) := do
+    (stepName : String) (cells : List NeedSupply.Sourced) : EvalM (List NeedSupply.Sourced) := do
   let algorithm <- projectInvokingSlot (invokingSlotRole .whileBuiltin) (<- rec.invokeNeed step)
   match <- WhileRound.advance (fun cells => rec.runNeedWhileRound algorithm ctx env cells stepName) cells with
   | .inl final => pure final
-  | .inr next => rec.whileLoop step ctx env stepName next
+  | .inr next => rec.whileLoop step ctx env stepName (retainedSourced next)
 
 def evalStep (rec : EvalRec) : EvalRec := fun c =>
   match c with
@@ -12454,10 +12488,10 @@ def invokeNeed (arg : ResolvedArgumentAlgorithm) : EvalM (Option Algorithm) :=
 def argumentNeed (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Nat :=
   evalUnbounded (.argumentNeed arg ctx env)
 
-def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM (List Result) :=
+def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (List Result) :=
   evalUnbounded (.runNeedStepSlots step ctx env cells stepName)
 
-def runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) : EvalM (Option (List Result)) :=
+def runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) : EvalM (Option (List Result)) :=
   evalUnbounded (.runNeedWhileRound step ctx env cells stepName)
 
 def evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=

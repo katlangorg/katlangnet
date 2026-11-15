@@ -156,7 +156,7 @@ variable {γ : Type} [PartialOrder γ]
   unfold WhileRound.conditionFirst; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_whileAdvance
-    (round : γ → List Nat → EvalM (Option (List Result))) (h : monotone round) (cells : List Nat) :
+    (round : γ → List NeedSupply.Sourced → EvalM (Option (List Result))) (h : monotone round) (cells : List NeedSupply.Sourced) :
     monotone (fun x => WhileRound.advance (round x) cells) := by
   unfold WhileRound.advance; mono_cb_tac
 
@@ -170,6 +170,13 @@ variable {γ : Type} [PartialOrder γ]
     (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (h : monotone classify) (a : Nat) :
     monotone (fun x => NeedPlan.calleeCell (classify x) a) := by
   unfold NeedPlan.calleeCell; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_metaLoopCaptureSourced
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify)
+    (read : γ → Nat → EvalM CountedResult) (hr : monotone read)
+    (view : γ → Nat → EvalM (List NeedSupply.Sourced)) (hv : monotone view) (adapter : Nat) :
+    monotone (fun x => metaLoopCaptureSourced (classify x) (read x) (view x) adapter) := by
+  unfold metaLoopCaptureSourced; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_metaLoopCapture
     (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify)
@@ -666,7 +673,7 @@ include h
   | cons i rest ih => unfold EvalBody.evalMapCounted.mapLoop; mono_tac
 
 @[partial_fixpoint_monotone] theorem monotone_repeatLoop (ctx : EvalCtx) (env : ValEnv)
-    (step : ResolvedArgumentAlgorithm) (stepName : String) (remaining : Nat) (cells : List Nat) :
+    (step : ResolvedArgumentAlgorithm) (stepName : String) (remaining : Nat) (cells : List NeedSupply.Sourced) :
     monotone (fun ρ => EvalBody.applyBuiltinCounted.repeatLoop (recOf ρ) ctx env step stepName remaining cells) := by
   induction remaining generalizing cells with
   | zero => unfold EvalBody.applyBuiltinCounted.repeatLoop; mono_tac
@@ -674,7 +681,7 @@ include h
 
 end LocalLoops
 
-theorem EvalBody.whileLoop_mono (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_mono (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     monotone (fun rec : EvalRec => EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; mono_tac
 
@@ -849,11 +856,11 @@ theorem EvalBody.argumentNeed_mono (arg : ResolvedArgumentAlgorithm) (ctx : Eval
     monotone (fun rec : EvalRec => EvalBody.argumentNeed rec arg ctx env) := by
   unfold EvalBody.argumentNeed; mono_tac
 
-theorem EvalBody.runNeedStepSlots_mono (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_mono (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     monotone (fun rec : EvalRec => EvalBody.runNeedStepSlots rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; mono_tac
 
-theorem EvalBody.runNeedWhileRound_mono (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_mono (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     monotone (fun rec : EvalRec => EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; mono_tac
 

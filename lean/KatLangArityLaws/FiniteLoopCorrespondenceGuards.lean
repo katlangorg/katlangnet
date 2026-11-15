@@ -49,12 +49,13 @@ theorem litStep_rows (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (s : Eval
 /-- `count_one_user` holds for a concrete step, with every domain premise DISCHARGED: the only
     premise left is the projection of the retained step. -/
 theorem litStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some litStep), s₁)) :
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some litStep), s₁)) :
     StepAgreement id ((runNeedStepSlots litStep ctx env cells name).runState s₁)
-      ((evalNeedUserSupply litStep cells ctx env).runState s₁) ∧
+      ((evalNeedUserSupply litStep (cells.map Prod.fst) ctx env).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots litStep ctx env cells name).runState s₁) :=
-  count_one_user step ctx env name cells s s₁ litStep hi litStep_domain (litStep_rows ctx env cells s₁)
+  count_one_user step ctx env name cells s s₁ litStep hi litStep_domain
+    (litStep_rows ctx env (cells.map Prod.fst) s₁)
 
 /-- The slot `7` is canonical, so the value equality of the corollary applies to its row supply. -/
 theorem litStep_value : loopResultCounted [.atom 7] = ordinaryValue [.atom 7] :=
@@ -64,19 +65,21 @@ theorem litStep_value : loopResultCounted [.atom 7] = ordinaryValue [.atom 7] :=
 
 section Rounds
 variable (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-  (alg₀ : Algorithm) (cells : List Nat) (s s₁ s₂ s₃ s₄ : EvalState) (x y z : Result)
+  (alg₀ : Algorithm) (cells : List NeedSupply.Sourced) (s s₁ s₂ s₃ s₄ : EvalState) (x y z : Result)
 
-/-- Two rounds: the first emits TWO rows, so the second reads TWO fresh Ready cells; it emits one
-    row. The run composes over those real cells, and its result is the last round's supply
-    materialized: this is not nesting of a one-argument value call. -/
+/-- Two rounds: the first emits TWO rows, so the second reads TWO fresh Ready cells — which have
+    no written slot, whatever slots the entering cells had; it emits one row. The run composes
+    over those real cells, and its result is the last round's supply materialized: this is not
+    nesting of a one-argument value call. -/
 theorem two_rows_then_one
     (hi₀ : (invokeNeed step).runState s = (.ok (some alg₀), s₁))
     (h₁ : (runNeedStepSlots alg₀ ctx env cells name).runState s₁ = (.ok [x, y], s₂))
     (hi₁ : (invokeNeed step).runState (pushReady s₂ [x, y]) = (.ok (some alg₀), s₃))
-    (h₂ : (runNeedStepSlots alg₀ ctx env [s₂.needs.size, s₂.needs.size + 1] name).runState s₃ = (.ok [z], s₄)) :
+    (h₂ : (runNeedStepSlots alg₀ ctx env [(s₂.needs.size, none), (s₂.needs.size + 1, none)] name).runState s₃ =
+      (.ok [z], s₄)) :
     (repeatAfterSetup evalUnbounded step ctx env name 2 cells).runState s =
       (.ok (loopResultCounted [z]), pushCompleted s₄ [z]) := by
-  have ht : RepeatTrace step ctx env name 2 cells s (.ok (readyAddrs s₄.needs.size [z])) (pushReady s₄ [z]) :=
+  have ht : RepeatTrace step ctx env name 2 cells s (.ok (readyState s₄.needs.size [z])) (pushReady s₄ [z]) :=
     .next hi₀ h₁ (.next hi₁ h₂ (.done _ _))
   have hm : (materialize (readyAddrs s₄.needs.size [z])).runState (pushReady s₄ [z]) =
       (.ok [z], pushCompleted s₄ [z]) := materialize_ready [z] s₄.needs (pushReady s₄ [z]) rfl
@@ -94,7 +97,7 @@ theorem failure_after_prefix (n : Nat) (e : Error) (he : e ≠ .fuelExhausted)
     (hi₀ : (invokeNeed step).runState s = (.ok (some alg₀), s₁))
     (h₁ : (runNeedStepSlots alg₀ ctx env cells name).runState s₁ = (.ok [x], s₂))
     (hi₁ : (invokeNeed step).runState (pushReady s₂ [x]) = (.ok (some alg₀), s₃))
-    (h₂ : (runNeedStepSlots alg₀ ctx env [s₂.needs.size] name).runState s₃ = (.error e, s₄)) :
+    (h₂ : (runNeedStepSlots alg₀ ctx env [(s₂.needs.size, none)] name).runState s₃ = (.error e, s₄)) :
     (repeatDriver step ctx env name evalUnbounded (n + 2) cells).runState s = (.error e, s₄) :=
   ((repeat_trace_iff step ctx env name (n + 2) cells s s₄ _).1
     (.next hi₀ h₁ (.stepError he hi₁ h₂))).1
@@ -105,8 +108,8 @@ theorem one_transition_then_false
     (hi₀ : (invokeNeed step).runState s = (.ok (some alg₀), s₁))
     (h₁ : (runNeedWhileRound alg₀ ctx env cells name).runState s₁ = (.ok (some [x]), s₂))
     (hi₁ : (invokeNeed step).runState (pushReady s₂ [x]) = (.ok (some alg₀), s₃))
-    (h₂ : (runNeedWhileRound alg₀ ctx env [s₂.needs.size] name).runState s₃ = (.ok none, s₄)) :
-    (whileDriver step ctx env name cells).runState s = (.ok [s₂.needs.size], s₄) :=
+    (h₂ : (runNeedWhileRound alg₀ ctx env [(s₂.needs.size, none)] name).runState s₃ = (.ok none, s₄)) :
+    (whileDriver step ctx env name cells).runState s = (.ok [(s₂.needs.size, none)], s₄) :=
   (while_of_trace step ctx env name (.next hi₀ h₁ (.stop hi₁ h₂))).1
 
 /-- An ordinary error after accepted transitions is the driver's outcome, nothing later runs. -/
@@ -114,7 +117,7 @@ theorem while_error_after_prefix (e : Error) (he : e ≠ .fuelExhausted)
     (hi₀ : (invokeNeed step).runState s = (.ok (some alg₀), s₁))
     (h₁ : (runNeedWhileRound alg₀ ctx env cells name).runState s₁ = (.ok (some [x]), s₂))
     (hi₁ : (invokeNeed step).runState (pushReady s₂ [x]) = (.ok (some alg₀), s₃))
-    (h₂ : (runNeedWhileRound alg₀ ctx env [s₂.needs.size] name).runState s₃ = (.error e, s₄)) :
+    (h₂ : (runNeedWhileRound alg₀ ctx env [(s₂.needs.size, none)] name).runState s₃ = (.error e, s₄)) :
     (whileDriver step ctx env name cells).runState s = (.error e, s₄) :=
   (while_of_trace step ctx env name (.next hi₀ h₁ (.roundError he hi₁ h₂))).1
 
@@ -259,11 +262,11 @@ def entry (n : Int) : Nat × EvalState :=
 
 def viaRepeat (a : Algorithm) (n : Int) : Except Error CountedResult × EvalState :=
   let (c, s) := entry n
-  (repeatAfterSetup evalUnbounded (stepArg a) stepCtx [] "S" 1 [c]).runState s
+  (repeatAfterSetup evalUnbounded (stepArg a) stepCtx [] "S" 1 [(c, none)]).runState s
 
 def viaOneRound (a : Algorithm) (n : Int) : Except Error CountedResult × EvalState :=
   let (c, s) := entry n
-  oneRoundOutcome ((runNeedStepSlots a stepCtx [] [c] "S").runState s)
+  oneRoundOutcome ((runNeedStepSlots a stepCtx [] [(c, none)] "S").runState s)
 
 def viaCall (a : Algorithm) (n : Int) : Except Error CountedResult × EvalState :=
   let (c, s) := entry n
@@ -271,7 +274,7 @@ def viaCall (a : Algorithm) (n : Int) : Except Error CountedResult × EvalState 
 
 def viaStep (a : Algorithm) (n : Int) : Except Error (List Result) × EvalState :=
   let (c, s) := entry n
-  (runNeedStepSlots a stepCtx [] [c] "S").runState s
+  (runNeedStepSlots a stepCtx [] [(c, none)] "S").runState s
 
 -- `repeat_one_round`: the whole outcome and final state, for one and for several rows.
 #guard reprStr (viaRepeat incStep 3) == reprStr (viaOneRound incStep 3)
@@ -299,7 +302,7 @@ def hostTwoCell : Except Error (List Result) × Except Error CountedResult :=
   match (readyNeed hostValue).runState EvalState.empty with
   | (.ok c, s) =>
     let echo := alg ["x"] [] [] [.param "x"]
-    (((runNeedStepSlots echo stepCtx [] [c] "S").runState s).1,
+    (((runNeedStepSlots echo stepCtx [] [(c, none)] "S").runState s).1,
      ((evalNeedUserSupply echo [c] stepCtx []).runState s).1)
   | _ => (.error .badArity, .error .badArity)
 

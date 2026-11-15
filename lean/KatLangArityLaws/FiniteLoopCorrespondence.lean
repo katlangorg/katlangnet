@@ -18,7 +18,11 @@ call boundary. It changes no definition of `KatLang.lean`.
 
 ## Three objects, kept apart
 
-* The STATE is an ordered list of need-cell addresses (`RepeatTrace`, `WhileTrace` index it).
+* The STATE is an ordered SOURCED supply: need-cell addresses, each with its written slot
+  (`NeedSupply.Sourced`; `RepeatTrace`, `WhileTrace` index it). The first round's state is the
+  captured call's own supply; a later round's Ready cells have no written slot (`readyState`).
+  A binder and the family dispatcher read the addresses (`.map Prod.fst`); a builtin step reads
+  the slots too (`stepArguments`), exactly as the ordinary dispatch does.
 * A step's ROW SUPPLY is an ordered list of `Result`s (`runNeedStepSlots`, `runNeedWhileRound`).
 * The COUNTED VALUE of a finished loop is `loopResultCounted` of its materialized final slots; its
   public count is `Result.valueCount` of that value, never the slot count.
@@ -27,7 +31,7 @@ call boundary. It changes no definition of `KatLang.lean`.
 
 | Production entry | Existing theorem | Gap closed here | Result, domain |
 | --- | --- | --- | --- |
-| `applyBuiltinCounted` (`.repeatBuiltin`, `.whileBuiltin`) | `metaLoopCapture_run`, `repeat_setup_order` over abstract capabilities | The arm IS the setup at the real channels: `repeat_arm`, `while_arm` (definitional), `repeat_completes_iff`, `while_completes_iff`, `repeat_setup_stages`, `while_setup_stages` | All cell-backed arguments of a captured plan; failures `repeat_capture_failure`, `repeat_count_failure`, `repeat_negative_count` |
+| `applyBuiltinCounted` (`.repeatBuiltin`, `.whileBuiltin`) | `metaLoopCaptureSourced_run`, `repeat_setup_order` over abstract capabilities | The arm IS the setup at the real channels: `repeat_arm`, `while_arm` (definitional), `repeat_completes_iff`, `while_completes_iff`, `repeat_setup_stages`, `while_setup_stages` | All cell-backed arguments of a captured plan; failures `repeat_capture_failure`, `repeat_count_failure`, `repeat_negative_count` |
 | `repeatLoop` (local to the arm) | none | Equations and composition `repeatDriver_zero/succ/add`; finite derivation `repeat_trace_iff` | Every `n`, every step; each round an atomic production subcall |
 | `EvalBody.whileLoop` | `production_unfolds` only | Finite derivation with both directions `while_trace_iff` | Every completed run; the round an atomic production subcall |
 | Final boundary (LOOP-07) | `zero_state_result` | `Finished`, `finish_iff`, `repeat_after_setup_iff`, `while_after_setup_iff` | Every completed run |
@@ -84,8 +88,9 @@ row one cell, though both finish as one value.
   `runNeedWhileRound_*` (`WhileRoundProduction.lean`), which keeps its completion premise.
   `FuelReached` for an arbitrary binder is not proved; nothing here needs it.
 * Builtin and alias steps stay on the generic driver. `builtin_step_run` and `alias_step_run` give
-  their dispatch; the only ordinary-call facts here are `ordinary_builtin_is_step_application` and
-  the reduction of an alias to its target's step. Their VALUE theorems are in
+  their dispatch; the only ordinary-call facts here are `ordinary_builtin_is_step_application` —
+  over the SAME sourced supply, so the written slots a builtin's VALUE-demand report reads are the
+  ordinary call's — and the reduction of an alias to its target's step. Their VALUE theorems are in
   `FiniteLoopSurface.lean` (E-15 widening): `count_one_builtin`, `count_one_alias_value`.
 * `UserRowsBounded` and `FamilyRowsBounded` are premises about the run, and canonical slots a
   premise of the value equality. `FiniteLoopSurface.lean` discharges them for syntactic row
@@ -854,14 +859,15 @@ theorem noView_of_rows (p : Option ScopeCtx) (pp : List ParameterPattern)
   cases pp <;> rfl
 
 theorem user_loop_body (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) (env : ValEnv)
-    (cells : List Nat) (name : String) (rec : EvalRec) :
-    evalStep rec (.runNeedStepSlots a ctx env cells name) = loopRead (userActivation a ctx env cells) rec := by
+    (cells : List NeedSupply.Sourced) (name : String) (rec : EvalRec) :
+    evalStep rec (.runNeedStepSlots a ctx env cells name) =
+      loopRead (userActivation a ctx env (cells.map Prod.fst)) rec := by
   obtain ⟨p, pp, o, pr, e, rows, d, rfl⟩ := h.user
   apply EvalM.ext; intro s
   show (EvalBody.runNeedStepSlots rec _ ctx env cells name).runState s = _
   simp only [EvalBody.runNeedStepSlots, EvalBody.runNeedStepWith, loopRead, userActivation,
     EvalM.bind_runState]
-  rcases (bindNeedPatterns rec.bindingChannels _ cells).runState s with ⟨_ | (_ | b), t⟩
+  rcases (bindNeedPatterns rec.bindingChannels _ (cells.map Prod.fst)).runState s with ⟨_ | (_ | b), t⟩
   · rfl
   · rfl
   · simp only [EvalM.bind_runState]
@@ -928,25 +934,29 @@ theorem user_activation_domain (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) 
     from the SAME state, the loop step `runNeedStepSlots` and the ordinary call `evalNeedUserSupply`
     run the same binder and the same body: they complete together and reach the SAME state; the
     ordinary value is `ordinaryValue` of the step's row supply; an error is the same error with
-    its missing-output kind nested. Domain: `UserStep` and `UserRowsBounded`. -/
+    its missing-output kind nested. The step's state is the sourced supply; a binder reads its
+    cell addresses, which are the ordinary call's supply. Domain: `UserStep` and
+    `UserRowsBounded`. -/
 theorem user_step_agreement (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) (env : ValEnv)
-    (cells : List Nat) (name : String) (s : EvalState) (hrows : UserRowsBounded a ctx env cells s) :
+    (cells : List NeedSupply.Sourced) (name : String) (s : EvalState)
+    (hrows : UserRowsBounded a ctx env (cells.map Prod.fst) s) :
     StepAgreement id ((runNeedStepSlots a ctx env cells name).runState s)
-      ((evalNeedUserSupply a cells ctx env).runState s) := by
-  refine shared_agreement (userActivation a ctx env cells) (monotone_userActivation a ctx env cells) s
-    (user_activation_domain a h ctx env cells s hrows) id id (fun _ _ => rfl) (fun _ => Iff.rfl) id
+      ((evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s) := by
+  refine shared_agreement (userActivation a ctx env (cells.map Prod.fst))
+    (monotone_userActivation a ctx env (cells.map Prod.fst)) s
+    (user_activation_domain a h ctx env (cells.map Prod.fst) s hrows) id id (fun _ _ => rfl) (fun _ => Iff.rfl) id
     (fun _ _ => rfl) (fun _ _ _ => rfl) _ _ ?_ ?_
   · intro r
     have h1 := completedAt_step (.runNeedStepSlots a ctx env cells name) s r
     rw [show (fun rec => evalStep rec (.runNeedStepSlots a ctx env cells name)) =
-      fun rec => id (loopRead (userActivation a ctx env cells) rec) from
+      fun rec => id (loopRead (userActivation a ctx env (cells.map Prod.fst)) rec) from
       funext (user_loop_body a h ctx env cells name)] at h1
     exact h1
   · intro r
-    have h1 := completedAt_step (.evalNeedUserSupply a cells ctx env) s r
-    rw [show (fun rec => evalStep rec (.evalNeedUserSupply a cells ctx env)) =
-      ordinaryRead (userActivation a ctx env cells) from
-      funext (user_ordinary_body a h ctx env cells)] at h1
+    have h1 := completedAt_step (.evalNeedUserSupply a (cells.map Prod.fst) ctx env) s r
+    rw [show (fun rec => evalStep rec (.evalNeedUserSupply a (cells.map Prod.fst) ctx env)) =
+      ordinaryRead (userActivation a ctx env (cells.map Prod.fst)) from
+      funext (user_ordinary_body a h ctx env (cells.map Prod.fst))] at h1
     exact h1
 
 /-! ### The clause-family step -/
@@ -967,11 +977,11 @@ def FamilyRowsBounded (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : Li
     ActivationDomain p t
 
 theorem family_loop_body (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
-    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (name : String)
+    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String)
     (rec : EvalRec) :
     evalStep rec (.runNeedStepSlots (.conditional p o br d) ctx env cells name) =
       withCtx s!"while evaluating call to {name}"
-        (loopRead (familyActivation (.conditional p o br d) ctx env cells name) rec) := rfl
+        (loopRead (familyActivation (.conditional p o br d) ctx env (cells.map Prod.fst) name) rec) := rfl
 
 theorem family_ordinary_body (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat)
     (name : String) (rec : EvalRec) :
@@ -982,14 +992,14 @@ theorem family_ordinary_body (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cel
     for the one family dispatcher. The loop keeps its step call frame around the error
     (`wrap`); the ordinary call nests it instead. -/
 theorem family_step_agreement (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
-    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (name : String)
-    (s : EvalState) (hrows : FamilyRowsBounded (.conditional p o br d) ctx env cells name s) :
+    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String)
+    (s : EvalState) (hrows : FamilyRowsBounded (.conditional p o br d) ctx env (cells.map Prod.fst) name s) :
     StepAgreement (Error.withContext s!"while evaluating call to {name}")
       ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s)
-      ((evalNeedFamilySupply (.conditional p o br d) cells ctx env name).runState s) := by
-  have hm := monotone_familyActivation (.conditional p o br d) ctx env cells name
+      ((evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s) := by
+  have hm := monotone_familyActivation (.conditional p o br d) ctx env (cells.map Prod.fst) name
   let c := s!"while evaluating call to {name}"
-  refine shared_agreement (familyActivation (.conditional p o br d) ctx env cells name) hm s
+  refine shared_agreement (familyActivation (.conditional p o br d) ctx env (cells.map Prod.fst) name) hm s
     (fun p' t hp => hrows p' t (hp.production hm)) (withCtx c) (ctxOutcome c) (ctx_run c) (ctxOutcome_fuel c)
     (Error.withContext c) (fun _ _ => rfl) ?_ _ _ ?_ ?_
   · intro e t he
@@ -997,22 +1007,24 @@ theorem family_step_agreement (p : Option ScopeCtx) (o : List Expr) (br : List C
   · intro r
     have h1 := completedAt_step (.runNeedStepSlots (.conditional p o br d) ctx env cells name) s r
     rw [show (fun rec => evalStep rec (.runNeedStepSlots (.conditional p o br d) ctx env cells name)) =
-      fun rec => withCtx c (loopRead (familyActivation (.conditional p o br d) ctx env cells name) rec) from
+      fun rec => withCtx c (loopRead (familyActivation (.conditional p o br d) ctx env (cells.map Prod.fst) name) rec) from
       funext (family_loop_body p o br d ctx env cells name)] at h1
     exact h1
   · intro r
-    have h1 := completedAt_step (.evalNeedFamilySupply (.conditional p o br d) cells ctx env name) s r
-    rw [show (fun rec => evalStep rec (.evalNeedFamilySupply (.conditional p o br d) cells ctx env name)) =
-      ordinaryRead (familyActivation (.conditional p o br d) ctx env cells name) from
-      funext (family_ordinary_body _ ctx env cells name)] at h1
+    have h1 := completedAt_step (.evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name) s r
+    rw [show (fun rec => evalStep rec (.evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name)) =
+      ordinaryRead (familyActivation (.conditional p o br d) ctx env (cells.map Prod.fst) name) from
+      funext (family_ordinary_body _ ctx env (cells.map Prod.fst) name)] at h1
     exact h1
 
 /-! ### Builtin and alias steps, over the generic dispatch -/
 
-/-- The argument list a step dispatch passes a builtin: need-backed, source-free. -/
-def stepArguments (cells : List Nat) : List ResolvedArgumentAlgorithm :=
-  cells.map fun address =>
-    ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm)
+/-- The argument list a step dispatch passes a builtin: need-backed, each argument keeping its
+    cell's written slot (`source?`) — the arguments the ordinary dispatch builds from the same
+    sourced supply (`ordinary_builtin_is_step_application`). -/
+def stepArguments (cells : List NeedSupply.Sourced) : List ResolvedArgumentAlgorithm :=
+  cells.map fun (address, source?) =>
+    ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
 
 theorem finite_withCtx {α : Type} (c : String) {B : EvalRec → EvalM α} (hB : Finite B) :
     Finite (fun rec => withCtx c (B rec)) := by
@@ -1029,7 +1041,7 @@ def builtinStepOutcome (c : String) :
 
 /-- A builtin step at production, with no binder premise: it completes exactly when its ordinary
     application does, and then its ONE result is ONE row under the step's own frame. -/
-theorem builtin_step_run (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (name : String)
+theorem builtin_step_run (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String)
     (s : EvalState) :
     (ProductionCompletes (runNeedStepSlots (.builtin b) ctx env cells name) s ↔
       ProductionCompletes (applyBuiltinCountedResolved b (stepArguments cells) ctx env) s) ∧
@@ -1069,18 +1081,21 @@ theorem builtin_step_run (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : L
   exact (production_eq_of_finite (.runNeedStepSlots (.builtin b) ctx env cells name) _ hstep hb s
     (hbc.2 hc)).trans hbody
 
-/-- Over a source-free supply the ordinary builtin arm IS the application the step dispatch runs. -/
-theorem ordinary_builtin_is_step_application (origin : CalleeOrigin) (b : Builtin) (cells : List Nat)
+/-- **THE ORDINARY BUILTIN ARM IS THE STEP APPLICATION.** Over the SAME sourced supply — whatever
+    written slots its cells carry — the ordinary dispatch of a builtin callee IS the application the
+    loop's step dispatch runs: the same builtin over the same arguments, written slots included.
+    So a first round over the captured call's supply fails, when it fails, exactly as the direct
+    call does. -/
+theorem ordinary_builtin_is_step_application (origin : CalleeOrigin) (b : Builtin) (cells : List NeedSupply.Sourced)
     (ctx : EvalCtx) (env : ValEnv) (name : String) :
-    evalSuppliedCallCounted origin (.builtin b) (cells.map fun c => (c, none)) ctx env name =
+    evalSuppliedCallCounted origin (.builtin b) cells ctx env name =
       applyBuiltinCountedResolved b (stepArguments cells) ctx env := by
   have h := delegation_equation
-    (.evalSuppliedCallCounted origin (.builtin b) (cells.map fun c => (c, none)) ctx env name)
+    (.evalSuppliedCallCounted origin (.builtin b) cells ctx env name)
     (.applyBuiltinCountedResolved b (stepArguments cells) ctx env) pure
     (fun rec => by
       refine Eq.trans ?_ (bind_pure_eq _).symm
-      show EvalBody.evalSuppliedCallCounted rec origin (.builtin b) _ ctx env name = _
-      simp only [EvalBody.evalSuppliedCallCounted, List.map_map, stepArguments]
+      show EvalBody.evalSuppliedCallCounted rec origin (.builtin b) cells ctx env name = _
       rfl)
     (fun _ _ => nofun)
   exact h.trans (bind_pure_eq _)
@@ -1101,7 +1116,7 @@ theorem ordinary_user_of_nonempty (origin : CalleeOrigin) (p : Option ScopeCtx)
 /-- An alias step resolves its target once and IS that target's step. -/
 theorem alias_step_run (p : Option ScopeCtx) (o : List Expr) (pr : List PropDef) (t : Expr)
     (d : Option PropertyIdentity) (rf : Bool) (ctx : EvalCtx) (env : ValEnv)
-    (cells : List Nat) (name : String) (s : EvalState)
+    (cells : List NeedSupply.Sourced) (name : String) (s : EvalState)
     (hc : ProductionCompletes (resolveAliasTarget (.alias p o pr t d rf) ctx >>= fun target =>
       runNeedStepSlots target ctx env cells name) s) :
     (runNeedStepSlots (.alias p o pr t d rf) ctx env cells name).runState s =
@@ -1125,6 +1140,18 @@ def completedCell (v : Result) : NeedCell :=
 def readyAddrs : Nat → List Result → List Nat
   | _, [] => []
   | n, _ :: rest => n :: readyAddrs (n + 1) rest
+
+/-- A round's next STATE: the next `slots.length` cells, which are fresh Ready cells and so have
+    no written slot. -/
+abbrev readyState (n : Nat) (slots : List Result) : List NeedSupply.Sourced :=
+  retainedSourced (readyAddrs n slots)
+
+/-- The cells of a source-free supply are the addresses it was built from. -/
+theorem retainedSourced_fst (cells : List Nat) : (retainedSourced cells).map Prod.fst = cells := by
+  unfold retainedSourced
+  induction cells with
+  | nil => rfl
+  | cons c rest ih => exact congrArg (c :: ·) ih
 
 /-- `s` with Ready cells for `slots` appended, in order; every other field unchanged. -/
 def pushReady (s : EvalState) (slots : List Result) : EvalState :=
@@ -1223,28 +1250,31 @@ section Drivers
 variable (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
 
 /-- The evaluator's `repeat` driver, at evaluator answer `rec`. -/
-abbrev repeatDriver (rec : EvalRec) (n : Nat) (cells : List Nat) : EvalM (List Nat) :=
+abbrev repeatDriver (rec : EvalRec) (n : Nat) (cells : List NeedSupply.Sourced) : EvalM (List NeedSupply.Sourced) :=
   EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step name n cells
 
 /-- ONE `repeat` round over the state cells: project the retained step, read its row supply over
-    the cells, allocate the supply as the next Ready cells. -/
-def repeatRound (rec : EvalRec) (cells : List Nat) : EvalM (List Nat) :=
+    the cells, allocate the supply as the next Ready cells — the next state, with no written
+    slot. -/
+def repeatRound (rec : EvalRec) (cells : List NeedSupply.Sourced) : EvalM (List NeedSupply.Sourced) :=
   rec.invokeNeed step >>= fun o =>
     projectInvokingSlot (invokingSlotRole .repeatBuiltin) o >>= fun algorithm =>
-      rec.runNeedStepSlots algorithm ctx env cells name >>= fun slots => allocReady slots
+      rec.runNeedStepSlots algorithm ctx env cells name >>= fun slots =>
+        allocReady slots >>= fun next => pure (retainedSourced next)
 
-theorem repeatDriver_zero (rec : EvalRec) (cells : List Nat) :
+theorem repeatDriver_zero (rec : EvalRec) (cells : List NeedSupply.Sourced) :
     repeatDriver step ctx env name rec 0 cells = pure cells := rfl
 
 /-- The successor law of the driver: ONE round, then the rest over its Ready cells. -/
-theorem repeatDriver_succ (rec : EvalRec) (n : Nat) (cells : List Nat) :
+theorem repeatDriver_succ (rec : EvalRec) (n : Nat) (cells : List NeedSupply.Sourced) :
     repeatDriver step ctx env name rec (n + 1) cells =
       (repeatRound step ctx env name rec cells >>= repeatDriver step ctx env name rec n) := by
   apply EvalM.ext; intro s
   show (rec.invokeNeed step >>= fun o =>
     projectInvokingSlot (invokingSlotRole .repeatBuiltin) o >>= fun algorithm =>
       rec.runNeedStepSlots algorithm ctx env cells name >>= fun slots =>
-        allocReady slots >>= fun next => repeatDriver step ctx env name rec n next).runState s = _
+        allocReady slots >>= fun next =>
+          repeatDriver step ctx env name rec n (retainedSourced next)).runState s = _
   simp only [repeatRound, EvalM.bind_runState]
   rcases (rec.invokeNeed step).runState s with ⟨_ | o, s₁⟩
   · rfl
@@ -1255,9 +1285,10 @@ theorem repeatDriver_succ (rec : EvalRec) (n : Nat) (cells : List Nat) :
       rcases (rec.runNeedStepSlots a ctx env cells name).runState s₁ with ⟨_ | ys, s₂⟩
       · rfl
       · dsimp only
+        rw [alloc_run]
 
 /-- `repeat` composes: `m + n` rounds are `m` rounds, then `n` over the resulting cells. -/
-theorem repeatDriver_add (rec : EvalRec) (m n : Nat) (cells : List Nat) :
+theorem repeatDriver_add (rec : EvalRec) (m n : Nat) (cells : List NeedSupply.Sourced) :
     repeatDriver step ctx env name rec (m + n) cells =
       (repeatDriver step ctx env name rec m cells >>= repeatDriver step ctx env name rec n) := by
   induction m generalizing cells with
@@ -1273,28 +1304,30 @@ theorem repeatDriver_add (rec : EvalRec) (m n : Nat) (cells : List Nat) :
 
 /-- **THE FINITE `repeat` DERIVATION**: exactly the production rounds, over the real cells. Every
     premise is a production subcall; the first failure stops the composition in its retained
-    state. `done` is the zero-iteration case: no projection and no invocation. -/
-inductive RepeatTrace : Nat → List Nat → EvalState → Except Error (List Nat) → EvalState → Prop
-  | done (cells : List Nat) (s : EvalState) : RepeatTrace 0 cells s (.ok cells) s
-  | next {n : Nat} {cells : List Nat} {s s₁ s₂ t : EvalState} {alg : Algorithm} {slots : List Result}
-      {r : Except Error (List Nat)} :
+    state. `done` is the zero-iteration case: no projection and no invocation. The state is the
+    sourced supply: the derivation starts from the cells it is given WITH their written slots,
+    and every accepted round continues from fresh Ready cells (`readyState`). -/
+inductive RepeatTrace : Nat → List NeedSupply.Sourced → EvalState → Except Error (List NeedSupply.Sourced) → EvalState → Prop
+  | done (cells : List NeedSupply.Sourced) (s : EvalState) : RepeatTrace 0 cells s (.ok cells) s
+  | next {n : Nat} {cells : List NeedSupply.Sourced} {s s₁ s₂ t : EvalState} {alg : Algorithm} {slots : List Result}
+      {r : Except Error (List NeedSupply.Sourced)} :
       (invokeNeed step).runState s = (.ok (some alg), s₁) →
       (runNeedStepSlots alg ctx env cells name).runState s₁ = (.ok slots, s₂) →
-      RepeatTrace n (readyAddrs s₂.needs.size slots) (pushReady s₂ slots) r t →
+      RepeatTrace n (readyState s₂.needs.size slots) (pushReady s₂ slots) r t →
       RepeatTrace (n + 1) cells s r t
-  | projectError {n : Nat} {cells : List Nat} {s t : EvalState} {e : Error} :
+  | projectError {n : Nat} {cells : List NeedSupply.Sourced} {s t : EvalState} {e : Error} :
       e ≠ .fuelExhausted → (invokeNeed step).runState s = (.error e, t) →
       RepeatTrace (n + 1) cells s (.error e) t
-  | refused {n : Nat} {cells : List Nat} {s t : EvalState} :
+  | refused {n : Nat} {cells : List NeedSupply.Sourced} {s t : EvalState} :
       (invokeNeed step).runState s = (.ok none, t) →
       RepeatTrace (n + 1) cells s (.error (Error.notAnAlgorithm (invokingSlotRole .repeatBuiltin))) t
-  | stepError {n : Nat} {cells : List Nat} {s s₁ t : EvalState} {alg : Algorithm} {e : Error} :
+  | stepError {n : Nat} {cells : List NeedSupply.Sourced} {s s₁ t : EvalState} {alg : Algorithm} {e : Error} :
       e ≠ .fuelExhausted → (invokeNeed step).runState s = (.ok (some alg), s₁) →
       (runNeedStepSlots alg ctx env cells name).runState s₁ = (.error e, t) →
       RepeatTrace (n + 1) cells s (.error e) t
 
 /-- The production round, as a total run. -/
-theorem repeatRound_run (rec : EvalRec) (cells : List Nat) (s : EvalState) :
+theorem repeatRound_run (rec : EvalRec) (cells : List NeedSupply.Sourced) (s : EvalState) :
     (repeatRound step ctx env name rec cells).runState s =
       (match (rec.invokeNeed step).runState s with
        | (.error e, t) => (.error e, t)
@@ -1302,7 +1335,7 @@ theorem repeatRound_run (rec : EvalRec) (cells : List Nat) (s : EvalState) :
        | (.ok (some a), s₁) =>
          match (rec.runNeedStepSlots a ctx env cells name).runState s₁ with
          | (.error e, t) => (.error e, t)
-         | (.ok ys, s₂) => (.ok (readyAddrs s₂.needs.size ys), pushReady s₂ ys)) := by
+         | (.ok ys, s₂) => (.ok (readyState s₂.needs.size ys), pushReady s₂ ys)) := by
   simp only [repeatRound, EvalM.bind_runState]
   rcases (rec.invokeNeed step).runState s with ⟨_ | o, s₁⟩
   · rfl
@@ -1312,11 +1345,12 @@ theorem repeatRound_run (rec : EvalRec) (cells : List Nat) (s : EvalState) :
       simp only [projectInvokingSlot, pure_runState]
       rcases (rec.runNeedStepSlots a ctx env cells name).runState s₁ with ⟨_ | ys, s₂⟩
       · rfl
-      · simp only [alloc_run]
+      · dsimp only
+        rw [alloc_run]
 
 /-- **FINITE `repeat` CORRESPONDENCE.** A finite derivation of `n` rounds IS a completed production
     driver run of `n` rounds, in both directions: outcome and state. -/
-theorem repeat_trace_iff (n : Nat) (cells : List Nat) (s t : EvalState) (r : Except Error (List Nat)) :
+theorem repeat_trace_iff (n : Nat) (cells : List NeedSupply.Sourced) (s t : EvalState) (r : Except Error (List NeedSupply.Sourced)) :
     RepeatTrace step ctx env name n cells s r t ↔
       ((repeatDriver step ctx env name evalUnbounded n cells).runState s = (r, t) ∧
         r ≠ .error .fuelExhausted) := by
@@ -1380,10 +1414,10 @@ theorem repeat_trace_iff (n : Nat) (cells : List Nat) (s t : EvalState) (r : Exc
 /-! ## 6. Finite `while`: the condition-first stopping and error traces -/
 
 /-- One `while` iteration over its state cells, written out at evaluator answer `rec`. -/
-abbrev whileDriver (cells : List Nat) : EvalM (List Nat) :=
+abbrev whileDriver (cells : List NeedSupply.Sourced) : EvalM (List NeedSupply.Sourced) :=
   evalUnbounded (.whileLoop step ctx env name cells)
 
-theorem whileBody_run (rec : EvalRec) (cells : List Nat) (s : EvalState) :
+theorem whileBody_run (rec : EvalRec) (cells : List NeedSupply.Sourced) (s : EvalState) :
     (EvalBody.whileLoop rec step ctx env name cells).runState s =
       (match (rec.invokeNeed step).runState s with
        | (.error e, t) => (.error e, t)
@@ -1393,7 +1427,7 @@ theorem whileBody_run (rec : EvalRec) (cells : List Nat) (s : EvalState) :
          | (.error e, t) => (.error e, t)
          | (.ok none, t) => (.ok cells, t)
          | (.ok (some ys), s₂) =>
-           (rec.whileLoop step ctx env name (readyAddrs s₂.needs.size ys)).runState (pushReady s₂ ys)) := by
+           (rec.whileLoop step ctx env name (readyState s₂.needs.size ys)).runState (pushReady s₂ ys)) := by
   simp only [EvalBody.whileLoop, WhileRound.advance, EvalM.bind_runState]
   rcases (rec.invokeNeed step).runState s with ⟨_ | o, s₁⟩
   · rfl
@@ -1410,7 +1444,7 @@ theorem whileBody_run (rec : EvalRec) (cells : List Nat) (s : EvalState) :
           rw [show (List.mapM (fun value => readyNeed (value, Result.valueCount value)) ys).runState s₂ = _ from alloc_run ys s₂]
           rfl
 
-theorem finite_whileLoop (cells : List Nat) :
+theorem finite_whileLoop (cells : List NeedSupply.Sourced) :
     Finite (fun rec => EvalBody.whileLoop rec step ctx env name cells) := by
   unfold EvalBody.whileLoop
   refine finite_bind (finite_call (.invokeNeed step)) (fun o => ?_)
@@ -1426,30 +1460,31 @@ theorem finite_whileLoop (cells : List Nat) :
 
 /-- **THE FINITE `while` DERIVATION**, indexed by its accepted transitions. Every step is the
     production `invokeNeed` and the production condition-first round; `stop` retains the ENTERING
-    cell addresses and the state the false round left (its discovery effects are not rolled back). -/
-inductive WhileTrace : Nat → List Nat → EvalState → Except Error (List Nat) → EvalState → Prop
-  | stop {cells : List Nat} {s s₁ t : EvalState} {alg : Algorithm} :
+    cells (with the written slots they entered with) and the state the false round left (its
+    discovery effects are not rolled back). -/
+inductive WhileTrace : Nat → List NeedSupply.Sourced → EvalState → Except Error (List NeedSupply.Sourced) → EvalState → Prop
+  | stop {cells : List NeedSupply.Sourced} {s s₁ t : EvalState} {alg : Algorithm} :
       (invokeNeed step).runState s = (.ok (some alg), s₁) →
       (runNeedWhileRound alg ctx env cells name).runState s₁ = (.ok none, t) →
       WhileTrace 0 cells s (.ok cells) t
-  | next {n : Nat} {cells : List Nat} {s s₁ s₂ t : EvalState} {alg : Algorithm} {slots : List Result}
-      {r : Except Error (List Nat)} :
+  | next {n : Nat} {cells : List NeedSupply.Sourced} {s s₁ s₂ t : EvalState} {alg : Algorithm} {slots : List Result}
+      {r : Except Error (List NeedSupply.Sourced)} :
       (invokeNeed step).runState s = (.ok (some alg), s₁) →
       (runNeedWhileRound alg ctx env cells name).runState s₁ = (.ok (some slots), s₂) →
-      WhileTrace n (readyAddrs s₂.needs.size slots) (pushReady s₂ slots) r t →
+      WhileTrace n (readyState s₂.needs.size slots) (pushReady s₂ slots) r t →
       WhileTrace (n + 1) cells s r t
-  | projectError {cells : List Nat} {s t : EvalState} {e : Error} :
+  | projectError {cells : List NeedSupply.Sourced} {s t : EvalState} {e : Error} :
       e ≠ .fuelExhausted → (invokeNeed step).runState s = (.error e, t) →
       WhileTrace 0 cells s (.error e) t
-  | refused {cells : List Nat} {s t : EvalState} :
+  | refused {cells : List NeedSupply.Sourced} {s t : EvalState} :
       (invokeNeed step).runState s = (.ok none, t) →
       WhileTrace 0 cells s (.error (Error.notAnAlgorithm (invokingSlotRole .whileBuiltin))) t
-  | roundError {cells : List Nat} {s s₁ t : EvalState} {alg : Algorithm} {e : Error} :
+  | roundError {cells : List NeedSupply.Sourced} {s s₁ t : EvalState} {alg : Algorithm} {e : Error} :
       e ≠ .fuelExhausted → (invokeNeed step).runState s = (.ok (some alg), s₁) →
       (runNeedWhileRound alg ctx env cells name).runState s₁ = (.error e, t) →
       WhileTrace 0 cells s (.error e) t
 
-theorem whileProduction_step (cells : List Nat) (s : EvalState)
+theorem whileProduction_step (cells : List NeedSupply.Sourced) (s : EvalState)
     (hc : ProductionCompletes (EvalBody.whileLoop evalUnbounded step ctx env name cells) s) :
     (whileDriver step ctx env name cells).runState s =
       (EvalBody.whileLoop evalUnbounded step ctx env name cells).runState s :=
@@ -1458,7 +1493,7 @@ theorem whileProduction_step (cells : List Nat) (s : EvalState)
     (finite_whileLoop step ctx env name cells) s hc
 
 /-- A derivation is a completed production run. -/
-theorem while_of_trace {n : Nat} {cells : List Nat} {s t : EvalState} {r : Except Error (List Nat)}
+theorem while_of_trace {n : Nat} {cells : List NeedSupply.Sourced} {s t : EvalState} {r : Except Error (List NeedSupply.Sourced)}
     (h : WhileTrace step ctx env name n cells s r t) :
     (whileDriver step ctx env name cells).runState s = (r, t) ∧ r ≠ .error .fuelExhausted := by
   induction h with
@@ -1484,7 +1519,7 @@ theorem while_of_trace {n : Nat} {cells : List Nat} {s t : EvalState} {r : Excep
       rw [whileBody_run]
       show (match (invokeNeed step).runState s with | (.error e, t) => _ | (.ok none, t) => _ | (.ok (some a), s₁) => _) = _
       rw [hi]
-    have hne : (Except.error e : Except Error (List Nat)) ≠ .error .fuelExhausted := fun h => he (by injection h)
+    have hne : (Except.error e : Except Error (List NeedSupply.Sourced)) ≠ .error .fuelExhausted := fun h => he (by injection h)
     exact ⟨(whileProduction_step step ctx env name cells s (by unfold ProductionCompletes; rw [hb]; exact hne)).trans hb, hne⟩
   | @refused cells s t hi =>
     have hb : (EvalBody.whileLoop evalUnbounded step ctx env name cells).runState s =
@@ -1500,7 +1535,7 @@ theorem while_of_trace {n : Nat} {cells : List Nat} {s t : EvalState} {r : Excep
       rw [hi]
       show (match (runNeedWhileRound alg ctx env cells name).runState s₁ with | (.error e, t) => _ | (.ok none, t) => _ | (.ok (some ys), s₂) => _) = _
       rw [hr]
-    have hne : (Except.error e : Except Error (List Nat)) ≠ .error .fuelExhausted := fun h => he (by injection h)
+    have hne : (Except.error e : Except Error (List NeedSupply.Sourced)) ≠ .error .fuelExhausted := fun h => he (by injection h)
     exact ⟨(whileProduction_step step ctx env name cells s (by unfold ProductionCompletes; rw [hb]; exact hne)).trans hb, hne⟩
 
 theorem subcall_production (c : EvalCall) (k : Nat) (s : EvalState) (r : Except Error c.Ret × EvalState)
@@ -1509,7 +1544,7 @@ theorem subcall_production (c : EvalCall) (k : Nat) (s : EvalState) (r : Except 
   ((completedAt_call c s r).1 ⟨hr, k, h⟩).1
 
 /-- A completed core run at any fuel has a finite derivation. -/
-theorem trace_of_fuel (k : Nat) : ∀ (cells : List Nat) (s t : EvalState) (r : Except Error (List Nat)),
+theorem trace_of_fuel (k : Nat) : ∀ (cells : List NeedSupply.Sourced) (s t : EvalState) (r : Except Error (List NeedSupply.Sourced)),
     (evalFuel k (.whileLoop step ctx env name cells)).runState s = (r, t) →
     r ≠ .error .fuelExhausted → ∃ n, WhileTrace step ctx env name n cells s r t := by
   induction k with
@@ -1557,7 +1592,7 @@ theorem trace_of_fuel (k : Nat) : ∀ (cells : List Nat) (s t : EvalState) (r : 
 /-- **FINITE `while` CORRESPONDENCE.** A completed production driver run — a false round after finite
     accepted transitions, or an ordinary error after a finite prefix — IS a finite derivation,
     and conversely: outcome and state. Fuel exhaustion is not an outcome of either side. -/
-theorem while_trace_iff (cells : List Nat) (s t : EvalState) (r : Except Error (List Nat)) :
+theorem while_trace_iff (cells : List NeedSupply.Sourced) (s t : EvalState) (r : Except Error (List NeedSupply.Sourced)) :
     (∃ n, WhileTrace step ctx env name n cells s r t) ↔
       ((whileDriver step ctx env name cells).runState s = (r, t) ∧ r ≠ .error .fuelExhausted) := by
   constructor
@@ -1631,10 +1666,10 @@ theorem finite_calleeCell (a : Nat) :
         dsimp only
         exact finite_bind (finite_routeOf a shape) (fun _ => finite_const _)
 
-theorem finite_metaLoopCapture (adapter : Nat) :
+theorem finite_metaLoopCaptureSourced (adapter : Nat) :
     Finite (fun rec : EvalRec =>
-      metaLoopCapture rec.planRoute.classify rec.demandNeedRecursive rec.argumentViewCells adapter) := by
-  unfold metaLoopCapture
+      metaLoopCaptureSourced rec.planRoute.classify rec.demandNeedRecursive rec.argumentViewCells adapter) := by
+  unfold metaLoopCaptureSourced
   refine finite_bind (finite_call (.demandNeedRecursive adapter)) (fun _ => ?_)
   refine finite_bind (finite_const _) (fun plan => ?_)
   refine finite_bind (finite_call (.argumentViewCells plan)) (fun _ => ?_)
@@ -1650,9 +1685,10 @@ def boundCell (bindings : NeedEnv) (name : Ident) : EvalM Nat :=
 def stepArgument (stepCell : Nat) : ResolvedArgumentAlgorithm :=
   { algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some stepCell }
 
-/-- The arms' captured setup (`metaLoopCapture` at the evaluator's channels). -/
-def loopCapture (rec : EvalRec) (bindings : NeedEnv) : EvalM (ResolvedArgumentAlgorithm × List Nat) := do
-  let (stepCell, initialCells) <- metaLoopCapture rec.planRoute.classify rec.demandNeedRecursive
+/-- The arms' captured setup (`metaLoopCaptureSourced` at the evaluator's channels): the step and
+    the plan's sourced supply, the state the first round runs over. -/
+def loopCapture (rec : EvalRec) (bindings : NeedEnv) : EvalM (ResolvedArgumentAlgorithm × List NeedSupply.Sourced) := do
+  let (stepCell, initialCells) <- metaLoopCaptureSourced rec.planRoute.classify rec.demandNeedRecursive
     rec.argumentViewCells (<- boundCell bindings "step")
   pure (stepArgument stepCell, initialCells)
 
@@ -1661,20 +1697,21 @@ def countDemand (rec : EvalRec) (c : ResolvedArgumentAlgorithm) (bindings : Need
     (env : ValEnv) : EvalM Int := do
   expectInt (<- rec.evalArgumentValue { c with need? := some (<- boundCell bindings "count") } ctx env)
 
-/-- A driver, then the loop's separate final boundary (LOOP-07). -/
-def finishLoop (rec : EvalRec) (driver : EvalM (List Nat)) : EvalM CountedResult := do
+/-- A driver, then the loop's separate final boundary (LOOP-07): the final state's cells are
+    demanded by address; a written slot plays no part in materialization. -/
+def finishLoop (rec : EvalRec) (driver : EvalM (List NeedSupply.Sourced)) : EvalM CountedResult := do
   let finalCells <- driver
-  let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
+  let finalSlots <- (finalCells.map Prod.fst).mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
   pure (loopResultCounted finalSlots)
 
 /-- `repeat` AFTER ITS SETUP: `n` rounds from the initial cells, then final materialization. -/
 def repeatAfterSetup (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (n : Nat) (cells : List Nat) : EvalM CountedResult :=
+    (name : String) (n : Nat) (cells : List NeedSupply.Sourced) : EvalM CountedResult :=
   finishLoop rec (repeatDriver step ctx env name rec n cells)
 
 /-- `while` AFTER ITS SETUP: the driver from the initial cells, then final materialization. -/
 def whileAfterSetup (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (cells : List Nat) : EvalM CountedResult :=
+    (name : String) (cells : List NeedSupply.Sourced) : EvalM CountedResult :=
   finishLoop rec (rec.whileLoop step ctx env name cells)
 
 /-- The `repeat` arm once its binding is formed. -/
@@ -1753,7 +1790,7 @@ theorem while_binder_channel_free (ch ch' : NeedChannels) (cells : List Nat) :
 theorem finite_loopCapture (bindings : NeedEnv) : Finite (fun rec => loopCapture rec bindings) := by
   unfold loopCapture
   refine finite_bind (finite_const _) (fun adapter => ?_)
-  exact finite_bind (finite_metaLoopCapture adapter) (fun _ => finite_const _)
+  exact finite_bind (finite_metaLoopCaptureSourced adapter) (fun _ => finite_const _)
 
 theorem finite_countDemand (c : ResolvedArgumentAlgorithm) (bindings : NeedEnv) (ctx : EvalCtx) (env : ValEnv) :
     Finite (fun rec => countDemand rec c bindings ctx env) := by
@@ -1761,15 +1798,15 @@ theorem finite_countDemand (c : ResolvedArgumentAlgorithm) (bindings : NeedEnv) 
   refine finite_bind (finite_const _) (fun address => ?_)
   exact finite_bind (finite_call _) (fun _ => finite_const _)
 
-theorem finite_finishLoop (D : EvalRec → EvalM (List Nat)) (hD : Finite D) :
+theorem finite_finishLoop (D : EvalRec → EvalM (List NeedSupply.Sourced)) (hD : Finite D) :
     Finite (fun rec => finishLoop rec (D rec)) := by
   unfold finishLoop
   refine finite_bind hD (fun cells => ?_)
-  refine finite_bind (finite_mapM _ (fun a => ?_) cells) (fun _ => finite_const _)
+  refine finite_bind (finite_mapM _ (fun a => ?_) (cells.map Prod.fst)) (fun _ => finite_const _)
   exact finite_bind (B := fun rec => rec (.demandNeedRecursive a)) (finite_call _) (fun _ => finite_const _)
 
 theorem finite_repeatDriver (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String) :
-    ∀ (n : Nat) (cells : List Nat), Finite (fun rec => repeatDriver step ctx env name rec n cells) := by
+    ∀ (n : Nat) (cells : List NeedSupply.Sourced), Finite (fun rec => repeatDriver step ctx env name rec n cells) := by
   intro n
   induction n with
   | zero => intro cells; exact finite_const _
@@ -1778,7 +1815,7 @@ theorem finite_repeatDriver (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (
     refine finite_bind (B := fun rec => rec (.invokeNeed step)) (finite_call _) (fun o => ?_)
     refine finite_bind (finite_const _) (fun alg => ?_)
     refine finite_bind (B := fun rec => rec (.runNeedStepSlots alg ctx env cells name)) (finite_call _) (fun ys => ?_)
-    exact finite_bind (finite_const _) (fun next => ih next)
+    exact finite_bind (finite_const _) (fun next => ih (retainedSourced next))
 
 theorem finite_repeatTail (c : ResolvedArgumentAlgorithm) (bindings : NeedEnv) (ctx : EvalCtx) (env : ValEnv) :
     Finite (fun rec => repeatTail rec c bindings ctx env) := by
@@ -1900,32 +1937,33 @@ theorem while_arm_production (a : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (en
 /-! ## 8. Final materialization and the post-setup theorems -/
 
 /-- The loop's final boundary after a completed driver: an ordinary driver failure is the loop's
-    failure and nothing is materialized; otherwise the final cells are demanded in order. -/
-inductive Finished : Except Error (List Nat) → EvalState → Except Error CountedResult → EvalState → Prop
+    failure and nothing is materialized; otherwise the final cells are demanded in order, by
+    address. -/
+inductive Finished : Except Error (List NeedSupply.Sourced) → EvalState → Except Error CountedResult → EvalState → Prop
   | failed {e : Error} {t : EvalState} : Finished (.error e) t (.error e) t
-  | materialized {final : List Nat} {t u : EvalState} {slots : List Result} :
-      (materialize final).runState t = (.ok slots, u) →
+  | materialized {final : List NeedSupply.Sourced} {t u : EvalState} {slots : List Result} :
+      (materialize (final.map Prod.fst)).runState t = (.ok slots, u) →
       Finished (.ok final) t (.ok (loopResultCounted slots)) u
-  | materializeFailed {final : List Nat} {t u : EvalState} {e : Error} :
-      e ≠ .fuelExhausted → (materialize final).runState t = (.error e, u) →
+  | materializeFailed {final : List NeedSupply.Sourced} {t u : EvalState} {e : Error} :
+      e ≠ .fuelExhausted → (materialize (final.map Prod.fst)).runState t = (.error e, u) →
       Finished (.ok final) t (.error e) u
 
-theorem finish_iff (driver : EvalM (List Nat)) (s u : EvalState) (r : Except Error CountedResult) :
+theorem finish_iff (driver : EvalM (List NeedSupply.Sourced)) (s u : EvalState) (r : Except Error CountedResult) :
     ((finishLoop evalUnbounded driver).runState s = (r, u) ∧ r ≠ .error .fuelExhausted) ↔
       ∃ d t, (driver.runState s = (d, t) ∧ d ≠ .error .fuelExhausted) ∧ Finished d t r u := by
   have hrun : (finishLoop evalUnbounded driver).runState s =
       (match driver.runState s with
        | (.error e, t) => (.error e, t)
        | (.ok final, t) =>
-         match (materialize final).runState t with
+         match (materialize (final.map Prod.fst)).runState t with
          | (.error e, v) => (.error e, v)
          | (.ok slots, v) => (.ok (loopResultCounted slots), v)) := by
-    show (driver >>= fun fc => materialize fc >>= fun ys => pure (loopResultCounted ys)).runState s = _
+    show (driver >>= fun fc => materialize (fc.map Prod.fst) >>= fun ys => pure (loopResultCounted ys)).runState s = _
     rw [EvalM.bind_runState]
     rcases driver.runState s with ⟨_ | fc, t⟩
     · rfl
     · simp only [EvalM.bind_runState]
-      rcases (materialize fc).runState t with ⟨_ | _, _⟩ <;> rfl
+      rcases (materialize (fc.map Prod.fst)).runState t with ⟨_ | _, _⟩ <;> rfl
   rw [hrun]
   constructor
   · rintro ⟨h, hr⟩
@@ -1936,7 +1974,7 @@ theorem finish_iff (driver : EvalM (List Nat)) (s u : EvalState) (r : Except Err
       exact ⟨_, _, ⟨rfl, error_ne_fuel hr⟩, .failed⟩
     · rw [hd] at h
       simp only at h
-      rcases hm : (materialize fc).runState t with ⟨_ | ys, v⟩
+      rcases hm : (materialize (fc.map Prod.fst)).runState t with ⟨_ | ys, v⟩
       · rename_i e
         rw [hm] at h
         cases h
@@ -1953,7 +1991,7 @@ theorem finish_iff (driver : EvalM (List Nat)) (s u : EvalState) (r : Except Err
 
 /-- **FINITE `repeat`, post-setup.** The real rounds and the final boundary, both directions. -/
 theorem repeat_after_setup_iff (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (n : Nat) (cells : List Nat) (s u : EvalState) (r : Except Error CountedResult) :
+    (name : String) (n : Nat) (cells : List NeedSupply.Sourced) (s u : EvalState) (r : Except Error CountedResult) :
     ((repeatAfterSetup evalUnbounded step ctx env name n cells).runState s = (r, u) ∧ r ≠ .error .fuelExhausted) ↔
       ∃ d t, RepeatTrace step ctx env name n cells s d t ∧ Finished d t r u := by
   unfold repeatAfterSetup
@@ -1966,7 +2004,7 @@ theorem repeat_after_setup_iff (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx
 
 /-- **FINITE `while`, post-setup.** The real rounds and the final boundary, both directions. -/
 theorem while_after_setup_iff (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (cells : List Nat) (s u : EvalState) (r : Except Error CountedResult) :
+    (name : String) (cells : List NeedSupply.Sourced) (s u : EvalState) (r : Except Error CountedResult) :
     ((whileAfterSetup evalUnbounded step ctx env name cells).runState s = (r, u) ∧ r ≠ .error .fuelExhausted) ↔
       ∃ k d t, WhileTrace step ctx env name k cells s d t ∧ Finished d t r u := by
   unfold whileAfterSetup
@@ -1981,14 +2019,14 @@ theorem while_after_setup_iff (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
 /-- **COUNT ZERO.** No iteration: the step is not consulted at all. What remains is the final
     materialization of the initial cells, which can still demand and fail. -/
 theorem repeat_zero (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s : EvalState) :
+    (cells : List NeedSupply.Sourced) (s : EvalState) :
     (repeatAfterSetup evalUnbounded step ctx env name 0 cells).runState s =
-      (materialize cells >>= fun ys => pure (loopResultCounted ys)).runState s := by
-  show (pure cells >>= fun fc => materialize fc >>= fun ys => pure (loopResultCounted ys)).runState s = _
+      (materialize (cells.map Prod.fst) >>= fun ys => pure (loopResultCounted ys)).runState s := by
+  show (pure cells >>= fun fc => materialize (fc.map Prod.fst) >>= fun ys => pure (loopResultCounted ys)).runState s = _
   rw [EvalM.bind_runState]; rfl
 
 theorem repeat_trace_zero (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s t : EvalState) (r : Except Error (List Nat)) :
+    (cells : List NeedSupply.Sourced) (s t : EvalState) (r : Except Error (List NeedSupply.Sourced)) :
     RepeatTrace step ctx env name 0 cells s r t ↔ (r = .ok cells ∧ t = s) := by
   constructor
   · intro h; cases h; exact ⟨rfl, rfl⟩
@@ -2005,14 +2043,14 @@ def oneRoundOutcome : Except Error (List Result) × EvalState → Except Error C
     value. The final state is the step's state with one COMPLETED Ready cell per slot appended;
     every other field is unchanged. -/
 theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ : EvalState) (alg : Algorithm)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (alg : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some alg), s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots alg ctx env cells name).runState s₁) := by
   have hdriver : (repeatDriver step ctx env name evalUnbounded 1 cells).runState s =
       (match (runNeedStepSlots alg ctx env cells name).runState s₁ with
        | (.error e, t) => (.error e, t)
-       | (.ok ys, s₂) => (.ok (readyAddrs s₂.needs.size ys), pushReady s₂ ys)) := by
+       | (.ok ys, s₂) => (.ok (readyState s₂.needs.size ys), pushReady s₂ ys)) := by
     rw [repeatDriver_succ, EvalM.bind_runState, repeatRound_run]
     simp only [EvalRec.invokeNeed, EvalRec.runNeedStepSlots]
     rw [show evalUnbounded (.invokeNeed step) = invokeNeed step from rfl, hi]
@@ -2020,12 +2058,12 @@ theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env
     rw [show evalUnbounded (.runNeedStepSlots alg ctx env cells name) = runNeedStepSlots alg ctx env cells name from rfl]
     rcases (runNeedStepSlots alg ctx env cells name).runState s₁ with ⟨_ | ys, s₂⟩ <;> rfl
   show (repeatDriver step ctx env name evalUnbounded 1 cells >>= fun fc =>
-    materialize fc >>= fun ys => pure (loopResultCounted ys)).runState s = _
+    materialize (fc.map Prod.fst) >>= fun ys => pure (loopResultCounted ys)).runState s = _
   rw [EvalM.bind_runState, hdriver]
   rcases (runNeedStepSlots alg ctx env cells name).runState s₁ with ⟨_ | ys, s₂⟩
   · rfl
   · simp only [EvalM.bind_runState]
-    rw [materialize_ready ys s₂.needs (pushReady s₂ ys) rfl]
+    rw [retainedSourced_fst, materialize_ready ys s₂.needs (pushReady s₂ ys) rfl]
     rfl
 
 /-- The two value observations agree exactly on canonical slots. -/
@@ -2054,24 +2092,24 @@ theorem noncanonical_counterexample :
     `repeat` completes with the slots' `loopResultCounted`, its final heap being the call's plus
     the completed slot cells; on canonical slots the counted values are EQUAL. -/
 theorem count_one_user (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ : EvalState) (a : Algorithm)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (a : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some a), s₁)) (h : UserStep a)
-    (hrows : UserRowsBounded a ctx env cells s₁) :
+    (hrows : UserRowsBounded a ctx env (cells.map Prod.fst) s₁) :
     StepAgreement id ((runNeedStepSlots a ctx env cells name).runState s₁)
-      ((evalNeedUserSupply a cells ctx env).runState s₁) ∧
+      ((evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots a ctx env cells name).runState s₁) :=
   ⟨user_step_agreement a h ctx env cells name s₁ hrows, repeat_one_round step ctx env name cells s s₁ a hi⟩
 
 /-- **COUNT ONE AGAINST THE ORDINARY FAMILY CALL.** -/
 theorem count_one_family (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
     (d : Option PropertyIdentity)
     (hi : (invokeNeed step).runState s = (.ok (some (.conditional p o br d)), s₁))
-    (hrows : FamilyRowsBounded (.conditional p o br d) ctx env cells name s₁) :
+    (hrows : FamilyRowsBounded (.conditional p o br d) ctx env (cells.map Prod.fst) name s₁) :
     StepAgreement (Error.withContext s!"while evaluating call to {name}")
       ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁)
-      ((evalNeedFamilySupply (.conditional p o br d) cells ctx env name).runState s₁) ∧
+      ((evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁) :=
   ⟨family_step_agreement p o br d ctx env cells name s₁ hrows,
@@ -2168,17 +2206,18 @@ theorem boundCell_run (bindings : NeedEnv) (name : Ident) (a : Nat) (s : EvalSta
     (h : lookupAssoc name bindings = some a) : (boundCell bindings name).runState s = (.ok a, s) := by
   simp only [boundCell, h]; rfl
 
-/-- The arms' capture at production: the adapter read, then the plan's sticky supply, then the
-    canonical callee cell (the installation of `metaLoopCapture`). -/
+/-- The arms' capture at production: the adapter read, then the plan's sticky supply — kept
+    WITH its written slots — then the canonical callee cell (the installation of
+    `metaLoopCaptureSourced`). -/
 theorem capture_run (bindings : NeedEnv) (s s₂ s₃ : EvalState) (plan stepCell : Nat)
     (sourced : List NeedSupply.Sourced) (hb : lookupAssoc "step" bindings = some s.needs.size)
     (hc : CaptureRun plan (adapterRead s plan) s₂ s₃ sourced stepCell) :
     (loopCapture evalUnbounded bindings).runState (adapterPushed s plan) =
-      (.ok (stepArgument stepCell, sourced.map Prod.fst), s₃) := by
+      (.ok (stepArgument stepCell, sourced), s₃) := by
   unfold loopCapture
   rw [EvalM.bind_runState, boundCell_run bindings "step" s.needs.size _ hb]
   simp only [EvalM.bind_runState]
-  have hm := KatLang.MetaLoopLaws.metaLoopCapture_run (EvalRec.planRoute evalUnbounded).classify
+  have hm := KatLang.MetaLoopLaws.metaLoopCaptureSourced_run (EvalRec.planRoute evalUnbounded).classify
     (EvalRec.demandNeedRecursive evalUnbounded) (EvalRec.argumentViewCells evalUnbounded) s.needs.size plan 1
     sourced (adapterPushed s plan) (adapterRead s plan) s₂ (adapter_read s plan) hc.view
   rw [hm, show (NeedPlan.calleeCell (EvalRec.planRoute evalUnbounded).classify plan).runState s₂ = _ from hc.callee]
@@ -2192,9 +2231,9 @@ theorem capture_view_fails (bindings : NeedEnv) (s t : EvalState) (plan : Nat) (
   unfold loopCapture
   rw [EvalM.bind_runState, boundCell_run bindings "step" s.needs.size _ hb]
   simp only [EvalM.bind_runState]
-  have hm : (metaLoopCapture (EvalRec.planRoute evalUnbounded).classify (EvalRec.demandNeedRecursive evalUnbounded)
+  have hm : (metaLoopCaptureSourced (EvalRec.planRoute evalUnbounded).classify (EvalRec.demandNeedRecursive evalUnbounded)
       (EvalRec.argumentViewCells evalUnbounded) s.needs.size).runState (adapterPushed s plan) = (.error e, t) := by
-    simp only [metaLoopCapture, EvalM.bind_runState]
+    simp only [metaLoopCaptureSourced, EvalM.bind_runState]
     rw [show (EvalRec.demandNeedRecursive evalUnbounded s.needs.size).runState (adapterPushed s plan) = _ from
       adapter_read s plan]
     simp only [decodeCallRef, pure_runState]
@@ -2248,7 +2287,7 @@ theorem repeat_capture_failure (a c : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
   rfl
 
 theorem repeat_tail_capture_ok (c : ResolvedArgumentAlgorithm) (bindings : NeedEnv) (ctx : EvalCtx)
-    (env : ValEnv) (s s₃ : EvalState) (step : ResolvedArgumentAlgorithm) (cells : List Nat)
+    (env : ValEnv) (s s₃ : EvalState) (step : ResolvedArgumentAlgorithm) (cells : List NeedSupply.Sourced)
     (h : (loopCapture evalUnbounded bindings).runState s = (.ok (step, cells), s₃)) :
     (repeatTail evalUnbounded c bindings ctx env).runState s =
       (match (countDemand evalUnbounded c bindings ctx env).runState s₃ with
@@ -2312,7 +2351,7 @@ theorem repeat_setup_stages {a c : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {e
     {s s₂ s₃ s₄ : EvalState} {sourced : List NeedSupply.Sourced} {stepCell : Nat} {n : Int} {name : String}
     (h : RepeatSetup a c ctx env plan cnt s s₂ s₃ s₄ sourced stepCell n name) :
     (repeatBody evalUnbounded a c ctx env).runState s =
-      (repeatAfterSetup evalUnbounded (stepArgument stepCell) ctx env name n.toNat (sourced.map Prod.fst)).runState s₄ := by
+      (repeatAfterSetup evalUnbounded (stepArgument stepCell) ctx env name n.toNat sourced).runState s₄ := by
   rw [repeat_body_prefix a c ctx env plan cnt s h.toRepeatPrefix,
     repeat_tail_capture_ok c _ ctx env _ s₃ _ _ (capture_run _ s s₂ s₃ plan stepCell sourced rfl h.capture), h.count]
   simp only [Int.not_lt.2 h.nonnegative, ite_false, EvalM.bind_runState, h.stepName]
@@ -2353,7 +2392,7 @@ theorem repeat_builtin_iff {a c : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {en
     (h : RepeatSetup a c ctx env plan cnt s s₂ s₃ s₄ sourced stepCell n name)
     (r : Except Error CountedResult) (u : EvalState) :
     ((applyBuiltinCounted .repeatBuiltin [a, c] ctx env).runState s = (r, u) ∧ r ≠ .error .fuelExhausted) ↔
-      ∃ r₀ d t, RepeatTrace (stepArgument stepCell) ctx env name n.toNat (sourced.map Prod.fst) s₄ d t ∧
+      ∃ r₀ d t, RepeatTrace (stepArgument stepCell) ctx env name n.toNat sourced s₄ d t ∧
         Finished d t r₀ u ∧ nestOutcome (r₀, u) = (r, u) := by
   rw [arm_transfer (repeat_completes_iff a c ctx env s) (repeat_arm_production a c ctx env s)
     (repeat_setup_stages h) r u]
@@ -2375,7 +2414,7 @@ theorem repeat_builtin_count_one {a c : ResolvedArgumentAlgorithm} {ctx : EvalCt
     (h : RepeatSetup a c ctx env plan cnt s s₂ s₃ s₄ sourced stepCell 1 name)
     (hi : (invokeNeed (stepArgument stepCell)).runState s₄ = (.ok (some alg), s₅))
     (hd : UserStep alg) (hrows : UserRowsBounded alg ctx env (sourced.map Prod.fst) s₅) :
-    let L := (runNeedStepSlots alg ctx env (sourced.map Prod.fst) name).runState s₅
+    let L := (runNeedStepSlots alg ctx env sourced name).runState s₅
     let O := (evalNeedUserSupply alg (sourced.map Prod.fst) ctx env).runState s₅
     (ProductionCompletes (applyBuiltinCounted .repeatBuiltin [a, c] ctx env) s ↔
       O.1 ≠ .error .fuelExhausted) ∧
@@ -2425,7 +2464,7 @@ theorem while_setup_stages {a : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env 
     {s s₂ s₃ : EvalState} {sourced : List NeedSupply.Sourced} {stepCell : Nat} {name : String}
     (h : WhileSetup a ctx env plan s s₂ s₃ sourced stepCell name) :
     (whileBody evalUnbounded a ctx env).runState s =
-      (whileAfterSetup evalUnbounded (stepArgument stepCell) ctx env name (sourced.map Prod.fst)).runState s₃ := by
+      (whileAfterSetup evalUnbounded (stepArgument stepCell) ctx env name sourced).runState s₃ := by
   obtain ⟨shape, hshape⟩ := h.isPlan
   unfold whileBody
   rw [EvalM.bind_runState, KatLang.NeedControl.Schedule.mapM_schedule]
@@ -2447,7 +2486,7 @@ theorem while_builtin_iff {a : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env :
     (h : WhileSetup a ctx env plan s s₂ s₃ sourced stepCell name)
     (r : Except Error CountedResult) (u : EvalState) :
     ((applyBuiltinCounted .whileBuiltin [a] ctx env).runState s = (r, u) ∧ r ≠ .error .fuelExhausted) ↔
-      ∃ r₀ k d t, WhileTrace (stepArgument stepCell) ctx env name k (sourced.map Prod.fst) s₃ d t ∧
+      ∃ r₀ k d t, WhileTrace (stepArgument stepCell) ctx env name k sourced s₃ d t ∧
         Finished d t r₀ u ∧ nestOutcome (r₀, u) = (r, u) := by
   rw [arm_transfer (while_completes_iff a ctx env s) (while_arm_production a ctx env s)
     (while_setup_stages h) r u]
@@ -2461,7 +2500,7 @@ theorem while_builtin_iff {a : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env :
 /-- A stopping round retains the cells that ENTERED it: a zero-transition `while` finishes with
     its initial cells, and the state is the false round's, not the entry state. -/
 theorem while_false_first (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ t : EvalState) (alg : Algorithm)
+    (cells : List NeedSupply.Sourced) (s s₁ t : EvalState) (alg : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some alg), s₁))
     (hr : (runNeedWhileRound alg ctx env cells name).runState s₁ = (.ok none, t)) :
     (whileDriver step ctx env name cells).runState s = (.ok cells, t) :=
@@ -2504,7 +2543,7 @@ theorem Retained.pushReady (s : EvalState) (ys : List Result) : Retained s (push
 /-- **NO ROLLBACK (`repeat`).** Whatever a finite run ends in, an ordinary error included, every
     earlier cell keeps its completed outcomes and links and every published entry survives. -/
 theorem repeat_trace_retained {step : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv} {name : String}
-    {n : Nat} {cells : List Nat} {s t : EvalState} {r : Except Error (List Nat)}
+    {n : Nat} {cells : List NeedSupply.Sourced} {s t : EvalState} {r : Except Error (List NeedSupply.Sourced)}
     (h : RepeatTrace step ctx env name n cells s r t) : Retained s t := by
   induction h with
   | done => exact .refl _
@@ -2515,7 +2554,7 @@ theorem repeat_trace_retained {step : ResolvedArgumentAlgorithm} {ctx : EvalCtx}
 
 /-- **NO ROLLBACK (`while`).** A false round's discovery effects stay. -/
 theorem while_trace_retained {step : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv} {name : String}
-    {n : Nat} {cells : List Nat} {s t : EvalState} {r : Except Error (List Nat)}
+    {n : Nat} {cells : List NeedSupply.Sourced} {s t : EvalState} {r : Except Error (List NeedSupply.Sourced)}
     (h : WhileTrace step ctx env name n cells s r t) : Retained s t := by
   induction h with
   | stop hi hs => exact (Retained.ofRun _ hi).trans (.ofRun _ hs)

@@ -1072,7 +1072,7 @@ theorem act_mapLoop (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (i
   | cons i rest ih => unfold EvalBody.evalMapCounted.mapLoop; act_tac_base
 
 theorem act_repeatLoop (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm)
-    (stepName : String) (remaining : Nat) (cells : List Nat) :
+    (stepName : String) (remaining : Nat) (cells : List NeedSupply.Sourced) :
     ActDisc (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells) := by
   induction remaining generalizing cells with
   | zero => unfold EvalBody.applyBuiltinCounted.repeatLoop; act_tac_base
@@ -1168,7 +1168,7 @@ macro "act_tac" : tactic => `(tactic| without_info_trees ((try act_unfold_rec) <
   | act_unfold_head
   | (with_reducible apply ActAt.of_disc))))
 
-theorem EvalBody.whileLoop_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     ActDisc (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; act_tac
 
@@ -1318,11 +1318,11 @@ theorem EvalBody.argumentNeed_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (re
     ActDisc (EvalBody.argumentNeed rec arg ctx env) := by
   unfold EvalBody.argumentNeed; act_tac
 
-theorem EvalBody.runNeedStepSlots_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     ActDisc (EvalBody.runNeedStepSlots rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; act_tac
 
-theorem EvalBody.runNeedWhileRound_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     ActDisc (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; act_tac
 

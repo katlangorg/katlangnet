@@ -224,6 +224,16 @@ attribute [ht_fwd] GotV.susp_map
 
 /-! ## The bodies' local loops (generalized over the precondition) -/
 
+/-- Cells with no written slot — a retained collector's slice, a loop round's fresh Ready cells —
+    are a valid sourced supply. -/
+theorem validSourced_retained {h : Array NeedCell} {slice : List Nat} (v : ValidAddresses h slice) :
+    ValidSourced h (retainedSourced slice) := by
+  intro x m
+  obtain ⟨a, ma, rfl⟩ := List.mem_map.mp m
+  exact v a ma
+
+attribute [ht_lemmas] validSourced_retained
+
 section Loops
 variable {rec : EvalRec} (hrec : RecSound rec)
 include hrec
@@ -305,10 +315,10 @@ theorem mapLoop_spec (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
   | cons i rest ih => intro P hP hreq; unfold EvalBody.evalMapCounted.mapLoop; ht_tac
 
 theorem repeatLoop_spec (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm) (stepName : String) :
-    ∀ (remaining : Nat) {P : Array NeedCell → Prop} (_hP : HMono P) (cells : List Nat)
-      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RAV h step ∧ ValidAddresses h cells),
+    ∀ (remaining : Nat) {P : Array NeedCell → Prop} (_hP : HMono P) (cells : List NeedSupply.Sourced)
+      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RAV h step ∧ ValidSourced h cells),
     SoundI P (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells)
-      (fun xs h => ValidAddresses h xs) := by
+      (fun xs h => ValidSourced h xs) := by
   intro remaining
   induction remaining with
   | zero => intro P hP cells hreq; unfold EvalBody.applyBuiltinCounted.repeatLoop; ht_tac
@@ -360,9 +370,9 @@ theorem mapLoop_app {rec : EvalRec} (hrec : RecSound rec) {transformAlg : Algori
   fun hP => mapLoop_spec hrec transformAlg ctx env items hP hreq hP
 theorem repeatLoop_app {rec : EvalRec} (hrec : RecSound rec) {ctx : EvalCtx} {env : ValEnv}
     {step : ResolvedArgumentAlgorithm} {stepName : String} {remaining : Nat} {P : Array NeedCell → Prop}
-    {cells : List Nat} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RAV h step ∧ ValidAddresses h cells) :
+    {cells : List NeedSupply.Sourced} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RAV h step ∧ ValidSourced h cells) :
     SoundI P (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells)
-      (fun xs h => ValidAddresses h xs) :=
+      (fun xs h => ValidSourced h xs) :=
   fun hP => repeatLoop_spec hrec ctx env step stepName remaining hP cells hreq hP
 
 attribute [ht_spec] outputRowsCollect_app explicitRowsCollect_app listLiteralCollect_app
@@ -435,7 +445,7 @@ attribute [ht_fwd] RLV.of_eq SuffixLV.drop_eq SuffixLV.head' SuffixLV.tail' RLV.
 
 /-! ## The bodies -/
 
-theorem EvalBody.whileLoop_sound (rec : EvalRec) (hrec : RecSound rec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_sound (rec : EvalRec) (hrec : RecSound rec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     SoundI (CallPre (.whileLoop step ctx env stepName cells)) (EvalBody.whileLoop rec step ctx env stepName cells) (CallPost (.whileLoop step ctx env stepName cells)) := by
   unfold EvalBody.whileLoop; ht_tac
 
@@ -579,11 +589,11 @@ theorem EvalBody.argumentNeed_sound (rec : EvalRec) (hrec : RecSound rec) (arg :
     SoundI (CallPre (.argumentNeed arg ctx env)) (EvalBody.argumentNeed rec arg ctx env) (CallPost (.argumentNeed arg ctx env)) := by
   unfold EvalBody.argumentNeed; ht_tac
 
-theorem EvalBody.runNeedStepSlots_sound (rec : EvalRec) (hrec : RecSound rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_sound (rec : EvalRec) (hrec : RecSound rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     SoundI (CallPre (.runNeedStepSlots step ctx env cells stepName)) (EvalBody.runNeedStepSlots rec step ctx env cells stepName) (CallPost (.runNeedStepSlots step ctx env cells stepName)) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; ht_tac
 
-theorem EvalBody.runNeedWhileRound_sound (rec : EvalRec) (hrec : RecSound rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_sound (rec : EvalRec) (hrec : RecSound rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     SoundI (CallPre (.runNeedWhileRound step ctx env cells stepName)) (EvalBody.runNeedWhileRound rec step ctx env cells stepName) (CallPost (.runNeedWhileRound step ctx env cells stepName)) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; ht_tac
 
@@ -766,14 +776,6 @@ theorem writtenCollectorSlice_spec {rec : EvalRec} (hrec : RecSound rec) (receiv
   all_goals exact fun _ _ _ absent => by cases absent
 
 attribute [ht_spec] writtenCollectorSlice_spec
-
-theorem validSourced_retained {h : Array NeedCell} {slice : List Nat} (v : ValidAddresses h slice) :
-    ValidSourced h (retainedSourced slice) := by
-  intro x m
-  obtain ⟨a, ma, rfl⟩ := List.mem_map.mp m
-  exact v a ma
-
-attribute [ht_lemmas] validSourced_retained
 
 theorem validAddresses_takePrefix {h : Array NeedCell} {slice : List Nat} {count : Int}
     (v : ValidAddresses h slice) : ValidAddresses h (takePrefix slice count) := by

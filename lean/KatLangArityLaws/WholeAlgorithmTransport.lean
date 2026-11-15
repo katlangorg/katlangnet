@@ -367,7 +367,7 @@ the loop's own receiver. -/
 theorem loop_step_through_alias_is_the_target_step (rec : EvalRec) {α : Type}
     (read : Algorithm → EvalCtx → ValEnv → EvalM α) (atomic : CountedResult → EvalM α) (again : Algorithm → EvalM α)
     (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
-    (reference : Bool) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+    (reference : Bool) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     EvalBody.runNeedStepWith rec read atomic again (.alias p op pr target id reference) ctx env cells stepName
       = (rec.resolveAliasTarget (.alias p op pr target id reference) ctx >>= again) := rfl
 

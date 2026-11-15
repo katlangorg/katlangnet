@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 575
+- specification surface cases: 576
 - excluded parse-level cases (Lean has no surface parser): 82
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 469
-- probe observations (C#-only by design): 1551
+- Lean-guarded cases: 470
+- probe observations (C#-only by design): 1557
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -644,6 +644,11 @@ def case_loop_step_family_no_match_is_ordinary : Expr :=
 def case_loop_step_lazy_builtin_roles : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "if") [.boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2]), .num 1])])
 #guard obs case_loop_step_lazy_builtin_roles == "ok raw=2 n=1"
+
+-- loop-step-builtin-argument-blame [errors]: G(z) = repeat(count({ q + 1 }), 1) \n G(0)
+def case_loop_step_builtin_argument_blame : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["z"] [] [] [(.call (.resolve "repeat") [(.call (.resolve "count") [(.algorithmExpr (alg ["q"] [] [] [(.binary .add (.param "q") (.num 1))]))]), .num 1])])] [(.call (.resolve "G") [.num 0])])
+#guard obs case_loop_step_builtin_argument_blame == "err unresolvedImplicitParams"
 
 -- loop-meta-plain-and-dot [variadic-calls]: Step(x) = x + 1, x < 3 \n Inc(x) = x + 1 \n while(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)
 def case_loop_meta_plain_and_dot : Expr :=
@@ -2550,7 +2555,7 @@ def case_output_spread_reference_certainly_read : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "P" (alg [] [] [] [(.index (.resolve "Q") [.num 0])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [.resolve "P", .resolve "Add", (.call (.resolve "Inc") [.param "x"])])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [(.unary .minus (.num 3))])])
 #guard obs case_output_spread_reference_certainly_read == "ok raw=1 n=1"
 
--- 469 canonical Lean-guarded specification cases.
+-- 470 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2648,6 +2653,7 @@ def specCaseIds : List String := [
   "loop-step-zero-iterations-never-projects",
   "loop-step-family-no-match-is-ordinary",
   "loop-step-lazy-builtin-roles",
+  "loop-step-builtin-argument-blame",
   "loop-meta-plain-and-dot",
   "loop-meta-no-implicit-provenance",
   "loop-meta-zero-state",
@@ -3028,6 +3034,6 @@ def specCaseIds : List String := [
   "output-spread-lifted-call-ends-known-positions",
   "output-spread-reference-certainly-read"
 ]
-#guard specCaseIds.length == 469
+#guard specCaseIds.length == 470
 
 end LanguageSpecCases

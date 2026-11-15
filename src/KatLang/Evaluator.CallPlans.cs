@@ -704,6 +704,53 @@ public static partial class Evaluator
         return EvalResult<IReadOnlyList<NeedCell>>.Ok(PlanCells(supply.Value));
     }
 
+    /// <summary>
+    /// A loop's initial state (META-S3-3): the captured plan's ONE sticky supply — exactly the
+    /// <see cref="Cells"/> <see cref="PrepareArgumentView"/> returns — together with the slot WRITTEN for each
+    /// cell in the captured call (<see cref="Sources"/>, parallel to the cells; <c>null</c> when the recorded
+    /// preparation kept none). Lean: the result of <c>metaLoopCaptureSourced</c>
+    /// (<c>List NeedSupply.Sourced</c>).
+    /// </summary>
+    private readonly record struct LoopInitialState(IReadOnlyList<NeedCell> Cells, IReadOnlyList<Expr?>? Sources);
+
+    /// <summary>
+    /// The initial state of the loop over the captured call <paramref name="reference"/> (META-S3-3, CR-9):
+    /// <see cref="PrepareArgumentView"/>'s route, ownership checks and ONE sticky preparation, returning the
+    /// cells WITH their written slots instead of the cells alone. The first round hands a BUILTIN step each
+    /// cell with its slot (<see cref="ResolvedArgumentAlgorithm.Source"/>), which is what the direct call
+    /// <c>Step(args)</c> gives it, so a failing VALUE demand there is the direct call's failure — the same
+    /// error kind, subject and frames (ARGUMENT BLAME: the CURRENT written slot, never the transported cell's
+    /// original <see cref="NeedCell.Source"/>). Nothing more is formed, demanded or resolved than the view
+    /// does, and a supply that already has its sources is returned without allocating.
+    /// Lean: <c>metaLoopCaptureSourced</c>.
+    /// </summary>
+    private static EvalResult<LoopInitialState> PrepareLoopInitialState(Result.CallReference reference, EvalCtx ctx)
+    {
+        if (CheckCallReferenceOwnership(reference, ctx) is { } rejected)
+            return rejected;
+        var route = InvocationRouteOf(PlanRouteOf(reference.Plan), reference.Plan);
+        if (route.IsError) return route.Error;
+        var supply = PreparePlanSupplyCounted(reference.Plan, PlanSupplyShape.Sourced, byInvocation: true);
+        if (supply.IsError) return supply.Error;
+        if (CheckCallReferenceOwnership(reference, ctx) is { } terminal)
+            return terminal;
+        return EvalResult<LoopInitialState>.Ok(new LoopInitialState(PlanCells(supply.Value), PlanWrittenSources(supply.Value)));
+    }
+
+    /// <summary>MIRROR OF <see cref="PrepareLoopInitialState"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<LoopInitialState>> PrepareLoopInitialStateAsync(Result.CallReference reference, EvalCtx ctx)
+    {
+        if (CheckCallReferenceOwnership(reference, ctx) is { } rejected)
+            return rejected;
+        var route = InvocationRouteOf(await PlanRouteOfAsync(reference.Plan).ConfigureAwait(false), reference.Plan);
+        if (route.IsError) return route.Error;
+        var supply = await PreparePlanSupplyAsync(reference.Plan, PlanSupplyShape.Sourced, byInvocation: true).ConfigureAwait(false);
+        if (supply.IsError) return supply.Error;
+        if (CheckCallReferenceOwnership(reference, ctx) is { } terminal)
+            return terminal;
+        return EvalResult<LoopInitialState>.Ok(new LoopInitialState(PlanCells(supply.Value), PlanWrittenSources(supply.Value)));
+    }
+
     /// <summary>Whether <paramref name="value"/> is an argument view (CallReference S2).</summary>
     internal static bool IsArgumentView(Result value) => value is Result.CallReference { IsArgumentView: true };
 
@@ -1376,6 +1423,30 @@ public static partial class Evaluator
         ResolvedArgumentAlgorithm[] arguments => Array.ConvertAll(arguments, static argument => argument.Cell!),
         _ => throw new InvalidOperationException($"Unexpected prepared plan supply '{prepared.GetType().Name}'."),
     };
+
+    // The written slots of the prepared supply, parallel to PlanCells: the sources an argument view or a loop
+    // setup recorded (S2), or the ones a builtin arm's argument records carry. A cell list prepared by a user
+    // arm recorded none (null); its callee is no builtin, and only a builtin step reads a written slot.
+    // Indexed, without LINQ (PERF-ORD-1).
+    private static IReadOnlyList<Expr?>? PlanWrittenSources(object prepared)
+    {
+        switch (prepared)
+        {
+            case SourcedPlanSupply sourced:
+                return sourced.Sources;
+            case ResolvedArgumentAlgorithm[] arguments:
+            {
+                var sources = new Expr?[arguments.Length];
+                for (var i = 0; i < sources.Length; i++)
+                    sources[i] = arguments[i].Source;
+                return sources;
+            }
+            case IReadOnlyList<NeedCell>:
+                return null;
+            default:
+                throw new InvalidOperationException($"Unexpected prepared plan supply '{prepared.GetType().Name}'.");
+        }
+    }
 
     // The prepared supply as a builtin's arguments. A cell list prepared by a user arm cannot reach a
     // builtin arm; the conversion is defensive and records no written source (diagnostic identity only).

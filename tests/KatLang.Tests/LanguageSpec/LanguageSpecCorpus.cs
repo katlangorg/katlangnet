@@ -1517,6 +1517,28 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "loop-step-builtin-argument-blame",
+            Category = "errors",
+            Source = "G(z) = repeat(count({ q + 1 }), 1)\nG(0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "unresolvedImplicitParams",
+            Probes =
+            [
+                // The direct call, and the `while` and dot spellings of the loop: the same contract.
+                new SpecProbe("G(z) = count({ q + 1 })\nG(0)", "err unresolvedImplicitParams"),
+                new SpecProbe("G(z) = while(count({ q + 1 }))\nG(0)", "err unresolvedImplicitParams"),
+                new SpecProbe("G(z) = count({ q + 1 }).repeat(1)\nG(0)", "err unresolvedImplicitParams"),
+                // A property and a family argument fail by their own contracts, as in the direct call.
+                new SpecProbe("Inc(x) = x + 1\nG(z) = repeat(take(Inc, 1), 1)\nG(0)", "err arity"),
+                new SpecProbe("Fam(0) = 1\nFam(1) = 2\nG(z) = repeat(count(Fam), 1)\nG(0)", "err branch"),
+                // Values and later rounds are unchanged: round 2 runs over a Ready cell.
+                new SpecProbe("G(z) = repeat(count([1, 2]), 2)\nG(0)", "ok raw=1 n=1"),
+            ],
+            Notes = "November 2026 (independent audit of 2026-11-14, section 1.10). Before it the first round passed bare cells, so this was an anonymous ArityMismatch attributed to `count`.",
+            Explanation = "A loop's first round runs its step over the captured call's own arguments, exactly as the direct call would: a builtin step such as `count` gets each argument together with the way it was written. So when `count` needs the value of the block `{ q + 1 }` and nobody supplies the block's own parameter `q`, the loop fails with the block's `UnresolvedImplicitParams` — the very failure `count({ q + 1 })` reports — and never with a failure attributed to `count`. Only that failure report depends on how the argument was written; no value, effect or later round does.",
+        },
+        new()
+        {
             Id = "loop-meta-plain-and-dot",
             Category = "variadic-calls",
             Source = "Step(x) = x + 1, x < 3\nInc(x) = x + 1\nwhile(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)",

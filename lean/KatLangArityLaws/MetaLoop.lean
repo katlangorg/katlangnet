@@ -16,9 +16,11 @@ authoritative definitions are in `lean/KatLang.lean`:
 * the META binding step of `applyBuiltinCounted` (`builtinDeclaresMeta`): the arity gate, then
   THE ONE binder `bindNeedPatterns` over the signature, whose `.metaRef` arm is
   `NeedPlan.reference` (the user META capture);
-* `metaLoopCapture` — the captured step's setup: the adapter's reference decoded into its plan,
-  the plan's ONE sticky supply (`argumentViewCells` = `NeedPlan.viewCells`) as the initial state,
-  the plan's canonical callee cell (`NeedPlan.calleeCell`) as the step;
+* `metaLoopCaptureSourced` — the captured step's setup: the adapter's reference decoded into its
+  plan, the plan's ONE sticky supply (`argumentViewCells` = `NeedPlan.viewCells`) as the initial
+  state — each ORIGINAL cell with its written slot, which the first round hands a builtin step —
+  and the plan's canonical callee cell (`NeedPlan.calleeCell`) as the step; `metaLoopCapture` is
+  its projection to cell addresses;
 * `metaRepeatSetup` — RP-1: the captured setup BEFORE the count.
 
 Proved here, over those total definitions:
@@ -29,7 +31,9 @@ Proved here, over those total definitions:
   step position transports its cell while `count` is a value (`loop_lifting_roles`);
 * INERT CAPTURE — the binder's `meta step` occurrence on a plan cell allocates ONE Ready adapter and
   changes nothing else (`step_capture_inert`, from `production_meta_binding`);
-* the capture's state and step (`metaLoopCapture_run`): the initial state is EXACTLY the plan's view
+* the capture's state and step (`metaLoopCaptureSourced_run`, and `metaLoopCapture_run` for its
+  address projection, `metaLoopCapture_projects`): the initial state is EXACTLY the plan's view
+  supply, written slots included (`state_is_view_supply`), so its cells are the view's
   cells (`state_is_view_cells`; for a prepared plan, its recorded supply with nothing run,
   `state_of_prepared_plan` — the cells `Invoke` and `Arguments` share), and the step is the
   plan's canonical callee cell (`step_is_recorded_callee_cell`), established inertly
@@ -122,6 +126,32 @@ theorem step_capture_inert (channels : NeedChannels) (address : Nat) (s : EvalSt
 
 /-! ## The captured step's setup -/
 
+/-- The run of `metaLoopCaptureSourced` once the adapter reads as plan `a`'s reference and the
+    plan's view yields `cells`: the state is `cells` WITH their written slots and the step is
+    `NeedPlan.calleeCell a`. -/
+theorem metaLoopCaptureSourced_run (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
+    (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter a k : Nat)
+    (cells : List NeedSupply.Sourced) (s s1 s2 : EvalState)
+    (hread : (read adapter).runState s = (.ok (.callRef a, k), s1))
+    (hview : (view a).runState s1 = (.ok cells, s2)) :
+    (metaLoopCaptureSourced classify read view adapter).runState s =
+      (match (NeedPlan.calleeCell classify a).runState s2 with
+       | (.ok c, t) => (.ok (c, cells), t)
+       | (.error e, t) => (.error e, t)) := by
+  simp only [metaLoopCaptureSourced, bind_run, hread, decodeCallRef, pure_run, hview]
+  rcases (NeedPlan.calleeCell classify a).runState s2 with ⟨_ | c, t⟩ <;> rfl
+
+/-- `metaLoopCapture` IS the sourced setup with the written slots projected away: the same step,
+    the same cells in the same order, the same state and the same failure. -/
+theorem metaLoopCapture_projects (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
+    (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter : Nat) (s : EvalState) :
+    (metaLoopCapture classify read view adapter).runState s =
+      (match (metaLoopCaptureSourced classify read view adapter).runState s with
+       | (.ok r, t) => (.ok (r.1, r.2.map Prod.fst), t)
+       | (.error e, t) => (.error e, t)) := by
+  simp only [metaLoopCapture, bind_run]
+  rcases (metaLoopCaptureSourced classify read view adapter).runState s with ⟨_ | ⟨c, cells⟩, t⟩ <;> rfl
+
 /-- The run of `metaLoopCapture` once the adapter reads as plan `a`'s reference and the plan's
     view yields `cells`: the state is `cells` and the step is `NeedPlan.calleeCell a`. -/
 theorem metaLoopCapture_run (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
@@ -133,8 +163,22 @@ theorem metaLoopCapture_run (classify : NeedPlan.CallShape → EvalM PlanRoute) 
       (match (NeedPlan.calleeCell classify a).runState s2 with
        | (.ok c, t) => (.ok (c, cells.map Prod.fst), t)
        | (.error e, t) => (.error e, t)) := by
-  simp only [metaLoopCapture, bind_run, hread, decodeCallRef, pure_run, hview]
+  rw [metaLoopCapture_projects, metaLoopCaptureSourced_run classify read view adapter a k cells s s1 s2 hread hview]
   rcases (NeedPlan.calleeCell classify a).runState s2 with ⟨_ | c, t⟩ <;> rfl
+
+/-- **CR-9, with the written slots: the initial state IS the plan's view supply** — every original
+    argument cell paired with the slot written for it in the captured call, never re-formed,
+    copied or stripped. This is the supply the loop arms hand the first round. -/
+theorem state_is_view_supply (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
+    (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter a k : Nat)
+    (cells : List NeedSupply.Sourced) (s s1 s2 t : EvalState) (step : Nat) (state : List NeedSupply.Sourced)
+    (hread : (read adapter).runState s = (.ok (.callRef a, k), s1))
+    (hview : (view a).runState s1 = (.ok cells, s2))
+    (h : (metaLoopCaptureSourced classify read view adapter).runState s = (.ok (step, state), t)) :
+    state = cells := by
+  rw [metaLoopCaptureSourced_run classify read view adapter a k cells s s1 s2 hread hview] at h
+  rcases hc : (NeedPlan.calleeCell classify a).runState s2 with ⟨_ | c, u⟩ <;> rw [hc] at h <;> cases h
+  rfl
 
 /-- **CR-9: the initial state IS the plan's view cells** — the original argument cells, never
     re-formed or copied. -/

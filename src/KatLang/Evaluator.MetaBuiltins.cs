@@ -63,15 +63,17 @@ public static partial class Evaluator
     /// <summary>
     /// The loop over a captured step invocation (META-S3-3, D1, CR-9, CR-13): the reference bound to
     /// <c>meta step</c> (its Ready adapter, read without running anything) decoded into its plan; the plan's
-    /// ONE sticky supply (<see cref="PrepareArgumentView"/>, which also checks the reference's run
-    /// ownership: its recorded preparation or exactly one formation in the captured caller context, opening
-    /// only the explicit spreads written inside the captured call and demanding no argument VALUE) is the
-    /// initial state — the ORIGINAL argument cells, never re-formed; an empty supply is the ordinary
-    /// zero-slot state (OD-1) — and the plan's canonical callee cell (<see cref="InvocationPlan.CalleeCell"/>,
-    /// inert) is the step, projected only when an iteration runs. The captured call itself is never
-    /// dispatched. RP-1: <c>repeat</c> demands and validates its count, the outer call's own VALUE argument,
-    /// once and only AFTER the captured supply is prepared, so a captured spread's failure, effect or
-    /// cancellation precedes the count's (LOOP-01/05). Lean: <c>metaLoopCapture</c>, <c>metaRepeatSetup</c>.
+    /// ONE sticky supply (<see cref="PrepareLoopInitialState"/>, the argument view's preparation, which also
+    /// checks the reference's run ownership: its recorded preparation or exactly one formation in the captured
+    /// caller context, opening only the explicit spreads written inside the captured call and demanding no
+    /// argument VALUE) is the initial state — the ORIGINAL argument cells, never re-formed, each with the slot
+    /// written for it in the captured call, which the first round hands a builtin step; an empty supply is
+    /// the ordinary zero-slot state (OD-1) — and the plan's canonical callee cell
+    /// (<see cref="InvocationPlan.CalleeCell"/>, inert) is the step, projected only when an iteration runs.
+    /// The captured call itself is never dispatched. RP-1: <c>repeat</c> demands and validates its count, the
+    /// outer call's own VALUE argument, once and only AFTER the captured supply is prepared, so a captured
+    /// spread's failure, effect or cancellation precedes the count's (LOOP-01/05).
+    /// Lean: <c>metaLoopCaptureSourced</c>, <c>metaRepeatSetup</c>.
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalMetaLoop(
         BuiltinId builtin, NeedEnv env, EvalCtx ctx, ValEnv values, bool asynchronous)
@@ -80,8 +82,8 @@ public static partial class Evaluator
         if (adapter.IsError) return adapter.Error;
         var reference = (Result.CallReference)adapter.Value.Value;
         var state = asynchronous
-            ? await PrepareArgumentViewAsync(reference, ctx).ConfigureAwait(false)
-            : PrepareArgumentView(reference, ctx);
+            ? await PrepareLoopInitialStateAsync(reference, ctx).ConfigureAwait(false)
+            : PrepareLoopInitialState(reference, ctx);
         if (state.IsError) return state.Error;
         var plan = reference.Plan;
         // META-S3-4: the view established the plan's route (and refused an intrinsic route), so the step is
@@ -98,6 +100,6 @@ public static partial class Evaluator
             if (integer.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
             remaining = integer.Value >= long.MaxValue ? long.MaxValue : (long)integer.Value;
         }
-        return await EvalNeedLoop(builtin, step, remaining, state.Value, ctx, values, asynchronous).ConfigureAwait(false);
+        return await EvalNeedLoop(builtin, step, remaining, state.Value.Cells, ctx, values, state.Value.Sources, asynchronous).ConfigureAwait(false);
     }
 }

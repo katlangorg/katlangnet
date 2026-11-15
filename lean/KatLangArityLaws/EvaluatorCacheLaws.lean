@@ -789,7 +789,7 @@ theorem pres_mapLoop (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (
   | cons i rest ih => unfold EvalBody.evalMapCounted.mapLoop; pres_tac_mid
 
 theorem pres_repeatLoop (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm)
-    (stepName : String) (remaining : Nat) (cells : List Nat) :
+    (stepName : String) (remaining : Nat) (cells : List NeedSupply.Sourced) :
     Preserves R (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells) := by
   induction remaining generalizing cells with
   | zero => unfold EvalBody.applyBuiltinCounted.repeatLoop; pres_tac_mid
@@ -879,7 +879,7 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
 section Bodies
 variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
 
-theorem EvalBody.whileLoop_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     Preserves R (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; pres_tac
 
@@ -1023,11 +1023,11 @@ theorem EvalBody.argumentNeed_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (r
     Preserves R (EvalBody.argumentNeed rec arg ctx env) := by
   unfold EvalBody.argumentNeed; pres_tac
 
-theorem EvalBody.runNeedStepSlots_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Preserves R (EvalBody.runNeedStepSlots rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; pres_tac
 
-theorem EvalBody.runNeedWhileRound_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Preserves R (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; pres_tac
 

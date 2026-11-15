@@ -1101,7 +1101,7 @@ theorem link_mapLoop (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (
   | cons i rest ih => unfold EvalBody.evalMapCounted.mapLoop; link_tac_base
 
 theorem link_repeatLoop (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm)
-    (stepName : String) (remaining : Nat) (cells : List Nat) :
+    (stepName : String) (remaining : Nat) (cells : List NeedSupply.Sourced) :
     LinkDisc (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells) := by
   induction remaining generalizing cells with
   | zero => unfold EvalBody.applyBuiltinCounted.repeatLoop; link_tac_base
@@ -1197,7 +1197,7 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | link_unfold_head
   | (with_reducible apply LinkAt.of_disc))))
 
-theorem EvalBody.whileLoop_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     LinkDisc (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; link_tac
 
@@ -1347,11 +1347,11 @@ theorem EvalBody.argumentNeed_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (
     LinkDisc (EvalBody.argumentNeed rec arg ctx env) := by
   unfold EvalBody.argumentNeed; link_tac
 
-theorem EvalBody.runNeedStepSlots_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     LinkDisc (EvalBody.runNeedStepSlots rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; link_tac
 
-theorem EvalBody.runNeedWhileRound_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     LinkDisc (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; link_tac
 

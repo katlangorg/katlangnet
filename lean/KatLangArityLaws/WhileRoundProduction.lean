@@ -603,7 +603,7 @@ its target once and is that target's round. The family's selection, binder activ
 body entry is `readRows`'s, performed once inside that one `whileVerdictSlots` call. These keep
 `production_unfolds`' completion premise — the binder channels are not proved `Finite` here. -/
 
-theorem runNeedWhileRound_unfolds (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat)
+theorem runNeedWhileRound_unfolds (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced)
     (stepName : String) (s : EvalState)
     (hc : ProductionCompletes (runNeedWhileRound step ctx env cells stepName) s) :
     (runNeedWhileRound step ctx env cells stepName).runState s =
@@ -612,16 +612,17 @@ theorem runNeedWhileRound_unfolds (step : Algorithm) (ctx : EvalCtx) (env : ValE
         (fun target => runNeedWhileRound target ctx env cells stepName) step ctx env cells stepName).runState s :=
   (production_unfolds (.runNeedWhileRound step ctx env cells stepName) s hc).symm
 
-/-- A user step: the one binder over the state cells, ONE fresh binding context, then exactly ONE
-    production `whileVerdictSlots` of the step body with the bound context. -/
+/-- A user step: the one binder over the state cells' addresses (a binder reads no written slot),
+    ONE fresh binding context, then exactly ONE production `whileVerdictSlots` of the step body
+    with the bound context. -/
 theorem runNeedWhileRound_user (p : Option ScopeCtx) (pp : List ParameterPattern) (o : List Expr)
     (pr : List PropDef) (out : List Expr) (d : Option PropertyIdentity)
-    (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) (s : EvalState)
+    (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) (s : EvalState)
     (hc : ProductionCompletes (runNeedWhileRound (.mk p pp o pr out d) ctx env cells stepName) s) :
     (runNeedWhileRound (.mk p pp o pr out d) ctx env cells stepName).runState s =
       (do
         let some bindings ← bindNeedPatterns bindingChannels
-            ((Algorithm.parameterPatterns (.mk p pp o pr out d)).map NeedPattern.ofParameter) cells
+            ((Algorithm.parameterPatterns (.mk p pp o pr out d)).map NeedPattern.ofParameter) (cells.map Prod.fst)
           | throw Error.badArity
         let next ← needBindingContext ctx bindings
         whileVerdictSlots (.mk p pp o pr out d) next
@@ -631,31 +632,33 @@ theorem runNeedWhileRound_user (p : Option ScopeCtx) (pp : List ParameterPattern
 /-- A clause family: the ordinary family dispatcher ONCE, then exactly ONE production
     `whileVerdictSlots` of the selected, activated body — no second dispatch, no second body. -/
 theorem runNeedWhileRound_family (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
-    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String)
+    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String)
     (s : EvalState)
     (hc : ProductionCompletes (runNeedWhileRound (.conditional p o br d) ctx env cells stepName) s) :
     (runNeedWhileRound (.conditional p o br d) ctx env cells stepName).runState s =
       (withCtx s!"while evaluating call to {stepName}" do
-        let (body, next, values) ← selectNeedFamilyBranch bindingChannels (.conditional p o br d) cells ctx env stepName
+        let (body, next, values) ← selectNeedFamilyBranch bindingChannels (.conditional p o br d) (cells.map Prod.fst) ctx env stepName
         whileVerdictSlots body next values).runState s := by
   rw [runNeedWhileRound_unfolds _ ctx env cells stepName s hc]; rfl
 
-/-- A builtin step: its ordinary argument roles over the state cells; its ONE result is ONE
-    atomic row read by `WhileRound.ofSupply`. -/
-theorem runNeedWhileRound_builtin (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat)
+/-- A builtin step: its ordinary argument roles over the state cells, each argument keeping its
+    cell's written slot (`source?`) — the arguments the ordinary dispatch `evalSuppliedCallCounted`
+    builds from the same sourced supply; its ONE result is ONE atomic row read by
+    `WhileRound.ofSupply`. -/
+theorem runNeedWhileRound_builtin (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced)
     (stepName : String) (s : EvalState)
     (hc : ProductionCompletes (runNeedWhileRound (.builtin b) ctx env cells stepName) s) :
     (runNeedWhileRound (.builtin b) ctx env cells stepName).runState s =
       (withCtx s!"while evaluating call to {stepName}" do
-        let out ← applyBuiltinCountedResolved b (cells.map fun address =>
-          ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm)) ctx env
+        let out ← applyBuiltinCountedResolved b (cells.map fun (address, source?) =>
+          ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)) ctx env
         WhileRound.ofSupply (loopStepBuiltinRows out)).runState s := by
   rw [runNeedWhileRound_unfolds _ ctx env cells stepName s hc]; rfl
 
 /-- An alias step: its target resolved once by the existing alias route; the round is the
     target's round over the same cells. -/
 theorem runNeedWhileRound_alias (p : Option ScopeCtx) (o : List Expr) (pr : List PropDef) (t : Expr)
-    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) (s : EvalState)
+    (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) (s : EvalState)
     (hc : ProductionCompletes (runNeedWhileRound (.alias p o pr t d) ctx env cells stepName) s) :
     (runNeedWhileRound (.alias p o pr t d) ctx env cells stepName).runState s =
       (do

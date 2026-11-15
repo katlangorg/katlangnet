@@ -1284,7 +1284,8 @@ public static partial class Evaluator
     {
         if (ctx.Budget.TryChargeStep() is { } limit) return limit;
         var cells = state.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
-        return await InvokeLoopStepSupply(step, prepared, cells, ctx, values, loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
+        // Ready cells have no written slot: only the captured call's own cells do (EvalNeedLoop, round 1).
+        return await InvokeLoopStepSupply(step, prepared, cells, stateSources: null, ctx, values, loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1310,17 +1311,23 @@ public static partial class Evaluator
     /// <item>A builtin runs through its ordinary argument roles (<see cref="ApplyBuiltinCountedResolved"/>,
     /// the callback arm's own route); it has no written rows, so its ONE result value is ONE non-spread
     /// row — <c>()</c> and collections included — never re-counted into zero or several slots; for
-    /// <c>while</c> that one row is both the flag and the candidate state (<see cref="WhileVerdictOfSupply"/>).</item>
+    /// <c>while</c> that one row is both the flag and the candidate state (<see cref="WhileVerdictOfSupply"/>).
+    /// Each argument keeps its state cell's WRITTEN slot (<paramref name="stateSources"/>, parallel to
+    /// <paramref name="state"/>; <see cref="ResolvedArgumentAlgorithm.Source"/>): the first round runs over the
+    /// captured call's own cells, so its arguments are the ones the direct call <c>Step(args)</c> builds and
+    /// a failing VALUE demand is the direct call's failure (ARGUMENT BLAME). A later round's Ready cells have
+    /// no written slot (<c>null</c>).</item>
     /// </list>
     /// A family's or builtin's failure is its ordinary invocation failure under the step's own call
     /// frame; the loop adds only its outer frame. Nothing here charges a step or enters an invocation
     /// level: the caller charges one step per iteration, and a loop-step invocation stays outside the
-    /// depth protocol for every callable shape, as it always was for user steps. Lean:
-    /// <c>runNeedStepSlots</c>.
+    /// depth protocol for every callable shape, as it always was for user steps. A binder and the family
+    /// dispatcher read the cells alone, so the written slots cost a user or family step nothing. Lean:
+    /// <c>runNeedStepSlots</c> over a sourced supply (<c>runNeedStepWith</c>).
     /// </summary>
     private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> InvokeLoopStepSupply(
-        Algorithm step, PreparedGenericLoopStep prepared, IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values,
-        string loopName, CallDiagnosticName stepName, bool conditionFirst, bool asynchronous)
+        Algorithm step, PreparedGenericLoopStep prepared, IReadOnlyList<NeedCell> state, IReadOnlyList<Expr?>? stateSources,
+        EvalCtx ctx, ValEnv values, string loopName, CallDiagnosticName stepName, bool conditionFirst, bool asynchronous)
     {
         switch (step)
         {
@@ -1349,7 +1356,14 @@ public static partial class Evaluator
             }
             case Algorithm.Builtin(var builtin):
             {
-                var supplied = state.Select(static cell => new ResolvedArgumentAlgorithm(null) { Cell = cell }).ToArray();
+                // One written slot per state cell, or none at all: a partial list would blame the wrong slot.
+                if (stateSources is not null && stateSources.Count != state.Count)
+                    throw new InvalidOperationException(
+                        $"A loop state of {state.Count} cell(s) carries {stateSources.Count} written slot(s).");
+                // Indexed, without LINQ (PERF-ORD-1).
+                var supplied = new ResolvedArgumentAlgorithm[state.Count];
+                for (var i = 0; i < supplied.Length; i++)
+                    supplied[i] = new ResolvedArgumentAlgorithm(null) { Cell = state[i], Source = stateSources?[i] };
                 var result = NestMissingOutput(asynchronous
                     ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
                     : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values));
@@ -1367,7 +1381,7 @@ public static partial class Evaluator
                     ? await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false)
                     : ResolveAliasTarget(alias, ctx);
                 if (target.IsError) return target.Error;
-                return await InvokeLoopStepSupply(target.Value, PrepareUserLoopStep(target.Value, ctx), state, ctx, values,
+                return await InvokeLoopStepSupply(target.Value, PrepareUserLoopStep(target.Value, ctx), state, stateSources, ctx, values,
                     loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
             }
         }
@@ -1815,19 +1829,26 @@ public static partial class Evaluator
     /// THE NATIVE LOOP KERNEL of <c>while</c>/<c>repeat</c> over its logical components (META-S3-3): the
     /// step argument (the captured plan's canonical callee cell), the remaining iteration count of a
     /// <c>repeat</c> (already demanded and validated, RP-1; ignored by <c>while</c>), and the initial
-    /// state cells (the captured plan's ONE sticky supply, possibly empty, OD-1). The step's CALLABLE is
-    /// projected only when an iteration needs it; <c>while</c> rounds read their flag condition first
-    /// (LOOP-CF1); the optimizer (<see cref="LoopOptimizer"/>) is tried once the step is projected; the
-    /// final state is materialized at the one result site (<see cref="MakeCheckedLoopStateResult"/>).
-    /// Lean: the loop arms of <c>applyBuiltinCounted</c> after <c>metaLoopCapture</c>.
+    /// state cells (the captured plan's ONE sticky supply, possibly empty, OD-1) with the slots written for
+    /// them in the captured call (<paramref name="initialSources"/>, parallel to the cells, or <c>null</c>).
+    /// The step's CALLABLE is projected only when an iteration needs it; <c>while</c> rounds read their flag
+    /// condition first (LOOP-CF1); the optimizer (<see cref="LoopOptimizer"/>) is tried once the step is
+    /// projected; the final state is materialized at the one result site
+    /// (<see cref="MakeCheckedLoopStateResult"/>). ROUND 1 KEEPS THE WRITTEN SLOTS: the first round runs over
+    /// the captured call's own cells and passes their slots to the step invocation, so a builtin step's
+    /// failure there is the direct call's; every later round runs over Ready cells, which have none. The
+    /// slots are diagnostic identity only — no value, effect, demand order, step or depth charge reads them.
+    /// Lean: the loop arms of <c>applyBuiltinCounted</c> after <c>metaLoopCaptureSourced</c>.
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedLoop(
         BuiltinId builtin, ResolvedArgumentAlgorithm stepArgument, long remaining,
-        IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values, bool asynchronous)
+        IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values, IReadOnlyList<Expr?>? initialSources, bool asynchronous)
     {
         var repeat = builtin == BuiltinId.@repeat;
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
+        // The written slots of the CURRENT state: the captured call's for the first round, none afterwards.
+        var stateSources = initialSources;
         Algorithm? step = null;
         PreparedGenericLoopStep prepared = default;
         var loopName = repeat ? "repeat" : "while";
@@ -1868,7 +1889,16 @@ public static partial class Evaluator
                             (admittedHead, count, slots) => RepeatLoopGenericCounted(step, admittedHead, count, slots, ctx, values, stepName), out optimized)
                         : LoopOptimizer.TryEvaluateWhile(step, state, ctx, values,
                             (admittedHead, slots) => WhileLoopGenericCounted(step, admittedHead, slots, ctx, values, stepName), out optimized);
-                    if (taken) return optimized;
+                    if (taken)
+                    {
+                        // The shape gate lets every non-user step through, but the planner takes USER steps
+                        // only (LoopOptimizer.TryBuildLoopPlanTemplate refuses any other shape). A planned
+                        // loop therefore never runs a builtin's first round, the one round that reads the
+                        // written slots; its generic continuation runs over Ready cells, which have none.
+                        System.Diagnostics.Debug.Assert(step is Algorithm.User,
+                            "The loop planner took a non-user step; a builtin step's first round must keep the captured call's written slots.");
+                        return optimized;
+                    }
                     // The planner refused the step and already recorded that ONE fallback under
                     // its own reason (OPT-FB-1); it is not recorded again here.
                 }
@@ -1882,11 +1912,13 @@ public static partial class Evaluator
             if (ctx.Budget.TryChargeStep() is { } limit) return limit;
             // A `while` round reads its step condition first (LOOP-06): `null` is a false verdict,
             // and the state that entered the round is the loop's final state.
-            var output = await InvokeLoopStepSupply(step, prepared, state, ctx, values, loopName, stepName,
+            var output = await InvokeLoopStepSupply(step, prepared, state, stateSources, ctx, values, loopName, stepName,
                 conditionFirst: !repeat, asynchronous).ConfigureAwait(false);
             if (output.IsError) return output.Error;
             if (output.Value is not { } next) break;
             state = next.Select(item => NeedCell.Ready(new(item, item.ValueCount()))).ToArray();
+            // The next state is Ready cells: no slot was written for them.
+            stateSources = null;
             if (repeat) remaining--;
         }
         var materialized = new List<Result>(state.Count);

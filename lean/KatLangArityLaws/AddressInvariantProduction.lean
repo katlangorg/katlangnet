@@ -17,7 +17,8 @@ replaced here by premise-free (`Inv` + structural input validity) theorems:
   `production_form_failure_retains_prefix`).
 * **Plans**: every `.prepared (.ok cells)` is valid (the `Inv` clause `CellV.plan`, written only
   by `prepare`, `prepare_spec`); read paths `production_prepared_reread`, `production_viewCells`,
-  `production_argumentViewCells`, `production_viewSupply`, `production_metaLoopCapture`,
+  `production_argumentViewCells`, `production_viewSupply`, `production_metaLoopCaptureSourced`,
+  `production_metaLoopCapture`,
   `production_executeAlong`, `production_invoke`.
 * **Binder**: `production_bindNeedPatterns` at `bindingChannels`, its user-call / loop-step /
   META-builtin instances, and clause-family dispatch `production_selectNeedFamilyBranch` /
@@ -180,7 +181,26 @@ theorem production_invoke (r : NeedPlan.CallReference) :
   invoke_spec production_routeSpec (fun _ _ _ _ => trivial)
 
 /-- The captured step's loop setup at production: the step cell and the ORIGINAL initial cells
-    (the plan's one supply) are valid. -/
+    (the plan's one SOURCED supply, what the loop arms hand the first round) are valid. -/
+theorem metaLoopCaptureSourced_aux {P : Array NeedCell → Prop} (hP : HMono P)
+    {classify : NeedPlan.CallShape → EvalM PlanRoute}
+    {read : Nat → EvalM CountedResult} {view : Nat → EvalM (List NeedSupply.Sourced)} {adapter : Nat}
+    (hc : ClassifySpec classify) (hd : DemandSpec read)
+    (hv : ∀ a, SoundI (fun h => P h ∧ a < h.size) (view a) (fun xs h => ValidSourced h xs))
+    (hreq : ∀ h, P h → adapter < h.size) :
+    SoundI P (metaLoopCaptureSourced classify read view adapter)
+      (fun r h => r.1 < h.size ∧ ValidSourced h r.2) := by
+  unfold metaLoopCaptureSourced; ht_tac
+
+theorem production_metaLoopCaptureSourced (adapter : Nat) :
+    SoundOver Inv (fun h => adapter < h.size)
+      (metaLoopCaptureSourced productionPlanRoute.classify demandNeedRecursive argumentViewCells adapter)
+      (fun r h => r.1 < h.size ∧ ValidSourced h r.2) :=
+  metaLoopCaptureSourced_aux (hmono_lt adapter) production_routeSpec.classify (demandSpec_rec production_recSound_all)
+    (fun a => (production_recSound_all (.argumentViewCells a)).weaken (fun _ _ => trivial)
+      (fun _ _ _ _ => trivial) (fun _ _ h => h)) (fun _ h => h) (hmono_lt adapter)
+
+/-- The same setup as cell addresses (`metaLoopCapture`, the sourced setup's projection). -/
 theorem metaLoopCapture_aux {P : Array NeedCell → Prop} (hP : HMono P)
     {classify : NeedPlan.CallShape → EvalM PlanRoute}
     {read : Nat → EvalM CountedResult} {view : Nat → EvalM (List NeedSupply.Sourced)} {adapter : Nat}
@@ -232,7 +252,7 @@ theorem production_user_binder (callee : Algorithm) (cells : List Nat) :
       (fun r h => OptEnvValid r h) :=
   production_bindNeedPatterns _ cells false
 
-/-- The loop-step instantiation (`runNeedStepWith` over the state cells). -/
+/-- The loop-step instantiation (`runNeedStepWith` over the state cells' addresses). -/
 theorem production_loop_step_binder (step : Algorithm) (cells : List Nat) :
     SoundOver Inv (fun h => ValidAddresses h cells)
       (bindNeedPatterns bindingChannels ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells)

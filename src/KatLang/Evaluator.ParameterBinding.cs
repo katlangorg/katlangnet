@@ -59,8 +59,11 @@ public static partial class Evaluator
         /// slot's rejection reports through (<see cref="SequenceBuiltinValueDemandError"/> and
         /// the zero-argument value-demand law, <see cref="ZeroArgumentValueDemandError"/>) —
         /// its span, and whether the argument was written as a property, a parameter, a dot
-        /// receiver, or a block. <c>null</c> for an opened spread's items. Diagnostic identity
-        /// only: it never changes which callable a slot resolves to. Lean: <c>source?</c>.
+        /// receiver, or a block. <c>null</c> for an opened spread's items. A builtin loop step's
+        /// arguments keep the slots written in the captured call for the FIRST round, whose state
+        /// is that call's own supply (<see cref="PrepareLoopInitialState"/>); a later round's
+        /// Ready cells have none. Diagnostic identity only: it never changes which callable a
+        /// slot resolves to. Lean: <c>source?</c>.
         /// </summary>
         public Expr? Source { get; init; }
     }

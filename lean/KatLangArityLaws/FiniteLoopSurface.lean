@@ -534,12 +534,12 @@ theorem userActivation_fst (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells
 
 /-- **The canonical-slot premise IS DISCHARGED for a user step with scalar rows.** -/
 theorem user_slots_canonical (a : Algorithm) (h : UserStep a) (hr : RowsBy scalarRow a) (ctx : EvalCtx)
-    (env : ValEnv) (cells : List Nat) (name : String) :
+    (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String) :
     OkSat CanonSlots (runNeedStepSlots a ctx env cells name) := by
   refine okSat_call (.runNeedStepSlots a ctx env cells name) CanonSlots ?_
   rw [user_loop_body a h ctx env cells name evalUnbounded]
   unfold loopRead
-  refine okSat_bind_of (userActivation_fst a ctx env cells) fun p hp => ?_
+  refine okSat_bind_of (userActivation_fst a ctx env (cells.map Prod.fst)) fun p hp => ?_
   obtain ⟨b, c', e'⟩ := p
   dsimp only at hp
   subst hp
@@ -552,14 +552,14 @@ theorem user_slots_canonical (a : Algorithm) (h : UserStep a) (hr : RowsBy scala
     rows.** -/
 theorem family_slots_canonical (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
     (d : Option PropertyIdentity) (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (ctx : EvalCtx) (env : ValEnv)
-    (cells : List Nat) (name : String) :
+    (cells : List NeedSupply.Sourced) (name : String) :
     OkSat CanonSlots (runNeedStepSlots (.conditional p o br d) ctx env cells name) := by
   refine okSat_call (.runNeedStepSlots (.conditional p o br d) ctx env cells name) CanonSlots ?_
   rw [family_loop_body p o br d ctx env cells name evalUnbounded]
   refine okSat_withCtx _ ?_
   unfold loopRead
   refine okSat_bind_of (Q := fun q : Activation => ∃ b ∈ br, ∃ w, q.1 = b.body.withParent w)
-    (fun s q t hq => select_ok _ ctx env cells name s q t hq) fun q hq => ?_
+    (fun s q t hq => select_ok _ ctx env (cells.map Prod.fst) name s q t hq) fun q hq => ?_
   obtain ⟨b, hb, w, hw⟩ := hq
   obtain ⟨body, c', e'⟩ := q
   dsimp only at hw
@@ -611,30 +611,31 @@ theorem value_iff_of_agreement {wrap : Error → Error} {L : Except Error (List 
 /-- **COUNT ONE, BY VALUE (user step with scalar rows).** For every user step whose written rows
     are scalar rows, from the projected step: `repeat` of count one completes with `v` iff the
     ordinary call over the same cells completes with the SAME `v`; the loop state is the call
-    state plus the completed slot cells. The only premise left is the step projection. -/
+    state plus the completed slot cells. The only premise left is the step projection. The loop's
+    state is the sourced supply and the user call binds its cell addresses. -/
 theorem count_one_user_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (cells : List Nat) (s s₁ : EvalState) (a : Algorithm)
+    (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (a : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some a), s₁)) (h : UserStep a) (hr : RowsBy scalarRow a)
     (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
-      (∃ t, (evalNeedUserSupply a cells ctx env).runState s₁ = (.ok v, t)) := by
+      (∃ t, (evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) := by
   obtain ⟨hag, heq⟩ := count_one_user step ctx env name cells s s₁ a hi h
-    (userRowsBounded_of_valueRows a hr.value_of_scalar ctx env cells s₁)
+    (userRowsBounded_of_valueRows a hr.value_of_scalar ctx env (cells.map Prod.fst) s₁)
   rw [heq]
   exact value_iff_of_agreement hag (fun ys t hL => user_slots_canonical a h hr ctx env cells name s₁ ys t hL) v
 
 /-- **COUNT ONE, BY VALUE (clause family with scalar-row clause bodies).** -/
 theorem count_one_family_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (cells : List Nat) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr)
+    (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr)
     (br : List CondBranch) (d : Option PropertyIdentity)
     (hi : (invokeNeed step).runState s = (.ok (some (.conditional p o br d)), s₁))
     (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (v : CountedResult) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
-      (∃ t, (evalNeedFamilySupply (.conditional p o br d) cells ctx env name).runState s₁ = (.ok v, t)) := by
+      (∃ t, (evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s₁ = (.ok v, t)) := by
   have hv : ∀ b ∈ br, ClauseBy valueRow b.body := fun b hb =>
     ⟨(h b hb).user, (h b hb).props, (h b hb).rows.value_of_scalar⟩
   obtain ⟨hag, heq⟩ := count_one_family step ctx env name cells s s₁ p o br d hi
-    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env cells name s₁)
+    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env (cells.map Prod.fst) name s₁)
   rw [heq]
   exact value_iff_of_agreement hag
     (fun ys t hL => family_slots_canonical p o br d h ctx env cells name s₁ ys t hL) v
@@ -652,7 +653,7 @@ theorem loop_value_one_slot (out : CountedResult) (h : out.fst.normalize = out.f
 /-- **A BUILTIN STEP ROUND, BY VALUE.** Wherever the builtin application over the step arguments
     completes, the step round is that application outcome: its ONE result as ONE slot, in the
     SAME state; an ordinary error is the same error under the step call frame. -/
-theorem builtin_step_value (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (name : String)
+theorem builtin_step_value (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (name : String)
     (s : EvalState) (x : Except Error CountedResult) (t : EvalState)
     (hx : x ≠ .error .fuelExhausted)
     (h : (applyBuiltinCountedResolved b (stepArguments cells) ctx env).runState s = (x, t)) :
@@ -663,15 +664,17 @@ theorem builtin_step_value (b : Builtin) (ctx : EvalCtx) (env : ValEnv) (cells :
   rw [(builtin_step_run b ctx env cells name s).2 hc, h]
 
 /-- **COUNT ONE, BY VALUE (builtin step).** From the projected builtin step: whatever completed
-    outcome the ordinary call `F(args)` over the same cells has (any callee origin), the one-round
-    `repeat` is determined by it. A result `out` gives `loopResultCounted [out.fst]` over the call
-    state plus one completed slot cell; an ordinary error is the same error under the step call
-    frame, in the same state. No builtin is excluded. -/
+    outcome the ordinary call `F(args)` over the SAME SOURCED SUPPLY has (any callee origin, any
+    written slots), the one-round `repeat` is determined by it. A result `out` gives
+    `loopResultCounted [out.fst]` over the call state plus one completed slot cell; an ordinary
+    error is the same error under the step call frame, in the same state — so a failing VALUE
+    demand of a written argument is reported as the direct call reports it. No builtin is
+    excluded. -/
 theorem count_one_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin b)), s₁))
     (x : Except Error CountedResult) (t : EvalState) (hx : x ≠ .error .fuelExhausted)
-    (hcall : (evalSuppliedCallCounted origin (.builtin b) (cells.map fun c => (c, none)) ctx env name).runState s₁ = (x, t)) :
+    (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (x, t)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome (builtinStepOutcome s!"while evaluating call to {name}" (x, t)) := by
   rw [ordinary_builtin_is_step_application] at hcall
@@ -680,10 +683,10 @@ theorem count_one_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (en
 /-- The success case of `count_one_builtin`: on a canonical result, `repeat(1)` IS the call value
     at its value boundary. -/
 theorem count_one_builtin_ok (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List Nat) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin b)), s₁))
     (out : CountedResult) (t : EvalState) (hcan : out.fst.normalize = out.fst)
-    (hcall : (evalSuppliedCallCounted origin (.builtin b) (cells.map fun c => (c, none)) ctx env name).runState s₁ = (.ok out, t)) :
+    (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (.ok out, t)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (reCountValueBoundary out), pushCompleted t [out.fst]) := by
   rw [count_one_builtin step ctx env name cells s s₁ b origin hi (.ok out) t nofun hcall]
@@ -752,7 +755,7 @@ theorem count_application_value (args : List ResolvedArgumentAlgorithm) (ctx : E
 /-- The count step's specified result: the collection's length, with one completed numeric slot
     appended to the state left by collection argument binding. -/
 theorem count_one_count_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (cells : List Nat) (s s₁ t : EvalState) (bound : BoundSequenceBuiltinArguments)
+    (name : String) (cells : List NeedSupply.Sourced) (s s₁ t : EvalState) (bound : BoundSequenceBuiltinArguments)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .countBuiltin)), s₁))
     (hb : (evalUnbounded (.bindSequenceBuiltinArguments .countBuiltin {} (stepArguments cells) ctx env)).runState s₁ =
       (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) :
@@ -802,14 +805,15 @@ theorem if_application_value (cond yes no : ResolvedArgumentAlgorithm) (ctx : Ev
         rw [EvalM.bind_runState, hyes]
         rfl)
 
-/-- One source-free argument backed by an already supplied cell, as in `stepArguments`. -/
-def stepCellArgument (c : Nat) : ResolvedArgumentAlgorithm :=
-  { algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some c }
+/-- One argument backed by an already supplied cell, with that cell's written slot, as in
+    `stepArguments`. -/
+def stepCellArgument (c : NeedSupply.Sourced) : ResolvedArgumentAlgorithm :=
+  { algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some c.1, source? := c.2 }
 
 /-- The lazy `if` step has the selected branch's value. Canonical selected values include all
     scalar results; the unselected branch may fail or diverge. -/
 theorem count_one_if_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (c y n : Nat) (s s₁ s₂ t : EvalState) (flag : Bool) (out : CountedResult)
+    (name : String) (c y n : NeedSupply.Sourced) (s s₁ s₂ t : EvalState) (flag : Bool) (out : CountedResult)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .ifBuiltin)), s₁))
     (hc : (evalUnbounded (.evalArgumentValue (stepCellArgument c) ctx env)).runState s₁ = (.ok (.bool flag), s₂))
     (hb : (evalUnbounded (.evalArgumentValueCounted (stepCellArgument (if flag then y else n)) ctx env)).runState s₂ = (.ok out, t))
@@ -856,7 +860,7 @@ theorem StepAgreement.forward {wrap : Error → Error} {L L' : Except Error (Lis
     the alias step round and the target step round, from the resolved state, complete together
     and are then equal. -/
 theorem alias_loop_forwards (p : Option ScopeCtx) (o : List Expr) (pr : List PropDef) (tg : Expr)
-    (d : Option PropertyIdentity) (rf : Bool) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat)
+    (d : Option PropertyIdentity) (rf : Bool) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced)
     (name : String) (s : EvalState) (target : Algorithm) (s' : EvalState)
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s = (.ok target, s')) :
     Forwards ((runNeedStepSlots (.alias p o pr tg d rf) ctx env cells name).runState s)
@@ -911,9 +915,9 @@ theorem alias_user_step_agreement (p : Option ScopeCtx) (o : List Expr) (pr : Li
     (target : Algorithm) (s' : EvalState)
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s = (.ok target, s'))
     (h : UserStep target) (hrows : UserRowsBounded target ctx env ((c :: cs).map Prod.fst) s') :
-    StepAgreement id ((runNeedStepSlots (.alias p o pr tg d rf) ctx env ((c :: cs).map Prod.fst) name).runState s)
+    StepAgreement id ((runNeedStepSlots (.alias p o pr tg d rf) ctx env (c :: cs) name).runState s)
       ((evalSuppliedCallCounted origin (.alias p o pr tg d rf) (c :: cs) ctx env name).runState s) := by
-  have hag := user_step_agreement target h ctx env _ name s' hrows
+  have hag := user_step_agreement target h ctx env (c :: cs) name s' hrows
   have hO := alias_call_forwards origin p o pr tg d rf (c :: cs) ctx env name s target s' hres
   obtain ⟨p', pp, o', pr', e, rows, d', rfl⟩ := h.user
   rw [ordinary_user_of_nonempty] at hO
@@ -929,11 +933,11 @@ theorem count_one_alias_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     (hi : (invokeNeed step).runState s = (.ok (some (.alias p o pr tg d rf)), s₁))
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s₁ = (.ok target, s'))
     (h : UserStep target) (hr : RowsBy scalarRow target) (v : CountedResult) :
-    (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 ((c :: cs).map Prod.fst)).runState s = (.ok v, u)) ↔
+    (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 (c :: cs)).runState s = (.ok v, u)) ↔
       (∃ t, (evalSuppliedCallCounted origin (.alias p o pr tg d rf) (c :: cs) ctx env name).runState s₁ = (.ok v, t)) := by
   have hag := alias_user_step_agreement p o pr tg d rf origin c cs ctx env name s₁ target s' hres h
     (userRowsBounded_of_valueRows target hr.value_of_scalar ctx env _ s')
-  have hL := alias_loop_forwards p o pr tg d rf ctx env ((c :: cs).map Prod.fst) name s₁ target s' hres
+  have hL := alias_loop_forwards p o pr tg d rf ctx env (c :: cs) name s₁ target s' hres
   rw [repeat_one_round step ctx env name _ s s₁ _ hi]
   refine value_iff_of_agreement hag (fun ys t hl => ?_) v
   have hc' := hL.completes.1 (by rw [hl]; nofun)
@@ -944,17 +948,17 @@ theorem count_one_alias_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     a builtin: whatever completed outcome the ordinary call of the ALIAS over the same cells has,
     the one-round `repeat` is the builtin step outcome of it, exactly as for the builtin itself. -/
 theorem count_one_alias_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-    (name : String) (cells : List Nat) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr)
+    (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr)
     (pr : List PropDef) (tg : Expr) (d : Option PropertyIdentity) (rf : Bool) (origin : CalleeOrigin)
     (b : Builtin) (s' : EvalState)
     (hi : (invokeNeed step).runState s = (.ok (some (.alias p o pr tg d rf)), s₁))
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s₁ = (.ok (.builtin b), s'))
     (x : Except Error CountedResult) (t : EvalState) (hx : x ≠ .error .fuelExhausted)
-    (hcall : (evalSuppliedCallCounted origin (.alias p o pr tg d rf) (cells.map fun c => (c, none)) ctx env name).runState s₁ = (x, t)) :
+    (hcall : (evalSuppliedCallCounted origin (.alias p o pr tg d rf) cells ctx env name).runState s₁ = (x, t)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome (builtinStepOutcome s!"while evaluating call to {name}" (x, t)) := by
-  have hO := alias_call_forwards origin p o pr tg d rf (cells.map fun c => (c, none)) ctx env name s₁ _ s' hres
-  have hOc : ((evalSuppliedCallCounted origin (.alias p o pr tg d rf) (cells.map fun c => (c, none)) ctx env name).runState s₁).1 ≠
+  have hO := alias_call_forwards origin p o pr tg d rf cells ctx env name s₁ _ s' hres
+  have hOc : ((evalSuppliedCallCounted origin (.alias p o pr tg d rf) cells ctx env name).runState s₁).1 ≠
       .error .fuelExhausted := by rw [hcall]; exact hx
   have hcall' := (hO.eq (hO.completes.1 hOc)).symm.trans hcall
   rw [ordinary_builtin_is_step_application] at hcall'

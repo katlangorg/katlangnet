@@ -1,3 +1,5 @@
+using System.Reflection;
+using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
 using KatLang.Rendering;
@@ -407,6 +409,182 @@ public partial class LoopStepCallableDispatchTests
         Assert.Equal(callFrames, loopFrames.Skip(1).ToArray());
     }
 
+    // ── 3b. Round 1 keeps the captured call's written argument slots ───────────────────────────
+
+    private const string Inc = "Inc(x) = x + 1\n";
+    private const string Fam = "Fam(0) = 1\nFam(1) = 2\n";
+    private const string Head = "Head(x, *rest) = x\n";
+    private const string RepeatFrame = "while evaluating call to repeat";
+    private const string WhileFrame = "while evaluating call to while";
+
+    /// <summary>
+    /// A loop whose step is a captured BUILTIN call with a failing argument, split so the direct call can be
+    /// written at the SAME columns: definitions, the enclosing head, the text before and after the step call,
+    /// the step call, the invocation, and the loop's own frame. Explicit heads (<c>G(z)</c>, <c>F(v)</c>)
+    /// keep formula lifting out of the picture: nothing lifts into a written parameter list.
+    /// </summary>
+    public static TheoryData<string, string, string, string, string, string, string> BuiltinStepRoundOne() => new()
+    {
+        // A written block: its OWN unresolved implicit parameter.
+        { "", "G(z) = ", "repeat(", "count({ q + 1 })", ", 1)", "\nG(0)", RepeatFrame },
+        { "", "G(z) = ", "while(", "count({ q + 1 })", ")", "\nG(0)", WhileFrame },
+        // A parameterized property: its own arity contract, named.
+        { Inc, "G(z) = ", "repeat(", "count(Inc)", ", 1)", "\nG(0)", RepeatFrame },
+        { Inc, "G(z) = ", "while(", "count(Inc)", ")", "\nG(0)", WhileFrame },
+        // `take` has two parameters and received two: the failure is its first argument's, never `take`'s.
+        { Inc, "G(z) = ", "repeat(", "take(Inc, 1)", ", 1)", "\nG(0)", RepeatFrame },
+        // A clause family: named by its reference, never the anonymous 'conditional'.
+        { Fam, "G(z) = ", "repeat(", "count(Fam)", ", 1)", "\nG(0)", RepeatFrame },
+        { Fam, "G(z) = ", "while(", "count(Fam)", ")", "\nG(0)", WhileFrame },
+        // The parameter route: the slot written in the captured call is the parameter read `v`.
+        { Inc, "F(v) = ", "repeat(", "count(v)", ", 1)", "\nF(Inc)", RepeatFrame },
+        { Fam, "F(v) = ", "while(", "count(v)", ")", "\nF(Fam)", WhileFrame },
+        // A minimum-arity signature, a selecting builtin, and the dot spelling of the loop.
+        { Head, "G(z) = ", "repeat(", "first(Head)", ", 1)", "\nG(0)", RepeatFrame },
+        { Inc, "G(z) = ", "", "count(Inc)", ".repeat(1)", "\nG(0)", "while evaluating dotCall .repeat of count(...)" },
+        { "", "G(z) = ", "", "count({ q + 1 })", ".while", "\nG(0)", "while evaluating dotCall .while of count(...)" },
+        // Inline and named callable aliases report their target (FA-OQ-1); a navigated member its path.
+        { Inc, "G(z) = ", "repeat(", "count({ Inc })", ", 1)", "\nG(0)", RepeatFrame },
+        { "Box = {\n  public Inc(x) = x + 1\n}\n", "G(z) = ", "repeat(", "count(Box.Inc)", ", 1)", "\nG(0)", RepeatFrame },
+        // An alias of a builtin is the builtin step (the loop normalizes it once).
+        { Inc + "Cnt = count\n", "G(z) = ", "repeat(", "Cnt(Inc)", ", 1)", "\nG(0)", RepeatFrame },
+        // Control: a value-only argument names no callable, so its own failure was always the direct call's.
+        { "", "G(z) = ", "repeat(", "count((1 / 0))", ", 1)", "\nG(0)", RepeatFrame },
+    };
+
+    /// <summary>
+    /// ROUND 1 OF A BUILTIN STEP FAILS AS THE DIRECT CALL (ARGUMENT BLAME, November 2026). The loop's initial
+    /// state is the captured call's own supply with the slots WRITTEN for its cells
+    /// (<c>Evaluator.PrepareLoopInitialState</c>), so the builtin's arguments in the first round are the
+    /// ones the direct call builds: the same error code, innermost kind, message, inner frames and blamed
+    /// span, the loop adding exactly its own frame after the enclosing call's. Before this the first round
+    /// passed bare cells, and a callable-bearing argument's failed VALUE demand was reported through the
+    /// anonymous shape — a spanless <c>ArityMismatch</c> rendered as "Property 'count' expects 1 parameter"
+    /// (false for <c>take</c>, which received its two arguments), or "No matching branch for 'conditional'".
+    /// Lean: <c>metaLoopCaptureSourced</c>, <c>runNeedStepWith</c>; <c>CoreTests/LoopSteps.lean</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(BuiltinStepRoundOne))]
+    public async Task BuiltinStepRoundOne_FailsAsTheDirectCall(
+        string definitions, string head, string before, string step, string after, string invocation, string loopFrame)
+    {
+        var loop = definitions + head + before + step + after + invocation;
+        // The direct call, with its step at the loop's columns: positions are comparable exactly.
+        var call = definitions + head + new string(' ', before.Length) + step + invocation;
+
+        var (looped, _) = await AllRoutesAsync(loop);
+        var (called, _) = await AllRoutesAsync(call);
+        Assert.Equal("err", looped.Kind);
+        Assert.Equal("err", called.Kind);
+
+        // The same public code and innermost kind ...
+        Assert.Equal(called.Causes, looped.Causes);
+
+        // ... and the same code, message and span, the loop's frame inserted after the enclosing call's.
+        var enclosing = "while evaluating call to " + head[..head.IndexOf('(')] + ": ";
+        var direct = Assert.Single(called.Errors);
+        var at = direct.IndexOf(enclosing, StringComparison.Ordinal);
+        Assert.True(at >= 0, direct);
+        Assert.Equal(direct.Insert(at + enclosing.Length, loopFrame + ": "), Assert.Single(looped.Errors));
+
+        // The failure is never attributed to the builtin step itself.
+        foreach (var builtin in new[] { "count", "take", "first" })
+            Assert.DoesNotContain($"Property '{builtin}'", Assert.Single(looped.Errors), StringComparison.Ordinal);
+        Assert.DoesNotContain("'conditional'", Assert.Single(looped.Errors), StringComparison.Ordinal);
+
+        // The structured chain: the direct call's frames, with the loop's frame after the leading one.
+        var loopFrames = Frames(GenericError(loop));
+        var callFrames = Frames(GenericError(call));
+        Assert.Equal(enclosing[..^2], callFrames[0]);
+        Assert.Equal([callFrames[0], loopFrame, .. callFrames.Skip(1)], loopFrames);
+        Assert.Equal(Innermost(GenericError(call)).GetType(), Innermost(GenericError(loop)).GetType());
+    }
+
+    /// <summary>The audit's reproductions, pinned by error code and subject (the direct call's, verbatim).</summary>
+    [Theory]
+    [InlineData("G(z) = repeat(count({ q + 1 }), 1)\nG(0)", "UnresolvedImplicitParams", "while evaluating call to count: Identifier 'q' does not resolve")]
+    [InlineData(Inc + "G(z) = repeat(count(Inc), 1)\nG(0)", "ArityMismatch", "while evaluating call to count: Property 'Inc' expects 1 parameter, but was called with 0 arguments.")]
+    [InlineData(Inc + "G(z) = repeat(take(Inc, 1), 1)\nG(0)", "ArityMismatch", "while evaluating call to take: Property 'Inc' expects 1 parameter, but was called with 0 arguments.")]
+    [InlineData(Fam + "G(z) = repeat(count(Fam), 1)\nG(0)", "NoMatchingBranch", "while evaluating call to count: No matching branch for 'Fam'")]
+    [InlineData(Inc + "G(z) = while(count(Inc))\nG(0)", "ArityMismatch", "while evaluating call to count: Property 'Inc' expects 1 parameter, but was called with 0 arguments.")]
+    [InlineData(Inc + "F(v) = repeat(count(v), 1)\nF(Inc)", "ArityMismatch", "while evaluating call to count: Property 'Inc' expects 1 parameter, but was called with 0 arguments.")]
+    // A builtin forwarded through a parameter, over a transported collector slice: each cell keeps its own
+    // written slot. (The step's frame names the argument written for its cell, `count`, LOOP-08; the direct
+    // call `f(s*)` names the written callee `f` — a naming difference of the two frames, not of the failure.)
+    [InlineData(Inc + "F(f, *s) = repeat(f(s*), 1)\nF(count, Inc)", "ArityMismatch", "while evaluating call to count: Property 'Inc' expects 1 parameter, but was called with 0 arguments.")]
+    [InlineData("G(z) = repeat(count((1 / 0)), 1)\nG(0)", "DivisionByZero", "while evaluating call to count: Division by zero")]
+    public async Task BuiltinStepRoundOne_ReportsTheArgumentsOwnContract(string source, string code, string subject)
+    {
+        var (observation, _) = await AllRoutesAsync(source);
+        Assert.Equal("err", observation.Kind);
+        var error = Assert.Single(observation.Errors);
+        Assert.StartsWith(code + ": ", error, StringComparison.Ordinal);
+        Assert.Contains(subject, error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Property 'count'", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Property 'take'", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("'conditional'", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Only the FAILURE of round 1 reads a written slot: values, effects and later rounds are unchanged.
+    /// A second round runs over Ready cells, which have none.
+    /// </summary>
+    [Theory]
+    [InlineData("G(z) = repeat(count([1, 2]), 2)\nG(0)", "1", "")]
+    [InlineData("G(z) = repeat(count([1, 2]), 1)\nG(0)", "2", "")]
+    [InlineData("G(z) = repeat(take(trace([1, 2, 3]), trace(2)), 1)\nG(0)", "L[1, 2]", "trace(L[1, 2, 3]),trace(2)")]
+    [InlineData("Only(*xs) = xs\nG(z) = repeat(count(Only), 2)\nG(0)", "1", "")]
+    [InlineData(Inc + "G(z) = repeat(map([1, 2], Inc), 1)\nG(0)", "L[2, 3]", "")]
+    [InlineData("G(z) = while(first([false]))\nG(0)", "L[false]", "")]
+    public async Task BuiltinStepRoundOne_SuccessesAndLaterRounds_AreUnchanged(string source, string expected, string hostCalls)
+    {
+        var (observation, _) = await AllRoutesAsync(source);
+        Assert.Equal(("ok", expected), (observation.Kind, observation.Value));
+        Assert.Equal(hostCalls, string.Join(",", observation.HostCalls));
+    }
+
+    /// <summary>
+    /// The builtin arm takes ONE written slot per state cell or none at all: a list that is not parallel to
+    /// the state is an internal defect and fails loudly, never a blame of the wrong slot.
+    /// </summary>
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
+    public async Task BuiltinStepRoundOne_SlotListNotParallelToTheState_FailsLoudly(int slots, bool asynchronous)
+    {
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await InvokeBuiltinStepOverOneCell(new Expr?[slots], asynchronous));
+        Assert.Equal($"A loop state of 1 cell(s) carries {slots} written slot(s).", failure.Message);
+    }
+
+    /// <summary>A parallel slot list, and none at all (a later round's Ready cells), both run the step.</summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task BuiltinStepRoundOne_ParallelOrAbsentSlots_RunTheStep(bool withSlots, bool asynchronous)
+    {
+        var output = await InvokeBuiltinStepOverOneCell(withSlots ? new Expr?[1] : null, asynchronous);
+        Assert.True(output.IsOk);
+        Assert.Equal("1", SixRouteAgreement.Neutral(Assert.Single(output.Value)));
+    }
+
+    // `count` as a loop step over ONE Ready state cell, through the one step invocation.
+    private static ValueTask<EvalResult<IReadOnlyList<Result>>> InvokeBuiltinStepOverOneCell(IReadOnlyList<Expr?>? stateSources, bool asynchronous)
+    {
+        var method = typeof(Evaluator).GetMethod("InvokeLoopStepSupply", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var parameters = method.GetParameters();
+        var prepared = Activator.CreateInstance(Assert.Single(parameters, static parameter => parameter.Name == "prepared").ParameterType);
+        var stepName = Assert.Single(parameters, static parameter => parameter.Name == "stepName").ParameterType
+            .GetMethod("FromKnown", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, ["count"]);
+        IReadOnlyList<NeedCell> state = [NeedCell.Ready(new(new Result.Atom(7), 1))];
+        return (ValueTask<EvalResult<IReadOnlyList<Result>>>)method.Invoke(null,
+            [new Algorithm.Builtin(BuiltinId.count), prepared, state, stateSources, Evaluator.EvalCtx.Empty,
+                Array.Empty<(string, Result)>(), "repeat", stepName, false, asynchronous])!;
+    }
+
     [Theory]
     [InlineData("while(contains([1, 2], 3))", "ok", "S[L[1, 2], 3]")]
     [InlineData("while(contains([1, 2], 1))", "err", "Callable `contains(collection, item)` expects 2 arguments, but was called with 1 argument.")]
@@ -441,6 +619,15 @@ public partial class LoopStepCallableDispatchTests
         { "while(contains(trace([1, 2]), trace(3)))", "W(c, x) = contains(c, x)\nwhile(W(trace([1, 2]), trace(3)))" },
         { "while(first([()]))", "W(c) = first(c)\nwhile(W([()]))" },
         { "repeat(range(1, trace(3)), 1)", "W(a, b) = range(a, b)\nrepeat(W(1, trace(3)), 1)" },
+        // A callable-bearing argument whose VALUE demand fails in round 1 (ARGUMENT BLAME): the direct builtin
+        // step reports what its wrapper's parameter read reports — a block's own unresolved implicit
+        // parameter, a property's or a family's own contract — never an anonymous arity mismatch.
+        { "G(z) = repeat(count({ q + 1 }), 1)\nG(0)", "W(c) = count(c)\nG(z) = repeat(W({ q + 1 }), 1)\nG(0)" },
+        { Inc + "G(z) = repeat(count(Inc), 1)\nG(0)", Inc + "W(c) = count(c)\nG(z) = repeat(W(Inc), 1)\nG(0)" },
+        { Fam + "G(z) = repeat(count(Fam), 1)\nG(0)", Fam + "W(c) = count(c)\nG(z) = repeat(W(Fam), 1)\nG(0)" },
+        { Inc + "G(z) = repeat(take(Inc, 1), 1)\nG(0)", Inc + "W(c, n) = take(c, n)\nG(z) = repeat(W(Inc, 1), 1)\nG(0)" },
+        { Inc + "G(z) = while(count(Inc))\nG(0)", Inc + "W(c) = count(c)\nG(z) = while(W(Inc))\nG(0)" },
+        { "G(z) = while(count({ q + 1 }))\nG(0)", "W(c) = count(c)\nG(z) = while(W({ q + 1 }))\nG(0)" },
     };
 
     [Theory]

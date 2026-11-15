@@ -527,7 +527,7 @@ theorem disc_mapLoop (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (
   | cons i rest ih => unfold EvalBody.evalMapCounted.mapLoop; disc_tac_base
 
 theorem disc_repeatLoop (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm)
-    (stepName : String) (remaining : Nat) (cells : List Nat) :
+    (stepName : String) (remaining : Nat) (cells : List NeedSupply.Sourced) :
     Disciplined (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells) := by
   induction remaining generalizing cells with
   | zero => unfold EvalBody.applyBuiltinCounted.repeatLoop; disc_tac_base
@@ -651,7 +651,7 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | disc_unfold_head
   | (with_reducible apply DiscAt.of_disc))))
 
-theorem EvalBody.whileLoop_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     Disciplined (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; disc_tac
 
@@ -808,11 +808,11 @@ theorem EvalBody.argumentNeed_disciplined (rec : EvalRec) (hrec : ∀ c, Discipl
     Disciplined (EvalBody.argumentNeed rec arg ctx env) := by
   unfold EvalBody.argumentNeed; disc_tac
 
-theorem EvalBody.runNeedStepSlots_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Disciplined (EvalBody.runNeedStepSlots rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; disc_tac
 
-theorem EvalBody.runNeedWhileRound_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     Disciplined (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; disc_tac
 

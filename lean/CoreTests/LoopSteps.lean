@@ -108,7 +108,10 @@ private def lsProgram (rows : List KatLang.Expr) : KatLang.Expr :=
     ("Cnt", .alias none [] [] (resolve "count")), ("Cnt2", .alias none [] [] (resolve "Cnt")),
     -- Run1(f, s) = repeat(f(s), 1); Run0(f, s) = repeat(f(s), 0)
     ("Run1", alg ["f", "s"] [] [] [.call (resolve "repeat") [.call (.param "f") [.param "s"], .num 1]]),
-    ("Run0", alg ["f", "s"] [] [] [.call (resolve "repeat") [.call (.param "f") [.param "s"], .num 0]])
+    ("Run0", alg ["f", "s"] [] [] [.call (resolve "repeat") [.call (.param "f") [.param "s"], .num 0]]),
+    -- Inc(x) = x + 1; RunCount(v) = repeat(count(v), 1)
+    ("Inc", alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),
+    ("RunCount", alg ["v"] [] [] [.call (resolve "repeat") [.call (resolve "count") [.param "v"], .num 1]])
   ] rows)
 
 private def lsCall (callee : String) (args : List KatLang.Expr) : KatLang.Expr :=
@@ -246,5 +249,99 @@ where
     | e => e
 
 #guard lsOneIterationEqualsTheCall
+
+--------------------------------------------------------------------------------
+-- ROUND 1 KEEPS THE CAPTURED CALL'S WRITTEN ARGUMENT SLOTS (November 2026)
+--------------------------------------------------------------------------------
+-- The loop's initial state is the captured call's SOURCED supply
+-- (`metaLoopCaptureSourced`: each original argument cell with the slot written
+-- for it), and the first round hands it to the step as the ordinary dispatch
+-- does (`runNeedStepWith`, `evalSuppliedCallCounted`). A builtin step's VALUE
+-- demand of a callable-bearing argument is therefore judged by the slot the
+-- direct call judges (`zeroArgumentDemandError?`): a written block reports its
+-- OWN unresolved implicit parameters, a clause family is named by its reference,
+-- a parameterized property keeps its property context. Before this, round 1
+-- passed bare cells: a block and a property were a bare `arityMismatch 1 0`
+-- under the builtin's frame, and a family was `noMatchingBranch "conditional"`.
+-- Only the failure of round 1 changes; no value, effect or later round does.
+--
+-- C#: `LoopStepCallableDispatchTests.BuiltinStepRoundOne_*`, spec
+-- `loop-step-builtin-argument-blame`. Laws: `ordinary_builtin_is_step_application`,
+-- `count_one_builtin` (`KatLangArityLaws/FiniteLoop*.lean`).
+
+-- { q + 1 }: a written block whose one implicit parameter is `q`.
+private def lsBlock : KatLang.Expr :=
+  .algorithmExpr (alg ["q"] [] [] [.binary .add (.param "q") (.num 1)])
+
+private def lsInnermostIsUnresolvedImplicitParams (names : List String) : Error -> Bool
+  | .withContext _ inner => lsInnermostIsUnresolvedImplicitParams names inner
+  | .unresolvedImplicitParams actual => actual == names
+  | _ => false
+
+-- A builtin `count` step over a BLOCK cell captured through `metaLoopCaptureSourced`:
+-- the block's own `unresolvedImplicitParams`, under `count`'s frame, as `count({ q + 1 })`.
+#guard lsFails [lsRepeat (resolve "count") 1 [lsBlock]] (lsInnermostIsUnresolvedImplicitParams ["q"])
+#guard lsFails [lsRepeat (resolve "count") 1 [lsBlock]] (hasContext "while evaluating call to count")
+#guard lsFails [lsCall "count" [lsBlock]] (lsInnermostIsUnresolvedImplicitParams ["q"])
+#guard lsFails [lsWhile (resolve "count") [lsBlock]] (lsInnermostIsUnresolvedImplicitParams ["q"])
+
+-- Over a FAMILY cell: `noMatchingBranch` naming the family, never the anonymous "conditional".
+#guard lsFails [lsRepeat (resolve "count") 1 [resolve "F"]] (innermostIsNoMatchingBranch "F")
+#guard lsFails [lsWhile (resolve "count") [resolve "F"]] (innermostIsNoMatchingBranch "F")
+#guard lsFails [lsCall "count" [resolve "F"]] (innermostIsNoMatchingBranch "F")
+#guard !lsFails [lsRepeat (resolve "count") 1 [resolve "F"]] (innermostIsNoMatchingBranch "conditional")
+
+-- Over a parameterized PROPERTY: its property-context arity mismatch — `Inc`'s contract, which
+-- no frame can present as the builtin's (`take` received its two arguments).
+#guard lsFails [lsRepeat (resolve "count") 1 [resolve "Inc"]]
+  (fun e => innermostIsArityMismatch 1 0 e && hasContext (KatLang.CtxMsg.property "Inc") e)
+#guard lsFails [lsRepeat (resolve "take") 1 [resolve "Inc", .num 1]]
+  (fun e => innermostIsArityMismatch 1 0 e && hasContext (KatLang.CtxMsg.property "Inc") e)
+
+/-- An error with its first frame `frame` removed. -/
+private def lsWithoutFrame (frame : String) : Error -> Error
+  | .withContext msg inner => if msg == frame then inner else .withContext msg (lsWithoutFrame frame inner)
+  | e => e
+
+/-- ROUND 1'S FAILURE IS THE DIRECT CALL'S, WHOLE: the loop's error with its own frame removed is
+    the direct call's error — every frame and the innermost payload, not only the innermost kind
+    (`lsOneIterationEqualsTheCall` compares the innermost error, which a missing property context
+    does not change). Blocks, families, properties, a two-parameter builtin, `first`, aliases of a
+    builtin, and the value-only control `(1 / 0)`, through `repeat`, `while` and the dot form. -/
+def lsRoundOneFailureIsTheDirectCalls : Bool :=
+  let cases : List (String × List KatLang.Expr) := [
+    ("count", [lsBlock]), ("count", [resolve "F"]), ("count", [resolve "Inc"]),
+    ("take", [resolve "Inc", .num 1]), ("first", [resolve "Inc"]), ("last", [lsBlock]),
+    -- an alias (chain) of a builtin is the builtin step over the same sourced supply
+    ("Cnt", [resolve "Inc"]), ("Cnt2", [lsBlock]),
+    ("count", [.binary .div (.num 1) (.num 0)])
+  ]
+  cases.all fun (callee, supply) =>
+    let direct := runResult (lsProgram [lsCall callee supply])
+    let same (loop : KatLang.Expr) (frame : String) : Bool :=
+      match runResult (lsProgram [loop]), direct with
+      | .error a, .error b => (repr (lsWithoutFrame frame a)).pretty == (repr b).pretty
+      | _, _ => false
+    same (lsRepeat (resolve callee) 1 supply) "while evaluating call to repeat"
+      && same (lsWhile (resolve callee) supply) "while evaluating call to while"
+      && same (.dotMember (.call (resolve callee) supply) "repeat" (resolve "repeat") (some [.num 1]))
+          "while evaluating dotCall .repeat of (call)"
+
+#guard lsRoundOneFailureIsTheDirectCalls
+
+-- The PARAMETER route: `RunCount(v) = repeat(count(v), 1)` against `C(c) = count(c)`. The slot
+-- written in the captured call is the parameter read `v`, whose cell transports `Inc`; both
+-- report `Inc`'s property-context mismatch under `count`'s frame.
+#guard match runResult (lsProgram [lsCall "RunCount" [resolve "Inc"]]), runResult (lsProgram [lsCall "C" [resolve "Inc"]]) with
+  | .error a, .error b =>
+      (repr (lsWithoutFrame "while evaluating call to repeat" (lsWithoutFrame "while evaluating call to RunCount" a))).pretty
+        == (repr (lsWithoutFrame "while evaluating call to C" b)).pretty
+  | _, _ => false
+
+-- Controls: values and later rounds are unchanged. Two rounds of `count` over a closed list
+-- (round 2 reads a Ready cell, which has no written slot), and a successful first round.
+#guard lsOk [lsRepeat (resolve "count") 2 [.listLiteral [.num 1, .num 2]]] (.atom 1)
+#guard lsOk [lsRepeat (resolve "count") 1 [.listLiteral [.num 1, .num 2]]] (.atom 2)
+#guard lsFails [lsRepeat (resolve "count") 1 [.binary .div (.num 1) (.num 0)]] innermostIsDivByZero
 
 end KatLangTests

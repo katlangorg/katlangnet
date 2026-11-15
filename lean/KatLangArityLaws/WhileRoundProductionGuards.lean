@@ -139,7 +139,7 @@ def famStep : Algorithm :=
 def famRound (n : Int) : Except Error (Option (List Result)) × EvalState :=
   (do
     let cell ← readyNeed (.atom n, 1)
-    runNeedWhileRound famStep { callStack := [preludeAlg] } [] [cell] "Fam" : EvalM _).runState EvalState.empty
+    runNeedWhileRound famStep { callStack := [preludeAlg] } [] [(cell, none)] "Fam" : EvalM _).runState EvalState.empty
 
 /-- NEGATIVE CONTROL: dispatch the family AGAIN for the transitions (a second selected body). -/
 def famRedispatch (n : Int) : Except Error (Option (List Result)) × EvalState :=
@@ -176,7 +176,7 @@ def famLocalStep : Algorithm :=
 def famLocalRound (n : Int) : Except Error (Option (List Result)) × EvalState :=
   (do
     let cell ← readyNeed (.atom n, 1)
-    runNeedWhileRound famLocalStep { callStack := [preludeAlg] } [] [cell] "FamLocal" :
+    runNeedWhileRound famLocalStep { callStack := [preludeAlg] } [] [(cell, none)] "FamLocal" :
       EvalM _).runState EvalState.empty
 
 /-- NEGATIVE CONTROL: select ONCE, then re-enter that very selected body between discovery

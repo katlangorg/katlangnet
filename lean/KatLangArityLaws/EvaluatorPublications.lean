@@ -1125,7 +1125,7 @@ theorem pub_mapLoop (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (i
   | cons i rest ih => unfold EvalBody.evalMapCounted.mapLoop; pub_tac_base
 
 theorem pub_repeatLoop (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm)
-    (stepName : String) (remaining : Nat) (cells : List Nat) :
+    (stepName : String) (remaining : Nat) (cells : List NeedSupply.Sourced) :
     PubDisc (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells) := by
   induction remaining generalizing cells with
   | zero => unfold EvalBody.applyBuiltinCounted.repeatLoop; pub_tac_base
@@ -1222,7 +1222,7 @@ macro "pub_tac" : tactic => `(tactic| without_info_trees ((try pub_unfold_rec) <
   | pub_unfold_head
   | (with_reducible apply PubAt.of_disc))))
 
-theorem EvalBody.whileLoop_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
+theorem EvalBody.whileLoop_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List NeedSupply.Sourced) :
     PubDisc (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; pub_tac
 
@@ -1372,11 +1372,11 @@ theorem EvalBody.argumentNeed_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (re
     PubDisc (EvalBody.argumentNeed rec arg ctx env) := by
   unfold EvalBody.argumentNeed; pub_tac
 
-theorem EvalBody.runNeedStepSlots_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedStepSlots_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     PubDisc (EvalBody.runNeedStepSlots rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedStepSlots EvalBody.runNeedStepWith; pub_tac
 
-theorem EvalBody.runNeedWhileRound_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (stepName : String) :
+theorem EvalBody.runNeedWhileRound_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) :
     PubDisc (EvalBody.runNeedWhileRound rec step ctx env cells stepName) := by
   unfold EvalBody.runNeedWhileRound EvalBody.runNeedStepWith; pub_tac
 

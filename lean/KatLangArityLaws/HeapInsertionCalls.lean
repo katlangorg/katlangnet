@@ -70,7 +70,7 @@ def shiftSupply (σ : Site) : SpreadSupply → SpreadSupply
 
 /-- The plan-side call of a production-side call: every need address among its arguments shifted. -/
 def shiftCall (σ : Site) : EvalCall → EvalCall
-  | .whileLoop step ctx env stepName cells => .whileLoop (shiftArgument σ step) (shiftCtx σ ctx) (shiftValEnv σ env) stepName (cells.map σ.addr)
+  | .whileLoop step ctx env stepName cells => .whileLoop (shiftArgument σ step) (shiftCtx σ ctx) (shiftValEnv σ env) stepName (shiftSourced σ cells)
   | .aliasStepIsRuntime step target ctx visited => .aliasStepIsRuntime step target (shiftCtx σ ctx) visited
   | .aliasValue wired ctx env => .aliasValue wired (shiftCtx σ ctx) (shiftValEnv σ env)
   | .resolveAliasChase followCarriers projectRuntime a ctx visited last => .resolveAliasChase followCarriers projectRuntime a (shiftCtx σ ctx) visited last
@@ -106,8 +106,8 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .evalNeedFamilySupply callee cells ctx env calleeName => .evalNeedFamilySupply callee (cells.map σ.addr) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .invokeNeed arg => .invokeNeed (shiftArgument σ arg)
   | .argumentNeed arg ctx env => .argumentNeed (shiftArgument σ arg) (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .runNeedStepSlots step ctx env cells stepName => .runNeedStepSlots step (shiftCtx σ ctx) (shiftValEnv σ env) (cells.map σ.addr) stepName
-  | .runNeedWhileRound step ctx env cells stepName => .runNeedWhileRound step (shiftCtx σ ctx) (shiftValEnv σ env) (cells.map σ.addr) stepName
+  | .runNeedStepSlots step ctx env cells stepName => .runNeedStepSlots step (shiftCtx σ ctx) (shiftValEnv σ env) (shiftSourced σ cells) stepName
+  | .runNeedWhileRound step ctx env cells stepName => .runNeedWhileRound step (shiftCtx σ ctx) (shiftValEnv σ env) (shiftSourced σ cells) stepName
   | .evalAlgOutputCore a ctx env => .evalAlgOutputCore a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalAlgOutput a ctx env => .evalAlgOutput a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalProgramOutput a ctx env => .evalProgramOutput a (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -177,7 +177,7 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
 
 /-- The plan-side result of a production-side result of the call `c`. -/
 def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
-  | .whileLoop .., r => r.map σ.addr
+  | .whileLoop .., r => shiftSourced σ r
   | .aliasStepIsRuntime .., r => r
   | .aliasValue .., r => shiftCounted σ r
   | .resolveAliasChase .., r => r

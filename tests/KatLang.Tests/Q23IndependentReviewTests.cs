@@ -21,12 +21,13 @@ public partial class LoopStepCallableDispatchTests
             () => throw new InvalidOperationException("unused step VALUE"),
             () => { projections++; return EvalResult<Algorithm?>.Ok(new Algorithm.Builtin(BuiltinId.count)); });
         // META-S3-3: the native kernel takes its logical components — the step argument (a captured
-        // plan's callee cell), the validated remaining count and the initial state cells.
+        // plan's callee cell), the validated remaining count, the initial state cells and the slots
+        // written for them in the captured call (none here: the state is a Ready cell).
         var stepArgument = new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = step };
         IReadOnlyList<NeedCell> state = [NeedCell.Ready(new(new Result.Atom(7), 1))];
         var method = typeof(Evaluator).GetMethod("EvalNeedLoop", BindingFlags.Static | BindingFlags.NonPublic)!;
         var invocation = (ValueTask<EvalResult<Evaluator.CountedResult>>)method.Invoke(null,
-            [BuiltinId.@repeat, stepArgument, 0L, state, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(), asynchronous])!;
+            [BuiltinId.@repeat, stepArgument, 0L, state, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(), null, asynchronous])!;
         var result = await invocation;
         Assert.True(result.IsOk);
         Assert.Equal("7", SixRouteAgreement.Neutral(result.Value.Value));
@@ -253,9 +254,11 @@ public partial class LoopStepCallableDispatchTests
             : new Algorithm.Builtin(BuiltinId.count);
         var method = typeof(Evaluator).GetMethod("InvokeLoopStepSupply", BindingFlags.NonPublic | BindingFlags.Static)!;
         var preparedType = method.GetParameters()[1].ParameterType;
+        // The state cell has no written slot (`stateSources: null`): it is not a captured call's own cell.
+        var stepNameType = Assert.Single(method.GetParameters(), static parameter => parameter.Name == "stepName").ParameterType;
         var invocation = (ValueTask<EvalResult<IReadOnlyList<Result>>>)method.Invoke(null,
-            [step, Activator.CreateInstance(preparedType), new[] { cell }, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(),
-                "repeat", method.GetParameters()[6].ParameterType.GetMethod("FromKnown", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, ["F"]),
+            [step, Activator.CreateInstance(preparedType), new[] { cell }, null, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(),
+                "repeat", stepNameType.GetMethod("FromKnown", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, ["F"]),
                 false, true])!;
         var joined = invocation.AsTask();
         Assert.False(joined.IsCompleted);

@@ -340,7 +340,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
     [
         new("Evaluator.InvocationPlan.PrepareSupply", 0, "15f43bca98b410b5", AC, "the plan route"),
         new("Evaluator.InvocationPlan.PrepareSupply", 1, "fe19b0079f3927da", AC, "the plan supply"),
-        new("Evaluator.EvalMetaLoop", 0, "f39936b759796c95", AC, "the argument view's cells"),
+        new("Evaluator.EvalMetaLoop", 0, "711e29be2df977ac", AC, "the captured call's sourced initial state"),
         new("Evaluator.FormSpreadSupplySlot", 0, "a3fb71e714ecc550", AC, "the written collector slice"),
         new("Evaluator.FormSpreadSupplySlot", 1, "77f3dfbbf300143d", AC, "the spread operand value"),
         new("Evaluator.FormSpreadSupplySlot", 2, "01da8d2ec5ad13d5", AC, "the argument view's cells"),
@@ -360,7 +360,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalNeedCallbackBody", 2, "a1733cfe57da7715", AC, "the user callback's driver"),
         new("Evaluator.EvalNeedLoop", 0, "c613b240dc6307dc", RA, "the asynchronous step projection takes ctx for its adapter"),
         new("Evaluator.EvalNeedLoop", 1, "83cadc7942d61e81", AC, "the alias step's target"),
-        new("Evaluator.EvalNeedLoop", 2, "10720252dd093ced", OP, "only the synchronous run attempts the loop optimizer"),
+        new("Evaluator.EvalNeedLoop", 2, "aabad8df74d12744", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step)"),
         new("Evaluator.EvalNeedLoop", 3, "c3141958221e536e", OP, "the loop diagnostics report the pinned strategy for the asynchronous run"),
     ];
 
@@ -429,6 +429,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.PlanCalleeCellAsync ~ Evaluator.PlanCalleeCell",
         "Evaluator.InvokeCallReferenceValueAsync ~ Evaluator.InvokeCallReferenceValue",
         "Evaluator.PrepareArgumentViewAsync ~ Evaluator.PrepareArgumentView",
+        "Evaluator.PrepareLoopInitialStateAsync ~ Evaluator.PrepareLoopInitialState",
         "Evaluator.EvalArgumentViewBuiltinAsync ~ Evaluator.EvalArgumentViewBuiltin",
         "Evaluator.RunPlanPreparationAsync ~ Evaluator.RunPlanPreparationCounted",
         "Evaluator.EvalSuspendedValueAsync ~ Evaluator.EvalSuspendedValue",

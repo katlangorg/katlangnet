@@ -721,7 +721,7 @@ conclusion. -/
     is given (VALUE demand, CALLABLE projection, link channels, argument views) refuses an
     out-of-range address itself, so its contract places no bound on that address. -/
 def CallPre : EvalCall → Array NeedCell → Prop
-  | .whileLoop step ctx env _ cells => fun h => RAV h step ∧ ValidCtx h ctx ∧ VEV h env ∧ ValidAddresses h cells
+  | .whileLoop step ctx env _ cells => fun h => RAV h step ∧ ValidCtx h ctx ∧ VEV h env ∧ ValidSourced h cells
   | .aliasStepIsRuntime _ _ ctx _ => fun h => ValidCtx h ctx
   | .aliasValue _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .resolveAliasChase _ _ _ ctx _ _ => fun h => ValidCtx h ctx
@@ -758,8 +758,8 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .evalNeedFamilySupply _ cells ctx env _ => fun h => ValidAddresses h cells ∧ ValidCtx h ctx ∧ VEV h env
   | .invokeNeed arg => fun h => RAV h arg
   | .argumentNeed arg ctx env => fun h => RAV h arg ∧ ValidCtx h ctx ∧ VEV h env
-  | .runNeedStepSlots _ ctx env cells _ => fun h => ValidCtx h ctx ∧ VEV h env ∧ ValidAddresses h cells
-  | .runNeedWhileRound _ ctx env cells _ => fun h => ValidCtx h ctx ∧ VEV h env ∧ ValidAddresses h cells
+  | .runNeedStepSlots _ ctx env cells _ => fun h => ValidCtx h ctx ∧ VEV h env ∧ ValidSourced h cells
+  | .runNeedWhileRound _ ctx env cells _ => fun h => ValidCtx h ctx ∧ VEV h env ∧ ValidSourced h cells
   | .evalAlgOutputCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalAlgOutput _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalProgramOutput _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
@@ -831,7 +831,7 @@ def CallPre : EvalCall → Array NeedCell → Prop
 
 /-- The result contract of an evaluator call. -/
 def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
-  | .whileLoop .., cells, h => ValidAddresses h cells
+  | .whileLoop .., cells, h => ValidSourced h cells
   | .aliasStepIsRuntime .., _, _ => True
   | .aliasValue .., r, h => CRV h r
   | .resolveAliasChase .., _, _ => True

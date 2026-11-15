@@ -228,9 +228,10 @@ theorem cf_next_drops_flag (x y : Result) (rest : List Result) :
     whose verdict is `false` FINISHES the loop with exactly the cells that entered it — on the
     first round, the original initial cells (R1: zero accepted transitions); their final VALUE
     materialization is the loop's separate LOOP-07 boundary (`demandNeedRecursive`, then
-    `loopResultCounted`). Nothing is allocated for a candidate next state. -/
+    `loopResultCounted`). Nothing is allocated for a candidate next state. The cells are the
+    round's SOURCED state, returned with the written slots they entered with. -/
 theorem cf3_false_round_keeps_entering_cells
-    (round : List Nat → EvalM (Option (List Result))) (cells : List Nat) (s t : EvalState)
+    (round : List NeedSupply.Sourced → EvalM (Option (List Result))) (cells : List NeedSupply.Sourced) (s t : EvalState)
     (h : (round cells).runState s = (.ok none, t)) :
     (WhileRound.advance round cells).runState s = (.ok (.inl cells), t) := by
   simp only [WhileRound.advance, bind_run, h]; rfl
