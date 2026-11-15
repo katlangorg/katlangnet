@@ -33,7 +33,9 @@ public class StackHopTests
         var hop = new StackHop();
         Assert.False(hop.IsCompleted);
         Assert.False(hop.GetAwaiter().IsCompleted);
+#pragma warning disable xUnit1031 // StackHop.GetResult is the awaiter contract under test: an empty method that cannot block.
         hop.GetResult();
+#pragma warning restore xUnit1031
 
         var local = new AsyncLocal<string?>();
         int startThread = 0, posts = -1;

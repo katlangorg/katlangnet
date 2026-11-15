@@ -247,6 +247,8 @@ public class LanguageSpecRunnerTests
             "open-reference-private-member-keeps-private-names",
             "open-target-head-must-name-an-algorithm",
             "open-inline-headed-path-must-resolve",
+            // E-18 owner decision Q3 (2026-11-14): a block-headed reference resolves like a named one.
+            "open-block-headed-reference-target-must-resolve",
             "open-after-clause-definition-rejected",
             "grace-in-branch-deconstruction-rejected",
             // Q-16 G-O (2026-10-07): Grace eligibility is a front-end decision of the marker's

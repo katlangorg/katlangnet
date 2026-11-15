@@ -24,9 +24,15 @@ public class LocalMemberAccessTests
     [InlineData("m")]
     public async Task NavigatedOpenCapture_PreservesOwnerAndCallBoundary(string outerParameter)
     {
-        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public Lib = {{ public X = n }}\n 0 }}\n P = if(false, {{ open Mid.Lib\n X }}, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
+        // Read where it runs, the capture is refused: neither the outer call nor a same-named outer parameter owns it.
+        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public Lib = {{ public X = n }}\n 0 }}\n P = if(true, {{ open Mid.Lib\n X }}, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
         RunFailure(source, KatLangErrorCode.LocalOnlyProperty);
         await AssertSyncAndAsyncAgree(source);
+        // In a branch that does not run, a read that can never pass where it is written requires nothing of `P`
+        // (E-18 owner decision Q1, 2026-11-14; formerly `P` carried a requirement no call could supply and was refused).
+        var untaken = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public Lib = {{ public X = n }}\n 0 }}\n P = if(false, {{ open Mid.Lib\n X }}, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
+        Assert.Equal("10", Display(untaken));
+        await AssertSyncAndAsyncAgree(untaken);
         var inside = $"Outer({outerParameter}) = {{\n public Mid(n) = {{ public Lib = {{ public X = n }}\n Read = {{ open Outer.Mid.Lib\n X }}\n Read }}\n Mid(7)\n}}\nOuter(5)";
         Assert.Equal("7", Display(inside));
         await AssertSyncAndAsyncAgree(inside);
@@ -37,11 +43,18 @@ public class LocalMemberAccessTests
     [InlineData("m")]
     public async Task NavigatedCapture_CannotBeReownedByAnUnusedSameNamedParameter(string outerParameter)
     {
-        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public X = n\n 0 }}\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
+        // `Mid.X` read in `Outer` can never pass: `Mid` is no static ancestor of `P`. It therefore charges `P` nothing
+        // (E-18 owner decision Q1, 2026-11-14; formerly the fail-closed entry n@-1), and the outer parameter, whatever
+        // its name, never owns it: the read is refused when it runs, and an untaken one is an ordinary untaken error.
+        var source = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public X = n\n 0 }}\n P = if(true, Mid.X, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
         var p = NestedProperty(SourceProvenance.ParseValid(source).Root, "Outer", "P");
-        Assert.Equal([new CapturedParameterRequirement("n", -1)], p.CaptureRequirements);
+        Assert.Equal(PropertyExposure.Exported, p.Exposure);
+        Assert.Empty(p.CaptureRequirements!);
         RunFailure(source, KatLangErrorCode.LocalOnlyProperty);
         await AssertSyncAndAsyncAgree(source);
+        var untaken = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public X = n\n 0 }}\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}}\nOuter(5)";
+        Assert.Equal("10", Display(untaken));
+        await AssertSyncAndAsyncAgree(untaken);
 
         var inside = $"Outer({outerParameter}) = {{\n Mid(n) = {{ public X = n\n Read = Outer.Mid.X\n Read }}\n Mid(7)\n}}\nOuter(5)";
         Assert.Equal("7", Display(inside));

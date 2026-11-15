@@ -425,6 +425,12 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
    target; a direct miss stops the direct chain, which then cannot return; a hit on every step passes only declared
    members, which a returning lone row does not have). This is still an argument, not a proof; the evidence is the
    41,472-program × 24-order sweep and `OpenLoneDotRowProviderTests`.
+
+   Correction (E-18 owner decision Q3, 2026-11-14): the open branch of `WrittenRowTarget` keys the BLOCK head of a
+   reference's row under the reference (`DirectPath`, `blockHeadUnderScope`), where the evaluator's `OpenStructure`
+   wires it and where the value reading of the same row already keyed it. It was keyed at the root, as a block
+   written as an open TARGET is, so `open L` with `L = { … }.Sub` selected nothing statically. A block written as an
+   open target stays rooted at the prelude. `ExposureAccessCheckTests`, `SemanticModelTests`.
 6. **Editor.** The editor reads the published elaborated tree: formed aliases carry their targets, and inputs are
    `Param` nodes. B3-2★ must list every `ElaboratedScopeLookup` chase entry point the editor still calls. Any that
    remains reads the front end's engine through the parse result, never a third chase.

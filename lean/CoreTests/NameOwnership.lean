@@ -700,7 +700,9 @@ def privateDottedOpenMemberUsesVisibilityError : Bool :=
 
 #guard privateDottedOpenMemberUsesVisibilityError
 
-/-- A navigated owner's unavailable activation is not supplied by an unrelated n. -/
+/-- A navigated owner's unavailable activation is not supplied by an unrelated n. Since owner decision
+Q1 (2026-11-14) the front end never publishes a requirement without an owner depth; this host-built
+tree keeps `("n", none)` to pin the evaluator's refusal. -/
 def navigatedCaptureKeepsUnavailableOwner (outerName : String) : Bool :=
   let mid := alg ["n"] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])
     (alg [] [] [] [.param "n"])] [.num 0]

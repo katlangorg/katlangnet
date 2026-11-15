@@ -141,6 +141,81 @@ internal static class CensusGrid
     }
 
     /// <summary>
+    /// THE DECLARED COPY of a block-headed reference cell (owner decision D2, 2026-11-15): the same program with the
+    /// literal given a name. In the body, the declaration <c>L = { literal }.path</c> becomes <c>Lit = { literal }</c>
+    /// followed by <c>L = Lit.path</c> at the same indentation; the dimensions and the readers are the cell's own. It
+    /// is the twin Q3 speaks of (a block-headed reference resolves like a named one): the two programs differ in
+    /// nothing but how <c>L</c>'s target is headed. The grid's <c>ref1</c> cell is no twin: it points at the real
+    /// <c>Lib</c>, which holds the reader and whose <c>Mid</c> is activated, while the literal is a stripped copy
+    /// (<c>ProgramShape.BlockHead</c>). A body without exactly one block-headed <c>L</c> declaration throws: no cell
+    /// is ever skipped.
+    /// </summary>
+    public static CensusCase DeclaredCopy(CensusCase @case)
+    {
+        if (@case.Dims.Count == 0 || @case.Dim("head") != "blockref")
+            throw new ArgumentException($"Only a head=blockref cell has a declared copy: {@case.Id}", nameof(@case));
+        const string opening = "L = {";
+        const string copyName = "Lit";
+        var lines = @case.Body.Split('\n').ToList();
+        if (lines.Any(line => line.Split(' ', '.', '(', ')', ',').Contains(copyName, StringComparer.Ordinal)))
+            throw new InvalidDataException($"The body already uses the name {copyName}: {@case.Id}");
+        var starts = Enumerable.Range(0, lines.Count).Where(i => lines[i].TrimStart(' ') == opening).ToArray();
+        if (starts.Length != 1)
+            throw new InvalidDataException($"Expected one block-headed L declaration, found {starts.Length}: {@case.Id}");
+        var start = starts[0];
+        var indent = lines[start][..^opening.Length];
+        // The literal's lines are indented deeper; the first line that is not is its closer, `}.path`.
+        var end = start + 1;
+        while (end < lines.Count && lines[end].StartsWith(indent + " ", StringComparison.Ordinal)) end++;
+        var closer = indent + "}.";
+        var path = end < lines.Count && lines[end].StartsWith(closer, StringComparison.Ordinal) ? lines[end][closer.Length..] : "";
+        if (path.Length == 0 || !path.Split('.').All(step => step.Length > 0 && step.All(char.IsAsciiLetter)))
+            throw new InvalidDataException($"The block-headed L declaration does not end in a member path: {@case.Id}");
+        lines[start] = $"{indent}{copyName} = {{";
+        lines[end] = indent + "}";
+        lines.Insert(end + 1, $"{indent}L = {copyName}.{path}");
+        return @case with { Body = string.Join("\n", lines), Kind = "declared-copy" };
+    }
+
+    /// <summary>
+    /// THE IMPOSSIBLE CHECK of a grid cell, described from the grid's own terms and never from exposure metadata: the
+    /// member whose access check can never pass at the site where the evaluator performs it, or null when the cell has
+    /// none (owner decisions Q1 and Q2, 2026-11-14: such a check charges nothing). Only a <c>req=deep</c> cell has a
+    /// candidate: <c>Sub</c> requires <c>p</c> of <c>Mid(p)</c>, so its check passes only at a site inside that
+    /// <c>Mid</c>. The site is:
+    /// <list type="bullet">
+    /// <item>nowhere, for a head written as a literal (<c>block</c>, <c>group-block</c>, <c>blockref</c>): the
+    /// <c>Mid</c> it selects is declared inside the literal, so no site lies inside it;</item>
+    /// <item>the CONSULTED level, the level that holds the <c>open</c>, for an open position (a crossed reference's
+    /// target walk included);</item>
+    /// <item>the reference's OWN scope for a value crossing (<c>ref1</c>, <c>chain2</c>, <c>refmem</c>, and the
+    /// route navigation of <c>rt-alg</c>): every reference is declared in <c>F</c>, outside <c>Mid</c>;</item>
+    /// <item>the READING site for a written path (<c>name</c>, <c>group-name</c>) and for an opened head, which is
+    /// placed outside only.</item>
+    /// </list>
+    /// A runtime head (<c>rt-param</c>, <c>rt-member</c>) selects nothing statically.
+    /// </summary>
+    public static string? ImpossibleMember(CensusCase @case)
+    {
+        if (@case.Dims.Count == 0 || @case.Dim("req") != "deep") return null;
+        var (head, pos, place) = (@case.Dim("head"), @case.Dim("pos"), @case.Dim("place"));
+        if (head is "rt-param" or "rt-member") return null;
+        if (head is "block" or "group-block" or "blockref") return "Sub";
+        if (IsOpenPosition(pos)) return ConsultedLevelIsInsideMid(@case.Dim("open"), @case.Dim("reader"), place) ? null : "Sub";
+        return head is "name" or "group-name" && place == "in-mid" ? null : "Sub";
+    }
+
+    // The level an open position writes its target on (ProgramShape.Opens): the reader's own value block, a block or
+    // deep reader's enclosing level, the placement level, or the placement level's parent. Inside Lib.Mid exactly
+    // when the reader is placed there and the level is not Mid's parent.
+    private static bool ConsultedLevelIsInsideMid(string open, string reader, string place)
+    {
+        if (place != "in-mid") return false;
+        var relative = open == "two" ? "enc1" : open[..open.IndexOf('-')];
+        return relative != "enc2" || reader is "block" or "deep";
+    }
+
+    /// <summary>
     /// Fixed cases: the controls the brief requires to stay exported, and the self-check programs the
     /// census must detect (section 3 of the brief).
     /// </summary>

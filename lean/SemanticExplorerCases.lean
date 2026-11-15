@@ -12692,7 +12692,7 @@ def case_special__openLocalOnlyCapturedParamsInsideOwner : Expr :=
 
 -- special__openLocalOnlyCapturedParamsOutsideOwner: Outer(p) = { \n     public Lib = { \n         public X = p + 101 \n     } \n     0 \n } \n A = { \n     open Outer.Lib \n     X \n } \n A
 def case_special__openLocalOnlyCapturedParamsOutsideOwner : Expr :=
-  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["p"]) (.alias none [(.dotCall (.resolve "Outer") "Lib" none)] [] (.resolve "X") none false)) with requiredOwnerDepths := some [("p", none)] }, privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [(.dotCall (.resolve "Outer") "Lib" none)] [] (.resolve "X") none false), privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
 #guard obs case_special__openLocalOnlyCapturedParamsOutsideOwner == "err localOnlyProperty"
 
 #guard errorObs case_special__openLocalOnlyCapturedParamsOutsideOwner == .matched (some { kind := "localOnlyProperty", names := ["X", "captured"], counts := [] })

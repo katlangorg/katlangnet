@@ -13,10 +13,19 @@ namespace KatLang.Tests.ExposureCensus;
 /// <para>The census FIXES NOTHING. Every gap it finds is listed in <c>census-gaps.txt</c> (the ratchet):
 /// the default test computes the gaps of its deterministic 3-way subset and requires them to equal the
 /// list restricted to that subset, so a new gap fails it and so does a listed gap that no longer occurs.
-/// The fix run takes the ratchet as its acceptance test.</para>
+/// The fix run takes the ratchet as its acceptance test. Since the E-18 F1 closeout (2026-11-15, owner
+/// decisions Q1–Q3) the list holds the three lines no decision removes: two over-charges of the fixed
+/// self-checks and the model's stricter verdict on one of them. An exported reader whose escaped read fails at
+/// a check that can never pass where the evaluator makes it is no gap: it is counted in the impossible-check
+/// class (decided by the grid and by behavior, which must agree), and no published requirement may be one that
+/// no chain can supply.</para>
 ///
 /// <para>Modes (<c>KATLANG_EXPOSURE_CENSUS</c>; output directory <c>KATLANG_EXPOSURE_CENSUS_OUT</c>):
-/// <c>full</c> — every valid case and every work family, compared with the whole list;
+/// <c>full</c> — every valid case and every work family, compared with the whole list (it also writes the
+/// recomputed cover and the model sample's retained witnesses, the regeneration path of both stored files);
+/// <c>work</c> — the work families alone;
+/// <c>twins</c> — every block-headed reference cell against its declared copy, the same literal given a name
+/// (owner decisions Q3, 2026-11-14, and D2, 2026-11-15; the default suite compares the stored cover's cells);
 /// <c>emit-lean</c> — writes the encodings (3-way subset) as Lean batch files for <c>lake env lean</c>;
 /// <c>check-lean</c> — reads the batch outputs and compares M1–M4 with the list;
 /// <c>emit-head</c> — writes every valid case's probe programs for the HEAD a4b545e8 probe;
@@ -29,7 +38,12 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
     private const string OutVariable = "KATLANG_EXPOSURE_CENSUS_OUT";
     // Full mode independently recomputes the valid universe and its cover. Pin its observed triple
     // count here too, so dropping a subset entry cannot silently shrink default-suite coverage.
-    private const int ValidTripleCount = 5577;
+    private const int ValidTripleCount = 5495;
+
+    // The impossible-check class (CensusRunner.Run): observations that are no gap, pinned so that the class can
+    // neither grow nor shrink unnoticed. Full mode pins the whole valid grid, the default mode its stored cover.
+    private const int ImpossibleObservationsInFull = 7478;
+    private const int ImpossibleObservationsInDefault = 152;
 
     private static string? Mode => Environment.GetEnvironmentVariable(ModeVariable) is { Length: > 0 } mode ? mode : null;
 
@@ -63,11 +77,14 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         => File.ReadLines(SubsetPath).Where(l => l.Length > 0 && !l.StartsWith('#'))
             .Select(id => CensusGrid.TryParseId(id) ?? throw new InvalidDataException($"Not a census id: {id}")).ToArray();
 
+    private static string WitnessPath => Path.Combine(RepoRoot.Find(), "tests", "KatLang.Tests", "ExposureCensus", "census-model-witnesses.txt");
+
     // Keep known model findings sampled when an expanded grid chooses a different greedy cover.
-    // These stable witnesses remain after the corresponding ratchet entry is fixed and removed.
+    // These stable witnesses remain after the corresponding ratchet entry is fixed and removed; a witness leaves
+    // only when its case leaves the valid grid (full mode writes the list of those still valid and requires the
+    // stored file to equal it).
     private static IReadOnlyList<CensusCase> ModelCases()
-        => Subset().Concat(CensusGrid.Fixed()).Concat(File.ReadLines(Path.Combine(RepoRoot.Find(), "tests", "KatLang.Tests",
-                "ExposureCensus", "census-model-witnesses.txt")).Where(line => line.Length > 0 && !line.StartsWith('#'))
+        => Subset().Concat(CensusGrid.Fixed()).Concat(File.ReadLines(WitnessPath).Where(line => line.Length > 0 && !line.StartsWith('#'))
             .Select(id => CensusGrid.TryParseId(id) ?? throw new InvalidDataException($"Not a model witness id: {id}")))
             .DistinctBy(@case => @case.Id, StringComparer.Ordinal).ToArray();
 
@@ -107,9 +124,16 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
             yield return $"skipped\t{group.Count()}\t{group.Key}";
         yield return $"valid\t{results.Count(r => r.Skipped is null)}";
         yield return $"inside-works\t{results.Count(r => r.Skipped is null && r.InsideWorks)}";
+        yield return $"impossible-check\t{results.Sum(r => r.Impossible.Count)}";
+        yield return $"unsupplied-requirement-cases\t{results.Count(r => r.UnsuppliedRequirements.Count > 0)}";
         foreach (var group in results.SelectMany(r => r.Gaps).GroupBy(g => $"{g.Check}\t{g.Class}").OrderBy(g => g.Key, StringComparer.Ordinal))
             yield return $"gaps\t{group.Key}\t{group.Count()}";
     }
+
+    // The Q1 invariant: no valid case publishes a requirement no level of its declaring chain can supply.
+    private static List<string> Unsupplied(IReadOnlyList<CensusCaseResult> results)
+        => results.Where(r => r.UnsuppliedRequirements.Count > 0)
+            .Select(r => $"{r.Case.Id}\t{string.Join(" ; ", r.UnsuppliedRequirements)}").ToList();
 
     private static IEnumerable<string> Observations(IReadOnlyList<CensusCaseResult> results)
         => results.Where(r => r.Skipped is null).Select(r =>
@@ -137,10 +161,14 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("default-summary.txt", Summary(results).Prepend($"time\t{clock.Elapsed.TotalSeconds:F1} s\tcases\t{cases.Length}"));
         WriteIfRequested("default-gaps.txt", results.SelectMany(r => r.Gaps).Select(g => g.Line));
         WriteIfRequested("default-observations.txt", Observations(results));
+        WriteIfRequested("default-impossible.txt", results.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("default-unsupplied-requirements.txt", Unsupplied(results));
 
         // Generation is total over the subset: a case that does not parse is a skip, never a silent drop.
         Assert.Equal(cases.Length, results.Count);
         AssertMatchesRatchet(results.SelectMany(r => r.Gaps).ToList(), cases.Select(c => c.Id).ToHashSet(StringComparer.Ordinal), CSharpChecks, "default subset");
+        Assert.Equal(ImpossibleObservationsInDefault, results.Sum(r => r.Impossible.Count));
+        Assert.Empty(Unsupplied(results));
     }
 
     [Fact]
@@ -190,17 +218,20 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         Assert.Contains(i25.Gaps, g => g is { Check: "O", Class: "over-charge", Reader: "A", Detail: "r=y@0" });
         Assert.Contains(ReadRatchet(), g => g is { Check: "O", Class: "over-charge-inherited", Id: "selfcheck=I25-eager-own-open" });
 
+        // The static prefix of a runtime open: the front end charges the reader, and the selection model now refuses
+        // the copy without that requirement (no M2 line; NavigationSourceDomainGuards.CheckSites.staticPrefixRuntimeOpen_*).
         var prefix = await CensusRunner.Run(fixedCases["selfcheck=static-prefix-runtime-open"], collectLean: true);
         Assert.Equal("LocalOnlyCapturedAncestorParameters[y@0]", prefix.Metadata["A"]);
         Assert.Contains(prefix.Lean, item => item.Role == "copy-needed");
-        Assert.Contains(ReadRatchet(), g => g is { Check: "M2", Id: "selfcheck=static-prefix-runtime-open" });
+        Assert.DoesNotContain(ReadRatchet(), g => g.Id == "selfcheck=static-prefix-runtime-open");
 
+        // The two families the host checks of 2026-11-14 flagged settle within the bound.
         foreach (var family in new[] { CensusWork.BoxSelfCheck(), CensusWork.DischargeSelfCheck() })
         {
             var measured = CensusWork.Measure(family);
             output.WriteLine($"{family.Id}: frames {string.Join(" / ", measured.Frames)}; checkpoints {string.Join(" / ", measured.Checkpoints)}");
-            Assert.False(measured.WithinBound);
-            Assert.Contains(ReadRatchet(), g => g.Check == "W" && g.Id == family.Id);
+            Assert.True(measured.WithinBound, measured.Problem);
+            Assert.DoesNotContain(ReadRatchet(), g => g.Check == "W" && g.Id == family.Id);
         }
     }
 
@@ -259,6 +290,11 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         var gaps = results.SelectMany(r => r.Gaps).ToList();
         var cover = CensusGrid.ThreeWayCover(valid);
         WriteIfRequested("census-subset.txt", cover.Select(c => c.Id).Prepend("# E-18 route census default subset: the greedy 3-way cover of the valid grid cases (full mode recomputes it)."));
+        // The model sample's retained witnesses are valid cases: one that left the valid grid leaves the sample.
+        var validIds = valid.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        var storedWitnesses = File.ReadAllLines(WitnessPath);
+        var validWitnesses = storedWitnesses.Where(line => line.Length == 0 || line.StartsWith('#') || validIds.Contains(line)).ToArray();
+        WriteIfRequested("census-model-witnesses.txt", validWitnesses);
 
         var work = RunWork(gaps);
         clock.Stop();
@@ -276,10 +312,111 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("full-observations.txt", Observations(results));
         WriteIfRequested("full-skipped.txt", results.Where(r => r.Skipped is not null).Select(r => $"{r.Case.Id}\t{r.Skipped}"));
         WriteIfRequested("full-excluded.txt", excluded.Select(e => $"{e.Id}\t{e.Reason}"));
+        WriteIfRequested("full-impossible.txt", results.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("full-unsupplied-requirements.txt", Unsupplied(results));
 
         Assert.Equal(cover.Select(c => c.Id), Subset().Select(c => c.Id));
+        Assert.Equal(validWitnesses, storedWitnesses);
         AssertMatchesRatchet(gaps, cases.Select(c => c.Id).Concat(work.Select(w => w.Split('\t')[0])).ToHashSet(StringComparer.Ordinal),
             new HashSet<string>(CSharpChecks.Append("W"), StringComparer.Ordinal), "full", completeDomain: true);
+        Assert.Equal(ImpossibleObservationsInFull, results.Sum(r => r.Impossible.Count));
+        Assert.Empty(Unsupplied(results));
+    }
+
+    // ── Twins: a block-headed reference resolves like a named one (owner decision Q3, 2026-11-14) ─────
+
+    /// <summary>What the twin comparison reads of one case: diagnostics, inferred signatures and outcomes.</summary>
+    private static List<string> TwinFacts(CensusCase @case)
+    {
+        var facts = new List<string>();
+        var rows = new List<(string Label, string Row)> { ("in5", CensusRunner.Inside5), ("in7", CensusRunner.Inside7), ("same", CensusRunner.SameRun) };
+        rows.AddRange(@case.Readers.Select(reader => ($"esc:{reader.Label}", reader.Escaped)));
+        foreach (var (label, row) in rows)
+        {
+            var source = @case.Body + row + "\n";
+            var parsed = Parser.Parse(source);
+            if (parsed.HasErrors)
+            {
+                facts.Add($"{label} diagnostics: " + string.Join(",", parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .Select(d => d.Code.ToString()).Distinct().Order(StringComparer.Ordinal)));
+                continue;
+            }
+
+            if (label == "in5")
+            {
+                var model = KatLang.Semantics.SemanticModelBuilder.Build(parsed);
+                // The declarations a block-headed program and its declared copy both write (the copy adds only the
+                // literal's name, CensusGrid.DeclaredCopy).
+                foreach (var name in new[] { "F", "L", "A", "K", "B", "D", "N" })
+                    facts.Add($"signature {name}: " + string.Join(" / ", model.FindProperties(name).Select(p => p.DisplaySignature)));
+            }
+
+            facts.Add($"{label} outcome: " + CensusRunner.Render(Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root))));
+        }
+
+        return facts;
+    }
+
+    /// <summary>
+    /// Every given block-headed cell against its declared copy (<see cref="CensusGrid.DeclaredCopy"/>): the pairs
+    /// whose twin facts differ, each with its differing facts. Q3 admits no difference, so there is no exemption: a
+    /// cell is equal to its copy or it is listed. A cell without a declared copy throws; none is skipped.
+    /// </summary>
+    private static List<string> DeclaredCopyDifferences(IReadOnlyList<CensusCase> cells, int parallelism)
+    {
+        var details = new string?[cells.Count];
+        Parallel.For(0, cells.Count, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, i =>
+        {
+            var (cell, copy) = (TwinFacts(cells[i]), TwinFacts(CensusGrid.DeclaredCopy(cells[i])));
+            if (cell.SequenceEqual(copy, StringComparer.Ordinal)) return;
+            var detail = string.Join(" ; ", cell.Zip(copy).Where(pair => pair.First != pair.Second).Select(pair => $"{pair.First} <> {pair.Second}"));
+            details[i] = cell.Count == copy.Count ? detail : $"fact counts {cell.Count} <> {copy.Count} ; {detail}";
+        });
+        return Enumerable.Range(0, cells.Count).Where(i => details[i] is not null).Select(i => $"{cells[i].Id}\t{details[i]}").ToList();
+    }
+
+    private static string[] TwinSummary(int pairs, int differ) => [$"pairs\t{pairs}", $"equal\t{pairs - differ}", $"differ\t{differ}"];
+
+    /// <summary>
+    /// <c>twins</c> mode: every generated <c>blockref</c> cell, valid or not, against its declared copy (owner
+    /// decision D2, 2026-11-15). The two programs differ only in how <c>L</c>'s target is headed, so the error
+    /// diagnostics of each probe, the signatures of the declarations both write and every probe outcome must be
+    /// equal. Every differing pair is written out with its differing facts, and any one fails the run.
+    /// </summary>
+    [Fact]
+    public void TwinsMode_BlockHeadedReferencesMatchTheirDeclaredCopies()
+    {
+        if (Mode != "twins") return;
+        var (all, _) = CensusGrid.Generate();
+        var cells = all.Where(c => c.Dim("head") == "blockref").ToArray();
+        var differences = DeclaredCopyDifferences(cells, FullParallelism);
+        var summary = TwinSummary(cells.Length, differences.Count);
+        WriteIfRequested("twins-differences.txt", differences);
+        WriteIfRequested("twins-summary.txt", summary);
+        output.WriteLine(string.Join("; ", summary).Replace('\t', ' '));
+        Assert.NotEmpty(cells);
+        Assert.True(differences.Count == 0,
+            $"Block-headed cells that differ from their declared copies ({differences.Count} of {cells.Length}):\n" + string.Join("\n", differences.Take(40)));
+    }
+
+    /// <summary>
+    /// The default suite's share of the twin comparison, so that CI keeps Q3's equality: every <c>blockref</c> cell
+    /// of the stored cover equals its declared copy. The <c>twins</c> mode compares the whole generated grid.
+    /// </summary>
+    [Fact]
+    public void DefaultSubset_BlockHeadedReferencesMatchTheirDeclaredCopies()
+    {
+        var clock = Stopwatch.StartNew();
+        var cells = Subset().Where(c => c.Dim("head") == "blockref").ToArray();
+        var differences = DeclaredCopyDifferences(cells, parallelism: 1);
+        var summary = TwinSummary(cells.Length, differences.Count);
+        output.WriteLine($"{string.Join("; ", summary).Replace('\t', ' ')}; {clock.Elapsed.TotalSeconds:F1} s");
+        WriteIfRequested("default-twins-differences.txt", differences);
+        WriteIfRequested("default-twins-summary.txt", summary);
+        Assert.NotEmpty(cells);
+        Assert.True(differences.Count == 0,
+            $"Block-headed cells of the stored cover that differ from their declared copies ({differences.Count} of {cells.Length}):\n"
+            + string.Join("\n", differences.Take(40)));
     }
 
     // ── Model check (Lean, outside the canonical targets) ────────────────────────────────────────────
@@ -340,7 +477,9 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
     /// <summary>
     /// Reads the HEAD probe's output: per program, the metadata of every non-exported declaration and the
     /// outcome. Classifies every over-charge of the ratchet (inherited when HEAD charged the same requirement
-    /// of the same declaration) and runs the HEAD self-checks (U flags R2, S1 and the enclosing-level open).
+    /// of the same declaration) and runs the HEAD self-checks (U flags R2, S1 and the enclosing-level open). It also
+    /// compares the INSIDE outcomes of every valid case with HEAD's: an inside probe that succeeded on HEAD and fails
+    /// now is a gap (<c>regression-vs-head</c>); the opposite direction and a changed value are report-only lists.
     /// </summary>
     [Fact]
     public void CheckHead_ClassifiesOverChargesAndRunsTheHeadSelfChecks()
@@ -391,12 +530,47 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("head-overcharge-classes.txt", report);
         WriteIfRequested("head-gaps.txt", headGaps);
         WriteIfRequested("head-engine-gaps.txt", engineGaps);
+
+        // Inside outcomes, HEAD against now (the synchronous route on both sides; full mode checks the others).
+        var compared = head.CaseIds.Order(StringComparer.Ordinal).Select(id => cases[id]).ToArray();
+        var now = new IReadOnlyList<(string Label, string Outcome)>?[compared.Length];
+        Parallel.For(0, compared.Length, new ParallelOptions { MaxDegreeOfParallelism = FullParallelism },
+            i => now[i] = CensusRunner.InsideOutcomes(compared[i]));
+        var regressions = new List<string>();
+        var revived = new List<string>();
+        var valueChanges = new List<string>();
+        for (var i = 0; i < compared.Length; i++)
+        {
+            var id = compared[i].Id;
+            var before = head.Outcomes(id);
+            foreach (var (label, current) in now[i] ?? throw new InvalidDataException($"A HEAD case no longer parses cleanly: {id}"))
+            {
+                var headOutcome = before[label];
+                var headWorked = headOutcome.StartsWith("OK ", StringComparison.Ordinal);
+                var worksNow = current.StartsWith("ok ", StringComparison.Ordinal);
+                if (headWorked && !worksNow)
+                    regressions.Add($"E\tregression-vs-head\t{id}\t-\t{label}: HEAD={headOutcome}; now={current}");
+                else if (!headWorked && worksNow)
+                    revived.Add($"{id}\t{label}\tHEAD={headOutcome}\tnow={current}");
+                else if (headWorked && worksNow && headOutcome[3..] != current[3..])
+                    valueChanges.Add($"{id}\t{label}\tHEAD={headOutcome}\tnow={current}");
+            }
+        }
+        WriteIfRequested("head-regressions.txt", regressions);
+        WriteIfRequested("head-revived.txt", revived);
+        WriteIfRequested("head-value-changes.txt", valueChanges);
+        var regressedCases = regressions.Select(line => line.Split('\t')[2]).Distinct(StringComparer.Ordinal).Count();
+        output.WriteLine($"inside outcomes: regressions {regressions.Count} in {regressedCases} cases; "
+            + $"failed on HEAD and succeed now {revived.Count}; value changes {valueChanges.Count}");
         output.WriteLine($"over-charges classified {report.Count}; mismatched tags {mismatched.Count}; HEAD U gaps {headGaps.Count}");
 
         Assert.Contains(headGaps, g => g.Contains("\thead=ref1|pos=value|open=none|reader=plain|place=outside|end=found|req=container\tA\t", StringComparison.Ordinal));
         Assert.Contains(headGaps, g => g.StartsWith("U\tunder-charge-wrong-value\tselfcheck=S1-audit-inline-block", StringComparison.Ordinal));
         Assert.Contains(headGaps, g => g.Contains("\thead=name|pos=open|open=enc1-used|reader=plain|place=outside|end=found|req=container\tA\t", StringComparison.Ordinal));
         Assert.True(mismatched.Count == 0, "Over-charge tags differ from HEAD's metadata:\n" + string.Join("\n", mismatched.Take(40)));
+        Assert.True(regressions.Count == 0,
+            $"Inside probes that succeeded on HEAD a4b545e8 fail now ({regressions.Count} outcomes in {regressedCases} cases):\n"
+            + string.Join("\n", regressions.Take(40)));
     }
 
     /// <summary>The HEAD probe's output format: <c>id \t probe \t META|OUT \t text</c>.</summary>

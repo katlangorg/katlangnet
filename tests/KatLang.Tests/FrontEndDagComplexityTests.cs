@@ -1021,7 +1021,8 @@ public class FrontEndDagComplexityTests
     /// <summary>
     /// Depth+1 distinct nested algorithm values: value_1..value_depth each wrap the previous
     /// as their one property, and the innermost leaf captures the ancestor-owned name `p`.
-    /// The root holds value_depth as property "Top".
+    /// The root holds value_depth as property "Top" and binds `p`: a name no level binds is
+    /// charged to nobody (owner decision Q1, 2026-11-14), so the capture needs its owner.
     /// </summary>
     private static Algorithm.User NestedPropertyChainRoot(int depth)
     {
@@ -1038,7 +1039,7 @@ public class FrontEndDagComplexityTests
 
         return new Algorithm.User(
             Parent: null,
-            ParameterPatterns: [],
+            ParameterPatterns: [new CaptureParameterPattern("p")],
             Opens: [],
             Properties: [new Property("Top", value)],
             Output: OutputBundle.Empty);
@@ -1091,8 +1092,9 @@ public class FrontEndDagComplexityTests
             null, [], [],
             [new Property("CB", sharedChild)],
             new OutputBundle([new Expr.Resolve("CB")]));
+        // The root binds p: a name no level binds is charged to nobody (owner decision Q1, 2026-11-14).
         var root = new Algorithm.User(
-            null, [], [],
+            null, [new CaptureParameterPattern("p")], [],
             [new Property("PA", parentA), new Property("PB", parentB)],
             OutputBundle.Empty);
         Assert.Same(parentA.Properties[0].Value, parentB.Properties[0].Value);
@@ -1753,6 +1755,8 @@ public class FrontEndDagComplexityTests
     /// Exposure classification of a shared branch body is computed once per region and the
     /// families keep ONE rewritten object. A plain property has a different capture-owner
     /// context: its unbound b cannot reuse the branch's owner-qualified requirement payload.
+    /// No level binds that b, so it charges nothing (owner decision Q1, 2026-11-14; it was the
+    /// fail-closed entry b@-1).
     /// </summary>
     [Fact]
     public void Exposure_SharedBranchBody_ClassifiesOnceAndPreservesSharing()
@@ -1778,7 +1782,7 @@ public class FrontEndDagComplexityTests
         Assert.Same(leftBody, rightBody);
         Assert.NotSame(leftBody, rewritten.Properties[2].Value);
         Assert.Equal([new CapturedParameterRequirement("b", 1)], leftBody.Properties[0].CaptureRequirements);
-        Assert.Equal([new CapturedParameterRequirement("b", -1)], rewritten.Properties[2].Value.Properties[0].CaptureRequirements);
+        Assert.Empty(rewritten.Properties[2].Value.Properties[0].CaptureRequirements!);
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, Assert.Single(leftBody.Properties, p => p.Name == "Captures").Exposure);
         Assert.Equal(PropertyExposure.Exported, Assert.Single(leftBody.Properties, p => p.Name == "Plain").Exposure);
     }

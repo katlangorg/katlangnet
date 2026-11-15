@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 571
-- excluded parse-level cases (Lean has no surface parser): 81
+- specification surface cases: 575
+- excluded parse-level cases (Lean has no surface parser): 82
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 466
-- probe observations (C#-only by design): 1534
+- Lean-guarded cases: 469
+- probe observations (C#-only by design): 1551
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1286,6 +1286,21 @@ def case_open_local_only_enclosing_level : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
 #guard obs case_open_local_only_enclosing_level == "err localOnlyProperty"
 
+-- open-block-headed-reference-keeps-requirement [access-boundaries]: F(y) = { \n   open L \n   L = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_open_block_headed_reference_keeps_requirement : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L"] [privateProp "L" (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_open_block_headed_reference_keeps_requirement == "ok raw=S[5, 7] n=2"
+
+-- impossible-read-in-untaken-branch-charges-nothing [access-boundaries]: F(y) = { \n   A = y + 1 \n   A \n } \n Box = { \n   public R = if(false, F.A, 0) \n } \n Box.R
+def case_impossible_read_in_untaken_branch_charges_nothing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "R" (alg [] [] [] [(.call (.resolve "if") [.boolLiteral false, (.dotCall (.resolve "F") "A" none), .num 0])])] []), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 1))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.dotCall (.resolve "Box") "R" none)])
+#guard obs case_impossible_read_in_untaken_branch_charges_nothing == "ok raw=0 n=1"
+
+-- open-reference-checked-where-it-is-opened [access-boundaries]: F(y) = { \n   L = Lib.Mid.Sub \n   Lib = { \n     public Mid(p) = { \n       public Sub = { \n         public Q = 1 \n         p \n       } \n       B(z) = { \n         open L \n         Q + 0 \n       } \n       B(0) \n     } \n     0 \n   } \n   Lib.Mid(y) \n } \n F(5)
+def case_open_reference_checked_where_it_is_opened : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "L" (.alias none [] [] ((.dotCall (.dotCall (.resolve "Lib") "Mid" none) "Sub" none))), privateProp "Lib" (alg [] [] [publicProp "Mid" (alg ["p"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["p"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "p") none false)) with requiredOwnerDepths := some [("p", some 0)] }, { (privateLocalProp "B" (.localCapturedAncestorParams ["p"]) (alg ["z"] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("p", some 0)] }] [(.call (.resolve "B") [.num 0])])] [.num 0])] [(.dotCall (.resolve "Lib") "Mid" (some [.param "y"]))])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_open_reference_checked_where_it_is_opened == "ok raw=1 n=1"
+
 -- dot-exported-inline-block-head-member [access-boundaries]: F(y) = { \n   A = { \n     public Q = 1 \n     y + 0 \n   }.Q + 0 \n   A \n } \n F(5), F.A
 def case_dot_exported_inline_block_head_member : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "A" (alg [] [] [] [(.binary .add (.dotCall (.algorithmExpr (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [(.binary .add (.param "y") (.num 0))])) "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
@@ -2535,7 +2550,7 @@ def case_output_spread_reference_certainly_read : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "P" (alg [] [] [] [(.index (.resolve "Q") [.num 0])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [.resolve "P", .resolve "Add", (.call (.resolve "Inc") [.param "x"])])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [(.unary .minus (.num 3))])])
 #guard obs case_output_spread_reference_certainly_read == "ok raw=1 n=1"
 
--- 466 canonical Lean-guarded specification cases.
+-- 469 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2760,6 +2775,9 @@ def specCaseIds : List String := [
   "dot-local-only-inline-block-head",
   "open-local-only-through-reference",
   "open-local-only-enclosing-level",
+  "open-block-headed-reference-keeps-requirement",
+  "impossible-read-in-untaken-branch-charges-nothing",
+  "open-reference-checked-where-it-is-opened",
   "dot-exported-inline-block-head-member",
   "dot-exported-value-only-reference",
   "open-exported-runtime-reference",
@@ -3010,6 +3028,6 @@ def specCaseIds : List String := [
   "output-spread-lifted-call-ends-known-positions",
   "output-spread-reference-certainly-read"
 ]
-#guard specCaseIds.length == 466
+#guard specCaseIds.length == 469
 
 end LanguageSpecCases

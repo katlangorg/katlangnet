@@ -1151,4 +1151,110 @@ theorem intermediateCorrupt_refused : ¬ SourceDomain intermediateCorrupt :=
 
 end AccessChecks
 
+/-! ## Check sites and impossible checks (E-18 F1, owner decisions Q1–Q3, 2026-11-14)
+
+Each access check is charged at the site the evaluator makes it, and a check that can never pass
+there requires nothing. One source program per rule:
+
+* `openCrossingInside`: a reference opened INSIDE `Mid`'s activation is walked from the consulted
+  level, so `Sub` (which needs `Mid`'s `p`) is selected there and the reader requires `p` (Q2). The
+  same tree with the reader exported is refused.
+* `valueCrossingOutside`: a VALUE read through the reference walks its target in the reference's own
+  scope, outside `Mid`. That check can never pass, so the reader requires nothing (Q1, Q2); the read
+  sits in a branch that does not run.
+* `consultedOutside`: an `open` written on `F`, outside `Mid`, is checked on `F`, whoever reads
+  through it: the reader inside `Mid` requires nothing, and the run fails at `Sub`.
+* `untakenImpossible`: `F.A` written outside `F` can never be read; in an untaken branch it is no
+  requirement of the algorithm around it (Q1).
+* `staticPrefixRuntimeOpen`: opening `L = Lib.Sub.Algorithm` checks `Sub` before the runtime link, so
+  the reader requires `y`; the same tree with the reader exported is refused (the C1/I28 review's
+  counterexample: the runtime end of a walk keeps the checks of its static prefix).
+* `blockHeadedOpen`: a block-headed reference is opened like a named one, so the reader requires what
+  the provided member requires (Q3); the same tree with the reader exported is refused.
+
+The C# fidelity tests are `NavigationSourceDomainWitnessTests` (scope `CheckSites`) and
+`ExposureAccessCheckTests`.
+-/
+
+namespace CheckSites
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `L = Lib.Mid.Sub`, `Lib = { public Mid(p) = { public Sub = { public Q = 1 ⏎ p } ⏎ B(z) = { open L ⏎ Q + 0 } ⏎ B(0) } ⏎ 0 }`, `Lib.Mid(y)`, inside `F(y)` / `F(5)`:
+    an open crossing inside `Mid`. `B` is local-only on `p`. -/
+def openCrossingInside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "L" (.alias none [] [] ((.dotCall (.dotCall (.resolve "Lib") "Mid" none) "Sub" none))), privateProp "Lib" (alg [] [] [publicProp "Mid" (alg ["p"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["p"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "p") none false)) with requiredOwnerDepths := some [("p", some 0)] }, { (privateLocalProp "B" (.localCapturedAncestorParams ["p"]) (alg ["z"] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("p", some 0)] }] [(.call (.resolve "B") [.num 0])])] [.num 0])] [(.dotCall (.resolve "Lib") "Mid" (some [.param "y"]))])] [(.call (.resolve "F") [.num 5])])
+
+/-- Host-built: the same tree with `B` exported. -/
+def openCrossingInsideHostBuilt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "L" (.alias none [] [] ((.dotCall (.dotCall (.resolve "Lib") "Mid" none) "Sub" none))), privateProp "Lib" (alg [] [] [publicProp "Mid" (alg ["p"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["p"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "p") none false)) with requiredOwnerDepths := some [("p", some 0)] }, privateProp "B" (alg ["z"] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])] [(.call (.resolve "B") [.num 0])])] [.num 0])] [(.dotCall (.resolve "Lib") "Mid" (some [.param "y"]))])] [(.call (.resolve "F") [.num 5])])
+
+theorem openCrossingInside_sourceDomain : SourceDomain openCrossingInside := ⟨by cbv, by cbv⟩
+
+theorem openCrossingInside_hostBuilt_refused : ¬ SourceDomain openCrossingInsideHostBuilt :=
+  fun h => by have := h.exposed; rw [show exposureFull openCrossingInsideHostBuilt = false by cbv] at this; cases this
+
+#guard (match runResult openCrossingInside with | .ok (.atom 1) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `L = Lib.Mid.Sub` (the same `Lib`, with no reader inside `Mid`), `Box = { public A = if(false, L.Q + 0, 7) }`, `Box.A`, inside `F(y)` / `F(5)`:
+    a value crossing checked in `L`'s own scope, outside `Mid`. `A` is exported. -/
+def valueCrossingOutside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "L" (.alias none [] [] ((.dotCall (.dotCall (.resolve "Lib") "Mid" none) "Sub" none))), privateProp "Lib" (alg [] [] [publicProp "Mid" (alg ["p"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["p"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "p") none false)) with requiredOwnerDepths := some [("p", some 0)] }] [.num 0])] [.num 0]), privateProp "Box" (alg [] [] [publicProp "A" (alg [] [] [] [(.call (.resolve "if") [.boolLiteral false, (.binary .add (.dotCall (.resolve "L") "Q" none) (.num 0)), .num 7])])] [])] [(.dotCall (.resolve "Box") "A" none)])] [(.call (.resolve "F") [.num 5])])
+
+theorem valueCrossingOutside_sourceDomain : SourceDomain valueCrossingOutside := ⟨by cbv, by cbv⟩
+
+#guard (match runResult valueCrossingOutside with | .ok (.atom 7) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open Lib.Mid.Sub` written on `F`, with the reader `A(z) = Q + 0` inside `Mid` / `F(5)`:
+    the consulted level is outside `Mid`. `A` is exported, and the run fails at `Sub`. -/
+def consultedOutside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.dotCall (.resolve "Lib") "Mid" none) "Sub" none)] [privateProp "Lib" (alg [] [] [publicProp "Mid" (alg ["p"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["p"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "p") none false)) with requiredOwnerDepths := some [("p", some 0)] }, privateProp "A" (alg ["z"] [] [] [(.binary .add (.resolve "Q") (.num 0))])] [(.call (.resolve "A") [.num 0])])] [.num 0])] [(.dotCall (.resolve "Lib") "Mid" (some [.param "y"]))])] [(.call (.resolve "F") [.num 5])])
+
+theorem consultedOutside_sourceDomain : SourceDomain consultedOutside := ⟨by cbv, by cbv⟩
+
+#guard (match runResult consultedOutside with
+  | .error e => (match innermost e with | .localOnlyProperty _ "Sub" _ => true | _ => false)
+  | .ok _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `F(y) = { A = y + 1 ⏎ A }`, `Box = { public R = if(false, F.A, 0) }` / `Box.R`:
+    an impossible read in a branch that does not run. `R` is exported. -/
+def untakenImpossible : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "R" (alg [] [] [] [(.call (.resolve "if") [.boolLiteral false, (.dotCall (.resolve "F") "A" none), .num 0])])] []), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 1))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.dotCall (.resolve "Box") "R" none)])
+
+theorem untakenImpossible_sourceDomain : SourceDomain untakenImpossible := ⟨by cbv, by cbv⟩
+
+#guard (match runResult untakenImpossible with | .ok (.atom 0) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open L, Other`, `L = Lib.Sub.Algorithm`, `Lib = { public Sub = { public Q = 1 ⏎ y } ⏎ 0 }`, `Other = { public Z = 2 }`, `A = Z + 0`, inside `F(y)` / `F(5)`:
+    the static prefix of a runtime open. `A` is local-only on `y`. -/
+def staticPrefixRuntimeOpen : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L", .resolve "Other"] [{ (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Other" (alg [] [] [publicProp "Z" (alg [] [] [] [.num 2])] []), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Z") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+/-- Host-built: the same tree with `A` exported (the review's counterexample of 2026-11-14). -/
+def staticPrefixRuntimeOpenHostBuilt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L", .resolve "Other"] [{ (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Algorithm" none)))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Other" (alg [] [] [publicProp "Z" (alg [] [] [] [.num 2])] []), privateProp "A" (alg [] [] [] [(.binary .add (.resolve "Z") (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem staticPrefixRuntimeOpen_sourceDomain : SourceDomain staticPrefixRuntimeOpen := ⟨by cbv, by cbv⟩
+
+theorem staticPrefixRuntimeOpen_hostBuilt_refused : ¬ SourceDomain staticPrefixRuntimeOpenHostBuilt :=
+  fun h => by have := h.exposed; rw [show exposureFull staticPrefixRuntimeOpenHostBuilt = false by cbv] at this; cases this
+
+#guard (match runResult staticPrefixRuntimeOpen with | .ok (.atom 2) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open L`, `L = { public Sub = { public Q = y ⏎ 0 } }.Sub`, `A = Q + 0`, inside `F(y)` / `F(5)`:
+    a block-headed reference opened like a named one. `A` is local-only on `y`. -/
+def blockHeadedOpen : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L"] [privateProp "L" (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+/-- Host-built: the pre-Q3 front end's tree of the same source, with `A` exported. -/
+def blockHeadedOpenHostBuilt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L"] [privateProp "L" (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none))), privateProp "A" (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem blockHeadedOpen_sourceDomain : SourceDomain blockHeadedOpen := ⟨by cbv, by cbv⟩
+
+theorem blockHeadedOpen_hostBuilt_refused : ¬ SourceDomain blockHeadedOpenHostBuilt :=
+  fun h => by have := h.exposed; rw [show exposureFull blockHeadedOpenHostBuilt = false by cbv] at this; cases this
+
+#guard (match runResult blockHeadedOpen with | .ok (.atom 5) => true | _ => false)
+
+end CheckSites
+
 end KatLang.NavigationSourceDomainGuards

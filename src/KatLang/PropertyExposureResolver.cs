@@ -102,37 +102,53 @@ internal static class PropertyExposureResolver
         /// <summary>The landing of a resolution that walked no chain: it is the same from every site.</summary>
         public const int NoOwnerLookup = -1;
 
-        // The ONE owner lookup of an owner-qualified requirement: false when a bound owner supplies it.
+        // The ONE owner lookup of an owner-qualified requirement: false when a bound owner supplies it, and false when
+        // its owner is on no level of this chain. This level is the SITE of the access check the requirement stands for
+        // (owner decision Q2, 2026-11-14), and a check whose owner is not a static ancestor of its site can never pass:
+        // no chain there can hold an activation of that owner. No successful read depends on such a check, so it
+        // charges nothing (owner decision Q1 = (b), 2026-11-14; the former fail-closed entry, owner depth -1, is
+        // retired). The path still fails with LocalOnlyProperty at the member the evaluator checks when it runs.
         private bool TryResolveRequirement(OwnerQualifiedParameter requirement, BoundOwnerSet? boundOwners,
             out Requirement resolved, out int landing)
         {
             landing = NoOwnerLookup;
+            resolved = default;
             if (requirement.Owner is null)
             {
-                resolved = new Requirement(requirement.Name, null);
-                return true;
+                // No owner was recorded: the name's nearest binder on this chain owns it, as for a names-only requirement.
+                foreach (var named in ResolveRequirements([requirement.Name]))
+                {
+                    resolved = named;
+                    return true;
+                }
+
+                landing = int.MaxValue;
+                return false;
             }
 
             if (boundOwners?.Contains(requirement.Owner) == true)
-            {
-                resolved = default;
                 return false;
-            }
 
             var owner = this;
             while (owner is not null && !ReferenceEquals(owner.Algorithm, requirement.Owner))
                 owner = owner.Parent;
             landing = owner?.Depth ?? int.MaxValue;
+            if (owner is null)
+                return false;
             // The completed key names the branch binding region by its body. Runtime capture
             // positions retain the existing separate family-binding frame above that body.
-            if (owner?.PropertyScope.CompletedContext?.Key.BindingRegion is not null
+            if (owner.PropertyScope.CompletedContext?.Key.BindingRegion is not null
                 && !owner.Parameters.Contains(requirement.Name)
                 && owner.Parent?.Parameters.Contains(requirement.Name) == true)
                 owner = owner.Parent;
-            resolved = new Requirement(requirement.Name, owner?.PropertyScope);
+            resolved = new Requirement(requirement.Name, owner.PropertyScope);
             return true;
         }
 
+        /// <summary>
+        /// The names-only requirements, each at the nearest level of this chain that binds the name. A name no level
+        /// binds can be supplied by no activation on this chain, so it is no requirement (owner decision Q1).
+        /// </summary>
         public IEnumerable<Requirement> ResolveRequirements(IEnumerable<string> names)
         {
             foreach (var name in names)
@@ -140,7 +156,8 @@ internal static class PropertyExposureResolver
                 var owner = this;
                 while (owner is not null && !owner.Parameters.Contains(name))
                     owner = owner.Parent;
-                yield return new Requirement(name, owner?.PropertyScope);
+                if (owner is not null)
+                    yield return new Requirement(name, owner.PropertyScope);
             }
         }
 
@@ -1019,6 +1036,28 @@ internal static class PropertyExposureResolver
         /// </summary>
         internal Dictionary<(StaticLookupFacts Facts, int Version, SummaryScope Opening), HashSet<StaticScopeKey>> OpenWalkAnchors { get; } = [];
 
+        /// <summary>
+        /// Q2: per crossed reference (its opened terminal) and facts view, the members its open crossing selects
+        /// (<c>PendingResolution.ChargeOpenCrossing</c>), in selection order, with the views they were read from.
+        /// Completed facts only, so never partial; an entry is recomputed once one of its views has moved on.
+        /// </summary>
+        internal Dictionary<(StaticLookupFacts Facts, int Version, StaticScopeKey Terminal), OpenCrossing> OpenCrossings { get; } = [];
+
+        /// <summary>The members one open crossing selects: each by the view, owner and name it is charged with.</summary>
+        internal sealed class OpenCrossing((StaticLookupFacts Facts, StaticScopeKey Owner, string Name)[] selections,
+            (StaticLookupFacts Facts, int Version)[] views)
+        {
+            public (StaticLookupFacts Facts, StaticScopeKey Owner, string Name)[] Selections => selections;
+            public (StaticLookupFacts Facts, int Version)[] Views => views;
+
+            public bool Stands()
+            {
+                foreach (var (facts, version) in views)
+                    if (facts.ViewVersion != version) return false;
+                return true;
+            }
+        }
+
         /// <summary>The settlement kept for <paramref name="key"/>, while every view it consulted stands.</summary>
         public bool TryGet(Key key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Settled? settled)
         {
@@ -1084,16 +1123,27 @@ internal static class PropertyExposureResolver
         CancellationToken cancellationToken)
     {
         private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, BoundOwnerSet? Bound);
-        private readonly record struct AnchoredSeed(PropertyDependencyGraphBuilder.SummarySeed Seed, SummaryScope Level);
+
+        /// <summary>
+        /// A seed anchored at a level of the chain. <see cref="Site"/>, when set, is the site its requirements are
+        /// checked from instead of the frame's own (owner decision Q2, 2026-11-14: each check where the evaluator makes
+        /// it): the consulted level for an open target's walk step, the reference's own scope for a value crossing.
+        /// </summary>
+        /// <see cref="OpenWalkMember"/> marks a member an open-target walk selects, a step of the target or a member of a
+        /// reference it crosses (<see cref="ChargePublishedOpenPath"/>, <see cref="ChargeOpenCrossing"/>): its seed is
+        /// resolved in place when it reads nothing further (<see cref="TryResolveInPlace"/>).
+        private readonly record struct AnchoredSeed(PropertyDependencyGraphBuilder.SummarySeed Seed, SummaryScope Level,
+            SummaryScope? Site = null, bool OpenWalkMember = false);
         private readonly record struct SeedSettlementKey(PropertyDependencyGraphBuilder.SummarySeed Seed,
             SummaryScope Level, SummaryScope Site, BoundOwnerSet? Bound);
 
-        private readonly HashSet<SettlementKey> _inProgress = [];
+        // The settlements in progress, each with its frame: a reference met again while its own settlement runs is a
+        // cycle cut, and the frame says how far out the cut reaches (Frame.OutermostCut).
+        private readonly Dictionary<SettlementKey, Frame> _inProgress = [];
         // Unlike anchoring, settlement reads live equations. A complete result that read one, or that depends
         // on its site, is reused only inside ONE synchronous Run; the run's share keeps the others.
         private readonly Dictionary<SettlementKey, SettlementShare.Settled> _completed = [];
         private readonly Dictionary<SeedSettlementKey, SettlementShare.Settled> _completedSeeds = [];
-        private long _cycleCuts;
         private HashSet<string>? _levelReads;
         // The frame whose body is running: what it consults beyond its key is recorded on it (see Frame).
         private Frame? _running;
@@ -1147,14 +1197,43 @@ internal static class PropertyExposureResolver
             public RequirementSet Result;
             public SettlementKey? CacheKey;
             public SeedSettlementKey? SeedCacheKey;
-            public long CycleCutsAtEntry;
+
+            /// <summary>The number of frames below this one on the run's stack (<see cref="Run"/>).</summary>
+            public int Depth;
+
+            /// <summary>
+            /// The outermost settlement a cycle cut inside this one reached, as that frame's <see cref="Depth"/>;
+            /// <see cref="int.MaxValue"/> when it saw none. A cut is a reference met again while its own settlement
+            /// is in progress, and it contributes nothing where it is met. When every cut inside a settlement
+            /// reached that settlement itself or one nested in it, each of them is settled inside it, so its union
+            /// is whole (<see cref="IsWhole"/>): it is the settlement its key has as a top-level one. A cut that
+            /// reached an ENCLOSING settlement leaves this one a partial union, which is kept nowhere
+            /// (EXPOSURE-OPEN-1).
+            /// </summary>
+            public int OutermostCut = int.MaxValue;
+
+            /// <summary>No cycle cut inside this settlement reached a settlement that began before it.</summary>
+            public bool IsWhole => OutermostCut >= Depth;
 
             /// <summary>Set on a frame that computes a settlement the run's share may keep.</summary>
             public SettlementShare.Key? ShareKey;
             public bool ReadLive;
+
+            /// <summary>
+            /// Set on the walk of an open target settled AT its consulted level (owner decision Q2), to that level: the
+            /// walk's site is the level its key already names, so an owner it found on no level of that chain is found
+            /// by no other settlement of the same key either. Such a lookup makes an ordinary settlement depend on its
+            /// site (<see cref="int.MaxValue"/>); this one depends on nothing deeper than its own level, which is what
+            /// it reports.
+            /// </summary>
+            public SummaryScope? SiteIsItsLevel;
             private int _siteDepth = SummaryScope.NoOwnerLookup;
             private bool _inconsistentViews;
             private List<(StaticLookupFacts Facts, int Version)>? _views;
+
+            // The deepest landing this settlement depends on. Every lookup of a consulted-level walk starts at that
+            // level, so one that found no owner is bounded by the level's own depth.
+            private int SiteDepth => SiteIsItsLevel is { } own && _siteDepth == int.MaxValue ? own.Depth : _siteDepth;
 
             public void NoteSiteLanding(int landing) => _siteDepth = Math.Max(_siteDepth, landing);
 
@@ -1174,7 +1253,8 @@ internal static class PropertyExposureResolver
 
             public void Absorb(Frame nested)
             {
-                NoteSiteLanding(nested._siteDepth);
+                OutermostCut = Math.Min(OutermostCut, nested.OutermostCut);
+                NoteSiteLanding(nested.SiteDepth);
                 ReadLive |= nested.ReadLive;
                 _inconsistentViews |= nested._inconsistentViews;
                 if (nested._views is { } views)
@@ -1194,11 +1274,11 @@ internal static class PropertyExposureResolver
             }
 
             public SettlementShare.Settled Complete()
-                => new(Result, _siteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews);
+                => new(Result, SiteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews);
 
             /// <summary><see cref="SettlementShare.Settled.StandsFromEverySite"/> of what this frame has recorded so far.</summary>
             public bool StandsFromEverySite(SummaryScope level)
-                => !ReadLive && !_inconsistentViews && _siteDepth <= level.Depth;
+                => !ReadLive && !_inconsistentViews && SiteDepth <= level.Depth;
         }
 
         /// <summary>
@@ -1225,14 +1305,15 @@ internal static class PropertyExposureResolver
                     _running = frame;
                     if (frame.Body.MoveNext())
                     {
+                        frame.Body.Current.Depth = frames.Count;
                         frames.Push(frame.Body.Current);
                         ObserveCancellation();
                     }
                     else
                     {
                         frames.Pop();
-                        // A settlement that saw a cycle cut holds a partial union: it is kept nowhere.
-                        if (frame.CycleCutsAtEntry == _cycleCuts && (frame.CacheKey is not null || frame.SeedCacheKey is not null))
+                        // A settlement a cycle cut left partial is kept nowhere (Frame.OutermostCut).
+                        if (frame.IsWhole && (frame.CacheKey is not null || frame.SeedCacheKey is not null))
                         {
                             var settled = frame.Complete();
                             if (frame.CacheKey is { } key)
@@ -1286,18 +1367,61 @@ internal static class PropertyExposureResolver
                 return reused;
             }
 
-            var frame = new Frame { SeedCacheKey = key, ShareKey = shareKey, CycleCutsAtEntry = _cycleCuts };
+            var frame = new Frame { SeedCacheKey = key, ShareKey = shareKey };
             frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
             return frame;
         }
 
         private static IEnumerator<Frame> NoFrames() { yield break; }
 
+        /// <summary>
+        /// THE SITE OF A CHECK (owner decision Q2, 2026-11-14): the deepest level, from <paramref name="site"/> upward,
+        /// that is the scope <paramref name="checkedIn"/> or one of its ancestors. The evaluator makes an access check
+        /// in one scope (the consulted level of an open walk, a reference's own scope for a value crossing), and an
+        /// owner activation can satisfy it only on that scope's chain. A requirement reaches the reader through every
+        /// enclosing check, so what counts is the part of that chain the settlement's site shares: a frame's site only
+        /// ever moves outward. <paramref name="isThatScope"/>: the level found is <paramref name="checkedIn"/> itself.
+        /// </summary>
+        private static SummaryScope CheckSite(SummaryScope site, StaticScopeKey checkedIn, out bool isThatScope)
+        {
+            // The scope itself on the chain: the common case, and no allocation.
+            for (var at = site; at is not null; at = at.Parent)
+                if (ReferenceEquals(at.PropertyScope.CompletedContext?.Key, checkedIn))
+                {
+                    isThatScope = true;
+                    return at;
+                }
+
+            isThatScope = false;
+            var ancestors = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
+            for (var key = checkedIn.Parent; key is not null; key = key.Parent)
+                ancestors.Add(key);
+            for (var at = site; at.Parent is not null; at = at.Parent)
+                if (at.PropertyScope.CompletedContext?.Key is { } key && ancestors.Contains(key))
+                    return at;
+            // Every chain ends at the prelude, which every scope shares.
+            return site.Root;
+        }
+
         /// <summary>The settlement of one pending reference (see the class summary); its result is <paramref name="self"/>'s.</summary>
         private IEnumerator<Frame> ResolveReference(Frame self, PendingReference pending, SummaryScope level, SummaryScope? site,
             BoundOwnerSet? boundOwners)
         {
             site ??= level;
+            // Q2 (owner decision 2026-11-14): an open target's walk is checked from the CONSULTED level, the level that
+            // holds the `open`, never from the reader (LookupOpens resolves a level's opens with that level as the site).
+            // A consulted level on the site's chain is the frame itself: the walk is settled at that level, from that
+            // level, whoever reads through it. A level off that chain (a member's own body, the reader's own block) is
+            // checked from the deepest level the two chains share.
+            if (pending.OpenPath && pending.Origin is { } consulted)
+            {
+                var checkedFrom = CheckSite(site, consulted.Key, out var isConsultedLevel);
+                if (isConsultedLevel || checkedFrom.Depth < level.Depth)
+                    level = checkedFrom;
+                site = checkedFrom;
+                self.SiteIsItsLevel = isConsultedLevel ? checkedFrom : null;
+            }
+
             // The walk's bound owners plus this reference's own: the set is extended, never copied or
             // serialized (BoundOwnerSet), and is itself the bound part of both keys.
             if (pending.BoundOwners.Count > 0)
@@ -1309,16 +1433,16 @@ internal static class PropertyExposureResolver
                 self.Reuse(settled);
                 yield break;
             }
-            if (!_inProgress.Add(key))
+            if (_inProgress.TryGetValue(key, out var inProgress))
             {
-                _cycleCuts++;
+                self.OutermostCut = Math.Min(self.OutermostCut, inProgress.Depth);
                 self.Result = default;
                 yield break;
             }
 
+            _inProgress.Add(key, self);
             self.CacheKey = key;
             self.ShareKey = shareKey;
-            self.CycleCutsAtEntry = _cycleCuts;
 
             try
             {
@@ -1328,11 +1452,10 @@ internal static class PropertyExposureResolver
                 {
                     // C1: the level's walks settled ONCE, at the level itself with no bound owners, answer every reader
                     // that consults it when that settlement stands from every site there (see SharedOpenWalksLevel).
-                    var cutsBefore = _cycleCuts;
                     var unbound = ReferenceFrame(PropertyDependencyGraphBuilder.SummaryMemo.OpenWalksOf(pending.Origin),
                         opening, site, boundOwners: null);
                     yield return unbound;
-                    if (cutsBefore == _cycleCuts && unbound.StandsFromEverySite(opening))
+                    if (unbound.IsWhole && unbound.StandsFromEverySite(opening))
                     {
                         self.Result = unbound.Result;
                         yield break;
@@ -1406,7 +1529,8 @@ internal static class PropertyExposureResolver
                 foreach (var part in parts)
                 {
                     if (part.Seed.IsEmptyWithoutFolding()) continue;
-                    var charge = SeedFrame(part.Seed, part.Level, site, boundOwners);
+                    if (TryResolveInPlace(self, part, site, boundOwners)) continue;
+                    var charge = SeedFrame(part.Seed, part.Level, part.Site ?? site, boundOwners);
                     yield return charge;
                     self.Result = sets.Union(self.Result, charge.Result);
                 }
@@ -1433,7 +1557,7 @@ internal static class PropertyExposureResolver
             {
                 Expr target = new Expr.Resolve(pending.Head);
                 foreach (var member in pending.Members) target = new Expr.DotCall(target, member, null);
-                self.Result = ChargePublishedOpenPath(level, scope, target, parts);
+                ChargePublishedOpenPath(level, scope, target, parts);
             }
             else
             {
@@ -1462,7 +1586,7 @@ internal static class PropertyExposureResolver
                     // The head was crossed as a receiver: a transparent reference's target walk selects in the
                     // reference's own scope, so those selections are charged; its VALUE is not.
                     if (navigated > 0)
-                        self.Result = ChargeReferenceCrossing(facts, key, hit.Property.Name, declaringKey, level, parts, opened: false);
+                        self.Result = ChargeReferenceCrossing(facts, key, hit.Property.Name, declaringKey, level, site, parts);
                     if (navigated == 0)
                     {
                         // A direct summary of this live equation must remain a recorded read.
@@ -1491,15 +1615,20 @@ internal static class PropertyExposureResolver
                             walks = sets.Union(walks, walk.Result);
                         }
                         var group = new OpenLevelSettlement();
+                        // Q2: the providing target's walk steps are checked from this consulted level, the member it
+                        // provides from the reader (LookupOpens: the site is the algorithm whose body reads the name).
+                        SummaryScope? consultedSite = null;
                         foreach (var target in current.Opens)
-                            if (TryProvideCompleted(level, target, pending, out var offered, out var identity, current)
+                            if (TryProvideCompleted(level, target, pending, out var offered, out var identity, current,
+                                    consultedSite ??= current.CompletedContext is { } consultedContext
+                                        ? CheckSite(site, consultedContext.Key, out _) : site)
                                 && !group.HasProvider(identity))
                             {
                                 var names = default(RequirementSet);
                                 foreach (var part in offered)
                                 {
                                     if (part.Seed.IsEmptyWithoutFolding()) continue;
-                                    var charge = SeedFrame(part.Seed, part.Level, site, boundOwners);
+                                    var charge = SeedFrame(part.Seed, part.Level, part.Site ?? site, boundOwners);
                                     yield return charge;
                                     names = sets.Union(names, charge.Result);
                                 }
@@ -1514,64 +1643,197 @@ internal static class PropertyExposureResolver
             foreach (var part in parts)
             {
                 if (part.Seed.IsEmptyWithoutFolding()) continue;
-                var charge = SeedFrame(part.Seed, part.Level, site, boundOwners);
+                if (TryResolveInPlace(self, part, site, boundOwners)) continue;
+                var charge = SeedFrame(part.Seed, part.Level, part.Site ?? site, boundOwners);
                 yield return charge;
                 self.Result = sets.Union(self.Result, charge.Result);
             }
         }
 
-        private RequirementSet ChargePublishedOpenPath(SummaryScope opening, ElaboratedPropertyScope scope, Expr target,
+        /// <summary>
+        /// A member an open-target walk selects whose seed names parameters only: its requirements are resolved here, at
+        /// the frame's site, exactly as <see cref="ResolveSeed"/> resolves them, without a frame of their own (the walk
+        /// that selected it is the settlement that is kept). A seed that reads a name or holds a reference is settled
+        /// as every seed is (false).
+        /// </summary>
+        private bool TryResolveInPlace(Frame self, AnchoredSeed part, SummaryScope site, BoundOwnerSet? boundOwners)
+        {
+            if (!part.OpenWalkMember || part.Seed.VisiblePropertyDependencyNames.Count != 0 || part.Seed.PendingReferences.Count != 0)
+                return false;
+            var landing = SummaryScope.NoOwnerLookup;
+            self.Result = sets.Union(self.Result, sets.From(part.Level.ResolveRequirements(part.Seed.RequiredAncestorOwnedParameterNames)
+                .Concat((part.Site ?? site).ResolveRequirementsFromSite(part.Seed.OwnerQualifiedParameters, boundOwners, ref landing))));
+            self.NoteSiteLanding(landing);
+            return true;
+        }
+
+        /// <summary>
+        /// The walk of one open target of the level <paramref name="scope"/> (<c>resolveOpen</c>): the head by the
+        /// direct lexical chain, each PUBLIC step selected from its receiver's open structure. Every selection is
+        /// checked from the consulted level, which is the frame's site (<see cref="ResolveReference"/>): the steps
+        /// here, and the target walk of every transparent reference the walk reads through, head or step
+        /// (<see cref="ChargeOpenCrossing"/>).
+        /// </summary>
+        private void ChargePublishedOpenPath(SummaryScope opening, ElaboratedPropertyScope scope, Expr target,
             List<AnchoredSeed> parts)
         {
             var facts = scope.CompletedContext!.Facts;
             NoteView(facts);
             var head = target.OpenTargetHead(out var steps);
             if (ElaboratedScopeLookup.ResolveOpenProviderHead(scope, head, out var declaring) is not { } resolved
-                || CompletedStructureContext.For(resolved.Target, declaring) is not { } context) return default;
-            // A head that is a transparent reference is crossed: its target walk selects in its own scope.
-            var live = head is Expr.Resolve(var name) && declaring.CompletedContext?.Key is { } declaringKey
-                && facts.Member(declaringKey, name) is { } headKey
-                ? ChargeReferenceCrossing(facts, headKey, name, declaringKey, opening, parts, opened: true)
-                : default;
+                || CompletedStructureContext.For(resolved.Target, declaring) is not { } context) return;
+            // A head that is a transparent reference is crossed: its target walk is checked from here too.
+            if (head is Expr.Resolve(var name) && declaring.CompletedContext?.Key is { } declaringKey
+                && facts.Member(declaringKey, name) is { } headKey)
+                ChargeOpenCrossing(facts, headKey, name, declaringKey, opening, parts);
             var current = context.Key;
             foreach (var step in steps)
             {
                 if (facts.Facts(current)?.Open.Target is not { } owner
                     || facts.Facts(owner)?.Body is not { } body
                     || ElaboratedScopeLookup.TryLookupPublicProperty(body, step) is null
-                    || facts.Member(owner, step) is not { } member) return live;
-                AddPublishedCharge(facts, owner, step, opening, parts);
+                    || facts.Member(owner, step) is not { } member) return;
+                AddOpenWalkCharge(facts, owner, step, opening, parts);
+                // What follows reads this member through its open structure: a reference is crossed in turn.
+                if (facts.Facts(member)?.Body is Algorithm.Alias { IsReference: true })
+                    ChargeOpenCrossing(facts, member, step, owner, opening, parts);
                 current = member;
             }
-            return live;
+        }
+
+        /// <summary><see cref="AddPublishedCharge"/> of a member an open-target walk selects (<see cref="AnchoredSeed.OpenWalkMember"/>).</summary>
+        private void AddOpenWalkCharge(StaticLookupFacts facts, StaticScopeKey owner, string name, SummaryScope opening,
+            List<AnchoredSeed> parts)
+        {
+            var first = parts.Count;
+            AddPublishedCharge(facts, owner, name, opening, parts);
+            for (var added = first; added < parts.Count; added++)
+                parts[added] = parts[added] with { OpenWalkMember = true };
+        }
+
+        /// <summary>
+        /// Q2 (owner decision 2026-11-14): the charge of crossing the declaration <paramref name="key"/> while an OPEN
+        /// target is resolved. <c>openStructure</c> walks a transparent reference's static target with the context it
+        /// was given, the consulted level's, and reads every reference RECEIVER of that walk the same way: so every
+        /// member those walks select is checked from the consulted level, never in the reference's own scope. Each
+        /// selected member's requirement seed is therefore added to <paramref name="parts"/>, to be resolved at the
+        /// frame's site; the reference's own summary, which is resolved in its own scope, is never adopted. The head of
+        /// a reference's target is resolved by the direct lexical chain only, and its value is never read; a member-less
+        /// chain is followed, and a runtime reference ends it with nothing charged
+        /// (<see cref="PropertyDependencyGraphBuilder.SummaryMemo.ReferenceTerminal"/>, opened). Each reference is
+        /// walked once per crossing, so a cycle of references ends.
+        /// </summary>
+        private void ChargeOpenCrossing(StaticLookupFacts facts, StaticScopeKey key, string name, StaticScopeKey declaring,
+            SummaryScope opening, List<AnchoredSeed> parts)
+        {
+            if (memos.SharedMemo.ReferenceTerminal(facts, key, name, declaring, opened: true) is not { } first) return;
+            // What a crossing selects is a fact of the reference: it is found once per view, and charged at each crossing.
+            var crossings = shared.OpenCrossings;
+            var memoKey = (facts, facts.ViewVersion, first.Key);
+            if (!crossings.TryGetValue(memoKey, out var crossing) || !crossing.Stands())
+                crossings[memoKey] = crossing = OpenCrossingOf(facts, first);
+            foreach (var (view, version) in crossing.Views)
+                _running?.NoteView(view, version);
+            foreach (var (view, owner, member) in crossing.Selections)
+                AddOpenWalkCharge(view, owner, member, opening, parts);
+        }
+
+        /// <summary>The members the open crossing of the reference <paramref name="first"/> selects (<see cref="ChargeOpenCrossing"/>).</summary>
+        private SettlementShare.OpenCrossing OpenCrossingOf(StaticLookupFacts facts,
+            (StaticScopeKey Key, string Name, StaticScopeKey Declaring) first)
+        {
+            var selections = new List<(StaticLookupFacts Facts, StaticScopeKey Owner, string Name)>();
+            var views = new List<(StaticLookupFacts Facts, int Version)>();
+            HashSet<StaticScopeKey>? crossed = null;
+            Stack<(StaticLookupFacts Facts, (StaticScopeKey Key, string Name, StaticScopeKey Declaring) Terminal)>? next = null;
+            List<(StaticScopeKey Key, string Name, StaticScopeKey Owner)>? selected = null;
+            for (var (view, terminal) = (facts, first); ;)
+            {
+                if ((crossed ??= new(ReferenceEqualityComparer.Instance)).Add(terminal.Key)
+                    && view.Facts(terminal.Key)?.Body is { } reference)
+                {
+                    var row = PropertyDependencyGraphBuilder.GetAlgorithmSummary(reference, memos, view.Context(terminal.Key)).OutputSeed;
+                    // A head an open provides is no direct-lexical head: openStructure resolves nothing through it.
+                    var directHead = true;
+                    foreach (var written in row.PendingReferences)
+                        directHead &= written.Selection != PendingSelection.OpenWalks;
+                    foreach (var written in row.PendingReferences)
+                    {
+                        if (!directHead || written.OpenPath || written.Candidates.Count > 0
+                            || memos.SharedMemo.RequirementContext(written.Origin ?? view.Context(terminal.Key)) is not { } origin)
+                            continue;
+                        var seen = false;
+                        foreach (var (known, _) in views) seen |= ReferenceEquals(known, origin.Facts);
+                        if (!seen) views.Add((origin.Facts, origin.Facts.ViewVersion));
+                        (selected ??= []).Clear();
+                        if (written.Selection == PendingSelection.BlockHead)
+                        {
+                            // The block is wired under the reference: its members are selected from it.
+                            var members = new List<string>(written.Members.Count + 1) { written.Head };
+                            members.AddRange(written.Members);
+                            SelectPublishedPath(origin.Facts, origin.Key, members, firstIsNamespace: true, selected);
+                        }
+                        else
+                        {
+                            var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(memos.SharedMemo.RequirementLevel(origin),
+                                written.Head, ElaboratedScopeLookup.OwnParameterBindings.Instance);
+                            if (!owned.TryGetProperty(out var headLevel, out var hit)
+                                || headLevel.CompletedContext?.Key is not { } headDeclaring
+                                || origin.Facts.Member(headDeclaring, hit.Property.Name) is not { } headKey)
+                                continue;
+                            // The head is crossed in turn when it is a reference (asked only then: the terminal walk is a
+                            // summary checkpoint).
+                            if (SelectPublishedPath(origin.Facts, headKey, written.Members, firstIsNamespace: false, selected) > 0
+                                && origin.Facts.Facts(headKey)?.Body is Algorithm.Alias { IsReference: true }
+                                && memos.SharedMemo.ReferenceTerminal(origin.Facts, headKey, hit.Property.Name, headDeclaring,
+                                    opened: true) is { } headTerminal)
+                                (next ??= new()).Push((origin.Facts, headTerminal));
+                        }
+
+                        foreach (var member in selected)
+                        {
+                            selections.Add((origin.Facts, member.Owner, member.Name));
+                            if (origin.Facts.Facts(member.Key)?.Body is Algorithm.Alias { IsReference: true }
+                                && memos.SharedMemo.ReferenceTerminal(origin.Facts, member.Key, member.Name, member.Owner,
+                                    opened: true) is { } memberTerminal)
+                                (next ??= new()).Push((origin.Facts, memberTerminal));
+                        }
+                    }
+                }
+
+                if (next is null || !next.TryPop(out var following)) return new([.. selections], [.. views]);
+                (view, terminal) = following;
+            }
         }
 
         /// <summary>
         /// The charge of crossing the declaration <paramref name="key"/> (<paramref name="name"/>, declared at
-        /// <paramref name="declaring"/>) as a receiver or open head WITHOUT selecting it: nothing unless it is a
-        /// transparent reference, whose target walk the evaluator performs in the reference's own scope
-        /// (<c>aliasStepNavigateWith</c>), access-checking each member it selects. A reference whose target selects a
-        /// member, or whose head is not found by the owner walk (an open provides it), charges its VALUE requirement,
-        /// which is exactly those selections (its head's value is never read). A member-less reference to a lexically
-        /// found name selects nothing itself: the chain is followed while it names references
-        /// (<see cref="PropertyDependencyGraphBuilder.SummaryMemo.ReferenceTerminal"/>), and a name that is not a
-        /// reference charges nothing. An open head (<paramref name="opened"/>) that is, or whose member-less chain
-        /// reaches, a RUNTIME reference charges nothing either: the open is that reference's own namespace (OD-C). The
-        /// live summary is returned when the terminal's level is on the chain (a recorded read); otherwise its anchored
-        /// seed is added to <paramref name="parts"/>.
+        /// <paramref name="declaring"/>) as the receiver of a written path WITHOUT selecting it, a VALUE crossing: nothing
+        /// unless it is a transparent reference, whose target walk the evaluator performs in the reference's OWN scope
+        /// (<c>aliasStepNavigateWith</c>: the alias chase pushes the reference), access-checking each member it selects.
+        /// A reference whose target selects a member, or whose head is not found by the owner walk (an open provides
+        /// it), charges its VALUE requirement, which is exactly those selections (its head's value is never read). A
+        /// member-less reference to a lexically found name selects nothing itself: the chain is followed while it names
+        /// references (<see cref="PropertyDependencyGraphBuilder.SummaryMemo.ReferenceTerminal"/>), and a name that is
+        /// not a reference charges nothing. The live summary, which is resolved in the reference's scope, is returned
+        /// when the terminal's level is on the chain (a recorded read); otherwise its anchored seed is added to
+        /// <paramref name="parts"/>, to be resolved from that scope too (owner decision Q2, 2026-11-14). The crossing
+        /// made while an OPEN target is resolved is <see cref="ChargeOpenCrossing"/>: the consulted level checks it.
         /// </summary>
         private RequirementSet ChargeReferenceCrossing(StaticLookupFacts facts, StaticScopeKey key, string name,
-            StaticScopeKey declaring, SummaryScope opening, List<AnchoredSeed> parts, bool opened)
+            StaticScopeKey declaring, SummaryScope opening, SummaryScope site, List<AnchoredSeed> parts)
         {
-            if (memos.SharedMemo.ReferenceTerminal(facts, key, name, declaring, opened) is not { } terminal) return default;
+            if (memos.SharedMemo.ReferenceTerminal(facts, key, name, declaring, opened: false) is not { } terminal) return default;
             SummaryScope? found = opening;
             while (found is not null && !ReferenceEquals(found.PropertyScope.CompletedContext?.Key, terminal.Declaring))
                 found = found.Parent;
             if (found is not null && TryLookupSummary(found, terminal.Name, out var at, out _, out var summary) && ReferenceEquals(at, found))
                 return sets.Adopt(summary);
+            // Q2: a value crossing is checked in the reference's OWN scope (the alias chase pushes the reference), so a
+            // reference declared off the chain is resolved from the part of its declaring chain the site shares.
             parts.Add(AnchorPublishedSeed(facts,
                 PropertyDependencyGraphBuilder.GetAlgorithmSummary(facts.Facts(terminal.Key)!.Body!, memos, facts.Context(terminal.Key)).OutputSeed,
-                terminal.Key.Parent, opening));
+                terminal.Key.Parent, opening) with { Site = CheckSite(site, terminal.Declaring, out _) });
             return default;
         }
 
@@ -1672,8 +1934,11 @@ internal static class PropertyExposureResolver
 
         // Select only through completed Q2/Q3/Q4 facts. Requirement seeds, expansion and settlement
         // still belong to Q8; each seed is anchored at the selected namespace's actual declaring owner.
+        // The providing target's walk steps are checked from the consulted level (consultedSite, on whose chain they are
+        // anchored); the member it provides is checked from the reader, at the frame's own site.
         private bool TryProvideCompleted(SummaryScope opening, Expr target, PendingReference pending,
-            out List<AnchoredSeed> parts, out OpenProviderIdentity identity, ElaboratedPropertyScope? lookupScope = null)
+            out List<AnchoredSeed> parts, out OpenProviderIdentity identity, ElaboratedPropertyScope? lookupScope = null,
+            SummaryScope? consultedSite = null)
         {
             parts = [];
             identity = null!;
@@ -1694,9 +1959,12 @@ internal static class PropertyExposureResolver
                     || ElaboratedScopeLookup.TryLookupPublicProperty(body, step) is null
                     || facts.Member(owner, step) is not { } member)
                     return false;
-                AddPublishedCharge(facts, owner, step, opening, parts);
+                AddPublishedCharge(facts, owner, step, consultedSite ?? opening, parts);
                 current = member;
             }
+            if (consultedSite is not null)
+                for (var i = 0; i < parts.Count; i++)
+                    parts[i] = parts[i] with { Site = consultedSite };
             if (facts.Facts(current)?.Open.Target is not { } provider
                 || facts.Facts(provider)?.Body is not { } providerBody
                 || ElaboratedScopeLookup.TryLookupPublicProperty(providerBody, pending.Head) is null
@@ -1728,6 +1996,27 @@ internal static class PropertyExposureResolver
                     return i;
                 }
                 AddPublishedCharge(facts, owner, members[i], opening, parts);
+                current = next;
+            }
+            return members.Count;
+        }
+
+        /// <summary>
+        /// The members of a reference's target path walked while an open target is resolved
+        /// (<see cref="OpenCrossingOf"/>): the navigation of <see cref="ChargePublishedPath"/>, each selected member
+        /// reported in <paramref name="selected"/> and nothing charged here. A step that selects nothing reads no value
+        /// in this mode (an <c>.Algorithm</c> link is the reference's own namespace).
+        /// </summary>
+        private static int SelectPublishedPath(StaticLookupFacts facts, StaticScopeKey declaration, IReadOnlyList<string> members,
+            bool firstIsNamespace, List<(StaticScopeKey Key, string Name, StaticScopeKey Owner)> selected)
+        {
+            var current = declaration;
+            for (var i = 0; i < members.Count; i++)
+            {
+                var owner = i == 0 && firstIsNamespace ? current : facts.Facts(current)?.Receiver.Target;
+                if (owner is null || facts.Facts(owner)?.Body is null || facts.Member(owner, members[i]) is not { } next)
+                    return i;
+                selected.Add((next, members[i], owner));
                 current = next;
             }
             return members.Count;

@@ -1033,7 +1033,6 @@ public class SemanticModelTests
 
     [Theory]
     [InlineData("Box.Sub", "t")]
-    [InlineData("Alias", "t")]
     [InlineData("Box.Sub", "x")]
     public void Build_DotCall_RuntimeMember_InaccessibleStructuralReceiverStaysUnresolved(string receiver, string parameter)
     {
@@ -1055,6 +1054,60 @@ public class SemanticModelTests
         Assert.Equal(IdentifierClassification.Unresolved, member.Classification);
         Assert.Null(member.ResolvedDeclaration);
         Assert.Null(member.ResolvedProperty);
+    }
+
+    /// <summary>
+    /// The same read through the reference <c>Alias = Box.Sub</c>, written outside <c>Box</c>. The reference's own
+    /// target walk selects <c>Sub</c> where no activation of <c>Box</c> can exist: that check can never pass, so it
+    /// charges nothing (owner decision Q1, 2026-11-14) and <c>Alias</c> is exported, where it formerly carried the
+    /// fail-closed entry that made it an inaccessible receiver. Its row is a runtime one, so the member is the
+    /// runtime member of a valid receiver; the run still fails with <c>LocalOnlyProperty</c>, at <c>Sub</c> itself.
+    /// </summary>
+    [Fact]
+    public void Build_DotCall_RuntimeMember_ThroughAReferenceWhoseTargetWalkCanNeverPass_IsARuntimeMember()
+    {
+        const string source = """
+            Box(x) = {
+                Sub = x
+                x
+            }
+            Alias = Box.Sub
+            Get(t) = Alias.Q
+            Get(0)
+            """;
+        var model = BuildModel(source);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.True(result.IsError);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, result.Error.Code);
+        var refused = result.Error;
+        while (refused is EvalError.WithContext context) refused = context.Inner;
+        Assert.Equal("Sub", Assert.IsType<EvalError.LocalOnlyProperty>(refused).PropertyName);
+        Assert.Equal(PropertyExposure.Exported, SingleProperty(model, "Alias").Exposure);
+        var member = ResolutionAt(model, 6, 16);
+        Assert.Equal(IdentifierClassification.RuntimeMemberReference, member.Classification);
+        Assert.Null(member.ResolvedDeclaration);
+        Assert.Null(member.ResolvedProperty);
+    }
+
+    /// <summary>
+    /// A name read through <c>open L</c> resolves to the member the block of a block-headed reference declares,
+    /// exactly as through its named twin (owner decision Q3, 2026-11-14): the block head of a reference's row, read in
+    /// open mode, is keyed under the reference, where the value reading of the same row keys it.
+    /// </summary>
+    [Theory]
+    [InlineData("L = { public Sub = { public Q = 1 } }.Sub")]
+    [InlineData("Lib = { public Sub = { public Q = 1 } }\nL = Lib.Sub")]
+    public void Build_OpenReference_BlockHeadedOrNamed_ResolvesTheProvidedNameToTheDeclaredMember(string declarations)
+    {
+        var source = "open L\n" + declarations + "\nQ + 0";
+        var model = BuildModel(source);
+        var qDeclaration = Assert.Single(model.FindDeclarations("Q"));
+        var qReference = ResolutionAt(model, source.Count(c => c == '\n') + 1, 1);
+        Assert.Equal(OccurrenceKind.ResolveReference, qReference.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, qReference.Classification);
+        Assert.Equal(qDeclaration, qReference.ResolvedDeclaration);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
     }
 
     [Fact]

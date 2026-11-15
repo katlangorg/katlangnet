@@ -3,7 +3,7 @@ import KatLang
 open KatLang
 
 /-!
-# Candidate static input domain of navigation admissibility (ledger E-18, F1 DEFER)
+# Candidate static input domain of navigation admissibility (ledger E-18, F1 CLOSED)
 
 `NavigationContract` reduces "a reachable production navigation is a navigation-core run" to one
 per-body obligation of a call contract. The cell clause of that contract rests on STATIC facts of
@@ -94,6 +94,73 @@ lookup reaches after every level's own declarations and BEFORE any `open` (`prel
   this source, and both evaluators agree. This is a predicate gap, not a language change.
   Evidence: `artifacts/validation/e18-c1-i28-20261114-review/`. The historical closure claim above
   is superseded; this module remains a candidate fragment. C# correspondence is still ASSUMED.
+
+  E-18 F1 CLOSEOUT (2026-11-15, owner decisions Q1–Q3 of 2026-11-14): EXPOSURE CORRECT; SETTLEMENT
+  LINEAR; MODEL AGREES; F1 CLOSED, superseding the STOPPED / F1 DEFER verdict above. B2 stays
+  DEFERRED and ledger E-18 stays OPEN. Q2: each access check is charged at the site the evaluator
+  makes it: a written path at the reading site; an open target's walk, a crossed reference's target
+  walk included, at the consulted level; the member an open provides at the reading site; a value
+  crossing in the reference's own scope. Q1: a check that can never pass at its site charges
+  nothing; the fail-closed entry (owner depth -1, and a names-only requirement no level binds) is
+  retired, and no published requirement is one that no chain can supply. Q3: the block head of a
+  reference's row read in open mode is keyed under the reference
+  (`StaticStructureQueries.DirectPath`), so a block-headed reference resolves like a named one. The
+  route census (`ExposureCensusTests`) holds three ratchet lines (two over-charges of its fixed
+  self-checks and the model's stricter verdict on one of them); 26,102 cases are valid (912
+  block-headed open targets naming a missing member or `.Algorithm` are now `UnresolvedOpenTarget`,
+  as their named twins were); 7,478 observations are in the impossible-check class, decided by the
+  grid and by behavior in agreement; no inside outcome that worked on `a4b545e8` fails now.
+  Settlement keeps a settlement when no cycle cut inside it reached a settlement that began before
+  it; all 2,442 work families are within the 2.5 doubling bound (285 were not), the `Lib.Mid.Sub`
+  discharge witness takes 204 / 379 / 729 frames at 25 / 50 / 100 (formerly 3,522 / 11,972 /
+  43,872), and every observation is identical before and after that change. Lean: a missing or
+  runtime end keeps the checks made before it (`Sel.miss`, `Sel.runtime`), so the static prefix of a
+  runtime open is on the trail and the review's host-built copy is refused; each scope restricts the
+  checks made inside it (`Located.within`, `Sel.within`); guards
+  `NavigationSourceDomainGuards.CheckSites`. The model check leaves no M1, M2 or M4 line, the corpus
+  tally has no `paramsBound` or `exposureFull` failure, and the axiom audit finds only `propext`,
+  `Classical.choice` and `Quot.sound`. C# correspondence, model/evaluator agreement and fuel
+  sufficiency remain assumptions; no `NavRuns` premise, per-body obligation or B2 criterion is
+  discharged. Evidence: `artifacts/validation/e18-f1-closeout-20261115/`.
+
+  Independent reviewer correction (2026-11-15): F1 DEFER; acceptance BLOCKED, superseding this
+  closeout's F1 CLOSED claim until all required checks pass. The preceding DotNet phase failed
+  `StaticStructureDefaultCutoverTests.ResolutionWithoutAnAdmittedOperationIsPhysicallyAbsent`
+  because `ImplicitArgumentResolver.OutputSpreading.cs` contains `StructuralOperation!`; the brief
+  excludes that file, so its failure cannot be waived or repaired in this task. The required twin
+  equality is also unresolved: `GridBuiltTwinDifference` exempts 91 differing pairs, including
+  three outside the inventory's prediction, rather than establishing the brief's equality
+  criterion. The 2,442 work families comprise 1,733 measured families within bound and 709
+  excluded families; the exclusions are not passing measurements. The exposure/model findings and
+  their evidence remain recorded above; B2 stays DEFERRED and E-18 OPEN. Independent review
+  evidence: `artifacts/validation/review-e18-f1-20261115/`.
+
+  E-18 F1 FINISH (2026-11-15, owner decisions D1 and D2 of 2026-11-15): F1 CLOSED against the route
+  census, superseding the reviewer's F1 DEFER; acceptance BLOCKED verdict above. B2 stays DEFERRED
+  and ledger E-18 stays OPEN. Both review findings are resolved, neither by a change to exposure, to
+  this model or to an evaluator. D1: `ImplicitArgumentResolver.OutputSpreading.cs` no longer writes
+  `StructuralOperation!` (the field is non-nullable, so the operator did nothing at run time);
+  `StaticStructureDefaultCutoverTests.ResolutionWithoutAnAdmittedOperationIsPhysicallyAbsent`
+  passes and the DotNet phase has no failure. D2: the twin of a block-headed reference is the
+  DECLARED COPY of the same literal, `Lit = { <literal> }` followed by `L = Lit.<path>`
+  (`CensusGrid.DeclaredCopy`). The grid's `ref1` cell was never that twin: it points at the real
+  `Lib`, whose `Mid` holds the reader and is activated, while the literal is a stripped copy, and
+  all 91 pairs the retired comparison exempted have the reader there. Each of the 5,136 generated
+  `head=blockref` cells, valid or not, gives exactly its declared copy's error diagnostics,
+  signatures and probe outcomes (census mode `twins`, no exemption), and
+  `ExposureCensusTests.DefaultSubset_BlockHeadedReferencesMatchTheirDeclaredCopies` keeps that
+  equality in the default suite for the stored cover's 51 cells. The comparison sees Q3: with
+  `blockHeadUnderScope` passed as `false`, 2,506 of the 5,136 pairs and 9 of the 51 differ. The
+  `ref1` pairing and its exemption categories are deleted, so the mention of
+  `GridBuiltTwinDifference` above is history. The closeout's other results stand as the reviewer
+  re-measured them, and the final candidate gives them again: census `full` (26,102 valid cases,
+  7,478 impossible-check observations, no unsupplied requirement, the three ratchet lines, and no
+  work family flagged: 1,733 measured within the bound, 709 excluded by the work generator's own
+  structural rules, the same as before the closeout), the model check (one line, the M3 of a fixed
+  self-check) and the comparison with `a4b545e8` (no regression). C# correspondence,
+  model/evaluator agreement and fuel sufficiency remain assumptions; no `NavRuns` premise,
+  per-body obligation or B2 criterion is discharged. Evidence:
+  `artifacts/validation/e18-f1-finish-20261115/`.
 
   Runtime-only routes — parameter and computed heads, `.Algorithm` links, runtime reference rows —
   contribute nothing statically (`Sel.runtime`). A chase meeting a key it already passed is the
@@ -291,11 +358,13 @@ inductive Sel (α : Type) where
   /-- The selection reaches this. -/
   | found (a : α)
   /-- It selects nothing, as production: a structural miss, an undeclared name, a builtin, or a
-      production refusal (an ambiguous open level, a failing open target). -/
-  | miss
+      production refusal (an ambiguous open level, a failing open target). `checked` holds the
+      declarations access-checked before it ended. -/
+  | miss (checked : List Located)
   /-- Decided only at run time: a parameter or computed receiver, an `.Algorithm` link, a runtime
-      reference row. Contributes nothing statically. -/
-  | runtime
+      reference row. The end contributes nothing statically; `checked` holds the declarations
+      access-checked before it (the static prefix of `Lib.Sub.Algorithm` checks `Sub`). -/
+  | runtime (checked : List Located)
   /-- The model cannot decide (the fuel ended): the member's check FAILS CLOSED. -/
   | stuck
   deriving Inhabited
@@ -313,9 +382,37 @@ structure Hit where
 /-- Continue a selection with what it found. -/
 def Sel.bind {α β : Type} : Sel α → (α → Sel β) → Sel β
   | .found a, f => f a
-  | .miss, _ => .miss
-  | .runtime, _ => .runtime
+  | .miss checked, _ => .miss checked
+  | .runtime checked, _ => .runtime checked
   | .stuck, _ => .stuck
+
+/-- A selection made AFTER `checked` was access-checked: its trail, or the checked prefix of its
+    missing or runtime end, starts with `checked`. -/
+def Sel.after (checked : List Located) : Sel Hit → Sel Hit
+  | .found h => .found ⟨h.loc, checked ++ h.trail⟩
+  | .miss later => .miss (checked ++ later)
+  | .runtime later => .runtime (checked ++ later)
+  | .stuck => .stuck
+
+/-- THE SITE OF A CHECK (owner decision Q2, 2026-11-14). The evaluator makes an access check in ONE
+    scope: the reader's own for a written path and for the member an `open` provides, the CONSULTED
+    level's for an open target's walk (a crossed reference's target walk included), the REFERENCE's
+    own for a value crossing. A declared requirement counts at the level its position names only when
+    that level is on the chain of the scope the check is made in; a check made inside another one
+    counts only where both chains meet. `L.within scope` is the declaration `L` as checked from inside
+    the scope whose levels are at the positions `scope` of the reader's stack: every other position
+    names no level there. A check whose owner is not on its site's chain can never pass, so it
+    requires nothing (owner decision Q1 = (b), 2026-11-14). The reader's own scope holds every
+    position, so it restricts nothing. -/
+def Located.within (scope : List (Option Nat)) (L : Located) : Located :=
+  { L with map := L.map.map fun position => if position.isSome && scope.contains position then position else none }
+
+/-- Every check a selection made, as made from inside `scope`. The selected declaration is unchanged. -/
+def Sel.within (scope : List (Option Nat)) : Sel Hit → Sel Hit
+  | .found h => .found ⟨h.loc, h.trail.map (Located.within scope)⟩
+  | .miss checked => .miss (checked.map (Located.within scope))
+  | .runtime checked => .runtime (checked.map (Located.within scope))
+  | .stuck => .stuck
 
 /-- All of a level's providers, or the first outcome that is not one (a stuck provider first:
     fail closed; then a failing target, which fails the whole open level in production). -/
@@ -323,7 +420,7 @@ def Sel.all {α : Type} (xs : List (Sel α)) : Sel (List α) :=
   if xs.any (fun x => match x with | .stuck => true | _ => false) then .stuck
   else
     let found := xs.filterMap fun x => match x with | .found a => some a | _ => none
-    if found.length = xs.length then .found found else .miss
+    if found.length = xs.length then .found found else .miss []
 
 /-- The hits of one open level, each provider once: by the provider's static KEY (the semantic
     provider identity `resolveAllOpens` deduplicates by — declaration and declaring scope — never the
@@ -353,9 +450,15 @@ mutual
       (`staticPathSelectWith`: the full lookup, opens included), a carrier is itself, a runtime row is
       `runtime`. In the open mode it is `openStructure`: the target's head is resolved direct-lexically
       only, a runtime or non-static target is the reference's own namespace. Every member a target walk
-      selects is access-checked (`aliasStepNavigateWith`, `openNavigateWith`), so it joins the trail. A
-      key met twice on one chase is the alias cycle production refuses (`miss`), or — deciding an
-      `.Algorithm` row's route — the runtime route. -/
+      selects is access-checked (`aliasStepNavigateWith`, `openNavigateWith`), so it joins the trail,
+      checked from the SITE the evaluator makes that check in (Q2). In the value mode that is the
+      reference's OWN scope (the chase pushes the reference): everything the chase checks, to its end,
+      is checked `within` that scope. In the open mode it is the site of whoever opened it
+      (`openStructure` keeps the consulted level's context through every reference it reads), so
+      nothing is restricted here. A runtime end in the open mode is the reference's own namespace,
+      reached AFTER the checks of its static prefix, which stay on the trail. A key met twice on one
+      chase is the alias cycle production refuses (`miss`), or — deciding an `.Algorithm` row's route —
+      the runtime route. -/
   def structureOf (R : Stack) (opn : Bool) : Nat → List (List String) → Located → Sel Hit
     | 0, _, c =>
         match c.alg with
@@ -367,26 +470,31 @@ mutual
             -- A repeated key is an alias cycle: production refuses it (`illegalInEval`; in the open
             -- mode `openStructure`'s exhausted fuel), unless it is met deciding an `.Algorithm` row's
             -- route, where every failure is the runtime route (`aliasStepIsRuntime`).
-            let failed : Sel Hit := if !opn && target.isRuntimeAliasRow then .runtime else .miss
-            if visited.contains c.key then failed
+            let failed : List Located → Sel Hit := fun checked =>
+              if !opn && target.isRuntimeAliasRow then .runtime checked else .miss checked
+            if visited.contains c.key then failed []
             else
               match Expr.staticAliasPath? target with
-              | none => if opn then .found ⟨c, []⟩ else failed
+              | none => if opn then .found ⟨c, []⟩ else failed []
               | some (head, steps) =>
-                  match walkPath R (if opn then .reference else .value) fuel (c.key :: visited)
-                      (levelOf c.key c.name c.alg :: c.stack) (c.self :: c.map) head steps (c.key ++ ["#target"]) with
-                  | .found v =>
-                      (structureOf R opn fuel (c.key :: visited) v.loc).bind fun s => .found ⟨s.loc, v.trail ++ s.trail⟩
-                  | .runtime => if opn then .found ⟨c, []⟩ else .runtime
-                  | .miss => failed
-                  | .stuck => .stuck
+                  let own := c.self :: c.map
+                  let chased : Sel Hit :=
+                    match walkPath R (if opn then .reference else .value) fuel (c.key :: visited)
+                        (levelOf c.key c.name c.alg :: c.stack) own head steps (c.key ++ ["#target"]) with
+                    | .found v => Sel.after v.trail (structureOf R opn fuel (c.key :: visited) v.loc)
+                    | .runtime checked => if opn then .found ⟨c, checked⟩ else .runtime checked
+                    | .miss checked => failed checked
+                    | .stuck => .stuck
+                  if opn then chased else chased.within own
         | _ => .found ⟨c, []⟩
 
   /-- A static path from the scope stack `S` (its levels at `M` on `R`): its head — a name by the
       full lookup (`value`: the direct chain, then the prelude, then the opens level by level) or the
       direct chain only (`reference`, `target`), or a block (wired at `S`; an open target's block at
       the prelude) — then its member steps. A head the owner walk finds, and a block head, are not on
-      the trail; an opened head is (with the walks of the open levels consulted). -/
+      the trail; an opened head is (with the walks of the open levels consulted). The walk's own
+      selections, its member steps and an opened head's provided member, are checked from the site of
+      whoever walks: nothing is restricted here. -/
   def walkPath (R : Stack) (w : Walk) : Nat → List (List String) → Stack → List (Option Nat) → Expr →
       List Ident → List String → Sel Hit
     | 0, _, _, _, _, _, _ => .stuck
@@ -396,72 +504,81 @@ mutual
           | .resolve name =>
               match propIndex? S name with
               | some (i, p) => .found ⟨foundAt R S M i p, []⟩
-              | none => if w = .value && !preludeDeclares name then openedAt R fuel name S M else .miss
+              | none => if w = .value && !preludeDeclares name then openedAt R fuel name S M else .miss []
           | .algorithmExpr block =>
               if w = .target then .found ⟨{ name := none, alg := block, stack := [], map := [], self := none, key := blockKey }, []⟩
               else .found ⟨{ name := none, alg := block, stack := S, map := M, self := none, key := blockKey }, []⟩
-          | _ => .miss
-        start.bind fun h => (walkSteps R w fuel visited steps h.loc).bind fun s => .found ⟨s.loc, h.trail ++ s.trail⟩
+          | _ => .miss []
+        match start with
+        | .found h => Sel.after h.trail (walkSteps R w fuel visited steps h.loc)
+        | other => other
 
   /-- The member steps of a static path, each receiver read through its structure (the open mode's
       for `reference` and `target`), each selected member on the trail after the target walks its
       receiver's structure crossed. A missing step `Algorithm` is the runtime link (the reference's
-      own namespace in the open mode); an open target's step must be public. -/
+      own namespace in the open mode); an open target's step must be public. A step that ends the
+      walk keeps the checks made before it. -/
   def walkSteps (R : Stack) (w : Walk) : Nat → List (List String) → List Ident → Located → Sel Hit
     | _, _, [], c => .found ⟨c, []⟩
     | 0, _, _ :: _, _ => .stuck
     | .succ fuel, visited, m :: rest, c =>
-        (structureOf R (w != .value) fuel visited c).bind fun container =>
-          match lookupPropDefAny? (levelOf container.loc.key container.loc.name container.loc.alg).props m with
-          | some p =>
-              if w = .target && !p.isPublic then .miss
-              else
-                let member := memberOf R container.loc p
-                (walkSteps R w fuel visited rest member).bind fun s =>
-                  .found ⟨s.loc, container.trail ++ member :: s.trail⟩
-          | none => if m == "Algorithm" && w != .target then .runtime else .miss
+        match structureOf R (w != .value) fuel visited c with
+        | .found container =>
+            match lookupPropDefAny? (levelOf container.loc.key container.loc.name container.loc.alg).props m with
+            | some p =>
+                if w = .target && !p.isPublic then .miss container.trail
+                else
+                  let member := memberOf R container.loc p
+                  Sel.after (container.trail ++ [member]) (walkSteps R w fuel visited rest member)
+            | none => if m == "Algorithm" && w != .target then .runtime container.trail else .miss container.trail
+        | other => other
 
   /-- The member a name an `open` provides, searched from the levels `S` (at `M` on `R`) outward:
       at each level its targets' PROVIDERS, each once by static identity (`dedupKeys`); the first
       level some provider provides the name publicly decides — one provider selects its member, two
       or more select nothing (`ambiguousOpen`) — and a target that fails fails the level. Every
       provider's walk of every level consulted, up to and including the deciding one, is on the
-      trail (`resolveAllOpens` resolves them all before the name is looked up), then the member. -/
+      trail (`resolveAllOpens` resolves them all before the name is looked up), then the member.
+      Each level's walks are checked from THAT level (`lookupOpenProperties` pushes the consulted
+      level as the site): `within` the positions `M` of `level :: rest`. The provided member is
+      checked from the scope whose body reads the name, so it is not restricted here. -/
   def openedAt (R : Stack) : Nat → Ident → Stack → List (Option Nat) → Sel Hit
     | 0, _, _, _ => .stuck
-    | .succ _, _, [], _ => .miss
+    | .succ _, _, [], _ => .miss []
     | .succ fuel, name, level :: rest, M =>
         match Sel.all ((indexed 0 level.opens).map fun (e, j) => openProvider R fuel (level :: rest) M level.key j e) with
         | .found providers =>
-            let walks := providers.flatMap Hit.trail
+            let walks := (providers.flatMap Hit.trail).map (Located.within M)
             match dedupKeys [] (providers.filterMap fun provider =>
                 (lookupPropDefPublic? (levelOf provider.loc.key provider.loc.name provider.loc.alg).props name).map
                   (memberOf R provider.loc)) with
             | [] => (openedAt R fuel name rest (M.drop 1)).bind fun h => .found ⟨h.loc, walks ++ h.trail⟩
             | [hit] => .found ⟨hit, walks ++ [hit]⟩
-            | _ => .miss
+            | _ => .miss []
         | .stuck => .stuck
-        | _ => .miss
+        | _ => .miss []
 
   /-- The provider an `open` target of the level `S` (at `M` on `R`; its key `levelKey`, the target
       the `j`-th) opens (`resolveOpen`), with the trail of its walk: an inline block at the prelude, or
       a static path resolved from that level (`resolveAlgForOpen`), read through `openStructure`; a
-      builtin or an argument-requiring provider is refused (`illegalInOpen`). -/
+      builtin or an argument-requiring provider is refused (`illegalInOpen`). Every step, and every
+      target walk `openStructure` reads through, is checked from the consulted level (`openedAt`). -/
   def openProvider (R : Stack) : Nat → Stack → List (Option Nat) → List String → Nat → Expr → Sel Hit
     | 0, _, _, _, _, _ => .stuck
     | .succ fuel, S, M, levelKey, j, e =>
         let check : Hit → Sel Hit := fun provider =>
-          if provider.loc.alg.isBuiltin || provider.loc.alg.requiresArguments then .miss else .found provider
+          if provider.loc.alg.isBuiltin || provider.loc.alg.requiresArguments then .miss provider.trail else .found provider
         match e with
         | .algorithmExpr block =>
             check ⟨{ name := none, alg := block, stack := [], map := [], self := none,
                      key := levelKey ++ ["#open" ++ toString j] }, []⟩
         | _ =>
             match Expr.staticAliasPath? e with
-            | none => .miss
+            | none => .miss []
             | some (head, steps) =>
-                ((walkPath R .target fuel [] S M head steps (levelKey ++ ["#open" ++ toString j])).bind fun h =>
-                  (structureOf R true fuel [] h.loc).bind fun s => .found ⟨s.loc, h.trail ++ s.trail⟩).bind check
+                match walkPath R .target fuel [] S M head steps (levelKey ++ ["#open" ++ toString j]) with
+                | .found h => (Sel.after h.trail (structureOf R true fuel [] h.loc)).bind check
+                | other => other
 end
 
 /-! ## The fuel, derived from the program -/
@@ -544,8 +661,8 @@ def Reqs.cat (a b : Reqs) : Reqs := (a.1 ++ b.1, a.2 && b.2)
 /-- A selection's requirements as a collection: nothing selected requires nothing, `stuck` is undecided. -/
 def Reqs.ofSel : Sel (List Requirement) → Reqs
   | .found requirements => (requirements, true)
-  | .miss => ([], true)
-  | .runtime => ([], true)
+  | .miss _ => ([], true)
+  | .runtime _ => ([], true)
   | .stuck => ([], false)
 
 /-- What the reader requires of every declaration a selection's trail access-checks. -/
@@ -559,7 +676,7 @@ def trailRequirements (inner : Stack) (h : Hit) : List Requirement :=
 def dottedRequirements (outer inner : Stack) (e : Expr) : Sel (List Requirement) :=
   let R := inner ++ outer
   match Expr.staticAliasPath? e with
-  | none => .miss
+  | none => .miss []
   | some (head, steps) =>
       (walkPath R .value (selFuel R e) [] R (readerMap R 0) head steps (childKey R (some "#block"))).bind
         fun h => .found (trailRequirements inner h)

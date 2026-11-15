@@ -79,6 +79,12 @@ public class NavigationSourceDomainWitnessTests
         { "AccessChecks", "namedMemberOnly", "F(y) = {\n  B = {\n    public Q = 1\n    y + 0\n  }\n  A = B.Q + 0\n  A\n}\nF(5)\n" },
         { "AccessChecks", "blockHeadRelaxed", "F(y) = {\n  A = {\n    public Q = 1\n    y + 0\n  }.Q + 0\n  A\n}\nF(5)\n" },
         { "AccessChecks", "runtimeReferenceOpen", "F(y) = {\n  open L, Other\n  L = y\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5)\n" },
+        { "CheckSites", "openCrossingInside", "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      B(z) = {\n        open L\n        Q + 0\n      }\n      B(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(5)\n" },
+        { "CheckSites", "valueCrossingOutside", "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      0\n    }\n    0\n  }\n  Box = {\n    public A = if(false, L.Q + 0, 7)\n  }\n  Box.A\n}\nF(5)\n" },
+        { "CheckSites", "consultedOutside", "F(y) = {\n  open Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(5)\n" },
+        { "CheckSites", "untakenImpossible", "F(y) = {\n  A = y + 1\n  A\n}\nBox = {\n  public R = if(false, F.A, 0)\n}\nBox.R\n" },
+        { "CheckSites", "staticPrefixRuntimeOpen", "F(y) = {\n  open L, Other\n  L = Lib.Sub.Algorithm\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Other = { public Z = 2 }\n  A = Z + 0\n  A\n}\nF(5)\n" },
+        { "CheckSites", "blockHeadedOpen", "F(y) = {\n  open L\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF(5)\n" },
     };
 
     [Theory]
@@ -129,6 +135,11 @@ public class NavigationSourceDomainWitnessTests
     [InlineData("namedMemberOnly", 1)]
     [InlineData("blockHeadRelaxed", 1)]
     [InlineData("runtimeReferenceOpen", 1)]
+    [InlineData("openCrossingInside", 1)]
+    [InlineData("valueCrossingOutside", 7)]
+    [InlineData("untakenImpossible", 0)]
+    [InlineData("staticPrefixRuntimeOpen", 2)]
+    [InlineData("blockHeadedOpen", 5)]
     public void SourceWitness_HasTheLeanGuardValue(string name, int expected)
     {
         var source = Witnesses.Single(row => (string)row[1] == name)[2] as string;
@@ -140,6 +151,7 @@ public class NavigationSourceDomainWitnessTests
 
     [Theory]
     [InlineData("rootRead", KatLangErrorCode.LocalOnlyProperty)]
+    [InlineData("consultedOutside", KatLangErrorCode.LocalOnlyProperty)]
     public void SourceWitness_HasTheLeanGuardError(string name, KatLangErrorCode expected)
     {
         var source = Witnesses.Single(row => (string)row[1] == name)[2] as string;

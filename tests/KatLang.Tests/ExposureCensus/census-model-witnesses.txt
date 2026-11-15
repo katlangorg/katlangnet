@@ -1,20 +1,11 @@
 # Model gap witnesses retained when the 2026-11-14 review expanded the default cover.
 head=blockref|pos=callee|open=none|reader=deep|place=in-mid|end=found|req=deep
-head=blockref|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=runtime|req=container
-head=blockref|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=missing|req=container
-head=blockref|pos=open-dotted|open=own-unused|reader=clause|place=in-mid|end=missing|req=deep
-head=blockref|pos=open-dotted|open=own-unused|reader=deep|place=in-mid|end=runtime|req=deep
 head=blockref|pos=open-dotted|open=own-used|reader=block|place=in-mid|end=found|req=deep
 head=blockref|pos=open-dotted|open=two|reader=clause|place=in-mid|end=found|req=container
 head=blockref|pos=open|open=enc1-used|reader=param|place=in-mid|end=found|req=member
 head=blockref|pos=open|open=enc1-used|reader=plain|place=outside|end=found|req=container
-head=blockref|pos=open|open=enc2-unused|reader=block|place=in-box|end=missing|req=container
-head=blockref|pos=open|open=enc2-unused|reader=block|place=outside|end=runtime|req=container
-head=blockref|pos=open|open=enc2-unused|reader=clause|place=in-mid|end=missing|req=deep
-head=blockref|pos=open|open=enc2-unused|reader=deep|place=in-mid|end=runtime|req=deep
 head=blockref|pos=open|open=enc2-used|reader=block|place=in-box|end=found|req=container
 head=blockref|pos=open|open=enc2-used|reader=deep|place=outside|end=found|req=member
-head=blockref|pos=open|open=own-unused|reader=plain|place=in-mid|end=missing|req=container
 head=blockref|pos=open|open=own-used|reader=deep|place=in-box|end=found|req=member
 head=blockref|pos=open|open=own-used|reader=param|place=in-lib|end=found|req=container
 head=blockref|pos=open|open=two|reader=param|place=in-lib|end=found|req=member

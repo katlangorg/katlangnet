@@ -331,8 +331,8 @@ public class ZeroArgPropertyResultCacheTests
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
 
         Assert.False(result.IsError);
-        Assert.NotNull(result.Value.TopLevelProperties[0]);
-        Assert.Equal(result.Value.Output.Value, result.Value.TopLevelProperties[0].Value.Value);
+        var topLevel = Assert.NotNull(result.Value.TopLevelProperties[0]);
+        Assert.Equal(result.Value.Output.Value, topLevel.Value);
         // `MaxDecimalPlaces = Source` is a reference (M4★), which owns no entry: both reads — the
         // output row and the engine's top-level property read — are Source's ONE entry.
         Assert.Equal(["Source", "Source"], cache.Requests.Select(request => request.Binding.Name));

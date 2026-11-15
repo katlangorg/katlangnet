@@ -54,13 +54,15 @@ public class ExposureSymbolicSharingTests
         var exposed = PropertyExposureResolver.Resolve(root);
         Assert.Equal(PropertyExposure.Exported, Member(exposed, "P").Exposure);
         Assert.Empty(Member(exposed, "P").CaptureRequirements!);
-        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, Member(exposed, "Q").Exposure);
-        Assert.Equal([new CapturedParameterRequirement("p", -1)], Member(exposed, "Q").CaptureRequirements);
+        // Under Q no level binds p: a read no activation can supply charges nothing (owner decision Q1, 2026-11-14;
+        // it was the fail-closed entry p@-1). The body is still not the one P keeps.
+        Assert.Equal(PropertyExposure.Exported, Member(exposed, "Q").Exposure);
+        Assert.Empty(Member(exposed, "Q").CaptureRequirements!);
         var p = ((Algorithm.Conditional)Member(exposed, "P").Value).Branches[0].Body;
         var q = ((Algorithm.Conditional)Member(exposed, "Q").Value).Branches[0].Body;
         Assert.NotSame(p, q);
         Assert.Equal([new CapturedParameterRequirement("p", 1)], Member(p, "Captures").CaptureRequirements);
-        Assert.Equal([new CapturedParameterRequirement("p", -1)], Member(q, "Captures").CaptureRequirements);
+        Assert.Empty(Member(q, "Captures").CaptureRequirements!);
     }
 
     [Theory]

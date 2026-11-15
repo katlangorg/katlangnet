@@ -44,6 +44,12 @@ public sealed class ExposureCensusHarnessTests
         }
     }
 
+    /// <summary>
+    /// The front end charges this reader (<c>y@0</c>; before owner decision Q3, 2026-11-14, a name provided through a
+    /// block-headed reference was the under-charge this control ran on, and Q3 removed it). The control therefore
+    /// shows the census a HOST-BUILT tree with the reader exported: the escaped read fails at <c>Q</c>, and the
+    /// failing inside call must not hide it.
+    /// </summary>
     [Fact]
     public async Task FailingInside_DoesNotSuppressTheEscapedUndercharge()
     {
@@ -59,9 +65,21 @@ public sealed class ExposureCensusHarnessTests
             }
 
             """, [new CensusReader("A", ["F", "A"], "F.A")]);
-        var result = await CensusRunner.Run(@case, collectLean: false);
+        string[] reader = ["F", "A"];
+        var charged = await CensusRunner.Run(@case, collectLean: false);
+        Assert.Null(charged.Skipped);
+        Assert.Equal("LocalOnlyCapturedAncestorParameters[y@0]", charged.Metadata["A"]);
+        Assert.DoesNotContain(charged.Gaps, gap => gap.Check == "U");
+
+        var result = await CensusRunner.Run(@case, collectLean: false, hostBuilt: root =>
+        {
+            var property = CensusRunner.Find(root, reader)!;
+            return CensusRunner.Replace(root, reader,
+                current => CensusRunner.Requirements(property).Aggregate(current, CensusRunner.Without));
+        });
         Assert.Null(result.Skipped);
         Assert.False(result.InsideWorks);
+        Assert.Equal("exported", result.Metadata["A"]);
         Assert.Contains(result.Gaps, gap => gap.Class == "under-charge-masked-access");
     }
 

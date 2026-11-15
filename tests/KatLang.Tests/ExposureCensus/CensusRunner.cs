@@ -26,6 +26,15 @@ internal sealed class CensusCaseResult
     public required CensusCase Case { get; init; }
     public string? Skipped { get; init; }
     public List<CensusGap> Gaps { get; } = [];
+
+    /// <summary>
+    /// The impossible-check class (see <see cref="CensusRunner.Run"/>): observations that are no gap. An exported
+    /// reader's escaped read fails at a member whose check can never pass where the evaluator performs it.
+    /// </summary>
+    public List<CensusGap> Impossible { get; } = [];
+
+    /// <summary>Every published requirement no level of its declaring chain can supply (<c>path: name@depth</c>).</summary>
+    public List<string> UnsuppliedRequirements { get; } = [];
     public List<CensusLeanItem> Lean { get; } = [];
     public Dictionary<string, string> Outcomes { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> Metadata { get; } = new(StringComparer.Ordinal);
@@ -160,6 +169,97 @@ internal static class CensusRunner
         return true;
     }
 
+    /// <summary>
+    /// THE INVARIANT of owner decision Q1 (2026-11-14): no declaration of an elaborated source tree publishes a
+    /// requirement that no level of its declaring chain can supply, either an owner-qualified requirement with a
+    /// negative owner depth or a names-only requirement no enclosing level binds. Returns each one as
+    /// <c>path: name@depth</c>; the walk passes every algorithm of the tree, those written inside expressions included.
+    /// </summary>
+    internal static List<string> UnsuppliedRequirements(Algorithm root)
+    {
+        var found = new List<string>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<(object Node, string Path, EnclosingNames Bound)>();
+        pending.Push((root, "root", EnclosingNames.None));
+        while (pending.TryPop(out var item))
+        {
+            if (!seen.Add(item.Node)) continue;
+            switch (item.Node)
+            {
+                case Algorithm.Conditional conditional:
+                    foreach (var open in conditional.Opens) pending.Push((open, item.Path + "#open", item.Bound));
+                    for (var b = 0; b < conditional.Branches.Count; b++)
+                        pending.Push((conditional.Branches[b].Body, $"{item.Path}#{b}",
+                            item.Bound.Push(conditional.Branches[b].Pattern.BoundNames())));
+                    break;
+                case Algorithm algorithm:
+                {
+                    var bound = item.Bound.Push(algorithm is Algorithm.User user ? user.Params : []);
+                    foreach (var property in algorithm.Properties)
+                    {
+                        var path = $"{item.Path}.{property.Name}";
+                        if (property.CaptureRequirements is { } captures)
+                        {
+                            foreach (var capture in captures)
+                                if (capture.OwnerDepth < 0) found.Add($"{path}: {Requirement(capture)}");
+                        }
+                        else
+                        {
+                            foreach (var name in property.RequiredAncestorParameters)
+                                if (!bound.Binds(name)) found.Add($"{path}: {name}@names-only");
+                        }
+                        pending.Push((property.Value, path, bound));
+                    }
+                    foreach (var open in algorithm.Opens) pending.Push((open, item.Path + "#open", bound));
+                    foreach (var row in algorithm.Output) pending.Push((row, item.Path + "#row", bound));
+                    break;
+                }
+                default:
+                    // An expression, an argument bundle or a pattern: the walk continues through whatever it nests.
+                    for (var i = 0; AstStructuralPreflight.TryGetChild(item.Node, i, out var child); i++)
+                        pending.Push((child, item.Path, item.Bound));
+                    break;
+            }
+        }
+        found.Sort(StringComparer.Ordinal);
+        return found;
+    }
+
+    /// <summary>The parameter names of the levels enclosing a position, innermost first.</summary>
+    internal sealed class EnclosingNames
+    {
+        public static readonly EnclosingNames None = new([], null);
+        private readonly IReadOnlyList<string> _names;
+        private readonly EnclosingNames? _outer;
+
+        private EnclosingNames(IReadOnlyList<string> names, EnclosingNames? outer) => (_names, _outer) = (names, outer);
+
+        public EnclosingNames Push(IReadOnlyList<string> names) => new(names, this);
+
+        public bool Binds(string name)
+        {
+            for (var level = this; level is not null; level = level._outer)
+                if (level._names.Contains(name, StringComparer.Ordinal)) return true;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The outcomes of the three inside probes of a case on the synchronous route (the comparison with HEAD
+    /// a4b545e8 reads them; <see cref="Run"/> checks the other routes), or null when a probe does not parse cleanly.
+    /// </summary>
+    public static IReadOnlyList<(string Label, string Outcome)>? InsideOutcomes(CensusCase @case)
+    {
+        var outcomes = new List<(string, string)>(3);
+        foreach (var (label, row) in new[] { ("in5", Inside5), ("in7", Inside7), ("same", SameRun) })
+        {
+            var source = @case.Body + row + "\n";
+            if (Parser.Parse(source).HasErrors) return null;
+            outcomes.Add((label, Render(Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)))));
+        }
+        return outcomes;
+    }
+
     /// <summary>Every probe program of a case (label, source), or null when one does not parse cleanly.</summary>
     public static IReadOnlyList<(string Label, string Source)>? Probes(CensusCase @case)
     {
@@ -169,7 +269,13 @@ internal static class CensusRunner
         return sources.Any(s => Parser.Parse(s.Source).HasErrors) ? null : sources;
     }
 
-    public static async Task<CensusCaseResult> Run(CensusCase @case, bool collectLean)
+    /// <summary>
+    /// Runs every check of one case. <paramref name="hostBuilt"/> is the harness's own seam: it rewrites each probe's
+    /// front-end tree before the checks read it (a host-built tree, as the O check's copies are), so a negative control
+    /// can show the census a tree the front end no longer produces. The engine comparison, which runs the SOURCE, is
+    /// skipped for such a tree.
+    /// </summary>
+    public static async Task<CensusCaseResult> Run(CensusCase @case, bool collectLean, Func<Algorithm.User, Algorithm.User>? hostBuilt = null)
     {
         var probes = new List<(string Label, string Row)> { ("in5", Inside5), ("in7", Inside7), ("same", SameRun) };
         probes.AddRange(@case.Readers.Select(r => ($"esc:{r.Label}", r.Escaped)));
@@ -187,11 +293,13 @@ internal static class CensusRunner
             }
             // The pre-screen above keeps diagnostics for skipped cells; every evaluated source then
             // crosses the repository's explicit clean-source assertion boundary.
-            parsed[label] = SourceProvenance.ParseValid(source).Root;
+            var root = SourceProvenance.ParseValid(source).Root;
+            parsed[label] = hostBuilt is null ? root : hostBuilt(root);
             sources[label] = source;
         }
 
         var outcome = new CensusCaseResult { Case = @case };
+        outcome.UnsuppliedRequirements.AddRange(UnsuppliedRequirements(parsed["in5"]));
         foreach (var reader in @case.Readers)
         {
             var described = Describe(Find(parsed["in5"], reader.Path));
@@ -207,7 +315,7 @@ internal static class CensusRunner
             outcome.Outcomes[label] = result;
             if (disagreement is not null)
                 outcome.Gaps.Add(new CensusGap("E", "engine-disagreement", @case.Id, "-", $"{label}: {disagreement}"));
-            else if (await EngineDisagreement(sources[label], result) is { } engine)
+            else if (hostBuilt is null && await EngineDisagreement(sources[label], result) is { } engine)
                 outcome.Gaps.Add(new CensusGap("E", "engine-disagreement", @case.Id, "-", $"{label}: {engine}"));
             if (collectLean)
                 outcome.Lean.Add(new CensusLeanItem($"{@case.Id}#real#{label}", @case.Id, "real", "real", parsed[label], result));
@@ -227,7 +335,20 @@ internal static class CensusRunner
             var escaped = o[$"esc:{reader.Label}"];
             // U2 is the brief's escaped-access check on EVERY valid program. An unrelated failure in F
             // does not remove this tree from the source-domain census; keep that context in the detail.
-            if (escaped.StartsWith("err localOnlyProperty", StringComparison.Ordinal))
+            if (!escaped.StartsWith("err localOnlyProperty", StringComparison.Ordinal)) continue;
+            // THE IMPOSSIBLE-CHECK CLASS (owner decision Q1, 2026-11-14): the escaped read fails at a member whose
+            // check can never pass where the evaluator performs it, so leaving the reader exported is correct and the
+            // observation is no gap. Two independent means decide it and must agree: the grid's own description of
+            // the cell, and the behavior (every inside probe fails at that same member). A disagreement is a gap of
+            // its own class, never silently classified.
+            var byGrid = escaped == $"err localOnlyProperty:{CensusGrid.ImpossibleMember(@case)}";
+            var byBehavior = o["in5"] == escaped && o["in7"] == escaped && o["same"] == escaped;
+            if (byGrid && byBehavior)
+                outcome.Impossible.Add(new CensusGap("U", "impossible-check", @case.Id, reader.Label, escaped));
+            else if (byGrid != byBehavior)
+                outcome.Gaps.Add(new CensusGap("U", "impossible-check-disagreement", @case.Id, reader.Label,
+                    $"{escaped}; grid={(byGrid ? "impossible" : "possible")}; inside={o["in5"]} / {o["in7"]} / {o["same"]}"));
+            else
                 outcome.Gaps.Add(new CensusGap("U", "under-charge-masked-access", @case.Id, reader.Label,
                     outcome.InsideWorks ? escaped : $"{escaped}; inside={o["in5"]}"));
         }

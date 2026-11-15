@@ -138,6 +138,117 @@ public sealed class ExposureAccessCheckTests
             Assert.Equal([$"{inside}", $"{escaped}"], Assert.IsType<RunResult.Success>(result).Atoms.Select(atom => atom.ToString()));
     }
 
+    // ── Each check where the evaluator makes it, and nothing for a check that can never pass (owner decisions Q1–Q3, 2026-11-14) ──
+
+    private const string OnlyInsideF = "F(y) = {\n  A = y + 1\n  A\n}\n";
+
+    // `Sub` requires `p` of the `Mid(p)` this literal declares, which nothing ever activates.
+    private const string LiteralMid = "{\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      0\n    }\n  }.Mid.Sub";
+
+    private const string LibMid = "  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n";
+
+    private const string RefInMid = "F(y) = {\n  L = Lib.Mid.Sub\n" + LibMid
+        + "      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n"
+        + "      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\n";
+
+    private const string BlockHeadedProvider = "F(y) = {\n  open L\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\n";
+
+    private const string NamedProvider = "F(y) = {\n  open L\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }\n  L = Lib.Sub\n  A = Q + 0\n  A\n}\n";
+
+    /// <summary>
+    /// The decision probes (<c>artifacts/validation/e18-q1-decision-20261114/programs</c>): a program, a root row and
+    /// its outcome, which is the atoms it returns or the member a <c>LocalOnlyProperty</c> refusal names.
+    /// </summary>
+    public static TheoryData<string, string, string, string> SiteAndImpossibleCheckPins => new()
+    {
+        // Q3: a name provided by opening a block-headed reference keeps the provider's requirement (census G1) ...
+        { "g1-min", BlockHeadedProvider, "F(5)", "5" },
+        { "g1-min", BlockHeadedProvider, "F(7)", "7" },
+        { "g1-min", BlockHeadedProvider, "F(5), F(7)", "5, 7" },
+        { "g1-min", BlockHeadedProvider, "F.A", "refused at A" },
+        // ... exactly as its named twin does.
+        { "g1-ref", NamedProvider, "F(5)", "5" },
+        { "g1-ref", NamedProvider, "F(7)", "7" },
+        { "g1-ref", NamedProvider, "F(5), F(7)", "5, 7" },
+        { "g1-ref", NamedProvider, "F.A", "refused at A" },
+        // Q2: an open crossing is checked from the consulted level, here inside Mid's activation ...
+        { "openref-in-mid", "F(y) = {\n  L = Lib.Mid.Sub\n" + LibMid + "      B(z) = {\n        open L\n        Q + 0\n      }\n      B(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\n", "F(5)", "1" },
+        // ... and a value crossing in the reference's own scope, outside it: only the route that runs fails.
+        { "ref-in-mid", RefInMid, "F(1)", "refused at Sub" },
+        { "ref-in-mid", RefInMid, "F(2)", "1" },
+        { "ref-in-mid", RefInMid, "F(3)", "1" },
+        { "ref-in-mid", RefInMid, "F(4)", "1" },
+        // An open walk consulted OUTSIDE Mid by a reader inside it can never pass: the path that runs fails at the check.
+        { "open-in-mid", "F(y) = {\n  open Lib.Mid.Sub\n" + LibMid + "      A(z) = Q + 0\n      A(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\n", "F(5)", "refused at Sub" },
+        // Q1: an impossible path behaves like any error in a branch that does not run, for values ...
+        { "l1-root-row", OnlyInsideF, "if(false, F.A, 0)", "0" },
+        { "l2-property", OnlyInsideF + "R = if(false, F.A, 0)\n", "R", "0" },
+        { "l3-selected", OnlyInsideF + "Box = {\n  public R = if(false, F.A, 0)\n}\n", "Box.R", "0" },
+        { "l4-in-call", OnlyInsideF + "G(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\n", "G(1)", "1" },
+        { "l4-in-call", OnlyInsideF + "G(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\n", "G(200)", "refused at A" },
+        { "l5-nested", OnlyInsideF + "M = {\n  public G(x) = {\n    R = if(x > 100, F.A, x)\n    R\n  }\n}\n", "M.G(1)", "1" },
+        { "l5-nested", OnlyInsideF + "M = {\n  public G(x) = {\n    R = if(x > 100, F.A, x)\n    R\n  }\n}\n", "M.G(200)", "refused at A" },
+        // ... and for caching: the reader is cached once per run, as an untaken `1 / 0` is.
+        { "t1-untaken-impossible", OnlyInsideF + "G(x) = {\n  R = if(false, F.A, tick())\n  R\n}\n", "G(1), G(2)", "1, 1" },
+        { "t2-plain-control", "G(x) = {\n  R = tick()\n  R\n}\n", "G(1), G(2)", "1, 1" },
+        { "t3-div-control", "G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\n", "G(1), G(2)", "1, 1" },
+        // More readers of an impossible path that does not run: selected by a path, nested, read by name.
+        { "untaken-selected-g8", "F(y) = {\n  L = Lib.Mid.Sub\n" + LibMid + "      0\n    }\n    0\n  }\n  Box = {\n    public A = if(false, L.Q + 0, 7)\n  }\n  Box.A\n}\n", "F(5)", "7" },
+        { "untaken-nested-g8", "M = {\n  public F(y) = {\n    L = Lib.Mid.Sub\n  " + LibMid.Replace("\n", "\n  ") + "    0\n      }\n      0\n    }\n    A = if(false, L.Q + 0, 7)\n    A\n  }\n}\n", "M.F(5)", "7" },
+        { "untaken-selected-g9", "F(y) = {\n  Box = {\n    public A = {\n      open " + LiteralMid + "\n      if(false, Q + 0, 7)\n    }\n  }\n  Box.A\n}\n", "F(5)", "7" },
+        { "untaken-nested-g9", "M = {\n  public F(y) = {\n    open " + LiteralMid + "\n    A = if(false, Q + 0, 7)\n    A\n  }\n}\n", "M.F(5)", "7" },
+        { "untaken-lexical-g9", "F(y) = {\n  open " + LiteralMid + "\n  A = if(false, Q + 0, 7)\n  A\n}\n", "F(5)", "7" },
+        { "untaken-lexical-g9", "F(y) = {\n  open " + LiteralMid + "\n  A = if(false, Q + 0, 7)\n  A\n}\n", "F.A", "7" },
+        // The accepted consequence: under `tick`, the reader of an impossible path is cached once, like an untaken `1 / 0`.
+        { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(5), F(7)", "0, 0" },
+        { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(5)", "0" },
+        { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(7)", "0" },
+        { "d02-live-tick", "F(y) = {\n  A = if(tick() > 1, y, 0)\n  A\n}\n", "F(5), F(7)", "0, 7" },
+        // The impossible path, when it runs, fails at the member the evaluator checks.
+        { "d03-impossible-direct", "F(y) = {\n  open " + LiteralMid + "\n  A = Q + 0\n  A\n}\n", "F(5), F(7)", "refused at Sub" },
+    };
+
+    private static string Outcome(RunResult result)
+    {
+        if (result is RunResult.Success success)
+            return string.Join(", ", success.Atoms.Select(atom => atom.ToString()));
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, error.Code);
+        var source = error.Source;
+        while (source is EvalError.WithContext context) source = context.Inner;
+        return "refused at " + Assert.IsType<EvalError.LocalOnlyProperty>(source).PropertyName;
+    }
+
+    [Theory]
+    [MemberData(nameof(SiteAndImpossibleCheckPins))]
+    public async Task EachCheckIsChargedAtItsSite_AndAnImpossibleOneChargesNothing(string name, string body, string row, string expected)
+    {
+        _ = name;
+        var source = body + row + "\n";
+        // No declaration publishes a requirement no level of its chain can supply (the fail-closed entry is retired).
+        Assert.Empty(ExposureCensus.CensusRunner.UnsuppliedRequirements(SourceProvenance.ParseValid(source).Root));
+        foreach (var result in await BothEngines(source))
+            Assert.Equal(expected, Outcome(result));
+    }
+
+    /// <summary>
+    /// Q3: an open target that names a missing member through a block-headed reference is unresolved, exactly as
+    /// through a named reference, at the same position.
+    /// </summary>
+    [Fact]
+    public void MissingMemberThroughABlockHeadedReference_IsUnresolved_LikeItsNamedTwin()
+    {
+        var blockHeaded = SourceProvenance.ParseAllowingDiagnostics(
+            "F(y) = {\n  open L.Missing\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  1\n}\nF(5)\n");
+        var named = SourceProvenance.ParseAllowingDiagnostics(
+            "F(y) = {\n  open L.Missing\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }\n  L = Lib.Sub\n  1\n}\nF(5)\n");
+        var expected = Assert.Single(named.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        var actual = Assert.Single(blockHeaded.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.UnresolvedOpenTarget, expected.Code);
+        Assert.Equal(expected.Code, actual.Code);
+        Assert.Equal(expected.Span, actual.Span);
+    }
+
     /// <summary>The intermediate readers of a chain are charged too: <c>M = L0.T</c> crosses <c>L0 = Lib.Sub</c>.</summary>
     [Fact]
     public void ChainLinkThatSelectsAMember_IsLocalOnly()

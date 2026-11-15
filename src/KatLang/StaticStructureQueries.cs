@@ -455,13 +455,18 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     }
 
     private StaticFact DirectPath(StaticScopeKey scope, Expr expression, StaticCycleCheck stratum,
-        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool runtimeParameter = false)
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool runtimeParameter = false, bool blockHeadUnderScope = false)
     {
         // Only an open's head bypasses opens; its public member steps use the selected structure.
         var steps = new Stack<string>();
         while (expression is Expr.DotCall { Args: null } edge) { steps.Push(edge.Name); expression = edge.Target; }
         StaticFact current;
-        if (expression is Expr.AlgorithmExpr(var block)) current = new(StaticFactKind.Structure, BodyIn(Keys.Root, block));
+        // A block written as an open TARGET is rooted at the prelude. The block head of a transparent reference's row
+        // read in open mode (blockHeadUnderScope) is wired under the reference instead (Evaluator.OpenStructure:
+        // ChildOfInContext(reference, block, ctx)), so it is keyed under the reference's scope, where the value reading
+        // of the same row keys it: `L = { … }.Sub` then opens like its named twin (owner decision Q3, 2026-11-14).
+        if (expression is Expr.AlgorithmExpr(var block))
+            current = new(StaticFactKind.Structure, BodyIn(blockHeadUnderScope ? scope : Keys.Root, block));
         else if (expression is Expr.Resolve(var name))
         {
             var binding = reader.Read(Project(StaticQueryKind.Binding, scope, StaticQueryProjection.OpenHeadBinding, name, stratum));
@@ -515,7 +520,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             // step misses, is no reference: its own namespace, exactly what the pending arm answers.
             var own = IsAlgorithmLink(expression) ? new StaticFact(StaticFactKind.Runtime, context.Key) : StaticFact.No;
             if (!StaticAliasTargets.IsStaticPath(expression)) return own;
-            var path = DirectPath(context.Key, expression, stratum, reader, runtimeParameter: true);
+            var path = DirectPath(context.Key, expression, stratum, reader, runtimeParameter: true, blockHeadUnderScope: true);
             return path.Kind == StaticFactKind.No ? own : path;
         }
         if (expression is Expr.Resolve(var name))

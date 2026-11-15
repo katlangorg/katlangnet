@@ -75,9 +75,11 @@ public class OpenVisibilityCorpusFidelityTests
 
             // `A` opens a provider whose member captures `p`, so A's own summary carries that
             // requirement too: a container that reads a captured member is local-only in turn.
+            // `A` is written outside `Outer`: the check of `X` can never pass there, so `A` requires nothing (E-18 owner
+            // decision Q1, 2026-11-14; formerly the fail-closed entry `("p", none)`). The access is still refused.
             ["openLocalOnlyCapturedParamsOutsideOwner"] = Golden(
-                "{ (privateLocalProp \"A\" (.localCapturedAncestorParams [\"p\"]) "
-                    + "(.alias none [(.dotCall (.resolve \"Outer\") \"Lib\" none)] [] (.resolve \"X\") none false)) with requiredOwnerDepths := some [(\"p\", none)] }, "
+                "privateProp \"A\" "
+                    + "(.alias none [(.dotCall (.resolve \"Outer\") \"Lib\" none)] [] (.resolve \"X\") none false), "
                     + "privateProp \"Outer\" (alg [\"p\"] [] [publicProp \"Lib\" (alg [] [] "
                     + "[{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
                     + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0])",

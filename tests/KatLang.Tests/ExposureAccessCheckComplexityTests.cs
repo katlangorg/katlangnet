@@ -206,23 +206,109 @@ public sealed class ExposureAccessCheckComplexityTests(ITestOutputHelper output)
     /// <summary>
     /// The trap a share keyed by the level alone would fall into: <c>Mid</c>'s own reads of <c>Q</c> discharge
     /// <c>p</c> (<c>Mid</c> is a bound owner of its own summary), while the reader <c>A</c> inside <c>Mid</c> keeps it.
-    /// The level's walks anchor through <c>Lib</c>, which lies on both readers' chains, so each settles them itself.
+    /// The open is <c>Mid</c>'s own, so its walk is checked from <c>Mid</c> (owner decision Q2, 2026-11-14), where
+    /// <c>p</c>'s owner is active: the requirement is live, and each reader keeps its own discharge.
     /// </summary>
     [Fact]
     public void OwnerOnTheTargetPath_KeepsTheDischargeOfEachReader()
     {
-        const string source = "F(y) = {\n  open Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0) + Q\n    }\n    0\n  }\n  Lib.Mid(5)\n}\nF(1)\n";
+        const string source = "F(y) = {\n  Lib = {\n    public Mid(p) = {\n      open Lib.Mid.Sub\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0) + Q\n    }\n    0\n  }\n  Lib.Mid(5)\n}\nF(1)\n";
         foreach (var perReader in new[] { false, true })
         {
             var root = WithOpenWalks(perReader, () => ExposureOpenChainComplexityTests.Exposed(source, new FrontEndTraversalObservations()));
             ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "Lib", "Mid"));
             ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "Lib", "Mid", "A"), ("p", 0));
             ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "Lib", "Mid", "Sub"), ("p", 0));
-            // I25's eager charge of F's own dotted open: p has no owner on F's chain.
-            var f = ExposureOpenChainComplexityTests.Member(root, "F");
-            Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, f.Exposure);
-            Assert.Equal(["p"], f.RequiredAncestorParameters);
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F"));
         }
+    }
+
+    /// <summary>
+    /// The same family with the open on <c>F</c>, as this test was first written. <c>F</c>'s walk selects <c>Sub</c>
+    /// from <c>F</c>, where <c>Mid</c> is no static ancestor: that check can never pass, so it charges nobody (owner
+    /// decisions Q1 and Q2, 2026-11-14). Before, the walk was charged from each reader: <c>A</c> kept <c>p@0</c> and
+    /// <c>F</c> the fail-closed <c>p</c> no level binds. The run fails at <c>Sub</c> itself, as it always did.
+    /// </summary>
+    [Fact]
+    public void OwnerOnTheTargetPath_OpenedFromOutsideItsOwner_ChargesNoReader()
+    {
+        const string source = "F(y) = {\n  open Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0) + Q\n    }\n    0\n  }\n  Lib.Mid(5)\n}\nF(1)\n";
+        foreach (var perReader in new[] { false, true })
+        {
+            var root = WithOpenWalks(perReader, () => ExposureOpenChainComplexityTests.Exposed(source, new FrontEndTraversalObservations()));
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "Lib", "Mid"));
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "Lib", "Mid", "A"));
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "F", "Lib", "Mid", "Sub"), ("p", 0));
+            var f = ExposureOpenChainComplexityTests.Member(root, "F");
+            Assert.Equal(PropertyExposure.Exported, f.Exposure);
+            Assert.Empty(f.RequiredAncestorParameters);
+        }
+    }
+
+    // ── The route census's work groups: one family each, in the default suite (E-18 F1, 2026-11-15) ─────────────
+
+    /// <summary>
+    /// One doubling family of the route census (<c>ExposureCensus.CensusWork</c>) per work group it once flagged,
+    /// each the smallest of its group: M readers and M open targets at M = 25, 50 and 100 settle in frames and
+    /// summary checkpoints that at most a little more than double (the census's own bound, 2.5), every reader keeps
+    /// one classification at every width, and the published metadata is the per-reader settlement's. G2: readers
+    /// with their own parameter inside a container, the opens on <c>F</c>. G3: reference targets. G4: block-headed
+    /// reference targets. G5: runtime reference targets (the terminal walk's checkpoints). The last two rows are
+    /// the families whose open list is the CONTAINER's own, a level whose walks reach themselves through the
+    /// container: a settlement is kept when no cycle cut inside it reached a settlement that began before it.
+    /// </summary>
+    [Theory]
+    [InlineData("W|head=name|reader=param|place=in-box|level=F|use=unused")]
+    [InlineData("W|head=ref1|reader=param|place=outside|level=enc1|use=unused")]
+    [InlineData("W|head=blockref|reader=plain|place=outside|level=enc1|use=unused")]
+    [InlineData("W|head=rt-param|reader=param|place=in-box|level=F|use=unused")]
+    [InlineData("W|head=name|reader=param|place=in-box|level=enc1|use=used")]
+    [InlineData("W|head=name|reader=block|place=in-mid|level=enc2|use=used")]
+    public void CensusWorkFamily_SettlesWithinTheDoublingBound(string id)
+    {
+        var (family, excluded) = ExposureCensus.CensusWork.Families().Single(candidate => candidate.Family.Id == id);
+        Assert.Null(excluded);
+        Assert.Null(ExposureCensus.CensusWork.Diagnostics(family.Program(ExposureCensus.CensusWork.Widths[0])));
+        var measured = ExposureCensus.CensusWork.Measure(family);
+        output.WriteLine($"{id}: frames {string.Join(" / ", measured.Frames)}; checkpoints {string.Join(" / ", measured.Checkpoints)}");
+        Assert.True(measured.WithinBound, measured.Problem);
+    }
+
+    /// <summary>
+    /// The two families the host checks of 2026-11-14 flagged: parameterized readers inside <c>Box</c> (formerly
+    /// 783 / 2,808 / 10,608 frames), and the <c>Mid(p)</c> discharge family (formerly 3,522 / 11,972 / 43,872), whose
+    /// walks of <c>F</c>'s opens reach themselves through <c>Mid</c>'s own value.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CensusSelfCheckFamily_SettlesWithinTheDoublingBound(bool discharge)
+    {
+        var family = discharge ? ExposureCensus.CensusWork.DischargeSelfCheck() : ExposureCensus.CensusWork.BoxSelfCheck();
+        var measured = ExposureCensus.CensusWork.Measure(family);
+        output.WriteLine($"{family.Id}: frames {string.Join(" / ", measured.Frames)}; checkpoints {string.Join(" / ", measured.Checkpoints)}");
+        Assert.True(measured.WithinBound, measured.Problem);
+    }
+
+    /// <summary>
+    /// G6, the census's depth families: eight nested levels, each with its own chargeable open, and one reader per
+    /// level of a name only the outermost level's open provides. Every level's walks are settled once, for every
+    /// target head and reader kind the census generates.
+    /// </summary>
+    [Theory]
+    [InlineData("name", "param")]
+    [InlineData("ref1", "block")]
+    [InlineData("chain2", "clause")]
+    [InlineData("refmem", "deep")]
+    [InlineData("blockref", "plain")]
+    public void CensusDepthFamily_SettlesEachLevelOnce(string head, string reader)
+    {
+        const int depth = 8;
+        var source = ExposureCensus.CensusWork.DepthProgram(head, reader, depth);
+        Assert.Null(ExposureCensus.CensusWork.Diagnostics(source));
+        var (maxPerLevel, levels, _) = ExposureCensus.CensusWork.MeasureDepth(source, depth);
+        Assert.Equal(depth, levels);
+        Assert.Equal(1, maxPerLevel);
     }
 
     private static T WithOpenWalks<T>(bool perReader, Func<T> work)

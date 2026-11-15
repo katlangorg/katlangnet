@@ -4035,9 +4035,13 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Outer(n) = {\n    Mid(n) = {\n        Inner = {\n            public X = n\n        }\n        Inner.X\n    }\n    Mid.Inner.X\n}\nOuter(5)", "err localOnlyProperty"),
                 // Inside the owner (the nested `Apply` is written inside Outer) the same access is valid.
                 new SpecProbe("Outer(n) = {\n    Inner = { public X = n }\n    Apply(f) = f.X\n    Apply(Inner)\n}\nOuter(5)", "ok raw=5 n=1"),
-                // Neither another activation nor another same-binder family supplies the owner.
-                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
-                new SpecProbe("Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                // Neither another activation nor another same-binder family supplies the owner: the read is refused
+                // when it runs. In a branch that does not run it is an ordinary untaken error and requires nothing
+                // of `P` (E-18 owner decision Q1, 2026-11-14; formerly `P` itself was refused).
+                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(true, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(true, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "err localOnlyProperty"),
+                new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "ok raw=10 n=1"),
+                new SpecProbe("Outer(m) = {\n Mid(n) = { public X = n\n 0 }\n P = if(false, Mid.X, 10)\n Read = Outer.P\n Read\n}\nOuter(5)", "ok raw=10 n=1"),
                 new SpecProbe("Outer(n) = {\n Mid(n) = { public X = n\n Read = Outer.Mid.X\n Read }\n Mid(7)\n}\nOuter(5)", "ok raw=7 n=1"),
                 new SpecProbe("Outer(m) = {\n public Mid(n) = { public Lib = { public X = n }\n Read = { open Outer.Mid.Lib\n X }\n Read }\n Mid(7)\n}\nOuter(5)", "ok raw=7 n=1"),
                 new SpecProbe("H(f, n) = if(n != 0, H({ public X = n }, 0), f.X)\nH({ public X = 0 }, 5)", "err localOnlyProperty"),
@@ -4106,6 +4110,85 @@ public static class LanguageSpecCorpus
             ],
             Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
             Explanation = "A name looked up through an ENCLOSING level's opens charges the walk of every open target of every level the lookup consulted: `F(y) = { open Lib.Sub ⏎ … ⏎ A = Q + 0 }` checks `Sub`'s accessibility while resolving the open, so `A` requires `y` and `F(5), F.A` is refused naming `A` (formerly `1, 1`), also when the open target does not provide the name.",
+        },
+        new()
+        {
+            Id = "open-block-headed-reference-keeps-requirement",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  open L\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF(5), F(7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5\n7",
+            ExpectedRaw = "S[5, 7]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  open L\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  A = Q + 0\n  A\n}\nF.A", "err localOnlyProperty"),
+                // The named twin: the same reads, the same refusal.
+                new SpecProbe("F(y) = {\n  open L\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }\n  L = Lib.Sub\n  A = Q + 0\n  A\n}\nF(5), F(7)", "ok raw=S[5, 7] n=2"),
+                new SpecProbe("F(y) = {\n  open L\n  Lib = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }\n  L = Lib.Sub\n  A = Q + 0\n  A\n}\nF.A", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly the block-headed spelling gave `5, 5`: the block was resolved apart from the reference, so `A` was exported and its first value was reused.",
+            Explanation = "A reference whose target starts at a brace block, `L = { public Sub = { public Q = y ⏎ 0 } }.Sub`, is opened exactly like the named spelling `Lib = { … }` / `L = Lib.Sub`: `open L` provides `Q`, and `Q` reads `F`'s `y`, so `A = Q + 0` is local-only. Each call of `F` therefore reads its own `y` (`5`, then `7`), and the escaped `F.A` is refused naming `A`.",
+        },
+        new()
+        {
+            Id = "impossible-read-in-untaken-branch-charges-nothing",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  A = y + 1\n  A\n}\nBox = {\n  public R = if(false, F.A, 0)\n}\nBox.R",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nif(false, F.A, 0)", "ok raw=0 n=1"),
+                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nR = if(false, F.A, 0)\nR", "ok raw=0 n=1"),
+                // The same read in a branch that runs is refused, at the member the evaluator checks.
+                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\nG(1)", "ok raw=1 n=1"),
+                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\nG(200)", "err localOnlyProperty"),
+                // The reader requires nothing, so its value is kept once per run, like any untaken error.
+                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  R = if(false, F.A, tick())\n  R\n}\nG(1), G(2)", "ok raw=S[1, 1] n=2"),
+                new SpecProbe("G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\nG(1), G(2)", "ok raw=S[1, 1] n=2"),
+            ],
+            Notes = "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly `R` carried a requirement no call could supply, so selecting it was refused although the branch never ran.",
+            Explanation = "`F.A` outside `F` can never be read: `A` needs `F`'s `y`, and no activation of `F` exists where `Box.R` is written. A read that can never succeed where it is written is an ordinary error of the branch that makes it, never a requirement of the algorithm around it: `R = if(false, F.A, 0)` requires nothing, `Box.R` is `0`, and the refusal appears only when that branch runs (`G(200)`), naming `A`.",
+        },
+        new()
+        {
+            Id = "open-reference-checked-where-it-is-opened",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      B(z) = {\n        open L\n        Q + 0\n      }\n      B(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // One program, four routes to the same member: only the value read through the reference fails.
+                new SpecProbe("F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(1)", "err localOnlyProperty"),
+                new SpecProbe("F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(2)", "ok raw=1 n=1"),
+                new SpecProbe("F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(3)", "ok raw=1 n=1"),
+                new SpecProbe("F(y) = {\n  L = Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = L.Q + 0\n      B(z) = {\n        open L\n        Q + 0\n      }\n      C(z) = Lib.Mid.Sub.Q + 0\n      D(z) = Sub.Q + 0\n      if(p == 1, A(0), if(p == 2, B(0), if(p == 3, C(0), D(0))))\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(4)", "ok raw=1 n=1"),
+                // An open written OUTSIDE `Mid` is checked there, whoever reads through it.
+                new SpecProbe("F(y) = {\n  open Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0)\n    }\n    0\n  }\n  Lib.Mid(y)\n}\nF(5)", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly the open through `L` was charged in `L`'s own scope, where `Mid` is never active, and `Lib.Mid(y)` was refused at `Mid`.",
+            Explanation = "`Sub` needs `Mid`'s `p`, so it can be selected only where an activation of `Mid` is in scope. An `open` is resolved where it is WRITTEN: `B`'s `open L` is inside `Mid`, so the walk of `L = Lib.Mid.Sub` selects `Sub` there and `B(0)` is `1`. A VALUE read through the reference, `L.Q`, walks the target in `L`'s own scope, outside `Mid`, and is refused naming `Sub` (`F(1)`); and an `open Lib.Mid.Sub` written on `F` is checked on `F`, so even a reader inside `Mid` cannot use it.",
+        },
+        new()
+        {
+            Id = "open-block-headed-reference-target-must-resolve",
+            Category = "name-resolution",
+            Source = "F(y) = {\n  open L.Missing\n  L = {\n    public Sub = {\n      public Q = y\n      0\n    }\n  }.Sub\n  1\n}\nF(5)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "'L.Missing' cannot be opened because 'L' has no property named 'Missing'.",
+            ExpectedDiagnosticCode = DiagnosticCode.UnresolvedOpenTarget,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  open L.Sub2\n  L = {\n    public Sub = {\n      public Sub2 = { public Q = 1 }\n      0\n    }\n  }.Sub\n  Q\n}\nF(5)", "ok raw=1 n=1"),
+            ],
+            Notes = "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Front-end rejection; no elaborated Lean program exists for a rejected parse. The named spelling (`Lib = { … }`, `L = Lib.Sub`, `open L.Missing`) is the same error at the same position; formerly the block-headed one was accepted and failed only when it ran.",
+            Explanation = "An `open` target must name something: `open L.Missing` through a reference whose target starts at a brace block is resolved like the named spelling, so a member the block's `Sub` does not declare is reported at the open target before anything runs. A member it does declare is opened (`open L.Sub2`).",
         },
         new()
         {
