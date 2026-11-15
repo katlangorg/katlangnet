@@ -219,21 +219,34 @@ public sealed class SignatureSelectionTests
     }
 
     /// <summary>
-    /// Case H: a deferred unit (<c>b.kat</c>, loaded by a branch of <c>a.kat</c>) loads <c>a.kat</c> again — one canonical
-    /// URL is one module declaration (Q-32), so it reads the eager unit's selected facts: <c>V</c> lifts <c>K</c>'s
-    /// parameter through the reference <c>KR</c> (3 + 7), and <c>W</c> reads the carrier's own member (3).
+    /// Case H: a deferred unit (<c>b.kat</c>, loaded by a branch of the document) loads <c>a.kat</c>, which the document
+    /// loaded eagerly — one canonical URL is one module declaration (Q-32), so it reads the eager unit's selected facts:
+    /// <c>V</c> lifts <c>K</c>'s parameter through the reference <c>KR</c> (3 + 7), and <c>W</c> reads the carrier's own
+    /// member (3). When that branch sits in <c>a.kat</c> itself, <c>b.kat</c>'s load of <c>a.kat</c> closes a module
+    /// load cycle through the selected branch, which is refused with <c>LoadCycle</c> at its first selection, exactly
+    /// as eager loading refuses a cycle (owner decision 2026-11-15; <c>DeferredLoadCycleTests</c>).
     /// </summary>
     [Fact]
-    public Task ADeferredUnit_ReusesTheEagerUnitOfTheModuleItLoads()
-        => AssertModuleValue(
-            "M = load('https://modules.example/a.kat')\nM.G(0), M.KC.Q",
-            new Dictionary<string, string>
-            {
-                ["https://modules.example/a.kat"] = "K(x) = x\nKR = K\nKC = {\n    public Q = 3\n    K\n}\nG(0) = {\n"
-                    + "    N = load('https://modules.example/b.kat')\n    N.V(3) + N.W\n}\nG(n) = n\n0",
-                ["https://modules.example/b.kat"] = "M = load('https://modules.example/a.kat')\nV = M.KR + 7\nW = M.KC.Q\n0",
-            },
+    public async Task ADeferredUnit_ReusesTheEagerUnitOfTheModuleItLoads()
+    {
+        const string ModuleA = "K(x) = x\nKR = K\nKC = {\n    public Q = 3\n    K\n}\n";
+        const string Branch = "G(0) = {\n    N = load('https://modules.example/b.kat')\n    N.V(3) + N.W\n}\nG(n) = n\n";
+        var moduleB = new Dictionary<string, string>
+        {
+            ["https://modules.example/b.kat"] = "M = load('https://modules.example/a.kat')\nV = M.KR + 7\nW = M.KC.Q\n0",
+        };
+        await AssertModuleValue(
+            "M = load('https://modules.example/a.kat')\n" + Branch + "G(0), M.KC.Q",
+            new Dictionary<string, string>(moduleB) { ["https://modules.example/a.kat"] = ModuleA + "0" },
             "S[13, 3]");
+
+        var cyclic = await KatLangEngine.RunAsync(
+            "M = load('https://modules.example/a.kat')\nM.G(0), M.KC.Q",
+            ModuleOptions(new Dictionary<string, string>(moduleB) { ["https://modules.example/a.kat"] = ModuleA + Branch + "0" }));
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(cyclic).Errors);
+        Assert.Equal(KatLangErrorCode.LoadCycle, error.Code);
+        Assert.Contains("load cycle detected: https://modules.example/a.kat", error.Message, StringComparison.Ordinal);
+    }
 
     // ── Bounded selection, cancellation and exhaustion ───────────────────────────────────────────
 

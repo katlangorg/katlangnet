@@ -555,7 +555,7 @@ public class DeferredRegionAttachmentTests
 
         // The invariant is enforced at construction as well.
         Assert.Throws<ArgumentException>(() => new DeferredModuleRegion(
-            secondLoader, firstPlaceholder, ModuleLoader.LoadContext.PropertyDef, 1, 0, importSite: null, importDepth: 0));
+            secondLoader, firstPlaceholder, ModuleLoader.LoadContext.PropertyDef, 1, 0, importSite: null, importChain: []));
         Assert.Equal(0, modules[ModuleA]);
     }
 

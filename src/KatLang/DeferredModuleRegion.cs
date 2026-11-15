@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 
 namespace KatLang;
@@ -69,11 +70,12 @@ internal sealed class DeferredModuleRegion
         int depth,
         int nestedTraversalBase,
         SourceSpan? importSite,
-        int importDepth)
+        ImmutableArray<string> importChain)
     {
         if (rawBody.DeferredRegion is not null)
             throw new ArgumentException("A deferred region's raw body is unelaborated source structure and carries no region.", nameof(rawBody));
-        ArgumentOutOfRangeException.ThrowIfNegative(importDepth);
+        if (importChain.IsDefault)
+            throw new ArgumentException("A deferred region records the import chain at deferral (empty outside every module).", nameof(importChain));
 
         Loader = loader;
         RawBody = rawBody;
@@ -81,7 +83,7 @@ internal sealed class DeferredModuleRegion
         Depth = depth;
         NestedTraversalBase = nestedTraversalBase;
         ImportSite = importSite;
-        ImportDepth = importDepth;
+        ImportChain = importChain;
     }
 
     // A fork: the same occurrence's loader facts and every context recorded so far, with
@@ -94,7 +96,7 @@ internal sealed class DeferredModuleRegion
         Depth = source.Depth;
         NestedTraversalBase = source.NestedTraversalBase;
         ImportSite = source.ImportSite;
-        ImportDepth = source.ImportDepth;
+        ImportChain = source.ImportChain;
         _validation = source._validation;
         Exposure = source.Exposure;
         Structure = source.Structure;
@@ -122,14 +124,30 @@ internal sealed class DeferredModuleRegion
     internal int NestedTraversalBase { get; }
 
     /// <summary>
-    /// The live IMPORT DEPTH at deferral: how many module frames enclosed the family (0 for a
-    /// family the current document wrote; for a family inside a materialized branch, the
-    /// depth that materialization resumed plus the frames entered since). The materialization's
-    /// walk resumes at this depth and restores the displaced one when it ends, so the body's
-    /// loads obey <see cref="SourceProcessingLimits.MaxModuleDepth"/> — and a refusal names the
-    /// depth — exactly as eager elaboration would. Forks copy it.
+    /// The IMPORT CHAIN at deferral: the canonical URLs of the modules in progress when the loader
+    /// deferred the family, outermost first — empty for a family the current document wrote; for
+    /// a family inside a materialized branch, the chain that materialization resumed plus the
+    /// modules entered since. The family's own module, when it has one, is always the last
+    /// entry. The chain is EXACT: each module on it was in progress while the next was spliced
+    /// into it, so every one of their views contains this region, and a body that reaches any of
+    /// them reaches the region. The materialization's walk installs the chain as the loader's
+    /// modules in progress and restores the displaced ones when it ends, so a selected body whose
+    /// loads would close a module load cycle through it is refused with
+    /// <see cref="DiagnosticCode.LoadCycle"/> at its first selection, exactly as eager loading
+    /// refuses a cycle (see <see cref="ModuleLoader.LoadDeferredRegionAsync"/>). Immutable; forks
+    /// copy it.
     /// </summary>
-    internal int ImportDepth { get; }
+    internal ImmutableArray<string> ImportChain { get; }
+
+    /// <summary>
+    /// The live IMPORT DEPTH at deferral: how many module frames enclosed the family, which is
+    /// by construction the length of <see cref="ImportChain"/> (the loader asserts the agreement
+    /// when it defers a branch), so it is derived rather than stored. The materialization's walk
+    /// resumes at this depth and restores the displaced one when it ends, so the body's loads
+    /// obey <see cref="SourceProcessingLimits.MaxModuleDepth"/> — and a refusal names the depth —
+    /// exactly as eager elaboration would.
+    /// </summary>
+    internal int ImportDepth => ImportChain.Length;
 
     /// <summary>
     /// The import site the family was reached under (see <c>ModuleLoader._importSite</c>): null
@@ -272,7 +290,12 @@ internal sealed class DeferredModuleRegion
     /// retries a failed download.
     ///
     /// <para><b>Accounting of an attempt.</b> The body's loads are judged at the import depth
-    /// recorded at deferral (<see cref="ImportDepth"/>), as eager elaboration would judge them.
+    /// recorded at deferral (<see cref="ImportDepth"/>), as eager elaboration would judge them,
+    /// and against the import chain recorded with it (<see cref="ImportChain"/>): an attempt whose
+    /// loads would close a module load cycle fails with <see cref="DiagnosticCode.LoadCycle"/>
+    /// before its body is compiled, publishing nothing, so every selection of such a region
+    /// refuses again (a different mechanism from the B16 reentrant-selection refusal below,
+    /// which shares only the code).
     /// An attempt that publishes nothing — whether its load failed, its body has a front-end
     /// error, a structural or stack refusal stopped it, or it was cancelled or abandoned during
     /// the load, the compile, or at publication — releases the cache-hit splices charged by its

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace KatLang;
 
 /// <summary>
@@ -78,18 +80,132 @@ internal sealed partial class ModuleLoader
     // Keyed by the CANONICAL module URL (ModuleLoadTarget), as are _inProgress and every
     // downloader request: identity, cycle detection, and transport name one resource.
     private readonly Dictionary<string, CachedModule> _cache = new();
-    private readonly HashSet<string> _inProgress = new();
+
+    // The modules in progress around the walk's current position (see InProgressModules): the
+    // initial elaboration's own instance, or a materialization's, installed and restored by its
+    // walk-context scope. Replaced only by that scope, never shared between walks.
+    private InProgressModules _inProgress = InProgressModules.ForElaboration();
     private readonly DiagnosticBag _diagnostics;
 
     /// <summary>
-    /// One module-cache entry: the caller-independent import view every splice shares, and the
+    /// One module-cache entry: the caller-independent import view every splice shares, the
     /// aggregate source its elaboration charged — its own source plus everything its own loads
-    /// charged (nested downloads and nested splices). A later splice of the view adds exactly
-    /// that much content to the elaborated program, which the front end elaborates once more in
-    /// the splice's scope, so a cache hit charges <see cref="Weight"/> (see
-    /// <see cref="ProcessLoadAsync"/>).
+    /// charged (nested downloads and nested splices) — and the module's STATIC LOAD TARGETS.
+    /// A later splice of the view adds exactly that much content to the elaborated program, which
+    /// the front end elaborates once more in the splice's scope, so a cache hit charges
+    /// <see cref="Weight"/> (see <see cref="ProcessLoadAsync"/>).
+    /// <para><see cref="LoadTargets"/> are the canonical URLs of every load WRITTEN in the
+    /// module's text, each once: its eager loads and the loads inside its deferred branches,
+    /// whatever their outcome. They are the module's edges in the static import graph that a
+    /// deferred materialization's load-cycle check walks (<see cref="RefusesCycleClosingSplice"/>);
+    /// see <see cref="MarkLoadBearingModule"/>.</para>
     /// </summary>
-    private readonly record struct CachedModule(Algorithm View, int Weight);
+    private readonly record struct CachedModule(Algorithm View, int Weight, ImmutableArray<string> LoadTargets);
+
+    /// <summary>
+    /// The modules IN PROGRESS on the loader's import chain: the canonical URLs of the modules
+    /// whose fetch and elaboration enclose the walk's current position, outermost first. It is a
+    /// set for the cycle check (<see cref="ProcessLoadAsync"/>, step 4) and an ordered chain for
+    /// the deferred regions the walk creates (<see cref="Snapshot"/>,
+    /// <see cref="DeferredModuleRegion.ImportChain"/>). Every module frame enters it and leaves it
+    /// in reverse order of entry (<see cref="FetchAndSpliceAsync"/>).
+    ///
+    /// <para>The initial elaboration's instance starts empty. A deferred materialization's
+    /// instance starts as its region's recorded chain (<see cref="Installed"/>), installed by the
+    /// materialization's walk-context scope for the duration of its walk and replaced by the
+    /// displaced instance on every exit path. So a materialized body that loads a module on its
+    /// chain is refused as <see cref="DiagnosticCode.LoadCycle"/> exactly as eager loading refuses
+    /// a cycle, and a region the materialization defers records the installed chain plus the
+    /// modules entered since.</para>
+    /// </summary>
+    private sealed class InProgressModules
+    {
+        private readonly HashSet<string> _set;
+        private readonly List<string> _order;
+
+        // The current chain as an immutable array, shared by every region deferred until the
+        // chain next changes; default when stale.
+        private ImmutableArray<string> _snapshot;
+
+        private InProgressModules(ImmutableArray<string> installed, bool isMaterialization)
+        {
+            _set = new HashSet<string>(installed, StringComparer.Ordinal);
+            _order = new List<string>(installed);
+            _snapshot = installed;
+            Installed = installed;
+            IsMaterialization = isMaterialization;
+        }
+
+        /// <summary>The empty chain of an initial elaboration walk.</summary>
+        internal static InProgressModules ForElaboration() => new([], isMaterialization: false);
+
+        /// <summary>The chain of a materialization walk: the region's recorded chain.</summary>
+        internal static InProgressModules ForMaterialization(ImmutableArray<string> chain) => new(chain, isMaterialization: true);
+
+        /// <summary>The chain this instance started with: empty for an elaboration, the region's chain for a materialization.</summary>
+        internal ImmutableArray<string> Installed { get; }
+
+        /// <summary>True for a deferred materialization's walk: its splices are checked for load cycles.</summary>
+        internal bool IsMaterialization { get; }
+
+        internal int Count => _order.Count;
+
+        /// <summary>True when every module frame that entered since the instance was created has left it.</summary>
+        internal bool IsBalanced => _order.Count == Installed.Length;
+
+        internal bool Contains(string moduleUrl) => _set.Contains(moduleUrl);
+
+        /// <summary>True when <paramref name="moduleUrl"/> is on the installed chain (not a module entered since).</summary>
+        internal bool InstalledContains(string moduleUrl) => _set.Contains(moduleUrl) && Installed.Contains(moduleUrl);
+
+        internal void Enter(string moduleUrl)
+        {
+            _order.Add(moduleUrl);
+            _set.Add(moduleUrl);
+            _snapshot = default;
+        }
+
+        internal void Exit(string moduleUrl)
+        {
+            if (_order.Count <= Installed.Length || !string.Equals(_order[^1], moduleUrl, StringComparison.Ordinal))
+                throw new InvalidOperationException("Internal error: a module frame left the module loader's import chain out of order.");
+
+            _order.RemoveAt(_order.Count - 1);
+            _set.Remove(moduleUrl);
+            _snapshot = default;
+        }
+
+        /// <summary>The current chain, outermost first.</summary>
+        internal ImmutableArray<string> Snapshot()
+        {
+            if (_snapshot.IsDefault)
+                _snapshot = [.. _order];
+            return _snapshot;
+        }
+
+        // The load-cycle check's verdicts for this materialization's installed chain
+        // (RefusesCycleClosingSplice). A URL that reaches the chain keeps reaching it: during one
+        // walk the loader's known modules only grow, and their recorded targets never change. A
+        // URL that does not reach it is known only while the loader knows the same modules: a
+        // newly cached module can add a path, so those verdicts are dropped at the next cache write.
+        private HashSet<string>? _reachesChain;
+        private HashSet<string>? _avoidsChain;
+        private int _avoidsChainKnownModules;
+
+        internal HashSet<string> ReachesChain => _reachesChain ??= new(StringComparer.Ordinal);
+
+        /// <summary>The URLs known not to reach the chain while the loader knows <paramref name="knownModules"/> modules.</summary>
+        internal HashSet<string> AvoidsChain(int knownModules)
+        {
+            if (_avoidsChain is null || _avoidsChainKnownModules != knownModules)
+            {
+                _avoidsChain = new(StringComparer.Ordinal);
+                _avoidsChainKnownModules = knownModules;
+            }
+
+            return _avoidsChain;
+        }
+    }
 
     /// <summary>
     /// The aggregate source charged by the cache-hit splices of ONE walk frame — the root
@@ -375,13 +491,18 @@ internal sealed partial class ModuleLoader
     /// materialization): each restores what it displaced, in reverse order of entry. The
     /// default value installed nothing and restores nothing.
     ///
-    /// <para>The scope also brackets the budget's live IMPORT DEPTH. A materialization scope
-    /// resumes the depth its region recorded at deferral (the module frames that enclosed the
-    /// family), so the body's loads are judged, and reported, at the depth eager elaboration
-    /// would use; every other scope leaves the depth as it is. The walk's own module frames
-    /// enter and exit inside the scope as usual, so at exit the depth must again equal the
-    /// value the scope installed: <see cref="Dispose"/> restores the displaced depth on every
-    /// exit path, and only then throws if that balance was broken.</para>
+    /// <para>The scope also brackets the budget's live IMPORT DEPTH and the modules IN
+    /// PROGRESS. A materialization scope resumes the import CHAIN its region recorded at deferral
+    /// (<see cref="DeferredModuleRegion.ImportChain"/>, the module frames that enclosed the
+    /// family): the budget's depth resumes at the chain's length, so the body's loads are judged,
+    /// and reported, at the depth eager elaboration would use, and the chain is installed as the
+    /// loader's in-progress modules (<see cref="InProgressModules"/>), so a load of a module on it
+    /// is a <see cref="DiagnosticCode.LoadCycle"/> exactly as eagerly. Every other scope leaves
+    /// both as they are. The walk's own module frames enter and exit inside the scope as usual,
+    /// so at exit the depth must again equal the value the scope installed and the installed
+    /// modules must again be exactly the chain: <see cref="Dispose"/> restores the displaced
+    /// depth and the displaced in-progress modules on every exit path, and only then throws if
+    /// either balance was broken.</para>
     /// </summary>
     private readonly struct WalkContextScope : IDisposable
     {
@@ -393,14 +514,20 @@ internal sealed partial class ModuleLoader
         private readonly SpliceLedger _spliceLedger;
         private readonly int _displacedImportDepth;
         private readonly int _installedImportDepth;
+        private readonly InProgressModules? _displacedInProgress;
         private readonly StateScopeStack.Ticket _ticket;
 
         /// <summary>
         /// Captures <paramref name="loader"/>'s current walk context and, when
-        /// <paramref name="resumedImportDepth"/> is given, resumes the budget's import depth there.
+        /// <paramref name="resumedImportChain"/> is given (not <c>default</c>), resumes the budget's
+        /// import depth at its length and installs it as the loader's in-progress modules.
         /// </summary>
-        internal WalkContextScope(ModuleLoader loader, int? resumedImportDepth = null)
+        internal WalkContextScope(ModuleLoader loader, ImmutableArray<string> resumedImportChain = default)
         {
+            // Built before anything is entered, so a failure here changes no state.
+            var installedInProgress = resumedImportChain.IsDefault
+                ? null
+                : InProgressModules.ForMaterialization(resumedImportChain);
             _loader = loader;
             _sink = loader._sink;
             _nestedTraversalBase = loader._nestedTraversalBase;
@@ -408,8 +535,9 @@ internal sealed partial class ModuleLoader
             _importSite = loader._importSite;
             _spliceLedger = loader._spliceLedger;
             _ticket = loader._walkContextScopes.Enter();
-            if (resumedImportDepth is { } resumed)
+            if (installedInProgress is not null)
             {
+                var resumed = resumedImportChain.Length;
                 try
                 {
                     _displacedImportDepth = loader._budget.ResumeDepth(resumed);
@@ -420,6 +548,8 @@ internal sealed partial class ModuleLoader
                     throw;
                 }
                 _installedImportDepth = resumed;
+                _displacedInProgress = loader._inProgress;
+                loader._inProgress = installedInProgress;
             }
             else
             {
@@ -439,9 +569,18 @@ internal sealed partial class ModuleLoader
             _loader._cancellationToken = _cancellationToken;
             _loader._nestedTraversalBase = _nestedTraversalBase;
             _loader._sink = _sink;
+            var chainBalanced = true;
+            if (_displacedInProgress is not null)
+            {
+                chainBalanced = _loader._inProgress.IsBalanced;
+                _loader._inProgress = _displacedInProgress;
+            }
             if (!_loader._budget.RestoreDepth(_installedImportDepth, _displacedImportDepth))
                 throw new InvalidOperationException(
                     "Internal error: a module loader walk left an unbalanced import depth: a module frame did not exit inside its walk context.");
+            if (!chainBalanced)
+                throw new InvalidOperationException(
+                    "Internal error: a module loader walk left an unbalanced import chain: a module frame did not leave the in-progress modules inside its walk context.");
         }
     }
 
@@ -450,8 +589,9 @@ internal sealed partial class ModuleLoader
     /// (<see cref="LoadDeferredRegionAsync"/>): diagnostics go to the materialization's own
     /// bag, traversal depth is judged from the base the eager walk recorded for the
     /// region, loads inside the body are positioned at the import site the eager walk
-    /// recorded for it, import depth resumes at the depth the eager walk recorded for it (and
-    /// the displaced depth is restored when the scope ends), every walk check and the
+    /// recorded for it, the import chain the eager walk recorded for it is resumed — the
+    /// import depth at its length, and the chain as the modules in progress (the displaced
+    /// depth and modules are restored when the scope ends) — every walk check and the
     /// downloader observe the linked token, and the body's cache-hit splices charge the
     /// materialization attempt's own ledger.
     /// </summary>
@@ -459,11 +599,14 @@ internal sealed partial class ModuleLoader
         DiagnosticBag sink,
         int nestedTraversalBase,
         SourceSpan? importSite,
-        int importDepth,
+        ImmutableArray<string> importChain,
         SpliceLedger spliceLedger,
         CancellationToken cancellationToken)
     {
-        var scope = new WalkContextScope(this, importDepth);
+        if (importChain.IsDefault)
+            throw new ArgumentException("A materialization resumes its region's recorded import chain.", nameof(importChain));
+
+        var scope = new WalkContextScope(this, importChain);
         _sink = sink;
         _nestedTraversalBase = nestedTraversalBase;
         _importSite = importSite;
@@ -490,6 +633,18 @@ internal sealed partial class ModuleLoader
 
     /// <summary>Run-local state exposed internally for cleanup-invariant regression tests.</summary>
     internal int InProgressModuleCount => _inProgress.Count;
+
+    /// <summary>
+    /// The modules in progress, outermost first (the chain a region deferred now would record),
+    /// exposed internally for scope-restoration regression tests; never a decision input.
+    /// </summary>
+    internal ImmutableArray<string> InProgressChain => _inProgress.Snapshot();
+
+    /// <summary>
+    /// Module URLs the deferred load-cycle check (<see cref="RefusesCycleClosingSplice"/>) has
+    /// visited over this loader's lifetime: a test-observable work count, never a decision input.
+    /// </summary>
+    internal long LoadCycleReachVisits { get; private set; }
 
     /// <summary>
     /// The run's source-processing budget exposed internally for accounting regression tests
@@ -754,11 +909,48 @@ internal sealed partial class ModuleLoader
     /// than the number of root-to-node paths.</para>
     /// </summary>
     private void MarkLoadBearing(Algorithm root)
-        => new LoadBearingMarker(_loadBearing, TraversalObservations).VisitAlgorithm(root);
+        => new LoadBearingMarker(_loadBearing, TraversalObservations, loads: null).VisitAlgorithm(root);
+
+    /// <summary>
+    /// <see cref="MarkLoadBearing"/> for a fetched module's import view, which also returns the
+    /// module's STATIC LOAD TARGETS (<see cref="CachedModule.LoadTargets"/>): the canonical URL of
+    /// every load written in the module's text — each load call the scan meets, eager or inside a
+    /// deferred branch, at any position — once each. The scan already reaches every load (it
+    /// descends the branch bodies the walks defer), so this costs no second traversal. The
+    /// canonicalization is side-effect free: the written target (<see cref="WrittenLoadUrl"/>)
+    /// passes the ONE admission check (<see cref="ModuleLoadTarget.TryAdmit"/>) without a
+    /// diagnostic, a downloader call, or a budget charge, and a target that has no literal URL or
+    /// fails admission contributes no edge (no load of it can ever be made).
+    /// </summary>
+    private ImmutableArray<string> MarkLoadBearingModule(Algorithm moduleRoot)
+    {
+        var loads = new List<Expr>();
+        new LoadBearingMarker(_loadBearing, TraversalObservations, loads).VisitAlgorithm(moduleRoot);
+        if (loads.Count == 0)
+            return [];
+
+        var targets = ImmutableArray.CreateBuilder<string>();
+        var written = new HashSet<string>(StringComparer.Ordinal);
+        var canonical = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var load in loads)
+        {
+            if (load.TryGetUnresolvedLoadArguments(out var args)
+                && WrittenLoadUrl(args) is { } url
+                && written.Add(url)
+                && ModuleLoadTarget.TryAdmit(url, _allowedHosts, out var moduleUrl, out _)
+                && canonical.Add(moduleUrl))
+            {
+                targets.Add(moduleUrl);
+            }
+        }
+
+        return targets.ToImmutable();
+    }
 
     private sealed class LoadBearingMarker(
         HashSet<object> marked,
-        FrontEndTraversalObservations? observations) : AstWalker
+        FrontEndTraversalObservations? observations,
+        List<Expr>? loads) : AstWalker
     {
         private readonly List<object> _path = [];
 
@@ -821,6 +1013,7 @@ internal sealed partial class ModuleLoader
                 marked.Add(expr);
                 MarkCurrentPath();
                 _visited.Add(expr);
+                loads?.Add(expr);
                 return;
             }
 
@@ -1123,15 +1316,18 @@ internal sealed partial class ModuleLoader
     /// (<see cref="Algorithm.DeferredRegion"/>) with this walk's context: the family's load
     /// context (the body inherits it exactly as eager elaboration would), the body's counted
     /// depth (<c>CondBranch</c> is a depth membrane, so one level below the family), the
-    /// live traversal base, the import site, and the live IMPORT DEPTH: the number of module
-    /// frames enclosing the family, so the branch's loads are later judged, and reported, at
-    /// the depth eager elaboration would use. A deferral made during a materialization records
-    /// the resumed depth plus the module frames entered since, so nested deferrals accumulate.
-    /// A fresh placeholder per branch OCCURRENCE keeps regions distinct
-    /// even when host branches share one raw body object (the clones share that body's
-    /// declaration identity; region identity is the placeholder's own). A body that is itself
-    /// a placeholder of an earlier elaboration is deferred over its region-free copy, so the
-    /// earlier region can never surface through a materialization of this one.
+    /// live traversal base, the import site, and the live IMPORT CHAIN: the canonical URLs of the
+    /// module frames enclosing the family, outermost first, whose length is the live import
+    /// depth (asserted, <see cref="CurrentImportChain"/>), so the branch's loads are later
+    /// judged, and reported, at the depth eager elaboration would use, and refused as a
+    /// <see cref="DiagnosticCode.LoadCycle"/> when they close a cycle through those modules. A
+    /// deferral made during a materialization records the resumed chain plus the module frames
+    /// entered since, so nested deferrals accumulate. A fresh placeholder per branch OCCURRENCE
+    /// keeps regions distinct even when host branches share one raw body object (the clones
+    /// share that body's declaration identity; region identity is the placeholder's own). A
+    /// body that is itself a placeholder of an earlier elaboration is deferred over its
+    /// region-free copy, so the earlier region can never surface through a materialization of
+    /// this one.
     /// </summary>
     private IReadOnlyList<CondBranch> DeferOrKeepBranches(Algorithm.Conditional conditional, LoadContext context, int depth)
     {
@@ -1148,7 +1344,7 @@ internal sealed partial class ModuleLoader
             var placeholder = rawBody with
             {
                 DeferredRegion = new DeferredModuleRegion(
-                    this, rawBody, context, depth + 1, _nestedTraversalBase, _importSite, _budget.CurrentDepth),
+                    this, rawBody, context, depth + 1, _nestedTraversalBase, _importSite, CurrentImportChain()),
             };
             DeferredRegionCount++;
             branches.Add(branch with { Body = placeholder });
@@ -1158,14 +1354,34 @@ internal sealed partial class ModuleLoader
     }
 
     /// <summary>
+    /// The import chain a region deferred at the walk's current position records: the modules in
+    /// progress, outermost first (<see cref="InProgressModules.Snapshot"/>; one shared array until
+    /// the chain next changes). The CHAIN IS EXACT: each module on it was in progress while the
+    /// next one was spliced into it, so the view of each contains the region, and a body that
+    /// reaches any of them reaches the region itself. Its length is the live import depth by
+    /// construction — every module frame enters the budget's depth and the chain together, and a
+    /// materialization resumes both from one chain — which is why the region derives
+    /// <see cref="DeferredModuleRegion.ImportDepth"/> from it; this asserts the agreement.
+    /// </summary>
+    private ImmutableArray<string> CurrentImportChain()
+    {
+        var chain = _inProgress.Snapshot();
+        if (chain.Length != _budget.CurrentDepth)
+            throw new InvalidOperationException(
+                "Internal error: the module loader's import chain and its live import depth disagree.");
+        return chain;
+    }
+
+    /// <summary>
     /// The loader half of materializing a deferred region (called by
     /// <see cref="DeferredModuleRegion.MaterializeAsync"/> under this loader's
     /// <see cref="MaterializationGate"/>): the region's raw body is walked exactly like a
     /// subtree of the initial elaboration — its own pre-scan, the routed sync/async walks,
     /// the same per-URL cache, cycle detection, policy checks, and budgets, judged at the
-    /// depth, live traversal base, and import depth the eager walk recorded (the
-    /// materialization's walk-context scope resumes that import depth and restores the
-    /// displaced one on every exit path) — with diagnostics reported into
+    /// depth, live traversal base, and import chain the eager walk recorded (the
+    /// materialization's walk-context scope resumes that chain as the import depth and the
+    /// modules in progress, and restores the displaced ones on every exit path) — with
+    /// diagnostics reported into
     /// <paramref name="diagnostics"/> rather than the published parse result. Nested clause
     /// families inside the body are deferred again by the same rule. The composed body is
     /// then re-gated at both structural ceilings the eager pipeline applies (the raw-syntax
@@ -1176,6 +1392,18 @@ internal sealed partial class ModuleLoader
     /// placeholder prefix (<see cref="Evaluation.DeferredBodyAdmission"/>).
     /// The walk memos and the load-bearing set are cleared afterwards, as at the
     /// elaboration boundary.
+    ///
+    /// <para><b>Load cycles (owner decision 2026-11-15).</b> Deferred materialization agrees with
+    /// eager loading on load cycles. With the region's chain installed as the modules in
+    /// progress, a load of a module on it is refused at step 4 of <see cref="ProcessLoadAsync"/>,
+    /// exactly as eagerly. And every module this walk splices — a cache hit, or a miss once it
+    /// is fetched, elaborated and cached — is checked first for a path in the static import
+    /// graph back to the chain (<see cref="RefusesCycleClosingSplice"/>), counting the loads
+    /// written inside other modules' deferred branches, so the verdict does not depend on load
+    /// order or cache state. Either refusal is a <see cref="DiagnosticCode.LoadCycle"/> at the
+    /// load site, and the attempt publishes nothing, so the region's materialized body never
+    /// contains its own placeholder: the composed program graph stays acyclic, as
+    /// <see cref="Evaluation.DeferredBodyAdmission"/> assumes.</para>
     ///
     /// <para><paramref name="materializationCancellationToken"/> is the requesting
     /// materialization's own token (cancelled once no evaluation needs the region any more —
@@ -1219,9 +1447,10 @@ internal sealed partial class ModuleLoader
         {
             // Restore the walk context before clearing the walk memos, and before disposing
             // the linked source, preserving the original unwind order. The scope also resumes
-            // the import depth the region recorded and restores the displaced one.
+            // the import chain the region recorded (the import depth and the modules in
+            // progress) and restores the displaced ones.
             using var materialization = EnterMaterializationContext(
-                diagnostics, region.NestedTraversalBase, region.ImportSite, region.ImportDepth,
+                diagnostics, region.NestedTraversalBase, region.ImportSite, region.ImportChain,
                 materializationLedger, linkedCancellation.Token);
             Algorithm loaded;
             try
@@ -1689,7 +1918,8 @@ internal sealed partial class ModuleLoader
         if (moduleUrl is null)
             return RefuseLoad(load);
 
-        // 4. Cycle detection
+        // 4. Cycle detection: the modules in progress — during a deferred materialization, its
+        // region's recorded import chain plus the modules entered since (InProgressModules).
         if (_inProgress.Contains(moduleUrl))
         {
             ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {moduleUrl}", site);
@@ -1707,6 +1937,11 @@ internal sealed partial class ModuleLoader
         // aggregate bounds every splice of the elaborated program, exactly as before).
         if (_cache.TryGetValue(moduleUrl, out var cached))
         {
+            // During a deferred materialization, a splice that closes a load cycle through the
+            // region's import chain is refused before it is charged (RefusesCycleClosingSplice).
+            if (RefusesCycleClosingSplice(moduleUrl, load))
+                return RefuseLoad(load);
+
             if (!_budget.TryReserveAggregate(cached.Weight))
             {
                 ReportSourceProcessingDiagnostic(SourceProcessingDiagnostics.AggregateSourceLengthExceededBySplice(
@@ -1743,11 +1978,106 @@ internal sealed partial class ModuleLoader
     }
 
     /// <summary>
+    /// DEFERRED LOAD CYCLES (owner decision 2026-11-15): during a deferred materialization, whether
+    /// splicing <paramref name="moduleUrl"/> — a cache hit, or a miss once it is fetched, elaborated
+    /// and cached — would close a module load cycle through the region's import chain (the
+    /// installed <see cref="InProgressModules"/>). It does when the module reaches a URL on that
+    /// chain in the STATIC IMPORT GRAPH: the recorded load targets
+    /// (<see cref="CachedModule.LoadTargets"/>) of every module this loader knows, which include
+    /// the loads written inside deferred branches, so the verdict is the cycle eager loading would
+    /// report if every branch were loaded eagerly, independent of load order and cache state. The
+    /// splice is then reported as <see cref="DiagnosticCode.LoadCycle"/> at the site of
+    /// <paramref name="load"/> — its own span, or the import site of the module content it lies
+    /// in, exactly as <see cref="ProcessLoadAsync"/> positions every load diagnostic — naming the
+    /// module whose load closes the cycle, and the caller refuses the load (a refused miss stays
+    /// cached: the module is valid, only this splice is refused). Outside a materialization, or
+    /// for a region deferred outside every module (an empty chain), nothing is checked, so eager
+    /// elaboration is unchanged.
+    ///
+    /// <para>An iterative walk with a visited set, called from the load frames and never
+    /// recursing on the loader's spine: each URL is visited once, so one walk is bounded by the
+    /// known modules and their recorded targets (<see cref="LoadCycleReachVisits"/> counts it).
+    /// The verdicts are kept for the rest of the materialization (<see cref="InProgressModules"/>):
+    /// a URL that reaches the chain is answered at once, and every URL a walk visited without
+    /// reaching it is a known non-reaching leaf of later walks until the next module is cached.
+    /// So a body that splices the same modules at many load sites walks their graph once per
+    /// cache write, not once per site. The site is derived here from the load node, so those
+    /// async frames gain no span copy.</para>
+    /// </summary>
+    private bool RefusesCycleClosingSplice(string moduleUrl, Expr load)
+    {
+        var inProgress = _inProgress;
+        if (!inProgress.IsMaterialization || inProgress.Installed.IsEmpty)
+            return false;
+
+        var reachesChain = inProgress.ReachesChain;
+        var avoidsChain = inProgress.AvoidsChain(_cache.Count);
+        if (!reachesChain.Contains(moduleUrl))
+        {
+            if (avoidsChain.Contains(moduleUrl))
+                return false;
+
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Stack<string>();
+            pending.Push(moduleUrl);
+            var reaches = false;
+            while (pending.TryPop(out var url))
+            {
+                if (avoidsChain.Contains(url) || !visited.Add(url))
+                    continue;
+
+                LoadCycleReachVisits++;
+                if (reachesChain.Contains(url) || inProgress.InstalledContains(url))
+                {
+                    reaches = true;
+                    break;
+                }
+
+                if (_cache.TryGetValue(url, out var known))
+                {
+                    foreach (var target in known.LoadTargets)
+                    {
+                        if (!visited.Contains(target))
+                            pending.Push(target);
+                    }
+                }
+            }
+
+            if (!reaches)
+            {
+                // Every URL the walk visited reaches only visited URLs and known non-reaching
+                // ones, and none of them is on the chain.
+                avoidsChain.UnionWith(visited);
+                return false;
+            }
+
+            reachesChain.Add(moduleUrl);
+        }
+
+        ReportError(DiagnosticCode.LoadCycle, $"load cycle detected: {moduleUrl}", load.Span ?? _importSite);
+        return true;
+    }
+
+    /// <summary>
+    /// The written target of a load directive's arguments: exactly one string literal that is
+    /// not lexer recovery text, or null. The ONE shape rule behind <see cref="ExtractLoadUrl"/>
+    /// (which reports the other shapes) and the static load targets
+    /// (<see cref="MarkLoadBearingModule"/>, which only reads it).
+    /// </summary>
+    private static string? WrittenLoadUrl(OutputBundle args)
+        => args.Count == 1 && args[0] is Expr.StringLiteral { IsRecoveryLiteral: false } literal
+            ? literal.Value
+            : null;
+
+    /// <summary>
     /// Extracts a URL string from load arguments.
     /// Must be exactly one argument that is a string literal.
     /// </summary>
     private string? ExtractLoadUrl(OutputBundle args, SourceSpan? site)
     {
+        if (WrittenLoadUrl(args) is { } url)
+            return url;
+
         // load must have exactly 1 argument slot (the URL)
         if (args.Count != 1)
         {
@@ -1755,17 +2085,11 @@ internal sealed partial class ModuleLoader
             return null;
         }
 
-        var urlExpr = args[0];
-
         // Recovery text is retained for analysis, never authorization to acquire source.
         // The lexer already reported the exact defect (even if the diagnostic list is
         // full); refuse this directive without adding a second report or calling the host.
-        if (urlExpr is Expr.StringLiteral { IsRecoveryLiteral: true })
+        if (args[0] is Expr.StringLiteral { IsRecoveryLiteral: true })
             return null;
-
-        // Must be a string literal
-        if (urlExpr is Expr.StringLiteral(var url))
-            return url;
 
         // Not a literal — could be Resolve("url"), a variable, or any other expression
         ReportError(DiagnosticCode.InvalidLoadDirective, "load URL must be a literal (non-dynamic).", site);
@@ -1832,7 +2156,7 @@ internal sealed partial class ModuleLoader
         SpliceLedger? moduleLedger = null;
         try
         {
-            _inProgress.Add(moduleUrl);
+            _inProgress.Enter(moduleUrl);
             // Module-count ceiling, checked BEFORE downloading (this is a cache miss), so a run
             // past the ceiling never pays for another download.
             if (!_budget.CanReserveModule())
@@ -2039,8 +2363,9 @@ internal sealed partial class ModuleLoader
             // Recursively elaborate any load calls in the fetched module. The fetched
             // tree gets its own load-bearing pre-scan so its load-free subtrees take
             // the synchronous walk too. Loads written inside the module have no span of
-            // their own: their diagnostics are positioned at THIS load's site.
-            MarkLoadBearing(importView);
+            // their own: their diagnostics are positioned at THIS load's site. The scan also
+            // yields the module's static load targets, recorded with its cache entry.
+            var loadTargets = MarkLoadBearingModule(importView);
             Algorithm elaborated;
             moduleLedger = new SpliceLedger { IsMaterialization = _spliceLedger.IsMaterialization };
             using (EnterNestedTraversal(traversalBase, site, moduleLedger))
@@ -2060,8 +2385,17 @@ internal sealed partial class ModuleLoader
                 elaborated = moduleRoot with { IsModuleElaborated = true };
             if (_sink.ReportedErrorCount == nestedErrorsBefore)
             {
-                _cache[moduleUrl] = new CachedModule(elaborated, checked((int)(_budget.AggregateSource - aggregateBeforeModule)));
+                _cache[moduleUrl] = new CachedModule(
+                    elaborated, checked((int)(_budget.AggregateSource - aggregateBeforeModule)), loadTargets);
                 moduleLedger = null; // This module kept its splices as part of its cached weight.
+
+                // During a deferred materialization, a fetched module's splice is checked like a
+                // cache hit's, now that its load targets are recorded: the module stays cached
+                // (it is valid; its download stays charged), only this splice is refused. A
+                // module whose own elaboration failed is not checked: it is not cached, and its
+                // failure already fails the attempt.
+                if (RefusesCycleClosingSplice(moduleUrl, load))
+                    return RefuseLoad(load);
             }
 
             return new Expr.AlgorithmExpr(elaborated) { Span = load.Span };
@@ -2081,7 +2415,7 @@ internal sealed partial class ModuleLoader
             // this attempt, so pass them up until they reach the attempt's own ledger.
             if (moduleLedger is { IsMaterialization: true })
                 _spliceLedger.Charged += moduleLedger.Charged;
-            _inProgress.Remove(moduleUrl);
+            _inProgress.Exit(moduleUrl);
             _budget.ExitModule();
         }
     }

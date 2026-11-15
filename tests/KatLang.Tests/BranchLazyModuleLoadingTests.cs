@@ -1475,18 +1475,24 @@ public class BranchLazyModuleLoadingTests
 
         using var tokenSource = new CancellationTokenSource();
         var outerLedger = NewLedger();
-        // A materialization scope also resumes the import depth its region recorded (F3) and
-        // restores the displaced one; a nested-traversal scope leaves the depth as it is.
-        var outer = Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, 2, outerLedger, tokenSource.Token);
+        // A materialization scope also resumes the import chain its region recorded: the
+        // import depth at its length (F3) and the chain as the modules in progress (deferred
+        // load cycles), restoring the displaced ones; a nested-traversal scope leaves both.
+        static System.Collections.Immutable.ImmutableArray<string> Chain(int length)
+            => [.. Enumerable.Range(0, length).Select(i => $"https://katlang.org/chain/m{i}.kat")];
+        var outer = Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, Chain(2), outerLedger, tokenSource.Token);
         var outerContext = loader.WalkContext;
         Assert.Same(outerLedger, outerContext.SpliceLedger);
         Assert.Equal(2, loader.SourceBudget.CurrentDepth);
+        Assert.Equal<string>(Chain(2), loader.InProgressChain);
         var invalidEntry = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
-            Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, int.MaxValue, NewLedger(), tokenSource.Token));
+            Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!,
+                Chain(SourceProcessingLimits.MaxSupportedModuleDepth + 1), NewLedger(), tokenSource.Token));
         Assert.IsType<ArgumentOutOfRangeException>(invalidEntry.InnerException);
         Assert.Equal(outerContext, loader.WalkContext);
         Assert.Equal(2, loader.SourceBudget.CurrentDepth);
         Assert.Equal(2, loader.SourceBudget.PeakDepth);
+        Assert.Equal<string>(Chain(2), loader.InProgressChain);
         var copied = (IDisposable)System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(outer);
         Assert.Throws<OperationCanceledException>((Action)(() =>
         {
@@ -1496,6 +1502,7 @@ public class BranchLazyModuleLoadingTests
             Assert.Same(innerLedger, innerContext.SpliceLedger);
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(innerContext, loader.WalkContext);
+            Assert.Equal<string>(Chain(2), loader.InProgressChain);
             throw new OperationCanceledException();
         }));
         Assert.Equal(outerContext, loader.WalkContext);
@@ -1503,16 +1510,32 @@ public class BranchLazyModuleLoadingTests
         outer.Dispose();
         Assert.Equal(original, loader.WalkContext);
         Assert.Equal(0, loader.SourceBudget.CurrentDepth);
-        using (Enter("EnterMaterializationContext", new DiagnosticBag(), 23, new SourceSpan(5, 1, 5, 3), 1, NewLedger(), tokenSource.Token))
+        Assert.Equal(0, loader.InProgressModuleCount);
+        using (Enter("EnterMaterializationContext", new DiagnosticBag(), 23, new SourceSpan(5, 1, 5, 3), Chain(1), NewLedger(), tokenSource.Token))
         {
             var later = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(later, loader.WalkContext);
             Assert.Equal(1, loader.SourceBudget.CurrentDepth);
+            Assert.Equal<string>(Chain(1), loader.InProgressChain);
         }
-        var unbalanced = Enter("EnterMaterializationContext", new DiagnosticBag(), 23, null!, 1, NewLedger(), tokenSource.Token);
+        Assert.Equal(0, loader.InProgressModuleCount);
+        var unbalanced = Enter("EnterMaterializationContext", new DiagnosticBag(), 23, null!, Chain(1), NewLedger(), tokenSource.Token);
         Assert.True(loader.SourceBudget.TryEnterModule());
         Assert.Throws<InvalidOperationException>(() => unbalanced.Dispose());
+        Assert.Equal(0, loader.InProgressModuleCount);
+        // A module frame that never leaves the installed chain breaks the chain's balance: the
+        // displaced modules are restored anyway, and only then the scope reports it.
+        var unbalancedChain = Enter("EnterMaterializationContext", new DiagnosticBag(), 23, null!, Chain(1), NewLedger(), tokenSource.Token);
+        var installed = typeof(ModuleLoader).GetField("_inProgress",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(loader)!;
+        installed.GetType().GetMethod("Enter", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(installed, ["https://katlang.org/chain/leaked.kat"]);
+        Assert.Equal(2, loader.InProgressModuleCount);
+        var chainFailure = Assert.Throws<InvalidOperationException>(() => unbalancedChain.Dispose());
+        Assert.Contains("import chain", chainFailure.Message, StringComparison.Ordinal);
+        Assert.Equal(0, loader.InProgressModuleCount);
+        Assert.Equal(0, loader.SourceBudget.CurrentDepth);
         ((IDisposable)Activator.CreateInstance(outer.GetType())!).Dispose();
         Assert.Equal(original, loader.WalkContext);
         Assert.Equal(0, loader.SourceBudget.CurrentDepth);
