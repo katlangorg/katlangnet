@@ -618,7 +618,7 @@ public sealed class ExposureOpenChainComplexityTests
     {
         var algorithm = SourceProvenance.ParseValid("D = 0\n0").Root;
         var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
-        var memos = PropertyDependencyGraphBuilder.CreateWalkMemos(memo, observations: null);
+        var memos = PropertyDependencyGraphBuilder.CreateWalkMemos(memo, observations: null, AnalyzedStaticStructures.ForBoundAst(algorithm));
         var summaries = new Dictionary<string, PropertyDependencyGraphBuilder.SummarySeed>(StringComparer.Ordinal)
         {
             ["D"] = new(["p"]),

@@ -50,10 +50,15 @@ public class FrontEndDagComplexityTests
         }
         var root = EmptyAlgorithm() with { Properties = [new Property("P", shared)] };
         var observations = new FrontEndTraversalObservations();
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, observations: observations);
+        var graph = StandaloneSummaries.Build(root, observations: observations);
         Assert.Equal(3 * depth + 1, observations.DependencyAlgorithmSummaryComputations);
-        var pending = Assert.Single(graph[0].PendingReferences);
-        Assert.Empty(pending.BoundOwners);
+        // However many call boundaries reach the shared body, its one written path is ONE reference, and so is the
+        // member name its edge may fall back to: every occurrence of the body stands below one representative context
+        // (the exposure run's shared-body census), where both are anchored. The left and right boundaries bind
+        // different owners, so neither reference keeps one.
+        Assert.Equal("Global", Assert.Single(graph[0].PendingReferences, reference => reference.Members.Count > 0).Head);
+        Assert.Equal("X", Assert.Single(graph[0].PendingReferences, reference => reference.Members.Count == 0).Head);
+        Assert.All(graph[0].PendingReferences, reference => Assert.Empty(reference.BoundOwners));
     });
 
     [Fact]
@@ -876,13 +881,15 @@ public class FrontEndDagComplexityTests
                 Output: OutputBundle.Empty);
 
             var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations);
-            var summaryGraph = PropertyDependencyGraphBuilder.BuildSummaries(root, observations: observations);
+            var summaryGraph = StandaloneSummaries.Build(root, observations: observations);
 
             // The equation records the one callee B once (occurrences are deduplicated by identity), however
             // many of the 2^depth paths reach it, so A selects exactly the one lifted parameter the tree
-            // expansion gives; the summary edge set is one edge A -> B, neither lost nor duplicated.
+            // expansion gives; the summary edge set is one edge A -> B, neither lost nor duplicated (one
+            // reference to B, anchored at A's body, where the name is written).
             Assert.Equal(["y"], resolved.Properties[0].Value.Params);
-            Assert.Equal([1], summaryGraph[0].SummarySiblingDependencyIndices);
+            Assert.Equal([1], StandaloneSummaries.SiblingReads(summaryGraph, 0));
+            Assert.Equal("B", Assert.Single(summaryGraph[0].PendingReferences).Head);
 
             Assert.Equal(depth, observations.SignatureAnalysisExpansions);
             Assert.Equal(depth, observations.DependencySeedExpansions);
@@ -911,14 +918,20 @@ public class FrontEndDagComplexityTests
         var dagRoot = TwoPropertyRoot(BinaryDiamond(depth, ReferencingLeaf()));
         var treeRoot = TwoPropertyRoot(BinaryTree(depth, ReferencingLeaf));
 
-        var dag = PropertyDependencyGraphBuilder.BuildSummaries(dagRoot);
-        var tree = PropertyDependencyGraphBuilder.BuildSummaries(treeRoot);
+        var dag = StandaloneSummaries.Build(dagRoot);
+        var tree = StandaloneSummaries.Build(treeRoot);
         Assert.Equal(tree[0].SummarySiblingDependencyIndices, dag[0].SummarySiblingDependencyIndices);
         Assert.Equal(tree[0].SummaryVisiblePropertyDependencyNames, dag[0].SummaryVisiblePropertyDependencyNames);
         Assert.Equal(tree[0].RequiredAncestorOwnedParameterNames, dag[0].RequiredAncestorOwnedParameterNames);
+        // The read of the sibling B is written inside A's body, so both shapes report it as ONE reference
+        // anchored there, however many of the diamond's paths reach the name.
+        Assert.Equal([1], StandaloneSummaries.SiblingReads(dag, 0));
+        Assert.Equal(StandaloneSummaries.SiblingReads(tree, 0), StandaloneSummaries.SiblingReads(dag, 0));
+        Assert.Equal("B", Assert.Single(dag[0].PendingReferences).Head);
+        Assert.Equal("B", Assert.Single(tree[0].PendingReferences).Head);
         // The captured name is reported straight from the walk: the summary channel takes
-        // no ancestor-owned context at all (which is what makes empty-locals summaries
-        // memoizable by node reference — see PropertyDependencyGraphBuilder.SummaryMemo).
+        // no ancestor-owned context at all (which is what lets a summary that used no completed
+        // context be shared by node reference — see PropertyDependencyGraphBuilder.SummaryMemo).
         Assert.Equal(["p"], dag[0].RequiredAncestorOwnedParameterNames);
     }
 
@@ -974,11 +987,15 @@ public class FrontEndDagComplexityTests
         var root = new Algorithm.User(
             null, [], [], [new Property("A", aValue), new Property("T", transparentOnlyValue)], OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+        var graph = StandaloneSummaries.Build(root);
 
+        // Neither reach lets B escape its owner, as a bare name or as a reference anchored there: the only
+        // reference either summary carries is the callee no level declares.
         Assert.DoesNotContain("B", graph[0].SummaryVisiblePropertyDependencyNames);
+        Assert.Equal(["Neutral"], graph[0].PendingReferences.Select(reference => reference.Head));
         Assert.Equal(["p"], graph[0].RequiredAncestorOwnedParameterNames);
         Assert.DoesNotContain("B", graph[1].SummaryVisiblePropertyDependencyNames);
+        Assert.Equal(["Neutral"], graph[1].PendingReferences.Select(reference => reference.Head));
         Assert.Equal(["p"], graph[1].RequiredAncestorOwnedParameterNames);
     }
 
@@ -1180,7 +1197,7 @@ public class FrontEndDagComplexityTests
             [new Property("A", original), new Property("B", structuralTwin)],
             OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(
+        var graph = StandaloneSummaries.Build(
             root, new PropertyDependencyGraphBuilder.SummaryMemo(), observations);
 
         Assert.Equal(2, observations.DependencyAlgorithmSummaryComputations);
@@ -1217,7 +1234,7 @@ public class FrontEndDagComplexityTests
             ],
             OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+        var graph = StandaloneSummaries.Build(root);
 
         Assert.Equal(["x"], graph[0].RequiredAncestorOwnedParameterNames);
         Assert.Empty(graph[1].RequiredAncestorOwnedParameterNames);
@@ -1272,7 +1289,7 @@ public class FrontEndDagComplexityTests
         Assert.Same(sharedBody, conditional.Branches[0].Body);
         Assert.Same(sharedBody, plainProperty.Value);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+        var graph = StandaloneSummaries.Build(root);
 
         Assert.True(graph.TryGetPropertyIndex("Cond", out var condIndex));
         Assert.True(graph.TryGetPropertyIndex("Plain", out var plainIndex));

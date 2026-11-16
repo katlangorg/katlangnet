@@ -543,7 +543,7 @@ public class FrontEndTraversalTests
             Properties: [new Property("A", EmptyAlgorithm(embedded))],
             Output: OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+        var graph = StandaloneSummaries.Build(root);
 
         Assert.Equal(["captured"], graph[0].RequiredAncestorOwnedParameterNames);
     }

@@ -860,7 +860,7 @@ public class DotCallFallbackExposureTests
         {
             var outer = Assert.IsType<Algorithm.User>(
                 Assert.Single(root.Properties, property => property.Name == "Outer").Value);
-            var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);
+            var graph = StandaloneSummaries.Build(outer);
             return graph[0].RequiredAncestorOwnedParameterNames;
         }
 
@@ -931,10 +931,13 @@ public class DotCallFallbackExposureTests
         // it a forwarding carrier of P, M4★); the graph is about its properties only.
         var outer = Assert.IsType<Algorithm.User>(
             Assert.Single(root.Properties, property => property.Name == "Outer").Value);
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);
+        var graph = StandaloneSummaries.Build(outer);
         Assert.True(graph.TryGetPropertyIndex("P", out var pIndex));
         Assert.True(graph.TryGetPropertyIndex("t", out var tIndex));
-        Assert.Equal([tIndex], graph[pIndex].SummarySiblingDependencyIndices);
+        // The fallback name is written inside P's body, so it reaches Outer's level as a lexical reference
+        // anchored there: the read edge to the sibling `t` that the level solver follows.
+        Assert.Equal([tIndex], StandaloneSummaries.SiblingReads(graph, pIndex));
+        Assert.Contains(graph[pIndex].PendingReferences, reference => reference is { Head: "t", Members.Count: 0, Origin: not null });
     }
 
     // ── The static certainty predicate mirrors evaluator dispatch ───────────

@@ -22,19 +22,25 @@ public class PropertyExposureResolverTests
             }
             """);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
+        var graph = StandaloneSummaries.Build(algorithm);
         var leftNode = graph[PropertyIndex(graph, "Left")];
         var rightNode = graph[PropertyIndex(graph, "Right")];
 
         // The summary channel sees the nested references: a summary sibling cycle, whose facts the
         // exposure fixpoint settles (implicit-argument resolution reads no sibling order since B3-5★).
-        Assert.Equal([PropertyIndex(graph, "Right")], leftNode.SummarySiblingDependencyIndices);
+        // Each name is written inside a nested body, so it reaches this level as a lexical reference
+        // anchored at the body it was written in, never as a bare name.
+        Assert.Equal([PropertyIndex(graph, "Right")], StandaloneSummaries.SiblingReads(graph, PropertyIndex(graph, "Left")));
+        Assert.Empty(leftNode.SummarySiblingDependencyIndices);
         Assert.Empty(leftNode.SummaryVisiblePropertyDependencyNames);
         Assert.Empty(leftNode.RequiredAncestorOwnedParameterNames);
+        Assert.All(leftNode.PendingReferences, reference => Assert.NotNull(reference.Origin));
 
-        Assert.Equal([PropertyIndex(graph, "Left")], rightNode.SummarySiblingDependencyIndices);
+        Assert.Equal([PropertyIndex(graph, "Left")], StandaloneSummaries.SiblingReads(graph, PropertyIndex(graph, "Right")));
+        Assert.Empty(rightNode.SummarySiblingDependencyIndices);
         Assert.Empty(rightNode.SummaryVisiblePropertyDependencyNames);
         Assert.Equal(["x"], rightNode.RequiredAncestorOwnedParameterNames);
+        Assert.All(rightNode.PendingReferences, reference => Assert.NotNull(reference.Origin));
     }
 
     [Fact]
@@ -126,10 +132,12 @@ public class PropertyExposureResolverTests
             }
             """);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
+        var graph = StandaloneSummaries.Build(algorithm);
 
         Assert.Equal(["x"], graph[PropertyIndex(graph, "P")].RequiredAncestorOwnedParameterNames);
+        // No phantom dependency on a local name, in either form a name can leave a body in.
         Assert.Empty(graph[PropertyIndex(graph, "P")].SummaryVisiblePropertyDependencyNames);
+        Assert.Empty(graph[PropertyIndex(graph, "P")].PendingReferences);
     }
 
     [Fact]
@@ -167,12 +175,69 @@ public class PropertyExposureResolverTests
             }
             """);
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
+        var graph = StandaloneSummaries.Build(algorithm);
 
         Assert.Equal(["x"], graph[PropertyIndex(graph, "Direct")].RequiredAncestorOwnedParameterNames);
         Assert.Equal(["x"], graph[PropertyIndex(graph, "Grouped")].RequiredAncestorOwnedParameterNames);
         Assert.Equal(["x"], graph[PropertyIndex(graph, "Called")].RequiredAncestorOwnedParameterNames);
         Assert.Empty(graph[PropertyIndex(graph, "Helper")].RequiredAncestorOwnedParameterNames);
+    }
+
+    /// <summary>
+    /// The summary channel has ONE mode: a name or path written inside a nested body leaves that body anchored at
+    /// its completed context. The only entries a summary graph holds unanchored are the rows of a hoisted
+    /// deconstruction source: they are the level's own written rows, walked raw, and the level's settlement anchors
+    /// them at the level. (A settlement that met a reference it could not anchor would refuse it.)
+    /// </summary>
+    [Fact]
+    public void Build_AnchorsWhatLeavesANestedBody_AndOnlyHoistedSourceRowsStayRaw()
+    {
+        const string Source =
+            """
+            Outer(p) = {
+                Lib = {
+                    public V = p
+                }
+                T = 5
+                a, b = Lib.V, T
+                R = {
+                    Lib.V + T
+                }
+                a + b + R
+            }
+            """;
+        var algorithm = BuildUserAlgorithmBeforeExposure("Outer", Source);
+        var graph = StandaloneSummaries.Build(algorithm);
+        int Index(string name) => PropertyIndex(graph, name);
+
+        // R's body: both reads leave it as references anchored at a completed context.
+        var nested = graph[Index("R")];
+        Assert.Empty(nested.SummarySiblingDependencyIndices);
+        Assert.Empty(nested.SummaryVisiblePropertyDependencyNames);
+        Assert.Equal(["Lib", "T"], nested.PendingReferences.Select(reference => reference.Head).Order(StringComparer.Ordinal));
+        Assert.All(nested.PendingReferences, reference => Assert.NotNull(reference.Origin));
+        Assert.Equal(new[] { Index("Lib"), Index("T") }.Order(), StandaloneSummaries.SiblingReads(graph, Index("R")));
+
+        // The hoisted source: the same two reads, raw. The bare name is a sibling edge and the path has no origin yet.
+        var source = Assert.Single(algorithm.Properties, property => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true });
+        var raw = graph[Index(source.Name)];
+        Assert.Equal([Index("T")], raw.SummarySiblingDependencyIndices);
+        var path = Assert.Single(raw.PendingReferences);
+        Assert.Equal("Lib", path.Head);
+        Assert.Equal(["V"], path.Members);
+        Assert.Null(path.Origin);
+
+        // Settlement anchors the raw path at Outer's level and charges the member it selects, exactly as it charges
+        // the anchored one: the source, both targets and R all capture Outer's parameter.
+        var exposed = ParseSinglePropertyBody(Source);
+        foreach (var name in new[] { source.Name, "a", "b", "R" })
+        {
+            var property = Assert.Single(exposed.Properties, candidate => candidate.Name == name);
+            Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, property.Exposure);
+            Assert.Equal([new CapturedParameterRequirement("p", 0)], property.CaptureRequirements);
+        }
+
+        Assert.Equal(PropertyExposure.Exported, Assert.Single(exposed.Properties, candidate => candidate.Name == "T").Exposure);
     }
 
     [Fact]

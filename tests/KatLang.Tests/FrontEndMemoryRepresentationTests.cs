@@ -133,7 +133,7 @@ public class FrontEndMemoryRepresentationTests
         var root = SourceProvenance.ParseValid(source).Root;
         var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
 
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, memo);
+        var graph = StandaloneSummaries.Build(root, memo);
 
         Assert.Equal(properties, graph.Count);
         var census = ObjectCensus.Of(memo);

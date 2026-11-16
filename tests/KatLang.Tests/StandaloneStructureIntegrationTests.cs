@@ -151,7 +151,7 @@ public sealed class StandaloneStructureIntegrationTests(ITestOutputHelper output
         var detected = ParameterDetector.Detect(SourceProvenance.ParseSyntaxValidRoot("Outer(x)={Lib={public K=x\n0}\nA=Lib\nP={open A\nK}\n0}\n0"));
         var resolved = ImplicitArgumentResolver.Resolve(detected);
         var outer = resolved.Properties.Single().Value;
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);
+        var graph = StandaloneSummaries.Build(outer);
         var exposed = PropertyExposureResolver.Resolve(resolved);
         var p = exposed.Properties.Single().Value.Properties.Single(property => property.Name == "P");
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, p.Exposure);
@@ -210,6 +210,14 @@ public sealed class StandaloneStructureIntegrationTests(ITestOutputHelper output
             Assert.DoesNotContain(obsolete, graph);
             Assert.DoesNotContain(obsolete, exposure);
         }
+        // The contextless summary mode (deleted November 2026): every summary is computed in a completed context, so no
+        // node-keyed contextless cache, no gate that chose between the modes and no analysis made on the summary's behalf.
+        foreach (var obsolete in new[] { "SymbolicAlgorithmSummaries", "HasStructuralSelectionQuestion", "AnalysisContextOf" })
+        {
+            Assert.DoesNotContain(obsolete, graph);
+            Assert.DoesNotContain(obsolete, exposure);
+        }
+        Assert.DoesNotContain("CompletedStructureContext? completedContext = null", graph);
         var lookup = File.ReadAllText(Path.Combine(root, "src/KatLang/ElaboratedScopeLookup.cs"));
         foreach (var obsolete in new[] { "IsComplete", "DeclaredWithin", "EscapedThrough", "CompletedAt" })
             Assert.DoesNotContain(obsolete, lookup);
@@ -226,7 +234,7 @@ public sealed class StandaloneStructureIntegrationTests(ITestOutputHelper output
         var parsed = Parser.Parse(source);
         Assert.True(parsed.Diagnostics.Count >= minimumDiagnostics);
         Assert.NotNull(SemanticModelBuilder.Build(parsed));
-        Assert.NotNull(PropertyDependencyGraphBuilder.BuildSummaries(parsed.Root));
+        Assert.NotNull(StandaloneSummaries.Build(parsed.Root));
     }
 
     [Fact]

@@ -685,15 +685,21 @@ internal static class PropertyExposureResolver
         // is not an input to it (a captured parameter is reported by name regardless), so no
         // ancestor-owned or locally-owned name context is threaded here (M17).
         var levelScope = ElaboratedScopeLookup.CreateScope(algorithm, parent.PropertyScope, completedContext: completedContext);
+        // Every level is summarized and settled in its completed structural context: what escapes a level is
+        // anchored there, and the settlement selects from that structure. A level without one is a broken
+        // producer and is refused here, never summarized without an origin (there is no contextless mode).
+        var levelContext = levelScope.CompletedContext ?? throw new InvalidOperationException(
+            "Internal error: an exposure level has no completed structural context.");
         var summaryGraph = PropertyDependencyGraphBuilder.BuildSummaries(
             algorithm,
+            levelContext,
             summaryMemo,
-            observations, levelScope.CompletedContext);
+            observations);
 
         // This level's parameter names, materialized once per resolution and shared by every
         // fixed-point iteration's scope and the final one (FE-1).
         var parameterNames = summaryMemo.ParameterNamesOf(algorithm, observations);
-        var walkMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations, levelScope.CompletedContext);
+        var walkMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations, levelContext);
         var summaries = new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
         foreach (var property in algorithm.Properties)
             summaries[property.Name] = default;
@@ -1448,6 +1454,9 @@ internal static class PropertyExposureResolver
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, BoundOwnerSet? boundOwners)
         {
+            // A raw reference has no origin yet: a row of a hoisted deconstruction source, or a bare name the chain
+            // does not declare. It is anchored at the level that settles it; one no level anchors is refused below
+            // (ResolveReference). Every reference a summary walk let escape a body already carries that body's context.
             if (pending.Origin is null && level.PropertyScope.CompletedContext is { } completed)
                 pending = pending.At(completed);
             ChargeFrame();

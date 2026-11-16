@@ -25,8 +25,9 @@ from the selected endpoints. B2 is not adopted; X-04 is plain A-agree with R1 or
 Q8 symbolic work sharing does not select structure. A computation that neither observes nor anchors a contextual
 selection may reuse a pristine immutable summary by exact body reference (branches also by binder-name set,
 after agreement with authoritative parameters). A transitive contextual-effect marker includes selected reads,
-origin capture and dependent cache hits. Contextless legacy seeds remain separate because their escaping names
-still need an origin. Shared argument bundles keep owner-relative parameter reads symbolic and preserve one
+origin capture and dependent cache hits. Every such computation still runs in a completed structural context: the
+contextless legacy walk, whose seeds were kept apart because their escaping names had no origin, was deleted in
+November 2026 (`evaluator-and-hosting.md`, ONE SUMMARY MODE). Shared argument bundles keep owner-relative parameter reads symbolic and preserve one
 immutable tail seed; each consumer applies its own owner exclusions.
 
 Context-bearing branch recipes may share one summary representative only for the same immutable binding-free

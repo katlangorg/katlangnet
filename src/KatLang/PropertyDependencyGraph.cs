@@ -412,7 +412,10 @@ internal static class PropertyDependencyGraphBuilder
             get { Fold(); return _ownerQualifiedParameters ??= []; }
         }
 
-        /// <summary>Bare names no level between the reference and the consumer resolved, with no open providers on the way.</summary>
+        /// <summary>
+        /// Bare names of a RAW walk that no level expansion has met yet. An expansion resolves a name its level declares
+        /// and anchors every other one as a pending reference at the level's context, so an expanded seed carries none.
+        /// </summary>
         public HashSet<string> VisiblePropertyDependencyNames
         {
             get { Fold(); return _visiblePropertyDependencyNames ??= CreateNameSet(); }
@@ -873,17 +876,19 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// Completed-summary memo for the summary channel, keyed by ALGORITHM node REFERENCE
-    /// (reference identity, like every other front-end memo: two structurally equal but
-    /// distinct nodes summarize independently, while host-DAG sharing is by reference). An
-    /// entry is the finished summary of <c>CollectSummarySeed(algorithm, empty locally-owned
-    /// names)</c>, which is a pure function of the node: the summary walk never queries what
-    /// ancestors own — a free parameter reference is reported as a required ancestor-owned
-    /// name regardless of the ancestor context — so the empty-locals summary carries no
-    /// caller state. Conditional BRANCH bodies summarize under their per-branch binder names
-    /// (a genuinely context-sensitive input) and therefore never pass through this memo.
-    /// Entries are admitted only AFTER a summary is fully computed (local fixed point
-    /// converged, self-owned parameters stripped); the structural preflight guarantees
+    /// Completed-summary memo for the summary channel. EVERY summary is computed in a completed
+    /// structural context (<see cref="SummaryWalkMemos.CompletedContext"/>): there is ONE summary
+    /// mode, and an entry is the finished summary of one occurrence, keyed by its facts and scope key
+    /// (<see cref="ContextualAlgorithmSummaries"/>; reference identity, like every other front-end
+    /// memo: two structurally equal but distinct nodes summarize independently, while host-DAG
+    /// sharing is by reference). A summary whose computation used no context is kept by ALGORITHM
+    /// node REFERENCE instead and serves every occurrence of that node
+    /// (<see cref="IndependentAlgorithmSummaries"/>): the summary walk never queries what ancestors
+    /// own — a free parameter reference is reported as a required ancestor-owned name regardless of
+    /// the ancestor context — so such a summary carries no caller state. Conditional BRANCH bodies
+    /// summarize under their per-branch binder names (a genuinely context-sensitive input) and have
+    /// their own tables. Entries are admitted only AFTER a summary is fully computed (local fixed
+    /// point converged, self-owned parameters stripped); the structural preflight guarantees
     /// acyclic inputs, so a node can never be reached again while its own summary is still
     /// in flight. Lifetime is the caller's: <see cref="PropertyExposureResolver"/> creates
     /// ONE memo per resolution (never static, never cross-run) so each context-independent
@@ -926,27 +931,25 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         internal readonly BranchContextInterner BranchContexts = new();
-        private readonly Dictionary<Algorithm, CompletedStructureContext> _analysisContexts = new(ReferenceEqualityComparer.Instance);
-        internal CompletedStructureContext AnalysisContextOf(Algorithm body)
-        {
-            if (!_analysisContexts.TryGetValue(body, out var context))
-                _analysisContexts.Add(body, context = AnalyzedStaticStructures.ForBoundAst(body));
-            return context;
-        }
         // Completed requirements carry an exact origin until exposure settlement. Their summaries
-        // are occurrence-contextual; the legacy pure node-keyed cache remains separate.
+        // are occurrence-contextual: one entry per completed context.
         internal Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), AlgorithmSummary>? ContextualAlgorithmSummaries;
-        // Pure Q8 equations stay relative to their caller. This cache answers no structural question.
-        internal Dictionary<Algorithm, AlgorithmSummary>? SymbolicAlgorithmSummaries;
 
-        // A summary that neither observed nor captured a contextual selection is a symbolic
-        // computation over the immutable body, not over the path by which it was reached.
+        // Q8 work sharing. A summary whose computation neither observed nor captured a contextual
+        // selection is a function of the immutable body, not of the path by which it was reached,
+        // so it is kept by body reference and serves every occurrence of that body.
         // ContextUses is a transitive effect: anchoring an escaping reference, observing a
         // selection, or reading a context-dependent cached result prevents independent reuse.
-        // Keep this cache separate from summaries built without an admitted context: their
-        // escaping names still need an origin when consumed by a contextual walk.
+        // Such a summary is still computed in its occurrence's context: no walk runs without one.
         internal Dictionary<Algorithm, AlgorithmSummary>? IndependentAlgorithmSummaries;
         internal Dictionary<BranchBodySummaryKey, SummarySeed>? IndependentBranchSummaries;
+
+        /// <summary>
+        /// Completed call and dot-call argument-bundle seeds whose transparent walk used no context, by
+        /// bundle reference (FE-2), kept for the memo lifetime: K owners sharing one synthesized argument
+        /// bundle summarize it once, never once per owner region (FE-3). A bundle whose walk used a context
+        /// stays in its region (<see cref="SummaryWalkMemos.ArgumentBundleSeeds"/>).
+        /// </summary>
         internal Dictionary<OutputBundle, SummarySeed>? IndependentArgumentBundles;
         internal long ContextUses;
         internal void UseContext() => ContextUses++;
@@ -970,7 +973,7 @@ internal static class PropertyDependencyGraphBuilder
         // environment, even when literal patterns give it distinct structural graph keys.
         // This is only a summary representative: the actual keys/publications and runtime
         // branch scopes remain distinct. Unknown stays Unknown; availability must agree.
-        internal CompletedStructureContext? SummaryRegion(CompletedStructureContext? context, Algorithm body)
+        internal CompletedStructureContext SummaryRegion(CompletedStructureContext context, Algorithm body)
         {
             context = RequirementContext(context, body);
             if (context is not { Key.BindingRegion: not null, Key.Parent: { } parent } at
@@ -1031,6 +1034,7 @@ internal static class PropertyDependencyGraphBuilder
         private readonly Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope> _requirementLevels = new();
         private readonly Dictionary<StaticLookupFacts, RequirementLookupFacts> _requirementFacts = new(ReferenceEqualityComparer.Instance);
 
+        [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(context))]
         internal CompletedStructureContext? RequirementContext(CompletedStructureContext? context, Algorithm? body = null)
         {
             if (context is not { } at) return null;
@@ -1270,21 +1274,6 @@ internal static class PropertyDependencyGraphBuilder
         internal Dictionary<BranchBodySummaryKey, SummarySeed>? CompletedBranchBodySummaries;
 
         /// <summary>
-        /// Seeds of expressions walked in the TRANSPARENT context (argument slots and capture rows:
-        /// empty local summaries, nothing owned), by node reference. That context is the same in
-        /// every region, so such a seed is a pure function of the node and is computed once per
-        /// memo lifetime — never once per owner region (FE-3: K owners sharing one synthesized
-        /// argument bundle summarize it once). Stored pristine; readers clone.
-        /// </summary>
-        internal Dictionary<Expr, SummarySeed>? TransparentSeeds;
-
-        /// <summary>
-        /// Completed call and dot-call argument-bundle seeds, by bundle reference (FE-2): a pure
-        /// function of the bundle (the transparent walk), kept for the memo lifetime (FE-3).
-        /// </summary>
-        internal Dictionary<OutputBundle, SummarySeed>? ArgumentBundleSeeds;
-
-        /// <summary>
         /// FE-3: whether a COMPLETED seed carries nothing but required names that an owner's name
         /// set covers, by (seed, set) reference pair — see <see cref="SummarySeed.DropOwnedAbsorbedParts"/>.
         /// </summary>
@@ -1410,12 +1399,14 @@ internal static class PropertyDependencyGraphBuilder
     /// contents alike, all summarized under the empty locally-owned context) live on the
     /// region-spanning <see cref="SharedMemo"/> instead, so they are computed once per memo
     /// lifetime rather than once per region; conditional BRANCH bodies stay exempt (their
-    /// binder-name context varies per branch).
+    /// binder-name context varies per branch). A region ALWAYS has its completed structural
+    /// context (<see cref="CompletedContext"/>): what escapes it is anchored there, and no walk,
+    /// expansion or settlement runs without one.
     /// </summary>
     internal sealed class SummaryWalkMemos(SummaryMemo sharedMemo, FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext completedContext)
     {
-        public CompletedStructureContext? CompletedContext = completedContext;
+        public readonly CompletedStructureContext CompletedContext = completedContext;
         public Dictionary<Expr, SummarySeed>? TransparentSeeds;
         public Dictionary<OutputBundle, SummarySeed>? ArgumentBundleSeeds;
         public Dictionary<Expr, SummarySeed>? PrimarySeeds;
@@ -1462,17 +1453,20 @@ internal static class PropertyDependencyGraphBuilder
     /// <see cref="BuildSummaries"/> call of one logical analysis (the exposure resolver
     /// passes one memo per resolution, so a nested algorithm's summary is computed once
     /// rather than once per ancestor level); with no memo the call is standalone and
-    /// creates its own.
+    /// creates its own. <paramref name="completedContext"/> is the completed structural context
+    /// of <paramref name="algorithm"/> and is REQUIRED: summaries are computed in one mode only,
+    /// in which every escaping name and path is anchored at the context it was written in. (The
+    /// former contextless mode, whose escaping paths needed an origin from settlement,
+    /// was deleted in November 2026; a standalone caller supplies
+    /// <see cref="AnalyzedStaticStructures.ForBoundAst"/> of the tree it summarizes.)
     /// </summary>
     public static PropertyDependencySummaryGraph BuildSummaries(
         Algorithm algorithm,
+        CompletedStructureContext completedContext,
         SummaryMemo? memo = null,
-        FrontEndTraversalObservations? observations = null,
-        CompletedStructureContext? completedContext = null)
+        FrontEndTraversalObservations? observations = null)
     {
         memo ??= new SummaryMemo(observations);
-        if (completedContext is null && HasStructuralSelectionQuestion(algorithm))
-            completedContext = memo.AnalysisContextOf(algorithm);
         var propertyNameToIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < algorithm.Properties.Count; i++)
             propertyNameToIndex[algorithm.Properties[i].Name] = i;
@@ -1481,7 +1475,7 @@ internal static class PropertyDependencyGraphBuilder
         // summarized under the same empty locally-owned context, so two properties sharing
         // ONE value algorithm summarize it once — and the caller's shared memo carries the
         // same completed summaries across nesting levels.
-        var buildMemos = new SummaryWalkMemos(memo ?? new SummaryMemo(observations), observations, completedContext);
+        var buildMemos = new SummaryWalkMemos(memo, observations, completedContext);
         var nodes = new PropertyDependencySummaryNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
@@ -1517,39 +1511,6 @@ internal static class PropertyDependencyGraphBuilder
         return new PropertyDependencySummaryGraph(algorithm.Properties, propertyNameToIndex, nodes);
     }
 
-    /// <summary>A capability gate only: ordinary symbolic Q8 equations require no Q1–Q7 selection.</summary>
-    private static bool HasStructuralSelectionQuestion(Algorithm algorithm)
-    {
-        var declarations = BuiltinRegistry.SharedSemanticPreludeAlgorithm.Properties.Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
-        var heads = new HashSet<string>(StringComparer.Ordinal);
-        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        var pending = new Stack<object>();
-        pending.Push(algorithm);
-        while (pending.TryPop(out var node))
-        {
-            if (!seen.Add(node)) continue;
-            if (node is Algorithm body)
-            {
-                if (body.Opens.Count != 0) return true;
-                foreach (var property in body.Properties)
-                {
-                    declarations.Add(property.Name);
-                    pending.Push(property.Value);
-                }
-                if (body is Algorithm.Conditional family)
-                    foreach (var branch in family.Branches) pending.Push(branch.Body);
-                foreach (var row in body.Output) pending.Push(row);
-                // Parameter patterns contain no expressions or structural-selection questions.
-                // The summary memo alone materializes their known owner-name set.
-                continue;
-            }
-            if (node is Expr.DotCall edge && TryGetStaticMemberPath(edge, out var head, out _, out _)) heads.Add(head);
-            for (var i = 0; AstStructuralPreflight.TryGetChild(node, i, out var child); i++) pending.Push(child);
-        }
-        // Over-approximate the questions, never a selected binding, alias, receiver or provider.
-        return heads.Overlaps(declarations);
-    }
-
     private static CompletedStructureContext ChildContext(CompletedStructureContext parent, Algorithm body,
         Pattern? pattern = null, bool transparentFamily = false)
     {
@@ -1563,17 +1524,23 @@ internal static class PropertyDependencyGraphBuilder
             OpenProviderIdentity.DeclarationOf(body), pattern));
     }
 
-    /// <summary>A fresh walk-memo bundle over a shared memo, for the exposure resolver's own charging calls.</summary>
+    /// <summary>
+    /// A fresh walk-memo bundle over a shared memo at <paramref name="completedContext"/>, for the exposure resolver's
+    /// own charging calls.
+    /// </summary>
     internal static SummaryWalkMemos CreateWalkMemos(SummaryMemo memo, FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext completedContext)
         => new(memo, observations, completedContext);
 
     /// <summary>
     /// Memo-shared nested-algorithm summary for the constant empty locally-owned context —
-    /// see <see cref="SummaryMemo"/> for why that summary is a pure function of the node
-    /// reference and <see cref="SummarySeed"/> for the clone discipline. The observation
-    /// counter records completed COMPUTATIONS (memo misses) only, so an observed analysis
-    /// is pinned to at most one computation per distinct algorithm node per memo lifetime.
+    /// see <see cref="SummaryMemo"/> for when that summary is shared by node reference and
+    /// <see cref="SummarySeed"/> for the clone discipline. The observation counter records
+    /// completed COMPUTATIONS (memo misses) only, so an observed analysis is pinned to at most
+    /// one computation per distinct algorithm node and context per memo lifetime. A hoisted
+    /// deconstruction source's rows are the declaring level's own written rows: they are walked
+    /// RAW with that level's memos, so the bare names and paths they write reach the level's
+    /// summary graph unanchored and are anchored where the level expands or settles them.
     /// </summary>
     private static SummarySeed CollectSharedAlgorithmSummarySeed(
         Algorithm algorithm,
@@ -1585,23 +1552,15 @@ internal static class PropertyDependencyGraphBuilder
 
     /// <summary>
     /// The completed summary of a node (output seed and per-member seeds), computed at most
-    /// once per memo lifetime. Conditional families and builtins have no members.
+    /// once per memo lifetime and context. Conditional families and builtins have no members.
+    /// The node's context is <paramref name="exactContext"/> when the caller holds it, and
+    /// otherwise the node's occurrence below the walk's own context.
     /// </summary>
     internal static AlgorithmSummary GetAlgorithmSummary(Algorithm algorithm, SummaryWalkMemos memos,
         CompletedStructureContext? exactContext = null)
     {
-        if (exactContext is null && memos.CompletedContext is null)
-        {
-            var symbolic = memos.SharedMemo.SymbolicAlgorithmSummaries ??= new(ReferenceEqualityComparer.Instance);
-            if (symbolic.TryGetValue(algorithm, out var known)) return known;
-            memos.Observations?.RecordDependencyAlgorithmSummaryComputation();
-            var summary = CollectAlgorithmSummary(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations);
-            symbolic.Add(algorithm, summary);
-            return summary;
-        }
-        var context = exactContext ?? (memos.CompletedContext is { } parent
-            ? ChildContext(parent, algorithm) : memos.SharedMemo.AnalysisContextOf(algorithm));
-        context = memos.SharedMemo.RequirementContext(context, algorithm)!;
+        var context = exactContext ?? ChildContext(memos.CompletedContext, algorithm);
+        context = memos.SharedMemo.RequirementContext(context, algorithm);
         context = memos.SharedMemo.SharedRegionContext(context, algorithm);
         var independent = memos.SharedMemo.IndependentAlgorithmSummaries ??= new(ReferenceEqualityComparer.Instance);
         var canShare = context.Key.BindingRegion is null;
@@ -1627,7 +1586,7 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext completedContext)
         => CollectAlgorithmSummary(algorithm, locallyOwnedNames, sharedMemo, observations, completedContext).OutputSeed;
 
     private static AlgorithmSummary CollectAlgorithmSummary(
@@ -1635,7 +1594,7 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext completedContext)
     {
         FrontEndStack.Ensure();
         sharedMemo.ObserveCancellation();
@@ -1664,7 +1623,7 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext completedContext)
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is self-contained: it
         // binds its own N-capture pattern and outputs one of those bound params, capturing no
@@ -1702,8 +1661,8 @@ internal static class PropertyDependencyGraphBuilder
         // algorithm's self-owned parameters out of the summary it returns. What
         // ancestors own is deliberately NOT an input: a parameter reference not
         // owned within this walk is reported as a required ancestor-owned name
-        // regardless, which is what makes the empty-locals summary a pure
-        // function of the node (see SummaryMemo).
+        // regardless, which is what lets an empty-locals summary that used no
+        // context be shared by node (see SummaryMemo).
 
         // One expression-memo bundle per algorithm-level analysis region: the property base
         // seeds and the opens/output walks below all run against this region's local-summary
@@ -1749,7 +1708,7 @@ internal static class PropertyDependencyGraphBuilder
         seed.DropOwnedAbsorbedParts(ownedHere, sharedMemo);
         seed = ExpandAtLevel(seed, finalLevel);
         seed.RemoveRequiredAncestorOwnedParameterNames(ownedHere, algorithm,
-            ownerHasParameters: ownerParameterNames.Count > 0 || completedContext is not null && locallyOwnedNames.Count > 0, observations);
+            ownerHasParameters: ownerParameterNames.Count > 0 || locallyOwnedNames.Count > 0, observations);
 
         // A loaded module (Q-31 H-P) is wired to the prelude wherever it is held, exactly like an
         // inline open block: what still escapes its own levels is a
@@ -1778,7 +1737,7 @@ internal static class PropertyDependencyGraphBuilder
     /// a bare name that is one of the level's own properties resolves here to that property's
     /// summary, and so does a pending reference the completed structure proves to select one
     /// (<see cref="SummaryMemo.SelectsLocalMember"/>); anything else escapes to the enclosing
-    /// level, anchored at this level's completed context when it has one and still UNSETTLED
+    /// level, anchored at this level's completed context and still UNSETTLED
     /// (<see cref="AddEscaping"/>). No member path is navigated and no <c>open</c> provider is
     /// selected here: the owning level's settlement does both, from the completed structure
     /// (<see cref="PropertyExposureResolver"/>). The requirements this level's own parameters
@@ -1887,23 +1846,20 @@ internal static class PropertyDependencyGraphBuilder
                 yield return EscapingFrame(expanded, new PendingReference(dependencyName, []), level);
             }
 
+            var context = level.Memos.CompletedContext;
             foreach (var pending in baseSeed.PendingReferences)
             {
-                if (level.Memos.CompletedContext is { } context)
+                level.Memos.SharedMemo.UseContext();
+                // The same Q1-proved local equation bridge used by SolveMemberSeeds applies
+                // when anchoring an external seed through this owner. Read the live map so
+                // expansion-cache dependency tracking and invalidation remain unchanged.
+                if (level.Memos.SharedMemo.SelectsLocalMember(pending, context)
+                    && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
                 {
-                    level.Memos.SharedMemo.UseContext();
-                    // The same Q1-proved local equation bridge used by SolveMemberSeeds applies
-                    // when anchoring an external seed through this owner. Read the live map so
-                    // expansion-cache dependency tracking and invalidation remain unchanged.
-                    if (level.Memos.SharedMemo.SelectsLocalMember(pending, context)
-                        && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
-                    {
-                        expanded.AbsorbCompleted(local);
-                        continue;
-                    }
-                    expanded.PendingReferences.Add(pending.At(context));
+                    expanded.AbsorbCompleted(local);
+                    continue;
                 }
-                else expanded.PendingReferences.Add(pending);
+                expanded.PendingReferences.Add(pending.At(context));
             }
 
             expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
@@ -1919,16 +1875,14 @@ internal static class PropertyDependencyGraphBuilder
         }
     }
 
-    /// <summary>Carries a requirement's context without settling a raw path or provider.</summary>
+    /// <summary>
+    /// Carries a requirement's context without settling a raw path or provider: the escaping reference is anchored
+    /// at the level's completed context, so no expansion leaves a bare name or an origin-less path behind.
+    /// </summary>
     private static IEnumerator<ExpansionFrame> AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
     {
-        if (level.Memos.CompletedContext is { } context)
-        {
-            level.Memos.SharedMemo.UseContext();
-            expanded.PendingReferences.Add(pending.At(context));
-        }
-        else if (pending.Members.Count == 0) expanded.VisiblePropertyDependencyNames.Add(pending.Head);
-        else expanded.PendingReferences.Add(pending);
+        level.Memos.SharedMemo.UseContext();
+        expanded.PendingReferences.Add(pending.At(level.Memos.CompletedContext));
         yield break;
     }
 
@@ -2009,11 +1963,10 @@ internal static class PropertyDependencyGraphBuilder
         block = null!;
         members = [];
         intermediates = [];
-        if (memos.CompletedContext is not { } parent) return false;
         if (MemberPathSpine(dotCall, out var reversed, out var edges) is not Expr.AlgorithmExpr(var body)
             || body.IsModuleRoot || body is not (Algorithm.User or Algorithm.Alias))
             return false;
-        var context = memos.SharedMemo.RequirementContext(ChildContext(parent, body), body)!;
+        var context = memos.SharedMemo.RequirementContext(ChildContext(memos.CompletedContext, body), body);
         if (context.Facts.Facts(context.Key) is not { Body: not null })
             throw new InvalidOperationException("A completed block-head requirement body is unavailable.");
         memos.SharedMemo.UseContext();
@@ -2045,7 +1998,7 @@ internal static class PropertyDependencyGraphBuilder
             {
                 case Expr.Resolve(var head):
                     if (steps.Count > 0)
-                        seed.UnionWith(new SummarySeed(pendingReferences: [new PendingReference(head, steps, origin: memos.CompletedContext, openPath: memos.CompletedContext is not null)]));
+                        seed.UnionWith(new SummarySeed(pendingReferences: [new PendingReference(head, steps, origin: memos.CompletedContext, openPath: true)]));
                     break;
 
                 // An inline provider is also an identity, never an evaluated output, and so is
@@ -2069,7 +2022,7 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlySet<string> locallyOwnedNames,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext = null)
+        CompletedStructureContext completedContext)
     {
         var ownedHere = CreateNameSet(locallyOwnedNames);
         var localSummaries = new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
@@ -2090,9 +2043,8 @@ internal static class PropertyDependencyGraphBuilder
             // several families under the same binders is summarized once (M4).
             var context = sharedMemo.BranchContexts.NamesOf(branch.Pattern);
             var binderNames = context.Names;
-            var branchContext = completedContext is null ? null : ChildContext(completedContext, branch.Body, branch.Pattern,
-                algorithm.Opens.Count == 0);
-            var key = new BranchBodySummaryKey(branch.Body, context.Id, branchContext?.Key, branchContext?.Facts);
+            var branchContext = ChildContext(completedContext, branch.Body, branch.Pattern, algorithm.Opens.Count == 0);
+            var key = new BranchBodySummaryKey(branch.Body, context.Id, branchContext.Key, branchContext.Facts);
             // Union is idempotent. One family's repeated reach of the same region contributes
             // nothing new, so skip BEFORE cloning or merging its potentially wide summary.
             if (!contributed.Add(key))
@@ -2122,25 +2074,24 @@ internal static class PropertyDependencyGraphBuilder
         BranchBodySummaryKey key,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
-        CompletedStructureContext? completedContext)
+        CompletedStructureContext completedContext)
     {
         completedContext = sharedMemo.SummaryRegion(completedContext, branch.Body);
-        if (completedContext is not null) completedContext = sharedMemo.SharedRegionContext(completedContext, branch.Body);
-        if (completedContext is not null) key = key with { Scope = completedContext.Key, Facts = completedContext.Facts };
+        completedContext = sharedMemo.SharedRegionContext(completedContext, branch.Body);
+        key = key with { Scope = completedContext.Key, Facts = completedContext.Facts };
         var independentKey = key with { Scope = null, Facts = null };
         var independent = sharedMemo.IndependentBranchSummaries ??= new();
-        var canShare = completedContext is not null
-            && sharedMemo.BranchParametersAgree(branch.Body, binderNames, completedContext);
+        var canShare = sharedMemo.BranchParametersAgree(branch.Body, binderNames, completedContext);
         if (canShare && independent.TryGetValue(independentKey, out var shared)) return shared.Clone();
         var completedSummaries = sharedMemo.CompletedBranchBodySummaries ??= new();
         if (completedSummaries.TryGetValue(key, out var stored))
         {
-            if (completedContext is not null) sharedMemo.UseContext();
+            sharedMemo.UseContext();
             return stored.Clone();
         }
 
         var uses = sharedMemo.ContextUses;
-        if (completedContext is not null && !canShare) sharedMemo.UseContext();
+        if (!canShare) sharedMemo.UseContext();
         observations?.RecordDependencyBranchBodySummaryComputation();
         var seed = CollectSummarySeed(branch.Body, CreateNameSet(binderNames), sharedMemo, observations, completedContext);
         if (canShare && uses == sharedMemo.ContextUses) independent.Add(independentKey, seed.Clone());
@@ -2179,9 +2130,7 @@ internal static class PropertyDependencyGraphBuilder
             return CollectSummarySeedCore(expr, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
         var seedMap = inTransparentContext
-            ? memos.CompletedContext is null
-                ? memos.SharedMemo.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
-                : memos.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
+            ? memos.TransparentSeeds ??= new(ReferenceEqualityComparer.Instance)
             : memos.PrimarySeeds ??= new(ReferenceEqualityComparer.Instance);
         if (seedMap.TryGetValue(expr, out var stored))
             return stored.Clone();
@@ -2283,20 +2232,18 @@ internal static class PropertyDependencyGraphBuilder
     {
         FrontEndStack.Ensure();
         var independent = memos.SharedMemo.IndependentArgumentBundles ??= new(ReferenceEqualityComparer.Instance);
-        if (memos.CompletedContext is not null && independent.TryGetValue(bundle, out var shared)) return shared;
-        var bundleSeeds = memos.CompletedContext is null
-            ? memos.SharedMemo.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance)
-            : memos.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance);
+        if (independent.TryGetValue(bundle, out var shared)) return shared;
+        var bundleSeeds = memos.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance);
         if (!bundleSeeds.TryGetValue(bundle, out var seed))
         {
             var uses = memos.SharedMemo.ContextUses;
             memos.Observations?.RecordDependencyArgumentBundleSummary();
             seed = CollectTransparentBundleSummarySeed(bundle, memos);
-            if (memos.CompletedContext is not null && uses == memos.SharedMemo.ContextUses)
+            if (uses == memos.SharedMemo.ContextUses)
                 independent.Add(bundle, seed);
             else bundleSeeds.Add(bundle, seed);
         }
-        else if (memos.CompletedContext is not null) memos.SharedMemo.UseContext();
+        else memos.SharedMemo.UseContext();
 
         return seed;
     }
@@ -2416,37 +2363,37 @@ internal static class PropertyDependencyGraphBuilder
         // Equivalent completed consumers can have distinct origin keys but select the same local
         // declaration. Bridge only that proven selection to the existing live dependency equation;
         // never substitute a completed summary snapshot for a fixed-point read.
-        if (memos.CompletedContext is { } completed)
-            for (var i = 0; i < baseSeeds.Length; i++)
+        var completed = memos.CompletedContext;
+        for (var i = 0; i < baseSeeds.Length; i++)
+        {
+            var seed = baseSeeds[i];
+            if (seed.PendingReferences.Count > 0)
             {
-                var seed = baseSeeds[i];
-                if (seed.PendingReferences.Count > 0)
+                var references = seed.PendingReferences.SelectMany(memos.SharedMemo.SelectedReferences).ToArray();
+                if (!references.SequenceEqual(seed.PendingReferences))
                 {
-                    var references = seed.PendingReferences.SelectMany(memos.SharedMemo.SelectedReferences).ToArray();
-                    if (!references.SequenceEqual(seed.PendingReferences))
-                    {
-                        seed = seed.Clone();
-                        seed.PendingReferences.Clear();
-                        seed.PendingReferences.UnionWith(references);
-                        baseSeeds[i] = seed;
-                    }
-                }
-                SummarySeed? bridged = null;
-                HashSet<PendingReference>? selected = null;
-                foreach (var reference in seed.PendingReferences)
-                {
-                    if (!equationOf.ContainsKey(reference.Head) || !memos.SharedMemo.SelectsLocalMember(reference, completed)) continue;
-                    bridged ??= seed.Clone();
-                    (selected ??= []).Add(reference);
-                    bridged.VisiblePropertyDependencyNames.Add(reference.Head);
-                }
-                if (bridged is not null)
-                {
-                    bridged.PendingReferences.Clear();
-                    bridged.PendingReferences.UnionWith(seed.PendingReferences.Where(reference => !selected!.Contains(reference)));
-                    baseSeeds[i] = bridged;
+                    seed = seed.Clone();
+                    seed.PendingReferences.Clear();
+                    seed.PendingReferences.UnionWith(references);
+                    baseSeeds[i] = seed;
                 }
             }
+            SummarySeed? bridged = null;
+            HashSet<PendingReference>? selected = null;
+            foreach (var reference in seed.PendingReferences)
+            {
+                if (!equationOf.ContainsKey(reference.Head) || !memos.SharedMemo.SelectsLocalMember(reference, completed)) continue;
+                bridged ??= seed.Clone();
+                (selected ??= []).Add(reference);
+                bridged.VisiblePropertyDependencyNames.Add(reference.Head);
+            }
+            if (bridged is not null)
+            {
+                bridged.PendingReferences.Clear();
+                bridged.PendingReferences.UnionWith(seed.PendingReferences.Where(reference => !selected!.Contains(reference)));
+                baseSeeds[i] = bridged;
+            }
+        }
 
         // Statically read members: the local names a base seed reads directly or heads a path with.
         IEnumerable<int> StaticReads(int index)

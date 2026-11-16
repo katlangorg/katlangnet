@@ -27,11 +27,26 @@ public class Fe1HostileReviewTests
             Enumerable.Range(0, width).Select(i => (ParameterPattern)new CaptureParameterPattern($"p{i}")).ToArray());
         var owner = new Algorithm.User(null, patterns, [], [], new OutputBundle(
             Enumerable.Range(0, references).Select(i => (Expr)new Expr.DotCall(new Expr.Resolve("Lib"), $"M{i}", null)).ToArray()));
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(User([new Property("F", owner)]));
-        Assert.Equal(width, patterns.Reads);
-        Assert.Equal(references, graph[0].PendingReferences.Count);
-        Assert.All(graph[0].PendingReferences, reference => Assert.Same(owner, Assert.Single(reference.BoundOwners)));
+        var root = User([new Property("F", owner)]);
+        // The completed context comes first: the standalone analysis reads the owner's patterns too, and this test
+        // measures the summary walk alone.
+        var context = AnalyzedStaticStructures.ForBoundAst(root);
+        var analyzed = patterns.Reads;
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, context);
+        Assert.Equal(width, patterns.Reads - analyzed);
+        // Each written path is one reference, and so is the member name its edge may fall back to (a host-built edge
+        // carries no verdict). Both escape the owner anchored at it, bound by that owner alone.
+        Assert.Equal(references, graph[0].PendingReferences.Count(IsPath));
+        Assert.Equal(references, graph[0].PendingReferences.Count(reference => !IsPath(reference)));
+        Assert.All(graph[0].PendingReferences, reference =>
+        {
+            Assert.NotNull(reference.Origin);
+            Assert.Same(owner, Assert.Single(reference.BoundOwners));
+        });
     }
+
+    // A written member path (`Lib.M`), as opposed to the member name its edge may fall back to (`M`).
+    private static bool IsPath(PendingReference reference) => reference.Members.Count > 0;
 
     [Fact]
     public void PendingReferences_ShareOneOwnerSetAcrossMemoHitsWithoutMergingDifferentOwners()
@@ -42,13 +57,16 @@ public class Fe1HostileReviewTests
         var root = User([new Property("Left", left), new Property("Right", right)]);
         var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
         var observations = new FrontEndTraversalObservations();
+        // The context is built once, before the walks this test measures (the analysis reads the patterns too).
+        var context = AnalyzedStaticStructures.ForBoundAst(root);
+        var analyzed = patterns.Reads;
         for (var repeat = 0; repeat < 3; repeat++)
         {
-            var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, memo, observations);
-            Assert.Same(left, Assert.Single(Assert.Single(graph[0].PendingReferences).BoundOwners));
-            Assert.Same(right, Assert.Single(Assert.Single(graph[1].PendingReferences).BoundOwners));
+            var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, context, memo, observations);
+            Assert.Same(left, Assert.Single(Assert.Single(graph[0].PendingReferences, IsPath).BoundOwners));
+            Assert.Same(right, Assert.Single(Assert.Single(graph[1].PendingReferences, IsPath).BoundOwners));
         }
-        Assert.Equal(4, patterns.Reads);
+        Assert.Equal(4, patterns.Reads - analyzed);
         Assert.Equal(4, observations.OwnerParameterNamesMaterialized);
     }
 
@@ -62,11 +80,14 @@ public class Fe1HostileReviewTests
             var owner = new Algorithm.User(null, patterns, [], [], new OutputBundle(
                 Enumerable.Range(0, 2 * width).Select(i => (Expr)new Expr.DotCall(new Expr.Resolve("Lib"), "M" + i, null)).ToArray()));
             var root = User([new Property("F", owner)]);
+            // The context is built outside the measured window: the walk's own allocation is what scales here.
+            var context = AnalyzedStaticStructures.ForBoundAst(root);
+            var analyzed = patterns.Reads;
             var before = GC.GetAllocatedBytesForCurrentThread();
-            var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+            var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, context);
             var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.Equal(width, patterns.Reads);
-            Assert.Equal(2 * width, graph[0].PendingReferences.Count);
+            Assert.Equal(width, patterns.Reads - analyzed);
+            Assert.Equal(2 * width, graph[0].PendingReferences.Count(IsPath));
             return bytes;
         }
         Measure(16);
@@ -80,8 +101,9 @@ public class Fe1HostileReviewTests
     {
         var owner = new Algorithm.User(null, [new SequenceValueParameterPattern([])], [], [],
             new OutputBundle([new Expr.DotCall(new Expr.Resolve("Lib"), "Member", null)]));
-        var graph = PropertyDependencyGraphBuilder.BuildSummaries(User([new Property("F", owner)]));
-        Assert.Empty(Assert.Single(graph[0].PendingReferences).BoundOwners);
+        var graph = StandaloneSummaries.Build(User([new Property("F", owner)]));
+        Assert.Empty(Assert.Single(graph[0].PendingReferences, IsPath).BoundOwners);
+        Assert.All(graph[0].PendingReferences, reference => Assert.Empty(reference.BoundOwners));
     }
 
     [Fact]
@@ -276,7 +298,8 @@ public class Fe1HostileReviewTests
                 Assert.Empty(diagnostics);
                 break;
             case "resolver": _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root); break;
-            case "summary": _ = PropertyDependencyGraphBuilder.BuildSummaries(root); break;
+            // The summary walk with the standalone analysis that supplies its completed context.
+            case "summary": _ = StandaloneSummaries.Build(root); break;
             case "exposure": _ = PropertyExposureResolver.Resolve(root); break;
             default: throw new ArgumentException(pass);
         }
@@ -377,12 +400,25 @@ public class Fe1HostileReviewTests
         Assert.InRange(observations.ResolverSnapshotBindingProbes, 300, 900);
     }
 
+    /// <summary>
+    /// One body shared by every branch of a family is SUMMARIZED once. Its contribution is still merged once per
+    /// branch: each literal branch is a completed context of its own, and a family skips a repeated contribution by
+    /// that context. The exposure pass does the same work, measured here through its own entry. (This test first
+    /// pinned ONE contribution per family, 300 entries. That held only in the contextless summary mode, which no
+    /// exposure run entered and which was deleted in November 2026; the count below is what exposure always did.)
+    /// </summary>
     [Fact]
-    public void SharedWideBranch_ContributesItsSummaryOncePerFamily()
+    public void SharedWideBranch_IsSummarizedOnce_AndContributesOncePerBranchContext()
     {
+        const int width = 300, branches = 200;
         var observations = new FrontEndTraversalObservations();
-        _ = PropertyDependencyGraphBuilder.BuildSummaries(SharedReferenceFamily(300, 200), observations: observations);
+        _ = StandaloneSummaries.Build(SharedReferenceFamily(width, branches), observations: observations);
         Assert.Equal(1, observations.DependencyBranchBodySummaryComputations);
-        Assert.Equal(300, observations.BranchSummaryContributionEntries);
+        Assert.Equal((long)width * branches, observations.BranchSummaryContributionEntries);
+
+        var exposure = new FrontEndTraversalObservations();
+        _ = PropertyExposureResolver.Resolve(SharedReferenceFamily(width, branches), exposure);
+        Assert.Equal(1, exposure.DependencyBranchBodySummaryComputations);
+        Assert.Equal((long)width * branches, exposure.BranchSummaryContributionEntries);
     }
 }
