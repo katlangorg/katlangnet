@@ -43,7 +43,8 @@ internal sealed class CensusCaseResult
 
 /// <summary>
 /// Evaluates census cases: parses each probe program, evaluates it on every route, and applies the
-/// under-charge check U and the over-charge check O (brief section 2). Engine disagreements are
+/// under-charge check U and the over-charge check O (brief section 2), and for a deconstruction cell the twin
+/// check T (a refusal inside the owner's own call is neither U nor O). Engine disagreements are
 /// findings of their own class. The model check (M) consumes <see cref="CensusCaseResult.Lean"/>.
 /// </summary>
 internal static class CensusRunner
@@ -394,6 +395,65 @@ internal static class CensusRunner
                             @case.Id, $"{reader.Label}:{Requirement(requirement)}", "copy-" + verdict, copies[label], results[label]));
             }
         }
+
+        // T: a deconstruction cell against its rows twin (CensusGrid.DeconstructionTwin), always built from SOURCE, so a
+        // host-built cell is compared with the front end's own twin.
+        if (@case.Kind == "grid" && @case.Dims.Count > 0 && @case.Dim("pos") == "deconstruction")
+        {
+            var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.DeconstructionTwin(@case), probes.Select(p => p.Label).ToArray());
+            outcome.Gaps.AddRange(TwinDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
+        }
         return outcome;
+    }
+
+    /// <summary>
+    /// The facts check T compares of a rows twin, on the synchronous route (check E covers the cell's routes): every
+    /// probe's outcome and every reader's metadata, read from the <c>in5</c> probe as for the cell. A probe that does not
+    /// parse cleanly has the outcome <c>invalid</c>, which no evaluated cell outcome equals.
+    /// </summary>
+    internal static (Dictionary<string, string> Outcomes, Dictionary<string, string> Metadata) TwinFacts(CensusCase twin, IReadOnlyList<string> labels)
+    {
+        var rows = new Dictionary<string, string>(StringComparer.Ordinal) { ["in5"] = Inside5, ["in7"] = Inside7, ["same"] = SameRun };
+        foreach (var reader in twin.Readers) rows[$"esc:{reader.Label}"] = reader.Escaped;
+        var outcomes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var label in labels)
+        {
+            var source = twin.Body + rows[label] + "\n";
+            if (Parser.Parse(source).HasErrors)
+            {
+                outcomes[label] = "invalid";
+                continue;
+            }
+            var root = SourceProvenance.ParseValid(source).Root;
+            if (label == "in5")
+                foreach (var reader in twin.Readers)
+                    metadata[reader.Label] = Describe(Find(root, reader.Path));
+            outcomes[label] = Render(Evaluator.Run(new Expr.AlgorithmExpr(root)));
+        }
+        return (outcomes, metadata);
+    }
+
+    /// <summary>
+    /// Check T's verdict: every probe outcome and every reader's metadata of a deconstruction cell equal its rows twin's.
+    /// One gap per differing probe or reader (class <c>deconstruction-twin-differs</c>); no difference is exempt.
+    /// </summary>
+    internal static List<CensusGap> TwinDifferences(string id, IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
+        IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
+    {
+        var gaps = new List<CensusGap>();
+        foreach (var (label, cell) in outcomes.OrderBy(o => o.Key, StringComparer.Ordinal))
+        {
+            var twin = twinOutcomes.TryGetValue(label, out var value) ? value : "absent";
+            if (twin != cell)
+                gaps.Add(new CensusGap("T", "deconstruction-twin-differs", id, "-", $"{label}: deconstruction={cell}; rows={twin}"));
+        }
+        foreach (var (reader, cell) in metadata.OrderBy(m => m.Key, StringComparer.Ordinal))
+        {
+            var twin = twinMetadata.TryGetValue(reader, out var value) ? value : "absent";
+            if (twin != cell)
+                gaps.Add(new CensusGap("T", "deconstruction-twin-differs", id, reader, $"metadata: deconstruction={cell}; rows={twin}"));
+        }
+        return gaps;
     }
 }

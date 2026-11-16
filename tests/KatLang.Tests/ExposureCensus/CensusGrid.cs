@@ -40,7 +40,11 @@ internal static class CensusGrid
 
     // 2. Where the reader uses it. `open` opens the container written by the head (member-less for a
     // reference, dotted for a path, an inline block for a block head); `open-dotted` opens `<head>.T`.
-    public static readonly string[] Positions = ["value", "callee", "spread", "fallback", "open", "open-dotted"];
+    // `deconstruction` reads the selection in a deconstruction right-hand side, `a, b = <selection> + 0, 0`,
+    // and returns the targets: the evaluators wire whatever that side writes (an inline block head) under the
+    // synthetic source property, one runtime level below the reader (da209fa0). Its twin returns the same
+    // right-hand side as the reader's own row (`DeconstructionTwin`, check T of `CensusRunner.Run`).
+    public static readonly string[] Positions = ["value", "callee", "spread", "fallback", "open", "open-dotted", "deconstruction"];
 
     // 3. Which open level the lookup consults (used: the target provides the name; unused: Other does).
     public static readonly string[] OpenLevels =
@@ -52,11 +56,15 @@ internal static class CensusGrid
     // 5. Where the reader sits relative to the open target's path.
     public static readonly string[] Places = ["outside", "in-lib", "in-box", "in-mid"];
 
-    // 6. How the selection ends.
-    public static readonly string[] Ends = ["found", "runtime", "missing"];
+    // 6. How the selection ends. `missing` misses at the FINAL edge (`<head>.Missing`); `mid-fallback` misses at
+    // an INTERMEDIATE edge and continues through a further fallback (`<head>.Missing.Next`, or after the found
+    // member, `<head>.Q.Missing.Next`, in the fallback position): the evaluator calls `Missing` and continues by
+    // value, so the path charges that intermediate fallback's callee (da209fa0).
+    public static readonly string[] Ends = ["found", "runtime", "missing", "mid-fallback"];
 
-    // 7. What the selected declarations require.
-    public static readonly string[] Requirements = ["none", "container", "member", "deep"];
+    // 7. What the selected declarations require. `fallback`: nothing in the container, but the lexical fallback
+    // `Missing` the selection calls reads `y` (the audit's `T(v) = v + y`); every other value's `Missing` does not.
+    public static readonly string[] Requirements = ["none", "container", "member", "deep", "fallback"];
 
     public static readonly string[] DimensionNames = ["head", "pos", "open", "reader", "place", "end", "req"];
 
@@ -91,6 +99,16 @@ internal static class CensusGrid
                 return "the fallback receiver is the found member";
             case "missing" when pos is "callee" or "spread" or "fallback":
                 return "a missing member ends only a value read or an open target";
+            case "mid-fallback" when IsOpenPosition(pos):
+                return "an open target never calls a lexical fallback, so it has no intermediate fallback edge";
+        }
+        if (req == "fallback")
+        {
+            if (IsOpenPosition(pos)) return "an open target never calls a lexical fallback that could read y";
+            if (pos != "fallback" && end is not ("missing" or "mid-fallback"))
+                return "the selection calls no Missing fallback (only a missing or mid-fallback ending or the fallback position does)";
+            if (head == "rt-alg")
+                return "rt-alg's L = <path>.Algorithm fails (type) on Sub's numeric value before any fallback reads y";
         }
         return null;
     }
@@ -119,11 +137,32 @@ internal static class CensusGrid
         return (cases, excluded);
     }
 
-    public static CensusCase Build(IReadOnlyList<string> v)
+    public static CensusCase Build(IReadOnlyList<string> v) => Build(v, rowsTwin: false);
+
+    private static CensusCase Build(IReadOnlyList<string> v, bool rowsTwin)
     {
-        var builder = new ProgramShape(v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+        var builder = new ProgramShape(v[0], v[1], v[2], v[3], v[4], v[5], v[6], rowsTwin);
         var dims = DimensionNames.Select((name, i) => new KeyValuePair<string, string>(name, v[i])).ToArray();
-        return new CensusCase(IdOf(v), dims, builder.Body(), builder.Readers());
+        return new CensusCase(IdOf(v), dims, builder.Body(), builder.Readers(), rowsTwin ? "deconstruction-twin" : "grid");
+    }
+
+    /// <summary>
+    /// THE ROWS TWIN of a <c>pos=deconstruction</c> cell: the same program with the reader's deconstruction
+    /// <c>a, b = &lt;selection&gt; + 0, 0</c> and the row <c>a, b</c> returning its targets replaced by the right-hand side
+    /// itself as the reader's row, <c>&lt;selection&gt; + 0, 0</c>; the dimensions, the readers and every other line are the
+    /// cell's own. Returning the targets in order returns the items, so the two programs must give the same probe
+    /// outcomes and the same reader metadata (check T of <see cref="CensusRunner.Run"/>). (Two ordinary declarations
+    /// <c>a = …</c>, <c>b = 0</c> are no twin: an ordinary declaration infers an implicit parameter for a free name, a
+    /// deconstruction target cannot.) The twin is the census's witness for a refusal the evaluator makes INSIDE the
+    /// owner's own call, which U and O cannot see: before da209fa0 an inline block written in the right-hand side, wired
+    /// under the synthetic source property one runtime level deeper than the same block in the twin's row, published its
+    /// members' capture positions on the written chain, and the access was refused (<c>LocalOnlyProperty</c>).
+    /// </summary>
+    public static CensusCase DeconstructionTwin(CensusCase @case)
+    {
+        if (@case.Kind != "grid" || @case.Dims.Count == 0 || @case.Dim("pos") != "deconstruction")
+            throw new ArgumentException($"Only a pos=deconstruction grid cell has a rows twin: {@case.Id}", nameof(@case));
+        return Build(@case.Dims.Select(d => d.Value).ToArray(), rowsTwin: true);
     }
 
     public static CensusCase? TryParseId(string id)
@@ -191,7 +230,9 @@ internal static class CensusGrid
     /// <item>the reference's OWN scope for a value crossing (<c>ref1</c>, <c>chain2</c>, <c>refmem</c>, and the
     /// route navigation of <c>rt-alg</c>): every reference is declared in <c>F</c>, outside <c>Mid</c>;</item>
     /// <item>the READING site for a written path (<c>name</c>, <c>group-name</c>) and for an opened head, which is
-    /// placed outside only.</item>
+    /// placed outside only. A deconstruction's right-hand side is read in the reader's own body, so that is its
+    /// reading site too, and an intermediate or final fallback reads its receiver only after the path has selected
+    /// it there.</item>
     /// </list>
     /// A runtime head (<c>rt-param</c>, <c>rt-member</c>) selects nothing statically.
     /// </summary>
@@ -303,8 +344,8 @@ internal static class CensusGrid
         return keys.Count;
     }
 
-    /// <summary>The program text of one grid cell.</summary>
-    private sealed class ProgramShape(string head, string pos, string open, string reader, string place, string end, string req)
+    /// <summary>The program text of one grid cell (with <paramref name="rowsTwin"/>, its <see cref="DeconstructionTwin"/>).</summary>
+    private sealed class ProgramShape(string head, string pos, string open, string reader, string place, string end, string req, bool rowsTwin)
     {
         private readonly string[] _path = place switch
         {
@@ -375,14 +416,32 @@ internal static class CensusGrid
             var expression = (pos, end) switch
             {
                 ("value", "missing") => $"{container}.Missing + 0",
+                ("value", "mid-fallback") => $"{container}.Missing.Next + 0",
                 ("value", _) => $"{container}{Step}.Q + 0",
+                // The intermediate miss's continuation is the final edge, here a call (`Next(v, k)`).
+                ("callee", "mid-fallback") => $"{container}.Missing.Next(1) + 0",
                 ("callee", _) => $"{container}{Step}.G(1) + 0",
+                ("spread", "mid-fallback") => $"sum({container}.Missing.Next*) + 0",
                 ("spread", _) => $"sum({container}{Step}.Q*) + 0",
+                // The found member is the receiver: the miss after it is intermediate (the audit's `Box.S.T.U`).
+                ("fallback", "mid-fallback") => $"{container}.Q.Missing.Next + 0",
                 ("fallback", _) => $"{container}.Q.Missing + 0",
+                // A deconstruction, then the row returning its targets; the rows twin returns the right-hand side itself.
+                ("deconstruction", _) => rowsTwin
+                    ? $"{Selected(container)} + 0, 0"
+                    : $"a, b = {Selected(container)} + 0, 0\na, b",
                 _ => throw new InvalidOperationException(pos),
             };
             return (expression, open == "none" ? null : head == "opened" ? "Lib" : container);
         }
+
+        // The selection a value read makes, by ending (the value position's expression without `+ 0`).
+        private string Selected(string container) => end switch
+        {
+            "missing" => $"{container}.Missing",
+            "mid-fallback" => $"{container}.Missing.Next",
+            _ => $"{container}{Step}.Q",
+        };
 
         // Concrete level names: "own" (the reader's value block), "B" / "N" (a block or deep reader's
         // enclosing level), the placement level (F, Lib, Box, Mid), and its parent.
@@ -425,12 +484,15 @@ internal static class CensusGrid
 
         private string ReaderDeclarations(string expression, Dictionary<string, string> opens)
         {
-            var inner = opens.ContainsKey("own") ? $"{{\n  {opens["own"]}\n  {Indent(expression, 2).TrimStart()}\n}}" : expression;
+            // A deconstruction and its rows are always the reader's own body (braces are no scope of their own);
+            // its other clause then returns two items too.
+            var inner = pos == "deconstruction" ? $"{{\n{Indent(OpenLine(opens, "own") + expression, 2)}\n}}"
+                : opens.ContainsKey("own") ? $"{{\n  {opens["own"]}\n  {Indent(expression, 2).TrimStart()}\n}}" : expression;
             return reader switch
             {
                 "plain" => $"A = {inner}",
                 "param" => $"A(z) = {inner}",
-                "clause" => $"K(0) = {inner}\nK(n) = n",
+                "clause" => $"K(0) = {inner}\nK(n) = {(pos == "deconstruction" ? "n, n" : "n")}",
                 "block" => $"B(w) = {{\n{Indent(OpenLine(opens, "B") + "D = " + inner + "\nD", 2)}\n}}",
                 "deep" => $"N = {{\n{Indent(OpenLine(opens, "N") + "A = " + inner + "\nA", 2)}\n}}",
                 _ => throw new ArgumentOutOfRangeException(nameof(reader)),
@@ -459,9 +521,12 @@ internal static class CensusGrid
             var members = new List<string> { lib, "Other = {\n  public X = 1\n  public Z = 2\n}" };
             members.AddRange(declarations);
             // Every fallback READS its receiver (`r * 0`), so the receiver's value is a read the evaluator
-            // performs; the unread form is the fixed case `fallback-unread-receiver`.
-            if (!CensusGrid.IsOpenPosition(pos) && (pos == "fallback" || end == "missing"))
-                members.Add("Missing(r) = r * 0 + 2");
+            // performs; the unread form is the fixed case `fallback-unread-receiver`. Under `req=fallback` the
+            // callee `Missing` also reads `y`; the continuation `Next` of an intermediate miss never does.
+            if (!CensusGrid.IsOpenPosition(pos) && (pos == "fallback" || end is "missing" or "mid-fallback"))
+                members.Add(req == "fallback" ? "Missing(r) = r * 0 + y" : "Missing(r) = r * 0 + 2");
+            if (!CensusGrid.IsOpenPosition(pos) && end == "mid-fallback")
+                members.Add(pos == "callee" ? "Next(v, k) = v + k" : "Next(v) = v");
             if (head is "rt-param" or "rt-member" && !CensusGrid.IsOpenPosition(pos))
             {
                 members.Add("Q(r) = r * 0 + 1");

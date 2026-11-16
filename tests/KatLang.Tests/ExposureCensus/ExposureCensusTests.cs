@@ -7,8 +7,9 @@ namespace KatLang.Tests.ExposureCensus;
 /// <summary>
 /// The E-18 route census (discovery, 2026-11-14): programs generated over the whole route space of a
 /// static selection inside <c>F(y)</c> (<see cref="CensusGrid"/>), checked mechanically for the two
-/// properties under test — exposure is exact (U: under-charge, O: over-charge, W: work) and the model
-/// refuses exactly the under-declared trees (M, through Lean, outside the canonical targets).
+/// properties under test — exposure is exact (U: under-charge, O: over-charge, W: work, and T: a deconstruction
+/// cell gives what its rows twin gives) and the model refuses exactly the under-declared trees (M, through Lean,
+/// outside the canonical targets).
 ///
 /// <para>The census FIXES NOTHING. Every gap it finds is listed in <c>census-gaps.txt</c> (the ratchet):
 /// the default test computes the gaps of its deterministic 3-way subset and requires them to equal the
@@ -38,12 +39,15 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
     private const string OutVariable = "KATLANG_EXPOSURE_CENSUS_OUT";
     // Full mode independently recomputes the valid universe and its cover. Pin its observed triple
     // count here too, so dropping a subset entry cannot silently shrink default-suite coverage.
-    private const int ValidTripleCount = 5495;
+    // (5,495 before the deconstruction position, the mid-fallback ending and the fallback requirement of
+    // 2026-11-16; every earlier triple is still a valid one, since no earlier cell changed.)
+    private const int ValidTripleCount = 6861;
 
     // The impossible-check class (CensusRunner.Run): observations that are no gap, pinned so that the class can
     // neither grow nor shrink unnoticed. Full mode pins the whole valid grid, the default mode its stored cover.
-    private const int ImpossibleObservationsInFull = 7478;
-    private const int ImpossibleObservationsInDefault = 152;
+    // Full: the 7,478 of the earlier cells, unchanged, plus 5,599 of the cells the 2026-11-16 dimensions added.
+    private const int ImpossibleObservationsInFull = 13077;
+    private const int ImpossibleObservationsInDefault = 163;
 
     private static string? Mode => Environment.GetEnvironmentVariable(ModeVariable) is { Length: > 0 } mode ? mode : null;
 
@@ -55,7 +59,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
     private static string RatchetPath => Path.Combine(RepoRoot.Find(), "tests", "KatLang.Tests", "ExposureCensus", "census-gaps.txt");
 
     // C#-side checks the default and full modes compute; M lines belong to check-lean.
-    private static readonly HashSet<string> CSharpChecks = new(StringComparer.Ordinal) { "U", "O", "E", "H" };
+    private static readonly HashSet<string> CSharpChecks = new(StringComparer.Ordinal) { "U", "O", "E", "H", "T" };
 
     internal static List<CensusGap> ReadRatchet()
         => File.ReadLines(RatchetPath).Where(l => l.Length > 0 && !l.StartsWith('#'))
