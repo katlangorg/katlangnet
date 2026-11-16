@@ -237,6 +237,28 @@ internal static class PropertyExposureResolver
         HostOperations? hostOperations = null,
         ModuleUnits? modules = null,
         CancellationToken cancellationToken = default)
+        => ResolveRoot(root, observations, hostOperations, modules, sourceUnit: false, cancellationToken);
+
+    /// <summary>
+    /// The eager pipeline's entry (<c>FrontEndPipeline.ResolveExposure</c>): <c>Resolve</c> of a compilation's resolved
+    /// root, which must carry that compilation's unsealed unit, the operation its settlement frames are charged to
+    /// (<see cref="SettlementLedgerOf"/>). A source root without one is an internal error, never an uncharged run.
+    /// </summary>
+    internal static Algorithm ResolveCompilation(
+        Algorithm root,
+        FrontEndTraversalObservations? observations,
+        HostOperations? hostOperations,
+        ModuleUnits? modules,
+        CancellationToken cancellationToken)
+        => ResolveRoot(root, observations, hostOperations, modules, sourceUnit: true, cancellationToken);
+
+    private static Algorithm ResolveRoot(
+        Algorithm root,
+        FrontEndTraversalObservations? observations,
+        HostOperations? hostOperations,
+        ModuleUnits? modules,
+        bool sourceUnit,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -250,7 +272,7 @@ internal static class PropertyExposureResolver
             while (chain.TryPop(out var level))
                 parent = new(parent, level, NoSummaries,
                     level.CompletedContext?.Facts.Facts(level.CompletedContext.Key)?.Parameters, level.OwnerAlgorithm);
-            return ResolveInScope(root, parent!, observations, modules, context, cancellationToken);
+            return ResolveInScope(root, parent!, observations, modules, context, sourceUnit, cancellationToken);
         }
         catch
         {
@@ -264,15 +286,77 @@ internal static class PropertyExposureResolver
     private static readonly IReadOnlyDictionary<string, RequirementSet> NoSummaries =
         new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
 
+    /// <summary>
+    /// SETTLEMENT FRAME CHARGE (2026-11-16; C#-only host resource policy, no classification or Lean rule): the static
+    /// work ONE settlement frame costs the operation whose unit the exposure run completes. A frame is what
+    /// <see cref="FrontEndTraversalObservations.RequiredAncestorSettlementFrames"/> counts: one per pending reference
+    /// or seed settled, nested and reused ones included. Settlement frames can outgrow the source (a member chain
+    /// whose links own parameters takes a quadratic number, and an exponential one when its links read two members
+    /// below them). Their count measures work independently of retained storage, so they are charged as work: past the
+    /// operation's work bound (<see cref="StaticStructureAdmission"/>: 16,384 + 1,024 per admitted node and edge,
+    /// whatever the envelope) the run is refused with
+    /// <see cref="StaticQueryLimitExceededException"/>, which every source entry reports as one unpositioned
+    /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> and publishes nothing. The charge changes no result of
+    /// an admitted program, depends on the frames alone (never on time, the token or the machine), and is no
+    /// cancellation checkpoint.
+    /// </summary>
+    internal const long SettlementFrameWork = 1;
+
+    /// <summary>
+    /// The ledger settlement frames are charged to (<see cref="SettlementFrameWork"/>): that of the operation whose
+    /// unit this exposure call completes and seals. The entries that run exposure:
+    /// <list type="bullet">
+    /// <item>EAGER PARSE (<c>FrontEndPipeline.ResolveExposure</c>, <see cref="ResolveCompilation"/>): the resolved
+    /// root carries the compilation's unsealed publication (<c>StaticStructureOperation.CompleteLookups</c>), whose
+    /// table holds the admission operation's ledger until this call seals it.</item>
+    /// <item>DEFERRED MATERIALIZATION (<see cref="ElaborateDeferredBranch"/>): the resolved branch body carries the
+    /// materialization operation's unsealed publication in the same way. Its frames are that operation's, whose
+    /// bounds were measured from the loaded body.</item>
+    /// <item>STANDALONE ANALYSIS (<c>Resolve</c> of a root that is not the entry of an unsealed unit: a host-built
+    /// tree, a declaration-preserving copy, or an already completed tree) has NO operation to charge, and the ledger
+    /// is null. Its facts are an analysis snapshot or a sealed table, and both released their producer's ledger when
+    /// they sealed, before this pass began (<see cref="AnalyzedStaticStructures"/> retains no producer operation;
+    /// completed facts outlive theirs). No source reaches it: source is exposed only by the two entries above, which
+    /// require the unit (<paramref name="sourceUnit"/>).</item>
+    /// </list>
+    /// A source entry without a unit, or an unsealed unit without a ledger, is a broken producer and throws: neither
+    /// is ever an uncharged run.
+    /// </summary>
+    private static StaticQueryResourceBudget? SettlementLedgerOf(CompletedStaticStructures? unit, bool sourceUnit)
+    {
+        if (unit is not null)
+            return unit.ProducerLedger ?? throw new InvalidOperationException(
+                "Internal error: an unsealed structural unit reached exposure without its operation's resource ledger.");
+        if (sourceUnit)
+            throw new InvalidOperationException(
+                "Internal error: source exposure requires the unsealed structural unit of the operation it completes.");
+        return null;
+    }
+
+    /// <summary>
+    /// The unit this exposure call completes: the root's own unsealed publication, read through the context the walk
+    /// was given. It is the table the call retargets and seals, and whose producer its settlement frames are charged to.
+    /// </summary>
+    private static CompletedStaticStructures? CompletingUnit(Algorithm root, CompletedStructureContext? structuralContext)
+        => root.CompletedStructure is { Entry: not null } completed && !completed.Facts.IsSealed
+            && (structuralContext is null || ReferenceEquals(structuralContext.Facts, completed.Facts))
+                ? completed.Facts
+                : null;
+
     private static Algorithm ResolveInScope(
         Algorithm root,
         SummaryScope parent,
         FrontEndTraversalObservations? observations,
-        ModuleUnits? modules = null,
-        CompletedStructureContext? structuralContext = null,
-        CancellationToken cancellationToken = default)
+        ModuleUnits? modules,
+        CompletedStructureContext? structuralContext,
+        bool sourceUnit,
+        CancellationToken cancellationToken)
     {
-        var run = new ExposureRun(observations, cancellationToken) { Modules = modules ?? new() };
+        var run = new ExposureRun(observations, SettlementLedgerOf(CompletingUnit(root, structuralContext), sourceUnit),
+            cancellationToken)
+        {
+            Modules = modules ?? new(),
+        };
         run.SharedBodies = SharedBodyCensus.Of(root, cancellationToken);
         root = ProcessAlgorithm(root, parent,
             new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies, CancellationToken = cancellationToken },
@@ -310,13 +394,21 @@ internal static class PropertyExposureResolver
 
     private sealed class ExposureRun
     {
-        public ExposureRun(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+        public ExposureRun(FrontEndTraversalObservations? observations, StaticQueryResourceBudget? settlementLedger,
+            CancellationToken cancellationToken)
         {
             Requirements = new RequirementSetInterner(observations);
             Outputs = new RequiredAncestorOutputs(Requirements, observations);
             Settlements = new SettlementShare(observations);
+            SettlementLedger = settlementLedger;
             CancellationToken = cancellationToken;
         }
+
+        /// <summary>
+        /// The ledger every settlement frame of this run is charged to (<see cref="SettlementFrameWork"/>); null only
+        /// for a standalone analysis, which has no operation (<see cref="SettlementLedgerOf"/>).
+        /// </summary>
+        public readonly StaticQueryResourceBudget? SettlementLedger;
 
         /// <summary>
         /// The source-processing token of this resolution (the materialization's linked token in a deferred
@@ -616,7 +708,8 @@ internal static class PropertyExposureResolver
         var finalLevel = new SummaryScope(parent, levelScope, summaries, parameterNames, algorithm, parentDistance);
         if (algorithm.Properties.Count > 0)
             new LevelSolver(summaryGraph, finalLevel, summaries,
-                    new PendingResolution(walkMemos, run.Requirements, finalLevel, run.Settlements, run.CancellationToken), run.Requirements, observations,
+                    new PendingResolution(walkMemos, run.Requirements, finalLevel, run.Settlements, run.SettlementLedger,
+                        run.CancellationToken), run.Requirements, observations,
                     run.CancellationToken)
                 .Solve();
 
@@ -1114,12 +1207,14 @@ internal static class PropertyExposureResolver
     /// solver can reuse a settlement exactly as long as what it read still stands. A complete nested
     /// settlement that read none of them and does not depend on its site is kept in the run's
     /// <paramref name="shared"/> settlements and answers every later level (<see cref="SettlementShare"/>).
+    /// Every frame is charged to the run's <paramref name="ledger"/> (<see cref="SettlementFrameWork"/>).
     /// </summary>
     private sealed class PendingResolution(
         PropertyDependencyGraphBuilder.SummaryWalkMemos memos,
         RequirementSetInterner sets,
         SummaryScope levelInProgress,
         SettlementShare shared,
+        StaticQueryResourceBudget? ledger,
         CancellationToken cancellationToken)
     {
         private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, BoundOwnerSet? Bound);
@@ -1345,10 +1440,17 @@ internal static class PropertyExposureResolver
             => FrontEndTraversalObservations.ObserveCancellation(
                 memos.Observations, FrontEndCancellationCheckpoint.ExposureSettlementFrame, cancellationToken);
 
+        // One unit of static work per settlement frame, charged before the frame is counted or built: a frame the
+        // operation's work bound refuses is never observed and settles nothing (SettlementFrameWork). No token is
+        // passed, so this is no cancellation checkpoint: those stay one per frame pushed (Run). The ledger is null
+        // only for a standalone analysis, which has no operation (SettlementLedgerOf).
+        private void ChargeFrame() => ledger?.Work(SettlementFrameWork);
+
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, BoundOwnerSet? boundOwners)
         {
             if (pending.Origin is null && level.PropertyScope.CompletedContext is { } completed)
                 pending = pending.At(completed);
+            ChargeFrame();
             memos.Observations?.RecordRequiredAncestorSettlementFrame(pending);
             var frame = new Frame();
             frame.Body = ResolveReference(frame, pending, level, site, boundOwners);
@@ -1357,6 +1459,7 @@ internal static class PropertyExposureResolver
 
         private Frame SeedFrame(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, BoundOwnerSet? boundOwners)
         {
+            ChargeFrame();
             memos.Observations?.RecordRequiredAncestorSettlementFrame(seed);
             var key = new SeedSettlementKey(seed, level, site, boundOwners);
             var shareKey = new SettlementShare.Key(seed, level, boundOwners);
@@ -2193,7 +2296,8 @@ internal static class PropertyExposureResolver
         FrontEndTraversalObservations? observations = null,
         ModuleUnits? modules = null,
         CancellationToken cancellationToken = default)
-        => ResolveInScope(resolvedBody, context.Scope, observations, modules, cancellationToken: cancellationToken);
+        => ResolveInScope(resolvedBody, context.Scope, observations, modules, structuralContext: null, sourceUnit: true,
+            cancellationToken);
 
     /// <summary>
     /// A call's argument bundle may be shared by several call edges — implicit lifting gives every

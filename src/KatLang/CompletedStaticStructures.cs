@@ -123,6 +123,13 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     internal long ProjectedFactsBuilds { get; private set; }
     internal long RetainedStorageUnits { get; private set; }
     internal bool IsFailed => _failed || _resources?.IsFailed == true;
+    /// <summary>
+    /// The producer operation's ledger while this table is unsealed, for the exposure pass that completes the unit:
+    /// it settles on the producer's behalf before it seals the table, and charges its settlement frames there
+    /// (<c>PropertyExposureResolver.SettlementFrameWork</c>). Null once sealed: completed facts outlive their
+    /// producer, and no later reader is charged to it.
+    /// </summary>
+    internal StaticQueryResourceBudget? ProducerLedger => _resources;
     internal void RejectUnsealed()
     {
         if (!IsSealed) _failed = true;

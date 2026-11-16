@@ -18,8 +18,8 @@ using SummaryScope = PropertyExposureResolver.SummaryScope;
 /// level summary, which ends the walk), so a share that kept cut results passes every other test.</para>
 ///
 /// <para>The bound owners in a settlement key are a <see cref="BoundOwnerSet"/>: a chain the share cannot
-/// serve (every link lifting its own parameter) still settles in quadratic frames. The owner visits are
-/// bounded by the frame count on the tested chains.</para>
+/// serve (every link's member owning a parameter, lifted or written) still settles in quadratic frames. The
+/// owner visits are bounded by the frame count on the tested chains.</para>
 /// </summary>
 public sealed class ExposureSettlementShareTests
 {
@@ -440,6 +440,49 @@ public sealed class ExposureSettlementShareTests
             {
                 ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(owner, $"P{i}"));
                 ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(owner, $"P{i}", $"A{i}"), ("p", 1));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The audit's reproduction (2026-11-14, § 1.10): <c>P{i} = { public A(x) = P{i-1}.A(1) + 1 }</c> over
+    /// <c>P0 = { public A(x) = x + 1 }</c>, root row <c>0</c>. Every link's member OWNS a written parameter;
+    /// <paramref name="argument"/> <c>"x"</c> makes every link also read and forward it.
+    /// </summary>
+    internal static string ExplicitParameterMemberChain(int length, string argument = "1")
+    {
+        var source = new System.Text.StringBuilder("P0 = { public A(x) = x + 1 }\n");
+        for (var i = 1; i <= length; i++)
+            source.Append($"P{i} = {{ public A(x) = P{i - 1}.A({argument}) + 1 }}\n");
+        return source.Append("0\n").ToString();
+    }
+
+    /// <summary>
+    /// The residual is not about lifting: a member chain whose links own a parameter, written here, read or not,
+    /// binds one more owner at every link exactly as the lifted-terminal chain does, so no settlement key repeats,
+    /// the share serves nothing, and the frames stay quadratic (D² as measured). Nothing escapes any link: each
+    /// member's parameter is its own. The frames are charged to the operation
+    /// (<see cref="ExposureSettlementFrameChargeTests"/>).
+    /// </summary>
+    [Theory]
+    [InlineData("1")]
+    [InlineData("x")]
+    public void ExplicitParameterMemberChain_FramesStayQuadratic(string argument)
+    {
+        foreach (var length in new[] { 128, 256, 512 })
+        {
+            var observations = new FrontEndTraversalObservations();
+            var root = ExposureOpenChainComplexityTests.Exposed(ExplicitParameterMemberChain(length, argument), observations);
+
+            var frames = observations.RequiredAncestorSettlementFrames;
+            Assert.InRange(frames, (long)length * length / 2, (long)length * (length + 3));
+            Assert.InRange(observations.SettlementShareHits, 0, 4);
+            Assert.InRange(observations.SettlementBoundOwnerVisits, 1, frames);
+
+            for (var i = 0; i <= length; i++)
+            {
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, $"P{i}"));
+                ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, $"P{i}", "A"));
             }
         }
     }

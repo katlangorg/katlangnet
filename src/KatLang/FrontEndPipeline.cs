@@ -595,7 +595,9 @@ internal static class FrontEndPipeline
         FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
     {
         FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Exposure, begin: true);
-        input.Put(PropertyExposureResolver.Resolve(input.Take(), observations, hostOperations, modules, cancellationToken));
+        // The source entry: the resolved root carries this compilation's unsealed unit, whose operation the settlement
+        // frames are charged to (PropertyExposureResolver.SettlementFrameWork).
+        input.Put(PropertyExposureResolver.ResolveCompilation(input.Take(), observations, hostOperations, modules, cancellationToken));
         FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Exposure, begin: false);
     }
 

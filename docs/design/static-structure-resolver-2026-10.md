@@ -115,7 +115,8 @@ callbacks pure, globally monotone or sound on unobserved alternatives. Real Q1�
 properties, including stable identity and stratum, at B3-2★. Independent synchronous whole-graph/path-walk oracles
 test the protocol using different algorithms; they are not a proof of the unfinished real queries.
 
-**Limits and cost.** `MaxEvaluations` bounds worklist events plus explicitly charged local certificate and adapter work;
+**Limits and cost.** `MaxEvaluations` bounds worklist events plus explicitly charged local certificate and adapter work,
+and one unit per exposure settlement frame of the unit the operation admitted (below);
 `MaxReads` bounds all reader calls (including duplicates),
 `MaxEntries` bounds engine discovery and admitted auxiliary live records, and `MaxRefinements` bounds strict changes per key. Reaching a bound
 raises `StaticQueryLimitExceededException`. Cancellation is checked before/after callbacks and throughout engine,
@@ -274,6 +275,17 @@ is `StaticStructureLimitExceeded`, never A1. A failed solve/active publication i
 Successful sealing releases the producer ledger; later producer cancellation/fault cannot invalidate immutable
 completed facts or previous continuations. Cancelling an independent export discards that copy and does not
 poison its source solve. No failed solve, cancelled copy or unfinished unit can export a continuation.
+
+Exposure settlement is charged as WORK, not storage (2026-11-16): one unit per settlement frame of the unit
+the operation admitted (`PropertyExposureResolver.SettlementFrameWork`; an eager compilation's frames to its
+admission operation, a deferred unit's to its materialization). The frame count measures work independently of retained
+storage and can outgrow the source: quadratic for a member chain whose links own parameters, exponential when a
+link reads two members below it. The charge counts against 16,384 + 1,024F and so does not move with the
+envelope. Exposure runs before the unit is sealed, so the ledger is still the producer's; a standalone analysis
+of a sealed or host-built tree has no operation and is not charged. Measured: the written chain
+`P{i} = { public A(x) = P{i-1}.A(1) + 1 }` (F = 20D + 181, D² frames) is refused from 20,392 links, and a chain
+whose members each call the two links below from 25 (`language-rules/evaluator-and-hosting.md`, SETTLEMENT FRAME
+CHARGE; `ExposureSettlementFrameChargeTests`).
 
 Frozen state shares immutable syntax/member indexes and persistent maps. New syntax graphs are completed
 before export so a failed later unit cannot add unrecorded lazy storage to a previous snapshot. Retained
