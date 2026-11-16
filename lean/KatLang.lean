@@ -1243,7 +1243,7 @@ end Pattern
     declaring level and every host ancestor (HOST-NESTED-1) — by object reference, so the token
     takes part in every identity built from a scope chain: the property-cache owner
     (`ZeroArgPropertyCacheKey.hostOwners`), the runtime-alias binding cell and chase visit
-    (`aliasCellKey`, `aliasChaseKey`), the declaring-scope relation of NEED-04 callable identity,
+    (`aliasBindingCellKey`, `aliasChaseKey`), the declaring-scope relation of NEED-04 callable identity,
     Q-19 open providers and member accessibility (`sameDeclaringScope`), empty and opens-only
     levels included. Lean cannot recover object identity from two equal values: the token is an
     INPUT CONTRACT the encoder supplies (one object, one token; distinct objects and record
@@ -2411,8 +2411,10 @@ structure EvalState where
   nextBindingContext : Nat := 1
   lexicalActivations : Array ParameterActivation := #[]
   nextRuntimeDeclaration : Nat := 0
-  /-- META-S3-2: the BINDING CELL of each runtime-target alias per declaring activation
-      (`aliasCellKey`), established on first use by `aliasBindingCell` and never changed. -/
+  /-- META-S3-2: the BINDING CELL of each runtime-target alias under its property-lifetime key
+      (`aliasBindingCellKey`: per run when its own property is exported, per declaring binding
+      context when it is local-only), established on first use by `aliasBindingCell` and never
+      changed. -/
   aliasCells : List (String × Nat) := []
   /-- The run's `tick()` counter: the number of `tick` executions so far — zero when the run
       starts, advanced ONLY by `runTick` (one successful execution of the primitive), never reset
@@ -5884,10 +5886,29 @@ def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
 def isCacheableZeroArgPropertyAlgorithm (a : Algorithm) : Bool :=
   Algorithm.acceptsZeroSuppliedArguments a
 
+/-- THE BINDING-CONTEXT COMPONENT of a property-style key: none for an `exported` binding — its
+    value depends on no input an enclosing owner's call binds, so the key has no binding context at
+    all — and, for a local-only one, the declaring owner's retained context
+    (`propertyOwnerBindingContext`), falling back to the access context only on an unactivated
+    declaring chain. ONE function for the zero-argument property cache (`zeroArgPropertyCacheKey`)
+    and for a runtime-target alias's binding cell (`aliasBindingCellKey`), so an alias's cell and
+    the entry of the same row written as a property have one lifetime by construction
+    (ALIAS-CELL-LIFETIME, November 2026). C#: `ZeroArgPropertyCacheKey.EnvironmentIdentity`. -/
+def propertyKeyBindingContext (exported : Bool) (ownerBindingContext : Option Nat) (ctx : EvalCtx) :
+    Option Nat :=
+  if exported then none else some (ownerBindingContext.getD ctx.bindingContext)
+
+/-- The declaring OWNER component of a property-style key: the owner's declaration and structural
+    scope. Shared property lists do not identify distinct owners. Shared by the property cache and
+    the runtime-alias binding-cell key (ALIAS-CELL-LIFETIME). -/
+def propertyKeyOwner (owner : ScopeCtx) : String :=
+  reprStr owner.declarationId ++ reprStr (cacheScopeShape owner)
+
 /-- The cache key of one property-style access (see `ZeroArgPropertyCacheKey`
     for the law it encodes): an exported binding's key carries no environment
     components; a local-only binding uses its declaring owner's retained binding
-    context, falling back to the access environments only for unactivated host scopes. -/
+    context, falling back to the access environments only for unactivated host scopes
+    (`propertyKeyBindingContext`, shared with `aliasBindingCellKey`). -/
 def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (ctx : EvalCtx) (env : ValEnv)
     (ownerBindingContext : Option Nat := none)
@@ -5895,13 +5916,13 @@ def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
   let bindingContextFree := binding.exposure.isExported
   {
     accessKind := .lexical,
-    owner := reprStr owner.declarationId ++ reprStr (cacheScopeShape owner.asScopeCtx),
+    owner := propertyKeyOwner owner.asScopeCtx,
     hostOwners := hostMarks 0 owner.asScopeCtx.hostChain,
     componentOwners := hostMarks 0 owner.asScopeCtx.componentChain,
     propertyName := binding.name,
     propertyAlgorithm := reprStr (cacheAlgorithmShape binding.alg),
     valEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr env),
-    bindingContext := if bindingContextFree then none else some (ownerBindingContext.getD ctx.bindingContext)
+    bindingContext := propertyKeyBindingContext bindingContextFree ownerBindingContext ctx
   }
 
 /-- The binding context of the nearest ACTIVATED level of a declaring chain: the context its
@@ -6800,26 +6821,30 @@ def ScopeCtx.activationChain : Option ScopeCtx -> List (Option Nat)
   | some (.mk parent _ _ _ _ _ activation _) => activation :: ScopeCtx.activationChain parent
 
 /-- The STRUCTURAL part of `aliasCellKey`: the alias's declaration (independent of its own list view), the shape of its declaring
-    chain (`cacheScopeShape`, which carries no identity slot) and that chain's activations. -/
+    chain (`cacheScopeShape`, which carries no identity slot) and that chain's activations. It keys
+    the CHASE (`aliasChaseKey`); a binding cell is keyed by `aliasBindingCellKey`, which carries no
+    activation. -/
 def aliasCellShapeKey (wired : Algorithm) : String :=
   reprStr (PropertyIdentity.callableDeclaration wired.declarationId) ++ "@" ++ reprStr (wired.parent.map cacheScopeShape)
     ++ "@" ++ reprStr (ScopeCtx.activationChain wired.parent)
 
-/-- The memo key of a runtime-target alias's BINDING CELL (META-S3-2): the alias's declaration,
-    resolving scope shape and the activations of its declaring scope chain — ONE cell per declaring
-    scope and activation, the run-level case (no activation) included. A shared declaration wired
-    under different namespaces must not share its cell merely because both scopes are unactivated.
-    C#: `Evaluator.AliasTargetKey` over the alias's declaration and structural owner identity, on the
-    nearest activation's memo (or the run's).
+/-- The ACTIVATION-QUALIFIED identity of an alias BINDING: the alias's declaration, resolving scope
+    shape and the activations of its declaring scope chain. It is the base of the chase's visited
+    key (`aliasChaseKey`), where activations are needed: a carrier passed from one call into the next
+    is two steps, never a cycle. It is NOT the key of the alias's binding cell — since
+    ALIAS-CELL-LIFETIME (November 2026) that is `aliasBindingCellKey`, which has the lifetime of the
+    same row's property cache entry and no activation component. A shared declaration wired under
+    different namespaces is two bindings even when both scopes are unactivated.
+    C#: `Evaluator.AliasChaseVisit` (and `Evaluator.AliasTargetKey` for the static-end memo).
 
     The key opens with the HOST COMPONENT of the declaring chain (`hostKeyPrefix`, HOST-LEAN-O6): C#
     keys the declaring level and every host ancestor of that owner identity by object reference
-    (HOST-ALIAS-R14, HOST-NESTED-1), so one host object keeps one cell and distinct host objects —
-    however equal their content, at the declaring level or above — never share a cell, a resolved
-    target or a chase visit (`aliasChaseKey` extends this key). The rest is the structural part
-    (`aliasCellShapeKey`). A second independently delimited prefix retains owned component marks
-    (`ScopeCtx.componentChainOf`), even in a parent with no binding property. A chain with neither
-    host nor component annotations gains only the constant `"@@"`. -/
+    (HOST-ALIAS-R14, HOST-NESTED-1), so distinct host objects — however equal their content, at the
+    declaring level or above — never share a resolved target or a chase visit (`aliasChaseKey`
+    extends this key). The rest is the structural part (`aliasCellShapeKey`). A second independently
+    delimited prefix retains owned component marks (`ScopeCtx.componentChainOf`), even in a parent
+    with no binding property. A chain with neither host nor component annotations gains only the
+    constant `"@@"`. -/
 def aliasCellKey (wired : Algorithm) : String :=
   hostKeyPrefix (ScopeCtx.hostChainOf wired.parent) ++
     (hostKeyPrefix (ScopeCtx.componentChainOf wired.parent) ++ aliasCellShapeKey wired)
@@ -6835,11 +6860,82 @@ def aliasChaseKey (a : Algorithm) : String :=
     | some _ => ""
     | none => "#" ++ reprStr (cacheAlgorithmShape a))
 
+/-- THE ALIAS'S OWN PROPERTY (ALIAS-CELL-LIFETIME): the property of the alias's declaring scope that
+    carries the alias's declaration — the first one in declaration order, compared by declaration
+    identity (`PropertyIdentity.callableDeclaration`, so an owned list view of one declaration is
+    that declaration), never by spelling. It is where the alias's EXPOSURE is read: a wired
+    `Algorithm.alias` does not carry it, and no copy of it is kept anywhere else. `none` for an
+    alias that is no property of its declaring scope — an inline alias block wired to its caller, a
+    loaded module's root (wired under the chain's root level), a host-built alias without a
+    declaration identity. C#: `Evaluator.AliasOwnProperty`. -/
+def aliasOwnProperty? (wired : Algorithm) : Option PropDef :=
+  match wired.parent, PropertyIdentity.callableDeclaration wired.declarationId with
+  | some (.mk _ _ _ props _ _ _ _), some declaration =>
+      props.find? (fun p => PropertyIdentity.callableDeclaration p.alg.declarationId == some declaration)
+  | _, _ => none
+
+/-- Whether the alias's binding cell is RUN-WIDE: its own property is `exported` (the front end's
+    classification of its row, an INPUT here exactly as it is for the property cache). An alias
+    with no property of its own (`aliasOwnProperty?`) is treated as local-only: its cell is keyed
+    by its declaring binding context. -/
+def aliasCellIsExported (wired : Algorithm) : Bool :=
+  match aliasOwnProperty? wired with
+  | some property => property.exposure.isExported
+  | none => false
+
+/-- The BINDING-CONTEXT component of an alias's binding-cell key: exactly the component a
+    property-style read of the alias's own property would carry (`propertyKeyBindingContext`, the
+    function `zeroArgPropertyCacheKey` uses) — none for an exported alias, otherwise the binding
+    context of the nearest activated level of its declaring chain (`propertyOwnerBindingContext`),
+    or the access context on an unactivated chain. -/
+def aliasCellBindingContext (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) : Option Nat :=
+  propertyKeyBindingContext (aliasCellIsExported wired) (propertyOwnerBindingContext wired.parent state) ctx
+
+/-- A property alias uses the property cache's declaring-owner component. A property-less literal
+    has no property entry to identify and keeps its existing structural wiring identity; changing
+    its declaration/namespace policy is outside ALIAS-CELL-LIFETIME. -/
+def aliasBindingCellScopeOwnerKey (wired : Algorithm) : Option String :=
+  wired.parent.map fun scope =>
+    if (aliasOwnProperty? wired).isSome then propertyKeyOwner scope else reprStr (cacheScopeShape scope)
+
+/-- The STRUCTURAL part of `aliasBindingCellKey`: the host and component marks of the declaring
+    chain (as in `aliasCellKey`), the alias's declaration and its declaring owner's property key
+    (`cacheScopeShape`, which carries no identity slot and no activation). It reads no activation:
+    `ScopeCtx.hostChain`, `ScopeCtx.componentChain` and `propertyKeyOwner` all ignore them. The owner's
+    declaration remains part of a PROPERTY alias's key even when two owners share their property
+    lists. A property-less literal keeps its existing structural wiring identity. -/
+def aliasBindingCellScopeKey (wired : Algorithm) : String :=
+  hostKeyPrefix (ScopeCtx.hostChainOf wired.parent) ++
+    (hostKeyPrefix (ScopeCtx.componentChainOf wired.parent) ++
+      (reprStr (PropertyIdentity.callableDeclaration wired.declarationId) ++ "@"
+        ++ reprStr (aliasBindingCellScopeOwnerKey wired)))
+
+/-- THE KEY OF A RUNTIME-TARGET ALIAS'S BINDING CELL (ALIAS-CELL-LIFETIME, owner decision
+    2026-11-15: PROPERTY LIFETIME). The cell lives exactly as long as the zero-argument property
+    cache entry of the same row written as a property would:
+    * an alias whose own property is `exported` has ONE cell per declaration and structural
+      declaring scope per RUN — explicit calls of its owner, reads of its owner and reads from
+      outside all share it (`aliasBindingCellKey_exported`);
+    * a local-only alias has one cell per declaration, structural declaring scope and DECLARING
+      BINDING CONTEXT (`propertyOwnerBindingContext`, the context a local-only property key
+      carries): property-style reads inherit their declaring activation's context
+      (`enterPropertyOwnerBody`) and share the cell, an explicit call binds a fresh context and
+      gets a fresh cell (CACHE-OWNER-D1; `aliasBindingCellKey_agree`).
+    The key has NO activation component, so neither an activation a property-style read mints nor
+    one an unrelated local-only sibling forces can split or merge cells. The structural part is
+    `aliasBindingCellScopeKey` (host and component marks included: HOST-ALIAS-R14, HOST-NESTED-1,
+    HOST-LEAN-O6); the binding-context part is `aliasCellBindingContext`, the property key's own
+    component. C#: `ZeroArgPropertyCacheKey.ForAliasBindingCell`. -/
+def aliasBindingCellKey (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) : String :=
+  aliasBindingCellScopeKey wired ++ "@" ++ reprStr (aliasCellBindingContext wired ctx state)
+
 /-- The RECORDED binding cell of a non-parameter row (`aliasBindingCell`): the recorded address, or
-    the row supplied in the alias's entered body context and recorded under `aliasCellKey`. -/
+    the row supplied in the alias's entered body context and recorded under `aliasBindingCellKey`,
+    read in the state the use starts from (before the alias's own body entry). -/
 def aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat := do
-  let key := aliasCellKey wired
-  match lookupAssoc key (← get).aliasCells with
+  let state ← get
+  let key := aliasBindingCellKey wired ctx state
+  match lookupAssoc key state.aliasCells with
   | some address => pure address
   | none =>
     let declaringCtx ← enterAlgorithmBody wired ctx []
@@ -6851,14 +6947,19 @@ def aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx)
     row supplied in the alias's OWN declaring context — the alias entered as the head, exactly where
     its body is evaluated — through the ONE supplier (`supplyNeed`, the construction META-S3-1's
     callee cell uses). A parameter row IS that parameter's own cell (NEED-01 transport, nothing
-    allocated, `aliasBindingCell_parameter_transport`); every other row is established ONCE per
-    declaration and declaring activation (`aliasCellKey`) and recorded in `EvalState.aliasCells`, so
-    every later use reads the record (`aliasBindingCell_canonical`). Establishing it evaluates
+    allocated, `aliasBindingCell_parameter_transport`); every other row has the LIFETIME OF ITS
+    PROPERTY's cache entry (ALIAS-CELL-LIFETIME, `aliasBindingCellKey`): established once per
+    declaration and structural declaring scope per run when the alias's own property is exported,
+    once per declaring binding context when it is local-only, and recorded in
+    `EvalState.aliasCells`, so every later use under that key reads the record
+    (`aliasBindingCell_canonical`, `aliasBindingCell_shared`). Establishing it evaluates
     nothing: it may enter the alias's body scope, allocate one suspended cell and record its address
-    (`aliasBindingCell_inert`). It is established lazily ONCE per declaring binding activation (L-RUN,
-    M4★): its VALUE is the alias's bare read (`aliasValue`) and a value view's zero-supply invocation
-    (`valueViewCell?`), its CALLABLE the alias's runtime identity, so every observation shares its
-    receiver work and the supplied computation never reruns. C#: `Evaluator.AliasBindingCell`. -/
+    (`aliasBindingCell_inert`). Its VALUE is the alias's bare read (`aliasValue`) and a value view's
+    zero-supply invocation (`valueViewCell?`), its CALLABLE the alias's runtime identity, so every
+    observation shares its receiver work and the supplied computation never reruns. A need cell is
+    no property entry in one respect, which is unchanged: re-entering its own demand is
+    `demandCycle`, where a property's re-entrant read (Q-37) evaluates again.
+    C#: `Evaluator.AliasBindingCell`. -/
 def aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat :=
   match target with
   | .param _ => supplyNeed target (ctx.push wired) []
@@ -6866,13 +6967,16 @@ def aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM
 
 /-- THE VALUE VIEW'S CELL (L-RUN, M4★, superseding D4's first-observation claim): the recorded binding
     cell of the runtime-target alias whose value view `a` is (`Algorithm.aliasPropertyView` keeps the
-    alias's declaration and scope, so `aliasCellKey` finds it), read AFTER the ordinary binder's
-    cardinality gate — a zero-supply invocation of a value-only reference returns that cell's VALUE
-    every time, so the supplied computation never reruns. A parameter row records no cell: its view
-    reads the parameter, whose own cell it is. Reads only. C#: `Evaluator.ValueViewCell`. -/
-def valueViewCell? (a : Algorithm) : EvalM (Option Nat) := do
+    alias's declaration and scope, so `aliasBindingCellKey` finds it in the invoking context `ctx`),
+    read AFTER the ordinary binder's cardinality gate — a zero-supply invocation of a value-only
+    reference returns that cell's VALUE every time, so the supplied computation never reruns. A
+    parameter row records no cell: its view reads the parameter, whose own cell it is. Reads only.
+    C#: `Evaluator.ValueViewCell`. -/
+def valueViewCell? (a : Algorithm) (ctx : EvalCtx) : EvalM (Option Nat) := do
   match a with
-  | .mk _ [] _ _ [_] _ => pure (lookupAssoc (aliasCellKey a) (← get).aliasCells)
+  | .mk _ [] _ _ [_] _ =>
+      let state ← get
+      pure (lookupAssoc (aliasBindingCellKey a ctx state) state.aliasCells)
   | _ => pure none
 
 /-- The outcome of ONE runtime step of an alias chase (META-S3-2, M4★): `terminal` — the binding cell
@@ -9637,9 +9741,9 @@ def EvalBody.aliasStepIsRuntime (rec : EvalRec) (step : Algorithm) (target : Exp
   | _ => pure true
 
 /-- THE BARE READ of a runtime-target alias `wired` (FWD-02, META-S3-2; L-RUN, M4★): its binding cell's
-    VALUE (`aliasBindingCell`) — the very cell its CALLABLE projects, established once per declaring
-    binding activation, so a computed receiver (`A = Mk(5).Algorithm`) is evaluated once whatever
-    observes it first, and no alias owns a cache entry of its own. A parameter row is its property
+    VALUE (`aliasBindingCell`) — the very cell its CALLABLE projects, established once under its
+    property-lifetime key (`aliasBindingCellKey`), so a computed receiver (`A = Mk(5).Algorithm`) is
+    evaluated once whatever observes it first, and no alias owns a cache entry of its own. A parameter row is its property
     body's ordinary parameter read, which demands that parameter's own cell. Never a CALLABLE
     projection. C#: `Evaluator.EvalRuntimeAliasValueCounted`. -/
 def EvalBody.aliasValue (rec : EvalRec) (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
@@ -10291,7 +10395,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let some bindings <- withNestedMissingOutput (bindNeedPatterns (rec.bindingChannels) patterns cells) | throw Error.badArity
     if (Algorithm.output callee).isEmpty then throw (Error.missingOutput .own)
     let next <- needBindingContext ctx bindings
-    if let some address ← valueViewCell? callee then
+    if let some address ← valueViewCell? callee ctx then
       return (← rec.demandNeedRecursive address)
     rec.evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
 

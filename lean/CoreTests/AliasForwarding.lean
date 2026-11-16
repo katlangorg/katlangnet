@@ -571,6 +571,105 @@ def afFailsWithArity (r : Except Error Result) (expected actual : Nat) : Bool :=
 -- exactly as `Ap(f, x) = f(x)` would — nothing for the alias itself.
 #guard (afRuntimeRun [afCall "Use" [resolve "Sq"]]).snd == 3
 
+-- ALIAS-CELL-LIFETIME (November 2026; owner decision 2026-11-15, PROPERTY LIFETIME): the binding cell
+-- of a runtime alias lives as long as the cache entry of the same row written as a property would
+-- (`aliasBindingCellKey`). EXPORTED alias: one cell per run. LOCAL-ONLY alias: one cell per declaring
+-- binding context — property-style reads share it, an explicit call gets a fresh one. Each program's
+-- PROPERTY TWIN (the same row as an ordinary property) is the oracle and is guarded beside it.
+-- `Cap(meta r) = r`, `Ten(x) = x * 10`, `Hun(x) = x * 100`,
+-- `Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))`: `Pick(tick()).Algorithm` is `Ten` in the cell
+-- established first and `Hun` in a later one, so `(10, 10)` is ONE cell and `(10, 100)` two.
+-- `GT(x) = tick() + x * 0`.
+def afTick : KatLang.Expr := .call (resolve "tick") []
+def afCapture (callee : String) : KatLang.Expr := afCall "Cap" [afCall callee [num 0]]
+def afLifetimePrelude : List (String × Algorithm) :=
+  [ ("Cap", KatLang.algWithParameters [{ name := "r", kind := .metaRef }] [] [] [param "r"])
+  , ("Ten", alg ["x"] [] [] [.binary .mul (param "x") (num 10)])
+  , ("Hun", alg ["x"] [] [] [.binary .mul (param "x") (num 100)])
+  , ("Pick", alg ["n"] [] []
+      [.call (resolve "if") [.compare .eq (param "n") (num 1), afCapture "Ten", afCapture "Hun"]])
+  , ("GT", alg ["x"] [] [] [.binary .add afTick (.binary .mul (param "x") (num 0))]) ]
+
+def afLifetimeRun (decls : List KatLang.PropDef) (out : List KatLang.Expr) : Option Result :=
+  match KatLang.runResult (.algorithmExpr
+      (alg [] [] (KatLang.propsPrivate afLifetimePrelude ++ decls) out)) with
+  | .ok value => some value
+  | .error _ => none
+
+def afPair (a b : Int) : Result := .sequenceValue [.atom a, .atom b]
+
+-- The EXPORTED row and its property twin: `A = Pick(tick()).Algorithm` / `A(1)` against
+-- `P = Pick(tick())` / `P.Algorithm(1)`.
+def afPicked : KatLang.Expr := afCall "Pick" [afTick]
+def afAlgorithmOf (receiver : KatLang.Expr) : KatLang.Expr :=
+  .dotMember receiver "Algorithm" (resolve "Algorithm") none
+def afExportedAlias : Algorithm := .alias none [] [] (afAlgorithmOf afPicked)
+def afTwinCall : KatLang.Expr := .dotCall (resolve "P") "Algorithm" (some [num 1])
+def afTwinMemberCall (owner : String) : KatLang.Expr :=
+  .dotCall (.dotCall (resolve owner) "P" none) "Algorithm" (some [num 1])
+
+-- e4: `Outer(k) = { A = Pick(tick()).Algorithm ⏎ A(1) }` / `Outer(0), Outer(0)`
+-- (formerly `(10, 100)`: one cell per call of the owner).
+#guard afLifetimeRun
+    [KatLang.privateProp "Outer" (algPrivate ["k"] [] [("A", afExportedAlias)] [afCall "A" [num 1]])]
+    [afCall "Outer" [num 0], afCall "Outer" [num 0]] == some (afPair 10 10)
+#guard afLifetimeRun
+    [KatLang.privateProp "Outer" (algPrivate ["k"] [] [("P", alg [] [] [] [afPicked])] [afTwinCall])]
+    [afCall "Outer" [num 0], afCall "Outer" [num 0]] == some (afPair 10 10)
+-- esc: `Outer(k) = { public A = Pick(tick()).Algorithm ⏎ A(1) }` / `Outer(0), Outer.A(1)` — the member
+-- read from outside the owner after a call (formerly `(10, 100)`).
+#guard afLifetimeRun
+    [KatLang.privateProp "Outer" (alg ["k"] [] [KatLang.publicProp "A" afExportedAlias] [afCall "A" [num 1]])]
+    [afCall "Outer" [num 0], .call (.dotCall (resolve "Outer") "A" none) [num 1]] == some (afPair 10 10)
+#guard afLifetimeRun
+    [KatLang.privateProp "Outer" (alg ["k"] [] [KatLang.publicProp "P" (alg [] [] [] [afPicked])] [afTwinCall])]
+    [afCall "Outer" [num 0], afTwinMemberCall "Outer"] == some (afPair 10 10)
+-- e3: `F(k) = { Outer = { U = k + 0 ⏎ A = Pick(tick()).Algorithm ⏎ A(1) } ⏎ Outer(), Outer() }` — the
+-- unused local-only sibling `U` gives `Outer` an activation per explicit call and changes nothing
+-- (formerly `(10, 100)`, against `(10, 10)` without `U`).
+def afSiblingOwner (sibling : Bool) (member : KatLang.PropDef) (row : KatLang.Expr) : KatLang.PropDef :=
+  KatLang.privateProp "F" (alg ["k"] []
+    [KatLang.privateProp "Outer" (alg [] []
+      ((if sibling then
+          [KatLang.privateLocalProp "U" (.localCapturedAncestorParams ["k"])
+            (alg [] [] [] [.binary .add (param "k") (num 0)])]
+        else []) ++ [member])
+      [row])]
+    [afCall "Outer" [], afCall "Outer" []])
+#guard [false, true].all fun sibling =>
+  afLifetimeRun [afSiblingOwner sibling (KatLang.privateProp "A" afExportedAlias) (afCall "A" [num 1])]
+    [afCall "F" [num 0]] == some (afPair 10 10)
+#guard [false, true].all fun sibling =>
+  afLifetimeRun [afSiblingOwner sibling (KatLang.privateProp "P" (alg [] [] [] [afPicked])) afTwinCall]
+    [afCall "F" [num 0]] == some (afPair 10 10)
+
+-- The LOCAL-ONLY row and its twin: `F(b) = { B = { public A = b.GT ⏎ A + 0 } ⏎ rows }` against
+-- `P = b.GT + 0`.
+def afLocalOwner (member : KatLang.PropDef) (name : String) (rows : List KatLang.Expr) : KatLang.PropDef :=
+  KatLang.privateProp "F" (alg ["b"] []
+    [KatLang.privateLocalProp "B" (.localCapturedAncestorParams ["b"])
+      (alg [] [] [member] [.binary .add (resolve name) (num 0)])]
+    rows)
+def afExtension : KatLang.Expr := .dotCall (param "b") "GT" none
+def afLocalAlias : KatLang.PropDef :=
+  KatLang.publicLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] afExtension)
+def afLocalTwin : KatLang.PropDef :=
+  KatLang.publicLocalProp "P" (.localCapturedAncestorParams ["b"])
+    (alg [] [] [] [.binary .add afExtension (num 0)])
+def afMember (name : String) : KatLang.Expr := .dotCall (resolve "B") name none
+
+-- spec1: `B.A, B` (formerly `(1, 2)`).
+#guard afLifetimeRun [afLocalOwner afLocalAlias "A" [afMember "A", resolve "B"]] [afCall "F" [num 5]]
+  == some (afPair 1 1)
+#guard afLifetimeRun [afLocalOwner afLocalTwin "P" [afMember "P", resolve "B"]] [afCall "F" [num 5]]
+  == some (afPair 1 1)
+-- spec3: `B, B, B.A, B.A, B(), B.A` (formerly `(1, 1, 2, 2, 3, 2)`).
+def afSpec3 (name : String) : List KatLang.Expr :=
+  [resolve "B", resolve "B", afMember name, afMember name, afCall "B" [], afMember name]
+def afSpec3Value : Result := .sequenceValue [.atom 1, .atom 1, .atom 1, .atom 1, .atom 2, .atom 1]
+#guard afLifetimeRun [afLocalOwner afLocalAlias "A" (afSpec3 "A")] [afCall "F" [num 5]] == some afSpec3Value
+#guard afLifetimeRun [afLocalOwner afLocalTwin "P" (afSpec3 "P")] [afCall "F" [num 5]] == some afSpec3Value
+
 --------------------------------------------------------------------------------
 -- ALIAS-UNIFY-1 review: an alias step's route decision, and an alias receiver's frames
 --------------------------------------------------------------------------------

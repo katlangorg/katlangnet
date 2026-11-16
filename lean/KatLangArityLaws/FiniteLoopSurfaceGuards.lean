@@ -59,7 +59,7 @@ def famStep : Algorithm :=
 theorem incStep_user : UserStep incStep where
   user := ⟨_, _, _, _, _, _, _, rfl⟩
   checks := check_user_passes _ _ _ _ _ _ _ rfl rfl
-  noView _ := rfl
+  noView _ _ := rfl
 
 theorem incStep_rows : RowsBy scalarRow incStep := by
   intro e he; simp [incStep, alg, Algorithm.output] at he; subst he; rfl
@@ -67,7 +67,7 @@ theorem incStep_rows : RowsBy scalarRow incStep := by
 theorem nextStep_user : UserStep nextStep where
   user := ⟨_, _, _, _, _, _, _, rfl⟩
   checks := check_user_passes _ _ _ _ _ _ _ rfl rfl
-  noView _ := rfl
+  noView _ _ := rfl
 
 theorem nextStep_rows : RowsBy scalarRow nextStep := by
   intro e he; simp [nextStep, alg, Algorithm.output] at he; rcases he with rfl | rfl <;> rfl

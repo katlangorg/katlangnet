@@ -9012,6 +9012,107 @@ public static class LanguageSpecCorpus
             Explanation = "`A` needs `R`'s callee, and `R` captures a call of `A` itself, so resolving `A` re-enters its own resolution: a demand cycle, never a loop.",
         },
 
+        // ==================== ALIAS-CELL-LIFETIME (November 2026) ====================
+        // Owner decision 2026-11-15: a runtime alias is worked out exactly as often as the same line
+        // written as an ordinary property would be. Each case's property twin is a probe.
+        new()
+        {
+            Id = "runtime-alias-cell-read-and-path-share-one-call",
+            Category = "name-resolution",
+            Source = "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    B.A, B\n}\n\nF(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 1)",
+            ExpectedRaw = "S[1, 1]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The property twin: the same line as an ordinary property.
+                new SpecProbe("G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public P = b.G + 0\n        P + 0\n    }\n    B.P, B\n}\nF(5)", "ok raw=S[1, 1] n=1"),
+                // An opened name is the same alias too.
+                new SpecProbe("G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    C = {\n        open B\n        A + 0\n    }\n    B, C\n}\nF(5)", "ok raw=S[1, 1] n=1"),
+                // Every call of F works its own `A` out.
+                new SpecProbe("G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    B.A, B\n}\nF(5), F(7)", "ok raw=S[S[1, 1], S[2, 2]] n=2"),
+                // The one difference from a property: an alias read again while it is being worked out
+                // is a demand cycle, where a property read re-enters (the twin below gives 7).
+                new SpecProbe("F(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    G(x) = if(tick() < 3, B + 1, x)\n    B\n}\nF(5)", "err demandCycle"),
+                new SpecProbe("F(b) = {\n    B = {\n        public P = b.G + 0\n        P + 0\n    }\n    G(x) = if(tick() < 3, B + 1, x)\n    B\n}\nF(5)", "ok raw=7 n=1"),
+            ],
+            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (1, 2) — the read of `B` minted an activation of its own, and with it a second cell for `A` in the same call of `F`.",
+            Explanation = "`A = b.G` names what `b.G` gives in this call of `F`, and it is worked out once per call: the path `B.A` and the read of `B` (whose row reads `A`) use the same `A`, so `tick()` runs once. An alias is worked out exactly as often as the same line written as an ordinary property (`P = b.G + 0`) would be.",
+        },
+        new()
+        {
+            Id = "runtime-alias-cell-explicit-call-is-fresh",
+            Category = "name-resolution",
+            Source = "G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public A = b.G\n        A + 0\n    }\n    B, B, B.A, B.A, B(), B.A\n}\n\nF(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 1, 1, 1, 2, 1)",
+            ExpectedRaw = "S[1, 1, 1, 1, 2, 1]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("G(x) = tick() + x * 0\nF(b) = {\n    B = {\n        public P = b.G + 0\n        P + 0\n    }\n    B, B, B.P, B.P, B(), B.P\n}\nF(5)", "ok raw=S[1, 1, 1, 1, 2, 1] n=1"),
+            ],
+            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (1, 1, 2, 2, 3, 2).",
+            Explanation = "Reading `B` or `B.A` uses the `A` of this call of `F`, however often and in whatever order. Only the explicit call `B()` runs `B`'s body afresh, with an `A` of its own (the second `tick()`); the `B.A` after it reads the first one again. `A` depends on `b`, so it belongs to one call, exactly like a property that reads `b`.",
+        },
+        new()
+        {
+            Id = "runtime-alias-cell-one-per-run-across-calls",
+            Category = "name-resolution",
+            Source = "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick()).Algorithm\n    A(1)\n}\n\nOuter(0)\nOuter(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10\n10",
+            ExpectedRaw = "S[10, 10]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 10] n=2"),
+                // A line that reads the owner's input belongs to one call of the owner.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick() + k).Algorithm\n    A(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 100] n=2"),
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick() + k)\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 100] n=2"),
+            ],
+            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (10, 100) — one cell per call of `Outer`, although `A`'s line reads nothing of the call.",
+            Explanation = "`A = Pick(tick()).Algorithm` reads nothing that a call of `Outer` supplies, so it is worked out once for the whole run — both calls of `Outer` call the same `Ten` — exactly as the property `P = Pick(tick())` is evaluated once. If the line read `k`, each call of `Outer` would work out its own.",
+        },
+        new()
+        {
+            Id = "runtime-alias-cell-unused-sibling-changes-nothing",
+            Category = "name-resolution",
+            Source = "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\n\nF(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(10, 10)",
+            ExpectedRaw = "S[10, 10]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Without the unused `U`.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\nF(0)", "ok raw=S[10, 10] n=1"),
+                // The property twin.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        P = Pick(tick())\n        P.Algorithm(1)\n    }\n    Outer(), Outer()\n}\nF(0)", "ok raw=S[10, 10] n=1"),
+            ],
+            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (10, 100), while the same program without the unused `U` gave (10, 10).",
+            Explanation = "An unused neighbour never changes what a program gives. `U = k + 0` reads `F`'s input and is never used; `A`'s own line reads nothing of a call, so `A` is worked out once for the run and both calls of `Outer` call the same `Ten`, with or without `U`.",
+        },
+        new()
+        {
+            Id = "runtime-alias-cell-read-from-outside-after-a-call",
+            Category = "name-resolution",
+            Source = "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\n\nOuter(0)\nOuter.A(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10\n10",
+            ExpectedRaw = "S[10, 10]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter.P.Algorithm(1)", "ok raw=S[10, 10] n=2"),
+                // The other order.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\nOuter.A(1)\nOuter(0)", "ok raw=S[10, 10] n=2"),
+            ],
+            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (10, 100).",
+            Explanation = "A public alias reached from outside its owner is the alias the owner's own body uses: `Outer(0)` and `Outer.A(1)` call the same `Ten`, because `A`'s line reads nothing of a call and is worked out once for the run.",
+        },
+
         // ==================== ALIAS-UNIFY-1 review regressions (M4★) ====================
         new()
         {

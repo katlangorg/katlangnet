@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 576
+- specification surface cases: 581
 - excluded parse-level cases (Lean has no surface parser): 82
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 470
-- probe observations (C#-only by design): 1557
+- Lean-guarded cases: 475
+- probe observations (C#-only by design): 1570
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -2311,6 +2311,31 @@ def case_runtime_alias_cycle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))), privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "A") [.num 1])])]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "A") [.num 2])])
 #guard obs case_runtime_alias_cycle == "err demandCycle"
 
+-- runtime-alias-cell-read-and-path-share-one-call [name-resolution]: G(x) = tick() + x * 0 \n F(b) = { \n     B = { \n         public A = b.G \n         A + 0 \n     } \n     B.A, B \n } \n  \n F(5)
+def case_runtime_alias_cell_read_and_path_share_one_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "x") (.num 0)))]), privateProp "F" (alg ["b"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["b"]) (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] ((.dotCall (.param "b") "G" none)))) with requiredOwnerDepths := some [("b", some 1)] }] [(.binary .add (.resolve "A") (.num 0))])) with requiredOwnerDepths := some [("b", some 0)] }] [(.dotCall (.resolve "B") "A" none), .resolve "B"])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_runtime_alias_cell_read_and_path_share_one_call == "ok raw=S[1, 1] n=1"
+
+-- runtime-alias-cell-explicit-call-is-fresh [name-resolution]: G(x) = tick() + x * 0 \n F(b) = { \n     B = { \n         public A = b.G \n         A + 0 \n     } \n     B, B, B.A, B.A, B(), B.A \n } \n  \n F(5)
+def case_runtime_alias_cell_explicit_call_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "x") (.num 0)))]), privateProp "F" (alg ["b"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["b"]) (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] ((.dotCall (.param "b") "G" none)))) with requiredOwnerDepths := some [("b", some 1)] }] [(.binary .add (.resolve "A") (.num 0))])) with requiredOwnerDepths := some [("b", some 0)] }] [.resolve "B", .resolve "B", (.dotCall (.resolve "B") "A" none), (.dotCall (.resolve "B") "A" none), (.call (.resolve "B") []), (.dotCall (.resolve "B") "A" none)])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_runtime_alias_cell_explicit_call_is_fresh == "ok raw=S[1, 1, 1, 1, 2, 1] n=1"
+
+-- runtime-alias-cell-one-per-run-across-calls [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer(0)
+def case_runtime_alias_cell_one_per_run_across_calls : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Ten" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "Hun" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 100))]), privateProp "Pick" (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Cap") [(.call (.resolve "Ten") [.num 0])]), (.call (.resolve "Cap") [(.call (.resolve "Hun") [.num 0])])])]), privateProp "Outer" (alg ["k"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.num 1])])] [(.call (.resolve "Outer") [.num 0]), (.call (.resolve "Outer") [.num 0])])
+#guard obs case_runtime_alias_cell_one_per_run_across_calls == "ok raw=S[10, 10] n=2"
+
+-- runtime-alias-cell-unused-sibling-changes-nothing [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n F(k) = { \n     Outer = { \n         U = k + 0 \n         A = Pick(tick()).Algorithm \n         A(1) \n     } \n     Outer(), Outer() \n } \n  \n F(0)
+def case_runtime_alias_cell_unused_sibling_changes_nothing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Ten" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "Hun" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 100))]), privateProp "Pick" (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Cap") [(.call (.resolve "Ten") [.num 0])]), (.call (.resolve "Cap") [(.call (.resolve "Hun") [.num 0])])])]), privateProp "F" (alg ["k"] [] [privateProp "Outer" (alg [] [] [{ (privateLocalProp "U" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .add (.param "k") (.num 0))])) with requiredOwnerDepths := some [("k", some 1)] }, privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.num 1])])] [(.call (.resolve "Outer") []), (.call (.resolve "Outer") [])])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_runtime_alias_cell_unused_sibling_changes_nothing == "ok raw=S[10, 10] n=1"
+
+-- runtime-alias-cell-read-from-outside-after-a-call [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     public A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer.A(1)
+def case_runtime_alias_cell_read_from_outside_after_a_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Ten" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "Hun" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 100))]), privateProp "Pick" (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Cap") [(.call (.resolve "Ten") [.num 0])]), (.call (.resolve "Cap") [(.call (.resolve "Hun") [.num 0])])])]), privateProp "Outer" (alg ["k"] [] [publicProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.num 1])])] [(.call (.resolve "Outer") [.num 0]), (.dotCall (.resolve "Outer") "A" (some [.num 1]))])
+#guard obs case_runtime_alias_cell_read_from_outside_after_a_call == "ok raw=S[10, 10] n=2"
+
 -- runtime-alias-self-link-is-a-demand-cycle [errors]: A = A.Algorithm \n  \n A
 def case_runtime_alias_self_link_is_a_demand_cycle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "A") "Algorithm" none)))] [.resolve "A"])
@@ -2555,7 +2580,7 @@ def case_output_spread_reference_certainly_read : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "P" (alg [] [] [] [(.index (.resolve "Q") [.num 0])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [.resolve "P", .resolve "Add", (.call (.resolve "Inc") [.param "x"])])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [(.unary .minus (.num 3))])])
 #guard obs case_output_spread_reference_certainly_read == "ok raw=1 n=1"
 
--- 470 canonical Lean-guarded specification cases.
+-- 475 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2985,6 +3010,11 @@ def specCaseIds : List String := [
   "runtime-alias-namespace-of-its-own-declarations",
   "runtime-alias-failure-is-not-absence",
   "runtime-alias-cycle",
+  "runtime-alias-cell-read-and-path-share-one-call",
+  "runtime-alias-cell-explicit-call-is-fresh",
+  "runtime-alias-cell-one-per-run-across-calls",
+  "runtime-alias-cell-unused-sibling-changes-nothing",
+  "runtime-alias-cell-read-from-outside-after-a-call",
   "runtime-alias-self-link-is-a-demand-cycle",
   "reference-head-resolves-in-its-own-scope",
   "reference-receiver-is-its-target-structure",
@@ -3034,6 +3064,6 @@ def specCaseIds : List String := [
   "output-spread-lifted-call-ends-known-positions",
   "output-spread-reference-certainly-read"
 ]
-#guard specCaseIds.length == 470
+#guard specCaseIds.length == 475
 
 end LanguageSpecCases

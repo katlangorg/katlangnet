@@ -143,6 +143,14 @@ def aliasUnder (scope : ScopeCtx) : Algorithm :=
 #guard aliasCellKey (aliasUnder (blockLevel (hostAt 1))) == aliasCellKey (aliasUnder (blockLevel (hostAt 1)))
 -- … and the chase visit key extends the cell key, so two hosts' aliases are two chase steps.
 #guard aliasChaseKey (aliasUnder (blockLevel (hostAt 1))) != aliasChaseKey (aliasUnder (blockLevel (hostAt 2)))
+-- ALIAS-CELL-LIFETIME (November 2026): the binding CELL's own key (`aliasBindingCellKey`: the
+-- property-lifetime binding context in place of the activations) reads the same host chain — one
+-- object one cell, two objects two cells, at the declaring level and as an ancestor.
+def cellKey (scope : ScopeCtx) : String := aliasBindingCellKey (aliasUnder scope) { callStack := [] } {}
+#guard cellKey (hostAt 1) == cellKey (hostAt 1)
+#guard cellKey (hostAt 1) != cellKey (hostAt 2)
+#guard cellKey (blockLevel (hostAt 1)) != cellKey (blockLevel (hostAt 2))
+#guard cellKey (blockLevel (hostAt 1)) == cellKey (blockLevel (hostAt 1))
 -- A chain with no host level keeps its structural key behind the constant prefix.
 #guard aliasCellKey (aliasUnder (blockLevel (.mk none [] [] [] [] [] none none)))
   == "@@" ++ aliasCellShapeKey (aliasUnder (blockLevel (.mk none [] [] [] [] [] none none)))
@@ -289,6 +297,8 @@ def ownedView (view : Nat) : Algorithm :=
 #guard sameRepeatedCallableIdentity (ownedView 1) (ownedView 2)
 #guard aliasCellKey (aliasUnder (ownedView 1).asScopeCtx) != aliasCellKey (aliasUnder (ownedView 2).asScopeCtx)
 #guard aliasChaseKey (aliasUnder (ownedView 1).asScopeCtx) != aliasChaseKey (aliasUnder (ownedView 2).asScopeCtx)
+#guard cellKey (ownedView 1).asScopeCtx != cellKey (ownedView 2).asScopeCtx
+#guard cellKey (ownedView 1).asScopeCtx == cellKey ((ownedView 1).withDeclarationId (some (.sharedView 43 1))).asScopeCtx
 #guard aliasCellKey (aliasUnder (ownedView 1).asScopeCtx) ==
   aliasCellKey (aliasUnder ((ownedView 1).withDeclarationId (some (.sharedView 43 1))).asScopeCtx)
 #guard (zeroArgPropertyCacheKey .lexical (ownedView 1) pShared { callStack := [] } []).componentOwners == [(0, 1)]

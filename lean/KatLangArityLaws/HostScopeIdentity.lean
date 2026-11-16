@@ -35,7 +35,11 @@ RESULTS.
 3/4. Reuse and separation: `cacheKey_hostOwners`, `cacheKey_eq_of_owner_components`,
    `cacheKey_separates_hostMarks`, `cacheKey_separates_ancestor` (a changed host token at ANY depth
    separates); `hostKeyPrefix_append_inj`, `aliasCellKey_separates`, `aliasChaseKey_separates`,
-   `aliasCellKey_separates_ancestor`, `aliasCellKey_eq_of_components`.
+   `aliasCellKey_separates_ancestor`, `aliasCellKey_eq_of_components`; and, for the BINDING CELL's own
+   key since ALIAS-CELL-LIFETIME (November 2026: `aliasBindingCellKey`, which opens with the same host
+   and component prefixes and carries the property-lifetime binding context instead of activations),
+   `aliasBindingCellKey_separates`, `aliasBindingCellKey_separates_ancestor`,
+   `aliasBindingCellKey_separates_components`, `aliasBindingCellKey_eq_of_components`.
 5. Owned reconstruction: `hostChain_owned`, `hostChain_withActivation`,
    `hostChain_reconstruction`, `hostChain_branch_scope`.
 6. The declaring-scope relation: `sameDeclaringScope_host_distinct`,
@@ -257,7 +261,11 @@ theorem cacheKey_eq_of_owner_components (k : ZeroArgPropertyAccessKind) (o o' : 
     (hh : o.asScopeCtx.hostChain = o'.asScopeCtx.hostChain)
     (hc : o.asScopeCtx.componentChain = o'.asScopeCtx.componentChain) :
     zeroArgPropertyCacheKey k o b ctx env obc = zeroArgPropertyCacheKey k o' b ctx env obc := by
-  simp only [zeroArgPropertyCacheKey, hd, hs, hh, hc]
+  have ho : propertyKeyOwner o.asScopeCtx = propertyKeyOwner o'.asScopeCtx := by
+    change reprStr o.declarationId ++ reprStr (cacheScopeShape o.asScopeCtx) =
+      reprStr o'.declarationId ++ reprStr (cacheScopeShape o'.asScopeCtx)
+    rw [hd, hs]
+  simp only [zeroArgPropertyCacheKey, ho, hh, hc]
 
 /-- DISTINCT-OBJECT SEPARATION: different host marks are different keys, whatever else the two
     accesses share (declaration, property list, shape, environments). -/
@@ -323,8 +331,9 @@ theorem hostKeyPrefix_append_inj (c c' : List (Option Nat)) (s s' : String)
   obtain ⟨hm, hs⟩ := hostMarksKeyChars_append_inj _ _ _ _ hl
   exact ⟨hm, String.toList_inj.mp hs⟩
 
-/-- DISTINCT-OBJECT SEPARATION of binding cells: different host marks of the declaring chains are
-    different cells (and so different resolved targets). -/
+/-- DISTINCT-OBJECT SEPARATION of alias bindings: different host marks of the declaring chains are
+    different activation-qualified binding identities (and so different resolved targets and chase
+    visits). The binding CELL's own key is `aliasBindingCellKey` (`aliasBindingCellKey_separates`). -/
 theorem aliasCellKey_separates (a b : Algorithm)
     (h : hostMarks 0 (ScopeCtx.hostChainOf a.parent) ≠ hostMarks 0 (ScopeCtx.hostChainOf b.parent)) :
     aliasCellKey a ≠ aliasCellKey b := by
@@ -372,6 +381,63 @@ theorem aliasCellKey_eq_of_components (a b : Algorithm)
     (hc : hostMarks 0 (ScopeCtx.componentChainOf a.parent) = hostMarks 0 (ScopeCtx.componentChainOf b.parent))
     (hs : aliasCellShapeKey a = aliasCellShapeKey b) : aliasCellKey a = aliasCellKey b := by
   unfold aliasCellKey hostKeyPrefix; rw [hm, hc, hs]
+
+/-! ### The binding cell's key (ALIAS-CELL-LIFETIME, November 2026)
+
+`aliasBindingCellKey` opens with the host and component prefixes of the declaring chain exactly as
+`aliasCellKey` does, so HOST-ALIAS-R14 / HOST-NESTED-1 hold of the cells themselves: one host object
+keeps one cell, distinct host objects never share one — whatever the access contexts and states the
+two keys are read in. -/
+
+/-- DISTINCT-OBJECT SEPARATION of binding CELLS: different host marks of the declaring chains are
+    different cell keys, in any two contexts and states. -/
+theorem aliasBindingCellKey_separates (a b : Algorithm) (ctx ctx' : EvalCtx) (s s' : EvalState)
+    (h : hostMarks 0 (ScopeCtx.hostChainOf a.parent) ≠ hostMarks 0 (ScopeCtx.hostChainOf b.parent)) :
+    aliasBindingCellKey a ctx s ≠ aliasBindingCellKey b ctx' s' := by
+  intro heq
+  unfold aliasBindingCellKey aliasBindingCellScopeKey at heq
+  simp only [String.append_assoc] at heq
+  exact h (hostKeyPrefix_append_inj _ _ _ _ heq).1
+
+/-- A host ancestor at any depth of the declaring chain separates binding cells. -/
+theorem aliasBindingCellKey_separates_ancestor (a b : Algorithm) (ctx ctx' : EvalCtx) (s s' : EvalState)
+    (i t : Nat) (l : ScopeCtx)
+    (hl : a.parent.bind (fun sc => sc.ancestor? i) = some l) (ht : l.declarationId = some (.host t))
+    (hl' : ∀ l', b.parent.bind (fun sc => sc.ancestor? i) = some l' → l'.declarationId ≠ some (.host t)) :
+    aliasBindingCellKey a ctx s ≠ aliasBindingCellKey b ctx' s' := by
+  apply aliasBindingCellKey_separates
+  apply hostMarks_separate _ _ i t
+  · rw [hostChainOf_get_ancestor, hl]; simp [ht, PropertyIdentity.hostToken?]
+  · rw [hostChainOf_get_ancestor]
+    intro hc
+    cases ha : b.parent.bind (fun sc => sc.ancestor? i) with
+    | none => simp [ha] at hc
+    | some l' =>
+      simp only [ha, Option.map_some, Option.some.injEq] at hc
+      exact hl' l' ha ((hostToken_eq_some_iff _ t).mp hc)
+
+/-- Owned component identity of the declaring chain separates binding cells too. -/
+theorem aliasBindingCellKey_separates_components (a b : Algorithm) (ctx ctx' : EvalCtx) (s s' : EvalState)
+    (h : hostMarks 0 (ScopeCtx.componentChainOf a.parent) ≠ hostMarks 0 (ScopeCtx.componentChainOf b.parent)) :
+    aliasBindingCellKey a ctx s ≠ aliasBindingCellKey b ctx' s' := by
+  intro eq
+  unfold aliasBindingCellKey aliasBindingCellScopeKey at eq
+  simp only [String.append_assoc] at eq
+  have rest := (hostKeyPrefix_append_inj (ScopeCtx.hostChainOf a.parent) (ScopeCtx.hostChainOf b.parent)
+    _ _ eq).2
+  exact h (hostKeyPrefix_append_inj (ScopeCtx.componentChainOf a.parent) (ScopeCtx.componentChainOf b.parent)
+    _ _ rest).1
+
+/-- SAME-OBJECT REUSE of binding cells: equal host marks, component marks, declaration, scope shape
+    and binding-context component are one cell key. -/
+theorem aliasBindingCellKey_eq_of_components (a b : Algorithm) (ctx ctx' : EvalCtx) (s s' : EvalState)
+    (hm : hostMarks 0 (ScopeCtx.hostChainOf a.parent) = hostMarks 0 (ScopeCtx.hostChainOf b.parent))
+    (hc : hostMarks 0 (ScopeCtx.componentChainOf a.parent) = hostMarks 0 (ScopeCtx.componentChainOf b.parent))
+    (hd : PropertyIdentity.callableDeclaration a.declarationId = PropertyIdentity.callableDeclaration b.declarationId)
+    (hs : aliasBindingCellScopeOwnerKey a = aliasBindingCellScopeOwnerKey b)
+    (hb : aliasCellBindingContext a ctx s = aliasCellBindingContext b ctx' s') :
+    aliasBindingCellKey a ctx s = aliasBindingCellKey b ctx' s' := by
+  unfold aliasBindingCellKey aliasBindingCellScopeKey hostKeyPrefix; rw [hm, hc, hd, hs, hb]
 
 /-! ## 5. Owned reconstruction -/
 

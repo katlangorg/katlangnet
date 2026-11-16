@@ -745,7 +745,7 @@ theorem cacheKey_exported_context_free (k k' : ZeroArgPropertyAccessKind) (owner
     (binding : PropDef) (hexp : binding.exposure.isExported = true) (ctx ctx' : EvalCtx)
     (env env' : ValEnv) (oc oc' : Option Nat) :
     zeroArgPropertyCacheKey k owner binding ctx env oc = zeroArgPropertyCacheKey k' owner binding ctx' env' oc' := by
-  simp [zeroArgPropertyCacheKey, hexp]
+  simp [zeroArgPropertyCacheKey, propertyKeyBindingContext, hexp]
 
 /-- A LOCAL-only binding with a retained declaring-owner context `n` keys on `n`: it ignores the
     access kind, context and environment. -/
@@ -753,14 +753,14 @@ theorem cacheKey_retained_owner_context (k k' : ZeroArgPropertyAccessKind) (owne
     (binding : PropDef) (ctx ctx' : EvalCtx) (env env' : ValEnv) (n : Nat) :
     zeroArgPropertyCacheKey k owner binding ctx env (some n) =
       zeroArgPropertyCacheKey k' owner binding ctx' env' (some n) := by
-  simp [zeroArgPropertyCacheKey]
+  simp [zeroArgPropertyCacheKey, propertyKeyBindingContext]
 
 /-- Without a retained owner context, equal explicit inputs — the binding context and the value
     environment — give the same key (the relevant equality direction; no injectivity is claimed). -/
 theorem cacheKey_same_inputs (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (ctx ctx' : EvalCtx) (env : ValEnv) (hb : ctx.bindingContext = ctx'.bindingContext) :
     zeroArgPropertyCacheKey k owner binding ctx env none = zeroArgPropertyCacheKey k' owner binding ctx' env none := by
-  simp [zeroArgPropertyCacheKey, hb]
+  simp [zeroArgPropertyCacheKey, propertyKeyBindingContext, hb]
 
 /-- **A published entry is reused by the production access**: a cacheable property-style read whose
     key (at the read's state) holds `v` returns `v` and leaves the state unchanged — no evaluation,

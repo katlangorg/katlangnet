@@ -55,6 +55,14 @@ internal readonly struct PropertyDeclaringOwner : IEquatable<PropertyDeclaringOw
         _ => throw new InvalidOperationException("A zero-argument property execution must name its declaring owner."),
     };
 
+    /// <summary>
+    /// The same owner-key construction over a WIRED scope view. Its original owner supplies the
+    /// declaration, while the view supplies the current lists and parent chain: a rebuilt level can
+    /// keep its owner while replacing its parent. Host levels retain their own object identity.
+    /// </summary>
+    internal static object CacheIdentityOfLevel(ScopeCtx level)
+        => level.Owner is not null ? StructuralOwnerIdentity.FromPropertyScope(level) : level;
+
     public bool Equals(PropertyDeclaringOwner other) => ReferenceEquals(_owner, other._owner);
 
     public override bool Equals(object? obj) => obj is PropertyDeclaringOwner other && Equals(other);
@@ -170,25 +178,69 @@ internal readonly record struct ZeroArgPropertyCacheKey(
     /// </summary>
     internal static object RunWideEnvironmentIdentity { get; } = new();
 
-    public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
-    {
-        return execution.Binding.Exposure == PropertyExposure.Exported
-            ? new(
-                // Both spellings select the same exported declaration. Keep the
-                // original access kind on the execution for instrumentation only.
-                ZeroArgPropertyCacheAccessShape.Lexical,
-                execution.Owner.CacheIdentity,
-                execution.Binding,
-                RunWideEnvironmentIdentity,
-                execution.RunIdentity)
-            : new(
-                ZeroArgPropertyCacheAccessShape.Lexical,
-                execution.Owner.CacheIdentity,
-                execution.Binding,
-                Evaluator.DeclaringBindingIdentity(execution.DeclaringScope) ?? execution.ValueEnvironmentIdentity,
-                execution.RunIdentity);
-    }
+    /// <summary>
+    /// THE ENVIRONMENT COMPONENT of a property-style key (Lean <c>propertyKeyBindingContext</c>): the
+    /// run-wide sentinel for an exported binding; for a local-only one, the binding identity of the
+    /// nearest activated level of its declaring chain (<c>Evaluator.DeclaringBindingIdentity</c>,
+    /// CACHE-OWNER-D1) or — on a chain with no activated level (a host-built scope, a planned loop's
+    /// shadowed head) — the binding identity at the access. ONE function for the property cache
+    /// (<see cref="FromExecution"/>) and for a runtime-target alias's binding cell
+    /// (<see cref="ForAliasBindingCell"/>), so the two lifetimes cannot drift (ALIAS-CELL-LIFETIME).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static object EnvironmentIdentity(bool exported, ScopeCtx? declaringScope, object accessIdentity)
+        => exported
+            ? RunWideEnvironmentIdentity
+            : Evaluator.DeclaringBindingIdentity(declaringScope) ?? accessIdentity;
 
+    public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
+        => new(
+            // Both spellings select the same exported declaration. Keep the
+            // original access kind on the execution for instrumentation only.
+            ZeroArgPropertyCacheAccessShape.Lexical,
+            execution.Owner.CacheIdentity,
+            execution.Binding,
+            EnvironmentIdentity(
+                execution.Binding.Exposure == PropertyExposure.Exported,
+                execution.DeclaringScope,
+                execution.ValueEnvironmentIdentity),
+            execution.RunIdentity);
+
+    /// <summary>
+    /// THE KEY OF A RUNTIME-TARGET ALIAS'S BINDING CELL (ALIAS-CELL-LIFETIME, owner decision
+    /// 2026-11-15: PROPERTY LIFETIME; Lean <c>aliasBindingCellKey</c>). The cell lives exactly as long
+    /// as the zero-argument entry of the same row written as a property would, so its key is a
+    /// property-style key: the SAME declaring-owner identity a property read uses
+    /// (<see cref="PropertyDeclaringOwner.CacheIdentityOfLevel"/>: an evaluator owner's declaration and
+    /// structural scope, every ownerless host level by reference, HOST-ALIAS-R14 / HOST-NESTED-1),
+    /// the alias's DECLARATION in the binding slot (an inline alias
+    /// has no property and keeps its existing structural wiring identity; a declaration is never a
+    /// <see cref="Property"/>, so a cell key equals no
+    /// property key) and the SAME environment component (<see cref="EnvironmentIdentity"/>):
+    /// <list type="bullet">
+    ///   <item>an alias whose own property is <see cref="PropertyExposure.Exported"/> has ONE cell
+    ///   per declaration and structural declaring scope per run — explicit calls of its owner, reads
+    ///   of its owner and reads from outside share it;</item>
+    ///   <item>a local-only alias has one cell per declaring BINDING identity: property-style reads
+    ///   inherit their declaring activation's identity and share the cell, every explicit call mints
+    ///   a fresh identity and gets a fresh cell (CACHE-OWNER-D1).</item>
+    /// </list>
+    /// Never an activation: several activations share one binding identity.
+    /// </summary>
+    internal static ZeroArgPropertyCacheKey ForAliasBindingCell(
+        DeclarationIdentity declaration,
+        ScopeCtx? declaringScope,
+        Property? binding,
+        object accessIdentity,
+        object runIdentity)
+        => new(
+            ZeroArgPropertyCacheAccessShape.Lexical,
+            binding is not null && declaringScope is { } scope
+                ? PropertyDeclaringOwner.CacheIdentityOfLevel(scope)
+                : StructuralOwnerIdentity.FromScope(declaringScope),
+            declaration,
+            EnvironmentIdentity(binding is { Exposure: PropertyExposure.Exported }, declaringScope, accessIdentity),
+            runIdentity);
 }
 
 /// <summary>
@@ -248,12 +300,26 @@ internal sealed class StructuralOwnerIdentity
     }
 
     public static StructuralOwnerIdentity FromOwner(Algorithm owner, bool includeDeclaration = false)
+        => FromOwnerComponents(owner.Opens, owner.Properties, owner.Parent, includeDeclaration ? owner.Declaration : null);
+
+    /// <summary>
+    /// A property owner's wired scope: the same construction as <see cref="FromPropertyOwner"/>,
+    /// with the declaration from its owner and the resolving components from the actual scope view.
+    /// </summary>
+    internal static StructuralOwnerIdentity FromPropertyScope(ScopeCtx scope)
+        => FromOwnerComponents(scope.Opens, scope.Properties, scope.Parent, scope.Declaration);
+
+    private static StructuralOwnerIdentity FromOwnerComponents(
+        IReadOnlyList<Expr> opens,
+        IReadOnlyList<Property> properties,
+        ScopeCtx? parent,
+        object? declaration)
     {
         // Every cache request computes its key (CACHE-PUB-1 added the explicit zero-supply
         // invocations), so the chain is measured first and copied into ONE exact array.
         var length = 1;
         var hasHostLevel = false;
-        for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
+        for (var scope = parent; scope is not null; scope = scope.Parent)
         {
             length++;
             hasHostLevel |= scope.Owner is null;
@@ -262,16 +328,16 @@ internal sealed class StructuralOwnerIdentity
         var scopeChain = new ScopeComponent[length];
         var hostLevels = hasHostLevel ? new ScopeCtx?[length] : null;
         // The owner itself is an evaluator-owned level, never a host one (hostLevels[0] stays null).
-        scopeChain[0] = new ScopeComponent(owner.Opens, owner.Properties);
+        scopeChain[0] = new ScopeComponent(opens, properties);
         var index = 1;
-        for (var scope = owner.Parent; scope is not null; scope = scope.Parent, index++)
+        for (var scope = parent; scope is not null; scope = scope.Parent, index++)
         {
             scopeChain[index] = new ScopeComponent(scope.Opens, scope.Properties);
             if (hostLevels is not null && scope.Owner is null)
                 hostLevels[index] = scope;
         }
 
-        return new StructuralOwnerIdentity(scopeChain, hostLevels, includeDeclaration ? owner.Declaration : null);
+        return new StructuralOwnerIdentity(scopeChain, hostLevels, declaration);
     }
 
     internal static StructuralOwnerIdentity FromPropertyOwner(Algorithm owner)

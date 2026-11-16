@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 
 namespace KatLang.Evaluation.Caching;
@@ -38,9 +39,12 @@ internal sealed class PartitionedMap<TKey, TValue>
     private readonly BindingContextPartitionTable _partitions;
     private readonly int _store;
 
-    /// <summary>A store with a partition table of its own.</summary>
-    internal PartitionedMap(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf)
-        : this(comparer, partitionOf, new BindingContextPartitionTable(storeCount: 1), store: 0)
+    /// <summary>
+    /// A store with a partition table of its own; <paramref name="promptReclaim"/> selects the table's
+    /// reclamation (<see cref="BindingContextPartitionTable"/>).
+    /// </summary>
+    internal PartitionedMap(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf, bool promptReclaim = false)
+        : this(comparer, partitionOf, new BindingContextPartitionTable(storeCount: 1, promptReclaim), store: 0)
     {
     }
 
@@ -105,6 +109,12 @@ internal sealed class PartitionedMap<TKey, TValue>
     /// run-wide dictionary is not counted). A dead identity's partition is never counted.
     /// </summary>
     internal int LivePartitionCount() => _partitions.LivePartitionCount(_store);
+
+    /// <summary>TEST SEAM: the values stored under the run-wide identity (an exported binding's entries).</summary>
+    internal IReadOnlyCollection<TValue> RunWideValues => _runWide.Values;
+
+    /// <summary>TEST SEAM: the entry capacity of a prompt-reclaim partition table (0 for the other form).</summary>
+    internal int PromptTableCapacity => _partitions.PromptCapacity;
 
     private static bool IsRunWide(object identity)
         => ReferenceEquals(identity, ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity) || identity is null;
@@ -219,15 +229,31 @@ internal sealed class PartitionedSet<TKey>
 /// and keys missed without a store — instead of one entry per store.
 /// <para>No identity or partition is retained outside the weak table. Even one strong last-access
 /// shortcut could keep an unbounded chain of otherwise dead binding environments alive.</para>
+/// <para><b>Prompt reclamation</b> (<c>promptReclaim</c>; the runtime-alias binding cells,
+/// ALIAS-CELL-LIFETIME). A <see cref="ConditionalWeakTable{TKey, TValue}"/> replaces its container
+/// whenever it fills, and each replaced container is a FINALIZABLE object that frees its dead entries'
+/// handles only in its second finalization — so in a loop that mints one identity per step, the dead
+/// entries wait for full collections and peak memory grows by about 40 bytes per step until one
+/// happens (measured on the alias cells, November 2026: 54 MB at 10⁵ steps, 90 MB at 10⁶ and 177 MB at
+/// 3·10⁶, against a flat 49 MB). The prompt form holds the
+/// same weak association in ONE table of its own (<see cref="EphemeronSlots"/>): the same
+/// dependent-handle (ephemeron) semantics — a partition is reachable only while its identity is, even
+/// when the partition refers back to the identity — with dead entries freed, in place and at once, when
+/// the table fills. Which entry a key finds is the same in both forms.</para>
 /// </summary>
 internal sealed class BindingContextPartitionTable
 {
-    private readonly ConditionalWeakTable<object, object?[]> _partitions = new();
+    private readonly ConditionalWeakTable<object, object?[]>? _partitions;
+    private readonly EphemeronSlots? _prompt;
 
-    internal BindingContextPartitionTable(int storeCount)
+    internal BindingContextPartitionTable(int storeCount, bool promptReclaim = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(storeCount);
         StoreCount = storeCount;
+        if (promptReclaim)
+            _prompt = new EphemeronSlots();
+        else
+            _partitions = new ConditionalWeakTable<object, object?[]>();
     }
 
     /// <summary>Number of stores sharing the table (slots per identity).</summary>
@@ -235,12 +261,17 @@ internal sealed class BindingContextPartitionTable
 
     /// <summary>The slots of <paramref name="identity"/>, or null when no store has added under it.</summary>
     internal object?[]? Find(object identity)
-        => _partitions.TryGetValue(identity, out var slots) ? slots : null;
+        => _prompt is { } prompt
+            ? prompt.Find(identity)
+            : _partitions!.TryGetValue(identity, out var slots) ? slots : null;
 
     /// <summary>The slots of <paramref name="identity"/>, created on its first addition by any store.</summary>
     internal object?[] GetOrCreate(object identity)
     {
-        if (!_partitions.TryGetValue(identity, out var slots))
+        if (_prompt is { } prompt)
+            return prompt.Find(identity) ?? prompt.Add(identity, new object?[StoreCount]);
+
+        if (!_partitions!.TryGetValue(identity, out var slots))
         {
             slots = new object?[StoreCount];
             _partitions.Add(identity, slots);
@@ -255,14 +286,155 @@ internal sealed class BindingContextPartitionTable
     /// </summary>
     internal int LivePartitionCount(int store)
     {
+        if (_prompt is { } prompt)
+            return prompt.LiveCount(store);
+
         var count = 0;
-        foreach (var (_, slots) in (IEnumerable<KeyValuePair<object, object?[]>>)_partitions)
+        foreach (var (_, slots) in (IEnumerable<KeyValuePair<object, object?[]>>)_partitions!)
         {
             if (slots[store] is not null)
                 count++;
         }
 
         return count;
+    }
+
+    /// <summary>TEST SEAM: the entry capacity of the prompt-reclaim table (0 for the other form).</summary>
+    internal int PromptCapacity => _prompt?.Capacity ?? 0;
+
+    /// <summary>
+    /// The PROMPT-RECLAIM weak association identity OBJECT → slots: a chained hash table of
+    /// <see cref="DependentHandle"/>s (ephemerons — the slots are reachable through the table only
+    /// while their identity is reachable, even when they refer back to it), hashed and compared by
+    /// reference. Entries fill a dense prefix; when it is full, every entry whose identity is gone is
+    /// disposed and the rest are compacted in place, and the table doubles only when more than half of
+    /// it is still alive. So the table holds at most the identities that were alive at the last
+    /// reclamation plus those minted since, and nothing waits for a finalizer except the handles a
+    /// run still owns when its table becomes unreachable (the one finalizer below).
+    /// <para>Sequential, like the stores that use it: the caller serializes access (the alias cell
+    /// store's lock). A handle's target is read only for an identity the caller holds, which is
+    /// therefore alive for the whole lookup.</para>
+    /// </summary>
+    private sealed class EphemeronSlots
+    {
+        private const int InitialCapacity = 8;
+
+        private struct Entry
+        {
+            internal DependentHandle Handle;
+            internal int HashCode;
+            internal int Next; // the next entry of the bucket, as its position plus one; 0 ends the chain
+        }
+
+        private int[] _buckets = new int[InitialCapacity]; // an entry's position plus one; 0 is an empty bucket
+        private Entry[] _entries = new Entry[InitialCapacity];
+        private int _used;
+
+        ~EphemeronSlots()
+        {
+            var entries = _entries;
+            for (var index = 0; index < _used; index++)
+                entries[index].Handle.Dispose();
+        }
+
+        internal int Capacity => _entries.Length;
+
+        internal object?[]? Find(object identity)
+        {
+            var hashCode = RuntimeHelpers.GetHashCode(identity);
+            for (var index = _buckets[hashCode & (_buckets.Length - 1)]; index != 0; index = _entries[index - 1].Next)
+            {
+                ref var entry = ref _entries[index - 1];
+                if (entry.HashCode != hashCode || !ReferenceEquals(entry.Handle.Target, identity))
+                    continue;
+
+                // The caller holds the identity, so its dependent is alive.
+                var slots = (object?[]?)entry.Handle.Dependent;
+                GC.KeepAlive(identity);
+                // The array entry alone does not root its finalizable owner. Keep that owner
+                // alive until the native handle has been read, even on the store's last use.
+                GC.KeepAlive(this);
+                return slots;
+            }
+
+            GC.KeepAlive(this);
+            return null;
+        }
+
+        /// <summary>Adds the slots of an identity the table does not hold (the caller looked it up).</summary>
+        internal object?[] Add(object identity, object?[] slots)
+        {
+            if (_used == _entries.Length)
+                Reclaim();
+
+            var hashCode = RuntimeHelpers.GetHashCode(identity);
+            ref var entry = ref _entries[_used];
+            entry.Handle = new DependentHandle(identity, slots);
+            entry.HashCode = hashCode;
+            var bucket = hashCode & (_buckets.Length - 1);
+            entry.Next = _buckets[bucket];
+            _buckets[bucket] = ++_used;
+            GC.KeepAlive(this);
+            return slots;
+        }
+
+        internal int LiveCount(int store)
+        {
+            var count = 0;
+            for (var index = 0; index < _used; index++)
+            {
+                var (identity, slots) = _entries[index].Handle.TargetAndDependent;
+                if (identity is not null && ((object?[])slots!)[store] is not null)
+                    count++;
+                GC.KeepAlive(identity);
+            }
+
+            GC.KeepAlive(this);
+            return count;
+        }
+
+        // The table is full: free the entries whose identity is gone, compact the rest to the front
+        // and relink the buckets; double the table only when more than half of it is still alive.
+        private void Reclaim()
+        {
+            var entries = _entries;
+            var live = 0;
+            for (var index = 0; index < _used; index++)
+            {
+                if (entries[index].Handle.Target is null)
+                {
+                    entries[index].Handle.Dispose();
+                    continue;
+                }
+
+                if (live != index)
+                    entries[live] = entries[index];
+                live++;
+            }
+
+            // Every slot past the live prefix holds a freed handle or a moved entry's stale copy.
+            Array.Clear(entries, live, _used - live);
+            _used = live;
+
+            if (live > entries.Length / 2)
+            {
+                Array.Resize(ref _entries, entries.Length * 2);
+                entries = _entries;
+                _buckets = new int[entries.Length];
+            }
+            else
+            {
+                Array.Clear(_buckets);
+            }
+
+            var mask = _buckets.Length - 1;
+            for (var index = 0; index < live; index++)
+            {
+                var bucket = entries[index].HashCode & mask;
+                entries[index].Next = _buckets[bucket];
+                _buckets[bucket] = index + 1;
+            }
+        }
     }
 }
 

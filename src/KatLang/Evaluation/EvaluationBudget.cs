@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using KatLang.Evaluation.Caching;
 
 namespace KatLang.Evaluation;
 
@@ -402,24 +403,35 @@ internal sealed class EvaluationBudget
     private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>? _aliasTargets;
 
     /// <summary>
-    /// The run's runtime-alias BINDING CELLS (FWD-02, META-S3-2) for runtime-target aliases declared
-    /// OUTSIDE every activation, keyed like <see cref="AliasTargets"/> by the alias's declaration and
-    /// the resolving identity of its declaring scope chain: ONE retained cell per declaring scope, whose
-    /// VALUE is the alias's bare read and whose CALLABLE projection is the alias's runtime identity. A
-    /// binding declared under an activation keeps its cell on that activation
-    /// (<see cref="ParameterActivation.AliasBindingCells"/>). First-wins under the dictionary's own
-    /// lock, so racing establishments agree on one cell.
+    /// The run's runtime-alias BINDING CELLS (FWD-02, META-S3-2; ALIAS-CELL-LIFETIME, owner decision
+    /// 2026-11-15: PROPERTY LIFETIME), every one of them, under the property-style key
+    /// <see cref="ZeroArgPropertyCacheKey.ForAliasBindingCell"/>: ONE retained cell per key, whose VALUE
+    /// is the alias's bare read and whose CALLABLE projection is the alias's runtime identity. STORAGE
+    /// FOLLOWS LIFETIME, exactly as for the property cache's entries
+    /// (<see cref="PartitionedMap{TKey, TValue}"/>): the cell of an EXPORTED alias — one per declaration
+    /// and structural declaring scope per run — lives in the store's run-wide dictionary; the cell of a
+    /// LOCAL-ONLY alias lives in the partition of its declaring BINDING-IDENTITY object, held weakly,
+    /// so it is collected with that identity. No cell is keyed or stored by a
+    /// <see cref="ParameterActivation"/>: several activations share one binding identity
+    /// (CACHE-OWNER-D1, COLLECT-CACHE-1) and must share the cell. First-wins under a lock on the
+    /// store object (the store itself is sequential), so racing establishments agree on one cell. The
+    /// partitions are reclaimed PROMPTLY (<see cref="BindingContextPartitionTable"/>): a local-only
+    /// alias declared per step of a long loop mints one identity per step, and its cells must not wait
+    /// for a full collection.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, NeedCell> AliasBindingCells
+    internal PartitionedMap<ZeroArgPropertyCacheKey, NeedCell> AliasBindingCells
         => Volatile.Read(ref _aliasBindingCells)
-           ?? Interlocked.CompareExchange(ref _aliasBindingCells, [], null)
+           ?? Interlocked.CompareExchange(
+               ref _aliasBindingCells,
+               new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true),
+               null)
            ?? _aliasBindingCells!;
 
-    private Dictionary<Evaluator.AliasTargetKey, NeedCell>? _aliasBindingCells;
+    private PartitionedMap<ZeroArgPropertyCacheKey, NeedCell>? _aliasBindingCells;
 
     /// <summary>
     /// The run's settled <c>.Algorithm</c> ROUTE DECISIONS (C# implementation-only) of runtime-row aliases
-    /// declared OUTSIDE every activation, keyed like <see cref="AliasBindingCells"/> by the alias's declaration
+    /// declared OUTSIDE every activation, keyed like <see cref="AliasTargets"/> by the alias's declaration
     /// and the resolving identity of its declaring scope chain; one declared under an activation keeps its
     /// decision on that activation (<see cref="ParameterActivation.AliasRouteDecisions"/>). Only a decision whose
     /// navigation met no cycle or static failure and only PUBLISHED projections (success or failure) is recorded,

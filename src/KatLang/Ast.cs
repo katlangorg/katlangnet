@@ -4115,7 +4115,9 @@ public closed record Algorithm
     /// (<see cref="AliasTargetRows.IsRuntimeRow"/>, META-S3-2): a parameter reference, an argumentless
     /// <c>.Algorithm</c> link, or an argumentless parameter-rooted member path, whose callable identity
     /// is known only at run time. A RUNTIME-TARGET ALIAS is an alias whose own target is a runtime row;
-    /// its callable is the identity its ONE binding cell projects per declaring activation, OF ANY ARITY
+    /// its callable is the identity its ONE binding cell projects — a cell with the lifetime of the same
+    /// row's property cache entry (ALIAS-CELL-LIFETIME: per run when the alias's property is exported,
+    /// per declaring binding identity when it is local-only) — OF ANY ARITY
     /// (M4★), and when the cell projects none the alias is its VALUE VIEW (<see cref="User(Alias)"/>),
     /// whose zero-supply invocation returns that cell's VALUE, never a rerun of the row. A host-built alias whose target is
     /// anything else, or whose static targets form a cycle, is rejected before evaluation

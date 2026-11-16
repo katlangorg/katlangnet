@@ -322,7 +322,8 @@ public sealed class RuntimeAliasCancellationRaceTests
             catch (Exception error) { return error.ToString(); }
         }
 
-        public NeedCell Link => Assert.Single(Budget.AliasBindingCells).Value;
+        // The root alias is exported: its one cell is the run-wide one (ALIAS-CELL-LIFETIME).
+        public NeedCell Link => Assert.Single(Budget.AliasBindingCells.RunWideValues);
 
         public NeedCell ReceiverCell
             => ((Evaluator.LinkSuspension)Link.Suspension!).Receiver((Expr.DotCall)Link.Source!);

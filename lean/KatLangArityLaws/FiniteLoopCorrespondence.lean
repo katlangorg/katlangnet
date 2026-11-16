@@ -843,18 +843,19 @@ theorem monotone_userActivation (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (
 structure UserStep (a : Algorithm) : Prop where
   user : ∃ p pp o pr e rows d, a = .mk p pp o pr (e :: rows) d
   checks : Passes a
-  noView : ∀ s, (valueViewCell? a).runState s = (.ok none, s)
+  noView : ∀ ctx s, (valueViewCell? a ctx).runState s = (.ok none, s)
 
 /-- A parameterized body is never a value view. -/
 theorem noView_of_params (p : Option ScopeCtx) (q : ParameterPattern) (qs : List ParameterPattern)
-    (o : List Expr) (pr : List PropDef) (out : List Expr) (d : Option PropertyIdentity) (s : EvalState) :
-    (valueViewCell? (.mk p (q :: qs) o pr out d)).runState s = (.ok none, s) := rfl
+    (o : List Expr) (pr : List PropDef) (out : List Expr) (d : Option PropertyIdentity) (ctx : EvalCtx)
+    (s : EvalState) :
+    (valueViewCell? (.mk p (q :: qs) o pr out d) ctx).runState s = (.ok none, s) := rfl
 
 /-- A multi-row body is never a value view. -/
 theorem noView_of_rows (p : Option ScopeCtx) (pp : List ParameterPattern)
     (o : List Expr) (pr : List PropDef) (e₁ e₂ : Expr) (rows : List Expr) (d : Option PropertyIdentity)
-    (s : EvalState) :
-    (valueViewCell? (.mk p pp o pr (e₁ :: e₂ :: rows) d)).runState s = (.ok none, s) := by
+    (ctx : EvalCtx) (s : EvalState) :
+    (valueViewCell? (.mk p pp o pr (e₁ :: e₂ :: rows) d) ctx).runState s = (.ok none, s) := by
   cases pp <;> rfl
 
 theorem user_loop_body (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) (env : ValEnv)

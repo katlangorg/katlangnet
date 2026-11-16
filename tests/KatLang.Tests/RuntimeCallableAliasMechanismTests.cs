@@ -9,9 +9,11 @@ namespace KatLang.Tests;
 /// <list type="bullet">
 ///   <item>Option A classification by the front end (FWD-02 after Q-75 / DOT-05 inference and formula
 ///   lifting, never instead of them — except OD-B's parameter-rooted member path, M4★);</item>
-///   <item>the ONE binding cell per declaration and declaring activation (<see cref="Evaluator.AliasBindingCell"/>):
-///   canonical, retained, established without evaluating anything, a parameter row's own cell, first-wins
-///   under concurrency and retry-stable inside a non-initiating observation (Guard B);</item>
+///   <item>the ONE binding cell per property-lifetime key (<see cref="Evaluator.AliasBindingCell"/>,
+///   ALIAS-CELL-LIFETIME: the declaration, the structural declaring scope and the declaring binding
+///   identity — never an activation): canonical, retained, established without evaluating anything, a
+///   parameter row's own cell, first-wins under concurrency and retry-stable inside a non-initiating
+///   observation (Guard B);</item>
 ///   <item>the run pre-mark and the classification of supplied reference cells at their formation;</item>
 ///   <item>the editor's unknown-signature presentation.</item>
 /// </list>
@@ -90,14 +92,32 @@ public class RuntimeCallableAliasMechanismTests
     private static ScopeCtx ActivatedScope(Evaluator.EvalCtx ctx, string parameter = "p")
         => new(null, [], [], [parameter]) { Activation = ParameterActivation.Capture([parameter], ctx, []) };
 
+    // An EVALUATOR-OWNED declaring level (an ownerless host level is an identity of its own, by
+    // reference: HOST-ALIAS-R14), so two of them over one property list are ONE structural scope and
+    // differ only in their activation: none, a fresh call's binding identity, or — when
+    // `bindingIdentity` is given — an activation that INHERITS that identity, as the activation a
+    // property-style read of a parameterless owner mints does (CACHE-OWNER-D1).
+    private static readonly Algorithm.User LevelOwner = new(null, [], [], [], OutputBundle.Empty);
+
+    private static ScopeCtx OwnedLevel(
+        Evaluator.EvalCtx ctx, IReadOnlyList<Property> properties, bool activated = true, object? bindingIdentity = null)
+        => new(null, [], properties, ["p"])
+        {
+            Owner = LevelOwner,
+            Activation = activated
+                ? ParameterActivation.Capture(["p"], ctx, new List<(string Name, Result Value)>(), bindingIdentity)
+                : null,
+        };
+
     [Fact]
-    public void TheBindingCell_IsCanonicalPerDeclarationAndDeclaringActivation_AndEstablishingItEvaluatesNothing()
+    public void TheBindingCell_IsCanonicalPerDeclarationAndDeclaringBindingIdentity_AndEstablishingItEvaluatesNothing()
     {
         var ctx = Evaluator.EvalCtx.Empty;
+        // An alias that is no property of its declaring scope is keyed as a local-only one.
         var alias = new Algorithm.Alias(null, [], [], Link("R"));
-        var first = ActivatedScope(ctx);
-        var second = ActivatedScope(ctx);
-        var unactivated = new ScopeCtx(null, [], []);
+        var first = OwnedLevel(ctx, []);
+        var second = OwnedLevel(ctx, []);
+        var unactivated = OwnedLevel(ctx, [], activated: false);
 
         var cell = Evaluator.AliasBindingCell(Wired(alias, first), ctx);
         Assert.Same(cell, Evaluator.AliasBindingCell(Wired(alias, first), ctx));
@@ -106,8 +126,8 @@ public class RuntimeCallableAliasMechanismTests
         Assert.False(cell.HasCompletedValue);
         Assert.Equal(0, cell.ProjectionComputations);
 
-        // Another activation of the same declaration, the run level, and another declaration with the
-        // same row each have their own cell.
+        // Another binding identity of the same declaration (a fresh call), the run level, and another
+        // declaration with the same row each have their own cell.
         var other = Evaluator.AliasBindingCell(Wired(alias, second), ctx);
         Assert.NotSame(cell, other);
         var runLevel = Evaluator.AliasBindingCell(Wired(alias, unactivated), ctx);
@@ -115,6 +135,54 @@ public class RuntimeCallableAliasMechanismTests
         Assert.Same(runLevel, Evaluator.AliasBindingCell(Wired(alias, unactivated), ctx));
         var twin = new Algorithm.Alias(null, [], [], Link("R"));
         Assert.NotSame(cell, Evaluator.AliasBindingCell(Wired(twin, first), ctx));
+
+        // ALIAS-CELL-LIFETIME: the cell is keyed by the declaring BINDING IDENTITY, never by the
+        // activation. ANOTHER activation that carries the first one's identity — what a property-style
+        // read of the owner mints — reaches the SAME cell (formerly a second cell per activation).
+        var read = OwnedLevel(ctx, [], bindingIdentity: first.Activation!.ValueEnvironmentIdentity);
+        Assert.NotSame(first.Activation, read.Activation);
+        Assert.Same(cell, Evaluator.AliasBindingCell(Wired(alias, read), ctx));
+        Assert.Equal(4, ctx.Budget.AliasBindingCells.AddedCount);
+        Assert.Empty(ctx.Budget.AliasBindingCells.RunWideValues);
+
+        // An ownerless HOST level is itself part of the structural scope, by reference (HOST-ALIAS-R14):
+        // two host levels are two scopes, whatever their activations.
+        var host = ActivatedScope(ctx);
+        var hostCell = Evaluator.AliasBindingCell(Wired(alias, host), ctx);
+        Assert.Same(hostCell, Evaluator.AliasBindingCell(Wired(alias, host), ctx));
+        Assert.NotSame(hostCell, Evaluator.AliasBindingCell(Wired(alias, ActivatedScope(ctx)), ctx));
+        GC.KeepAlive(first);
+        GC.KeepAlive(second);
+    }
+
+    [Fact]
+    public void AnExportedAliasProperty_HasOneCellPerRun_WhateverActivationItIsWiredUnder()
+    {
+        var ctx = Evaluator.EvalCtx.Empty;
+        var alias = new Algorithm.Alias(null, [], [], Link("R"));
+        IReadOnlyList<Property> exported = [new Property("A", alias)];
+        IReadOnlyList<Property> localOnly =
+            [new Property("A", alias, Exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters)];
+        ScopeCtx Level(IReadOnlyList<Property> properties, bool activated) => OwnedLevel(ctx, properties, activated);
+
+        // Exported: the exposure is read from the alias's OWN property in its declaring scope, and
+        // two fresh activations and the unactivated level share the run's one cell.
+        var runWide = Evaluator.AliasBindingCell(Wired(alias, Level(exported, activated: true)), ctx);
+        Assert.Same(runWide, Evaluator.AliasBindingCell(Wired(alias, Level(exported, activated: true)), ctx));
+        Assert.Same(runWide, Evaluator.AliasBindingCell(Wired(alias, Level(exported, activated: false)), ctx));
+        Assert.Same(runWide, Assert.Single(ctx.Budget.AliasBindingCells.RunWideValues));
+        Assert.Equal(0, ctx.Budget.AliasBindingCells.LivePartitionCount());
+
+        // Local-only: the SAME declaration under a local-only property is one cell per binding identity.
+        var firstCall = Level(localOnly, activated: true);
+        var secondCall = Level(localOnly, activated: true);
+        var local = Evaluator.AliasBindingCell(Wired(alias, firstCall), ctx);
+        Assert.NotSame(runWide, local);
+        Assert.Same(local, Evaluator.AliasBindingCell(Wired(alias, firstCall), ctx));
+        Assert.NotSame(local, Evaluator.AliasBindingCell(Wired(alias, secondCall), ctx));
+        Assert.Same(runWide, Assert.Single(ctx.Budget.AliasBindingCells.RunWideValues));
+        GC.KeepAlive(firstCall);
+        GC.KeepAlive(secondCall);
     }
 
     [Fact]
@@ -260,7 +328,7 @@ public class RuntimeCallableAliasMechanismTests
         var scope = NeedCell.EnterObservation();
         try
         {
-            // Retained by its stable owner (the declaring activation): never a fresh allocation.
+            // Retained by its stable owner (the run's cell store, under its key): never a fresh allocation.
             observed = Evaluator.AliasBindingCell(wired, ctx);
             // Guard B is unchanged for a fresh, unretained runtime-projection cell.
             Assert.Throws<System.Diagnostics.UnreachableException>(() => Evaluator.SupplyCell(Link("R"), ctx, []));

@@ -176,9 +176,9 @@ public static partial class Evaluator
     /// navigated CLEANLY — no alias cycle or static navigation failure, no <c>ResolveAlg</c> fallback, no
     /// non-exported member, and every runtime projection it read a PUBLISHED (sticky) outcome, success or
     /// failure — is recorded per alias declaration and declaring scope on the alias's memo owner
-    /// (<see cref="AliasRouteDecision"/>), exactly where its binding cell lives, and reused by every later
-    /// chase. It is a function of what it read: the alias's own scope (the static end's and the binding cell's
-    /// key), declarations, and published projections, which never change; a later fresh navigation reads the
+    /// (<see cref="AliasRouteDecision"/>: the nearest activation of its declaring chain, or the run), and
+    /// reused by every later chase. It is a function of what it read: the alias's own scope (the static
+    /// end's key), declarations, and published projections, which never change; a later fresh navigation reads the
     /// same facts or a memo of them, and it cannot meet a cycle the first one did not (a structure computation
     /// that encloses the decision and is reached by it was itself reached, uncut, by the first navigation —
     /// cut-offs only grow — whose nested re-entry of the decision would have met that cycle). A navigation that
@@ -1016,27 +1016,32 @@ public static partial class Evaluator
     /// exactly where its body is evaluated — through the ONE supply-cell constructor
     /// (<see cref="SupplyCell"/>). A parameter row IS that parameter's own cell (NEED-01 transport,
     /// nothing allocated); an <c>.Algorithm</c> row is a link with its one receiver (CR-15); a
-    /// parameter-rooted path is a runtime-projection reference cell. Every other row is established ONCE
-    /// per declaration and declaring scope on the nearest activation of the declaring chain (or run-wide),
-    /// first-wins, and retained (retry-stable, Guard B); establishing it evaluates nothing. Its VALUE is
-    /// the alias's bare read and its value view's zero-supply invocation (<see cref="ValueViewCell"/>), its
-    /// CALLABLE the alias's runtime identity — so every observation shares its receiver work and the
-    /// supplied computation never reruns. Lean: <c>aliasBindingCell</c>.
+    /// parameter-rooted path is a runtime-projection reference cell. Every other row has the LIFETIME OF
+    /// ITS PROPERTY's cache entry (ALIAS-CELL-LIFETIME, owner decision 2026-11-15;
+    /// <see cref="AliasBindingCellKey"/>): established ONCE per declaration and structural declaring
+    /// scope per run when the alias's own property is exported, once per declaring binding identity
+    /// when it is local-only — never per activation — first-wins, and retained (retry-stable, Guard B);
+    /// establishing it evaluates nothing. Its VALUE is the alias's bare read and its value view's
+    /// zero-supply invocation (<see cref="ValueViewCell"/>), its CALLABLE the alias's runtime identity —
+    /// so every observation shares its receiver work and the supplied computation never reruns. A need
+    /// cell is no property entry in one respect, which is unchanged: re-entering its own demand is
+    /// <see cref="EvalError.DemandCycle"/>, where a property's re-entrant read (Q-37) evaluates again.
+    /// Lean: <c>aliasBindingCell</c>.
     /// </summary>
     internal static NeedCell AliasBindingCell(Algorithm.Alias wired, EvalCtx ctx)
     {
         if (wired.Target is Expr.Param)
             return SupplyCell(wired.Target, ctx.Push(wired), [], retained: true);
 
-        var memo = AliasMemoOwner(wired) is { } activation ? activation.AliasBindingCells : ctx.Budget.AliasBindingCells;
-        var key = new AliasTargetKey(wired.Declaration!, StructuralOwnerIdentity.FromScope(wired.Parent));
-        lock (memo)
-            if (memo.TryGetValue(key, out var known)) return known;
+        var cells = ctx.Budget.AliasBindingCells;
+        var key = AliasBindingCellKey(wired, ctx);
+        lock (cells)
+            if (cells.TryGetValue(key, out var known)) return known;
         var created = SupplyCell(wired.Target, EnterAlgorithmBody(wired, ctx, []), [], retained: true);
-        lock (memo)
+        lock (cells)
         {
-            if (memo.TryGetValue(key, out var raced)) return raced;
-            memo.Add(key, created);
+            if (cells.TryGetValue(key, out var raced)) return raced;
+            cells.TryAdd(key, created);
             return created;
         }
     }
@@ -1044,25 +1049,65 @@ public static partial class Evaluator
     /// <summary>
     /// THE VALUE VIEW'S CELL (L-RUN, M4★; Lean <c>valueViewCell?</c>): the recorded binding cell of the
     /// runtime-target alias whose value view <paramref name="algorithm"/> is (<see cref="TerminalAliasProperty"/>
-    /// keeps the alias's declaration and scope, so the binding-cell key finds it), read AFTER the ordinary
-    /// binder's cardinality gate — a zero-supply invocation of a value-only reference returns that cell's
-    /// VALUE every time, so the supplied computation never reruns. Every other algorithm has no recorded
-    /// cell. A parameter row records none: its view reads the parameter, whose own cell it is. Reads only.
+    /// keeps the alias's declaration and scope, so the binding-cell key finds it in the invoking context),
+    /// read AFTER the ordinary binder's cardinality gate — a zero-supply invocation of a value-only
+    /// reference returns that cell's VALUE every time, so the supplied computation never reruns. Every
+    /// other algorithm has no recorded cell. A parameter row records none: its view reads the parameter,
+    /// whose own cell it is. Reads only: the SAME store under the SAME key as <see cref="AliasBindingCell"/>.
     /// </summary>
     private static NeedCell? ValueViewCell(Algorithm algorithm, EvalCtx ctx)
     {
         if (!ctx.Budget.MayReachRuntimeAliases || algorithm is not Algorithm.User { ParameterPatterns.Count: 0, Output.Count: 1 })
             return null;
-        var memo = AliasMemoOwner(algorithm) is { } activation ? activation.AliasBindingCells : ctx.Budget.AliasBindingCells;
-        var key = new AliasTargetKey(algorithm.Declaration!, StructuralOwnerIdentity.FromScope(algorithm.Parent));
-        lock (memo)
-            return memo.TryGetValue(key, out var cell) ? cell : null;
+        var cells = ctx.Budget.AliasBindingCells;
+        var key = AliasBindingCellKey(algorithm, ctx);
+        lock (cells)
+            return cells.TryGetValue(key, out var cell) ? cell : null;
     }
+
+    /// <summary>
+    /// THE KEY of the binding cell of the alias wired as <paramref name="wired"/> (or of its value view,
+    /// which keeps its declaration and scope), read in <paramref name="ctx"/> (ALIAS-CELL-LIFETIME; Lean
+    /// <c>aliasBindingCellKey</c>): the property-style key
+    /// <see cref="ZeroArgPropertyCacheKey.ForAliasBindingCell"/> — the ONE construction that also keys a
+    /// property-style read (<see cref="ZeroArgPropertyCacheKey.EnvironmentIdentity"/>), so an alias and the
+    /// same row written as a property have one lifetime. The EXPOSURE is the alias's OWN property's
+    /// (<see cref="AliasOwnProperty"/>); an alias that is no property of its declaring scope (an inline
+    /// alias block, a loaded module's root) is keyed as a local-only one, by its declaring binding
+    /// identity. The access identity — used only on a declaring chain with no activated level — is the
+    /// context's own (<see cref="BindingContextIdentity"/>): the cell's row is supplied with NO value
+    /// environment, so below every binding boundary its context has one identity (Lean: the root's
+    /// <c>ctx.bindingContext</c>).
+    /// </summary>
+    private static ZeroArgPropertyCacheKey AliasBindingCellKey(Algorithm wired, EvalCtx ctx)
+        => ZeroArgPropertyCacheKey.ForAliasBindingCell(
+            wired.Declaration!,
+            wired.Parent,
+            binding: AliasOwnProperty(wired, ctx.Budget),
+            accessIdentity: BindingContextIdentity(ctx, NoBindingCellValues),
+            runIdentity: ctx.Budget);
+
+    // The value environment a binding cell's row is supplied with: none (SupplyCell(row, ..., [], ...)).
+    private static readonly ValEnv NoBindingCellValues = [];
+
+    /// <summary>
+    /// THE ALIAS'S OWN PROPERTY (ALIAS-CELL-LIFETIME; Lean <c>aliasOwnProperty?</c>): the property of
+    /// the alias's declaring scope that carries the alias's declaration — the first one in declaration
+    /// order, by declaration identity, never by spelling — looked up run-locally by the property-list
+    /// reference (<see cref="PropertyBindingIndexCache.LookupDeclaration"/>). It is where the alias's
+    /// exposure is read: a wired <see cref="Algorithm.Alias"/> does not carry it. Null for an alias
+    /// that is no property of its declaring scope.
+    /// </summary>
+    private static Property? AliasOwnProperty(Algorithm wired, EvaluationBudget budget)
+        => wired.Parent is { Properties: { Count: > 0 } properties } && wired.Declaration is { } declaration
+            ? budget.PropertyBindings.LookupDeclaration(properties, declaration)
+            : null;
 
     /// <summary>The value view of a value-only runtime reference: the alias's ordinary zero-parameter body, never the alias again (Lean <c>Algorithm.aliasPropertyView</c>).</summary>
     private static Algorithm.User TerminalAliasProperty(Algorithm.Alias alias) => new(alias);
 
-    // The nearest activation of an alias's declaring chain, which owns its memo entries.
+    // The nearest activation of an alias's declaring chain, which owns its PURE memo entries (static ends,
+    // route decisions) and qualifies a chase visit. A binding cell is never owned by an activation.
     private static ParameterActivation? AliasMemoOwner(Algorithm wired)
     {
         for (var level = wired.Parent; level is not null; level = level.Parent)
@@ -1096,14 +1141,15 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The memo key of an alias BINDING (a <see cref="Property"/>) or, for a runtime-alias binding cell,
-    /// of an alias DECLARATION (a <see cref="DeclarationIdentity"/>, which covers inline aliases too),
-    /// together with the resolving identity of the scope chain it is wired under (each level's opens and
+    /// The memo key of an alias BINDING (a <see cref="Property"/>) for its static end or, for a settled
+    /// route decision, of an alias DECLARATION (a <see cref="DeclarationIdentity"/>, which covers inline
+    /// aliases too), together with the resolving identity of the scope chain it is wired under (each level's opens and
     /// properties, by reference; every ownerless host-built level of the chain — the declaring level or
     /// any ancestor — is itself part of it, also by reference:
     /// <see cref="StructuralOwnerIdentity.FromScope"/>) and, for a static end, whether the chase follows
     /// carriers — everything its static part reads besides the activation, which selects the memo the key
-    /// lives in. Compared by reference.
+    /// lives in. Compared by reference. A runtime alias's BINDING CELL is not keyed here: it has its
+    /// property's lifetime (<see cref="AliasBindingCellKey"/>), never an activation's.
     /// </summary>
     internal readonly struct AliasTargetKey(object binding, StructuralOwnerIdentity scope, bool followCarriers = false) : IEquatable<AliasTargetKey>
     {

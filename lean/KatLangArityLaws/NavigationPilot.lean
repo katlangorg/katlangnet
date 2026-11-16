@@ -197,7 +197,7 @@ theorem pilot_evalNeedUserSupply (callee : Algorithm) (cells : List Nat) (ctx : 
         ((Algorithm.parameterPatterns callee).map NeedPattern.ofParameter) cells)) (fun _ _ => True))
     (vcContext : ∀ bindings t, Agree K t (needBindingContext ctx bindings) (needBindingContext ctx bindings)
       (fun _ _ => True))
-    (vcView : ∀ t, Agree K t (valueViewCell? callee) (valueViewCell? callee) (fun _ _ => True))
+    (vcView : ∀ t, Agree K t (valueViewCell? callee ctx) (valueViewCell? callee ctx) (fun _ _ => True))
     (vcDemand : ∀ address t, K.inv t → K.pre (.demandNeedRecursive address) t)
     (vcOutput : ∀ next values t, K.inv t → K.pre (.evalAlgOutputCountedCore callee next values) t) :
     Agree K s (EvalBody.evalNeedUserSupply rec callee cells ctx env)

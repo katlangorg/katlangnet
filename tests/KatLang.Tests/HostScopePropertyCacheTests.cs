@@ -529,7 +529,7 @@ public partial class HostScopePropertyCacheTests
         var second = Evaluator.AliasBindingCell(alias with { Parent = copy }, ctx);
         Assert.NotSame(first, second);
         Assert.Same(second, Evaluator.AliasBindingCell(alias with { Parent = copy }, ctx));
-        Assert.Equal(2, ctx.Budget.AliasBindingCells.Count);
+        Assert.Equal(2L, ctx.Budget.AliasBindingCells.AddedCount);
         Assert.NotSame(first, Evaluator.AliasBindingCell(alias with { Parent = host }, Evaluator.EvalCtx.Empty));
 
         // Reconstructing an evaluator-owned scope must still find the SAME retained cell.

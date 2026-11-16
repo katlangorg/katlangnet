@@ -1,4 +1,7 @@
 import KatLangArityLaws.AlgorithmProjection
+import KatLangArityLaws.CallableIdentityProvenance
+import KatLangArityLaws.OwnerContextStability
+import KatLangArityLaws.TotalLeaves
 
 open KatLang KatLang.CallPlan KatLang.AlgorithmProjectionLaws
 
@@ -6,9 +9,10 @@ open KatLang KatLang.CallPlan KatLang.AlgorithmProjectionLaws
 production fuel search, and the installation this header describes is a body equation of that core
 (`EvaluatorInstallation.alias_chase_installs`, `alias_value_installs`).
 `EvaluatorCore.production_unfolds` covers completed operations; reachable alias
-bindings, declaring activations and end-to-end alias refinement remain open. (M4★, ALIAS-UNIFY-1,
+bindings and end-to-end alias refinement remain open. (M4★, ALIAS-UNIFY-1,
 October 2026, retired D4's first-observation claims and FWD-02's runtime eligibility gate; the
-whole-algorithm transport laws are `WholeAlgorithmTransport.lean`.) -/
+whole-algorithm transport laws are `WholeAlgorithmTransport.lean`. ALIAS-CELL-LIFETIME, November
+2026, replaced the activation-keyed cell by the property-lifetime key `aliasBindingCellKey`.) -/
 
 /-!
 # META-S3-2: runtime-target callable aliases (October 2026)
@@ -16,15 +20,18 @@ whole-algorithm transport laws are `WholeAlgorithmTransport.lean`.) -/
 A RUNTIME-TARGET ALIAS (FWD-02; owner decisions D1 = yes, D2 = Option A, D3 = fresh invocation; L-RUN,
 M4★) is an `Algorithm.alias` whose row is a RUNTIME ROW (`Expr.isRuntimeAliasRow`): a parameter
 reference, an argumentless `.Algorithm` link, or an argumentless parameter-rooted member path. Its
-STRUCTURE and its INVOCATION target are the identity its ONE binding cell projects in its declaring
-activation, at ANY arity (no eligibility gate); a cell that projects NO identity makes it a VALUE VIEW
+STRUCTURE and its INVOCATION target are the identity its ONE binding cell projects, at ANY arity (no
+eligibility gate); a cell that projects NO identity makes it a VALUE VIEW
 (`Algorithm.aliasPropertyView`): no members, no CALLABLE, a zero-supply invocation returns the binding
 cell's VALUE (`valueViewCell?`) and a non-empty supply is the binder's cardinality failure. Its bare
 read is the binding cell's VALUE (`aliasValue`). The authoritative definitions are in `lean/KatLang.lean`:
 
 * `aliasBindingCell` — the binding cell, supplied in the alias's own declaring context through the one
-  supplier (`supplyNeed`) and recorded in `EvalState.aliasCells` under `aliasCellKey` (the alias's
-  declaration and its declaring activations);
+  supplier (`supplyNeed`) and recorded in `EvalState.aliasCells` under `aliasBindingCellKey`: the
+  alias's declaration, the structure of its declaring scope chain (`aliasBindingCellScopeKey`) and the
+  binding-context component a property-style read of the alias's own property would carry
+  (`aliasCellBindingContext` = `propertyKeyBindingContext`, the function `zeroArgPropertyCacheKey`
+  uses) — PROPERTY LIFETIME (ALIAS-CELL-LIFETIME, owner decision 2026-11-15);
 * `runtimeAliasStepWith` — one runtime step of the chase over a CALLABLE capability;
 * `Algorithm.aliasPropertyView` and `valueViewCell?` — the value view and the cell its invocation reads.
 
@@ -37,12 +44,27 @@ programs through it (`RuntimeAliasGuards.lean`, the `runtime-alias-*` LanguageSp
 
 Proved here, over the total definitions:
 
-* the binding cell is CANONICAL per declaration and declaring activation
-  (`aliasBindingCell_recorded`, `aliasBindingCell_canonical`: once established, every later use — the
-  bare VALUE and every CALLABLE projection alike — reads the recorded cell and changes nothing), its
-  establishment is INERT (`aliasBindingCell_inert`: every existing cell keeps its suspension, VALUE
-  state, CALLABLE state and plan supply), and a PARAMETER row is that parameter's own cell, allocating
-  nothing (`aliasBindingCell_parameter_transport`, NEED-01);
+* the binding cell is CANONICAL PER KEY (`aliasBindingCellKey`): a recorded key is read
+  (`aliasBindingCell_recorded`), and once a use established or read a cell, EVERY use whose key is that
+  key — the same wiring again (`aliasBindingCell_canonical`, on a declaring chain whose owner search is
+  valid) or another wiring, context or route (`aliasBindingCell_shared`) — returns the same cell and
+  changes nothing: the bare VALUE and every CALLABLE projection alike. Its establishment is INERT
+  (`aliasBindingCell_inert`: every existing cell keeps its suspension, VALUE state, CALLABLE state and
+  plan supply), and a PARAMETER row is that parameter's own cell, allocating nothing
+  (`aliasBindingCell_parameter_transport`, NEED-01);
+* THE KEY HAS ITS PROPERTY'S LIFETIME, with the alias's exposure as an INPUT (the front end's
+  classification, read from the alias's own property, `aliasOwnProperty?`; nothing here concerns how
+  it is inferred): its binding-context component is the property cache key's own
+  (`aliasCellBindingContext_is_the_property_key_component`); two uses whose declaring chains have the
+  same owner binding context and the same structural scope have ONE key
+  (`aliasBindingCellKey_agree`, read/structural agreement; at a property-style read of the owner,
+  `aliasBindingCellKey_read_entry`: the alias wired under the read-entered head scope and under the
+  owner's unactivated scope), hence one cell (`aliasBindingCell_agree`); an EXPORTED alias's key has
+  no binding-context component and no activation component — it is the structural scope key alone, in
+  every context and state (`aliasBindingCellKey_exported`, `aliasBindingCellKey_exported_run_wide`),
+  and that scope key reads no activation at any depth (`aliasBindingCellScopeKey_declaration`,
+  `aliasBindingCellScopeKey_withActivation`); the key is stable under every activation-prefix
+  extension of a valid chain (`aliasBindingCellKey_stable`);
 * one runtime step keeps FAILURE apart from ABSENCE: a projection failure propagates with its error
   (`runtimeAliasStep_failure_propagates`), as does a failure to establish the cell
   (`runtimeAliasStep_cell_failure_propagates`), absence ends the chase as the value view
@@ -62,7 +84,13 @@ new supply (D3) and that a chain or cycle behaves as the guards show — propert
 reachable bindings, beyond the one-step equation above; the C# front end's Option A
 classification and Q-75 inference (front-end facts, FORMAL-02: no theorem here concerns inference);
 C# concurrency, first-wins establishment, the CALLABLE single flight, Guard B, run pre-marking,
-asynchronous resolution and cancellation (C#-only, `RuntimeCallableAliasMechanismTests`).
+asynchronous resolution and cancellation (C#-only, `RuntimeCallableAliasMechanismTests`); that the C#
+cell store (`ZeroArgPropertyCacheKey.ForAliasBindingCell`, the identity-partitioned
+`EvaluationBudget.AliasBindingCells`) realizes this key — the C# differential
+(`RuntimeAliasCellLifetimeTests`, the spec cases); that a reachable production state gives the
+premises of the agreement laws (which chain `scopeInContext` selects is guard-pinned, ledger E-12);
+and anything about re-entrancy beyond the cell's own `demandCycle` (a property's Q-37 re-entrant read
+is deliberately not an alias's).
 -/
 
 namespace KatLang.RuntimeAliasLaws
@@ -86,62 +114,300 @@ theorem aliasBindingCell_nonparameter (wired : Algorithm) (target : Expr) (ctx :
     aliasBindingCell wired target ctx = aliasBindingCellRecorded wired target ctx := by
   cases target <;> first | exact absurd rfl (hnp _) | rfl
 
+/-! ### The key (ALIAS-CELL-LIFETIME: property lifetime) -/
+
+/-- The structural owner used by the cell key is the property cache's own owner component,
+    including its declaration even for distinct owners that share their property list. -/
+theorem propertyKeyOwner_is_the_property_cache_owner (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+    (property : PropDef) (ctx : EvalCtx) (env : ValEnv) (obc : Option Nat) :
+    (zeroArgPropertyCacheKey k owner property ctx env obc).owner = propertyKeyOwner owner.asScopeCtx := rfl
+
+/-- The key reads the state ONLY through the owner search of the declaring chain
+    (`propertyOwnerBindingContext`): no activation index, no cell, no cache entry. -/
+theorem aliasBindingCellKey_of_owner_context (wired : Algorithm) (ctx : EvalCtx) (s t : EvalState)
+    (h : propertyOwnerBindingContext wired.parent t = propertyOwnerBindingContext wired.parent s) :
+    aliasBindingCellKey wired ctx t = aliasBindingCellKey wired ctx s := by
+  simp only [aliasBindingCellKey, aliasCellBindingContext, h]
+
+/-- **The key is stable on a valid chain**: every activation-prefix extension of a state in which
+    the declaring chain's owner search is valid (`OwnerSearchValid`: no dangling level where the
+    search stops) computes the same key. Production only appends activations
+    (`OwnerContextStability.activations_kept`). -/
+theorem aliasBindingCellKey_stable (wired : Algorithm) (ctx : EvalCtx) {s t : EvalState}
+    (hp : KatLang.OwnerContextStability.ActivationPrefix s t)
+    (hv : KatLang.OwnerContextStability.OwnerSearchValid wired.parent s) :
+    aliasBindingCellKey wired ctx t = aliasBindingCellKey wired ctx s :=
+  aliasBindingCellKey_of_owner_context wired ctx s t (KatLang.OwnerContextStability.owner_context_stable hp hv)
+
+/-- **The binding-context component IS the property key's.** For an alias that is a property of its
+    declaring scope, the context component of its cell key is the `bindingContext` field of the
+    zero-argument cache key of that property (`zeroArgPropertyCacheKey`), read with the declaring
+    chain's owner context: the two lifetimes come from one function and cannot drift. -/
+theorem aliasCellBindingContext_is_the_property_key_component (wired : Algorithm) (property : PropDef)
+    (hown : aliasOwnProperty? wired = some property) (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+    (ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
+    aliasCellBindingContext wired ctx s =
+      (zeroArgPropertyCacheKey k owner property ctx env (propertyOwnerBindingContext wired.parent s)).bindingContext := by
+  unfold aliasCellBindingContext aliasCellIsExported
+  rw [hown]
+  rfl
+
+/-- **(b) An exported alias's key has no binding-context component**: it is the structural scope key
+    alone (`aliasBindingCellScopeKey`), whatever the context and the state. -/
+theorem aliasBindingCellKey_exported (wired : Algorithm) (ctx : EvalCtx) (s : EvalState)
+    (hexp : aliasCellIsExported wired = true) :
+    aliasBindingCellKey wired ctx s = aliasBindingCellScopeKey wired ++ "@" ++ reprStr (none : Option Nat) := by
+  unfold aliasBindingCellKey aliasCellBindingContext propertyKeyBindingContext
+  rw [hexp]
+  rfl
+
+/-- **(b) One exported cell per declaration and structural declaring scope per run**: two exported
+    wirings with one structural scope key have one cell key in ANY two contexts and states — explicit
+    calls of the owner, reads of it and reads from outside alike. -/
+theorem aliasBindingCellKey_exported_run_wide (wired wired' : Algorithm) (ctx ctx' : EvalCtx) (s s' : EvalState)
+    (hexp : aliasCellIsExported wired = true) (hexp' : aliasCellIsExported wired' = true)
+    (hscope : aliasBindingCellScopeKey wired = aliasBindingCellScopeKey wired') :
+    aliasBindingCellKey wired ctx s = aliasBindingCellKey wired' ctx' s' := by
+  rw [aliasBindingCellKey_exported wired ctx s hexp, aliasBindingCellKey_exported wired' ctx' s' hexp', hscope]
+
+/-- `ScopeCtx.declaration` (the chain without its activations, at every depth) keeps host provenance. -/
+theorem hostChain_declaration : ∀ scope : ScopeCtx, scope.declaration.hostChain = scope.hostChain
+  | .mk none _ _ _ _ _ _ _ => rfl
+  | .mk (some p) ps op pr out br act id => by
+      have ih := hostChain_declaration p
+      simp only [ScopeCtx.declaration, ScopeCtx.hostChain, ih]
+
+/-- `ScopeCtx.declaration` keeps component provenance. -/
+theorem componentChain_declaration : ∀ scope : ScopeCtx, scope.declaration.componentChain = scope.componentChain
+  | .mk none _ _ _ _ _ _ _ => rfl
+  | .mk (some p) ps op pr out br act id => by
+      have ih := componentChain_declaration p
+      simp only [ScopeCtx.declaration, ScopeCtx.componentChain, ih]
+
+/-- `cacheScopeShape` reads no activation, at any depth. -/
+theorem cacheScopeShape_declaration : ∀ scope : ScopeCtx, cacheScopeShape scope.declaration = cacheScopeShape scope
+  | .mk none ps op pr out br act id => by
+      rw [show (ScopeCtx.mk none ps op pr out br act id).declaration = .mk none ps op pr out br none id from rfl,
+        KatLang.TotalLeaves.cacheScopeShape_equation (.mk none ps op pr out br none id),
+        KatLang.TotalLeaves.cacheScopeShape_equation (.mk none ps op pr out br act id)]
+  | .mk (some p) ps op pr out br act id => by
+      have ih := cacheScopeShape_declaration p
+      rw [show (ScopeCtx.mk (some p) ps op pr out br act id).declaration
+            = .mk (some p.declaration) ps op pr out br none id from rfl,
+        KatLang.TotalLeaves.cacheScopeShape_equation (.mk (some p.declaration) ps op pr out br none id),
+        KatLang.TotalLeaves.cacheScopeShape_equation (.mk (some p) ps op pr out br act id)]
+      simp only [Option.map_some, ih]
+
+/-- **(b) The structural scope key reads no activation, at any depth**: an alias wired under a scope
+    chain and under that chain with every activation erased (`ScopeCtx.declaration`) has one scope
+    key. With `aliasBindingCellKey_exported`: an exported alias's cell key has no activation
+    component at all. -/
+theorem aliasBindingCellScopeKey_declaration (scope : ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    aliasBindingCellScopeKey (.alias (some scope.declaration) op pr target id reference) =
+      aliasBindingCellScopeKey (.alias (some scope) op pr target id reference) := by
+  have hown : aliasOwnProperty? (.alias (some scope.declaration) op pr target id reference) =
+      aliasOwnProperty? (.alias (some scope) op pr target id reference) := by
+    cases scope with
+    | mk parent ps sop spr out br act sid =>
+      cases parent <;> cases hd : PropertyIdentity.callableDeclaration id <;>
+        simp only [aliasOwnProperty?, Algorithm.parent, Algorithm.declarationId, ScopeCtx.declaration, hd]
+  simp only [aliasBindingCellScopeKey, aliasBindingCellScopeOwnerKey, hown,
+    Algorithm.parent, Algorithm.declarationId, ScopeCtx.hostChainOf,
+    ScopeCtx.componentChainOf, Option.map_some, hostChain_declaration, componentChain_declaration,
+    propertyKeyOwner, cacheScopeShape_declaration,
+    show scope.declaration.declarationId = scope.declarationId from by
+      cases scope with
+      | mk parent ps sop spr out br act sid => cases parent <;> rfl]
+
+/-- The declaring level's own activation is invisible to the scope key: the head scope a body entry
+    activates and the unactivated level a structural path or an `open` rebuilds are one scope. -/
+theorem aliasBindingCellScopeKey_withActivation (scope : ScopeCtx) (v : Nat) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    aliasBindingCellScopeKey (.alias (some (scope.withActivation v)) op pr target id reference) =
+      aliasBindingCellScopeKey (.alias (some scope) op pr target id reference) := by
+  rw [← aliasBindingCellScopeKey_declaration (scope.withActivation v),
+    ← aliasBindingCellScopeKey_declaration scope,
+    KatLang.CallableIdentityProvenance.declaration_withActivation]
+
+/-- The alias's own property — hence its exposure — is read from the declaring level's property list
+    and declaration identities only: the level's activation is invisible to it. -/
+theorem aliasCellIsExported_withActivation (scope : ScopeCtx) (v : Nat) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    aliasCellIsExported (.alias (some (scope.withActivation v)) op pr target id reference) =
+      aliasCellIsExported (.alias (some scope) op pr target id reference) := by
+  cases scope with
+  | mk p ps sop spr out br act sid =>
+    cases hd : PropertyIdentity.callableDeclaration id <;>
+      simp only [aliasCellIsExported, aliasOwnProperty?, Algorithm.parent, Algorithm.declarationId,
+        ScopeCtx.withActivation, hd]
+
+/-- **(a) Read/structural agreement.** Two uses of an alias — two wirings, in two contexts — whose
+    declaring chains have the same structural scope (`aliasBindingCellScopeKey`), the same exposure
+    and the same owner binding context (`propertyOwnerBindingContext`) have ONE cell key. On a chain
+    with an activated level the two access contexts are irrelevant; on an unactivated chain they must
+    agree (the property cache's own fallback). -/
+theorem aliasBindingCellKey_agree (wired wired' : Algorithm) (ctx ctx' : EvalCtx) (s : EvalState)
+    (hscope : aliasBindingCellScopeKey wired = aliasBindingCellScopeKey wired')
+    (hexp : aliasCellIsExported wired = aliasCellIsExported wired')
+    (hctx : propertyOwnerBindingContext wired.parent s = propertyOwnerBindingContext wired'.parent s)
+    (hfound : (propertyOwnerBindingContext wired.parent s).isSome = true ∨ ctx.bindingContext = ctx'.bindingContext) :
+    aliasBindingCellKey wired ctx s = aliasBindingCellKey wired' ctx' s := by
+  unfold aliasBindingCellKey aliasCellBindingContext propertyKeyBindingContext
+  rw [hscope, hexp, ← hctx]
+  cases aliasCellIsExported wired' with
+  | true => rfl
+  | false =>
+    rcases hfound with hsome | hsame
+    · cases hown : propertyOwnerBindingContext wired.parent s with
+      | none => rw [hown] at hsome; cases hsome
+      | some n => rfl
+    · rw [hsame]
+
+/-- **(a), at a property-style read (CACHE-OWNER-D1, COLLECT-CACHE-1).** After a read-owned entry of
+    the owner `a` (`enterPropertyOwnerBody` with the inherited context, on a declaring chain that
+    retains a context `m`), a member alias of `a` wired under the ENTERED head scope and the same
+    alias wired under `a`'s UNACTIVATED scope — a structural `B.A`, an opened `A`, a lexical read in a
+    body entered without a record — have ONE cell key, in any two access contexts. The read's fresh
+    activation neither splits the cell (the former defect: a cell per minted activation) nor merges
+    two declaring contexts. -/
+theorem aliasBindingCellKey_read_entry (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv) (s : EvalState)
+    {m : Nat} (hrec : KatLang.WhileRoundProduction.recordsActivation a = true)
+    (hr : KatLang.OwnerContextStability.RetainedAt a.parent s m)
+    (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) (reference : Bool)
+    (use use' : EvalCtx) :
+    aliasBindingCellKey (.alias (some (KatLang.OwnerContextStability.enteredScope a s)) op pr target id reference) use
+        (KatLang.WhileRoundProduction.enteredState a
+          { boundCtx with bindingContext := KatLang.PropertyOwnerContext.inheritedContext a ctx s } env s) =
+      aliasBindingCellKey (.alias (some a.asScopeCtx) op pr target id reference) use'
+        (KatLang.WhileRoundProduction.enteredState a
+          { boundCtx with bindingContext := KatLang.PropertyOwnerContext.inheritedContext a ctx s } env s) := by
+  have hsite := KatLang.OwnerContextStability.property_entry_retains_declaring_context a boundCtx ctx env s hr
+  simp only [KatLang.OwnerContextStability.enteredSite, hrec, ite_true] at hsite
+  apply aliasBindingCellKey_agree
+  · exact aliasBindingCellScopeKey_withActivation a.asScopeCtx _ op pr target id reference
+  · exact aliasCellIsExported_withActivation a.asScopeCtx _ op pr target id reference
+  · exact KatLang.OwnerContextStability.read_entry_levels_agree a boundCtx ctx env s hrec hr
+      a.params a.opens a.props a.output a.branches a.declarationId
+  · left
+    show (propertyOwnerBindingContext (some (KatLang.OwnerContextStability.enteredScope a s)) _).isSome = true
+    rw [hsite.context]
+    rfl
+
+/-! ### The recorded cell -/
+
 /-- A recorded binding cell is read: nothing is supplied, allocated, entered or written. -/
 theorem aliasBindingCell_recorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (s : EvalState)
     (a : Nat) (hnp : ∀ n, target ≠ .param n)
-    (h : lookupAssoc (aliasCellKey wired) s.aliasCells = some a) :
+    (h : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells = some a) :
     (aliasBindingCell wired target ctx).runState s = (.ok a, s) := by
   rw [aliasBindingCell_nonparameter wired target ctx hnp]
   simp only [aliasBindingCellRecorded, bind_run, get_run, h]
   rfl
 
-/-- Entering an alias body succeeds and never touches the cell heap or the binding-cell record. -/
+/-- Entering an alias body succeeds and never touches the cell heap or the binding-cell record; it
+    only appends to the activation array. -/
 theorem enterAlgorithmBody_keeps_cells (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
     ∃ c t, (enterAlgorithmBody a ctx env).runState s = (.ok c, t)
-      ∧ t.needs = s.needs ∧ t.aliasCells = s.aliasCells := by
+      ∧ t.needs = s.needs ∧ t.aliasCells = s.aliasCells
+      ∧ KatLang.OwnerContextStability.ActivationPrefix s t := by
   unfold enterAlgorithmBody recordParameterActivation
   split
-  · exact ⟨_, _, rfl, rfl, rfl⟩
-  · exact ⟨_, _, rfl, rfl, rfl⟩
+  · exact ⟨_, _, rfl, rfl, rfl, KatLang.OwnerContextStability.ActivationPrefix.refl s⟩
+  · exact ⟨_, _, rfl, rfl, rfl, KatLang.OwnerContextStability.ActivationPrefix.push s _⟩
 
 /-- The first use of a non-parameter row's binding cell: the row supplied in the entered body context,
-    then recorded under the alias's key. -/
+    then recorded under the alias's key (read in the state the use started from). -/
 theorem aliasBindingCell_establishes (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (s : EvalState)
     (hnp : ∀ n, target ≠ .param n)
-    (hl : lookupAssoc (aliasCellKey wired) s.aliasCells = none) :
+    (hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells = none) :
     ∃ c u, (enterAlgorithmBody wired ctx []).runState s = (.ok c, u)
       ∧ u.needs = s.needs ∧ u.aliasCells = s.aliasCells
+      ∧ KatLang.OwnerContextStability.ActivationPrefix s u
       ∧ (aliasBindingCell wired target ctx).runState s =
           (.ok u.needs.size, { u with
             needs := u.needs.push { suspension := .expression target c [] },
-            aliasCells := (aliasCellKey wired, u.needs.size) :: u.aliasCells }) := by
-  obtain ⟨c, u, he, hneeds, hcells⟩ := enterAlgorithmBody_keeps_cells wired ctx [] s
-  refine ⟨c, u, he, hneeds, hcells, ?_⟩
+            aliasCells := (aliasBindingCellKey wired ctx s, u.needs.size) :: u.aliasCells }) := by
+  obtain ⟨c, u, he, hneeds, hcells, hprefix⟩ := enterAlgorithmBody_keeps_cells wired ctx [] s
+  refine ⟨c, u, he, hneeds, hcells, hprefix, ?_⟩
   rw [aliasBindingCell_nonparameter wired target ctx hnp]
   simp only [aliasBindingCellRecorded, bind_run, get_run, hl, he,
     KatLang.NeedControl.Allocation.supply_nonparameter target c [] u hnp, modify_run]
   rfl
 
-/-- **Canonical binding cell.** Whatever cell the first successful use of a runtime alias's binding
-    cell returns, using it again from the resulting state — for the bare VALUE or for any CALLABLE
-    projection — returns the SAME cell and changes nothing: one binding cell per declaration and
-    declaring activation (`aliasCellKey`). A parameter row is its parameter's own cell instead
-    (`aliasBindingCell_parameter_transport`). -/
-theorem aliasBindingCell_canonical (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (s t : EvalState)
-    (a : Nat) (hnp : ∀ n, target ≠ .param n)
-    (h : (aliasBindingCell wired target ctx).runState s = (.ok a, t)) :
-    (aliasBindingCell wired target ctx).runState t = (.ok a, t) := by
-  cases hl : lookupAssoc (aliasCellKey wired) s.aliasCells with
+/-- **One cell per key.** Whatever cell a successful use of a runtime alias's binding cell returns,
+    ANY use whose key in the resulting state is that use's key — another wiring of the alias, another
+    context, another route — returns the SAME cell from the resulting state and changes nothing. With
+    `aliasBindingCellKey_agree` this is the read/structural agreement of cells; with
+    `aliasBindingCellKey_exported_run_wide`, the one exported cell of a run. -/
+theorem aliasBindingCell_shared (wired wired' : Algorithm) (target : Expr) (ctx ctx' : EvalCtx)
+    (s t : EvalState) (a : Nat) (hnp : ∀ n, target ≠ .param n)
+    (h : (aliasBindingCell wired target ctx).runState s = (.ok a, t))
+    (hkey : aliasBindingCellKey wired' ctx' t = aliasBindingCellKey wired ctx s) :
+    (aliasBindingCell wired' target ctx').runState t = (.ok a, t) := by
+  cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
   | some a0 =>
     rw [aliasBindingCell_recorded wired target ctx s a0 hnp hl] at h
     cases h
-    exact aliasBindingCell_recorded wired target ctx s _ hnp hl
+    exact aliasBindingCell_recorded wired' target ctx' s _ hnp (hkey ▸ hl)
   | none =>
-    obtain ⟨c, u, _, _, _, hrun⟩ := aliasBindingCell_establishes wired target ctx s hnp hl
+    obtain ⟨c, u, _, _, _, _, hrun⟩ := aliasBindingCell_establishes wired target ctx s hnp hl
     rw [hrun] at h
     cases h
-    apply aliasBindingCell_recorded wired target ctx _ _ hnp
+    apply aliasBindingCell_recorded wired' target ctx' _ _ hnp
+    rw [hkey]
     simp [lookupAssoc]
+
+/-- **Canonical binding cell.** Whatever cell the first successful use of a runtime alias's binding
+    cell returns, using it again from the resulting state — for the bare VALUE or for any CALLABLE
+    projection — returns the SAME cell and changes nothing: one binding cell per key
+    (`aliasBindingCellKey`: the declaration, the structural declaring scope and the property-lifetime
+    binding context — never an activation). The premise is the declaring chain's owner-search
+    validity at the first use (`OwnerSearchValid`; a synthetic dangling level is the one thing an
+    append could re-key, `OwnerContextStability.dangling_reference_breaks_stability`). A parameter row
+    is its parameter's own cell instead (`aliasBindingCell_parameter_transport`). -/
+theorem aliasBindingCell_canonical (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (s t : EvalState)
+    (a : Nat) (hnp : ∀ n, target ≠ .param n)
+    (hv : KatLang.OwnerContextStability.OwnerSearchValid wired.parent s)
+    (h : (aliasBindingCell wired target ctx).runState s = (.ok a, t)) :
+    (aliasBindingCell wired target ctx).runState t = (.ok a, t) := by
+  apply aliasBindingCell_shared wired wired target ctx ctx s t a hnp h
+  apply aliasBindingCellKey_stable wired ctx _ hv
+  cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
+  | some a0 =>
+    rw [aliasBindingCell_recorded wired target ctx s a0 hnp hl] at h
+    cases h
+    exact KatLang.OwnerContextStability.ActivationPrefix.refl s
+  | none =>
+    obtain ⟨c, u, _, _, _, hprefix, hrun⟩ := aliasBindingCell_establishes wired target ctx s hnp hl
+    rw [hrun] at h
+    cases h
+    exact hprefix.trans (KatLang.OwnerContextStability.ActivationPrefix.of_eq rfl)
+
+/-- An exported alias needs no premise: its key reads no state. -/
+theorem aliasBindingCell_canonical_exported (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (s t : EvalState)
+    (a : Nat) (hnp : ∀ n, target ≠ .param n) (hexp : aliasCellIsExported wired = true)
+    (h : (aliasBindingCell wired target ctx).runState s = (.ok a, t)) :
+    (aliasBindingCell wired target ctx).runState t = (.ok a, t) :=
+  aliasBindingCell_shared wired wired target ctx ctx s t a hnp h
+    (aliasBindingCellKey_exported_run_wide wired wired ctx ctx t s hexp hexp rfl)
+
+/-- **(a) Read/structural agreement of CELLS.** After one use established or read the cell, a second
+    use — another wiring, another context — whose declaring chain has, in the resulting state, the
+    same structural scope, exposure and owner binding context as the first use's key was computed
+    from, reads the SAME cell and writes nothing. The first key's stability from `s` to `t` is
+    `aliasBindingCellKey_stable` on a valid chain. -/
+theorem aliasBindingCell_agree (wired wired' : Algorithm) (target : Expr) (ctx ctx' : EvalCtx)
+    (s t : EvalState) (a : Nat) (hnp : ∀ n, target ≠ .param n)
+    (h : (aliasBindingCell wired target ctx).runState s = (.ok a, t))
+    (hstable : aliasBindingCellKey wired ctx t = aliasBindingCellKey wired ctx s)
+    (hscope : aliasBindingCellScopeKey wired' = aliasBindingCellScopeKey wired)
+    (hexp : aliasCellIsExported wired' = aliasCellIsExported wired)
+    (hctx : propertyOwnerBindingContext wired'.parent t = propertyOwnerBindingContext wired.parent t)
+    (hfound : (propertyOwnerBindingContext wired'.parent t).isSome = true ∨ ctx'.bindingContext = ctx.bindingContext) :
+    (aliasBindingCell wired' target ctx').runState t = (.ok a, t) :=
+  aliasBindingCell_shared wired wired' target ctx ctx' s t a hnp h
+    ((aliasBindingCellKey_agree wired' wired ctx' ctx t hscope hexp hctx hfound).trans hstable)
 
 /-- **Inert establishment.** Establishing (or reading) a binding cell evaluates, prepares, projects
     and demands nothing: every existing cell keeps its suspension, VALUE state, CALLABLE state and plan
@@ -158,12 +424,12 @@ theorem aliasBindingCell_inert (wired : Algorithm) (target : Expr) (ctx : EvalCt
       obtain ⟨r, hr⟩ := supply_shape (.param n) (ctx.push wired) [] s
       rcases hr with hr | ⟨hr, _⟩ <;> rw [hr] at hs <;> cases hs
   · have hnp : ∀ n, target ≠ .param n := fun n h => hp ⟨n, h⟩
-    cases hl : lookupAssoc (aliasCellKey wired) s.aliasCells with
+    cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
     | some a0 =>
       rw [aliasBindingCell_recorded wired target ctx s a0 hnp hl]
       exact HeapCore.refl _
     | none =>
-      obtain ⟨c, u, _, hneeds, _, hrun⟩ := aliasBindingCell_establishes wired target ctx s hnp hl
+      obtain ⟨c, u, _, hneeds, _, _, hrun⟩ := aliasBindingCell_establishes wired target ctx s hnp hl
       rw [hrun]
       show HeapCore s.needs (u.needs.push _)
       rw [hneeds]
@@ -240,18 +506,18 @@ theorem aliasPropertyView_takes_no_supply (p : Option ScopeCtx) (op : List Expr)
     (Algorithm.alias p op pr target id reference).aliasPropertyView.parameterPatterns = [] := rfl
 
 /-- **The value view reads the binding cell.** The value view keeps the alias's declaration and scope, so
-    its cell key IS the alias's (`aliasCellKey`): a zero-supply invocation of the view demands exactly the
-    binding cell the chase projected, never a rerun of the row. -/
+    its cell key IS the alias's (`aliasBindingCellKey`, in the same context and state): a zero-supply
+    invocation of the view demands exactly the binding cell the chase projected, never a rerun of the row. -/
 theorem valueView_reads_the_binding_cell (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
-    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
-    aliasCellKey (Algorithm.alias p op pr target id reference).aliasPropertyView
-      = aliasCellKey (Algorithm.alias p op pr target id reference) := rfl
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (ctx : EvalCtx) (s : EvalState) :
+    aliasBindingCellKey (Algorithm.alias p op pr target id reference).aliasPropertyView ctx s
+      = aliasBindingCellKey (Algorithm.alias p op pr target id reference) ctx s := rfl
 
 /-- The value view's cell is a READ: it changes no state, and returns the recorded binding cell. -/
 theorem valueViewCell_reads_only (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
-    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (s : EvalState) :
-    (valueViewCell? (Algorithm.alias p op pr target id reference).aliasPropertyView).runState s
-      = (.ok (lookupAssoc (aliasCellKey (Algorithm.alias p op pr target id reference)) s.aliasCells), s) := by
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (ctx : EvalCtx) (s : EvalState) :
+    (valueViewCell? (Algorithm.alias p op pr target id reference).aliasPropertyView ctx).runState s
+      = (.ok (lookupAssoc (aliasBindingCellKey (Algorithm.alias p op pr target id reference) ctx s) s.aliasCells), s) := by
   simp only [Algorithm.aliasPropertyView, valueViewCell?, bind_run, get_run]
   rfl
 

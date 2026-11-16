@@ -613,7 +613,8 @@ theorem cacheKey_of_same_fields {owner owner' : Algorithm} {binding binding' : P
     (ctx ctx' : EvalCtx) (env env' : ValEnv) (n : Nat) :
     zeroArgPropertyCacheKey k' owner' binding' ctx' env' (some n) =
       zeroArgPropertyCacheKey k owner binding ctx env (some n) := by
-  simp [zeroArgPropertyCacheKey, h.ownerShape, h.hostOwners, h.componentOwners, h.propertyName, h.propertyAlgorithm, h.exported]
+  have ho : propertyKeyOwner owner'.asScopeCtx = propertyKeyOwner owner.asScopeCtx := h.ownerShape.symm
+  simp [zeroArgPropertyCacheKey, propertyKeyBindingContext, ho, h.hostOwners, h.componentOwners, h.propertyName, h.propertyAlgorithm, h.exported]
 
 /-- **A structural or opened read reuses the lexical read's entry.** `resolved` hangs under a level
     activated at record `id`, `resolved'` under the unactivated level rebuilt over the SAME parent

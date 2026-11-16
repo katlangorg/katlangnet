@@ -31,19 +31,19 @@ property names, a clause body's head binders), innermost level first, ending in 
 property level. `forwarded` lists the parameters automatic forwarding added afterwards (the resolved
 signature minus the detected one); the owner walk never reads it. Identical guards of one program
 are emitted once, with their multiplicity, and programs whose levels and guards are identical share
-one block that names every one of them (629 blocks): nothing is sampled.
+one block that names every one of them (634 blocks): nothing is sampled.
 
 Partition:
-- corpus programs: 3140
+- corpus programs: 3145
 - skipped, the parser rejected the source: 42
 - skipped, an unresolved `load` directive (module elaboration is async-only): 0
 - skipped, parameter inference refused as circular: 0
 - excluded by exact id, a reviewed Lean/C# disagreement (class and witness in
   `FrontEndDecisionCorpus.ReviewedDriftById`): 0
-- guarded programs: 3098 (7551 scope levels, 49 with a forwarded parameter)
-- name occurrences: 8187 (2615 parameters, 529 dot-edge fallback names)
+- guarded programs: 3103 (7584 scope levels, 49 with a forwarded parameter)
+- name occurrences: 8259 (2632 parameters, 539 dot-edge fallback names)
 - of those names and heads, the same node in the complete pipeline's tree (matched by source span):
-  7224; with no source span to match by (names the parser synthesized, such as the plumbing of an
+  7296; with no source span to match by (names the parser synthesized, such as the plumbing of an
   assignment deconstruction): 1046; with no node of that span and name left there: 0
 - open heads: 83 (4 parameter-owned)
 - clause families: 58 (12 with no lifting signature); skipped, a head with no Lean spelling: 1
@@ -8796,924 +8796,1083 @@ def p573_3 : List OwnerLevel := { parameters := ["op"], properties := [] } :: p5
 #guard selectOwnedDeclaration p573_0 "A" == .property 0
 #guard elaboratesToParameter p573_0 "A" == false
 
--- spec/runtime-alias-self-link-is-a-demand-cycle: A = A.Algorithm \n  \n A
-def p574_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
-def p574_1 : List OwnerLevel := { parameters := [], properties := [] } :: p574_0
-#guard selectOwnedDeclaration p574_1 "A" == .property 1
-#guard elaboratesToParameter p574_1 "A" == false
-#guard selectOwnedDeclaration p574_1 "Algorithm" == .none
-#guard elaboratesToParameter p574_1 "Algorithm" == false
-#guard selectOwnedDeclaration p574_0 "A" == .property 0
-#guard elaboratesToParameter p574_0 "A" == false
+-- spec/runtime-alias-cell-read-and-path-share-one-call: G(x) = tick() + x * 0 \n F(b) = { \n     B = { \n         public A = b.G \n         A + 0 \n     } \n     B.A, B \n } \n  \n F(5)
+def p574_0 : List OwnerLevel := { parameters := [], properties := ["G", "F"] } :: prelude
+def p574_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p574_0
+def p574_2 : List OwnerLevel := { parameters := ["b"], properties := ["B"] } :: p574_0
+def p574_3 : List OwnerLevel := { parameters := [], properties := ["A"] } :: p574_2
+def p574_4 : List OwnerLevel := { parameters := [], properties := [] } :: p574_3
+#guard selectOwnedDeclaration p574_1 "tick" == .property 2
+#guard elaboratesToParameter p574_1 "tick" == false
+#guard selectOwnedDeclaration p574_1 "x" == .parameter 0
+#guard elaboratesToParameter p574_1 "x" == true
+#guard selectOwnedDeclaration p574_4 "b" == .parameter 2
+#guard elaboratesToParameter p574_4 "b" == true
+#guard selectOwnedDeclaration p574_4 "G" == .property 3
+#guard elaboratesToParameter p574_4 "G" == false
+#guard selectOwnedDeclaration p574_3 "A" == .property 0
+#guard elaboratesToParameter p574_3 "A" == false
+#guard selectOwnedDeclaration p574_2 "B" == .property 0 -- x2
+#guard elaboratesToParameter p574_2 "B" == false -- x2
+#guard selectOwnedDeclaration p574_2 "A" == .none
+#guard elaboratesToParameter p574_2 "A" == false
+#guard selectOwnedDeclaration p574_0 "F" == .property 0
+#guard elaboratesToParameter p574_0 "F" == false
 
--- spec/reference-head-resolves-in-its-own-scope: Lib = { public Inc(x) = x + 1 } \n A = Lib \n F = { \n     open A \n     Lib = { public Dec(x) = x - 1 } \n     G = Inc \n     G(5) \n } \n  \n F
-def p575_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "A", "F"] } :: prelude
-def p575_1 : List OwnerLevel := { parameters := [], properties := ["Inc"] } :: p575_0
-def p575_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p575_1
-def p575_3 : List OwnerLevel := { parameters := [], properties := [] } :: p575_0
-def p575_4 : List OwnerLevel := { parameters := [], properties := ["Lib", "G"] } :: p575_0
-def p575_5 : List OwnerLevel := { parameters := [], properties := ["Dec"] } :: p575_4
-def p575_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p575_5
-def p575_7 : List OwnerLevel := { parameters := [], properties := [] } :: p575_4
-#guard selectOwnedDeclaration p575_2 "x" == .parameter 0
-#guard elaboratesToParameter p575_2 "x" == true
-#guard selectOwnedDeclaration p575_3 "Lib" == .property 1
-#guard elaboratesToParameter p575_3 "Lib" == false
-#guard selectOwnedDeclaration p575_4 "A" == .property 1
-#guard openHead? (elaborateOpenHead p575_4 "A") == some (false, "A")
-#guard selectOwnedDeclaration p575_6 "x" == .parameter 0
-#guard elaboratesToParameter p575_6 "x" == true
-#guard selectOwnedDeclaration p575_7 "Inc" == .none
-#guard elaboratesToParameter p575_7 "Inc" == false
-#guard selectOwnedDeclaration p575_4 "G" == .property 0
+-- spec/runtime-alias-cell-explicit-call-is-fresh: G(x) = tick() + x * 0 \n F(b) = { \n     B = { \n         public A = b.G \n         A + 0 \n     } \n     B, B, B.A, B.A, B(), B.A \n } \n  \n F(5)
+def p575_0 : List OwnerLevel := { parameters := [], properties := ["G", "F"] } :: prelude
+def p575_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p575_0
+def p575_2 : List OwnerLevel := { parameters := ["b"], properties := ["B"] } :: p575_0
+def p575_3 : List OwnerLevel := { parameters := [], properties := ["A"] } :: p575_2
+def p575_4 : List OwnerLevel := { parameters := [], properties := [] } :: p575_3
+#guard selectOwnedDeclaration p575_1 "tick" == .property 2
+#guard elaboratesToParameter p575_1 "tick" == false
+#guard selectOwnedDeclaration p575_1 "x" == .parameter 0
+#guard elaboratesToParameter p575_1 "x" == true
+#guard selectOwnedDeclaration p575_4 "b" == .parameter 2
+#guard elaboratesToParameter p575_4 "b" == true
+#guard selectOwnedDeclaration p575_4 "G" == .property 3
 #guard elaboratesToParameter p575_4 "G" == false
+#guard selectOwnedDeclaration p575_3 "A" == .property 0
+#guard elaboratesToParameter p575_3 "A" == false
+#guard selectOwnedDeclaration p575_2 "B" == .property 0 -- x6
+#guard elaboratesToParameter p575_2 "B" == false -- x6
+#guard selectOwnedDeclaration p575_2 "A" == .none -- x3
+#guard elaboratesToParameter p575_2 "A" == false -- x3
 #guard selectOwnedDeclaration p575_0 "F" == .property 0
 #guard elaboratesToParameter p575_0 "F" == false
 
--- spec/reference-receiver-is-its-target-structure: Lib = { \n     Defaults = { public Rate = 2 } \n     public Cfg = Defaults \n } \n Tax = Lib.Cfg.Rate * 100 \n  \n Tax
-def p576_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "Tax"] } :: prelude
-def p576_1 : List OwnerLevel := { parameters := [], properties := ["Defaults", "Cfg"] } :: p576_0
-def p576_2 : List OwnerLevel := { parameters := [], properties := ["Rate"] } :: p576_1
-def p576_3 : List OwnerLevel := { parameters := [], properties := [] } :: p576_2
-def p576_4 : List OwnerLevel := { parameters := [], properties := [] } :: p576_1
-def p576_5 : List OwnerLevel := { parameters := [], properties := [] } :: p576_0
-#guard selectOwnedDeclaration p576_4 "Defaults" == .property 1
-#guard elaboratesToParameter p576_4 "Defaults" == false
-#guard selectOwnedDeclaration p576_5 "Lib" == .property 1
-#guard elaboratesToParameter p576_5 "Lib" == false
-#guard selectOwnedDeclaration p576_5 "Cfg" == .none
-#guard elaboratesToParameter p576_5 "Cfg" == false
-#guard selectOwnedDeclaration p576_5 "Rate" == .none
-#guard elaboratesToParameter p576_5 "Rate" == false
-#guard selectOwnedDeclaration p576_0 "Tax" == .property 0
-#guard elaboratesToParameter p576_0 "Tax" == false
+-- spec/runtime-alias-cell-one-per-run-across-calls: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer(0)
+def p576_0 : List OwnerLevel := { parameters := [], properties := ["Cap", "Ten", "Hun", "Pick", "Outer"] } :: prelude
+def p576_1 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p576_0
+def p576_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p576_0
+def p576_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p576_0
+def p576_4 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p576_0
+def p576_5 : List OwnerLevel := { parameters := ["k"], properties := ["A"] } :: p576_0
+def p576_6 : List OwnerLevel := { parameters := [], properties := [] } :: p576_5
+#guard selectOwnedDeclaration p576_1 "r" == .parameter 0
+#guard elaboratesToParameter p576_1 "r" == true
+#guard selectOwnedDeclaration p576_2 "x" == .parameter 0
+#guard elaboratesToParameter p576_2 "x" == true
+#guard selectOwnedDeclaration p576_3 "x" == .parameter 0
+#guard elaboratesToParameter p576_3 "x" == true
+#guard selectOwnedDeclaration p576_4 "if" == .property 2
+#guard elaboratesToParameter p576_4 "if" == false
+#guard selectOwnedDeclaration p576_4 "n" == .parameter 0
+#guard elaboratesToParameter p576_4 "n" == true
+#guard selectOwnedDeclaration p576_4 "Cap" == .property 1 -- x2
+#guard elaboratesToParameter p576_4 "Cap" == false -- x2
+#guard selectOwnedDeclaration p576_4 "Ten" == .property 1
+#guard elaboratesToParameter p576_4 "Ten" == false
+#guard selectOwnedDeclaration p576_4 "Hun" == .property 1
+#guard elaboratesToParameter p576_4 "Hun" == false
+#guard selectOwnedDeclaration p576_6 "Pick" == .property 2
+#guard elaboratesToParameter p576_6 "Pick" == false
+#guard selectOwnedDeclaration p576_6 "tick" == .property 3
+#guard elaboratesToParameter p576_6 "tick" == false
+#guard selectOwnedDeclaration p576_6 "Algorithm" == .none
+#guard elaboratesToParameter p576_6 "Algorithm" == false
+#guard selectOwnedDeclaration p576_5 "A" == .property 0
+#guard elaboratesToParameter p576_5 "A" == false
+#guard selectOwnedDeclaration p576_0 "Outer" == .property 0 -- x2
+#guard elaboratesToParameter p576_0 "Outer" == false -- x2
 
--- spec/block-headed-reference-navigates-its-block: A = { \n     V = { public W = 7 } \n     K = V \n }.K \n  \n A.W
-def p577_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
-def p577_1 : List OwnerLevel := { parameters := [], properties := [] } :: p577_0
-def p577_2 : List OwnerLevel := { parameters := [], properties := ["V", "K"] } :: p577_1
-def p577_3 : List OwnerLevel := { parameters := [], properties := ["W"] } :: p577_2
-def p577_4 : List OwnerLevel := { parameters := [], properties := [] } :: p577_3
-def p577_5 : List OwnerLevel := { parameters := [], properties := [] } :: p577_2
-#guard selectOwnedDeclaration p577_5 "V" == .property 1
-#guard elaboratesToParameter p577_5 "V" == false
-#guard selectOwnedDeclaration p577_1 "K" == .none
-#guard elaboratesToParameter p577_1 "K" == false
-#guard selectOwnedDeclaration p577_0 "A" == .property 0
-#guard elaboratesToParameter p577_0 "A" == false
-#guard selectOwnedDeclaration p577_0 "W" == .none
-#guard elaboratesToParameter p577_0 "W" == false
+-- spec/runtime-alias-cell-unused-sibling-changes-nothing: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n F(k) = { \n     Outer = { \n         U = k + 0 \n         A = Pick(tick()).Algorithm \n         A(1) \n     } \n     Outer(), Outer() \n } \n  \n F(0)
+def p577_0 : List OwnerLevel := { parameters := [], properties := ["Cap", "Ten", "Hun", "Pick", "F"] } :: prelude
+def p577_1 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p577_0
+def p577_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p577_0
+def p577_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p577_0
+def p577_4 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p577_0
+def p577_5 : List OwnerLevel := { parameters := ["k"], properties := ["Outer"] } :: p577_0
+def p577_6 : List OwnerLevel := { parameters := [], properties := ["U", "A"] } :: p577_5
+def p577_7 : List OwnerLevel := { parameters := [], properties := [] } :: p577_6
+def p577_8 : List OwnerLevel := { parameters := [], properties := [] } :: p577_6
+#guard selectOwnedDeclaration p577_1 "r" == .parameter 0
+#guard elaboratesToParameter p577_1 "r" == true
+#guard selectOwnedDeclaration p577_2 "x" == .parameter 0
+#guard elaboratesToParameter p577_2 "x" == true
+#guard selectOwnedDeclaration p577_3 "x" == .parameter 0
+#guard elaboratesToParameter p577_3 "x" == true
+#guard selectOwnedDeclaration p577_4 "if" == .property 2
+#guard elaboratesToParameter p577_4 "if" == false
+#guard selectOwnedDeclaration p577_4 "n" == .parameter 0
+#guard elaboratesToParameter p577_4 "n" == true
+#guard selectOwnedDeclaration p577_4 "Cap" == .property 1 -- x2
+#guard elaboratesToParameter p577_4 "Cap" == false -- x2
+#guard selectOwnedDeclaration p577_4 "Ten" == .property 1
+#guard elaboratesToParameter p577_4 "Ten" == false
+#guard selectOwnedDeclaration p577_4 "Hun" == .property 1
+#guard elaboratesToParameter p577_4 "Hun" == false
+#guard selectOwnedDeclaration p577_7 "k" == .parameter 2
+#guard elaboratesToParameter p577_7 "k" == true
+#guard selectOwnedDeclaration p577_8 "Pick" == .property 3
+#guard elaboratesToParameter p577_8 "Pick" == false
+#guard selectOwnedDeclaration p577_8 "tick" == .property 4
+#guard elaboratesToParameter p577_8 "tick" == false
+#guard selectOwnedDeclaration p577_8 "Algorithm" == .none
+#guard elaboratesToParameter p577_8 "Algorithm" == false
+#guard selectOwnedDeclaration p577_6 "A" == .property 0
+#guard elaboratesToParameter p577_6 "A" == false
+#guard selectOwnedDeclaration p577_5 "Outer" == .property 0 -- x2
+#guard elaboratesToParameter p577_5 "Outer" == false -- x2
+#guard selectOwnedDeclaration p577_0 "F" == .property 0
+#guard elaboratesToParameter p577_0 "F" == false
 
--- spec/reference-behind-a-carrier-that-reads-it-back: A = B \n B = { \n     public F(x) = x * x \n     A.F \n } \n  \n A(3)
-def p578_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
-def p578_1 : List OwnerLevel := { parameters := [], properties := [] } :: p578_0
-def p578_2 : List OwnerLevel := { parameters := [], properties := ["F"] } :: p578_0
-def p578_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p578_2
-#guard selectOwnedDeclaration p578_1 "B" == .property 1
-#guard elaboratesToParameter p578_1 "B" == false
-#guard selectOwnedDeclaration p578_3 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p578_3 "x" == true -- x2
-#guard selectOwnedDeclaration p578_2 "A" == .property 1
-#guard elaboratesToParameter p578_2 "A" == false
-#guard selectOwnedDeclaration p578_2 "F" == .property 0
-#guard elaboratesToParameter p578_2 "F" == false
-#guard selectOwnedDeclaration p578_0 "A" == .property 0
+-- spec/runtime-alias-cell-read-from-outside-after-a-call: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     public A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer.A(1)
+def p578_0 : List OwnerLevel := { parameters := [], properties := ["Cap", "Ten", "Hun", "Pick", "Outer"] } :: prelude
+def p578_1 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p578_0
+def p578_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p578_0
+def p578_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p578_0
+def p578_4 : List OwnerLevel := { parameters := ["n"], properties := [] } :: p578_0
+def p578_5 : List OwnerLevel := { parameters := ["k"], properties := ["A"] } :: p578_0
+def p578_6 : List OwnerLevel := { parameters := [], properties := [] } :: p578_5
+#guard selectOwnedDeclaration p578_1 "r" == .parameter 0
+#guard elaboratesToParameter p578_1 "r" == true
+#guard selectOwnedDeclaration p578_2 "x" == .parameter 0
+#guard elaboratesToParameter p578_2 "x" == true
+#guard selectOwnedDeclaration p578_3 "x" == .parameter 0
+#guard elaboratesToParameter p578_3 "x" == true
+#guard selectOwnedDeclaration p578_4 "if" == .property 2
+#guard elaboratesToParameter p578_4 "if" == false
+#guard selectOwnedDeclaration p578_4 "n" == .parameter 0
+#guard elaboratesToParameter p578_4 "n" == true
+#guard selectOwnedDeclaration p578_4 "Cap" == .property 1 -- x2
+#guard elaboratesToParameter p578_4 "Cap" == false -- x2
+#guard selectOwnedDeclaration p578_4 "Ten" == .property 1
+#guard elaboratesToParameter p578_4 "Ten" == false
+#guard selectOwnedDeclaration p578_4 "Hun" == .property 1
+#guard elaboratesToParameter p578_4 "Hun" == false
+#guard selectOwnedDeclaration p578_6 "Pick" == .property 2
+#guard elaboratesToParameter p578_6 "Pick" == false
+#guard selectOwnedDeclaration p578_6 "tick" == .property 3
+#guard elaboratesToParameter p578_6 "tick" == false
+#guard selectOwnedDeclaration p578_6 "Algorithm" == .none
+#guard elaboratesToParameter p578_6 "Algorithm" == false
+#guard selectOwnedDeclaration p578_5 "A" == .property 0
+#guard elaboratesToParameter p578_5 "A" == false
+#guard selectOwnedDeclaration p578_0 "Outer" == .property 0 -- x2
+#guard elaboratesToParameter p578_0 "Outer" == false -- x2
+#guard selectOwnedDeclaration p578_0 "A" == .none
 #guard elaboratesToParameter p578_0 "A" == false
 
--- spec/reference-through-a-carrier-reads-the-carriers-member: Settings = Config \n Config = { \n     public Rate = 2 \n     Default \n } \n Default = Settings.Rate \n  \n Settings
-def p579_0 : List OwnerLevel := { parameters := [], properties := ["Settings", "Config", "Default"] } :: prelude
+-- spec/runtime-alias-self-link-is-a-demand-cycle: A = A.Algorithm \n  \n A
+def p579_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
 def p579_1 : List OwnerLevel := { parameters := [], properties := [] } :: p579_0
-def p579_2 : List OwnerLevel := { parameters := [], properties := ["Rate"] } :: p579_0
-def p579_3 : List OwnerLevel := { parameters := [], properties := [] } :: p579_2
-def p579_4 : List OwnerLevel := { parameters := [], properties := [] } :: p579_0
-#guard selectOwnedDeclaration p579_1 "Config" == .property 1
-#guard elaboratesToParameter p579_1 "Config" == false
-#guard selectOwnedDeclaration p579_2 "Default" == .property 1
-#guard elaboratesToParameter p579_2 "Default" == false
-#guard selectOwnedDeclaration p579_4 "Settings" == .property 1
-#guard elaboratesToParameter p579_4 "Settings" == false
-#guard selectOwnedDeclaration p579_4 "Rate" == .none
-#guard elaboratesToParameter p579_4 "Rate" == false
-#guard selectOwnedDeclaration p579_0 "Settings" == .property 0
-#guard elaboratesToParameter p579_0 "Settings" == false
+#guard selectOwnedDeclaration p579_1 "A" == .property 1
+#guard elaboratesToParameter p579_1 "A" == false
+#guard selectOwnedDeclaration p579_1 "Algorithm" == .none
+#guard elaboratesToParameter p579_1 "Algorithm" == false
+#guard selectOwnedDeclaration p579_0 "A" == .property 0
+#guard elaboratesToParameter p579_0 "A" == false
+
+-- spec/reference-head-resolves-in-its-own-scope: Lib = { public Inc(x) = x + 1 } \n A = Lib \n F = { \n     open A \n     Lib = { public Dec(x) = x - 1 } \n     G = Inc \n     G(5) \n } \n  \n F
+def p580_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "A", "F"] } :: prelude
+def p580_1 : List OwnerLevel := { parameters := [], properties := ["Inc"] } :: p580_0
+def p580_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p580_1
+def p580_3 : List OwnerLevel := { parameters := [], properties := [] } :: p580_0
+def p580_4 : List OwnerLevel := { parameters := [], properties := ["Lib", "G"] } :: p580_0
+def p580_5 : List OwnerLevel := { parameters := [], properties := ["Dec"] } :: p580_4
+def p580_6 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p580_5
+def p580_7 : List OwnerLevel := { parameters := [], properties := [] } :: p580_4
+#guard selectOwnedDeclaration p580_2 "x" == .parameter 0
+#guard elaboratesToParameter p580_2 "x" == true
+#guard selectOwnedDeclaration p580_3 "Lib" == .property 1
+#guard elaboratesToParameter p580_3 "Lib" == false
+#guard selectOwnedDeclaration p580_4 "A" == .property 1
+#guard openHead? (elaborateOpenHead p580_4 "A") == some (false, "A")
+#guard selectOwnedDeclaration p580_6 "x" == .parameter 0
+#guard elaboratesToParameter p580_6 "x" == true
+#guard selectOwnedDeclaration p580_7 "Inc" == .none
+#guard elaboratesToParameter p580_7 "Inc" == false
+#guard selectOwnedDeclaration p580_4 "G" == .property 0
+#guard elaboratesToParameter p580_4 "G" == false
+#guard selectOwnedDeclaration p580_0 "F" == .property 0
+#guard elaboratesToParameter p580_0 "F" == false
+
+-- spec/reference-receiver-is-its-target-structure: Lib = { \n     Defaults = { public Rate = 2 } \n     public Cfg = Defaults \n } \n Tax = Lib.Cfg.Rate * 100 \n  \n Tax
+def p581_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "Tax"] } :: prelude
+def p581_1 : List OwnerLevel := { parameters := [], properties := ["Defaults", "Cfg"] } :: p581_0
+def p581_2 : List OwnerLevel := { parameters := [], properties := ["Rate"] } :: p581_1
+def p581_3 : List OwnerLevel := { parameters := [], properties := [] } :: p581_2
+def p581_4 : List OwnerLevel := { parameters := [], properties := [] } :: p581_1
+def p581_5 : List OwnerLevel := { parameters := [], properties := [] } :: p581_0
+#guard selectOwnedDeclaration p581_4 "Defaults" == .property 1
+#guard elaboratesToParameter p581_4 "Defaults" == false
+#guard selectOwnedDeclaration p581_5 "Lib" == .property 1
+#guard elaboratesToParameter p581_5 "Lib" == false
+#guard selectOwnedDeclaration p581_5 "Cfg" == .none
+#guard elaboratesToParameter p581_5 "Cfg" == false
+#guard selectOwnedDeclaration p581_5 "Rate" == .none
+#guard elaboratesToParameter p581_5 "Rate" == false
+#guard selectOwnedDeclaration p581_0 "Tax" == .property 0
+#guard elaboratesToParameter p581_0 "Tax" == false
+
+-- spec/block-headed-reference-navigates-its-block: A = { \n     V = { public W = 7 } \n     K = V \n }.K \n  \n A.W
+def p582_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
+def p582_1 : List OwnerLevel := { parameters := [], properties := [] } :: p582_0
+def p582_2 : List OwnerLevel := { parameters := [], properties := ["V", "K"] } :: p582_1
+def p582_3 : List OwnerLevel := { parameters := [], properties := ["W"] } :: p582_2
+def p582_4 : List OwnerLevel := { parameters := [], properties := [] } :: p582_3
+def p582_5 : List OwnerLevel := { parameters := [], properties := [] } :: p582_2
+#guard selectOwnedDeclaration p582_5 "V" == .property 1
+#guard elaboratesToParameter p582_5 "V" == false
+#guard selectOwnedDeclaration p582_1 "K" == .none
+#guard elaboratesToParameter p582_1 "K" == false
+#guard selectOwnedDeclaration p582_0 "A" == .property 0
+#guard elaboratesToParameter p582_0 "A" == false
+#guard selectOwnedDeclaration p582_0 "W" == .none
+#guard elaboratesToParameter p582_0 "W" == false
+
+-- spec/reference-behind-a-carrier-that-reads-it-back: A = B \n B = { \n     public F(x) = x * x \n     A.F \n } \n  \n A(3)
+def p583_0 : List OwnerLevel := { parameters := [], properties := ["A", "B"] } :: prelude
+def p583_1 : List OwnerLevel := { parameters := [], properties := [] } :: p583_0
+def p583_2 : List OwnerLevel := { parameters := [], properties := ["F"] } :: p583_0
+def p583_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p583_2
+#guard selectOwnedDeclaration p583_1 "B" == .property 1
+#guard elaboratesToParameter p583_1 "B" == false
+#guard selectOwnedDeclaration p583_3 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p583_3 "x" == true -- x2
+#guard selectOwnedDeclaration p583_2 "A" == .property 1
+#guard elaboratesToParameter p583_2 "A" == false
+#guard selectOwnedDeclaration p583_2 "F" == .property 0
+#guard elaboratesToParameter p583_2 "F" == false
+#guard selectOwnedDeclaration p583_0 "A" == .property 0
+#guard elaboratesToParameter p583_0 "A" == false
+
+-- spec/reference-through-a-carrier-reads-the-carriers-member: Settings = Config \n Config = { \n     public Rate = 2 \n     Default \n } \n Default = Settings.Rate \n  \n Settings
+def p584_0 : List OwnerLevel := { parameters := [], properties := ["Settings", "Config", "Default"] } :: prelude
+def p584_1 : List OwnerLevel := { parameters := [], properties := [] } :: p584_0
+def p584_2 : List OwnerLevel := { parameters := [], properties := ["Rate"] } :: p584_0
+def p584_3 : List OwnerLevel := { parameters := [], properties := [] } :: p584_2
+def p584_4 : List OwnerLevel := { parameters := [], properties := [] } :: p584_0
+#guard selectOwnedDeclaration p584_1 "Config" == .property 1
+#guard elaboratesToParameter p584_1 "Config" == false
+#guard selectOwnedDeclaration p584_2 "Default" == .property 1
+#guard elaboratesToParameter p584_2 "Default" == false
+#guard selectOwnedDeclaration p584_4 "Settings" == .property 1
+#guard elaboratesToParameter p584_4 "Settings" == false
+#guard selectOwnedDeclaration p584_4 "Rate" == .none
+#guard elaboratesToParameter p584_4 "Rate" == false
+#guard selectOwnedDeclaration p584_0 "Settings" == .property 0
+#guard elaboratesToParameter p584_0 "Settings" == false
 
 -- spec/same-shape-references-are-distinct-bindings: Primary = Config \n Backup = Config \n Config = { \n     public Rate = 2 \n     Backup.Rate \n } \n  \n Primary
-def p580_0 : List OwnerLevel := { parameters := [], properties := ["Primary", "Backup", "Config"] } :: prelude
-def p580_1 : List OwnerLevel := { parameters := [], properties := [] } :: p580_0
-def p580_2 : List OwnerLevel := { parameters := [], properties := [] } :: p580_0
-def p580_3 : List OwnerLevel := { parameters := [], properties := ["Rate"] } :: p580_0
-def p580_4 : List OwnerLevel := { parameters := [], properties := [] } :: p580_3
-#guard selectOwnedDeclaration p580_1 "Config" == .property 1
-#guard elaboratesToParameter p580_1 "Config" == false
-#guard selectOwnedDeclaration p580_2 "Config" == .property 1
-#guard elaboratesToParameter p580_2 "Config" == false
-#guard selectOwnedDeclaration p580_3 "Backup" == .property 1
-#guard elaboratesToParameter p580_3 "Backup" == false
-#guard selectOwnedDeclaration p580_3 "Rate" == .property 0
-#guard elaboratesToParameter p580_3 "Rate" == false
-#guard selectOwnedDeclaration p580_0 "Primary" == .property 0
-#guard elaboratesToParameter p580_0 "Primary" == false
-
--- spec/algorithm-member-of-a-reference-behind-a-carrier: P = C \n C = { \n     public Algorithm = 5 \n     A \n } \n A = P.Algorithm \n  \n P
-def p581_0 : List OwnerLevel := { parameters := [], properties := ["P", "C", "A"] } :: prelude
-def p581_1 : List OwnerLevel := { parameters := [], properties := [] } :: p581_0
-def p581_2 : List OwnerLevel := { parameters := [], properties := ["Algorithm"] } :: p581_0
-def p581_3 : List OwnerLevel := { parameters := [], properties := [] } :: p581_2
-def p581_4 : List OwnerLevel := { parameters := [], properties := [] } :: p581_0
-#guard selectOwnedDeclaration p581_1 "C" == .property 1
-#guard elaboratesToParameter p581_1 "C" == false
-#guard selectOwnedDeclaration p581_2 "A" == .property 1
-#guard elaboratesToParameter p581_2 "A" == false
-#guard selectOwnedDeclaration p581_4 "P" == .property 1
-#guard elaboratesToParameter p581_4 "P" == false
-#guard selectOwnedDeclaration p581_4 "Algorithm" == .none
-#guard elaboratesToParameter p581_4 "Algorithm" == false
-#guard selectOwnedDeclaration p581_0 "P" == .property 0
-#guard elaboratesToParameter p581_0 "P" == false
-
--- spec/carrier-of-a-parameter-in-every-activation: Inc(x) = x + 1 \n F(f, n) = { \n     A = { f } \n     if(n == 0, A(5), F(A, n - 1)) \n } \n  \n F(Inc, 1)
-def p582_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "F"] } :: prelude
-def p582_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p582_0
-def p582_2 : List OwnerLevel := { parameters := ["f", "n"], properties := ["A"] } :: p582_0
-def p582_3 : List OwnerLevel := { parameters := [], properties := [] } :: p582_2
-#guard selectOwnedDeclaration p582_1 "x" == .parameter 0
-#guard elaboratesToParameter p582_1 "x" == true
-#guard selectOwnedDeclaration p582_3 "f" == .parameter 1
-#guard elaboratesToParameter p582_3 "f" == true
-#guard selectOwnedDeclaration p582_2 "if" == .property 2
-#guard elaboratesToParameter p582_2 "if" == false
-#guard selectOwnedDeclaration p582_2 "n" == .parameter 0 -- x2
-#guard elaboratesToParameter p582_2 "n" == true -- x2
-#guard selectOwnedDeclaration p582_2 "A" == .property 0 -- x2
-#guard elaboratesToParameter p582_2 "A" == false -- x2
-#guard selectOwnedDeclaration p582_2 "F" == .property 1
-#guard elaboratesToParameter p582_2 "F" == false
-#guard selectOwnedDeclaration p582_0 "F" == .property 0
-#guard elaboratesToParameter p582_0 "F" == false
-#guard selectOwnedDeclaration p582_0 "Inc" == .property 0
-#guard elaboratesToParameter p582_0 "Inc" == false
-
--- spec/reference-cycle-through-an-open-is-no-alias: open Lib \n Lib = { public B = A } \n A = B \n Same(x, x) = 0 \n  \n Same(A, A)
-def p583_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "A", "Same"] } :: prelude
-def p583_1 : List OwnerLevel := { parameters := [], properties := ["B"] } :: p583_0
-def p583_2 : List OwnerLevel := { parameters := [], properties := [] } :: p583_1
-def p583_3 : List OwnerLevel := { parameters := [], properties := [] } :: p583_0
-def p583_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p583_0
-#guard selectOwnedDeclaration p583_0 "Lib" == .property 0
-#guard openHead? (elaborateOpenHead p583_0 "Lib") == some (false, "Lib")
-#guard selectOwnedDeclaration p583_2 "A" == .property 2
-#guard elaboratesToParameter p583_2 "A" == false
-#guard selectOwnedDeclaration p583_3 "B" == .none
-#guard elaboratesToParameter p583_3 "B" == false
-#guard selectOwnedDeclaration p583_0 "Same" == .property 0
-#guard elaboratesToParameter p583_0 "Same" == false
-#guard selectOwnedDeclaration p583_0 "A" == .property 0 -- x2
-#guard elaboratesToParameter p583_0 "A" == false -- x2
-
--- spec/reference-to-a-carrier-that-leads-back-is-no-alias: A = B \n B = { \n     public X = 1 \n     A \n } \n G(p) = A.X \n  \n G(1)
-def p584_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "G"] } :: prelude
-def p584_1 : List OwnerLevel := { parameters := [], properties := [] } :: p584_0
-def p584_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p584_0
-def p584_3 : List OwnerLevel := { parameters := [], properties := [] } :: p584_2
-def p584_4 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p584_0
-#guard selectOwnedDeclaration p584_1 "B" == .property 1
-#guard elaboratesToParameter p584_1 "B" == false
-#guard selectOwnedDeclaration p584_2 "A" == .property 1
-#guard elaboratesToParameter p584_2 "A" == false
-#guard selectOwnedDeclaration p584_4 "A" == .property 1
-#guard elaboratesToParameter p584_4 "A" == false
-#guard selectOwnedDeclaration p584_4 "X" == .none
-#guard elaboratesToParameter p584_4 "X" == false
-#guard selectOwnedDeclaration p584_0 "G" == .property 0
-#guard elaboratesToParameter p584_0 "G" == false
-
--- spec/sibling-cycle-member-path-is-read-statically: A = B.C \n B = Lib \n Lib = { \n     public C = { public X = 1 } \n     public D = A \n } \n  \n A.X
-def p585_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "Lib"] } :: prelude
+def p585_0 : List OwnerLevel := { parameters := [], properties := ["Primary", "Backup", "Config"] } :: prelude
 def p585_1 : List OwnerLevel := { parameters := [], properties := [] } :: p585_0
 def p585_2 : List OwnerLevel := { parameters := [], properties := [] } :: p585_0
-def p585_3 : List OwnerLevel := { parameters := [], properties := ["C", "D"] } :: p585_0
-def p585_4 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p585_3
-def p585_5 : List OwnerLevel := { parameters := [], properties := [] } :: p585_4
-def p585_6 : List OwnerLevel := { parameters := [], properties := [] } :: p585_3
-#guard selectOwnedDeclaration p585_1 "B" == .property 1
-#guard elaboratesToParameter p585_1 "B" == false
-#guard selectOwnedDeclaration p585_1 "C" == .none
-#guard elaboratesToParameter p585_1 "C" == false
-#guard selectOwnedDeclaration p585_2 "Lib" == .property 1
-#guard elaboratesToParameter p585_2 "Lib" == false
-#guard selectOwnedDeclaration p585_6 "A" == .property 2
-#guard elaboratesToParameter p585_6 "A" == false
-#guard selectOwnedDeclaration p585_0 "A" == .property 0
-#guard elaboratesToParameter p585_0 "A" == false
-#guard selectOwnedDeclaration p585_0 "X" == .none
-#guard elaboratesToParameter p585_0 "X" == false
+def p585_3 : List OwnerLevel := { parameters := [], properties := ["Rate"] } :: p585_0
+def p585_4 : List OwnerLevel := { parameters := [], properties := [] } :: p585_3
+#guard selectOwnedDeclaration p585_1 "Config" == .property 1
+#guard elaboratesToParameter p585_1 "Config" == false
+#guard selectOwnedDeclaration p585_2 "Config" == .property 1
+#guard elaboratesToParameter p585_2 "Config" == false
+#guard selectOwnedDeclaration p585_3 "Backup" == .property 1
+#guard elaboratesToParameter p585_3 "Backup" == false
+#guard selectOwnedDeclaration p585_3 "Rate" == .property 0
+#guard elaboratesToParameter p585_3 "Rate" == false
+#guard selectOwnedDeclaration p585_0 "Primary" == .property 0
+#guard elaboratesToParameter p585_0 "Primary" == false
 
--- spec/open-block-member-reference-opens-its-target: open { \n     public Lib = { public K = 7 } \n     public A = Lib \n }.A \n  \n K
-def p586_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-def p586_1 : List OwnerLevel := { parameters := [], properties := ["Lib", "A"] } :: prelude
-def p586_2 : List OwnerLevel := { parameters := [], properties := ["K"] } :: p586_1
+-- spec/algorithm-member-of-a-reference-behind-a-carrier: P = C \n C = { \n     public Algorithm = 5 \n     A \n } \n A = P.Algorithm \n  \n P
+def p586_0 : List OwnerLevel := { parameters := [], properties := ["P", "C", "A"] } :: prelude
+def p586_1 : List OwnerLevel := { parameters := [], properties := [] } :: p586_0
+def p586_2 : List OwnerLevel := { parameters := [], properties := ["Algorithm"] } :: p586_0
 def p586_3 : List OwnerLevel := { parameters := [], properties := [] } :: p586_2
-def p586_4 : List OwnerLevel := { parameters := [], properties := [] } :: p586_1
-#guard selectOwnedDeclaration p586_4 "Lib" == .property 1
-#guard elaboratesToParameter p586_4 "Lib" == false
-#guard selectOwnedDeclaration p586_0 "K" == .none
-#guard elaboratesToParameter p586_0 "K" == false
+def p586_4 : List OwnerLevel := { parameters := [], properties := [] } :: p586_0
+#guard selectOwnedDeclaration p586_1 "C" == .property 1
+#guard elaboratesToParameter p586_1 "C" == false
+#guard selectOwnedDeclaration p586_2 "A" == .property 1
+#guard elaboratesToParameter p586_2 "A" == false
+#guard selectOwnedDeclaration p586_4 "P" == .property 1
+#guard elaboratesToParameter p586_4 "P" == false
+#guard selectOwnedDeclaration p586_4 "Algorithm" == .none
+#guard elaboratesToParameter p586_4 "Algorithm" == false
+#guard selectOwnedDeclaration p586_0 "P" == .property 0
+#guard elaboratesToParameter p586_0 "P" == false
 
--- spec/block-receiver-reference-member: V = { public W = 7 } \n Y = { K = V }.K.W + 0 \n  \n Y
-def p587_0 : List OwnerLevel := { parameters := [], properties := ["V", "Y"] } :: prelude
-def p587_1 : List OwnerLevel := { parameters := [], properties := ["W"] } :: p587_0
-def p587_2 : List OwnerLevel := { parameters := [], properties := [] } :: p587_1
-def p587_3 : List OwnerLevel := { parameters := [], properties := [] } :: p587_0
-def p587_4 : List OwnerLevel := { parameters := [], properties := ["K"] } :: p587_3
-def p587_5 : List OwnerLevel := { parameters := [], properties := [] } :: p587_4
-#guard selectOwnedDeclaration p587_5 "V" == .property 3
-#guard elaboratesToParameter p587_5 "V" == false
-#guard selectOwnedDeclaration p587_3 "K" == .none
-#guard elaboratesToParameter p587_3 "K" == false
-#guard selectOwnedDeclaration p587_3 "W" == .none
-#guard elaboratesToParameter p587_3 "W" == false
-#guard selectOwnedDeclaration p587_0 "Y" == .property 0
-#guard elaboratesToParameter p587_0 "Y" == false
+-- spec/carrier-of-a-parameter-in-every-activation: Inc(x) = x + 1 \n F(f, n) = { \n     A = { f } \n     if(n == 0, A(5), F(A, n - 1)) \n } \n  \n F(Inc, 1)
+def p587_0 : List OwnerLevel := { parameters := [], properties := ["Inc", "F"] } :: prelude
+def p587_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p587_0
+def p587_2 : List OwnerLevel := { parameters := ["f", "n"], properties := ["A"] } :: p587_0
+def p587_3 : List OwnerLevel := { parameters := [], properties := [] } :: p587_2
+#guard selectOwnedDeclaration p587_1 "x" == .parameter 0
+#guard elaboratesToParameter p587_1 "x" == true
+#guard selectOwnedDeclaration p587_3 "f" == .parameter 1
+#guard elaboratesToParameter p587_3 "f" == true
+#guard selectOwnedDeclaration p587_2 "if" == .property 2
+#guard elaboratesToParameter p587_2 "if" == false
+#guard selectOwnedDeclaration p587_2 "n" == .parameter 0 -- x2
+#guard elaboratesToParameter p587_2 "n" == true -- x2
+#guard selectOwnedDeclaration p587_2 "A" == .property 0 -- x2
+#guard elaboratesToParameter p587_2 "A" == false -- x2
+#guard selectOwnedDeclaration p587_2 "F" == .property 1
+#guard elaboratesToParameter p587_2 "F" == false
+#guard selectOwnedDeclaration p587_0 "F" == .property 0
+#guard elaboratesToParameter p587_0 "F" == false
+#guard selectOwnedDeclaration p587_0 "Inc" == .property 0
+#guard elaboratesToParameter p587_0 "Inc" == false
 
--- spec/member-miss-makes-the-body-its-own-structure: B = { Q = 1 } \n A = B.foo \n G(p) = A.bar \n  \n G(1)
-def p588_0 : List OwnerLevel := { parameters := [], properties := ["B", "A", "G"] } :: prelude
-def p588_1 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p588_0
+-- spec/reference-cycle-through-an-open-is-no-alias: open Lib \n Lib = { public B = A } \n A = B \n Same(x, x) = 0 \n  \n Same(A, A)
+def p588_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "A", "Same"] } :: prelude
+def p588_1 : List OwnerLevel := { parameters := [], properties := ["B"] } :: p588_0
 def p588_2 : List OwnerLevel := { parameters := [], properties := [] } :: p588_1
-def p588_3 : List OwnerLevel := { parameters := ["foo"], properties := [] } :: p588_0
-def p588_4 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p588_0
-#guard selectOwnedDeclaration p588_3 "B" == .property 1
+def p588_3 : List OwnerLevel := { parameters := [], properties := [] } :: p588_0
+def p588_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p588_0
+#guard selectOwnedDeclaration p588_0 "Lib" == .property 0
+#guard openHead? (elaborateOpenHead p588_0 "Lib") == some (false, "Lib")
+#guard selectOwnedDeclaration p588_2 "A" == .property 2
+#guard elaboratesToParameter p588_2 "A" == false
+#guard selectOwnedDeclaration p588_3 "B" == .none
 #guard elaboratesToParameter p588_3 "B" == false
-#guard selectOwnedDeclaration p588_3 "foo" == .parameter 0
-#guard elaboratesToParameter p588_3 "foo" == true
-#guard selectOwnedDeclaration p588_4 "A" == .property 1
-#guard elaboratesToParameter p588_4 "A" == false
-#guard selectOwnedDeclaration p588_4 "bar" == .none
-#guard elaboratesToParameter p588_4 "bar" == false
-#guard selectOwnedDeclaration p588_0 "G" == .property 0
-#guard elaboratesToParameter p588_0 "G" == false
+#guard selectOwnedDeclaration p588_0 "Same" == .property 0
+#guard elaboratesToParameter p588_0 "Same" == false
+#guard selectOwnedDeclaration p588_0 "A" == .property 0 -- x2
+#guard elaboratesToParameter p588_0 "A" == false -- x2
 
--- spec/reference-cycle-only-the-final-providers-close-is-no-alias: open Back \n A = B \n B = { \n     public N = 5 \n     A \n } \n Back = { public N = G.Z } \n G = { \n     open A \n     public Z = N \n     0 \n } \n Same(x, x) = 0 \n  \n Same(G.Z, G.Z)
-def p589_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "Back", "G", "Same"] } :: prelude
+-- spec/reference-to-a-carrier-that-leads-back-is-no-alias: A = B \n B = { \n     public X = 1 \n     A \n } \n G(p) = A.X \n  \n G(1)
+def p589_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "G"] } :: prelude
 def p589_1 : List OwnerLevel := { parameters := [], properties := [] } :: p589_0
-def p589_2 : List OwnerLevel := { parameters := [], properties := ["N"] } :: p589_0
+def p589_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p589_0
 def p589_3 : List OwnerLevel := { parameters := [], properties := [] } :: p589_2
-def p589_4 : List OwnerLevel := { parameters := [], properties := ["N"] } :: p589_0
-def p589_5 : List OwnerLevel := { parameters := [], properties := [] } :: p589_4
-def p589_6 : List OwnerLevel := { parameters := [], properties := ["Z"] } :: p589_0
-def p589_7 : List OwnerLevel := { parameters := [], properties := [] } :: p589_6
-def p589_8 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p589_0
-#guard selectOwnedDeclaration p589_0 "Back" == .property 0
-#guard openHead? (elaborateOpenHead p589_0 "Back") == some (false, "Back")
+def p589_4 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p589_0
 #guard selectOwnedDeclaration p589_1 "B" == .property 1
 #guard elaboratesToParameter p589_1 "B" == false
 #guard selectOwnedDeclaration p589_2 "A" == .property 1
 #guard elaboratesToParameter p589_2 "A" == false
-#guard selectOwnedDeclaration p589_5 "G" == .property 2
-#guard elaboratesToParameter p589_5 "G" == false
-#guard selectOwnedDeclaration p589_5 "Z" == .none
-#guard elaboratesToParameter p589_5 "Z" == false
-#guard selectOwnedDeclaration p589_6 "A" == .property 1
-#guard openHead? (elaborateOpenHead p589_6 "A") == some (false, "A")
-#guard selectOwnedDeclaration p589_7 "N" == .none
-#guard elaboratesToParameter p589_7 "N" == false
-#guard selectOwnedDeclaration p589_0 "Same" == .property 0
-#guard elaboratesToParameter p589_0 "Same" == false
-#guard selectOwnedDeclaration p589_0 "G" == .property 0 -- x2
-#guard elaboratesToParameter p589_0 "G" == false -- x2
-#guard selectOwnedDeclaration p589_0 "Z" == .none -- x2
-#guard elaboratesToParameter p589_0 "Z" == false -- x2
+#guard selectOwnedDeclaration p589_4 "A" == .property 1
+#guard elaboratesToParameter p589_4 "A" == false
+#guard selectOwnedDeclaration p589_4 "X" == .none
+#guard elaboratesToParameter p589_4 "X" == false
+#guard selectOwnedDeclaration p589_0 "G" == .property 0
+#guard elaboratesToParameter p589_0 "G" == false
 
--- spec/member-path-through-a-lower-cyclic-receiver-is-no-alias: X(v) = 0 \n A = B \n B = { \n     public X = D \n     A \n } \n D = { \n     public Q = 7 \n     A.X \n } \n E = D \n Same(x, x) = 0 \n  \n Same(E, D)
-def p590_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "D", "E", "X", "Same"] } :: prelude
+-- spec/sibling-cycle-member-path-is-read-statically: A = B.C \n B = Lib \n Lib = { \n     public C = { public X = 1 } \n     public D = A \n } \n  \n A.X
+def p590_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "Lib"] } :: prelude
 def p590_1 : List OwnerLevel := { parameters := [], properties := [] } :: p590_0
-def p590_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p590_0
-def p590_3 : List OwnerLevel := { parameters := [], properties := [] } :: p590_2
-def p590_4 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p590_0
+def p590_2 : List OwnerLevel := { parameters := [], properties := [] } :: p590_0
+def p590_3 : List OwnerLevel := { parameters := [], properties := ["C", "D"] } :: p590_0
+def p590_4 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p590_3
 def p590_5 : List OwnerLevel := { parameters := [], properties := [] } :: p590_4
-def p590_6 : List OwnerLevel := { parameters := [], properties := [] } :: p590_0
-def p590_7 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p590_0
-def p590_8 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p590_0
+def p590_6 : List OwnerLevel := { parameters := [], properties := [] } :: p590_3
 #guard selectOwnedDeclaration p590_1 "B" == .property 1
 #guard elaboratesToParameter p590_1 "B" == false
-#guard selectOwnedDeclaration p590_3 "D" == .property 2
-#guard elaboratesToParameter p590_3 "D" == false
-#guard selectOwnedDeclaration p590_2 "A" == .property 1
-#guard elaboratesToParameter p590_2 "A" == false
-#guard selectOwnedDeclaration p590_4 "A" == .property 1
-#guard elaboratesToParameter p590_4 "A" == false
-#guard selectOwnedDeclaration p590_4 "X" == .property 1
-#guard elaboratesToParameter p590_4 "X" == false
-#guard selectOwnedDeclaration p590_6 "D" == .property 1
-#guard elaboratesToParameter p590_6 "D" == false
-#guard selectOwnedDeclaration p590_0 "Same" == .property 0
-#guard elaboratesToParameter p590_0 "Same" == false
-#guard selectOwnedDeclaration p590_0 "E" == .property 0
-#guard elaboratesToParameter p590_0 "E" == false
-#guard selectOwnedDeclaration p590_0 "D" == .property 0
-#guard elaboratesToParameter p590_0 "D" == false
+#guard selectOwnedDeclaration p590_1 "C" == .none
+#guard elaboratesToParameter p590_1 "C" == false
+#guard selectOwnedDeclaration p590_2 "Lib" == .property 1
+#guard elaboratesToParameter p590_2 "Lib" == false
+#guard selectOwnedDeclaration p590_6 "A" == .property 2
+#guard elaboratesToParameter p590_6 "A" == false
+#guard selectOwnedDeclaration p590_0 "A" == .property 0
+#guard elaboratesToParameter p590_0 "A" == false
+#guard selectOwnedDeclaration p590_0 "X" == .none
+#guard elaboratesToParameter p590_0 "X" == false
+
+-- spec/open-block-member-reference-opens-its-target: open { \n     public Lib = { public K = 7 } \n     public A = Lib \n }.A \n  \n K
+def p591_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+def p591_1 : List OwnerLevel := { parameters := [], properties := ["Lib", "A"] } :: prelude
+def p591_2 : List OwnerLevel := { parameters := [], properties := ["K"] } :: p591_1
+def p591_3 : List OwnerLevel := { parameters := [], properties := [] } :: p591_2
+def p591_4 : List OwnerLevel := { parameters := [], properties := [] } :: p591_1
+#guard selectOwnedDeclaration p591_4 "Lib" == .property 1
+#guard elaboratesToParameter p591_4 "Lib" == false
+#guard selectOwnedDeclaration p591_0 "K" == .none
+#guard elaboratesToParameter p591_0 "K" == false
+
+-- spec/block-receiver-reference-member: V = { public W = 7 } \n Y = { K = V }.K.W + 0 \n  \n Y
+def p592_0 : List OwnerLevel := { parameters := [], properties := ["V", "Y"] } :: prelude
+def p592_1 : List OwnerLevel := { parameters := [], properties := ["W"] } :: p592_0
+def p592_2 : List OwnerLevel := { parameters := [], properties := [] } :: p592_1
+def p592_3 : List OwnerLevel := { parameters := [], properties := [] } :: p592_0
+def p592_4 : List OwnerLevel := { parameters := [], properties := ["K"] } :: p592_3
+def p592_5 : List OwnerLevel := { parameters := [], properties := [] } :: p592_4
+#guard selectOwnedDeclaration p592_5 "V" == .property 3
+#guard elaboratesToParameter p592_5 "V" == false
+#guard selectOwnedDeclaration p592_3 "K" == .none
+#guard elaboratesToParameter p592_3 "K" == false
+#guard selectOwnedDeclaration p592_3 "W" == .none
+#guard elaboratesToParameter p592_3 "W" == false
+#guard selectOwnedDeclaration p592_0 "Y" == .property 0
+#guard elaboratesToParameter p592_0 "Y" == false
+
+-- spec/member-miss-makes-the-body-its-own-structure: B = { Q = 1 } \n A = B.foo \n G(p) = A.bar \n  \n G(1)
+def p593_0 : List OwnerLevel := { parameters := [], properties := ["B", "A", "G"] } :: prelude
+def p593_1 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p593_0
+def p593_2 : List OwnerLevel := { parameters := [], properties := [] } :: p593_1
+def p593_3 : List OwnerLevel := { parameters := ["foo"], properties := [] } :: p593_0
+def p593_4 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p593_0
+#guard selectOwnedDeclaration p593_3 "B" == .property 1
+#guard elaboratesToParameter p593_3 "B" == false
+#guard selectOwnedDeclaration p593_3 "foo" == .parameter 0
+#guard elaboratesToParameter p593_3 "foo" == true
+#guard selectOwnedDeclaration p593_4 "A" == .property 1
+#guard elaboratesToParameter p593_4 "A" == false
+#guard selectOwnedDeclaration p593_4 "bar" == .none
+#guard elaboratesToParameter p593_4 "bar" == false
+#guard selectOwnedDeclaration p593_0 "G" == .property 0
+#guard elaboratesToParameter p593_0 "G" == false
+
+-- spec/reference-cycle-only-the-final-providers-close-is-no-alias: open Back \n A = B \n B = { \n     public N = 5 \n     A \n } \n Back = { public N = G.Z } \n G = { \n     open A \n     public Z = N \n     0 \n } \n Same(x, x) = 0 \n  \n Same(G.Z, G.Z)
+def p594_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "Back", "G", "Same"] } :: prelude
+def p594_1 : List OwnerLevel := { parameters := [], properties := [] } :: p594_0
+def p594_2 : List OwnerLevel := { parameters := [], properties := ["N"] } :: p594_0
+def p594_3 : List OwnerLevel := { parameters := [], properties := [] } :: p594_2
+def p594_4 : List OwnerLevel := { parameters := [], properties := ["N"] } :: p594_0
+def p594_5 : List OwnerLevel := { parameters := [], properties := [] } :: p594_4
+def p594_6 : List OwnerLevel := { parameters := [], properties := ["Z"] } :: p594_0
+def p594_7 : List OwnerLevel := { parameters := [], properties := [] } :: p594_6
+def p594_8 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p594_0
+#guard selectOwnedDeclaration p594_0 "Back" == .property 0
+#guard openHead? (elaborateOpenHead p594_0 "Back") == some (false, "Back")
+#guard selectOwnedDeclaration p594_1 "B" == .property 1
+#guard elaboratesToParameter p594_1 "B" == false
+#guard selectOwnedDeclaration p594_2 "A" == .property 1
+#guard elaboratesToParameter p594_2 "A" == false
+#guard selectOwnedDeclaration p594_5 "G" == .property 2
+#guard elaboratesToParameter p594_5 "G" == false
+#guard selectOwnedDeclaration p594_5 "Z" == .none
+#guard elaboratesToParameter p594_5 "Z" == false
+#guard selectOwnedDeclaration p594_6 "A" == .property 1
+#guard openHead? (elaborateOpenHead p594_6 "A") == some (false, "A")
+#guard selectOwnedDeclaration p594_7 "N" == .none
+#guard elaboratesToParameter p594_7 "N" == false
+#guard selectOwnedDeclaration p594_0 "Same" == .property 0
+#guard elaboratesToParameter p594_0 "Same" == false
+#guard selectOwnedDeclaration p594_0 "G" == .property 0 -- x2
+#guard elaboratesToParameter p594_0 "G" == false -- x2
+#guard selectOwnedDeclaration p594_0 "Z" == .none -- x2
+#guard elaboratesToParameter p594_0 "Z" == false -- x2
+
+-- spec/member-path-through-a-lower-cyclic-receiver-is-no-alias: X(v) = 0 \n A = B \n B = { \n     public X = D \n     A \n } \n D = { \n     public Q = 7 \n     A.X \n } \n E = D \n Same(x, x) = 0 \n  \n Same(E, D)
+def p595_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "D", "E", "X", "Same"] } :: prelude
+def p595_1 : List OwnerLevel := { parameters := [], properties := [] } :: p595_0
+def p595_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p595_0
+def p595_3 : List OwnerLevel := { parameters := [], properties := [] } :: p595_2
+def p595_4 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p595_0
+def p595_5 : List OwnerLevel := { parameters := [], properties := [] } :: p595_4
+def p595_6 : List OwnerLevel := { parameters := [], properties := [] } :: p595_0
+def p595_7 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p595_0
+def p595_8 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p595_0
+#guard selectOwnedDeclaration p595_1 "B" == .property 1
+#guard elaboratesToParameter p595_1 "B" == false
+#guard selectOwnedDeclaration p595_3 "D" == .property 2
+#guard elaboratesToParameter p595_3 "D" == false
+#guard selectOwnedDeclaration p595_2 "A" == .property 1
+#guard elaboratesToParameter p595_2 "A" == false
+#guard selectOwnedDeclaration p595_4 "A" == .property 1
+#guard elaboratesToParameter p595_4 "A" == false
+#guard selectOwnedDeclaration p595_4 "X" == .property 1
+#guard elaboratesToParameter p595_4 "X" == false
+#guard selectOwnedDeclaration p595_6 "D" == .property 1
+#guard elaboratesToParameter p595_6 "D" == false
+#guard selectOwnedDeclaration p595_0 "Same" == .property 0
+#guard elaboratesToParameter p595_0 "Same" == false
+#guard selectOwnedDeclaration p595_0 "E" == .property 0
+#guard elaboratesToParameter p595_0 "E" == false
+#guard selectOwnedDeclaration p595_0 "D" == .property 0
+#guard elaboratesToParameter p595_0 "D" == false
 
 -- spec/reference-head-is-the-parameter-its-own-scope-binds: F(x) = { \n     A = x \n     G(x) = A.W + 0 \n     G(5) \n } \n  \n F({ public W = 9 })
-def p591_0 : List OwnerLevel := { parameters := [], properties := ["F"] } :: prelude
-def p591_1 : List OwnerLevel := { parameters := ["x"], properties := ["A", "G"] } :: p591_0
-def p591_2 : List OwnerLevel := { parameters := [], properties := [] } :: p591_1
-def p591_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p591_1
-def p591_4 : List OwnerLevel := { parameters := [], properties := ["W"] } :: p591_0
-def p591_5 : List OwnerLevel := { parameters := [], properties := [] } :: p591_4
-#guard selectOwnedDeclaration p591_2 "x" == .parameter 1
-#guard elaboratesToParameter p591_2 "x" == true
-#guard selectOwnedDeclaration p591_3 "A" == .property 1
-#guard elaboratesToParameter p591_3 "A" == false
-#guard selectOwnedDeclaration p591_3 "W" == .none
-#guard elaboratesToParameter p591_3 "W" == false
-#guard selectOwnedDeclaration p591_1 "G" == .property 0
-#guard elaboratesToParameter p591_1 "G" == false
-#guard selectOwnedDeclaration p591_0 "F" == .property 0
-#guard elaboratesToParameter p591_0 "F" == false
+def p596_0 : List OwnerLevel := { parameters := [], properties := ["F"] } :: prelude
+def p596_1 : List OwnerLevel := { parameters := ["x"], properties := ["A", "G"] } :: p596_0
+def p596_2 : List OwnerLevel := { parameters := [], properties := [] } :: p596_1
+def p596_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p596_1
+def p596_4 : List OwnerLevel := { parameters := [], properties := ["W"] } :: p596_0
+def p596_5 : List OwnerLevel := { parameters := [], properties := [] } :: p596_4
+#guard selectOwnedDeclaration p596_2 "x" == .parameter 1
+#guard elaboratesToParameter p596_2 "x" == true
+#guard selectOwnedDeclaration p596_3 "A" == .property 1
+#guard elaboratesToParameter p596_3 "A" == false
+#guard selectOwnedDeclaration p596_3 "W" == .none
+#guard elaboratesToParameter p596_3 "W" == false
+#guard selectOwnedDeclaration p596_1 "G" == .property 0
+#guard elaboratesToParameter p596_1 "G" == false
+#guard selectOwnedDeclaration p596_0 "F" == .property 0
+#guard elaboratesToParameter p596_0 "F" == false
 
 -- spec/open-path-into-a-parameterized-body-is-its-own-namespace: p = { public K = 1 } \n Q(p) = { \n     public M = p \n     0 \n } \n F(z) = { \n     open Q.M \n     K \n } \n  \n F(1)
-def p592_0 : List OwnerLevel := { parameters := [], properties := ["p", "Q", "F"] } :: prelude
-def p592_1 : List OwnerLevel := { parameters := [], properties := ["K"] } :: p592_0
-def p592_2 : List OwnerLevel := { parameters := [], properties := [] } :: p592_1
-def p592_3 : List OwnerLevel := { parameters := ["p"], properties := ["M"] } :: p592_0
-def p592_4 : List OwnerLevel := { parameters := [], properties := [] } :: p592_3
-def p592_5 : List OwnerLevel := { parameters := ["z"], properties := [] } :: p592_0
-#guard selectOwnedDeclaration p592_4 "p" == .parameter 1
-#guard elaboratesToParameter p592_4 "p" == true
-#guard selectOwnedDeclaration p592_5 "Q" == .property 1
-#guard openHead? (elaborateOpenHead p592_5 "Q") == some (false, "Q")
-#guard selectOwnedDeclaration p592_5 "K" == .none
-#guard elaboratesToParameter p592_5 "K" == false
-#guard selectOwnedDeclaration p592_0 "F" == .property 0
-#guard elaboratesToParameter p592_0 "F" == false
+def p597_0 : List OwnerLevel := { parameters := [], properties := ["p", "Q", "F"] } :: prelude
+def p597_1 : List OwnerLevel := { parameters := [], properties := ["K"] } :: p597_0
+def p597_2 : List OwnerLevel := { parameters := [], properties := [] } :: p597_1
+def p597_3 : List OwnerLevel := { parameters := ["p"], properties := ["M"] } :: p597_0
+def p597_4 : List OwnerLevel := { parameters := [], properties := [] } :: p597_3
+def p597_5 : List OwnerLevel := { parameters := ["z"], properties := [] } :: p597_0
+#guard selectOwnedDeclaration p597_4 "p" == .parameter 1
+#guard elaboratesToParameter p597_4 "p" == true
+#guard selectOwnedDeclaration p597_5 "Q" == .property 1
+#guard openHead? (elaborateOpenHead p597_5 "Q") == some (false, "Q")
+#guard selectOwnedDeclaration p597_5 "K" == .none
+#guard elaboratesToParameter p597_5 "K" == false
+#guard selectOwnedDeclaration p597_0 "F" == .property 0
+#guard elaboratesToParameter p597_0 "F" == false
 
 -- spec/tick-counts-executions-in-the-run: tick(), tick(), tick()
-def p593_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-#guard selectOwnedDeclaration p593_0 "tick" == .property 1 -- x3
-#guard elaboratesToParameter p593_0 "tick" == false -- x3
+def p598_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+#guard selectOwnedDeclaration p598_0 "tick" == .property 1 -- x3
+#guard elaboratesToParameter p598_0 "tick" == false -- x3
 
 -- spec/tick-property-is-cached-call-is-fresh: A = tick() \n A(), A, A(), A
-def p594_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
-def p594_1 : List OwnerLevel := { parameters := [], properties := [] } :: p594_0
-#guard selectOwnedDeclaration p594_1 "tick" == .property 2
-#guard elaboratesToParameter p594_1 "tick" == false
-#guard selectOwnedDeclaration p594_0 "A" == .property 0 -- x4
-#guard elaboratesToParameter p594_0 "A" == false -- x4
+def p599_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
+def p599_1 : List OwnerLevel := { parameters := [], properties := [] } :: p599_0
+#guard selectOwnedDeclaration p599_1 "tick" == .property 2
+#guard elaboratesToParameter p599_1 "tick" == false
+#guard selectOwnedDeclaration p599_0 "A" == .property 0 -- x4
+#guard elaboratesToParameter p599_0 "A" == false -- x4
 
 -- spec/tick-argument-is-one-lazy-computation: Ignore(x) = 7 \n Twice(x) = x + x \n Ignore(tick()), Twice(tick()), tick()
-def p595_0 : List OwnerLevel := { parameters := [], properties := ["Ignore", "Twice"] } :: prelude
-def p595_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p595_0
-def p595_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p595_0
-#guard selectOwnedDeclaration p595_2 "x" == .parameter 0 -- x2
-#guard elaboratesToParameter p595_2 "x" == true -- x2
-#guard selectOwnedDeclaration p595_0 "Ignore" == .property 0
-#guard elaboratesToParameter p595_0 "Ignore" == false
-#guard selectOwnedDeclaration p595_0 "tick" == .property 1 -- x3
-#guard elaboratesToParameter p595_0 "tick" == false -- x3
-#guard selectOwnedDeclaration p595_0 "Twice" == .property 0
-#guard elaboratesToParameter p595_0 "Twice" == false
+def p600_0 : List OwnerLevel := { parameters := [], properties := ["Ignore", "Twice"] } :: prelude
+def p600_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p600_0
+def p600_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p600_0
+#guard selectOwnedDeclaration p600_2 "x" == .parameter 0 -- x2
+#guard elaboratesToParameter p600_2 "x" == true -- x2
+#guard selectOwnedDeclaration p600_0 "Ignore" == .property 0
+#guard elaboratesToParameter p600_0 "Ignore" == false
+#guard selectOwnedDeclaration p600_0 "tick" == .property 1 -- x3
+#guard elaboratesToParameter p600_0 "tick" == false -- x3
+#guard selectOwnedDeclaration p600_0 "Twice" == .property 0
+#guard elaboratesToParameter p600_0 "Twice" == false
 
 -- spec/tick-callable-reference-is-not-an-execution: T = tick \n Apply(f) = f() \n T(), Apply(tick), tick()
-def p596_0 : List OwnerLevel := { parameters := [], properties := ["T", "Apply"] } :: prelude
-def p596_1 : List OwnerLevel := { parameters := [], properties := [] } :: p596_0
-def p596_2 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p596_0
-#guard selectOwnedDeclaration p596_1 "tick" == .property 2
-#guard elaboratesToParameter p596_1 "tick" == false
-#guard selectOwnedDeclaration p596_2 "f" == .parameter 0
-#guard elaboratesToParameter p596_2 "f" == true
-#guard selectOwnedDeclaration p596_0 "T" == .property 0
-#guard elaboratesToParameter p596_0 "T" == false
-#guard selectOwnedDeclaration p596_0 "Apply" == .property 0
-#guard elaboratesToParameter p596_0 "Apply" == false
-#guard selectOwnedDeclaration p596_0 "tick" == .property 1 -- x2
-#guard elaboratesToParameter p596_0 "tick" == false -- x2
+def p601_0 : List OwnerLevel := { parameters := [], properties := ["T", "Apply"] } :: prelude
+def p601_1 : List OwnerLevel := { parameters := [], properties := [] } :: p601_0
+def p601_2 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p601_0
+#guard selectOwnedDeclaration p601_1 "tick" == .property 2
+#guard elaboratesToParameter p601_1 "tick" == false
+#guard selectOwnedDeclaration p601_2 "f" == .parameter 0
+#guard elaboratesToParameter p601_2 "f" == true
+#guard selectOwnedDeclaration p601_0 "T" == .property 0
+#guard elaboratesToParameter p601_0 "T" == false
+#guard selectOwnedDeclaration p601_0 "Apply" == .property 0
+#guard elaboratesToParameter p601_0 "Apply" == false
+#guard selectOwnedDeclaration p601_0 "tick" == .property 1 -- x2
+#guard elaboratesToParameter p601_0 "tick" == false -- x2
 
 -- spec/tick-meta-replay-is-fresh: Replay(meta op) = op.Invoke() + op.Invoke() \n Replay(tick()), tick()
-def p597_0 : List OwnerLevel := { parameters := [], properties := ["Replay"] } :: prelude
-def p597_1 : List OwnerLevel := { parameters := ["op"], properties := [] } :: p597_0
-#guard selectOwnedDeclaration p597_1 "op" == .parameter 0 -- x2
-#guard elaboratesToParameter p597_1 "op" == true -- x2
-#guard selectOwnedDeclaration p597_1 "Invoke" == .none -- x2
-#guard elaboratesToParameter p597_1 "Invoke" == false -- x2
-#guard selectOwnedDeclaration p597_0 "Replay" == .property 0
-#guard elaboratesToParameter p597_0 "Replay" == false
-#guard selectOwnedDeclaration p597_0 "tick" == .property 1 -- x2
-#guard elaboratesToParameter p597_0 "tick" == false -- x2
+def p602_0 : List OwnerLevel := { parameters := [], properties := ["Replay"] } :: prelude
+def p602_1 : List OwnerLevel := { parameters := ["op"], properties := [] } :: p602_0
+#guard selectOwnedDeclaration p602_1 "op" == .parameter 0 -- x2
+#guard elaboratesToParameter p602_1 "op" == true -- x2
+#guard selectOwnedDeclaration p602_1 "Invoke" == .none -- x2
+#guard elaboratesToParameter p602_1 "Invoke" == false -- x2
+#guard selectOwnedDeclaration p602_0 "Replay" == .property 0
+#guard elaboratesToParameter p602_0 "Replay" == false
+#guard selectOwnedDeclaration p602_0 "tick" == .property 1 -- x2
+#guard elaboratesToParameter p602_0 "tick" == false -- x2
 
 -- spec/tick-bare-value-requires-invocation: tick + 1
 -- the same levels and decisions, 1 more:
 --   spec/tick-argument-is-an-arity-error
-def p598_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
-#guard selectOwnedDeclaration p598_0 "tick" == .property 1
-#guard elaboratesToParameter p598_0 "tick" == false
+def p603_0 : List OwnerLevel := { parameters := [], properties := [] } :: prelude
+#guard selectOwnedDeclaration p603_0 "tick" == .property 1
+#guard elaboratesToParameter p603_0 "tick" == false
 
 -- spec/tick-is-an-ordinary-shadowable-binding: tick(x) = x + 100 \n tick(1)
-def p599_0 : List OwnerLevel := { parameters := [], properties := ["tick"] } :: prelude
-def p599_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p599_0
-#guard selectOwnedDeclaration p599_1 "x" == .parameter 0
-#guard elaboratesToParameter p599_1 "x" == true
-#guard selectOwnedDeclaration p599_0 "tick" == .property 0
-#guard elaboratesToParameter p599_0 "tick" == false
+def p604_0 : List OwnerLevel := { parameters := [], properties := ["tick"] } :: prelude
+def p604_1 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p604_0
+#guard selectOwnedDeclaration p604_1 "x" == .parameter 0
+#guard elaboratesToParameter p604_1 "x" == true
+#guard selectOwnedDeclaration p604_0 "tick" == .property 0
+#guard elaboratesToParameter p604_0 "tick" == false
 
 -- spec/grouped-runtime-member-value-call: Use(v) = { \n     Box = { \n         public A = v \n         0 \n     } \n     (Box.A)() \n } \n Use(5)
 -- the same levels and decisions, 1 more:
 --   spec/grouped-runtime-member-value-arity
-def p600_0 : List OwnerLevel := { parameters := [], properties := ["Use"] } :: prelude
-def p600_1 : List OwnerLevel := { parameters := ["v"], properties := ["Box"] } :: p600_0
-def p600_2 : List OwnerLevel := { parameters := [], properties := ["A"] } :: p600_1
-def p600_3 : List OwnerLevel := { parameters := [], properties := [] } :: p600_2
-#guard selectOwnedDeclaration p600_3 "v" == .parameter 2
-#guard elaboratesToParameter p600_3 "v" == true
-#guard selectOwnedDeclaration p600_1 "Box" == .property 0
-#guard elaboratesToParameter p600_1 "Box" == false
-#guard selectOwnedDeclaration p600_1 "A" == .none
-#guard elaboratesToParameter p600_1 "A" == false
-#guard selectOwnedDeclaration p600_0 "Use" == .property 0
-#guard elaboratesToParameter p600_0 "Use" == false
+def p605_0 : List OwnerLevel := { parameters := [], properties := ["Use"] } :: prelude
+def p605_1 : List OwnerLevel := { parameters := ["v"], properties := ["Box"] } :: p605_0
+def p605_2 : List OwnerLevel := { parameters := [], properties := ["A"] } :: p605_1
+def p605_3 : List OwnerLevel := { parameters := [], properties := [] } :: p605_2
+#guard selectOwnedDeclaration p605_3 "v" == .parameter 2
+#guard elaboratesToParameter p605_3 "v" == true
+#guard selectOwnedDeclaration p605_1 "Box" == .property 0
+#guard elaboratesToParameter p605_1 "Box" == false
+#guard selectOwnedDeclaration p605_1 "A" == .none
+#guard elaboratesToParameter p605_1 "A" == false
+#guard selectOwnedDeclaration p605_0 "Use" == .property 0
+#guard elaboratesToParameter p605_0 "Use" == false
 
 -- spec/open-reference-private-member-provides-public-names: open A \n Lib = { \n     Sub = { \n         public Q(x) = x + 1 \n     } \n } \n A = Lib.Sub \n Q(5)
-def p601_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "A"] } :: prelude
-def p601_1 : List OwnerLevel := { parameters := [], properties := ["Sub"] } :: p601_0
-def p601_2 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p601_1
-def p601_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p601_2
-def p601_4 : List OwnerLevel := { parameters := [], properties := [] } :: p601_0
-#guard selectOwnedDeclaration p601_0 "A" == .property 0
-#guard openHead? (elaborateOpenHead p601_0 "A") == some (false, "A")
-#guard selectOwnedDeclaration p601_3 "x" == .parameter 0
-#guard elaboratesToParameter p601_3 "x" == true
-#guard selectOwnedDeclaration p601_4 "Lib" == .property 1
-#guard elaboratesToParameter p601_4 "Lib" == false
-#guard selectOwnedDeclaration p601_4 "Sub" == .none
-#guard elaboratesToParameter p601_4 "Sub" == false
-#guard selectOwnedDeclaration p601_0 "Q" == .none
-#guard elaboratesToParameter p601_0 "Q" == false
-
--- spec/open-reference-private-member-keeps-private-names: open Lib.Sub \n Lib = { \n     Sub = { \n         public Q(x) = x + 1 \n     } \n } \n Q(5)
-def p602_0 : List OwnerLevel := { parameters := ["Q"], properties := ["Lib"] } :: prelude
-def p602_1 : List OwnerLevel := { parameters := [], properties := ["Sub"] } :: p602_0
-def p602_2 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p602_1
-def p602_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p602_2
-def p602_0c : List OwnerLevel := { parameters := [], properties := ["Lib"] } :: prelude
-#guard selectOwnedDeclaration p602_0c "Lib" == .property 0
-#guard openHead? (elaborateOpenHead p602_0c "Lib") == some (false, "Lib")
-#guard selectOwnedDeclaration p602_3 "x" == .parameter 0
-#guard elaboratesToParameter p602_3 "x" == true
-#guard selectOwnedDeclaration p602_0 "Q" == .parameter 0
-#guard elaboratesToParameter p602_0 "Q" == true
-
--- spec/open-runtime-link-provides-its-own-namespace: Cap(meta r) = r \n Inc(x) = x + 1 \n L = Cap(Inc(1)).Algorithm \n K = { \n     open L \n     5 \n } \n K
-def p603_0 : List OwnerLevel := { parameters := [], properties := ["L", "K", "Cap", "Inc"] } :: prelude
-def p603_1 : List OwnerLevel := { parameters := [], properties := [] } :: p603_0
-def p603_2 : List OwnerLevel := { parameters := [], properties := [] } :: p603_0
-def p603_3 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p603_0
-def p603_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p603_0
-#guard selectOwnedDeclaration p603_1 "Cap" == .property 1
-#guard elaboratesToParameter p603_1 "Cap" == false
-#guard selectOwnedDeclaration p603_1 "Inc" == .property 1
-#guard elaboratesToParameter p603_1 "Inc" == false
-#guard selectOwnedDeclaration p603_1 "Algorithm" == .none
-#guard elaboratesToParameter p603_1 "Algorithm" == false
-#guard selectOwnedDeclaration p603_2 "L" == .property 1
-#guard openHead? (elaborateOpenHead p603_2 "L") == some (false, "L")
-#guard selectOwnedDeclaration p603_3 "r" == .parameter 0
-#guard elaboratesToParameter p603_3 "r" == true
-#guard selectOwnedDeclaration p603_4 "x" == .parameter 0
-#guard elaboratesToParameter p603_4 "x" == true
-#guard selectOwnedDeclaration p603_0 "K" == .property 0
-#guard elaboratesToParameter p603_0 "K" == false
-
--- spec/open-calculation-link-is-refused: Mk(t) = t + 1 \n L = Mk.Algorithm \n K = { \n     open L \n     5 \n } \n K
-def p604_0 : List OwnerLevel := { parameters := [], properties := ["L", "K", "Mk"] } :: prelude
-def p604_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["t"] } :: p604_0
-def p604_2 : List OwnerLevel := { parameters := [], properties := [] } :: p604_0
-def p604_3 : List OwnerLevel := { parameters := ["t"], properties := [] } :: p604_0
-#guard selectOwnedDeclaration p604_1 "Mk" == .property 1
-#guard elaboratesToParameter p604_1 "Mk" == false
-#guard selectOwnedDeclaration p604_1 "Algorithm" == .none
-#guard elaboratesToParameter p604_1 "Algorithm" == false
-#guard selectOwnedDeclaration p604_2 "L" == .property 1
-#guard openHead? (elaborateOpenHead p604_2 "L") == some (false, "L")
-#guard selectOwnedDeclaration p604_3 "t" == .parameter 0
-#guard elaboratesToParameter p604_3 "t" == true
-#guard selectOwnedDeclaration p604_0 "K" == .property 0
-#guard elaboratesToParameter p604_0 "K" == false
-
--- spec/open-reference-to-a-calculation-link-reports-the-target-refusal: Mk(t) = t + 1 \n L = Mk.Algorithm \n A = L \n K = { \n     open A \n     5 \n } \n K
-def p605_0 : List OwnerLevel := { parameters := [], properties := ["L", "A", "K", "Mk"] } :: prelude
-def p605_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["t"] } :: p605_0
-def p605_2 : List OwnerLevel := { parameters := [], properties := [] } :: p605_0
-def p605_3 : List OwnerLevel := { parameters := [], properties := [] } :: p605_0
-def p605_4 : List OwnerLevel := { parameters := ["t"], properties := [] } :: p605_0
-#guard selectOwnedDeclaration p605_1 "Mk" == .property 1
-#guard elaboratesToParameter p605_1 "Mk" == false
-#guard selectOwnedDeclaration p605_1 "Algorithm" == .none
-#guard elaboratesToParameter p605_1 "Algorithm" == false
-#guard selectOwnedDeclaration p605_2 "L" == .property 1
-#guard elaboratesToParameter p605_2 "L" == false
-#guard selectOwnedDeclaration p605_3 "A" == .property 1
-#guard openHead? (elaborateOpenHead p605_3 "A") == some (false, "A")
-#guard selectOwnedDeclaration p605_4 "t" == .parameter 0
-#guard elaboratesToParameter p605_4 "t" == true
-#guard selectOwnedDeclaration p605_0 "K" == .property 0
-#guard elaboratesToParameter p605_0 "K" == false
-
--- spec/open-parameterized-fallback-row-is-refused: Add(x, y) = x + y \n L = Add.abs \n K = { \n     open L \n     5 \n } \n K
-def p606_0 : List OwnerLevel := { parameters := [], properties := ["L", "K", "Add"] } :: prelude
-def p606_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x", "y"] } :: p606_0
-def p606_2 : List OwnerLevel := { parameters := [], properties := [] } :: p606_0
-def p606_3 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p606_0
-#guard selectOwnedDeclaration p606_1 "Add" == .property 1
-#guard elaboratesToParameter p606_1 "Add" == false
-#guard selectOwnedDeclaration p606_1 "abs" == .property 2
-#guard elaboratesToParameter p606_1 "abs" == false
-#guard selectOwnedDeclaration p606_2 "L" == .property 1
-#guard openHead? (elaborateOpenHead p606_2 "L") == some (false, "L")
+def p606_0 : List OwnerLevel := { parameters := [], properties := ["Lib", "A"] } :: prelude
+def p606_1 : List OwnerLevel := { parameters := [], properties := ["Sub"] } :: p606_0
+def p606_2 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p606_1
+def p606_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p606_2
+def p606_4 : List OwnerLevel := { parameters := [], properties := [] } :: p606_0
+#guard selectOwnedDeclaration p606_0 "A" == .property 0
+#guard openHead? (elaborateOpenHead p606_0 "A") == some (false, "A")
 #guard selectOwnedDeclaration p606_3 "x" == .parameter 0
 #guard elaboratesToParameter p606_3 "x" == true
-#guard selectOwnedDeclaration p606_3 "y" == .parameter 0
-#guard elaboratesToParameter p606_3 "y" == true
-#guard selectOwnedDeclaration p606_0 "K" == .property 0
-#guard elaboratesToParameter p606_0 "K" == false
+#guard selectOwnedDeclaration p606_4 "Lib" == .property 1
+#guard elaboratesToParameter p606_4 "Lib" == false
+#guard selectOwnedDeclaration p606_4 "Sub" == .none
+#guard elaboratesToParameter p606_4 "Sub" == false
+#guard selectOwnedDeclaration p606_0 "Q" == .none
+#guard elaboratesToParameter p606_0 "Q" == false
+
+-- spec/open-reference-private-member-keeps-private-names: open Lib.Sub \n Lib = { \n     Sub = { \n         public Q(x) = x + 1 \n     } \n } \n Q(5)
+def p607_0 : List OwnerLevel := { parameters := ["Q"], properties := ["Lib"] } :: prelude
+def p607_1 : List OwnerLevel := { parameters := [], properties := ["Sub"] } :: p607_0
+def p607_2 : List OwnerLevel := { parameters := [], properties := ["Q"] } :: p607_1
+def p607_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p607_2
+def p607_0c : List OwnerLevel := { parameters := [], properties := ["Lib"] } :: prelude
+#guard selectOwnedDeclaration p607_0c "Lib" == .property 0
+#guard openHead? (elaborateOpenHead p607_0c "Lib") == some (false, "Lib")
+#guard selectOwnedDeclaration p607_3 "x" == .parameter 0
+#guard elaboratesToParameter p607_3 "x" == true
+#guard selectOwnedDeclaration p607_0 "Q" == .parameter 0
+#guard elaboratesToParameter p607_0 "Q" == true
+
+-- spec/open-runtime-link-provides-its-own-namespace: Cap(meta r) = r \n Inc(x) = x + 1 \n L = Cap(Inc(1)).Algorithm \n K = { \n     open L \n     5 \n } \n K
+def p608_0 : List OwnerLevel := { parameters := [], properties := ["L", "K", "Cap", "Inc"] } :: prelude
+def p608_1 : List OwnerLevel := { parameters := [], properties := [] } :: p608_0
+def p608_2 : List OwnerLevel := { parameters := [], properties := [] } :: p608_0
+def p608_3 : List OwnerLevel := { parameters := ["r"], properties := [] } :: p608_0
+def p608_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p608_0
+#guard selectOwnedDeclaration p608_1 "Cap" == .property 1
+#guard elaboratesToParameter p608_1 "Cap" == false
+#guard selectOwnedDeclaration p608_1 "Inc" == .property 1
+#guard elaboratesToParameter p608_1 "Inc" == false
+#guard selectOwnedDeclaration p608_1 "Algorithm" == .none
+#guard elaboratesToParameter p608_1 "Algorithm" == false
+#guard selectOwnedDeclaration p608_2 "L" == .property 1
+#guard openHead? (elaborateOpenHead p608_2 "L") == some (false, "L")
+#guard selectOwnedDeclaration p608_3 "r" == .parameter 0
+#guard elaboratesToParameter p608_3 "r" == true
+#guard selectOwnedDeclaration p608_4 "x" == .parameter 0
+#guard elaboratesToParameter p608_4 "x" == true
+#guard selectOwnedDeclaration p608_0 "K" == .property 0
+#guard elaboratesToParameter p608_0 "K" == false
+
+-- spec/open-calculation-link-is-refused: Mk(t) = t + 1 \n L = Mk.Algorithm \n K = { \n     open L \n     5 \n } \n K
+def p609_0 : List OwnerLevel := { parameters := [], properties := ["L", "K", "Mk"] } :: prelude
+def p609_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["t"] } :: p609_0
+def p609_2 : List OwnerLevel := { parameters := [], properties := [] } :: p609_0
+def p609_3 : List OwnerLevel := { parameters := ["t"], properties := [] } :: p609_0
+#guard selectOwnedDeclaration p609_1 "Mk" == .property 1
+#guard elaboratesToParameter p609_1 "Mk" == false
+#guard selectOwnedDeclaration p609_1 "Algorithm" == .none
+#guard elaboratesToParameter p609_1 "Algorithm" == false
+#guard selectOwnedDeclaration p609_2 "L" == .property 1
+#guard openHead? (elaborateOpenHead p609_2 "L") == some (false, "L")
+#guard selectOwnedDeclaration p609_3 "t" == .parameter 0
+#guard elaboratesToParameter p609_3 "t" == true
+#guard selectOwnedDeclaration p609_0 "K" == .property 0
+#guard elaboratesToParameter p609_0 "K" == false
+
+-- spec/open-reference-to-a-calculation-link-reports-the-target-refusal: Mk(t) = t + 1 \n L = Mk.Algorithm \n A = L \n K = { \n     open A \n     5 \n } \n K
+def p610_0 : List OwnerLevel := { parameters := [], properties := ["L", "A", "K", "Mk"] } :: prelude
+def p610_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["t"] } :: p610_0
+def p610_2 : List OwnerLevel := { parameters := [], properties := [] } :: p610_0
+def p610_3 : List OwnerLevel := { parameters := [], properties := [] } :: p610_0
+def p610_4 : List OwnerLevel := { parameters := ["t"], properties := [] } :: p610_0
+#guard selectOwnedDeclaration p610_1 "Mk" == .property 1
+#guard elaboratesToParameter p610_1 "Mk" == false
+#guard selectOwnedDeclaration p610_1 "Algorithm" == .none
+#guard elaboratesToParameter p610_1 "Algorithm" == false
+#guard selectOwnedDeclaration p610_2 "L" == .property 1
+#guard elaboratesToParameter p610_2 "L" == false
+#guard selectOwnedDeclaration p610_3 "A" == .property 1
+#guard openHead? (elaborateOpenHead p610_3 "A") == some (false, "A")
+#guard selectOwnedDeclaration p610_4 "t" == .parameter 0
+#guard elaboratesToParameter p610_4 "t" == true
+#guard selectOwnedDeclaration p610_0 "K" == .property 0
+#guard elaboratesToParameter p610_0 "K" == false
+
+-- spec/open-parameterized-fallback-row-is-refused: Add(x, y) = x + y \n L = Add.abs \n K = { \n     open L \n     5 \n } \n K
+def p611_0 : List OwnerLevel := { parameters := [], properties := ["L", "K", "Add"] } :: prelude
+def p611_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x", "y"] } :: p611_0
+def p611_2 : List OwnerLevel := { parameters := [], properties := [] } :: p611_0
+def p611_3 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p611_0
+#guard selectOwnedDeclaration p611_1 "Add" == .property 1
+#guard elaboratesToParameter p611_1 "Add" == false
+#guard selectOwnedDeclaration p611_1 "abs" == .property 2
+#guard elaboratesToParameter p611_1 "abs" == false
+#guard selectOwnedDeclaration p611_2 "L" == .property 1
+#guard openHead? (elaborateOpenHead p611_2 "L") == some (false, "L")
+#guard selectOwnedDeclaration p611_3 "x" == .parameter 0
+#guard elaboratesToParameter p611_3 "x" == true
+#guard selectOwnedDeclaration p611_3 "y" == .parameter 0
+#guard elaboratesToParameter p611_3 "y" == true
+#guard selectOwnedDeclaration p611_0 "K" == .property 0
+#guard elaboratesToParameter p611_0 "K" == false
 
 -- spec/open-link-over-a-head-only-an-open-provides-is-unresolved: Q = { \n     public S = { \n         public X = 1 \n     } \n } \n K = { \n     open Q \n     L = S.Algorithm \n     M = { \n         open L \n         5 \n     } \n     M \n } \n K
-def p607_0 : List OwnerLevel := { parameters := [], properties := ["Q", "K"] } :: prelude
-def p607_1 : List OwnerLevel := { parameters := [], properties := ["S"] } :: p607_0
-def p607_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p607_1
-def p607_3 : List OwnerLevel := { parameters := [], properties := [] } :: p607_2
-def p607_4 : List OwnerLevel := { parameters := [], properties := ["L", "M"] } :: p607_0
-def p607_5 : List OwnerLevel := { parameters := [], properties := [] } :: p607_4
-def p607_6 : List OwnerLevel := { parameters := [], properties := [] } :: p607_4
-#guard selectOwnedDeclaration p607_4 "Q" == .property 1
-#guard openHead? (elaborateOpenHead p607_4 "Q") == some (false, "Q")
-#guard selectOwnedDeclaration p607_5 "S" == .none
-#guard elaboratesToParameter p607_5 "S" == false
-#guard selectOwnedDeclaration p607_5 "Algorithm" == .none
-#guard elaboratesToParameter p607_5 "Algorithm" == false
-#guard selectOwnedDeclaration p607_6 "L" == .property 1
-#guard openHead? (elaborateOpenHead p607_6 "L") == some (false, "L")
-#guard selectOwnedDeclaration p607_4 "M" == .property 0
-#guard elaboratesToParameter p607_4 "M" == false
-#guard selectOwnedDeclaration p607_0 "K" == .property 0
-#guard elaboratesToParameter p607_0 "K" == false
+def p612_0 : List OwnerLevel := { parameters := [], properties := ["Q", "K"] } :: prelude
+def p612_1 : List OwnerLevel := { parameters := [], properties := ["S"] } :: p612_0
+def p612_2 : List OwnerLevel := { parameters := [], properties := ["X"] } :: p612_1
+def p612_3 : List OwnerLevel := { parameters := [], properties := [] } :: p612_2
+def p612_4 : List OwnerLevel := { parameters := [], properties := ["L", "M"] } :: p612_0
+def p612_5 : List OwnerLevel := { parameters := [], properties := [] } :: p612_4
+def p612_6 : List OwnerLevel := { parameters := [], properties := [] } :: p612_4
+#guard selectOwnedDeclaration p612_4 "Q" == .property 1
+#guard openHead? (elaborateOpenHead p612_4 "Q") == some (false, "Q")
+#guard selectOwnedDeclaration p612_5 "S" == .none
+#guard elaboratesToParameter p612_5 "S" == false
+#guard selectOwnedDeclaration p612_5 "Algorithm" == .none
+#guard elaboratesToParameter p612_5 "Algorithm" == false
+#guard selectOwnedDeclaration p612_6 "L" == .property 1
+#guard openHead? (elaborateOpenHead p612_6 "L") == some (false, "L")
+#guard selectOwnedDeclaration p612_4 "M" == .property 0
+#guard elaboratesToParameter p612_4 "M" == false
+#guard selectOwnedDeclaration p612_0 "K" == .property 0
+#guard elaboratesToParameter p612_0 "K" == false
 
 -- spec/open-of-a-link-over-a-cyclic-head-compiles-in-every-order: P5 = { \n     open P3 \n     Z \n } \n P6 = P6 \n P3 = P6.Algorithm \n P5(1)
-def p608_0 : List OwnerLevel := { parameters := [], properties := ["P5", "P6", "P3"] } :: prelude
-def p608_1 : List OwnerLevel := { parameters := ["Z"], properties := [] } :: p608_0
-def p608_2 : List OwnerLevel := { parameters := [], properties := [] } :: p608_0
-def p608_3 : List OwnerLevel := { parameters := [], properties := [] } :: p608_0
-#guard selectOwnedDeclaration p608_1 "P3" == .property 1
-#guard openHead? (elaborateOpenHead p608_1 "P3") == some (false, "P3")
-#guard selectOwnedDeclaration p608_1 "Z" == .parameter 0
-#guard elaboratesToParameter p608_1 "Z" == true
-#guard selectOwnedDeclaration p608_2 "P6" == .property 1
-#guard elaboratesToParameter p608_2 "P6" == false
-#guard selectOwnedDeclaration p608_3 "P6" == .property 1
-#guard elaboratesToParameter p608_3 "P6" == false
-#guard selectOwnedDeclaration p608_3 "Algorithm" == .none
-#guard elaboratesToParameter p608_3 "Algorithm" == false
-#guard selectOwnedDeclaration p608_0 "P5" == .property 0
-#guard elaboratesToParameter p608_0 "P5" == false
+def p613_0 : List OwnerLevel := { parameters := [], properties := ["P5", "P6", "P3"] } :: prelude
+def p613_1 : List OwnerLevel := { parameters := ["Z"], properties := [] } :: p613_0
+def p613_2 : List OwnerLevel := { parameters := [], properties := [] } :: p613_0
+def p613_3 : List OwnerLevel := { parameters := [], properties := [] } :: p613_0
+#guard selectOwnedDeclaration p613_1 "P3" == .property 1
+#guard openHead? (elaborateOpenHead p613_1 "P3") == some (false, "P3")
+#guard selectOwnedDeclaration p613_1 "Z" == .parameter 0
+#guard elaboratesToParameter p613_1 "Z" == true
+#guard selectOwnedDeclaration p613_2 "P6" == .property 1
+#guard elaboratesToParameter p613_2 "P6" == false
+#guard selectOwnedDeclaration p613_3 "P6" == .property 1
+#guard elaboratesToParameter p613_3 "P6" == false
+#guard selectOwnedDeclaration p613_3 "Algorithm" == .none
+#guard elaboratesToParameter p613_3 "Algorithm" == false
+#guard selectOwnedDeclaration p613_0 "P5" == .property 0
+#guard elaboratesToParameter p613_0 "P5" == false
 
 -- spec/receiver-expansion-return-through-a-reference: A = B \n B = { \n     public M = C \n     0 \n } \n C = A.M.abs \n 7
-def p609_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "C"] } :: prelude
-def p609_1 : List OwnerLevel := { parameters := [], properties := [] } :: p609_0
-def p609_2 : List OwnerLevel := { parameters := [], properties := ["M"] } :: p609_0
-def p609_3 : List OwnerLevel := { parameters := [], properties := [] } :: p609_2
-def p609_4 : List OwnerLevel := { parameters := [], properties := [] } :: p609_0
-#guard selectOwnedDeclaration p609_1 "B" == .property 1
-#guard elaboratesToParameter p609_1 "B" == false
-#guard selectOwnedDeclaration p609_3 "C" == .property 2
-#guard elaboratesToParameter p609_3 "C" == false
-#guard selectOwnedDeclaration p609_4 "A" == .property 1
-#guard elaboratesToParameter p609_4 "A" == false
-#guard selectOwnedDeclaration p609_4 "M" == .none
-#guard elaboratesToParameter p609_4 "M" == false
-#guard selectOwnedDeclaration p609_4 "abs" == .property 2
-#guard elaboratesToParameter p609_4 "abs" == false
+def p614_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "C"] } :: prelude
+def p614_1 : List OwnerLevel := { parameters := [], properties := [] } :: p614_0
+def p614_2 : List OwnerLevel := { parameters := [], properties := ["M"] } :: p614_0
+def p614_3 : List OwnerLevel := { parameters := [], properties := [] } :: p614_2
+def p614_4 : List OwnerLevel := { parameters := [], properties := [] } :: p614_0
+#guard selectOwnedDeclaration p614_1 "B" == .property 1
+#guard elaboratesToParameter p614_1 "B" == false
+#guard selectOwnedDeclaration p614_3 "C" == .property 2
+#guard elaboratesToParameter p614_3 "C" == false
+#guard selectOwnedDeclaration p614_4 "A" == .property 1
+#guard elaboratesToParameter p614_4 "A" == false
+#guard selectOwnedDeclaration p614_4 "M" == .none
+#guard elaboratesToParameter p614_4 "M" == false
+#guard selectOwnedDeclaration p614_4 "abs" == .property 2
+#guard elaboratesToParameter p614_4 "abs" == false
 
 -- spec/receiver-expansion-return-through-a-reference-link: A = B \n B = { \n     public M = C \n     0 \n } \n C = A.M.Algorithm \n 7
-def p610_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "C"] } :: prelude
-def p610_1 : List OwnerLevel := { parameters := [], properties := [] } :: p610_0
-def p610_2 : List OwnerLevel := { parameters := [], properties := ["M"] } :: p610_0
-def p610_3 : List OwnerLevel := { parameters := [], properties := [] } :: p610_2
-def p610_4 : List OwnerLevel := { parameters := [], properties := [] } :: p610_0
-#guard selectOwnedDeclaration p610_1 "B" == .property 1
-#guard elaboratesToParameter p610_1 "B" == false
-#guard selectOwnedDeclaration p610_3 "C" == .property 2
-#guard elaboratesToParameter p610_3 "C" == false
-#guard selectOwnedDeclaration p610_4 "A" == .property 1
-#guard elaboratesToParameter p610_4 "A" == false
-#guard selectOwnedDeclaration p610_4 "M" == .none
-#guard elaboratesToParameter p610_4 "M" == false
-#guard selectOwnedDeclaration p610_4 "Algorithm" == .none
-#guard elaboratesToParameter p610_4 "Algorithm" == false
+def p615_0 : List OwnerLevel := { parameters := [], properties := ["A", "B", "C"] } :: prelude
+def p615_1 : List OwnerLevel := { parameters := [], properties := [] } :: p615_0
+def p615_2 : List OwnerLevel := { parameters := [], properties := ["M"] } :: p615_0
+def p615_3 : List OwnerLevel := { parameters := [], properties := [] } :: p615_2
+def p615_4 : List OwnerLevel := { parameters := [], properties := [] } :: p615_0
+#guard selectOwnedDeclaration p615_1 "B" == .property 1
+#guard elaboratesToParameter p615_1 "B" == false
+#guard selectOwnedDeclaration p615_3 "C" == .property 2
+#guard elaboratesToParameter p615_3 "C" == false
+#guard selectOwnedDeclaration p615_4 "A" == .property 1
+#guard elaboratesToParameter p615_4 "A" == false
+#guard selectOwnedDeclaration p615_4 "M" == .none
+#guard elaboratesToParameter p615_4 "M" == false
+#guard selectOwnedDeclaration p615_4 "Algorithm" == .none
+#guard elaboratesToParameter p615_4 "Algorithm" == false
 
 -- spec/receiver-expansion-return-through-a-self-member: B = { \n     public M = B \n     public N = C \n     0 \n } \n C = B.M.N.abs \n 7
-def p611_0 : List OwnerLevel := { parameters := [], properties := ["B", "C"] } :: prelude
-def p611_1 : List OwnerLevel := { parameters := [], properties := ["M", "N"] } :: p611_0
-def p611_2 : List OwnerLevel := { parameters := [], properties := [] } :: p611_1
-def p611_3 : List OwnerLevel := { parameters := [], properties := [] } :: p611_1
-def p611_4 : List OwnerLevel := { parameters := [], properties := [] } :: p611_0
-#guard selectOwnedDeclaration p611_2 "B" == .property 2
-#guard elaboratesToParameter p611_2 "B" == false
-#guard selectOwnedDeclaration p611_3 "C" == .property 2
-#guard elaboratesToParameter p611_3 "C" == false
-#guard selectOwnedDeclaration p611_4 "B" == .property 1
-#guard elaboratesToParameter p611_4 "B" == false
-#guard selectOwnedDeclaration p611_4 "M" == .none
-#guard elaboratesToParameter p611_4 "M" == false
-#guard selectOwnedDeclaration p611_4 "N" == .none
-#guard elaboratesToParameter p611_4 "N" == false
-#guard selectOwnedDeclaration p611_4 "abs" == .property 2
-#guard elaboratesToParameter p611_4 "abs" == false
+def p616_0 : List OwnerLevel := { parameters := [], properties := ["B", "C"] } :: prelude
+def p616_1 : List OwnerLevel := { parameters := [], properties := ["M", "N"] } :: p616_0
+def p616_2 : List OwnerLevel := { parameters := [], properties := [] } :: p616_1
+def p616_3 : List OwnerLevel := { parameters := [], properties := [] } :: p616_1
+def p616_4 : List OwnerLevel := { parameters := [], properties := [] } :: p616_0
+#guard selectOwnedDeclaration p616_2 "B" == .property 2
+#guard elaboratesToParameter p616_2 "B" == false
+#guard selectOwnedDeclaration p616_3 "C" == .property 2
+#guard elaboratesToParameter p616_3 "C" == false
+#guard selectOwnedDeclaration p616_4 "B" == .property 1
+#guard elaboratesToParameter p616_4 "B" == false
+#guard selectOwnedDeclaration p616_4 "M" == .none
+#guard elaboratesToParameter p616_4 "M" == false
+#guard selectOwnedDeclaration p616_4 "N" == .none
+#guard elaboratesToParameter p616_4 "N" == false
+#guard selectOwnedDeclaration p616_4 "abs" == .property 2
+#guard elaboratesToParameter p616_4 "abs" == false
 
 -- spec/receiver-expansion-consumed-members-are-no-return: Q = { \n     public V = 5 \n } \n B = { \n     public M = B \n     public N = Q \n     0 \n } \n C = B.M.M.N \n C.V
-def p612_0 : List OwnerLevel := { parameters := [], properties := ["Q", "B", "C"] } :: prelude
-def p612_1 : List OwnerLevel := { parameters := [], properties := ["V"] } :: p612_0
-def p612_2 : List OwnerLevel := { parameters := [], properties := [] } :: p612_1
-def p612_3 : List OwnerLevel := { parameters := [], properties := ["M", "N"] } :: p612_0
-def p612_4 : List OwnerLevel := { parameters := [], properties := [] } :: p612_3
-def p612_5 : List OwnerLevel := { parameters := [], properties := [] } :: p612_3
-def p612_6 : List OwnerLevel := { parameters := [], properties := [] } :: p612_0
-#guard selectOwnedDeclaration p612_4 "B" == .property 2
-#guard elaboratesToParameter p612_4 "B" == false
-#guard selectOwnedDeclaration p612_5 "Q" == .property 2
-#guard elaboratesToParameter p612_5 "Q" == false
-#guard selectOwnedDeclaration p612_6 "B" == .property 1
-#guard elaboratesToParameter p612_6 "B" == false
-#guard selectOwnedDeclaration p612_6 "M" == .none -- x2
-#guard elaboratesToParameter p612_6 "M" == false -- x2
-#guard selectOwnedDeclaration p612_6 "N" == .none
-#guard elaboratesToParameter p612_6 "N" == false
-#guard selectOwnedDeclaration p612_0 "C" == .property 0
-#guard elaboratesToParameter p612_0 "C" == false
-#guard selectOwnedDeclaration p612_0 "V" == .none
-#guard elaboratesToParameter p612_0 "V" == false
+def p617_0 : List OwnerLevel := { parameters := [], properties := ["Q", "B", "C"] } :: prelude
+def p617_1 : List OwnerLevel := { parameters := [], properties := ["V"] } :: p617_0
+def p617_2 : List OwnerLevel := { parameters := [], properties := [] } :: p617_1
+def p617_3 : List OwnerLevel := { parameters := [], properties := ["M", "N"] } :: p617_0
+def p617_4 : List OwnerLevel := { parameters := [], properties := [] } :: p617_3
+def p617_5 : List OwnerLevel := { parameters := [], properties := [] } :: p617_3
+def p617_6 : List OwnerLevel := { parameters := [], properties := [] } :: p617_0
+#guard selectOwnedDeclaration p617_4 "B" == .property 2
+#guard elaboratesToParameter p617_4 "B" == false
+#guard selectOwnedDeclaration p617_5 "Q" == .property 2
+#guard elaboratesToParameter p617_5 "Q" == false
+#guard selectOwnedDeclaration p617_6 "B" == .property 1
+#guard elaboratesToParameter p617_6 "B" == false
+#guard selectOwnedDeclaration p617_6 "M" == .none -- x2
+#guard elaboratesToParameter p617_6 "M" == false -- x2
+#guard selectOwnedDeclaration p617_6 "N" == .none
+#guard elaboratesToParameter p617_6 "N" == false
+#guard selectOwnedDeclaration p617_0 "C" == .property 0
+#guard elaboratesToParameter p617_0 "C" == false
+#guard selectOwnedDeclaration p617_0 "V" == .none
+#guard elaboratesToParameter p617_0 "V" == false
 
 -- spec/output-spread-marked-call-spreads-its-rows: A(x, y)* = x, y \n A(1, 2) \n A(3, 4)
-def p613_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
-def p613_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p613_0
-#guard selectOwnedDeclaration p613_1 "x" == .parameter 0
-#guard elaboratesToParameter p613_1 "x" == true
-#guard selectOwnedDeclaration p613_1 "y" == .parameter 0
-#guard elaboratesToParameter p613_1 "y" == true
-#guard selectOwnedDeclaration p613_0 "A" == .property 0 -- x2
-#guard elaboratesToParameter p613_0 "A" == false -- x2
-
--- spec/output-spread-argument-and-element-slots: A(x, y)* = x, y \n Add(x, y) = x + y \n Add(A(1, 2)), [A(1, 2), A(3, 4)]
-def p614_0 : List OwnerLevel := { parameters := [], properties := ["A", "Add"] } :: prelude
-def p614_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p614_0
-def p614_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p614_0
-#guard selectOwnedDeclaration p614_1 "x" == .parameter 0
-#guard elaboratesToParameter p614_1 "x" == true
-#guard selectOwnedDeclaration p614_1 "y" == .parameter 0
-#guard elaboratesToParameter p614_1 "y" == true
-#guard selectOwnedDeclaration p614_2 "x" == .parameter 0
-#guard elaboratesToParameter p614_2 "x" == true
-#guard selectOwnedDeclaration p614_2 "y" == .parameter 0
-#guard elaboratesToParameter p614_2 "y" == true
-#guard selectOwnedDeclaration p614_0 "Add" == .property 0
-#guard elaboratesToParameter p614_0 "Add" == false
-#guard selectOwnedDeclaration p614_0 "A" == .property 0 -- x3
-#guard elaboratesToParameter p614_0 "A" == false -- x3
-
--- spec/output-spread-alias-inherits-the-marker: A(x, y)* = x, y \n B = A \n [B(3, 4)]
--- the same levels and decisions, 1 more:
---   spec/output-spread-marker-on-an-alias-is-an-error
-def p615_0 : List OwnerLevel := { parameters := [], properties := ["B", "A"] } :: prelude
-def p615_1 : List OwnerLevel := { parameters := [], properties := [] } :: p615_0
-def p615_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p615_0
-#guard selectOwnedDeclaration p615_1 "A" == .property 1
-#guard elaboratesToParameter p615_1 "A" == false
-#guard selectOwnedDeclaration p615_2 "x" == .parameter 0
-#guard elaboratesToParameter p615_2 "x" == true
-#guard selectOwnedDeclaration p615_2 "y" == .parameter 0
-#guard elaboratesToParameter p615_2 "y" == true
-#guard selectOwnedDeclaration p615_0 "B" == .property 0
-#guard elaboratesToParameter p615_0 "B" == false
-
--- spec/output-spread-value-positions-keep-one-value: A(x, y)* = x, y \n A(1, 2)[0], count({ A(1, 2) }), count([A(1, 2)])
-def p616_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
-def p616_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p616_0
-def p616_2 : List OwnerLevel := { parameters := [], properties := [] } :: p616_0
-#guard selectOwnedDeclaration p616_1 "x" == .parameter 0
-#guard elaboratesToParameter p616_1 "x" == true
-#guard selectOwnedDeclaration p616_1 "y" == .parameter 0
-#guard elaboratesToParameter p616_1 "y" == true
-#guard selectOwnedDeclaration p616_0 "A" == .property 0 -- x2
-#guard elaboratesToParameter p616_0 "A" == false -- x2
-#guard selectOwnedDeclaration p616_0 "count" == .property 1 -- x2
-#guard elaboratesToParameter p616_0 "count" == false -- x2
-#guard selectOwnedDeclaration p616_2 "A" == .property 1
-#guard elaboratesToParameter p616_2 "A" == false
-
--- spec/output-spread-builtin-argument-is-spread-too: A(x, y)* = x, y \n count(A(1, 2))
-def p617_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
-def p617_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p617_0
-#guard selectOwnedDeclaration p617_1 "x" == .parameter 0
-#guard elaboratesToParameter p617_1 "x" == true
-#guard selectOwnedDeclaration p617_1 "y" == .parameter 0
-#guard elaboratesToParameter p617_1 "y" == true
-#guard selectOwnedDeclaration p617_0 "count" == .property 1
-#guard elaboratesToParameter p617_0 "count" == false
-#guard selectOwnedDeclaration p617_0 "A" == .property 0
-#guard elaboratesToParameter p617_0 "A" == false
-
--- spec/output-spread-not-through-a-parameter: A(x, y)* = x, y \n Apply(f) = count(f(1, 2)) \n Apply(A)
-def p618_0 : List OwnerLevel := { parameters := [], properties := ["A", "Apply"] } :: prelude
+def p618_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
 def p618_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p618_0
-def p618_2 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p618_0
 #guard selectOwnedDeclaration p618_1 "x" == .parameter 0
 #guard elaboratesToParameter p618_1 "x" == true
 #guard selectOwnedDeclaration p618_1 "y" == .parameter 0
 #guard elaboratesToParameter p618_1 "y" == true
-#guard selectOwnedDeclaration p618_2 "count" == .property 2
-#guard elaboratesToParameter p618_2 "count" == false
-#guard selectOwnedDeclaration p618_2 "f" == .parameter 0
-#guard elaboratesToParameter p618_2 "f" == true
-#guard selectOwnedDeclaration p618_0 "Apply" == .property 0
-#guard elaboratesToParameter p618_0 "Apply" == false
-#guard selectOwnedDeclaration p618_0 "A" == .property 0
-#guard elaboratesToParameter p618_0 "A" == false
+#guard selectOwnedDeclaration p618_0 "A" == .property 0 -- x2
+#guard elaboratesToParameter p618_0 "A" == false -- x2
 
--- spec/output-spread-lifted-call-spreads: A(x, y)* = x, y \n S = [A] \n S(1, 2)
-def p619_0 : List OwnerLevel := { parameters := [], properties := ["S", "A"] } :: prelude
-def p619_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x", "y"] } :: p619_0
+-- spec/output-spread-argument-and-element-slots: A(x, y)* = x, y \n Add(x, y) = x + y \n Add(A(1, 2)), [A(1, 2), A(3, 4)]
+def p619_0 : List OwnerLevel := { parameters := [], properties := ["A", "Add"] } :: prelude
+def p619_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p619_0
 def p619_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p619_0
-#guard selectOwnedDeclaration p619_1 "A" == .property 1
-#guard elaboratesToParameter p619_1 "A" == false
+#guard selectOwnedDeclaration p619_1 "x" == .parameter 0
+#guard elaboratesToParameter p619_1 "x" == true
+#guard selectOwnedDeclaration p619_1 "y" == .parameter 0
+#guard elaboratesToParameter p619_1 "y" == true
 #guard selectOwnedDeclaration p619_2 "x" == .parameter 0
 #guard elaboratesToParameter p619_2 "x" == true
 #guard selectOwnedDeclaration p619_2 "y" == .parameter 0
 #guard elaboratesToParameter p619_2 "y" == true
-#guard selectOwnedDeclaration p619_0 "S" == .property 0
-#guard elaboratesToParameter p619_0 "S" == false
+#guard selectOwnedDeclaration p619_0 "Add" == .property 0
+#guard elaboratesToParameter p619_0 "Add" == false
+#guard selectOwnedDeclaration p619_0 "A" == .property 0 -- x3
+#guard elaboratesToParameter p619_0 "A" == false -- x3
 
--- spec/output-spread-loop-step-through-a-wrapper: Fib(a, b)* = b, a + b \n Step(a, b) = Fib(a, b) \n Step(0, 1).repeat(10)
-def p620_0 : List OwnerLevel := { parameters := [], properties := ["Fib", "Step"] } :: prelude
-def p620_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p620_0
-def p620_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p620_0
-#guard selectOwnedDeclaration p620_1 "b" == .parameter 0 -- x2
-#guard elaboratesToParameter p620_1 "b" == true -- x2
-#guard selectOwnedDeclaration p620_1 "a" == .parameter 0
-#guard elaboratesToParameter p620_1 "a" == true
-#guard selectOwnedDeclaration p620_2 "Fib" == .property 1
-#guard elaboratesToParameter p620_2 "Fib" == false
-#guard selectOwnedDeclaration p620_2 "a" == .parameter 0
-#guard elaboratesToParameter p620_2 "a" == true
-#guard selectOwnedDeclaration p620_2 "b" == .parameter 0
-#guard elaboratesToParameter p620_2 "b" == true
-#guard selectOwnedDeclaration p620_0 "Step" == .property 0
-#guard elaboratesToParameter p620_0 "Step" == false
-#guard selectOwnedDeclaration p620_0 "repeat" == .property 1
-#guard elaboratesToParameter p620_0 "repeat" == false
+-- spec/output-spread-alias-inherits-the-marker: A(x, y)* = x, y \n B = A \n [B(3, 4)]
+-- the same levels and decisions, 1 more:
+--   spec/output-spread-marker-on-an-alias-is-an-error
+def p620_0 : List OwnerLevel := { parameters := [], properties := ["B", "A"] } :: prelude
+def p620_1 : List OwnerLevel := { parameters := [], properties := [] } :: p620_0
+def p620_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p620_0
+#guard selectOwnedDeclaration p620_1 "A" == .property 1
+#guard elaboratesToParameter p620_1 "A" == false
+#guard selectOwnedDeclaration p620_2 "x" == .parameter 0
+#guard elaboratesToParameter p620_2 "x" == true
+#guard selectOwnedDeclaration p620_2 "y" == .parameter 0
+#guard elaboratesToParameter p620_2 "y" == true
+#guard selectOwnedDeclaration p620_0 "B" == .property 0
+#guard elaboratesToParameter p620_0 "B" == false
 
--- spec/output-spread-marked-call-as-loop-receiver: Fib(a, b)* = b, a + b \n Fib(0, 1).repeat(10)
-def p621_0 : List OwnerLevel := { parameters := [], properties := ["Fib"] } :: prelude
-def p621_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p621_0
-#guard selectOwnedDeclaration p621_1 "b" == .parameter 0 -- x2
-#guard elaboratesToParameter p621_1 "b" == true -- x2
-#guard selectOwnedDeclaration p621_1 "a" == .parameter 0
-#guard elaboratesToParameter p621_1 "a" == true
-#guard selectOwnedDeclaration p621_0 "repeat" == .property 1
-#guard elaboratesToParameter p621_0 "repeat" == false
-#guard selectOwnedDeclaration p621_0 "Fib" == .property 0
-#guard elaboratesToParameter p621_0 "Fib" == false
+-- spec/output-spread-value-positions-keep-one-value: A(x, y)* = x, y \n A(1, 2)[0], count({ A(1, 2) }), count([A(1, 2)])
+def p621_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
+def p621_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p621_0
+def p621_2 : List OwnerLevel := { parameters := [], properties := [] } :: p621_0
+#guard selectOwnedDeclaration p621_1 "x" == .parameter 0
+#guard elaboratesToParameter p621_1 "x" == true
+#guard selectOwnedDeclaration p621_1 "y" == .parameter 0
+#guard elaboratesToParameter p621_1 "y" == true
+#guard selectOwnedDeclaration p621_0 "A" == .property 0 -- x2
+#guard elaboratesToParameter p621_0 "A" == false -- x2
+#guard selectOwnedDeclaration p621_0 "count" == .property 1 -- x2
+#guard elaboratesToParameter p621_0 "count" == false -- x2
+#guard selectOwnedDeclaration p621_2 "A" == .property 1
+#guard elaboratesToParameter p621_2 "A" == false
 
--- spec/output-spread-zero-parameter-only-explicit-calls: P* = 1, 2 \n count(P), [P()]
-def p622_0 : List OwnerLevel := { parameters := [], properties := ["P"] } :: prelude
-def p622_1 : List OwnerLevel := { parameters := [], properties := [] } :: p622_0
+-- spec/output-spread-builtin-argument-is-spread-too: A(x, y)* = x, y \n count(A(1, 2))
+def p622_0 : List OwnerLevel := { parameters := [], properties := ["A"] } :: prelude
+def p622_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p622_0
+#guard selectOwnedDeclaration p622_1 "x" == .parameter 0
+#guard elaboratesToParameter p622_1 "x" == true
+#guard selectOwnedDeclaration p622_1 "y" == .parameter 0
+#guard elaboratesToParameter p622_1 "y" == true
 #guard selectOwnedDeclaration p622_0 "count" == .property 1
 #guard elaboratesToParameter p622_0 "count" == false
-#guard selectOwnedDeclaration p622_0 "P" == .property 0 -- x2
-#guard elaboratesToParameter p622_0 "P" == false -- x2
+#guard selectOwnedDeclaration p622_0 "A" == .property 0
+#guard elaboratesToParameter p622_0 "A" == false
 
--- spec/output-spread-argument-runs-at-formation: D(x, y)* = x / y, y \n FirstOf(a, *rest) = a \n FirstOf(5, D(1, 0))
-def p623_0 : List OwnerLevel := { parameters := [], properties := ["D", "FirstOf"] } :: prelude
+-- spec/output-spread-not-through-a-parameter: A(x, y)* = x, y \n Apply(f) = count(f(1, 2)) \n Apply(A)
+def p623_0 : List OwnerLevel := { parameters := [], properties := ["A", "Apply"] } :: prelude
 def p623_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p623_0
-def p623_2 : List OwnerLevel := { parameters := ["a", "rest"], properties := [] } :: p623_0
+def p623_2 : List OwnerLevel := { parameters := ["f"], properties := [] } :: p623_0
 #guard selectOwnedDeclaration p623_1 "x" == .parameter 0
 #guard elaboratesToParameter p623_1 "x" == true
-#guard selectOwnedDeclaration p623_1 "y" == .parameter 0 -- x2
-#guard elaboratesToParameter p623_1 "y" == true -- x2
-#guard selectOwnedDeclaration p623_2 "a" == .parameter 0
-#guard elaboratesToParameter p623_2 "a" == true
-#guard selectOwnedDeclaration p623_0 "FirstOf" == .property 0
-#guard elaboratesToParameter p623_0 "FirstOf" == false
-#guard selectOwnedDeclaration p623_0 "D" == .property 0
-#guard elaboratesToParameter p623_0 "D" == false
+#guard selectOwnedDeclaration p623_1 "y" == .parameter 0
+#guard elaboratesToParameter p623_1 "y" == true
+#guard selectOwnedDeclaration p623_2 "count" == .property 2
+#guard elaboratesToParameter p623_2 "count" == false
+#guard selectOwnedDeclaration p623_2 "f" == .parameter 0
+#guard elaboratesToParameter p623_2 "f" == true
+#guard selectOwnedDeclaration p623_0 "Apply" == .property 0
+#guard elaboratesToParameter p623_0 "Apply" == false
+#guard selectOwnedDeclaration p623_0 "A" == .property 0
+#guard elaboratesToParameter p623_0 "A" == false
+
+-- spec/output-spread-lifted-call-spreads: A(x, y)* = x, y \n S = [A] \n S(1, 2)
+def p624_0 : List OwnerLevel := { parameters := [], properties := ["S", "A"] } :: prelude
+def p624_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x", "y"] } :: p624_0
+def p624_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p624_0
+#guard selectOwnedDeclaration p624_1 "A" == .property 1
+#guard elaboratesToParameter p624_1 "A" == false
+#guard selectOwnedDeclaration p624_2 "x" == .parameter 0
+#guard elaboratesToParameter p624_2 "x" == true
+#guard selectOwnedDeclaration p624_2 "y" == .parameter 0
+#guard elaboratesToParameter p624_2 "y" == true
+#guard selectOwnedDeclaration p624_0 "S" == .property 0
+#guard elaboratesToParameter p624_0 "S" == false
+
+-- spec/output-spread-loop-step-through-a-wrapper: Fib(a, b)* = b, a + b \n Step(a, b) = Fib(a, b) \n Step(0, 1).repeat(10)
+def p625_0 : List OwnerLevel := { parameters := [], properties := ["Fib", "Step"] } :: prelude
+def p625_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p625_0
+def p625_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p625_0
+#guard selectOwnedDeclaration p625_1 "b" == .parameter 0 -- x2
+#guard elaboratesToParameter p625_1 "b" == true -- x2
+#guard selectOwnedDeclaration p625_1 "a" == .parameter 0
+#guard elaboratesToParameter p625_1 "a" == true
+#guard selectOwnedDeclaration p625_2 "Fib" == .property 1
+#guard elaboratesToParameter p625_2 "Fib" == false
+#guard selectOwnedDeclaration p625_2 "a" == .parameter 0
+#guard elaboratesToParameter p625_2 "a" == true
+#guard selectOwnedDeclaration p625_2 "b" == .parameter 0
+#guard elaboratesToParameter p625_2 "b" == true
+#guard selectOwnedDeclaration p625_0 "Step" == .property 0
+#guard elaboratesToParameter p625_0 "Step" == false
+#guard selectOwnedDeclaration p625_0 "repeat" == .property 1
+#guard elaboratesToParameter p625_0 "repeat" == false
+
+-- spec/output-spread-marked-call-as-loop-receiver: Fib(a, b)* = b, a + b \n Fib(0, 1).repeat(10)
+def p626_0 : List OwnerLevel := { parameters := [], properties := ["Fib"] } :: prelude
+def p626_1 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p626_0
+#guard selectOwnedDeclaration p626_1 "b" == .parameter 0 -- x2
+#guard elaboratesToParameter p626_1 "b" == true -- x2
+#guard selectOwnedDeclaration p626_1 "a" == .parameter 0
+#guard elaboratesToParameter p626_1 "a" == true
+#guard selectOwnedDeclaration p626_0 "repeat" == .property 1
+#guard elaboratesToParameter p626_0 "repeat" == false
+#guard selectOwnedDeclaration p626_0 "Fib" == .property 0
+#guard elaboratesToParameter p626_0 "Fib" == false
+
+-- spec/output-spread-zero-parameter-only-explicit-calls: P* = 1, 2 \n count(P), [P()]
+def p627_0 : List OwnerLevel := { parameters := [], properties := ["P"] } :: prelude
+def p627_1 : List OwnerLevel := { parameters := [], properties := [] } :: p627_0
+#guard selectOwnedDeclaration p627_0 "count" == .property 1
+#guard elaboratesToParameter p627_0 "count" == false
+#guard selectOwnedDeclaration p627_0 "P" == .property 0 -- x2
+#guard elaboratesToParameter p627_0 "P" == false -- x2
+
+-- spec/output-spread-argument-runs-at-formation: D(x, y)* = x / y, y \n FirstOf(a, *rest) = a \n FirstOf(5, D(1, 0))
+def p628_0 : List OwnerLevel := { parameters := [], properties := ["D", "FirstOf"] } :: prelude
+def p628_1 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p628_0
+def p628_2 : List OwnerLevel := { parameters := ["a", "rest"], properties := [] } :: p628_0
+#guard selectOwnedDeclaration p628_1 "x" == .parameter 0
+#guard elaboratesToParameter p628_1 "x" == true
+#guard selectOwnedDeclaration p628_1 "y" == .parameter 0 -- x2
+#guard elaboratesToParameter p628_1 "y" == true -- x2
+#guard selectOwnedDeclaration p628_2 "a" == .parameter 0
+#guard elaboratesToParameter p628_2 "a" == true
+#guard selectOwnedDeclaration p628_0 "FirstOf" == .property 0
+#guard elaboratesToParameter p628_0 "FirstOf" == false
+#guard selectOwnedDeclaration p628_0 "D" == .property 0
+#guard elaboratesToParameter p628_0 "D" == false
 
 -- spec/output-spread-opens-one-level: G* = [[1, 2], [3]] \n [G()], (G(), 9)
-def p624_0 : List OwnerLevel := { parameters := [], properties := ["G"] } :: prelude
-def p624_1 : List OwnerLevel := { parameters := [], properties := [] } :: p624_0
-#guard selectOwnedDeclaration p624_0 "G" == .property 0 -- x2
-#guard elaboratesToParameter p624_0 "G" == false -- x2
+def p629_0 : List OwnerLevel := { parameters := [], properties := ["G"] } :: prelude
+def p629_1 : List OwnerLevel := { parameters := [], properties := [] } :: p629_0
+#guard selectOwnedDeclaration p629_0 "G" == .property 0 -- x2
+#guard elaboratesToParameter p629_0 "G" == false -- x2
 
 -- spec/output-spread-receiver-edge-is-the-lowered-call: A(x, y)* = x, y \n Add3(a, b, c) = a + b + c \n H = A(x, y).F(3) \n H(Add3, 1, 2)
-def p625_0 : List OwnerLevel := { parameters := [], properties := ["H", "A", "Add3"] } :: prelude
-def p625_1 : List OwnerLevel := { parameters := ["F", "x", "y"], properties := [] } :: p625_0
-def p625_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p625_0
-def p625_3 : List OwnerLevel := { parameters := ["a", "b", "c"], properties := [] } :: p625_0
-#guard selectOwnedDeclaration p625_1 "F" == .parameter 0
-#guard elaboratesToParameter p625_1 "F" == true
-#guard selectOwnedDeclaration p625_1 "A" == .property 1
-#guard elaboratesToParameter p625_1 "A" == false
-#guard selectOwnedDeclaration p625_1 "x" == .parameter 0
-#guard elaboratesToParameter p625_1 "x" == true
-#guard selectOwnedDeclaration p625_1 "y" == .parameter 0
-#guard elaboratesToParameter p625_1 "y" == true
-#guard selectOwnedDeclaration p625_2 "x" == .parameter 0
-#guard elaboratesToParameter p625_2 "x" == true
-#guard selectOwnedDeclaration p625_2 "y" == .parameter 0
-#guard elaboratesToParameter p625_2 "y" == true
-#guard selectOwnedDeclaration p625_3 "a" == .parameter 0
-#guard elaboratesToParameter p625_3 "a" == true
-#guard selectOwnedDeclaration p625_3 "b" == .parameter 0
-#guard elaboratesToParameter p625_3 "b" == true
-#guard selectOwnedDeclaration p625_3 "c" == .parameter 0
-#guard elaboratesToParameter p625_3 "c" == true
-#guard selectOwnedDeclaration p625_0 "H" == .property 0
-#guard elaboratesToParameter p625_0 "H" == false
-#guard selectOwnedDeclaration p625_0 "Add3" == .property 0
-#guard elaboratesToParameter p625_0 "Add3" == false
+def p630_0 : List OwnerLevel := { parameters := [], properties := ["H", "A", "Add3"] } :: prelude
+def p630_1 : List OwnerLevel := { parameters := ["F", "x", "y"], properties := [] } :: p630_0
+def p630_2 : List OwnerLevel := { parameters := ["x", "y"], properties := [] } :: p630_0
+def p630_3 : List OwnerLevel := { parameters := ["a", "b", "c"], properties := [] } :: p630_0
+#guard selectOwnedDeclaration p630_1 "F" == .parameter 0
+#guard elaboratesToParameter p630_1 "F" == true
+#guard selectOwnedDeclaration p630_1 "A" == .property 1
+#guard elaboratesToParameter p630_1 "A" == false
+#guard selectOwnedDeclaration p630_1 "x" == .parameter 0
+#guard elaboratesToParameter p630_1 "x" == true
+#guard selectOwnedDeclaration p630_1 "y" == .parameter 0
+#guard elaboratesToParameter p630_1 "y" == true
+#guard selectOwnedDeclaration p630_2 "x" == .parameter 0
+#guard elaboratesToParameter p630_2 "x" == true
+#guard selectOwnedDeclaration p630_2 "y" == .parameter 0
+#guard elaboratesToParameter p630_2 "y" == true
+#guard selectOwnedDeclaration p630_3 "a" == .parameter 0
+#guard elaboratesToParameter p630_3 "a" == true
+#guard selectOwnedDeclaration p630_3 "b" == .parameter 0
+#guard elaboratesToParameter p630_3 "b" == true
+#guard selectOwnedDeclaration p630_3 "c" == .parameter 0
+#guard elaboratesToParameter p630_3 "c" == true
+#guard selectOwnedDeclaration p630_0 "H" == .property 0
+#guard elaboratesToParameter p630_0 "H" == false
+#guard selectOwnedDeclaration p630_0 "Add3" == .property 0
+#guard elaboratesToParameter p630_0 "Add3" == false
 
 -- spec/output-spread-lifted-call-ends-known-positions: P(x)* = [x] \n Add(a, b) = a + b \n Inc(x) = x + 1 \n H = reduce(P, Add, Inc) \n H(1)
-def p626_0 : List OwnerLevel := { parameters := [], properties := ["H", "P", "Add", "Inc"] } :: prelude
-def p626_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p626_0
-def p626_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p626_0
-def p626_3 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p626_0
-def p626_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p626_0
-#guard selectOwnedDeclaration p626_1 "reduce" == .property 2
-#guard elaboratesToParameter p626_1 "reduce" == false
-#guard selectOwnedDeclaration p626_1 "P" == .property 1
-#guard elaboratesToParameter p626_1 "P" == false
-#guard selectOwnedDeclaration p626_1 "Add" == .property 1
-#guard elaboratesToParameter p626_1 "Add" == false
-#guard selectOwnedDeclaration p626_1 "Inc" == .property 1
-#guard elaboratesToParameter p626_1 "Inc" == false
-#guard selectOwnedDeclaration p626_2 "x" == .parameter 0
-#guard elaboratesToParameter p626_2 "x" == true
-#guard selectOwnedDeclaration p626_3 "a" == .parameter 0
-#guard elaboratesToParameter p626_3 "a" == true
-#guard selectOwnedDeclaration p626_3 "b" == .parameter 0
-#guard elaboratesToParameter p626_3 "b" == true
-#guard selectOwnedDeclaration p626_4 "x" == .parameter 0
-#guard elaboratesToParameter p626_4 "x" == true
-#guard selectOwnedDeclaration p626_0 "H" == .property 0
-#guard elaboratesToParameter p626_0 "H" == false
+def p631_0 : List OwnerLevel := { parameters := [], properties := ["H", "P", "Add", "Inc"] } :: prelude
+def p631_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p631_0
+def p631_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p631_0
+def p631_3 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p631_0
+def p631_4 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p631_0
+#guard selectOwnedDeclaration p631_1 "reduce" == .property 2
+#guard elaboratesToParameter p631_1 "reduce" == false
+#guard selectOwnedDeclaration p631_1 "P" == .property 1
+#guard elaboratesToParameter p631_1 "P" == false
+#guard selectOwnedDeclaration p631_1 "Add" == .property 1
+#guard elaboratesToParameter p631_1 "Add" == false
+#guard selectOwnedDeclaration p631_1 "Inc" == .property 1
+#guard elaboratesToParameter p631_1 "Inc" == false
+#guard selectOwnedDeclaration p631_2 "x" == .parameter 0
+#guard elaboratesToParameter p631_2 "x" == true
+#guard selectOwnedDeclaration p631_3 "a" == .parameter 0
+#guard elaboratesToParameter p631_3 "a" == true
+#guard selectOwnedDeclaration p631_3 "b" == .parameter 0
+#guard elaboratesToParameter p631_3 "b" == true
+#guard selectOwnedDeclaration p631_4 "x" == .parameter 0
+#guard elaboratesToParameter p631_4 "x" == true
+#guard selectOwnedDeclaration p631_0 "H" == .property 0
+#guard elaboratesToParameter p631_0 "H" == false
 
 -- spec/output-spread-reference-needs-call: Q(x) = [[x]] \n P* = Q[0] \n Add(a, b) = a + b \n Inc(x) = x + 1 \n H = reduce(P, Add, Inc) \n H(1)
-def p627_0 : List OwnerLevel := { parameters := [], properties := ["P", "H", "Q", "Add", "Inc"] } :: prelude
-def p627_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p627_0
-def p627_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p627_0
-def p627_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p627_0
-def p627_4 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p627_0
-def p627_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p627_0
-#guard selectOwnedDeclaration p627_1 "Q" == .property 1
-#guard elaboratesToParameter p627_1 "Q" == false
-#guard selectOwnedDeclaration p627_2 "reduce" == .property 2
-#guard elaboratesToParameter p627_2 "reduce" == false
-#guard selectOwnedDeclaration p627_2 "P" == .property 1
-#guard elaboratesToParameter p627_2 "P" == false
-#guard selectOwnedDeclaration p627_2 "Add" == .property 1
-#guard elaboratesToParameter p627_2 "Add" == false
-#guard selectOwnedDeclaration p627_2 "Inc" == .property 1
-#guard elaboratesToParameter p627_2 "Inc" == false
-#guard selectOwnedDeclaration p627_3 "x" == .parameter 0
-#guard elaboratesToParameter p627_3 "x" == true
-#guard selectOwnedDeclaration p627_4 "a" == .parameter 0
-#guard elaboratesToParameter p627_4 "a" == true
-#guard selectOwnedDeclaration p627_4 "b" == .parameter 0
-#guard elaboratesToParameter p627_4 "b" == true
-#guard selectOwnedDeclaration p627_5 "x" == .parameter 0
-#guard elaboratesToParameter p627_5 "x" == true
-#guard selectOwnedDeclaration p627_0 "H" == .property 0
-#guard elaboratesToParameter p627_0 "H" == false
+def p632_0 : List OwnerLevel := { parameters := [], properties := ["P", "H", "Q", "Add", "Inc"] } :: prelude
+def p632_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p632_0
+def p632_2 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p632_0
+def p632_3 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p632_0
+def p632_4 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p632_0
+def p632_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p632_0
+#guard selectOwnedDeclaration p632_1 "Q" == .property 1
+#guard elaboratesToParameter p632_1 "Q" == false
+#guard selectOwnedDeclaration p632_2 "reduce" == .property 2
+#guard elaboratesToParameter p632_2 "reduce" == false
+#guard selectOwnedDeclaration p632_2 "P" == .property 1
+#guard elaboratesToParameter p632_2 "P" == false
+#guard selectOwnedDeclaration p632_2 "Add" == .property 1
+#guard elaboratesToParameter p632_2 "Add" == false
+#guard selectOwnedDeclaration p632_2 "Inc" == .property 1
+#guard elaboratesToParameter p632_2 "Inc" == false
+#guard selectOwnedDeclaration p632_3 "x" == .parameter 0
+#guard elaboratesToParameter p632_3 "x" == true
+#guard selectOwnedDeclaration p632_4 "a" == .parameter 0
+#guard elaboratesToParameter p632_4 "a" == true
+#guard selectOwnedDeclaration p632_4 "b" == .parameter 0
+#guard elaboratesToParameter p632_4 "b" == true
+#guard selectOwnedDeclaration p632_5 "x" == .parameter 0
+#guard elaboratesToParameter p632_5 "x" == true
+#guard selectOwnedDeclaration p632_0 "H" == .property 0
+#guard elaboratesToParameter p632_0 "H" == false
 
 -- spec/output-spread-reference-certainly-read: Q = [[1, 2], 3] \n P* = Q[0] \n Add(a, b) = a + b \n Inc(x) = x + 1 \n H = reduce(P, Add, Inc) \n H(-3)
-def p628_0 : List OwnerLevel := { parameters := [], properties := ["Q", "P", "H", "Add", "Inc"] } :: prelude
-def p628_1 : List OwnerLevel := { parameters := [], properties := [] } :: p628_0
-def p628_2 : List OwnerLevel := { parameters := [], properties := [] } :: p628_0
-def p628_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p628_0
-def p628_4 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p628_0
-def p628_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p628_0
-#guard selectOwnedDeclaration p628_2 "Q" == .property 1
-#guard elaboratesToParameter p628_2 "Q" == false
-#guard selectOwnedDeclaration p628_3 "reduce" == .property 2
-#guard elaboratesToParameter p628_3 "reduce" == false
-#guard selectOwnedDeclaration p628_3 "P" == .property 1
-#guard elaboratesToParameter p628_3 "P" == false
-#guard selectOwnedDeclaration p628_3 "Add" == .property 1
-#guard elaboratesToParameter p628_3 "Add" == false
-#guard selectOwnedDeclaration p628_3 "Inc" == .property 1
-#guard elaboratesToParameter p628_3 "Inc" == false
-#guard selectOwnedDeclaration p628_4 "a" == .parameter 0
-#guard elaboratesToParameter p628_4 "a" == true
-#guard selectOwnedDeclaration p628_4 "b" == .parameter 0
-#guard elaboratesToParameter p628_4 "b" == true
-#guard selectOwnedDeclaration p628_5 "x" == .parameter 0
-#guard elaboratesToParameter p628_5 "x" == true
-#guard selectOwnedDeclaration p628_0 "H" == .property 0
-#guard elaboratesToParameter p628_0 "H" == false
+def p633_0 : List OwnerLevel := { parameters := [], properties := ["Q", "P", "H", "Add", "Inc"] } :: prelude
+def p633_1 : List OwnerLevel := { parameters := [], properties := [] } :: p633_0
+def p633_2 : List OwnerLevel := { parameters := [], properties := [] } :: p633_0
+def p633_3 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p633_0
+def p633_4 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p633_0
+def p633_5 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p633_0
+#guard selectOwnedDeclaration p633_2 "Q" == .property 1
+#guard elaboratesToParameter p633_2 "Q" == false
+#guard selectOwnedDeclaration p633_3 "reduce" == .property 2
+#guard elaboratesToParameter p633_3 "reduce" == false
+#guard selectOwnedDeclaration p633_3 "P" == .property 1
+#guard elaboratesToParameter p633_3 "P" == false
+#guard selectOwnedDeclaration p633_3 "Add" == .property 1
+#guard elaboratesToParameter p633_3 "Add" == false
+#guard selectOwnedDeclaration p633_3 "Inc" == .property 1
+#guard elaboratesToParameter p633_3 "Inc" == false
+#guard selectOwnedDeclaration p633_4 "a" == .parameter 0
+#guard elaboratesToParameter p633_4 "a" == true
+#guard selectOwnedDeclaration p633_4 "b" == .parameter 0
+#guard elaboratesToParameter p633_4 "b" == true
+#guard selectOwnedDeclaration p633_5 "x" == .parameter 0
+#guard elaboratesToParameter p633_5 "x" == true
+#guard selectOwnedDeclaration p633_0 "H" == .property 0
+#guard elaboratesToParameter p633_0 "H" == false
 
 /--
 Machine-checked partition count: the id list is built by the loop that emits the guards above,
@@ -12760,6 +12919,11 @@ def guardedProgramIds : List String := [
   "spec/runtime-alias-namespace-of-its-own-declarations",
   "spec/runtime-alias-failure-is-not-absence",
   "spec/runtime-alias-cycle",
+  "spec/runtime-alias-cell-read-and-path-share-one-call",
+  "spec/runtime-alias-cell-explicit-call-is-fresh",
+  "spec/runtime-alias-cell-one-per-run-across-calls",
+  "spec/runtime-alias-cell-unused-sibling-changes-nothing",
+  "spec/runtime-alias-cell-read-from-outside-after-a-call",
   "spec/runtime-alias-self-link-is-a-demand-cycle",
   "spec/reference-head-resolves-in-its-own-scope",
   "spec/reference-receiver-is-its-target-structure",
@@ -12819,7 +12983,7 @@ def guardedProgramIds : List String := [
   "spec/output-spread-reference-needs-call",
   "spec/output-spread-reference-certainly-read"
 ]
-#guard guardedProgramIds.length == 3098
+#guard guardedProgramIds.length == 3103
 
 /--
 The programs that contribute no guard (the reasons are counted in the partition above).

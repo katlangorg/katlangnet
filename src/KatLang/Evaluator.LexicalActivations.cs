@@ -45,21 +45,17 @@ internal sealed class ParameterActivation
     internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd> AliasTargets => AliasMemos;
 
     /// <summary>
-    /// The runtime-alias BINDING CELLS of runtime-target aliases declared under this activation (FWD-02,
-    /// META-S3-2; <see cref="Evaluation.EvaluationBudget.AliasBindingCells"/>): one retained cell per alias
-    /// declaration and declaring scope, established on first use and forgotten with the activation.
-    /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, NeedCell> AliasBindingCells => AliasMemos.BindingCells;
-
-    /// <summary>
     /// The settled <c>.Algorithm</c> ROUTE DECISIONS of runtime-row aliases declared under this activation
     /// (<see cref="Evaluation.EvaluationBudget.AliasRouteDecisions"/>), keyed like
-    /// <see cref="AliasBindingCells"/> and forgotten with the activation.
+    /// <see cref="AliasTargets"/> by the alias's declaration and forgotten with the activation. (A
+    /// runtime alias's BINDING CELL is never held here: it has its property's lifetime and lives in
+    /// <see cref="Evaluation.EvaluationBudget.AliasBindingCells"/>, keyed by its binding identity —
+    /// several activations share one.)
     /// </summary>
     internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> AliasRouteDecisions => AliasMemos.RouteDecisions;
 
-    // The alias memos hang off ONE lazily created holder (published first-wins, so racing binding-cell
-    // establishments meet in one dictionary): an activation that never meets an alias pays one null field.
+    // The alias memos hang off ONE lazily created holder (published first-wins, so racing chases meet in
+    // one dictionary): an activation that never meets an alias pays one null field.
     private AliasMemo AliasMemos
         => Volatile.Read(ref _aliasMemos)
            ?? Interlocked.CompareExchange(ref _aliasMemos, new AliasMemo(), null)
@@ -67,16 +63,9 @@ internal sealed class ParameterActivation
 
     private AliasMemo? _aliasMemos;
 
-    // The alias-target memo itself, carrying the binding-cell memo created on first use.
+    // The alias-target memo itself, carrying the route-decision memo created on first use.
     private sealed class AliasMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
     {
-        private Dictionary<Evaluator.AliasTargetKey, NeedCell>? _bindingCells;
-
-        public Dictionary<Evaluator.AliasTargetKey, NeedCell> BindingCells
-            => Volatile.Read(ref _bindingCells)
-               ?? Interlocked.CompareExchange(ref _bindingCells, [], null)
-               ?? _bindingCells!;
-
         private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _routeDecisions;
 
         public Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> RouteDecisions
@@ -278,7 +267,7 @@ public static partial class Evaluator
     /// site chain, under compatible captured activations, is that activated site level, and the
     /// levels below it are re-parented onto it. So a member selected from a container obtained
     /// outside its owner's call reads the owner activation its reader is inside, never a same-named
-    /// binding of the reader. An activation's own context is never changed — its identity keys
+    /// binding of the reader. An activation's own context is never changed — its binding identity keys
     /// property caches and alias cells — so a static owner above an activated level stays static
     /// and <see cref="IsAccessibleFrom"/> refuses its members. Lean: <c>anchorChain</c> with
     /// <c>activatedDeclaration?</c>.

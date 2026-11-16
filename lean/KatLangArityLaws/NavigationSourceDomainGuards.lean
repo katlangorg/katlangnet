@@ -441,7 +441,7 @@ theorem facts :
     ((evalCounted row ctx []).runState EvalState.empty = (.ok (.callRef k, 1), fin)) ∧
     ((projectNeedStructuralMember path ctxIn).runState fin = (.ok (some wiredQ), mid)) ∧
     (paramRowOwnedB wiredQ = true) ∧
-    (paramRowAdmits wiredQ ctxIn mid = true) ∧
+    (navAdmits (.resolveAliasChase false true wiredQ ctxIn [] none) mid = true) ∧
     (((resolveAliasStructure wiredQ ctxIn).runState mid).1.isIncomplete = false) ∧
     (ScopeCtx.activationChain (siteScope? ctxIn) = [some 0, none]) ∧
     (ScopeCtx.activationChain wiredQ.parent = [none, some 0, none]) := by
@@ -530,7 +530,7 @@ theorem facts :
     (once.needs.size = mid.needs.size) ∧ (once.nextRuntimeDeclaration = mid.nextRuntimeDeclaration) ∧
     ((resolveAliasStructure wiredQ ctxIn).runState once = (.ok none, once)) ∧
     (paramRowOwnedB wiredQ = true) ∧
-    (paramRowAdmits wiredQ ctxIn mid = true) ∧
+    (navAdmits (.resolveAliasChase false true wiredQ ctxIn [] none) mid = true) ∧
     (ScopeCtx.activationChain (siteScope? ctxIn) = [some 2, some 0, none]) ∧
     (ScopeCtx.activationChain wiredQ.parent = [none, some 0, none]) ∧
     (ctxIn.needEnv.map Prod.fst = ["z"]) := by

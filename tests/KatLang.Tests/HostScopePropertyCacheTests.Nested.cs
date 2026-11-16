@@ -326,7 +326,7 @@ public partial class HostScopePropertyCacheTests
         var second = Evaluator.AliasBindingCell(alias with { Parent = PLevel(copy) }, ctx);
         Assert.NotSame(first, second);
         Assert.Same(second, Evaluator.AliasBindingCell(alias with { Parent = PLevel(copy) }, ctx));
-        Assert.Equal(2, ctx.Budget.AliasBindingCells.Count);
+        Assert.Equal(2L, ctx.Budget.AliasBindingCells.AddedCount);
         Assert.All(new[] { first, second }, cell =>
         {
             Assert.False(cell.HasCompletedValue);

@@ -43,28 +43,33 @@ nothing, repeats from every navigation extension of its exit; `RR m` at every st
 * `identifyRuntimeAlgorithm` MINTS: it advances the counter, so the no-mint premise excludes it.
   That premise is observable and necessary (`MemberStabilityGuards.memberOriginRemintsRuntimeIdentity`).
 * `aliasBindingCellRecorded` records under a key its own lookup did not find; from the exit state on
-  the record is read (`NavExt.aliasCell`).
+  the record is read (`NavExt.aliasCell`). Its key (`aliasBindingCellKey`, ALIAS-CELL-LIFETIME) reads
+  the state through the owner search of the alias's declaring chain, so it is the same key at every
+  navigation extension where that search is RECORDED (`ownerSearchRecorded`, the third read below).
 * `projectNeedCallable a` runs ARBITRARY code inside its flight (a link's receiver VALUE, body
   entries, mints) and publishes; from the exit state on the sticky outcome is read
   (`projection_reread`). No premise on the flight: it is memoized, not re-run.
 
 ## The navigation core `navFuel`
 
-Two reads of identity navigation are stable only on RECORDED data: a parameter read through a
+Three reads of identity navigation are stable only on RECORDED data: a parameter read through a
 captured activation (`capturedParameterActivation?` reads `lexicalActivations[id]?`, and an
 unrecorded `id` falls back to the context's own tier — the answer changes once that index is
-recorded: `OwnerContextStability.dangling_reference_breaks_stability`), and a projection of an
-address outside the heap (an address fault now, a cell later). No production run from a reachable
-state makes either read, but that is a WHOLE-RUN invariant of the evaluator which is not proved
+recorded: `OwnerContextStability.dangling_reference_breaks_stability`), a projection of an
+address outside the heap (an address fault now, a cell later), and — since ALIAS-CELL-LIFETIME — the
+owner search of an alias's declaring chain, which keys its binding cell (`aliasBindingCellKey` reads
+`propertyOwnerBindingContext`; a dangling level is skipped until a record lands at its index). No
+production run from a reachable state makes such a read, but that is a WHOLE-RUN invariant of the
+evaluator which is not proved
 (captured-activation validity is not in `AddressInvariant.Inv`); it cannot be a premise on the
 navigation's entry state either, because the navigation's own flights extend the heap and the
 activation array before the read.
 
-`navFuel n` is production's total core RESTRICTED to the runs that make neither read: the same
-bodies (`evalStep`), the same projection flights (`evalFuel`), with a call refused — incomplete —
+`navFuel n` is production's total core RESTRICTED to the runs that make none of these reads: the
+same bodies (`evalStep`), the same projection flights (`evalFuel`), with a call refused — incomplete —
 exactly when it is not an identity-navigation call, when a parameter it transports has an
-unrecorded captured activation or no cell, or when it projects an address outside the heap
-(`navAdmits`). It is no second evaluator: `navFuel n ⊑ evalFuel n` (`navFuel_le`), so a completed
+unrecorded captured activation or no cell, when it chases an alias whose declaring chain's owner
+search is unrecorded, or when it projects an address outside the heap (`navAdmits`). It is no second evaluator: `navFuel n ⊑ evalFuel n` (`navFuel_le`), so a completed
 navigation run IS the production run (`NavRuns.production`); and it is executable, so an instance
 establishes it by evaluation. `NavRuns c s r` is "the navigation core completes `c` from `s` with
 `r`".
@@ -196,18 +201,59 @@ theorem rr_identifyRuntime (a : Algorithm) : RR (identifyRuntimeAlgorithm a) := 
     ⟨fun _ _ h => h, Nat.le_succ _⟩⟩, fun hc => ?_⟩
   exact absurd hc (Nat.succ_ne_self _)
 
-/-- THE ALIAS TABLE'S ONE WRITER, re-read: a non-parameter row's binding cell is read from the record
-    its first use made (`NavExt.aliasCell`). -/
-theorem rr_aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (hnp : ∀ n, target ≠ .param n) :
-    RR (aliasBindingCell wired target ctx) := by
-  intro s
-  cases hl : lookupAssoc (aliasCellKey wired) s.aliasCells with
+/-- The decidable `OwnerContextStability.OwnerSearchValid`: the nearest ACTIVATED level of the chain
+    names a RECORDED activation, so the owner search of `propertyOwnerBindingContext` — which keys an
+    alias's binding cell (`aliasBindingCellKey`) — stops inside the array. -/
+def ownerSearchRecorded : Option ScopeCtx → EvalState → Bool
+  | none, _ => true
+  | some (.mk parent _ _ _ _ _ activation _), s =>
+      match activation with
+      | some id => decide (id < s.lexicalActivations.size)
+      | none => ownerSearchRecorded parent s
+
+theorem ownerSearchRecorded_spec : ∀ {chain : Option ScopeCtx} {s : EvalState},
+    ownerSearchRecorded chain s = true → KatLang.OwnerContextStability.OwnerSearchValid chain s
+  | none, _, _ => by simp only [KatLang.OwnerContextStability.OwnerSearchValid]
+  | some (.mk parent _ _ _ _ _ activation _), s, h => by
+      cases activation with
+      | some id =>
+        simp only [ownerSearchRecorded] at h
+        simp only [KatLang.OwnerContextStability.OwnerSearchValid]
+        exact of_decide_eq_true h
+      | none =>
+        simp only [ownerSearchRecorded] at h
+        simp only [KatLang.OwnerContextStability.OwnerSearchValid]
+        exact ownerSearchRecorded_spec (chain := parent) h
+
+theorem ownerSearchRecorded_mono {s u : EvalState} (hp : KatLang.OwnerContextStability.ActivationPrefix s u) :
+    ∀ {chain : Option ScopeCtx}, ownerSearchRecorded chain s = true → ownerSearchRecorded chain u = true
+  | none, _ => by simp only [ownerSearchRecorded]
+  | some (.mk parent _ _ _ _ _ activation _), h => by
+      cases activation with
+      | some id =>
+        simp only [ownerSearchRecorded] at h ⊢
+        exact decide_eq_true (Nat.lt_of_lt_of_le (of_decide_eq_true h) hp.size_le)
+      | none =>
+        simp only [ownerSearchRecorded] at h ⊢
+        exact ownerSearchRecorded_mono hp (chain := parent) h
+
+/-- THE ALIAS TABLE'S ONE WRITER, re-read where the declaring chain's owner search is recorded: a
+    non-parameter row's binding cell is read from the record its first use made (`NavExt.aliasCell`),
+    under the key that use computed — the same key at every navigation extension
+    (`RuntimeAliasLaws.aliasBindingCellKey_stable`). -/
+theorem rrat_aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (hnp : ∀ n, target ≠ .param n)
+    (s : EvalState) (hs : ownerSearchRecorded wired.parent s = true) :
+    RRat s (aliasBindingCell wired target ctx) := by
+  have hvalid := ownerSearchRecorded_spec hs
+  cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
   | some a0 =>
     exact RRat.of_run (KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx s a0 hnp hl)
       (NavExt.refl s)
-      (fun _ u hu => KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx u a0 hnp (hu.aliasCell hl))
+      (fun _ u hu => KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx u a0 hnp (by
+        rw [KatLang.RuntimeAliasLaws.aliasBindingCellKey_stable wired ctx hu.memo.activations hvalid]
+        exact hu.aliasCell hl))
   | none =>
-    obtain ⟨c, u, _, hneeds, _, hrun⟩ :=
+    obtain ⟨c, u, _, hneeds, _, _, hrun⟩ :=
       KatLang.RuntimeAliasLaws.aliasBindingCell_establishes wired target ctx s hnp hl
     have heq := KatLang.RuntimeAliasLaws.aliasBindingCell_nonparameter wired target ctx hnp
     have hact := pres_aliasBindingCellRecorded (R := KatLang.OwnerContextStability.ActivationPrefix) wired target ctx s
@@ -218,8 +264,9 @@ theorem rr_aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) 
       rw [hneeds]; exact HeapKept.push _ _
     · show LinkHeapKept s.needs (u.needs.push _)
       rw [hneeds]; exact LinkHeapKept.push _ _
-    · exact KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx v _ hnp
-        (hv.aliasCell (by simp [lookupAssoc]))
+    · exact KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx v _ hnp (by
+        rw [KatLang.RuntimeAliasLaws.aliasBindingCellKey_stable wired ctx (hact.trans hv.memo.activations) hvalid]
+        exact hv.aliasCell (by simp [lookupAssoc]))
 
 /-! ### The memoized projection -/
 
@@ -607,11 +654,29 @@ def paramRowAdmits (a : Algorithm) (ctx : EvalCtx) (s : EvalState) : Bool :=
       anchored y (ctx.push a) s && (parameterAddressIn s.lexicalActivations y (ctx.push a)).isSome
   | _ => true
 
+/-- A chase step of an alias reads (or establishes) its binding cell under `aliasBindingCellKey`,
+    which reads the state through the owner search of the alias's declaring chain: the step is
+    admitted where that search is recorded (`ownerSearchRecorded`). A non-alias takes no step. -/
+def cellKeyAdmits (a : Algorithm) (s : EvalState) : Bool :=
+  match a with
+  | .alias parent _ _ _ _ _ => ownerSearchRecorded parent s
+  | _ => true
+
+theorem cellKeyAdmits_mono {a : Algorithm} {s u : EvalState}
+    (hp : KatLang.OwnerContextStability.ActivationPrefix s u) (hadm : cellKeyAdmits a s = true) :
+    cellKeyAdmits a u = true := by
+  cases a with
+  | «alias» parent opens props target id reference => exact ownerSearchRecorded_mono hp (chain := parent) hadm
+  | mk p pp op pr out id => rfl
+  | builtin b => rfl
+  | conditional p op bs id => rfl
+
 /-- **What the navigation core answers, and where.** The calls of identity navigation; a parameter
-    read only where it is anchored; a projection only of an address inside the heap. -/
+    read only where it is anchored; an alias chase only where its declaring chain's owner search is
+    recorded; a projection only of an address inside the heap. -/
 def navAdmits : EvalCall → EvalState → Bool
   | .aliasStepIsRuntime _ _ _ _, _ => true
-  | .resolveAliasChase _ _ a ctx _ _, s => paramRowAdmits a ctx s
+  | .resolveAliasChase _ _ a ctx _ _, s => paramRowAdmits a ctx s && cellKeyAdmits a s
   | .resolveAliasStructure _ _, _ => true
   | .resolveDotReceiver? _ _, _ => true
   | .projectNeedStructuralMember _ _, _ => true
@@ -704,7 +769,12 @@ theorem paramRowAdmits_mono {a : Algorithm} {ctx : EvalCtx} {s u : EvalState} (h
 theorem navAdmits_mono {c : EvalCall} {s u : EvalState} (h : NavExt s u) (hadm : navAdmits c s = true) :
     navAdmits c u = true := by
   cases c
-  case resolveAliasChase fc pr a ctx visited last => exact paramRowAdmits_mono h hadm
+  case resolveAliasChase fc pr a ctx visited last =>
+    have hadm' : (paramRowAdmits a ctx s && cellKeyAdmits a s) = true := hadm
+    simp only [Bool.and_eq_true] at hadm'
+    show (paramRowAdmits a ctx u && cellKeyAdmits a u) = true
+    simp only [Bool.and_eq_true]
+    exact ⟨paramRowAdmits_mono h hadm'.1, cellKeyAdmits_mono h.memo.activations hadm'.2⟩
   case projectParameterCallable x ctx => exact anchored_mono h.memo.activations hadm
   case projectNeedCallable a =>
     show u.needs[a]?.isSome = true
@@ -809,7 +879,9 @@ theorem navFuel_rr (n : Nat) : ∀ (c : EvalCall), RR (navFuel n c) := by
       case resolveAliasChase fc pr a ctx visited last =>
         refine RRat.normalize ?_
         show RRat s (EvalBody.resolveAliasChase (navFuel n) fc pr a ctx visited last)
-        have hpa : paramRowAdmits a ctx s = true := hadm
+        have hadm' : (paramRowAdmits a ctx s && cellKeyAdmits a s) = true := hadm
+        simp only [Bool.and_eq_true] at hadm'
+        obtain ⟨hpa, hck⟩ := hadm'
         cases a with
         | mk p pp op pr' out id => exact rr_pure _ s
         | builtin b => exact rr_pure _ s
@@ -823,9 +895,13 @@ theorem navFuel_rr (n : Nat) : ∀ (c : EvalCall), RR (navFuel n c) := by
               fc pr parent opens props (.param y) id reference ctx visited last
               (rron_paramRow_cell parent opens props y id reference ctx) s hpa
           · have hnp : ∀ y, target ≠ .param y := fun y h => hp ⟨y, h⟩
-            exact rr_of_rron (rron_body_chase_alias (fun _ _ _ _ => trivial) (navFuel n)
-              (fun c => rron_of_rr (ih c)) fc pr parent opens props target id reference ctx visited last
-              (rron_of_rr (rr_aliasBindingCell _ target ctx hnp))) s
+            exact rron_body_chase_alias
+              (P := fun t => ownerSearchRecorded parent t = true)
+              (fun _ _ h hs => ownerSearchRecorded_mono h.memo.activations (chain := parent) hs)
+              (navFuel n) (fun c => rron_of_rr (ih c))
+              fc pr parent opens props target id reference ctx visited last
+              (fun t ht => rrat_aliasBindingCell (.alias parent opens props target id reference) target ctx hnp t ht)
+              s hck
       all_goals (simp [navAdmits] at hadm)
     rw [ite_eq_left hadm] at hdone
     have h := hbody hdone

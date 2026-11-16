@@ -420,7 +420,7 @@ theorem pres_recordActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv
   fun s => WriteFrame.push s _
 theorem pres_identifyRuntime (a : Algorithm) : Preserves R (identifyRuntimeAlgorithm a) :=
   fun s => WriteFrame.mint s
-theorem pres_valueViewCell (a : Algorithm) : Preserves R (valueViewCell? a) := by
+theorem pres_valueViewCell (a : Algorithm) (ctx : EvalCtx) : Preserves R (valueViewCell? a ctx) := by
   unfold valueViewCell?; pres_tac_base
 end Helpers
 
@@ -481,7 +481,7 @@ theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx :
     pres_bind (pres_enterAlgorithmBody wired ctx []) (fun declaringCtx => pres_supplyNeed target declaringCtx [])
   have k := hpre s
   have hget : (get : EvalM EvalState).runState s = (.ok s, s) := rfl
-  cases hl : lookupAssoc (aliasCellKey wired) s.aliasCells with
+  cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
   | some address =>
     have hrun : (aliasBindingCellRecorded wired target ctx).runState s = (.ok address, s) := by
       simp only [aliasBindingCellRecorded, EvalM.bind_runState, hget, hl]
@@ -491,7 +491,7 @@ theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx :
   | none =>
     have hrun : ((aliasBindingCellRecorded wired target ctx).runState s).2 =
         (match (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s with
-         | (.ok address, t) => { t with aliasCells := (aliasCellKey wired, address) :: t.aliasCells }
+         | (.ok address, t) => { t with aliasCells := (aliasBindingCellKey wired ctx s, address) :: t.aliasCells }
          | (.error _, t) => t) := by
       simp only [aliasBindingCellRecorded, EvalM.bind_runState, hget, hl]
       rcases (enterAlgorithmBody wired ctx []).runState s with ⟨_ | declaringCtx, t₁⟩

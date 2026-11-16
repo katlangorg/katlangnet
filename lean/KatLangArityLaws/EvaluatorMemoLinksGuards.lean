@@ -162,23 +162,26 @@ def aliasCell : NeedCell :=
 /-- A value view (the zero-parameter view of a runtime alias, `Algorithm.aliasPropertyView`) whose
     binding cell is recorded at address 0. -/
 def valueView : Algorithm := alg [] [] [] [.num 0]
+/-- The invoking context of the value view: its binding context keys an alias with no property of
+    its own (`aliasBindingCellKey`, local-only on an unactivated chain). -/
+def viewCtx : EvalCtx := { callStack := [] }
 def valueViewState : EvalState :=
-  { needs := #[aliasCell], aliasCells := [(aliasCellKey valueView, 0)] }
+  { needs := #[aliasCell], aliasCells := [(aliasBindingCellKey valueView viewCtx {}, 0)] }
 
 -- Every zero-supply invocation of the value view reads the SAME recorded cell and writes nothing:
 -- the supplied computation never reruns, and no first-observation claim exists any more.
-#guard match (valueViewCell? valueView).runState valueViewState with
+#guard match (valueViewCell? valueView viewCtx).runState valueViewState with
   | (.ok (some 0), t) => heapLinkKeptB valueViewState.needs t.needs &&
     t.needs.size == valueViewState.needs.size
   | _ => false
 #guard match (do
-    let _ ← valueViewCell? valueView
-    valueViewCell? valueView).runState valueViewState with
+    let _ ← valueViewCell? valueView viewCtx
+    valueViewCell? valueView viewCtx).runState valueViewState with
   | (.ok (some 0), t) => heapLinkKeptB valueViewState.needs t.needs &&
     t.needs.size == valueViewState.needs.size
   | _ => false
 -- An ordinary algorithm has no recorded value-view cell.
-#guard match (valueViewCell? (alg ["x"] [] [] [.param "x"])).runState valueViewState with
+#guard match (valueViewCell? (alg ["x"] [] [] [.param "x"]) viewCtx).runState valueViewState with
   | (.ok none, _) => true
   | _ => false
 

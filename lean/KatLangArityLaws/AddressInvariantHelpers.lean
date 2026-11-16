@@ -539,14 +539,14 @@ theorem Inv.collector_below {s : EvalState} (vs : Inv s) {a : Nat} {c : NeedCell
 
 /-- **The value view's cell** (`valueViewCell?`): a READ of a recorded alias binding cell, which is
     a valid address (`Inv.aliasCells`). -/
-theorem valueViewCell_spec {P : Array NeedCell → Prop} {a : Algorithm} :
-    SoundI P (valueViewCell? a) (fun o h => OptAddr h o) := by
+theorem valueViewCell_spec {P : Array NeedCell → Prop} {a : Algorithm} {ctx : EvalCtx} :
+    SoundI P (valueViewCell? a ctx) (fun o h => OptAddr h o) := by
   intro _ s vs _
   unfold valueViewCell?
   split
   · rw [EvalM.bind_runState, get_run]
     dsimp only
-    cases hl : lookupAssoc (aliasCellKey _) s.aliasCells with
+    cases hl : lookupAssoc (aliasBindingCellKey _ ctx s) s.aliasCells with
     | none => exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.nil⟩
     | some address =>
       have ha : address < s.needs.size := GotV.aliasCell ⟨vs, Nat.le_refl _⟩ hl

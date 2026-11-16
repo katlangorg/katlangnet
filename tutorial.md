@@ -3248,7 +3248,7 @@ A few more rules complete the picture:
 - Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error.
 - `R.Algorithm()` calls it with no arguments, which is an error too: it never repeats the captured `5` (that is `R.Invoke()`).
 - A property such as `A = R.Algorithm` is a new name for the captured algorithm, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value.
-- When the call reference itself comes from a calculation, as in `A = F(3).Algorithm` where `F(3)` returns a captured call, `F(3)` is worked out once, when `A` is first needed, and every call of `A` then calls the captured algorithm afresh.
+- When the call reference itself comes from a calculation, as in `A = F(3).Algorithm` where `F(3)` returns a captured call, `F(3)` is worked out once, when `A` is first needed, and every call of `A` then calls the captured algorithm afresh. "Once" means what it means for an ordinary property written on that line: once for the whole run when the line uses nothing an enclosing call supplies, and once per call of the enclosing algorithm when it does.
 
 Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
 

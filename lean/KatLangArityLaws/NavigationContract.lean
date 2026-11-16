@@ -440,6 +440,31 @@ theorem paramRowAdmits_of_owned (a : Algorithm) (ctx : EvalCtx) (s : EvalState)
     rfl
   · rfl
 
+/-- A backed chain's owner search is recorded: its nearest activated level names a record. -/
+theorem ownerSearchRecorded_of_backed {s : EvalState} :
+    ∀ {chain : Option ScopeCtx}, Backed s.lexicalActivations chain → ownerSearchRecorded chain s = true
+  | none, _ => by simp only [ownerSearchRecorded]
+  | some (.mk parent _ _ _ _ _ activation _), hv => by
+      simp only [Backed] at hv
+      cases activation with
+      | some id =>
+        obtain ⟨act, ha, -⟩ := hv.1 id rfl
+        simp only [ownerSearchRecorded]
+        exact decide_eq_true (lt_of_getElem?_some ha)
+      | none =>
+        simp only [ownerSearchRecorded]
+        exact ownerSearchRecorded_of_backed (chain := parent) hv.2
+
+/-- **THE CELL-KEY CLAUSE of a chase step.** An alias whose chain is backed: the navigation core
+    admits the read of its binding-cell key. -/
+theorem cellKeyAdmits_of_backed (a : Algorithm) (s : EvalState)
+    (hb : Backed s.lexicalActivations a.parent) : cellKeyAdmits a s = true := by
+  cases a with
+  | «alias» parent opens props target id reference => exact ownerSearchRecorded_of_backed (chain := parent) hb
+  | mk p pp op pr out id => rfl
+  | builtin b => rfl
+  | conditional p op bs id => rfl
+
 /-- **THE NAVIGATION FACTS**: the navigation fragment of the proposed call precondition — what a
     contract has to give at a navigation call for the navigation core to admit it. Every other
     navigation call is admitted outright. -/
@@ -453,7 +478,10 @@ def NavFacts : EvalCall → EvalState → Prop
 theorem navFacts_admits (c : EvalCall) (s : EvalState) (hc : navStatic c = true) (h : NavFacts c s) :
     navAdmits c s = true := by
   cases c
-  case resolveAliasChase fc pr a ctx vis last => exact paramRowAdmits_of_owned a ctx s h.1 h.2
+  case resolveAliasChase fc pr a ctx vis last =>
+    show (paramRowAdmits a ctx s && cellKeyAdmits a s) = true
+    rw [paramRowAdmits_of_owned a ctx s h.1 h.2, cellKeyAdmits_of_backed a s h.1]
+    rfl
   case projectParameterCallable x ctx => exact anchored_of_chainRecorded x ctx s (Backed.chainRecorded h)
   case projectNeedCallable a => exact (admits_projection_iff a s).2 h
   case resolveAlg e ctx => exact hc

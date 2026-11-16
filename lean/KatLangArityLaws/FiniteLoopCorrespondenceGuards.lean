@@ -40,7 +40,7 @@ theorem boundedRows_literals (ctx : EvalCtx) (env : ValEnv) :
 theorem litStep_domain : UserStep litStep where
   user := ⟨_, _, _, _, _, _, _, rfl⟩
   checks := check_user_passes _ _ _ _ _ _ _ rfl rfl
-  noView _ := rfl
+  noView _ _ := rfl
 
 theorem litStep_rows (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (s : EvalState) :
     UserRowsBounded litStep ctx env cells s :=

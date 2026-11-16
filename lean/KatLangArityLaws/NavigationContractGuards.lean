@@ -125,8 +125,11 @@ theorem written_projection : (projectNeedWritten path (ctx .exported)).runState 
 theorem navFacts_fail :
     ¬ NavFacts (.resolveAliasChase false true wired (ctx .exported) [] none) EvalState.empty := by
   intro h
-  have hadm : paramRowAdmits wired (ctx .exported) EvalState.empty = true :=
+  have hadm' : (paramRowAdmits wired (ctx .exported) EvalState.empty &&
+      cellKeyAdmits wired EvalState.empty) = true :=
     navFacts_admits (.resolveAliasChase false true wired (ctx .exported) [] none) EvalState.empty rfl h
+  simp only [Bool.and_eq_true] at hadm'
+  have hadm := hadm'.1
   rw [facts.2.2.2.2.2.2.1] at hadm
   cases hadm
 

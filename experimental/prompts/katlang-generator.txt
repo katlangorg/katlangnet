@@ -1224,7 +1224,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (179 of the 576-case canonical language specification,
+Verified reference examples (179 of the 581-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -3302,4 +3302,4 @@ Regenerate this block from the repo root with:
 
 === END GENERATED: katlang-spec-examples ===
 
-Runtime alias lifetime (M4★, superseding META-S3-2 D4): an alias never remembers a value of its own. A runtime reference such as `A = R.Algorithm` names the algorithm it projects, whatever that algorithm's parameters: `A()` and `A(args)` call it afresh with exactly the written arguments (D3), and a zero-argument call may store the TARGET's remembered value exactly as the target's own `P()` would. When the projection yields no algorithm (`A = b.G` on a value without a member `G`), `A` names that computed value, worked out once: `A` and `A()` both return it without recomputing. Working out the target never repeats the receiver: that work is shared with the first read or call. A runtime alias chain keeps its own openable namespace, while a static reference `A = Lib` opens `Lib` itself and a braced `A = { Lib }` opens only its own public members. The RF1-D4 local-cache alias returns `(10, 10, 10, 10)` with one tick.
+Runtime alias lifetime (M4★, superseding META-S3-2 D4): an alias never remembers a value of its own. A runtime reference such as `A = R.Algorithm` names the algorithm it projects, whatever that algorithm's parameters: `A()` and `A(args)` call it afresh with exactly the written arguments (D3), and a zero-argument call may store the TARGET's remembered value exactly as the target's own `P()` would. When the projection yields no algorithm (`A = b.G` on a value without a member `G`), `A` names that computed value, worked out once: `A` and `A()` both return it without recomputing. Working out the target never repeats the receiver: that work is shared with the first read or call, and it happens exactly as often as the same line written as an ordinary property would be evaluated — once for the whole run when the line reads nothing that an enclosing call supplies (`Outer(k) = { A = Pick(tick()).Algorithm ⏎ A(1) }`: every call of `Outer` uses the same `A`), once per call of the enclosing algorithm when it does (`A = b.G` inside `F(b)`: reads of `A` through any path share it, an explicit call of its owner works out its own). A runtime alias chain keeps its own openable namespace, while a static reference `A = Lib` opens `Lib` itself and a braced `A = { Lib }` opens only its own public members. The RF1-D4 local-cache alias returns `(10, 10, 10, 10)` with one tick.
