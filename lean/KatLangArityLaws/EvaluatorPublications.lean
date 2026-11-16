@@ -35,10 +35,18 @@ callback satisfies the result contract (`ResSusp`). The result contracts themsel
 through the fuel core and production, and the consequences for `structureNormal` are in
 `PublishedCallableNormal`.
 
-GENERATED from `EvaluatorMemoLinks.lean` (the `link_tac` procedure and its body lemmas under a
-renaming) by `artifacts/validation/e18-step1-m1-review-20261112/scratch/gen_publications.py`; the
-relation, its API lemmas and `pubDisc_projectionStep` are hand-written in that script's header
-files. Not claimed: anything about a cell's VALUE, addresses, activations, or C#.
+GENERATED text, never edited by hand: from `EvaluatorMemoLinks.lean` (the `link_tac` procedure and
+its body lemmas under a renaming) by
+`tests/KatLang.Tests/LeanProofModules/EvaluatorPublicationsLeanArtifactTests.cs`; the relation, its
+API lemmas and `pubDisc_projectionStep` are hand-written in that generator's `Header`, `Step` and
+`Tail` texts, and are edited there. After a change to the generator, or to the copied part of
+`EvaluatorMemoLinks.lean`, regenerate from the repo root with
+  $env:KATLANG_REGENERATE_EVALUATOR_PUBLICATIONS = "1"
+  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter EvaluatorPublicationsLeanArtifact
+(that run writes this file and then fails by design), then run `lake build KatLangArityLaws`: the
+generator writes the text, and only Lean checks the proofs.
+
+Not claimed: anything about a cell's VALUE, addresses, activations, or C#.
 -/
 
 -- Every body lemma carries the result contract `hres`; only the bodies that reach the publishing

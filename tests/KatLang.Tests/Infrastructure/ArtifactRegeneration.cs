@@ -57,7 +57,25 @@ internal static class RegenerationFlags
         Prefix + "FRONT_END_DECISIONS",
         "lean/CoreTests/FrontEndDecisionCases.lean");
 
-    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated, FrontEndDecisions];
+    // The three flags below regenerate Lean PROOF modules whose text is generated (tests/KatLang.Tests/LeanProofModules/).
+
+    public static readonly RegenerationFlag MemberRereadInstances = new(
+        Prefix + "MEMBER_REREAD_INSTANCES",
+        "lean/KatLangArityLaws/MemberRereadInstances.lean");
+
+    public static readonly RegenerationFlag PublishedCallableInstances = new(
+        Prefix + "PUBLISHED_CALLABLE_INSTANCES",
+        "lean/KatLangArityLaws/PublishedCallableInstances.lean");
+
+    public static readonly RegenerationFlag EvaluatorPublications = new(
+        Prefix + "EVALUATOR_PUBLICATIONS",
+        "lean/KatLangArityLaws/EvaluatorPublications.lean");
+
+    public static readonly IReadOnlyList<RegenerationFlag> All =
+    [
+        LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated, FrontEndDecisions,
+        MemberRereadInstances, PublishedCallableInstances, EvaluatorPublications,
+    ];
 }
 
 /// <summary>
@@ -74,7 +92,7 @@ internal sealed class ArtifactRegeneratedException(RegenerationFlag flag, string
 
 /// <summary>
 /// The one regeneration contract for tracked generated artifacts (Lean corpora,
-/// generator prompt blocks, the public API baseline).
+/// generated Lean proof modules, generator prompt blocks, the public API baseline).
 ///
 /// <para><b>Normal verification is observational.</b> Without the flag a test
 /// only compares the checked-in artifact with what it would generate and never

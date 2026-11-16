@@ -57,7 +57,14 @@ premise, but the instance's run facts cannot be proved by any Lean proof: the ch
 second step's `reprStr`-built key with the first's, and `Std.Format.pretty` is opaque
 (`NavigationRereadGuards` checks that run by execution instead).
 
-GENERATED text (`artifacts/validation/e18-step1-m1-20261112/scratch/gen_reread.py`).
+GENERATED text, never edited by hand. The generator — this header, the instance templates and the
+instance tables — is
+`tests/KatLang.Tests/LeanProofModules/MemberRereadInstancesLeanArtifactTests.cs`. To change an
+instance or a statement, edit it there and regenerate from the repo root with
+  $env:KATLANG_REGENERATE_MEMBER_REREAD_INSTANCES = "1"
+  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MemberRereadInstancesLeanArtifact
+(that run writes this file and then fails by design), then run `lake build KatLangArityLaws`: the
+generator writes the text, and only Lean checks the proofs.
 -/
 
 open KatLang KatLang.CallPlan KatLang.EvaluatorCore KatLang.PlanRouteBridge KatLang.MemberStability

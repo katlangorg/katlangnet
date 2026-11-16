@@ -32,8 +32,16 @@ its cache key with that entry's — two printed keys of different owners, which 
 
 The navigation run (`nav_run`) is still established by evaluating the navigation core: `NavRuns`
 from the production probe alone is NOT a theorem (captured-activation validity is not yet a
-whole-run invariant). GENERATED text
-(`artifacts/validation/e18-step1-m1-review-20261112/scratch/gen_published_instances.py`).
+whole-run invariant).
+
+GENERATED text, never edited by hand. The generator — this header, the instance template and the
+instance table — is
+`tests/KatLang.Tests/LeanProofModules/PublishedCallableInstancesLeanArtifactTests.cs`. To change an
+instance or a statement, edit it there and regenerate from the repo root with
+  $env:KATLANG_REGENERATE_PUBLISHED_CALLABLE_INSTANCES = "1"
+  dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter PublishedCallableInstancesLeanArtifact
+(that run writes this file and then fails by design), then run `lake build KatLangArityLaws`: the
+generator writes the text, and only Lean checks the proofs.
 -/
 
 open KatLang KatLang.CallPlan KatLang.EvaluatorCore KatLang.PlanRouteBridge KatLang.MemberStability
