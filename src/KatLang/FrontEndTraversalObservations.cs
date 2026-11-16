@@ -187,6 +187,20 @@ internal sealed class FrontEndTraversalObservations
         => ResolverForwardingVerdicts = checked(ResolverForwardingVerdicts + 1);
 
     /// <summary>
+    /// Argument slots the D2 dependence check of declaration-level output spreading inspected
+    /// (<c>ImplicitArgumentResolver.DependsOnPosition</c>): whether a slot's role differs at a known and an unknown
+    /// position and the slot holds a bare reference the value role could lift — the question a reference whose lift
+    /// only signature selection decides asks of the slots after it (<c>OutputSpreadReferenceNeedsCall</c>). The
+    /// rewrite's role walk asks it of each written slot at most once, while such a reference awaits its verdict, so
+    /// the count is bounded by the written argument slots of the walked calls, never by those slots times the
+    /// references waiting on them.
+    /// </summary>
+    public long OutputSpreadDependenceSlotInspections { get; private set; }
+
+    internal void RecordOutputSpreadDependenceSlotInspection()
+        => OutputSpreadDependenceSlotInspections = checked(OutputSpreadDependenceSlotInspections + 1);
+
+    /// <summary>
     /// Lifted references the resolver rewrote into synthesized implicit calls — one count per call
     /// EDGE (<c>ImplicitArgumentResolver.RewriteBareReference</c> and <c>LiftBareBuiltinDotCall</c>):
     /// every lifted reference keeps its own call node, which carries its source span and its

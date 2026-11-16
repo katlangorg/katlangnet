@@ -381,6 +381,12 @@ public class DeclarationOutputSpreadingTests
     [InlineData("H = while(Inc(0), P, Inc)\nH(1)", 6, 19, "P")]
     // Through a transparent alias the report names both.
     [InlineData("R = P\nH = reduce(R, Add, Inc)\nH(1)", 7, 12, "R")]
+    // The dependence comes before the first certain spread boundary, which ends the check after it.
+    [InlineData("Xs = [[5]]\nH = map(P, Inc, Inc, Xs*)\nH(1)", 7, 9, "P")]
+    // One slot is both the witness and the boundary: a marked reference that is certainly lifted where its role depends
+    // on the position. The witness test comes first, so it reports `P`.
+    [InlineData("R(x)* = [x]\nH = map(P, Inc, R)\nH(1)", 7, 9, "P")]
+    [InlineData("R(x)* = [x]\nH = reduce(P, Add, R)\nH(1)", 7, 12, "P")]
     public void SelectionDependentReference_IsReported_WhereALaterSlotDependsOnIt(string program, int line, int column, string reference)
     {
         var parsed = SourceProvenance.ParseAllowingDiagnostics(SelectionDependent + program);
@@ -415,6 +421,10 @@ public class DeclarationOutputSpreadingTests
     [InlineData("H = reduce(P(x), Add, 10)\nH(1)", "ok 11")]
     // A written spread already ended the known positions before the reference.
     [InlineData("Xs = [[5]]\nH = reduce(Xs*, P, Inc)\nH(1)", "err ArityMismatch")]
+    // An earlier certain spread boundary conceals a later slot that would depend on the position: a written spread, and a
+    // written call to a marked declaration (neither is itself a witness).
+    [InlineData("Xs = [[5]]\nH = map(P, Inc, Xs*, Inc)\n1", "ok 1")]
+    [InlineData("A(u, v)* = [u], [v]\nH = map(P, Inc, A(1, 2), Inc)\n1", "ok 1")]
     public async Task SelectionDependentReference_IsNoError_WhereNothingDependsOnIt(string program, string expected)
         => Assert.Equal(expected, await SummaryOnEveryRoute(SelectionDependent + program));
 
@@ -506,6 +516,105 @@ public class DeclarationOutputSpreadingTests
         Assert.Contains(use, program);
         _ = SourceProvenance.ParseValid(SelectionDependent + program.Replace(use, "reduce(" + reference + "(1), Add, Inc)"));
         _ = SourceProvenance.ParseValid(SelectionDependent + program.Replace(use, "reduce({ " + reference + " }, Add, Inc)"));
+    }
+
+    // ── The dependence check is the role walk itself: one inspection per written slot ──
+
+    [Theory]
+    // Each waiting reference is reported by the first later slot that depends on the position — a waiting reference
+    // included — in slot order; one still waiting where the known positions end, or at the last slot, is not.
+    [InlineData("H = map(P, Inc, P, Inc)\n1", 6, new[] { 9, 17 })]
+    [InlineData("H = map(P, Inc, P, P)\n1", 6, new[] { 9, 17 })]
+    [InlineData("Xs = [[5]]\nH = map(P, Inc, P, Xs*, Inc)\n1", 7, new[] { 9 })]
+    // A selected fallback's receiver is slot 0, so the argument after the callback is a surplus slot: the receiver is
+    // reported first, by that argument, which is in turn reported by the next one.
+    [InlineData("H = P.map(Inc, P, Inc)\n1", 6, new[] { 5, 16 })]
+    public void WaitingReferences_AreReportedInSlotOrder_EachByALaterWitness(string program, int line, int[] columns)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(SelectionDependent + program);
+        var errors = parsed.Diagnostics.Where(static d => d.Severity == DiagnosticSeverity.Error).ToArray();
+        Assert.All(errors, static d => Assert.Equal(DiagnosticCode.OutputSpreadReferenceNeedsCall, d.Code));
+        Assert.Equal(columns.Select(column => new SourceSpan(line, column, line, column + 1)), errors.Select(static d => d.Span!.Value));
+    }
+
+    /// <summary>
+    /// A call of <paramref name="width"/> separately written references to <c>P</c>, a selection result when marked, and
+    /// its explicit-<c>*</c> twin. Every slot of <c>if</c>, surplus slots included, is a value at a known and at an
+    /// unknown position, so no slot is a witness and every marked reference waits to the end. <c>H</c> is never demanded,
+    /// so the run-time arity of <c>if</c> plays no part.
+    /// </summary>
+    private static string SelectionResultsInEverySlot(int width, bool marked)
+        => "Q(x) = [x]\n" + (marked ? "P* = Q[0]\n" : "P = Q[0]\n")
+            + "H = if(" + string.Join(", ", Enumerable.Repeat(marked ? "P" : "P*", width)) + ")\n1";
+
+    [Fact]
+    public async Task DependenceCheck_InspectsEachWrittenSlotOnce_AsTheWidthDoubles()
+    {
+        long? half = null;
+        foreach (var width in new[] { 16, 32, 64 })
+        {
+            var marked = SelectionResultsInEverySlot(width, marked: true);
+            var explicitSpreads = SelectionResultsInEverySlot(width, marked: false);
+
+            // Both parse cleanly, infer H(x), elaborate to one tree and give the root result.
+            foreach (var source in new[] { marked, explicitSpreads })
+            {
+                Assert.Equal("H(x)", Assert.Single(SemanticModelBuilder.Build(SourceProvenance.ParseValid(source).Parsed).FindProperties("H")).DisplaySignature);
+                Assert.Equal("ok 1", await SummaryOnEveryRoute(source));
+            }
+
+            Assert.Equal(Encoding(explicitSpreads), Encoding(marked));
+
+            // Every later slot is inspected once for all the references waiting on it (a rescan of the suffix per
+            // reference inspected N(N−1)/2), and a program without markers inspects none.
+            var inspections = DependenceInspections(marked);
+            Assert.InRange(inspections, 1, width);
+            Assert.Equal(0, DependenceInspections(explicitSpreads));
+            if (half is { } atHalfTheWidth)
+                Assert.True(inspections <= 2 * atHalfTheWidth + 1, $"width {width}: {inspections} inspections after {atHalfTheWidth} at half the width");
+            half = inspections;
+        }
+    }
+
+    private static long DependenceInspections(string source)
+    {
+        var observations = new FrontEndTraversalObservations();
+        var parsed = Parser.ParseObserved(source, options: null, observations);
+        Assert.DoesNotContain(parsed.Diagnostics, static d => d.Severity == DiagnosticSeverity.Error);
+        return observations.OutputSpreadDependenceSlotInspections;
+    }
+
+    [Theory]
+    // The eager program and a deferred unit (a clause branch that loads a module, with the selection result its own body's
+    // declaration) decide the report by the same walk: a witness reports each waiting reference, and an earlier certain
+    // spread conceals a later slot.
+    [InlineData("open '@'\nInc(x) = x + 1\nQ(x) = [[x]]\nP* = Q[0]\nH = map(P, Inc, P, Inc)\n1", "parse OutputSpreadReferenceNeedsCall@5:9 | OutputSpreadReferenceNeedsCall@5:17")]
+    [InlineData("open '@'\nInc(x) = x + 1\nQ(x) = [[x]]\nP* = Q[0]\nH = map(P, Inc, Xs*, Inc)\n1", "ok 1")]
+    // A deferred unit's run-time failure carries its first front-end error: the first reference's.
+    [InlineData("Inc(x) = x + 1\nG(0) = 0\nG(n) = {\n    open '@'\n    Q(x) = [[x]]\n    P* = Q[0]\n    H = map(P, Inc, P, Inc)\n    1\n}\nG(1)", "err OutputSpreadReferenceNeedsCall@7:13")]
+    [InlineData("Inc(x) = x + 1\nG(0) = 0\nG(n) = {\n    open '@'\n    Q(x) = [[x]]\n    P* = Q[0]\n    H = map(P, Inc, Xs*, Inc)\n    1\n}\nG(1)", "ok 1")]
+    public async Task ModulesAndDeferredUnits_DecideTheDependenceByTheSameWalk(string program, string expected)
+    {
+        const string url = "https://katlang.org/needs-call.kat";
+        var options = new RunOptions
+        {
+            DownloadCode = (requested, _) => requested == url
+                ? ValueTask.FromResult("public Xs = [[5]]")
+                : throw new InvalidOperationException($"404: {requested}"),
+        };
+
+        var result = await KatLangEngine.RunAsync(program.Replace("@", url), options);
+        var outcome = result switch
+        {
+            RunResult.Success success => "ok " + SixRouteAgreement.Neutral(success.Value),
+            RunResult.EvalFailure failure => "err " + string.Join(" | ", failure.Errors.Select(CodeAt)),
+            RunResult.ParseFailure failure => "parse " + string.Join(" | ", failure.Errors.Select(CodeAt)),
+            _ => result.GetType().Name,
+        };
+        Assert.Equal(expected, outcome);
+
+        static string CodeAt(KatLangError error)
+            => error.Code + (error.Span is { } span ? $"@{span.Start.Line}:{span.Start.Column}" : "");
     }
 
     // ── A refused marker decides nothing at its uses (the follow-up's E3) ──

@@ -146,13 +146,35 @@ internal static partial class ImplicitArgumentResolver
     /// (<see cref="RequirePredictedLift"/>, <paramref name="lifts"/>).
     /// <para>A reference whose lift only selection decides (<see cref="StaticLift.Selected"/>) cannot be classified here:
     /// it is the front-end error <see cref="DiagnosticCode.OutputSpreadReferenceNeedsCall"/> exactly when the elaboration
-    /// depends on it (<see cref="LaterSlotDependsOnPosition"/>), reported by the rewrite (<paramref name="report"/>).
+    /// depends on it — when a slot after it, up to and including the first slot that ends the known positions, depends on
+    /// the position (<see cref="DependsOnPosition"/>) — reported by the rewrite (<paramref name="report"/>).
     /// Otherwise both readings elaborate alike, and the slot is spread if it was lifted.</para>
+    /// <para>THE WALK DECIDES THE DEPENDENCE TOO, in one pass (<see cref="RolesWithSpreadsWalk"/>): such a reference waits,
+    /// unreported, until the walk reaches a slot that depends on the position — the witness, which reports every reference
+    /// then waiting, in slot order — and the references still waiting where the known positions end depend on nothing,
+    /// since no later slot differs. The witness test PRECEDES the boundary test, so one slot (a marked reference that is
+    /// certainly lifted where its role depends on the position) can be both. So each written slot is inspected once,
+    /// whatever the number of references waiting on it: a call costs its written slots, never those slots times the
+    /// waiting references (a rescan of the suffix per reference made a width-N call of selection results N(N−1)/2
+    /// inspections). The reports are the rewrite's only diagnostics here, so deferring each to its witness keeps their
+    /// order.</para>
     /// <para>A program without markers reads <see cref="FormulaLiftingRoles.ArgumentRoles"/> exactly as before.</para>
+    /// <para>Out of line, so the calibrated rewrite frame of <see cref="RewriteCall"/> passes the arguments it always did.</para>
     /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static LiftingRole[] ArgumentRolesWithSpreads(
         LiftingCallee callee, OutputBundle args, int leadingSlots, bool leadingPositionsKnown,
         SignatureMap paramMap, ResolverWalkMemos memos, out StaticLift[]? lifts, bool report = false)
+        => RolesWithSpreadsWalk(callee, args, leadingSlots, leadingPositionsKnown, selectedReceiver: null, paramMap, memos, out lifts, report);
+
+    /// <summary>
+    /// The one walk of <see cref="ArgumentRolesWithSpreads"/>, where a selected fallback's receiver
+    /// (<paramref name="selectedReceiver"/>, <see cref="DotArgumentRolesWithSpreads"/>) is a selection result at slot 0: it
+    /// waits from before the first argument, at known positions, and the witness reports it before every argument.
+    /// </summary>
+    private static LiftingRole[] RolesWithSpreadsWalk(
+        LiftingCallee callee, OutputBundle args, int leadingSlots, bool leadingPositionsKnown, Expr? selectedReceiver,
+        SignatureMap paramMap, ResolverWalkMemos memos, out StaticLift[]? lifts, bool report)
     {
         lifts = null;
         if (!memos.Run.StructuralOperation.AdmittedWithOutputSpreadMarkers)
@@ -160,6 +182,10 @@ internal static partial class ImplicitArgumentResolver
 
         var roles = new LiftingRole[args.Count];
         var positionKnown = leadingPositionsKnown;
+        // The selection results awaiting a witness: the receiver, then each slot from `firstWaiting` on whose lift is
+        // Selected (every one of them sits at a known position before the current slot).
+        var waitingReceiver = report ? selectedReceiver : null;
+        var firstWaiting = -1;
         for (var index = 0; index < args.Count; index++)
         {
             var role = roles[index] = FormulaLiftingRoles.SlotRole(callee, leadingSlots + index, positionKnown);
@@ -167,6 +193,15 @@ internal static partial class ImplicitArgumentResolver
             if (!positionKnown)
                 continue;
             var slot = args[index];
+            // A witness is tested before the slot is read as a boundary: the slot that ends the known positions still counts.
+            if ((waitingReceiver is not null || firstWaiting >= 0)
+                && DependsOnPosition(callee, slot, leadingSlots + index, role, paramMap, memos))
+            {
+                ReportWaitingSelectionResults(waitingReceiver, args, firstWaiting, index, lifts, paramMap, memos);
+                waitingReceiver = null;
+                firstWaiting = -1;
+            }
+
             if (slot is Expr.SequenceSpread || MarkedCalleeOf(slot, paramMap, memos.Run) is not null)
             {
                 positionKnown = false;
@@ -179,11 +214,31 @@ internal static partial class ImplicitArgumentResolver
             (lifts ??= new StaticLift[args.Count])[index] = lift;
             if (lift == StaticLift.Lifted)
                 positionKnown = false;
-            else if (lift == StaticLift.Selected && report && LaterSlotDependsOnPosition(callee, args, leadingSlots, index + 1, paramMap, memos))
-                ReportOutputSpreadReferenceNeedsCall(slot, paramMap, memos);
+            else if (lift == StaticLift.Selected && report && firstWaiting < 0)
+                firstWaiting = index;
         }
 
         return roles;
+    }
+
+    /// <summary>
+    /// Reports the selection results a witness found waiting in <see cref="RolesWithSpreadsWalk"/>: the receiver, then
+    /// every slot from <paramref name="firstWaiting"/> (none when negative) before the witness <paramref name="witness"/>
+    /// whose lift is <see cref="StaticLift.Selected"/>. The ranges of successive witnesses are disjoint, so a walk reads
+    /// each slot here at most once.
+    /// </summary>
+    private static void ReportWaitingSelectionResults(
+        Expr? waitingReceiver, OutputBundle args, int firstWaiting, int witness, StaticLift[]? lifts, SignatureMap paramMap, ResolverWalkMemos memos)
+    {
+        if (waitingReceiver is not null)
+            ReportOutputSpreadReferenceNeedsCall(waitingReceiver, paramMap, memos);
+        if (firstWaiting < 0)
+            return;
+        for (var waiting = firstWaiting; waiting < witness; waiting++)
+        {
+            if (lifts![waiting] == StaticLift.Selected)
+                ReportOutputSpreadReferenceNeedsCall(args[waiting], paramMap, memos);
+        }
     }
 
     /// <summary>
@@ -210,11 +265,12 @@ internal static partial class ImplicitArgumentResolver
                 return ArgumentRolesWithSpreads(callee, args, leadingSlots: 0, leadingPositionsKnown: true, paramMap, memos, out lifts, report);
 
             case DotEdgeKind.Fallback:
-                if (receiverLift == StaticLift.Selected && report && LaterSlotDependsOnPosition(callee, args, leadingSlots: 1, from: 0, paramMap, memos))
-                    ReportOutputSpreadReferenceNeedsCall(edge.Target, paramMap, memos);
-                return ArgumentRolesWithSpreads(
+                // The receiver is slot 0 (a selection result's positions after it are known): one walk decides its report
+                // and the arguments', the receiver's first.
+                return RolesWithSpreadsWalk(
                     callee, args, leadingSlots: 1,
                     leadingPositionsKnown: edge.Target is not Expr.SequenceSpread && receiverLift != StaticLift.Lifted,
+                    selectedReceiver: receiverLift == StaticLift.Selected ? edge.Target : null,
                     paramMap, memos, out lifts, report);
 
             default:
@@ -477,31 +533,24 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// Whether the elaboration depends on a reference whose lift only selection decides: some slot from
-    /// <paramref name="from"/> on has a different role at a known and at an unknown position — a builtin value slot of a
-    /// builtin that also has a callable slot: after a spread it is a value only when every declared slot is
-    /// (<see cref="FormulaLiftingRoles.SlotRole"/>; <c>reduce</c>'s initial value is one, <c>if</c> has none, and a callback
-    /// slot is callable at both) — AND holds a bare reference the value role could lift and the callable role keeps. The
-    /// scan ends at the first slot that makes the positions unknown under either reading (a written spread, a written
-    /// marked call, a marked reference that is certainly lifted): nothing after it differs.
+    /// Whether the elaboration depends, at <paramref name="slot"/> (supplied position <paramref name="position"/>, whose
+    /// role at a known position is <paramref name="known"/>), on a reference before it whose lift only selection decides:
+    /// the slot's role differs at a known and at an unknown position — a builtin value slot of a builtin that also has a
+    /// callable slot: after a spread it is a value only when every declared slot is
+    /// (<see cref="FormulaLiftingRoles.SlotRole"/>; <c>reduce</c>'s initial value and a surplus slot of <c>map</c> or
+    /// <c>filter</c> are such slots, <c>if</c> has none, and a callback slot is callable at both) — AND it holds a bare
+    /// reference the value role could lift and the callable role keeps. Asked by the one role walk
+    /// (<see cref="RolesWithSpreadsWalk"/>) of each slot at a known position while a selection result waits, so at
+    /// most once per written slot; the walk stops asking at the first slot that makes the positions unknown under either
+    /// reading (a written spread, a written marked call, a marked reference that is certainly lifted), after asking it.
     /// </summary>
-    private static bool LaterSlotDependsOnPosition(
-        LiftingCallee callee, OutputBundle args, int leadingSlots, int from, SignatureMap paramMap, ResolverWalkMemos memos)
+    private static bool DependsOnPosition(
+        LiftingCallee callee, Expr slot, int position, LiftingRole known, SignatureMap paramMap, ResolverWalkMemos memos)
     {
-        for (var index = from; index < args.Count; index++)
-        {
-            var slot = args[index];
-            var known = FormulaLiftingRoles.SlotRole(callee, leadingSlots + index, positionKnown: true);
-            if (known != FormulaLiftingRoles.SlotRole(callee, leadingSlots + index, positionKnown: false)
-                && slot.UnwrapGraceOperand() is var reference && IsBareReference(reference)
-                && StaticLiftOf(reference, paramMap, memos) is StaticLift.Lifted or StaticLift.Selected)
-                return true;
-            if (slot is Expr.SequenceSpread || MarkedCalleeOf(slot, paramMap, memos.Run) is not null
-                || MarkedReferenceLift(slot, known, paramMap, memos) == StaticLift.Lifted)
-                return false;
-        }
-
-        return false;
+        memos.Run.Observations?.RecordOutputSpreadDependenceSlotInspection();
+        return known != FormulaLiftingRoles.SlotRole(callee, position, positionKnown: false)
+            && slot.UnwrapGraceOperand() is var reference && IsBareReference(reference)
+            && StaticLiftOf(reference, paramMap, memos) is StaticLift.Lifted or StaticLift.Selected;
     }
 
     /// <summary>
