@@ -3,15 +3,14 @@ using System.Diagnostics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// OOS-22: the summary channel's level expansion on long opened chains, process-isolated. Settling an
-/// opened link's charge at the owner expands it there, which settles the next link's, and so on
-/// (<c>ExpandAtLevel</c> → <c>AddEscaping</c> → <c>TryResolveLocalHeadCandidate</c> → <c>ExpandAtLevel</c>,
-/// or through the local-path and resolved-candidate arms); the rewrites of the candidates that chain
-/// nests (parameter qualification, requirement stripping, the lexical-absence reduction) reach every
-/// level of that nesting too. Both formerly recursed on the host stack once per link, and a program of
-/// a few hundred links killed the process: on a 1 MiB Release thread the opened chain
+/// OOS-22: the exposure analysis of long opened chains, process-isolated. The summary channel's level
+/// expansion formerly settled an opened link's charge at the owner by expanding it there, which settled
+/// the next link's, and so on, recursing on the host stack once per link; a program of a few hundred
+/// links killed the process: on a 1 MiB Release thread the opened chain
 /// (<c>NestedOwnerChain(700, last: "p")</c>) overflowed after about 560 links, the dotted chain after
-/// about 1,280, the mixed chain sooner. Both now run on explicit stacks. A stack overflow cannot be
+/// about 1,280, the mixed chain sooner. The level expansion now runs on an explicit stack and carries
+/// an escaping reference outward without settling it (<c>ExpandAtLevel</c>, <c>AddEscaping</c>), and
+/// the exposure settlement that resolves it is iterative too. A stack overflow cannot be
 /// caught, so the probe runs in a child process — the source is generated before the constrained
 /// thread starts, and only the front-end operation itself runs on a thread of exactly 1 MiB
 /// (<see cref="AstStructuralDepthProcessTests.RunOnThreadWithStack(int, Action)"/>). Every
@@ -69,8 +68,8 @@ public sealed class ExposureOpenChainDepthProcessTests
             }
         }
 
-        // A long chain through the internal pipeline: the candidate work stays linear — each link
-        // settled once at the owner and qualified once (2N rebuilds, as at 400 links in process).
+        // A long chain through the internal pipeline: the work stays linear — one member expansion a
+        // link and a bounded number of settlement frames (as at 400 links in process).
         {
             const int Length = 1_000;
             var source = ExposureOpenChainComplexityTests.NestedOwnerChain(Length, last: "p");
@@ -91,8 +90,8 @@ public sealed class ExposureOpenChainDepthProcessTests
             AssertRequires(Member(owner, $"P{Length}", $"A{Length}"));
         }
 
-        // Dotted reads (the local-path arm, no candidates) and the mixed chain with local intermediaries
-        // (ControlChains_BuildNoCandidates, MixedChain_WithLocalIntermediaries).
+        // Dotted reads (member paths) and the mixed chain with local intermediaries
+        // (ControlChains_SettleLinearly, MixedChain_WithLocalIntermediaries).
         {
             const int Length = 2_000;
             var dotted = Member(ParseValidOnOneMebibyte(ExposureOpenChainComplexityTests.NestedOwnerChain(Length, "dotted")), "O").Value;
@@ -123,8 +122,8 @@ public sealed class ExposureOpenChainDepthProcessTests
             AssertRequires(Member(owner, $"P{Length}", $"A{Length}"), ("p", 1));
         }
 
-        // The settled chain read again from the enclosing level (`X = O.R`): the root expands the nested
-        // resolved candidates of the navigated member's seed (the resolved-candidate arm).
+        // The settled chain read again from the enclosing level (`X = O.R`): the root settles the
+        // references the navigated member's seed carries.
         {
             const int Length = 1_000;
             var source = "O = {\n" + ExposureOpenChainComplexityTests.Chain("open", Length, "5", "    ")
@@ -134,55 +133,8 @@ public sealed class ExposureOpenChainDepthProcessTests
             AssertRequires(Member(root, "O", "R"));
         }
 
-        AssertDeepCandidateRewrites();
         AssertDeferredBranchElaboratesTheChain();
         WriteProbeMarker();
-    }
-
-    // Exercise each rewritten operation directly: an acyclic source chain need not repeat the head
-    // whose lexical-absence reduction walks the nesting, even when it qualifies/strips all 2,000 links.
-    private static void AssertDeepCandidateRewrites()
-    {
-        const int Depth = 2_000;
-        var owner = Member(SourceProvenance.ParseValid("F(p) = p\n0").Root, "F").Value;
-        var observations = new FrontEndTraversalObservations();
-        var memo = new PropertyDependencyGraphBuilder.SummaryMemo(observations);
-        var identity = OpenProviderIdentity.DeclaredAtRoot(owner);
-        var candidate = new ResolvedOpenCandidate(new PropertyDependencyGraphBuilder.SummarySeed(["p"]), 0, identity, memo);
-        for (var i = 0; i < Depth; i++)
-        {
-            var seed = new PropertyDependencyGraphBuilder.SummarySeed(
-                pendingReferences: [new PendingReference("a", [], [candidate])]);
-            candidate = new ResolvedOpenCandidate(seed, 0, identity, memo);
-        }
-
-        var names = new HashSet<string>(["p"], StringComparer.Ordinal);
-        OnOneMebibyteStack(() =>
-        {
-            var before = observations.OpenCandidateSeedRebuilds;
-            var qualified = candidate.QualifiedBy(owner, names);
-            Assert.Equal(Depth + 1, observations.OpenCandidateSeedRebuilds - before);
-            Assert.True(qualified.RequiresAny(names, owner));
-            var leaf = qualified;
-            for (var i = 0; i < Depth; i++)
-                leaf = Assert.IsType<ResolvedOpenCandidate>(Assert.Single(Assert.Single(leaf.Seed.PendingReferences).Candidates));
-            Assert.Equal(new OwnerQualifiedParameter("p", owner), Assert.Single(leaf.Seed.OwnerQualifiedParameters));
-
-            before = observations.OpenCandidateSeedRebuilds;
-            var stripped = qualified.Seed.Clone();
-            stripped.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters: true, observations);
-            Assert.Equal(Depth, observations.OpenCandidateSeedRebuilds - before);
-            Assert.False(new ResolvedOpenCandidate(stripped, 0, identity, memo).RequiresAny(names, owner));
-
-            before = observations.OpenCandidateSeedRebuilds;
-            var reduced = candidate.UnderMissingLexicalHead("a");
-            Assert.Equal(Depth, observations.OpenCandidateSeedRebuilds - before);
-            Assert.Empty(reduced.Seed.PendingReferences);
-            Assert.Equal(["p"], reduced.Seed.RequiredAncestorOwnedParameterNames);
-            // The rewrites operate on copies and cannot replace the original nested requirements.
-            Assert.Single(candidate.Seed.PendingReferences);
-            Assert.True(candidate.RequiresAny(names, owner));
-        });
     }
 
     /// <summary>

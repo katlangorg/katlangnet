@@ -13,9 +13,9 @@ namespace KatLang.Tests;
 /// <c>SequencePipelineOptimizer.ExecuteFilterCount</c> / <c>SourceKind</c>,
 /// <c>Evaluator.PreEvaluationValidationError</c>): the fake-variant experiment — a sealed
 /// probe variant added to each root — fails the build at exactly those sites and nowhere
-/// else. The two roots whose consumers are switch STATEMENTS or kind predicates
-/// (<c>OpenCandidate</c>, <c>PreparedSequenceBuiltinSuffixArg</c>) gain the closed
-/// contract itself. The former is a class; the latter is a record whose synthesized
+/// else. The root whose consumers are kind predicates
+/// (<c>PreparedSequenceBuiltinSuffixArg</c>) gains the closed
+/// contract itself: it is a record whose synthesized
 /// copy constructor can no longer admit foreign derivations. <c>CallableBindingNode</c>, the
 /// evaluator's binding-plan node, was a public root until the September 2026 public API audit
 /// made the signature and binding-plan planners internal; it keeps its closed contract here.
@@ -33,7 +33,6 @@ public class InternalClosedHierarchyTests
         (typeof(PreEvaluationAstViolation),
             ["ExplicitParametersWithoutOutput", "ConditionalBranchArityMismatch", "ConditionalBranchOutputArityMismatch", "SingletonSequencePattern", "MultipleCollectingCaptures", "RepeatedNameIncludesCollecting", "CollectingClauseBinder", "InvalidMetaParameter", "MetaClauseBinder", "AliasTargetNotStaticPath", "AliasCycle"]),
         (PreparedSequenceBuiltinSuffixArgType, ["AlgorithmArg", "ValueArg", "WholeNumberArg"]),
-        (typeof(OpenCandidate), ["ResolvedOpenCandidate", "UnresolvedOpenCandidate"]),
         (typeof(CallableBindingNode), ["CaptureBindingNode", "CollectingCaptureBindingNode", "SequenceValueBindingNode", "ListValueBindingNode", "UnpackingBindingNode"]),
     ];
 

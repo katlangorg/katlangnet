@@ -546,27 +546,16 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
     private readonly object[] _declarations;
     private readonly int _hash;
 
-    private OpenProviderIdentity(object[] declarations, bool complete)
+    // Every identity lists its declaring chain all the way to the root level: an identity is built
+    // only where that chain is known (a scope chain, a declaring-owner chain, or the root itself).
+    private OpenProviderIdentity(object[] declarations)
     {
         _declarations = declarations;
-        IsComplete = complete;
         var hash = new HashCode();
-        hash.Add(complete);
         foreach (var declaration in declarations)
             hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(declaration));
         _hash = hash.ToHashCode();
     }
-
-    /// <summary>
-    /// Whether the declaring chain is known all the way to the root level. The scope-free summary
-    /// walk of exposure analysis (<see cref="PropertyDependencyGraphBuilder"/>) builds an identity
-    /// inside a body whose enclosing levels it has not reached yet: such an identity is
-    /// INCOMPLETE — declared within the levels it lists — and is extended level by level as its
-    /// reference escapes (<see cref="EscapedThrough"/>) until the level that settles it completes
-    /// it (<see cref="CompletedAt"/>). Two identities of one open lookup are compared only when
-    /// both are complete or both end at the same level.
-    /// </summary>
-    internal bool IsComplete { get; }
 
     /// <summary>The number of declarations in the chain (the provider's and its owners').</summary>
     internal int Length => _declarations.Length;
@@ -578,7 +567,7 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
             return DeclaredAtRoot(provider);
         var declarations = new List<object> { DeclarationOf(provider) };
         AppendChain(declarations, level);
-        return new([.. declarations], complete: true);
+        return new([.. declarations]);
     }
 
     /// <summary>A provider declared as a property of the level whose declaring owners are <paramref name="owners"/>.</summary>
@@ -589,7 +578,7 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
         var declarations = new List<object> { DeclarationOf(provider) };
         for (var current = owners; current is not null; current = current.Outer)
             declarations.Add(current.Declaration);
-        return new([.. declarations], complete: true);
+        return new([.. declarations]);
     }
 
     /// <summary>
@@ -599,41 +588,11 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
     /// reaches it — <c>open 'u'</c>, <c>open M</c> for <c>M = load('u')</c>, <c>load('u').Sub</c>).
     /// </summary>
     internal static OpenProviderIdentity DeclaredAtRoot(Algorithm provider)
-        => new([DeclarationOf(provider), RootLevel], complete: true);
-
-    /// <summary>
-    /// A provider declared as a property of the body <paramref name="level"/> whose enclosing
-    /// levels are not known yet: an incomplete identity (see <see cref="IsComplete"/>) — unless the
-    /// provider or the level is a loaded module, which is declared at the root level.
-    /// </summary>
-    internal static OpenProviderIdentity DeclaredWithin(Algorithm provider, Algorithm level)
-        => provider.IsModuleRoot ? DeclaredAtRoot(provider)
-            : level.IsModuleRoot ? new([DeclarationOf(provider), DeclarationOf(level), RootLevel], complete: true)
-            : new([DeclarationOf(provider), DeclarationOf(level)], complete: false);
+        => new([DeclarationOf(provider), RootLevel]);
 
     /// <summary>A member of this provider: the member's declaration, then this provider's identity (a member that is itself a loaded module restarts at the root level).</summary>
     internal OpenProviderIdentity Member(Algorithm member)
-        => member.IsModuleRoot ? DeclaredAtRoot(member) : new([DeclarationOf(member), .. _declarations], IsComplete);
-
-    /// <summary>
-    /// An incomplete identity whose reference escaped the body <paramref name="level"/>: declared
-    /// within that level too — and complete when that level is a loaded module, which is declared at
-    /// the root level wherever it is held.
-    /// </summary>
-    internal OpenProviderIdentity EscapedThrough(Algorithm level)
-        => IsComplete ? this
-            : level.IsModuleRoot ? new([.. _declarations, DeclarationOf(level), RootLevel], complete: true)
-            : new([.. _declarations, DeclarationOf(level)], complete: false);
-
-    /// <summary>An incomplete identity settled from <paramref name="level"/>: the levels it lists are inside that level, whose own chain completes it.</summary>
-    internal OpenProviderIdentity CompletedAt(ElaboratedPropertyScope level)
-    {
-        if (IsComplete)
-            return this;
-        var declarations = new List<object>(_declarations);
-        AppendChain(declarations, level);
-        return new([.. declarations], complete: true);
-    }
+        => member.IsModuleRoot ? DeclaredAtRoot(member) : new([DeclarationOf(member), .. _declarations]);
 
     private static void AppendChain(List<object> declarations, ElaboratedPropertyScope level)
     {
@@ -658,7 +617,7 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
     internal OpenProviderIdentity? Rebased(OpenProviderIdentity from, OpenProviderIdentity to)
     {
         var prefix = _declarations.Length - from._declarations.Length;
-        if (prefix < 0 || !IsComplete || !from.IsComplete || !to.IsComplete)
+        if (prefix < 0)
             return null;
         for (var i = 0; i < from._declarations.Length; i++)
         {
@@ -666,7 +625,7 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
                 return null;
         }
 
-        return new([.. _declarations.AsSpan(0, prefix), .. to._declarations], complete: true);
+        return new([.. _declarations.AsSpan(0, prefix), .. to._declarations]);
     }
 
     /// <summary>The root level's element of a declaring chain (see <see cref="DeclaringOwners.Root"/>).</summary>
@@ -676,8 +635,7 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
 
     public bool Equals(OpenProviderIdentity? other)
     {
-        if (other is null || other._hash != _hash || other.IsComplete != IsComplete
-            || other._declarations.Length != _declarations.Length)
+        if (other is null || other._hash != _hash || other._declarations.Length != _declarations.Length)
             return false;
         for (var i = 0; i < _declarations.Length; i++)
         {

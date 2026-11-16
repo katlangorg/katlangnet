@@ -20,41 +20,6 @@ public class Fe4aHostileReviewTests
             Assert.IsType<RequiredAncestorList<CapturedParameterRequirement>>(q.CaptureRequirements).Backing);
     }
 
-    [Fact]
-    public void RepeatedOpenCondition_PreservesAmbiguityShadowingAndBoundOwners()
-    {
-        var owner = new Algorithm.User(null, [new CaptureParameterPattern(new ParameterDeclaration("x"))], [], [], OutputBundle.Empty);
-        var captured = new PropertyDependencyGraphBuilder.SummarySeed(ownerQualifiedParameters: [new("x", owner)]);
-        var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
-        var provider = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
-        var otherProvider = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
-        ResolvedOpenCandidate Settled(int level, Algorithm? by = null)
-        {
-            var identity = OpenProviderIdentity.DeclaredAtRoot(by ?? provider);
-            return new ResolvedOpenCandidate(captured, level, identity, memo);
-        }
-
-        PendingReference Lookup(string head, OpenCandidate[] candidates, bool bound = false)
-            => new(head, [], candidates, bound ? [owner] : []);
-        var single = Lookup("V", [Settled(0)]);
-        var ambiguous = Lookup("V", [Settled(0), Settled(0, otherProvider)]);
-        // Q-19 D-I: two candidates settled to ONE provider are that provider, never an ambiguity.
-        var oneProviderTwice = Lookup("V", [Settled(0), Settled(0)]);
-        var unresolved = Lookup("V", [new UnresolvedOpenCandidate("L", [], 0), Settled(1)]);
-        PropertyDependencyGraphBuilder.SummarySeed Reduce(PendingReference pending)
-            => new PropertyDependencyGraphBuilder.SummarySeed(pendingReferences: [pending]).UnderMissingLexicalHead("V");
-        Assert.Empty(Reduce(single).PendingReferences);
-        Assert.Equal([new OwnerQualifiedParameter("x", owner)], Reduce(single).OwnerQualifiedParameters);
-        Assert.True(Reduce(ambiguous).IsEmpty);
-        Assert.Equal([new OwnerQualifiedParameter("x", owner)], Reduce(oneProviderTwice).OwnerQualifiedParameters);
-        Assert.Single(Reduce(unresolved).PendingReferences);
-        Assert.Single(Reduce(Lookup("Other", [Settled(0)])).PendingReferences);
-        Assert.True(Reduce(Lookup("V", [Settled(0)], bound: true)).IsEmpty);
-        // Reduction is conditional: it never changes the original seed that lexical shadowing may select instead.
-        Assert.Single(single.Candidates);
-        Assert.Single(captured.OwnerQualifiedParameters);
-    }
-
     private sealed record Element(int Value);
 
     [Fact]
@@ -238,8 +203,11 @@ public class Fe4aHostileReviewTests
     /// (one provider), an inline provider beside a dotted read, a parameterized local reading through an
     /// open (bound owner), a local shadowing the opened name, and an indirect local read — in a random
     /// declaration order, with and without a root-level shadow. Every <c>P(i)</c> and every library member
-    /// matches the independent least fixed point (<see cref="OpenLibraryOracle"/>). Before the repair,
-    /// samples combining late-growing candidate seeds with a cycle never finished.
+    /// matches the independent least fixed point (<see cref="OpenLibraryOracle"/>). Before EXPOSURE-OPEN-1,
+    /// samples combining a cycle with an opened provider's charge that grew during the member fixed point
+    /// never finished. These source cases are also what pins an open lookup's verdicts in exposure — one
+    /// provider charges, two charge nothing, one provider reached twice is one, a bound owner is excluded,
+    /// a lexical declaration shadows the open — since the summary channel carries no provider itself.
     /// </summary>
     [Fact]
     public void GeneratedLibrariesWithEveryOpenForm_MatchIndependentOracleInAnyDeclarationOrder()

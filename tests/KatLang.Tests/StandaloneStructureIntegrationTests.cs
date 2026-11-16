@@ -203,6 +203,16 @@ public sealed class StandaloneStructureIntegrationTests(ITestOutputHelper output
             Assert.DoesNotContain(obsolete, graph);
         Assert.DoesNotContain("private bool TryProvide(", exposure);
         Assert.DoesNotContain("PropertyDependencyGraphBuilder.ChargePath", exposure);
+        // The open-candidate channel (deleted November 2026): a pending reference carries no open provider, and an
+        // open provider's identity always lists its declaring chain to the root level.
+        foreach (var obsolete in new[] { "OpenCandidate", "CandidateRewriteFrame", "SeedFact", "UnderMissingLexicalHead", "ShapeBoundKey", "WithSeedsUnitedWith", "UnitedCandidates" })
+        {
+            Assert.DoesNotContain(obsolete, graph);
+            Assert.DoesNotContain(obsolete, exposure);
+        }
+        var lookup = File.ReadAllText(Path.Combine(root, "src/KatLang/ElaboratedScopeLookup.cs"));
+        foreach (var obsolete in new[] { "IsComplete", "DeclaredWithin", "EscapedThrough", "CompletedAt" })
+            Assert.DoesNotContain(obsolete, lookup);
         var resolver = File.ReadAllText(Path.Combine(root, "src/KatLang/ImplicitArgumentResolver.cs"));
         Assert.DoesNotContain("public static Algorithm Resolve(Algorithm root)", resolver);
         Assert.DoesNotContain("WithResolution(", resolver);

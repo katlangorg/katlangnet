@@ -1192,9 +1192,9 @@ internal static class PropertyExposureResolver
     /// <summary>
     /// The owning level's settlement of the references the scope-free summary walk left
     /// pending (<see cref="PendingReference"/>), in exactly the evaluator's lookup order: the
-    /// head as a PROPERTY of the level's chain (ownership first), then the providers of the
-    /// levels the reference escaped (innermost first), then the owning level's own
-    /// <c>open</c> targets and its ancestors' — each candidate resolved from the level that
+    /// head as a PROPERTY of the chain of the reference's origin (ownership first), then the
+    /// <c>open</c> targets of that chain's levels, innermost first — a reference carries no
+    /// provider, so each target is resolved here, from the level that
     /// declares the open, level by level: the first level at which a target publicly provides
     /// the head decides, its sole provider charging and two or more charging NOTHING (the
     /// evaluator's ambiguousOpen selects no declaration; list order never picks one). A member
@@ -1649,7 +1649,7 @@ internal static class PropertyExposureResolver
                 {
                     if (!memos.SharedMemo.OpenTargetMayCharge(scope, target)
                         || target.OpenTargetHead(out var steps) is not Expr.Resolve(var head)) continue;
-                    var walk = ReferenceFrame(new PendingReference(head, steps, [], origin: pending.Origin, openPath: true),
+                    var walk = ReferenceFrame(new PendingReference(head, steps, origin: pending.Origin, openPath: true),
                         level, site, boundOwners);
                     yield return walk;
                     self.Result = sets.Union(self.Result, walk.Result);
@@ -1862,7 +1862,7 @@ internal static class PropertyExposureResolver
                         directHead &= written.Selection != PendingSelection.OpenWalks;
                     foreach (var written in row.PendingReferences)
                     {
-                        if (!directHead || written.OpenPath || written.Candidates.Count > 0
+                        if (!directHead || written.OpenPath
                             || memos.SharedMemo.RequirementContext(written.Origin ?? view.Context(terminal.Key)) is not { } origin)
                             continue;
                         var seen = false;
@@ -2186,7 +2186,7 @@ internal static class PropertyExposureResolver
                     continue;
                 }
 
-                var provided = ReferenceFrame(new PendingReference(dependencyName, [], []), level, site, boundOwners);
+                var provided = ReferenceFrame(new PendingReference(dependencyName, []), level, site, boundOwners);
                 yield return provided;
                 names = sets.Union(names, provided.Result);
             }
@@ -2203,7 +2203,7 @@ internal static class PropertyExposureResolver
 
         /// <summary>
         /// Settlement of a BARE visible name the scope-free summary walk could not reduce
-        /// further: the same rule as a member-less, candidate-less pending reference — the
+        /// further: the same rule as a member-less pending reference — the
         /// name as a property of the level's chain first (its stored summary), and only then
         /// the level's and its ancestors' <c>open</c> providers, whose provided member charges
         /// its own requirements. A name provided by nothing (an unresolvable name, or one the
@@ -2214,7 +2214,7 @@ internal static class PropertyExposureResolver
             if (TryLookupSummary(level, name, out _, out _, out var summary))
                 return sets.Adopt(summary);
 
-            return Run(ReferenceFrame(new PendingReference(name, [], []), level, site: null, boundOwners: null));
+            return Run(ReferenceFrame(new PendingReference(name, []), level, site: null, boundOwners: null));
         }
     }
 

@@ -75,8 +75,8 @@ public class FrontEndDagComplexityTests
     [Fact]
     public void RegionKeys_DistinguishNamesContainingTheirDelimiters()
     {
-        Assert.NotEqual(new PendingReference("A.B", ["C"], []).ContentKey,
-            new PendingReference("A", ["B", "C"], []).ContentKey);
+        Assert.NotEqual(new PendingReference("A.B", ["C"]).ContentKey,
+            new PendingReference("A", ["B", "C"]).ContentKey);
         Assert.NotEqual(new PropertyDependencyGraphBuilder.SummarySeed(["a,b"]).ContentKey,
             new PropertyDependencyGraphBuilder.SummarySeed(["a", "b"]).ContentKey);
         Assert.NotEqual(

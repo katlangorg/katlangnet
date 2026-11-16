@@ -2,22 +2,22 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// EXPOSURE-OPEN-1: the exposure pass on members read through <c>open</c> inside a parameterized owner.
-/// A resolved open candidate carries the seed its provider charges, and that seed can hold further
-/// candidates — a chain of N members opened from one another and read at the owner nests N deep. Two
-/// costs followed from that nesting. (A) Every enclosing link rebuilt the whole nesting below it (the
-/// lexical-absence reduction and parameter qualification walked it) and re-serialized it into a
-/// content key, so a chain of N cost O(N³) characters and copies: N = 300 took 9 s and 20 GB. (B) A
-/// candidate's seed grows during the member fixed point, and a reference with the smaller seed was a
-/// DIFFERENT entry from the same reference with the larger one; around a cycle of mutually reading
-/// libraries the stale entry circulated forever and the analysis never terminated. Now candidates are
-/// shared immutable nodes whose deep facts decide whether a transformation can change them, their keys
-/// name their seeds by exact interned ids, and same-shape references unite their seeds.
+/// The summary channel once carried, on every reference that escaped a level with opens, the seed its
+/// provider charges, and that seed held the next link's — a chain of N members opened from one another
+/// and read at the owner nested N deep. Two costs followed from that nesting. (A) Every enclosing link
+/// rebuilt and re-serialized the whole nesting below it, so a chain of N cost O(N³) characters and
+/// copies: N = 300 took 9 s and 20 GB. (B) A provider's seed grew during the member fixed point, and a
+/// reference with the smaller seed was a DIFFERENT entry from the same reference with the larger one;
+/// around a cycle of mutually reading libraries the stale entry circulated forever and the analysis
+/// never terminated. A pending reference now carries no provider and no seed at all: it names its head,
+/// member steps and completed origin, and the owning level's settlement selects the provider from the
+/// completed structure. These shapes stay pinned as the reproducers of both costs.
 ///
 /// <para>The regression oracle is deterministic work: <see cref="FrontEndTraversalObservations"/>
-/// counts the candidate rebuilds, the key characters, and the settlement frames the old shape
-/// amplified, at several sizes, against absolute polynomial bounds and doubling ratios. Classification
-/// is pinned exactly — every property's exposure, required names, and owner-relative capture depths —
-/// against an independent fixed-point oracle (<see cref="OpenLibraryOracle"/>).</para>
+/// counts the summary computations, member expansions and evaluations, the key characters, and the
+/// settlement frames, at several sizes, against absolute polynomial bounds and doubling ratios.
+/// Classification is pinned exactly — every property's exposure, required names, and owner-relative
+/// capture depths — against an independent fixed-point oracle (<see cref="OpenLibraryOracle"/>).</para>
 /// </summary>
 public sealed class ExposureOpenChainComplexityTests
 {
@@ -132,17 +132,16 @@ public sealed class ExposureOpenChainComplexityTests
     }
 
     /// <summary>
-    /// The work of the opened chain at three doubling sizes. Each link is settled at the owner once and
-    /// held by reference by the link above it, so its seed is built once (N candidate rebuilds in all)
-    /// and its key costs its own entries (O(N) characters in all). The exposure settlement of each
-    /// link's level reuses the walk of the links below it from the run's settlement share
-    /// (<see cref="ExposureSettlementShareTests"/>): at most 8 frames a link, where every level formerly
-    /// walked the whole chain below it (N(N + 3) frames, the order the root-level and dotted chains paid too).
-    /// Formerly every link rebuilt and re-serialized the nesting below it (the same operations, counted on
-    /// the former implementation): 560 rebuilds and 143,522 key characters at N = 16, 8,384 and 9,110,136 at N = 64.
+    /// The work of the opened chain at three doubling sizes. Each link's algorithm is summarized once
+    /// (2N + 2 summaries, N + 2 member expansions in all) and its key costs its own entries (O(N)
+    /// characters in all). The exposure settlement of each link's level reuses the walk of the links below
+    /// it from the run's settlement share (<see cref="ExposureSettlementShareTests"/>): at most 8 frames a
+    /// link, where every level formerly walked the whole chain below it (N(N + 3) frames, the order the
+    /// root-level and dotted chains paid too). Before EXPOSURE-OPEN-1 every link rebuilt and re-serialized
+    /// the nesting below it: 143,522 key characters at N = 16 and 9,110,136 at N = 64.
     /// </summary>
     [Fact]
-    public void NestedOwnerOpenedChain_BuildsEachCandidateOnce_AndSettlesLinearly()
+    public void NestedOwnerOpenedChain_SummarizesEachLinkOnce_AndSettlesLinearly()
     {
         var previous = default(FrontEndTraversalObservations);
         foreach (var length in new[] { 16, 32, 64 })
@@ -170,14 +169,13 @@ public sealed class ExposureOpenChainComplexityTests
     // ── Controls ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The same chain at the root (whose members are settled only by the exposure pass, never nested in
-    /// a candidate), and inside the owner through dotted reads (path expansions, no candidates): no
-    /// candidate is ever built, and settlement is the same linear walk.
+    /// The same chain at the root (no parameterized owner), and inside the owner through dotted reads
+    /// (member paths instead of opens): settlement is the same linear walk.
     /// </summary>
     [Theory]
     [InlineData("root")]
     [InlineData("dotted")]
-    public void ControlChains_BuildNoCandidates(string shape)
+    public void ControlChains_SettleLinearly(string shape)
     {
         foreach (var length in new[] { 16, 32, 64 })
         {
@@ -201,8 +199,8 @@ public sealed class ExposureOpenChainComplexityTests
 
     /// <summary>
     /// The opened chain whose terminal reads the owner's parameter: every link requires <c>p</c> one
-    /// level out, and the reader directly. Each link is qualified by the owner once more (2N rebuilds),
-    /// and an activation-specific value proves the classification: a link wrongly classified exported
+    /// level out, and the reader directly. The summary work is the constant-terminal chain's, and an
+    /// activation-specific value proves the classification: a link wrongly classified exported
     /// would let the run cache hand the first call's value to the second.
     /// </summary>
     [Fact]
@@ -232,7 +230,7 @@ public sealed class ExposureOpenChainComplexityTests
 
     /// <summary>Alternating opened and dotted links, each through a local intermediary before the public member.</summary>
     [Fact]
-    public void MixedChain_WithLocalIntermediaries_IsExported_AndBuildsEachOpenedCandidateOnce()
+    public void MixedChain_WithLocalIntermediaries_IsExported_WithLinearWork()
     {
         foreach (var length in new[] { 16, 32, 64 })
         {
@@ -253,10 +251,10 @@ public sealed class ExposureOpenChainComplexityTests
         Assert.Equal("10", Assert.IsType<RunResult.Success>(KatLangEngine.Run(NestedOwnerChain(6, "mixed"))).ToDisplayString());
     }
 
-    // ── Shared candidates under equal and different contexts ─────────────────
+    // ── One chain under equal and different contexts ─────────────────────────
 
     /// <summary>
-    /// K readers of one opened chain in ONE owner reach the same candidates: each reader is classified
+    /// K readers of one opened chain in ONE owner reach the same members: each reader is classified
     /// alike and the chain's settlement is shared by the level solver. The same chain declared under two
     /// owners whose parameters are both named <c>p</c> is two contexts: each reader requires its OWN
     /// owner's <c>p</c>, at its own depth.
@@ -315,7 +313,7 @@ public sealed class ExposureOpenChainComplexityTests
 
     /// <summary>
     /// Reproducer B — formerly more than a minute and never finishing: the member fixed point kept a
-    /// stale candidate seed alive around the library cycle. The outer owner is never called, so this is
+    /// stale provider seed alive around the library cycle. The outer owner is never called, so this is
     /// declaration analysis alone; it completes, reports exactly the two ambiguous opens, and classifies
     /// every library member and every <c>P(i)</c> as the independent oracle computes.
     /// </summary>
@@ -345,13 +343,13 @@ public sealed class ExposureOpenChainComplexityTests
 
     /// <summary>
     /// The minimal core of B: two libraries reading each other through inline-provider blocks and
-    /// opens, one of them reading a third library whose member captures the owner's input. The opened
-    /// candidate of that third library is first settled with an empty seed and later with <c>x0</c>;
-    /// as separate entries the two circulated around the cycle forever (no termination). United, the
-    /// fixed point is reached in a few evaluations.
+    /// opens, one of them reading a third library whose member captures the owner's input. That opened
+    /// member's requirements are first empty and later <c>x0</c>; when a reference carried them as a
+    /// seed, the two states were separate entries that circulated around the cycle forever (no
+    /// termination). A reference carries no seed now, and the fixed point is reached in a few evaluations.
     /// </summary>
     [Fact]
-    public void MutuallyReadingLibraries_ReachTheirFixedPoint_WhenACandidateSeedGrowsLate()
+    public void MutuallyReadingLibraries_ReachTheirFixedPoint_WhenAnOpenedMembersRequirementsGrowLate()
     {
         const string source = "O(x0) = {\nL1 = { public V = P1\n1 }\nP1 = { open { public V = 3 }\nV + L2.V }, { open L3\nV }\n"
             + "L2 = { public V = P2\n1 }\nP2 = L5.V\nL3 = { public V = P3\n1 }\nP3 = x0\nL5 = { public V = P5\n1 }\n"
@@ -499,7 +497,7 @@ public sealed class ExposureOpenChainComplexityTests
     /// <summary>
     /// A long opened chain with a reader at the owner, on a 1 MiB thread, in process: 400 links pin
     /// that the cubic cost does not come back (the implementation before EXPOSURE-OPEN-1 took 9 s at
-    /// 300 links and 58 s at 500) — exactly two candidate rebuilds per link. Settling each link's charge
+    /// 300 links and 58 s at 500) — exactly N + 2 member expansions. Settling each link's charge
     /// at the owner formerly also took one group of host frames per link (OOS-22: the process died
     /// between 500 and 700 links on a 1 MiB Release thread); that expansion now runs on an explicit
     /// stack, and the deep chains are pinned in a child process
@@ -545,8 +543,8 @@ public sealed class ExposureOpenChainComplexityTests
         Assert.Equal(0, shared.ExpansionCycleCuts);
     }
 
-    // A level's member map whose presence test fails for one member (the escaping-candidate settlement
-    // asks it whether the level declares a carried open target's head).
+    // A level's member map whose lookup fails for one member (the level expansion asks it whether the
+    // level declares a visible name before carrying that name outward).
     private sealed class FailingMemberMap(IReadOnlyDictionary<string, PropertyDependencyGraphBuilder.SummarySeed> inner, string? failAt)
         : IReadOnlyDictionary<string, PropertyDependencyGraphBuilder.SummarySeed>
     {
@@ -567,71 +565,7 @@ public sealed class ExposureOpenChainComplexityTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    // ── The merge rule itself ────────────────────────────────────────────────
-
-    [Fact]
-    public void SharedCandidateDag_TransformsAndUnionsOncePerDistinctNode_AndSeparatesOwners()
-    {
-        foreach (var depth in new[] { 8, 16, 32 })
-        {
-            var observations = new FrontEndTraversalObservations();
-            var memo = new PropertyDependencyGraphBuilder.SummaryMemo(observations);
-            var root = SourceProvenance.ParseValid("F(p) = p\nG(p) = p\n0").Root;
-            var owner = root.Properties[0].Value;
-            var otherOwner = root.Properties[1].Value;
-            var identity = OpenProviderIdentity.DeclaredAtRoot(owner);
-            ResolvedOpenCandidate Dag(string name)
-            {
-                var candidate = new ResolvedOpenCandidate(new PropertyDependencyGraphBuilder.SummarySeed([name]), 0, identity, memo);
-                for (var i = 0; i < depth; i++)
-                {
-                    var seed = new PropertyDependencyGraphBuilder.SummarySeed();
-                    seed.PendingReferences.Add(new PendingReference("a", [], [candidate]));
-                    seed.PendingReferences.Add(new PendingReference("b", [], [candidate]));
-                    candidate = new ResolvedOpenCandidate(seed, 0, identity, memo);
-                }
-                return candidate;
-            }
-
-            var dag = Dag("p");
-            var names = new HashSet<string>(["p"], StringComparer.Ordinal);
-            var before = observations.OpenCandidateSeedRebuilds;
-            var qualified = dag.QualifiedBy(owner, names);
-            Assert.Equal(depth + 1, observations.OpenCandidateSeedRebuilds - before);
-            var second = dag.QualifiedBy(otherOwner, names);
-            var leaf = qualified;
-            var secondLeaf = second;
-            for (var i = 0; i < depth; i++)
-            {
-                var references = leaf.Seed.PendingReferences.ToArray();
-                var firstChild = Assert.IsType<ResolvedOpenCandidate>(Assert.Single(references[0].Candidates));
-                Assert.Same(firstChild, Assert.Single(references[1].Candidates));
-                leaf = firstChild;
-                secondLeaf = Assert.IsType<ResolvedOpenCandidate>(Assert.Single(secondLeaf.Seed.PendingReferences.First().Candidates));
-            }
-            Assert.Equal(new OwnerQualifiedParameter("p", owner), Assert.Single(leaf.Seed.OwnerQualifiedParameters));
-            Assert.Equal(new OwnerQualifiedParameter("p", otherOwner), Assert.Single(secondLeaf.Seed.OwnerQualifiedParameters));
-
-            before = observations.OpenCandidateSeedRebuilds;
-            var reduced = dag.UnderMissingLexicalHead("a");
-            // One reduction per node, plus the unions of the surviving `b` branches.
-            Assert.InRange(observations.OpenCandidateSeedRebuilds - before, 1, 2 * depth);
-            Assert.True(reduced.RequiresAny(names, owner));
-
-            before = observations.OpenCandidateSeedRebuilds;
-            var stripped = dag.Seed.Clone();
-            stripped.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters: true, observations);
-            Assert.InRange(observations.OpenCandidateSeedRebuilds - before, 1, depth);
-            Assert.False(new ResolvedOpenCandidate(stripped, 0, identity, memo).RequiresAny(names, owner));
-
-            before = observations.OpenCandidateSeedRebuilds;
-            var united = dag.UnitedWith(Dag("q"));
-            Assert.Equal(depth + 1, observations.OpenCandidateSeedRebuilds - before);
-            Assert.True(united.RequiresAny(names, owner));
-            Assert.True(united.RequiresAny(new HashSet<string>(["q"], StringComparer.Ordinal), owner));
-            Assert.InRange(observations.SummaryKeyCharacters, 1, 4000L * (depth + 1));
-        }
-    }
+    // ── Shared members, the expansion cache and the reference set ────────────
 
     [Fact]
     public void OpenedMemberDiamonds_ShareChangedExpansionsAndCompleteSettlements()
@@ -700,39 +634,42 @@ public sealed class ExposureOpenChainComplexityTests
     }
 
     /// <summary>
-    /// The pending-reference set unites references that differ only in a resolved candidate's charged
-    /// seed (one provider: one charge, the union), keeps references of different bound owners apart
-    /// (their exclusions differ), and still narrows equal references' bound owners by intersection.
+    /// The pending-reference set keeps ONE entry per reference — its origin, selection, head and member
+    /// steps — and a repeated reference keeps only the owners EVERY occurrence binds (intersection):
+    /// (requirements − owner) ∪ requirements is the whole requirement. References that differ in head or
+    /// member path stay apart, each with its own bound owners.
     /// </summary>
     [Fact]
-    public void PendingReferenceSet_UnitesSameShapeSeeds_AndKeepsBoundOwnersExact()
+    public void PendingReferenceSet_KeepsOneEntryPerReference_AndNarrowsBoundOwnersByIntersection()
     {
-        var observations = new FrontEndTraversalObservations();
-        var memo = new PropertyDependencyGraphBuilder.SummaryMemo(observations);
-        var provider = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid("L = { public V = 1\n0 }\n0").Root.Properties.Single().Value);
-        var owner = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid("F(a) = a\n0").Root.Properties.Single().Value);
-        var identity = OpenProviderIdentity.DeclaredAtRoot(provider);
-        PendingReference Reference(string[] required, params Algorithm[] bound)
-            => new("V", [], [new ResolvedOpenCandidate(new PropertyDependencyGraphBuilder.SummarySeed(required), 0, identity, memo)], bound);
+        var root = SourceProvenance.ParseValid("F(a) = a\nG(b) = b\n0").Root;
+        var owner = root.Properties[0].Value;
+        var other = root.Properties[1].Value;
+        static PendingReference Reference(string head, params Algorithm[] bound) => new(head, [], bound);
 
-        var set = new PendingReferenceSet([Reference([]), Reference(["x0"])]);
-        var united = Assert.Single(set);
-        var candidate = Assert.IsType<ResolvedOpenCandidate>(Assert.Single(united.Candidates));
-        Assert.Equal(["x0"], candidate.Seed.RequiredAncestorOwnedParameterNames);
-        Assert.Equal(1, observations.PendingReferenceSeedMerges);
+        // Equal references are one entry.
+        Assert.Single(new PendingReferenceSet([Reference("V"), Reference("V")]));
+        Assert.Same(owner, Assert.Single(Assert.Single(new PendingReferenceSet([Reference("V", owner), Reference("V", owner)])).BoundOwners));
 
-        // Either order gives the same content.
-        Assert.True(set.SetEquals(new PendingReferenceSet([Reference(["x0"]), Reference([])])));
+        // An occurrence that binds nothing unbinds the entry, in either order.
+        Assert.Empty(Assert.Single(new PendingReferenceSet([Reference("V", owner), Reference("V")])).BoundOwners);
+        Assert.Empty(Assert.Single(new PendingReferenceSet([Reference("V"), Reference("V", owner)])).BoundOwners);
 
-        // A bound owner is part of the shape: (V - owner) and V stay two references.
-        var bound = new PendingReferenceSet([Reference(["x0"], owner), Reference(["x1"])]);
-        Assert.Equal(2, bound.Count);
+        // Only the owners every occurrence binds stay bound.
+        Assert.Same(other, Assert.Single(Assert.Single(new PendingReferenceSet([Reference("V", owner, other), Reference("V", other)])).BoundOwners));
+        Assert.Empty(Assert.Single(new PendingReferenceSet([Reference("V", owner), Reference("V", other)])).BoundOwners);
 
-        // Equal references narrow their bound owners, and the narrowed reference unites with the unbound one.
-        var narrowed = new PendingReferenceSet([Reference(["x0"], owner), Reference(["x1"]), Reference(["x0"])]);
-        var only = Assert.Single(narrowed);
-        Assert.Empty(only.BoundOwners);
-        Assert.Equal(["x0", "x1"], Assert.IsType<ResolvedOpenCandidate>(Assert.Single(only.Candidates)).Seed.RequiredAncestorOwnedParameterNames.Order(StringComparer.Ordinal));
+        // A different head or member path is a different reference; narrowing one leaves the others alone.
+        var apart = new PendingReferenceSet([Reference("V", owner), Reference("W", owner), new PendingReference("V", ["X"], [owner]), Reference("W")]);
+        Assert.Equal(3, apart.Count);
+        Assert.Equal(["V", "W", "V"], apart.Select(reference => reference.Head));
+        Assert.Same(owner, Assert.Single(apart.First().BoundOwners));
+        Assert.Empty(apart.Single(reference => reference.Head == "W").BoundOwners);
+        Assert.Same(owner, Assert.Single(apart.Single(reference => reference.Members.Count == 1).BoundOwners));
+
+        // Set equality is by content, bound owners included.
+        Assert.True(new PendingReferenceSet([Reference("V", owner), Reference("V")]).SetEquals(new PendingReferenceSet([Reference("V")])));
+        Assert.False(new PendingReferenceSet([Reference("V", owner)]).SetEquals(new PendingReferenceSet([Reference("V")])));
     }
 }
 
