@@ -812,10 +812,6 @@ public class ElaboratedLookupAccelerationTests
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(nearerParsed.Diagnostics).Code);
         var nearerRoot = Assert.IsType<Algorithm.User>(nearerParsed.Root);
         Assert.IsType<Expr.Resolve>(InnerRow(nearerRoot));
-
-        Assert.Equal(0, MeasureDetection(nearerProperty).LookupRootDiscoveryWalks);
-        Assert.Equal(0, MeasureDetection(fartherProperty).LookupRootDiscoveryWalks);
-
     }
 
     /// <summary>

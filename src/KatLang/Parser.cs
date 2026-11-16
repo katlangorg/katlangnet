@@ -1213,6 +1213,45 @@ public sealed class Parser
             LexicalFallback = lexicalFallback,
         };
 
+    // ── Spread marker ───────────────────────────────────────────────
+    // Expression spreading is written with the attached postfix marker `*`.
+    // Issue #183 (refining Q-65): a physical line-final star, EOF or a later
+    // closer/declaration included, is classified by attachment — attached `a*`
+    // is a spread that completes the expression, detached `a *` is
+    // multiplication that leaves it incomplete. A star with a same-line follower
+    // is a spread only before an explicit closure: comma, closer, fluent dot or
+    // a further spread-classified star; same-line operand syntax still makes
+    // multiplication (`a*b`, `a * b`). After same-line spread classification,
+    // exact marker attachment is enforced; a detached spread marker is a
+    // syntax error. Chaining nests one ordinary
+    // SequenceSpread node per star; the evaluator's VALUE law is unchanged.
+    // The parser only records the written layers; evaluation applies them
+    // compositionally, `value**` agreeing with `(value*)*` (each layer
+    // spreads the value the previous layer's supply re-captures — see
+    // Evaluator.EvalSequenceSpreadCounted).
+    //
+    // A spread expression is legal only as a whole expression-list slot
+    // (root output rows, call argument slots, parenthesized group and
+    // brace-body slots, list-literal elements, selector slots of a postfix
+    // selection — `Data[Is*]` — definition body slots, and the operand of
+    // another spread), or as the receiver of the fluent dot continuation
+    // `operand*.Target(...)`, which lowers to the ordinary lexical call
+    // `Target(operand*, ...)` with the spread as the leading argument slot.
+    // It never participates as an operand of a unary/binary operator — those
+    // placements report the targeted misplaced-spread diagnostic and
+    // recover by unwrapping to the spread's operand, so no embedded
+    // SequenceSpread survives in the recovered tree. A star before `[` is
+    // never a spread receiver (`A*[0]` is multiplication), and a spread
+    // before a retired `:` is unwrapped silently (one RetiredColonSelection).
+    //
+    // Prefix `*` is the collect marker and is COLLECTING-BINDING syntax only
+    // (`*name` in binding positions). It is not an expression operator, so a
+    // prefix star reaching expression position reports the targeted
+    // collect-marker diagnostic and recovers to the following operand.
+    // Semicolon is not a valid way to continue or join an expression;
+    // `A* ; B` is unsupported-semicolon diagnostic recovery only.
+    // Every SequenceSpread the parser builds goes through
+    // SequenceSpreadFrom (architecture-tested).
     /// <summary>Every SequenceSpread the parser builds goes through here (architecture-tested).</summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private Expr.SequenceSpread SequenceSpreadFrom(Expr operand, Token starToken)
@@ -1875,7 +1914,7 @@ public sealed class Parser
                         // a comma is the SYN-07A separator error, reported and recovered
                         // as the next slot by ParseExpressionListOperand.
                         var exprs = ParseExpressionListOperand(allowNewlineSeparator: true);
-                        AppendOutputContribution(output, exprs);
+                        output.AddRange(exprs);
                         break;
                     }
             }
@@ -1912,7 +1951,7 @@ public sealed class Parser
 
             for (var i = 0; i < condAlg.Branches.Count; i++)
             {
-                if (PatternContainsCollectingParameter(condAlg.Branches[i].Pattern))
+                if (condAlg.Branches[i].Pattern.HeadHasBinderOfKind(ParameterKind.Collecting))
                 {
                     ReportError(
                         DiagnosticCode.InvalidCollectingBinding,
@@ -2060,53 +2099,6 @@ public sealed class Parser
         var skipped = Advance();
         OwnSameLineItem(Current);
         return skipped;
-    }
-
-    // ── Spread marker ───────────────────────────────────────────────
-    // Expression spreading is written with the attached postfix marker `*`.
-    // Issue #183 (refining Q-65): a physical line-final star, EOF or a later
-    // closer/declaration included, is classified by attachment — attached `a*`
-    // is a spread that completes the expression, detached `a *` is
-    // multiplication that leaves it incomplete. A star with a same-line follower
-    // is a spread only before an explicit closure: comma, closer, fluent dot or
-    // a further spread-classified star; same-line operand syntax still makes
-    // multiplication (`a*b`, `a * b`). After same-line spread classification,
-    // exact marker attachment is enforced; a detached spread marker is a
-    // syntax error. Chaining nests one ordinary
-    // SequenceSpread node per star; the evaluator's VALUE law is unchanged.
-    // The parser only records the written layers; evaluation applies them
-    // compositionally, `value**` agreeing with `(value*)*` (each layer
-    // spreads the value the previous layer's supply re-captures — see
-    // Evaluator.EvalSequenceSpreadCounted).
-    //
-    // A spread expression is legal only as a whole expression-list slot
-    // (root output rows, call argument slots, parenthesized group and
-    // brace-body slots, list-literal elements, selector slots of a postfix
-    // selection — `Data[Is*]` — definition body slots, and the operand of
-    // another spread), or as the receiver of the fluent dot continuation
-    // `operand*.Target(...)`, which lowers to the ordinary lexical call
-    // `Target(operand*, ...)` with the spread as the leading argument slot.
-    // It never participates as an operand of a unary/binary operator — those
-    // placements report the targeted misplaced-spread diagnostic and
-    // recover by unwrapping to the spread's operand, so no embedded
-    // SequenceSpread survives in the recovered tree. A star before `[` is
-    // never a spread receiver (`A*[0]` is multiplication), and a spread
-    // before a retired `:` is unwrapped silently (one RetiredColonSelection).
-    //
-    // Prefix `*` is the collect marker and is COLLECTING-BINDING syntax only
-    // (`*name` in binding positions). It is not an expression operator, so a
-    // prefix star reaching expression position reports the targeted
-    // collect-marker diagnostic and recovers to the following operand.
-    // Semicolon is not a valid way to continue or join an expression;
-    // `A* ; B` is unsupported-semicolon diagnostic recovery only.
-    // Every SequenceSpread the parser builds goes through
-    // SequenceSpreadFrom (architecture-tested).
-    private static void AppendOutputContribution(List<Expr> output, IReadOnlyList<Expr> exprs)
-    {
-        if (exprs.Count == 0)
-            return;
-
-        output.AddRange(exprs);
     }
 
     /// <summary>
@@ -3252,15 +3244,6 @@ public sealed class Parser
     // no downstream consumer classifies recovery by a magic source spelling.
     private Pattern.Bind RecoveryBinder() => new($"$recovery${_recoveryBinderCounter++}") { IsRecoveryPlaceholder = true };
 
-    private static bool PatternContainsCollectingParameter(Pattern pattern)
-        => pattern switch
-        {
-            Pattern.Bind { ParameterKind: ParameterKind.Collecting } => true,
-            Pattern.SequenceValue(var items) => items.Any(PatternContainsCollectingParameter),
-            Pattern.ListValue(var items) => items.Any(PatternContainsCollectingParameter),
-            _ => false,
-        };
-
     /// <summary>
     /// Confines the rest of a recognized clause head to its own region: when the
     /// pattern grammar stopped before the head's <c>)</c> (the index the dispatch
@@ -3987,7 +3970,9 @@ public sealed class Parser
             }
             else if (!IsOpenForm(head))
             {
-                var kind = OpenExprKind(head);
+                // The kind names are the evaluator's ONE table (Lean: Expr.kind); this message alone
+                // keeps its own spelling of the empty sequence.
+                var kind = head is Expr.EmptySequence ? "empty sequence" : Evaluator.ExprKind(head);
                 ReportOpenFormError($"Invalid open form: '{kind}' is not allowed in open declarations.", head);
             }
         }
@@ -4092,30 +4077,6 @@ public sealed class Parser
     // occurrence is reported and unwrapped by NormalizeOpenExpr first.
     private static bool IsOpenForm(Expr e)
         => e.IsCoreOpenForm() || e.TryGetUnresolvedLoadArguments(out _);
-
-    /// <summary>
-    /// Human-readable kind string for open-form validation errors.
-    /// </summary>
-    private static string OpenExprKind(Expr e) => e switch
-    {
-        Expr.Num => "num",
-        Expr.StringLiteral => "stringLiteral",
-        Expr.BoolLiteral => "boolLiteral",
-        Expr.Param => "param",
-        Expr.Unary => "unary",
-        Expr.Binary => "binary",
-        Expr.Comparison => "comparison",
-        Expr.SequenceConstruct => "sequenceConstruct",
-        Expr.SequenceSpread => "spread",
-        Expr.ListLiteral => "listLiteral",
-        Expr.Index => "index",
-        Expr.Call => "call",
-        Expr.DotCall => "dotCall",
-        Expr.Grace => "grace",
-        Expr.NativeCall => "nativeCall",
-        Expr.EmptySequence => "empty sequence",
-        _ => "unknown",
-    };
 
     /// <summary>
     /// Parses one output contribution: an expression list whose slots are

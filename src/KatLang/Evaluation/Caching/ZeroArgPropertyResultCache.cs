@@ -84,12 +84,6 @@ internal readonly record struct ZeroArgPropertyResult(
     Result Value,
     int EmittedCount);
 
-internal enum ZeroArgPropertyCacheAccessShape
-{
-    Lexical,
-    Structural,
-}
-
 internal interface IZeroArgPropertyResultCache
 {
     EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
@@ -163,9 +157,11 @@ internal interface IZeroArgPropertyResultCache
 /// run identity keeps entries from crossing runs even on a host-shared cache instance. WHICH
 /// completion creates the entry is <see cref="ZeroArgPropertyPublications"/>'s law (Q-37, extended
 /// to invocations by CACHE-PUB-1): the outermost successful qualifying evaluation of the key.
+/// HOW the property is consumed is no key component: lexical and structural spellings of one
+/// binding have one key (Lean's key record still carries the constant <c>accessKind := .lexical</c>;
+/// the access kind stays on <see cref="ZeroArgPropertyExecution"/> for statistics only).
 /// </summary>
 internal readonly record struct ZeroArgPropertyCacheKey(
-    ZeroArgPropertyCacheAccessShape AccessShape,
     object OwnerIdentity,
     object BindingIdentity,
     object ValueEnvironmentIdentity,
@@ -195,9 +191,6 @@ internal readonly record struct ZeroArgPropertyCacheKey(
 
     public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
         => new(
-            // Both spellings select the same exported declaration. Keep the
-            // original access kind on the execution for instrumentation only.
-            ZeroArgPropertyCacheAccessShape.Lexical,
             execution.Owner.CacheIdentity,
             execution.Binding,
             EnvironmentIdentity(
@@ -234,7 +227,6 @@ internal readonly record struct ZeroArgPropertyCacheKey(
         object accessIdentity,
         object runIdentity)
         => new(
-            ZeroArgPropertyCacheAccessShape.Lexical,
             binding is not null && declaringScope is { } scope
                 ? PropertyDeclaringOwner.CacheIdentityOfLevel(scope)
                 : StructuralOwnerIdentity.FromScope(declaringScope),
@@ -461,8 +453,7 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
     }
 
     public bool Equals(ZeroArgPropertyCacheKey x, ZeroArgPropertyCacheKey y)
-        => x.AccessShape == y.AccessShape
-            && OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
+        => OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
             && ReferenceEquals(x.BindingIdentity, y.BindingIdentity)
             && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity)
             && ReferenceEquals(x.RunIdentity, y.RunIdentity);
@@ -483,7 +474,6 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
     public int GetHashCode(ZeroArgPropertyCacheKey obj)
     {
         var hash = new HashCode();
-        hash.Add(obj.AccessShape);
         hash.Add(obj.OwnerIdentity is StructuralOwnerIdentity structural
             ? structural.GetHashCode()
             : RuntimeHelpers.GetHashCode(obj.OwnerIdentity));

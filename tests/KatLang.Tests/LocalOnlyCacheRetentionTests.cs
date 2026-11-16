@@ -336,7 +336,7 @@ public sealed class LocalOnlyCacheRetentionTests(ITestOutputHelper output)
     // ── Helpers ─────────────────────────────────────────────────────────────────────────
 
     private static ZeroArgPropertyCacheKey Key(object owner, object binding, object identity, object run)
-        => new(ZeroArgPropertyCacheAccessShape.Lexical, owner, binding, identity, run);
+        => new(owner, binding, identity, run);
 
     // A separate frame, so no fresh identity stays reachable from the asserting method's locals.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]

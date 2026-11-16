@@ -302,12 +302,6 @@ public static partial class Evaluator
             ? counted.Error
             : EvalResult<Result>.Ok(counted.Value.Value);
 
-    private static EvalResult<CountedResult> EvalAlgOutputCounted(
-        Algorithm alg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-        => EvalAlgOutputCountedCore(alg, ctx, valEnv);
-
     // No builtin is valid as a bare zero-argument value; every builtin requires
     // a call. (The empty sequence value is written `()`, not a builtin.) A builtin whose
     // arity IS zero (`tick`) is refused as an INVOCATION-REQUIRED demand, never with the

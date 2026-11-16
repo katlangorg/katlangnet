@@ -217,7 +217,7 @@ internal static class FrontEndElaborationScenarios
 
 	/// <summary>
 	/// Checks aggregate static-query activity proportional to the declaration count,
-	/// with no linear property scan, root rediscovery or open-member work.
+	/// with no linear property scan or open-member work.
 	/// </summary>
 	private static void AssertLookupWorkObserved(string source, int minimumStaticReads)
 	{
@@ -231,14 +231,12 @@ internal static class FrontEndElaborationScenarios
 		if (observations.StaticQueryReads < minimumStaticReads
 			|| observations.LookupPropertyComparisons != 0
 			|| observations.StaticOpenTargetComputations != 0
-			|| observations.LookupOpenMemberIndexBuilds != 0
-			|| observations.LookupRootDiscoveryWalks != 0)
+			|| observations.LookupOpenMemberIndexBuilds != 0)
 		{
 			throw new InvalidOperationException(
 				"Lookup benchmark no longer exercises the intended indexed substrate: "
 				+ $"staticReads={observations.StaticQueryReads}, linearComparisons={observations.LookupPropertyComparisons}, "
-				+ $"openTargets={observations.StaticOpenTargetComputations}, openMemberIndexes={observations.LookupOpenMemberIndexBuilds}, "
-				+ $"rootWalks={observations.LookupRootDiscoveryWalks}.");
+				+ $"openTargets={observations.StaticOpenTargetComputations}, openMemberIndexes={observations.LookupOpenMemberIndexBuilds}.");
 		}
 	}
 

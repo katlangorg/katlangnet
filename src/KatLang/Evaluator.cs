@@ -659,17 +659,6 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Checks if a property exists (any visibility) in the algorithm.
-    /// Used to distinguish "missing" from "exists but private" in error reporting.
-    /// </summary>
-    private static bool HasPropAny(Algorithm alg, string name)
-    {
-        foreach (var prop in alg.Properties)
-            if (prop.Name == name) return true;
-        return false;
-    }
-
-    /// <summary>
     /// Human-readable constructor kind for diagnostics.
     /// Lean: Expr.kind.
     /// </summary>
@@ -826,16 +815,6 @@ public static partial class Evaluator
             return ExprNameRenderer.RenderDotReceiver(_expression!);
         }
     }
-
-    /// <summary>
-    /// Operand-shape spelling for operand-shape contexts: operators render bare at the
-    /// top with precedence-faithful operand parentheses (binary nodes, comparison
-    /// chains, prefix operators), zero-shape blocks and internal sequence joins render
-    /// as one written sequence value. Iterative and output-bounded like
-    /// <see cref="OpenExprName"/>. Lean: <c>exprDiagnosticName</c>.
-    /// </summary>
-    private static string ExprDiagnosticName(Expr expr)
-        => ExprNameRenderer.Render(expr, ExprNameMode.DiagnosticName);
 
     private static string BinaryExprDiagnosticName(BinaryOp op, Expr left, Expr right)
         => ExprNameRenderer.RenderBinaryDiagnosticName(op, left, right);
@@ -2187,10 +2166,6 @@ public static partial class Evaluator
     /// <summary>Lean: builtinAcceptsArity. Every builtin is fixed-arity (the loops <c>while(meta step)</c>/<c>repeat(meta step, count)</c> too, META-S3-3); collection builtins expect exactly one collection argument plus their fixed control arguments.</summary>
     private static bool BuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
         => BuiltinRegistry.GetBuiltin(builtin).AcceptsArity(argumentCount);
-
-    /// <summary>Lean: builtinArityDesc. Human-readable expected arity for error messages.</summary>
-    private static string BuiltinArityDesc(BuiltinId builtin)
-        => BuiltinRegistry.GetBuiltin(builtin).DescribeArity();
 
     private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
     {

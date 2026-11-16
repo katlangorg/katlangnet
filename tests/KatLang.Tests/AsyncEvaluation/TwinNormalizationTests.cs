@@ -115,9 +115,8 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         AsyncHostOperation = 1 << 12,
 
         /// <summary>The same computation spelled through an equivalent one-line helper on one side and inline on the
-        /// other (<c>ProjectCountedValue</c>, <c>CountValue</c>, a wrapper such as
-        /// <c>EvalAlgOutputCounted</c>), usually because the helper takes a result the twin only has after an
-        /// await.</summary>
+        /// other (<c>ProjectCountedValue</c>, <c>CountValue</c>, a forwarding wrapper), usually because the
+        /// helper takes a result the twin only has after an await.</summary>
         InlinedHelper = 1 << 13,
 
         /// <summary>The twin delegates a case proven not to suspend to the synchronous member itself.</summary>

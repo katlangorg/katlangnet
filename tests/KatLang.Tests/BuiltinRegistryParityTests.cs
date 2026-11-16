@@ -272,36 +272,36 @@ public class BuiltinRegistryParityTests
     }
 
     [Fact]
-    public void RegistryBuiltinCallableSignature_ExposesKnownOwnerMemberMetadataOnly()
+    public void RegistryMathMemberSignatures_CarryTheDescriptorParameterNames()
     {
-        Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Round", out var roundSignature));
-        Assert.Equal("Round(value, digits)", roundSignature!.DisplayText);
+        // The signature of a Math member is read from the member algorithm the registry builds
+        // (the editor's signature-only Math module): the registry keeps no second signature table.
+        var math = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly);
+        CallableSignature Signature(string name)
+            => CallableSignature.FromAlgorithm(name, Assert.Single(math.Properties, property => property.Name == name).Value);
+
+        var roundSignature = Signature("Round");
+        Assert.Equal("Round(value, digits)", roundSignature.DisplayText);
         Assert.Equal(["value", "digits"], roundSignature.ParameterNames);
 
-        Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Abs", out var absSignature));
-        Assert.Equal("Abs(x)", absSignature!.DisplayText);
+        var absSignature = Signature("Abs");
+        Assert.Equal("Abs(x)", absSignature.DisplayText);
         Assert.Equal(["x"], absSignature.ParameterNames);
 
         // Atan2 follows the conventional atan2(y, x) argument order (the runtime
         // forwards the first argument as y), so its signature must not fall back
         // to the default binary names (x, y).
-        Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Atan2", out var atan2Signature));
-        Assert.Equal("Atan2(y, x)", atan2Signature!.DisplayText);
+        var atan2Signature = Signature("Atan2");
+        Assert.Equal("Atan2(y, x)", atan2Signature.DisplayText);
         Assert.Equal(["y", "x"], atan2Signature.ParameterNames);
 
-        Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Random", out var randomSignature));
-        Assert.Equal("Random(start, end)", randomSignature!.DisplayText);
+        var randomSignature = Signature("Random");
+        Assert.Equal("Random(start, end)", randomSignature.DisplayText);
         Assert.Equal(["start", "end"], randomSignature.ParameterNames);
 
-        Assert.True(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "RandomInt", out var randomIntSignature));
-        Assert.Equal("RandomInt(start, end)", randomIntSignature!.DisplayText);
+        var randomIntSignature = Signature("RandomInt");
+        Assert.Equal("RandomInt(start, end)", randomIntSignature.DisplayText);
         Assert.Equal(["start", "end"], randomIntSignature.ParameterNames);
-
-        Assert.False(BuiltinRegistry.TryGetBuiltinCallableSignature("Math", "Pi", out var constantSignature));
-        Assert.Null(constantSignature);
-
-        Assert.False(BuiltinRegistry.TryGetBuiltinCallableSignature("Other", "Round", out var unknownOwnerSignature));
-        Assert.Null(unknownOwnerSignature);
     }
 
     [Fact]
@@ -346,21 +346,14 @@ public class BuiltinRegistryParityTests
         }
 
         // Parameter names are runtime binding metadata (NativeCall resolves them
-        // positionally), so the runtime prelude, the semantic prelude, and the
-        // public callable-signature metadata must agree on the exact name order.
+        // positionally), so the runtime prelude and the semantic prelude must agree
+        // on the exact name order.
         foreach (var name in runtimeMath.Keys.Intersect(semanticMath.Keys, StringComparer.Ordinal).OrderBy(static name => name, StringComparer.Ordinal))
         {
             if (!runtimeMath[name].SequenceEqual(semanticMath[name], StringComparer.Ordinal))
             {
                 failures.Add(
                     $"Math member '{name}' binds runtime parameters ({string.Join(", ", runtimeMath[name])}), but the semantic model exposes ({string.Join(", ", semanticMath[name])}).");
-            }
-
-            if (BuiltinRegistry.TryGetBuiltinCallableSignature("Math", name, out var signature)
-                && !signature!.ParameterNames.SequenceEqual(runtimeMath[name], StringComparer.Ordinal))
-            {
-                failures.Add(
-                    $"Math member '{name}' reports signature parameters ({string.Join(", ", signature.ParameterNames)}), but binds runtime parameters ({string.Join(", ", runtimeMath[name])}).");
             }
         }
 

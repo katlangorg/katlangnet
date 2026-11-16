@@ -766,8 +766,14 @@ internal static class AstStructuralPreflight
         // A spine node already contributes its ordinary one-unit node cost. Seven more
         // units on the delegated edge make that traversed spine layer cost eight in total,
         // preserving the calibrated re-entry bound without penalizing sibling paths.
-        if (IsExpressionSpineNode(parentExpr)
-            && !IsExpressionSpineNode(childExpr)
+        // The spine kinds are the evaluator's ONE classification (Evaluator.IsExpressionSpineNode),
+        // the machine this weight is calibrated against. Only the operand positions that machine
+        // actually drives are inspected: a Binary's SECOND operand, an Index's selector slots, a
+        // Comparison's link operands, and a list's later elements are siblings on separate paths,
+        // which the preflight judges independently, so a wide-but-shallow expression such as
+        // `1 + f(2) + g(3)` pays nothing along its long spine path.
+        if (Evaluator.IsExpressionSpineNode(parentExpr)
+            && !Evaluator.IsExpressionSpineNode(childExpr)
             && HasRecursiveChildren(childExpr))
         {
             return SpineReentryWeight - 1;
@@ -801,19 +807,6 @@ internal static class AstStructuralPreflight
     /// into recursive evaluation.
     /// </summary>
     private const int SpineReentryWeight = 8;
-
-    /// <summary>
-    /// Classifies the node kinds owned by the iterative expression-spine machine.
-    ///
-    /// <para>Only the operand positions the machine actually drives are inspected. A
-    /// <see cref="Expr.Binary"/>'s SECOND operand, an <see cref="Expr.Index"/>'s selector
-    /// slots, a <see cref="Expr.Comparison"/>'s link operands, and a list's later elements are
-    /// siblings on separate paths: the preflight already judges each path independently,
-    /// so a wide-but-shallow expression such as <c>1 + f(2) + g(3)</c> pays nothing along
-    /// its long spine path.</para>
-    /// </summary>
-    private static bool IsExpressionSpineNode(Expr expr)
-        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral;
 
     /// <summary>
     /// Cost of ONE re-entry from the iterative join machinery into generic recursive

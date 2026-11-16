@@ -1502,7 +1502,7 @@ internal static class PropertyDependencyGraphBuilder
                 _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
                 _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.ContentKey)) : string.Empty,
                 _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.ContentKey)) : string.Empty]);
-            observations?.RecordSummaryKey(key, IsEmpty ? key : IdFreeContentKey());
+            observations?.RecordSummaryKeyCharacters((IsEmpty ? key : IdFreeContentKey()).Length);
             return key;
         }
 

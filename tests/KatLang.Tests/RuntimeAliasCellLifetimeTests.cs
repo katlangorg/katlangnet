@@ -483,7 +483,7 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
     }
 
     private static ZeroArgPropertyCacheKey Key(object owner, object binding, object identity, object run)
-        => new(ZeroArgPropertyCacheAccessShape.Lexical, owner, binding, identity, run);
+        => new(owner, binding, identity, run);
 
     // Separate frames, so no fresh identity stays reachable from the asserting method's locals.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]

@@ -141,51 +141,12 @@ internal readonly record struct MathMemberDescriptor(
     /// The member's canonical qualified spelling (<c>"Math.Sin"</c>, <c>"Math.Pi"</c>):
     /// the ONE identity string every consumer keys on. It is derived exactly once,
     /// here at descriptor construction, from <see cref="BuiltinRegistry.MathModuleName"/>
-    /// and <see cref="Name"/>; <see cref="MathCallableFacts.CanonicalKey"/> (the
-    /// canonical callable facts) and the editor's alias-target metadata carry THIS
+    /// and <see cref="Name"/>; the editor's alias-target metadata carries THIS
     /// instance rather than re-joining the two names, so the relation has one owner.
     /// It can never collide with a user property name because identifiers cannot
     /// contain <c>'.'</c>.
     /// </summary>
     public string CanonicalQualifiedName { get; } = BuiltinRegistry.MathModuleName + "." + Name;
-}
-
-/// <summary>
-/// Registry-derived callable facts for the canonical structural spelling
-/// (<c>Math.Sin</c>) of a Math function member: its canonical key and its
-/// signature, projected from the member's descriptor and read by
-/// <see cref="BuiltinRegistry.TryGetBuiltinCallableSignature"/>. No consumer
-/// classifies a written reference through these facts: the Math VALUE role of
-/// every spelling is decided by the identity the resolver reaches
-/// (<c>ImplicitArgumentResolver.PreludeContext.IsStrictValue</c>).
-///
-/// <para>The facts are binding-NEUTRAL: they say nothing about whether a
-/// particular written name actually resolves to the prelude. Each consumer must
-/// first apply its own ordinary-resolution shadow knowledge (visible user
-/// properties, parameters) before consulting them — a user-defined <c>sin</c>
-/// is an ordinary neutral callable, never a Math member.</para>
-/// </summary>
-internal sealed class MathCallableFacts
-{
-    public MathCallableFacts(string spelledName, string canonicalKey, CallableSignature signature)
-    {
-        SpelledName = spelledName;
-        CanonicalKey = canonicalKey;
-        Signature = signature;
-    }
-
-    /// <summary>The written spelling these facts describe (<c>"Sin"</c> or <c>"sin"</c>).</summary>
-    public string SpelledName { get; }
-
-    /// <summary>
-    /// Stable canonical identity (<c>"Math.Sin"</c>) — the descriptor's own
-    /// <see cref="MathMemberDescriptor.CanonicalQualifiedName"/> instance, never
-    /// reconstructed here.
-    /// </summary>
-    public string CanonicalKey { get; }
-
-    /// <summary>Callable signature named by <see cref="SpelledName"/>, with the descriptor's parameter names.</summary>
-    public CallableSignature Signature { get; }
 }
 
 internal sealed class BuiltinDescriptor
@@ -284,12 +245,6 @@ internal sealed class BuiltinDescriptor
 
         return CallableSignatureDiagnostics.FormatExpectedArgumentCountWithoutNoun(ArityFacts);
     }
-
-    public IReadOnlyList<string> GetParameterNames(BuiltinCallStyle callStyle)
-        => callStyle == BuiltinCallStyle.Dot ? DotParameterNames : PlainParameterNames;
-
-    public IReadOnlyList<CallableParameter> GetParameters(BuiltinCallStyle callStyle)
-        => callStyle == BuiltinCallStyle.Dot ? DotParameters : PlainParameters;
 
     public CallableSignature GetSignature(BuiltinCallStyle callStyle)
         => callStyle == BuiltinCallStyle.Dot ? DotSignature : PlainSignature;
@@ -505,34 +460,6 @@ internal static class BuiltinRegistry
         }
     }
 
-    /// <summary>
-    /// Callable facts for Math FUNCTION members keyed by canonical member name
-    /// (<c>"Sin"</c>). Constants have no callable facts (zero parameters:
-    /// nothing lifts and no arguments exist).
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, MathCallableFacts> MathFunctionFactsByCanonicalName =
-        CreateMathFunctionFacts();
-
-    private static IReadOnlyDictionary<string, MathCallableFacts> CreateMathFunctionFacts()
-    {
-        var facts = new Dictionary<string, MathCallableFacts>(StringComparer.Ordinal);
-        foreach (var member in MathMemberDescriptors)
-        {
-            if (member.Kind == MathMemberKind.Constant)
-                continue;
-
-            var spelledName = member.Name;
-            facts[spelledName] = new MathCallableFacts(
-                spelledName,
-                canonicalKey: member.CanonicalQualifiedName,
-                CallableSignature.FromAlgorithm(
-                    spelledName,
-                    CreateMathMemberAlgorithm(member, MathAlgorithmFlavor.SignatureOnly)));
-        }
-
-        return facts.ToFrozenDictionary(StringComparer.Ordinal);
-    }
-
     public static IReadOnlyList<BuiltinDescriptor> AllBuiltins => Builtins;
 
     public static IReadOnlyList<string> BuiltinNames { get; } = Builtins
@@ -603,8 +530,7 @@ internal static class BuiltinRegistry
 
     /// <summary>
     /// Resolves a predefined prelude-alias spelling (<c>sin</c>, <c>pi</c>, ...)
-    /// to its Math member descriptor. Covers constants and functions alike,
-    /// unlike the function-only callable facts (<see cref="TryGetMathMemberFacts"/>).
+    /// to its Math member descriptor. Covers constants and functions alike.
     /// Binding-neutral: the caller must first establish through ordinary
     /// resolution that the written name actually reaches the prelude alias.
     /// </summary>
@@ -638,33 +564,6 @@ internal static class BuiltinRegistry
         .Select(static member => member.Name)
         .ToArray());
 
-    public static bool IsMathFunctionMember(string name)
-        => MathFunctionFactsByCanonicalName.ContainsKey(name);
-
-    /// <summary>
-    /// Callable facts for the canonical <c>Math.X</c> spelling of a Math
-    /// FUNCTION member. Constants yield no facts.
-    /// </summary>
-    internal static bool TryGetMathMemberFacts(
-        string memberName,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out MathCallableFacts? facts)
-        => MathFunctionFactsByCanonicalName.TryGetValue(memberName, out facts);
-
-    public static bool TryGetBuiltinCallableSignature(
-        string ownerName,
-        string memberName,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out CallableSignature? signature)
-    {
-        if (ownerName == MathModuleName && TryGetMathMemberFacts(memberName, out var facts))
-        {
-            signature = facts.Signature;
-            return true;
-        }
-
-        signature = null;
-        return false;
-    }
-
     public static IReadOnlyList<string> LoadParameterNames { get; } = ["url"];
 
     public static BuiltinDescriptor GetBuiltin(BuiltinId builtin)
@@ -681,12 +580,6 @@ internal static class BuiltinRegistry
         metadata = default;
         return false;
     }
-
-    public static IReadOnlyList<string> GetBuiltinParameterNames(BuiltinId builtin, BuiltinCallStyle callStyle)
-        => GetBuiltin(builtin).GetParameterNames(callStyle);
-
-    public static IReadOnlyList<CallableParameter> GetBuiltinParameters(BuiltinId builtin, BuiltinCallStyle callStyle)
-        => GetBuiltin(builtin).GetParameters(callStyle);
 
     public static Algorithm.User CreateMathAlgorithm(MathAlgorithmFlavor flavor)
         => new(

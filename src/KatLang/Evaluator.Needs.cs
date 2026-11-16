@@ -658,14 +658,6 @@ public static partial class Evaluator
     private static ValueTask<EvalResult<CountedResult>> DemandCell(NeedCell cell, bool asynchronous)
         => asynchronous ? cell.DemandAsync() : new(cell.Demand());
 
-    private static EvalResult<Algorithm> ProjectInvokedCell(NeedCell cell)
-    {
-        var projected = cell.ProjectCallable();
-        return projected.IsError ? projected.Error : projected.Value is { } algorithm
-            ? EvalResult<Algorithm>.Ok(algorithm)
-            : new EvalError.NotAnAlgorithm("argument") { Span = cell.Span };
-    }
-
     private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> ResolveNeedSupply(
         OutputBundle args, EvalCtx ctx, ValEnv values, bool asynchronous, Algorithm? boundCallee = null)
     {
@@ -1523,7 +1515,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// The body of a callee whose parameters a binding boundary has bound:
-    /// <see cref="EvalAlgOutputCounted"/> over the bound context, entered with the parameter names
+    /// <see cref="EvalAlgOutputCountedCore"/> over the bound context, entered with the parameter names
     /// that boundary ALREADY projected to shadow the inherited tiers. <c>Params</c> is a fresh
     /// projection on every read, so reading it again at body entry cost one more array per call
     /// (2026-11 allocation attribution); nothing is stored, and each call still projects its own.
@@ -1664,8 +1656,8 @@ public static partial class Evaluator
     // The family twins of the user drivers above: ONE dispatch (BindNeedFamilySupply*), then the
     // selected body's counted output at the call's value boundary — for an ordinary call and a
     // callback invocation alike (HO-03, PAT-11). The selected body is read by the shared core
-    // EvalAlgOutputCountedCore directly (EvalAlgOutputCounted only forwards to it), as the twin
-    // reads EvalAlgOutputCountedCoreAsync. Lean: evalNeedFamilySupply.
+    // EvalAlgOutputCountedCore, as the twin reads EvalAlgOutputCountedCoreAsync.
+    // Lean: evalNeedFamilySupply.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedFamilySupplyCounted(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)

@@ -221,8 +221,7 @@ public class CacheKeyDifferentialTests
     public void DeconstructionKey_ChangingExactlyOneDimension_MissesForEveryKeyDimension()
     {
         var comparer = DeconstructionBindingCacheKeyComparer.Instance;
-        var sourceKey = new ZeroArgPropertyCacheKey(
-            ZeroArgPropertyCacheAccessShape.Lexical, new object(), new object(), new object(), new object());
+        var sourceKey = new ZeroArgPropertyCacheKey(new object(), new object(), new object(), new object());
         var baseline = new DeconstructionBindingExecution(
             new object(),
             new object(),

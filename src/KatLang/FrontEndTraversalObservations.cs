@@ -16,6 +16,9 @@ namespace KatLang;
 /// observations with no semantic meaning, used only by the front-end shared-AST-graph (DAG)
 /// complexity regressions. A fresh instance starts at zero by construction, so no reset logic
 /// exists or is required.</para>
+/// <para>Every public numeric counter is also read by reflection in
+/// <c>FrontEndCancellationCheckpointTests</c> to detect work after cancellation and route differences;
+/// absence of a named reader alone does not make a counter unused.</para>
 ///
 /// <para>This is the same operation-scoped observation shape as
 /// <see cref="ValueTraversalObservations"/> (value walks) and
@@ -592,17 +595,7 @@ internal sealed class FrontEndTraversalObservations
     /// </summary>
     public long SummaryKeyCharacters { get; private set; }
 
-    /// <summary>Diagnostic-only: receives each summary key exactly as built, process-wide ids included.</summary>
-    internal Action<string>? SummaryKeyObserver { get; set; }
-
-    /// <param name="key">The key as built.</param>
-    /// <param name="idFreeKey">The same key with every process-wide id written as <c>#</c>; its length is counted.</param>
-    internal void RecordSummaryKey(string key, string idFreeKey)
-    {
-        RecordSummaryKeyCharacters(idFreeKey.Length);
-        SummaryKeyObserver?.Invoke(key);
-    }
-
+    /// <param name="characters">The length of the key with every process-wide id written as <c>#</c>.</param>
     internal void RecordSummaryKeyCharacters(int characters)
         => SummaryKeyCharacters = checked(SummaryKeyCharacters + characters);
 
@@ -1006,7 +999,7 @@ internal sealed class FrontEndTraversalObservations
     // Unlike the traversal counters above, these record LOOKUP work performed by
     // ElaboratedScopeLookup over one observed front-end pass: chain levels
     // visited, linear property-name comparisons, per-level acceleration-index
-    // constructions, open-target resolutions, and parent-walk root discoveries.
+    // constructions, and open-target resolutions.
     // They flow through the observed pass's ElaboratedPropertyScope chain (the
     // chain root carries the observer), so like every other counter they are
     // pass-scoped, passive, and absent from production paths.
@@ -1040,16 +1033,6 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordLookupOpenMemberIndexBuild()
         => LookupOpenMemberIndexBuilds = checked(LookupOpenMemberIndexBuilds + 1);
-
-    /// <summary>
-    /// Chain-root discoveries performed by WALKING parent links. The cached
-    /// per-chain root reference discovers the root at construction time without
-    /// a walk, so an accelerated pass records zero.
-    /// </summary>
-    public long LookupRootDiscoveryWalks { get; private set; }
-
-    internal void RecordLookupRootDiscoveryWalk()
-        => LookupRootDiscoveryWalks = checked(LookupRootDiscoveryWalks + 1);
 
     /// <summary>
     /// Source-processing cancellation checkpoints the elaboration passes reached (2.06): one per bounded

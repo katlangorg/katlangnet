@@ -266,34 +266,17 @@ public class MathAliasRegistryTests
     }
 
     [Fact]
-    public void MathCallableFacts_ExistForCanonicalFunctionNamesOnly()
+    public void MathMemberSignatures_CarryTheDescriptorParameterNames()
     {
-        foreach (var member in BuiltinRegistry.MathMembers)
-        {
-            if (member.Kind == MathMemberKind.Constant)
-            {
-                Assert.False(BuiltinRegistry.TryGetMathMemberFacts(member.Name, out _));
-                continue;
-            }
-
-            Assert.True(BuiltinRegistry.TryGetMathMemberFacts(member.Name, out var canonicalFacts));
-
-            Assert.Equal($"Math.{member.Name}", canonicalFacts!.CanonicalKey);
-            Assert.Equal(member.Name, canonicalFacts.SpelledName);
-
-            // The facts are keyed by the canonical member name only: the alias
-            // spelling never looks up callable facts.
-            Assert.False(BuiltinRegistry.TryGetMathMemberFacts(member.PreludeAlias, out _));
-        }
-
-        // The descriptor's parameter names, in order (atan2 takes y before x).
-        Assert.Equal("Round(value, digits)", GetCanonicalFacts("Round").Signature.DisplayText);
-        Assert.Equal("Exp(x)", GetCanonicalFacts("Exp").Signature.DisplayText);
-        Assert.Equal("Sin(radians)", GetCanonicalFacts("Sin").Signature.DisplayText);
-        Assert.Equal("Atan2(y, x)", GetCanonicalFacts("Atan2").Signature.DisplayText);
-        Assert.Equal("Log(value, base)", GetCanonicalFacts("Log").Signature.DisplayText);
-        Assert.Equal("Random(start, end)", GetCanonicalFacts("Random").Signature.DisplayText);
-        Assert.Equal("RandomInt(start, end)", GetCanonicalFacts("RandomInt").Signature.DisplayText);
+        // The descriptor's parameter names, in order (atan2 takes y before x), as the
+        // signature-only Math module the editor reads carries them.
+        Assert.Equal("Round(value, digits)", CanonicalSignatureText("Round"));
+        Assert.Equal("Exp(x)", CanonicalSignatureText("Exp"));
+        Assert.Equal("Sin(radians)", CanonicalSignatureText("Sin"));
+        Assert.Equal("Atan2(y, x)", CanonicalSignatureText("Atan2"));
+        Assert.Equal("Log(value, base)", CanonicalSignatureText("Log"));
+        Assert.Equal("Random(start, end)", CanonicalSignatureText("Random"));
+        Assert.Equal("RandomInt(start, end)", CanonicalSignatureText("RandomInt"));
     }
 
     [Fact]
@@ -314,10 +297,11 @@ public class MathAliasRegistryTests
         Assert.False(BuiltinRegistry.TryGetMathMemberByPreludeAlias("notAMathAlias", out _));
     }
 
-    private static MathCallableFacts GetCanonicalFacts(string memberName)
+    private static string CanonicalSignatureText(string memberName)
     {
-        Assert.True(BuiltinRegistry.TryGetMathMemberFacts(memberName, out var facts));
-        return facts!;
+        var math = BuiltinRegistry.CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly);
+        var member = Assert.Single(math.Properties, property => property.Name == memberName);
+        return CallableSignature.FromAlgorithm(memberName, member.Value).DisplayText;
     }
 
     [Fact]

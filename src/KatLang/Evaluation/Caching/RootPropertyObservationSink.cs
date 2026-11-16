@@ -72,9 +72,8 @@ internal sealed class RootPropertyObservationSink
     /// Builds the immutable public snapshot of the completed run and releases the raw records.
     /// Called once, after the engine's ordinary outcome projection and its cancellation checks.
     /// Each value is classified by the context-free predicate of the run-result boundary
-    /// (<see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/>, the scan behind
-    /// <see cref="Evaluator.CallReferenceBoundaryError"/>, with one completed-verdict memo across the snapshot
-    /// so shared structure is scanned once): a value containing a call reference
+    /// (<see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/>, with one
+    /// completed-verdict memo across the snapshot so shared structure is scanned once): a value containing a call reference
     /// anywhere becomes <see cref="PropertyValueStatus.Withheld"/> and is not retained; every other
     /// value is shared as is. Classification charges nothing and observes no token.
     /// </summary>

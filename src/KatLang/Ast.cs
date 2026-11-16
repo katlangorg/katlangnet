@@ -2564,14 +2564,14 @@ public closed record Pattern
 
         Stack<IReadOnlyList<Pattern>>? pending = null;
         HashSet<Pattern>? expanded = null;
-        var items = StructureItemsOf(this);
+        var items = ClauseGroupItems(this);
         while (items is not null)
         {
             foreach (var item in items)
             {
                 if (item is Bind bind && bind.ParameterKind == kind)
                     return true;
-                if (StructureItemsOf(item) is { Count: > 0 } nested
+                if (ClauseGroupItems(item) is { Count: > 0 } nested
                     && (expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(item))
                     (pending ??= new Stack<IReadOnlyList<Pattern>>()).Push(nested);
             }
@@ -2581,13 +2581,6 @@ public closed record Pattern
         }
 
         return false;
-
-        static IReadOnlyList<Pattern>? StructureItemsOf(Pattern pattern) => pattern switch
-        {
-            SequenceValue(var sequenceItems) => sequenceItems,
-            ListValue(var listItems) => listItems,
-            _ => null,
-        };
     }
 
     /// <summary>

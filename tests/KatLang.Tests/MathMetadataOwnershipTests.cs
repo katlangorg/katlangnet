@@ -9,13 +9,12 @@ namespace KatLang.Tests;
 /// <item>The registry descriptor owns the canonical qualified name
 /// (<see cref="MathMemberDescriptor.CanonicalQualifiedName"/>), derived once at
 /// descriptor construction from <see cref="BuiltinRegistry.MathModuleName"/> and the
-/// member name; the canonical callable facts and the editor's alias-target
-/// metadata carry that very string instance.</item>
-/// <item><see cref="BuiltinRegistry"/> alone consults the raw Math fact lookup. No
-/// consumer classifies a written Math reference by its spelling or shape: the
+/// member name; the editor's alias-target metadata carries that very string instance.</item>
+/// <item>No consumer classifies a written Math reference by its spelling or shape: the
 /// resolver classifies the member a reference resolves to by identity
 /// (<c>ImplicitArgumentResolver.PreludeContext.IsStrictValue</c>, read through the
-/// formula-lifting roles), and a source scan pins that ownership.</item>
+/// formula-lifting roles). The registry keeps no callable-facts table to consult, and a
+/// source scan pins that no consumer re-joins the qualified name or re-spells the module.</item>
 /// </list>
 /// Every check iterates the registry, so a future descriptor participates automatically.
 /// </summary>
@@ -35,26 +34,13 @@ public class MathMetadataOwnershipTests
     }
 
     [Fact]
-    public void CanonicalQualifiedName_IsDerivedOnce_AndTheCanonicalFactsCarryThatInstance()
+    public void CanonicalQualifiedName_IsDerivedOnce()
     {
         foreach (var member in BuiltinRegistry.MathMembers)
         {
             // Derived once at descriptor construction: repeated reads return the
             // same string instance (a per-read interpolation would not).
             Assert.Same(member.CanonicalQualifiedName, member.CanonicalQualifiedName);
-
-            if (member.Kind == MathMemberKind.Constant)
-            {
-                // Constants have a qualified name but no callable facts.
-                Assert.False(BuiltinRegistry.TryGetMathMemberFacts(member.Name, out _));
-                continue;
-            }
-
-            Assert.True(BuiltinRegistry.TryGetMathMemberFacts(member.Name, out var canonicalFacts));
-
-            // Reference identity, not merely equal text: the facts take the
-            // descriptor's instance instead of re-joining "Math" + "." + Name.
-            Assert.Same(member.CanonicalQualifiedName, canonicalFacts!.CanonicalKey);
         }
     }
 
@@ -71,11 +57,6 @@ public class MathMetadataOwnershipTests
     }
 
     // ── Ownership: consumers do not re-implement the relations ──────────────
-
-    /// <summary>The raw registry relation; only the registry may consult it directly.</summary>
-    private static readonly Regex RawMathFactLookup = new(
-        @"\bTryGetMathMemberFacts\s*\(",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>A re-joined canonical name: the module prefix spelled together with a member name.</summary>
     private static readonly Regex ReJoinedQualifiedName = new(
@@ -97,7 +78,7 @@ public class MathMetadataOwnershipTests
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     [Fact]
-    public void OnlyTheOwnersConsultRawMathFacts_AndNoConsumerReJoinsTheQualifiedName()
+    public void NoConsumerReJoinsTheQualifiedName_OrReSpellsTheModuleName()
     {
         var sourceRoot = Path.Combine(FindRepoRoot(), "src", "KatLang");
         var offenders = new List<string>();
@@ -109,8 +90,6 @@ public class MathMetadataOwnershipTests
                 continue;
 
             var text = File.ReadAllText(path);
-            if (RawMathFactLookup.IsMatch(text))
-                offenders.Add($"{fileName}: consults the raw registry fact lookup instead of resolving the member's identity.");
             if (ReJoinedQualifiedName.IsMatch(text))
                 offenders.Add($"{fileName}: re-joins the canonical qualified Math name instead of reading MathMemberDescriptor.CanonicalQualifiedName.");
             if (ReSpelledSemanticModuleName.IsMatch(text))
@@ -121,7 +100,6 @@ public class MathMetadataOwnershipTests
 
         // The scan is live: the owner itself does contain each raw relation.
         var registry = File.ReadAllText(Path.Combine(sourceRoot, "BuiltinRegistry.cs"));
-        Assert.Matches(RawMathFactLookup, registry);
         Assert.Matches(ReJoinedQualifiedName, registry);
         Assert.Matches(MathModuleDefinition, registry);
     }

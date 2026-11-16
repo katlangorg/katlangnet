@@ -1540,7 +1540,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// The HOST-ARGUMENT boundary (CallReference S1, J4; charged since SEC-01-FU): the
-    /// <see cref="CallReferenceBoundaryError"/> scan of one host-operation argument, charged to the run as
+    /// <see cref="ContainsCallReference(Result)"/> scan of one host-operation argument, charged to the run as
     /// structural work. Unlike the once-per-run result export, this scan repeats for EVERY host call, so a
     /// program passing one large nested value to many calls re-walked it uncharged and uncancellably per
     /// call. Each nested structure now costs one unit per slot plus one for the structure (the unit of
@@ -1836,17 +1836,11 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// THE RUN RESULT BOUNDARY (CallReference S1, J4): a call reference is run-scoped, so a value that
-    /// contains one is refused wherever it would leave the language — a run result, a host-operation
+    /// THE RUN-RESULT EXPORT (CallReference S1, J4; SEC-01-FU2) of one value a run hands out, given the run's
+    /// root context <paramref name="ctx"/>. THE RUN RESULT BOUNDARY: a call reference is run-scoped, so a value
+    /// that contains one is refused wherever it would leave the language — a run result, a host-operation
     /// argument, a host-operation return value, display and formatting — and every reference-free value
     /// passes unchanged. Lean: <c>exportRunValue</c> (the run result).
-    /// </summary>
-    internal static EvalError? CallReferenceBoundaryError(Result value)
-        => ContainsCallReference(value) ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage) : null;
-
-    /// <summary>
-    /// THE RUN-RESULT EXPORT (CallReference S1, J4; SEC-01-FU2): <see cref="CallReferenceBoundaryError"/> for
-    /// one value a run hands out, given the run's root context <paramref name="ctx"/>.
     ///
     /// <para><b>Skipped when no reference can exist.</b> A <see cref="Result.CallReference"/> (a reference or
     /// its argument view) is constructed only from an <see cref="InvocationPlan"/>, and a plan is allocated

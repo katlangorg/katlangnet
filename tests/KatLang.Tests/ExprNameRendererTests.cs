@@ -260,7 +260,7 @@ public class ExprNameRendererTests
         var two = new Expr.Num(2);
 
         // Top-level binary chains render bare, nested ones stay bare through the
-        // chain (matching the former recursive ExprDiagnosticName).
+        // chain (matching the former recursive diagnostic renderer).
         Assert.Equal("1 + 2", ExprNameRenderer.RenderBinaryDiagnosticName(BinaryOp.Add, one, two));
         Assert.Equal(
             "1 + 2 + 3",

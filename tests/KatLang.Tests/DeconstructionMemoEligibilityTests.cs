@@ -920,7 +920,7 @@ public class DeconstructionMemoEligibilityTests
 
     private static DeconstructionBindingExecution Execution(object group)
         => new(group, new object(),
-            new ZeroArgPropertyCacheKey(ZeroArgPropertyCacheAccessShape.Lexical, new object(), new object(), new object(), new object()));
+            new ZeroArgPropertyCacheKey(new object(), new object(), new object(), new object()));
 
     private static IReadOnlyDictionary<string, NeedCell> Bound(int value)
         => new Dictionary<string, NeedCell>(StringComparer.Ordinal) { ["x"] = NeedCell.Ready(new(new Result.Atom(value), 1)) };
