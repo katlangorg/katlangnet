@@ -58,6 +58,8 @@ internal sealed partial class StaticStructureOperation
         var belowReaches = new List<(StaticScopeKey Key, StaticScopeKey Counterpart)>();
         var belowReach = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
         var counterparts = new Dictionary<StaticScopeKey, StaticScopeKey>(ReferenceEqualityComparer.Instance);
+        // Every view below carries the same immutable publication of this graph (no entry), not one copy per body.
+        var publication = new CompletedStructurePublication(graph);
         while (pending.TryDequeue(out var key))
         {
             Queries.EnsureUsable();
@@ -82,7 +84,7 @@ internal sealed partial class StaticStructureOperation
             var lexicalView = view ?? (provisional ? detected : null);
             // Prelude/host registry objects can outlive a compilation. Never give them a back-reference to its tree.
             if (view is not null && !prelude.Contains(key) && view is not Algorithm.Builtin)
-                CompletedStaticStructures.Attach(view, new(graph));
+                CompletedStaticStructures.Attach(view, publication);
             var ready = view is not null && view is not Algorithm.Alias { ResolvedTargetCell.IsPending: true }
                 && view is not Algorithm.Alias { ResolvedStructureCell.IsPending: true };
             Queries.Resources.Metadata(8);
@@ -150,8 +152,8 @@ internal sealed partial class StaticStructureOperation
                         : offered.IsUnknown ? CompletedStaticStructures.Selection.Unavailable
                         : completedMiss.Kind == StaticFactKind.Structure ? Select(completedMiss) : new(StaticFactKind.Missing));
                 }
-            graph.Add(key, new(ready ? view : null, receiver, open, members.ToFrozenDictionary(StringComparer.Ordinal),
-                parameters.ToFrozenSet(StringComparer.Ordinal), providers.ToImmutableArray(), IsProvisional: provisional,
+            graph.Add(key, new(ready ? view : null, receiver, open, CompletedStaticStructures.BodyFacts.FreezeMembers(members),
+                CompletedStaticStructures.BodyFacts.FreezeParameters(parameters), providers.ToImmutableArray(), IsProvisional: provisional,
                 RequirementReceiver: requirementReceiver, RequirementOpen: requirementOpen));
             built.Add(key);
         }

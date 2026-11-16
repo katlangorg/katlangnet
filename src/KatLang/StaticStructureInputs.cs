@@ -17,8 +17,13 @@ internal sealed class StaticInputGraph
         internal int Roots;
     }
     internal Dictionary<Expr, Node> Nodes { get; } = new(ReferenceEqualityComparer.Instance);
-    internal Dictionary<string, List<Expr>> Uses { get; } = new(StringComparer.Ordinal);
-    internal List<string> Names { get; } = [];
+    // One graph exists per body whose inputs are asked for, and most bodies (every constant row) read no name: the use
+    // index is created by the first written name, and a graph without one shares this empty index. Never mutated.
+    private static readonly Dictionary<string, List<Expr>> NoUses = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<Expr>>? _uses;
+    private readonly List<string>? _names;
+    internal IReadOnlyDictionary<string, List<Expr>> Uses => _uses ?? NoUses;
+    internal IReadOnlyList<string> Names => _names ?? (IReadOnlyList<string>)[];
     internal IReadOnlyList<Expr> Rows { get; }
     internal List<Node> Topological { get; } = [];
     internal long RetainedStorageUnits { get; private set; }
@@ -39,7 +44,8 @@ internal sealed class StaticInputGraph
             Nodes.Add(expression, node);
             if (expression is Expr.Resolve { Name.Length: > 0 } resolve)
             {
-                if (!Uses.TryGetValue(resolve.Name, out var uses)) { Uses.Add(resolve.Name, uses = []); Names.Add(resolve.Name); }
+                _uses ??= new(StringComparer.Ordinal);
+                if (!_uses.TryGetValue(resolve.Name, out var uses)) { _uses.Add(resolve.Name, uses = []); (_names ??= []).Add(resolve.Name); }
                 uses.Add(expression);
             }
             foreach (var child in Children(expression))
@@ -216,8 +222,9 @@ internal sealed partial class StaticStructureQueries
         using var storage = Resources.Temporary();
         storage.Add(6L * syntax.Nodes.Count + 4L * syntax.Names.Count + syntax.Rows.Count, _cancellationToken);
         var inferred = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in syntax.Names)
-            if (reader.Read(StaticQueryKey.IsInput(context.Key, name)).Kind == StaticFactKind.Yes) inferred.Add(name);
+        var names = syntax.Names;
+        for (var index = 0; index < names.Count; index++)
+            if (reader.Read(StaticQueryKey.IsInput(context.Key, names[index])).Kind == StaticFactKind.Yes) inferred.Add(names[index]);
         if (inferred.Count == 0) return new(StaticFactKind.Inputs, Data: Array.Empty<string>());
         var order = OccurrenceOrder(context, inferred, reader, undecidedAsLowered: false, out var blocked, out var undecided);
         if (order is null) return blocked!;

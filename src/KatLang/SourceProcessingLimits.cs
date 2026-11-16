@@ -106,18 +106,23 @@ public sealed record SourceProcessingLimits
     /// and conditional clause-family duplicate checks bounded by ordered canonical keys and binder
     /// maps, independently of any hash (SEC-03; see PatternMatchEquivalenceIndex). This is a
     /// CHARACTER ceiling, not a memory bound: front-end memory grows with the accepted source and
-    /// depends on its shape. Measured (2026-11-14 at <c>897887a1</c>, the isolated <c>fe-mem</c> probe
-    /// with its defaults: one public <see cref="Parser.Parse(string)"/> per child under a 2 GiB GC heap
-    /// hard limit, Windows x64, .NET 11.0.0 workstation GC, Release, peak process commit, medians of
-    /// three): a ceiling-size source of dense declarations peaks at about 0.88-1.23 GiB (898 MiB for
-    /// repeated expressions, 1,059 MiB for one-line functions, 1,263 MiB for constant properties),
-    /// retaining about 106-151 MiB of result and allocating about 2.4-2.5 GiB; a ceiling-size wide
-    /// assignment deconstruction now exceeds the static entry bound and is refused with
-    /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> at about 1.07 GiB. Historical (SEC-S1,
+    /// depends on its shape. Measured (2026-11-16, the isolated <c>fe-mem</c> probe with its defaults:
+    /// one public <see cref="Parser.Parse(string)"/> per child under a 2 GiB GC heap hard limit, Windows
+    /// x64, .NET 11.0.0 workstation GC, Release, peak process commit, medians of three): a ceiling-size
+    /// source of dense declarations peaks at about 0.89-1.11 GiB (913 MiB for repeated expressions,
+    /// 1,091 MiB for one-line functions, 1,132 MiB for constant properties), retaining about 100-144 MiB
+    /// of result and allocating about 2.3-2.5 GiB; the live set of the functions and of the constant
+    /// properties peaks at about 0.45-0.53 GiB, and the constant properties complete under a 576 MiB heap
+    /// hard limit. A ceiling-size wide assignment deconstruction exceeds the static entry bound and is
+    /// refused with <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> at about 1.0 GiB. Historical (SEC-S1,
     /// 2026-10-23, .NET 11 RC2, the same probe): the dense declarations then peaked at about 417-443 MiB
     /// (about 539-653 MiB before SEC-S1 trimmed pass-local retention), retaining about 64-80 MiB and
     /// allocating about 1.8-2.1 GiB, and the wide deconstruction was accepted at about 1.11 GiB (1.82 GiB
-    /// before); the growth since then is not attributed here. The earlier
+    /// before). The growth since then came with the static-structure resolver (B3, <c>04225cf7</c>), whose
+    /// per-body queries, contexts and input graphs, three views of the tree and published completed facts
+    /// are its deliberate price; trimming that resolver's dead and empty per-body state on 2026-11-16 took
+    /// the constant properties from 1,262 MiB (704 MiB heap hard limit) to the figures above (bisect and
+    /// attribution: <c>docs/design/static-structure-resolver-2026-10.md</c> § 3). The earlier
     /// "600-900 MB" figure was introduced alongside a probe that also kept a separate raw parse
     /// alive; its original measurement invocation and inputs are not recorded. No default is universally safe: hosts that run concurrent
     /// parses or have a smaller memory envelope configure a lower value. The value matches

@@ -199,10 +199,10 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
             if (view is Algorithm.User user)
                 // A name set: shared host pattern nodes are expanded once (SHARED-DAG RULE).
                 parameterNames.UnionWith(ParameterPattern.CapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns).Select(parameter => parameter.Name));
-            var parameters = parameterNames.ToFrozenSet(StringComparer.Ordinal);
+            var parameters = CompletedStaticStructures.BodyFacts.FreezeParameters(parameterNames);
             queries.Resources.Metadata(12 + 2L * members.Count + 2L * providers.Count + 4L * parameters.Count,
                 cancellationToken: cancellationToken);
-            graph.Add(key, new(ready ? view : null, receiver, open, members.ToFrozenDictionary(StringComparer.Ordinal), parameters, providers.ToImmutable()));
+            graph.Add(key, new(ready ? view : null, receiver, open, CompletedStaticStructures.BodyFacts.FreezeMembers(members), parameters, providers.ToImmutable()));
             if (key.Parent is { } parent)
             {
                 if (ready) result._definitions.TryAdd((parent, view, key.BindingRegion), key);

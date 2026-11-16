@@ -403,9 +403,13 @@ $probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
 & $probe fe-mem --sizes 16k,64k,256k --routes parse --repeat 3 --out fuzz\artifacts\perf\fe-mem.txt
 & $probe fe-mem --shapes dense_props,dense_funcs,wide_decon --sizes 2m --routes parse --repeat 3 --timeout-ms 600000
 # opt-in regression envelope: fails on any child above it and on any incomplete measurement
-# (caps/envelopes use MiB despite the historical -mb spelling; SEC-S1 measures ~443 MiB here
-# and passes, baseline ~653 MiB fails — recalibrate on another host/runtime)
-& $probe fe-mem --shapes dense_props --sizes 2m --routes parse --max-peak-commit-mb 600 --timeout-ms 600000
+# (caps/envelopes use MiB despite the historical -mb spelling; on 2026-11-16 the front end measures
+# ~1,132 MiB here and passes, 5d756643 ~1,262 MiB fails; SEC-S1 measured ~443 MiB on 2026-10-23 —
+# recalibrate on another host/runtime)
+& $probe fe-mem --shapes dense_props --sizes 2m --routes parse --max-peak-commit-mb 1200 --timeout-ms 600000
+# heap-hard-limit check, less sensitive to collector scheduling: an OOM under the limit is incomplete
+# and fails the run (2026-11-16: completes at 576 MiB, not 544; 5d756643 needed 704 MiB)
+& $probe fe-mem --shapes dense_props --sizes 2m --routes parse --heap-limit-mb 640 --timeout-ms 600000
 # B — attribution (explicit retention, NOT production peaks): per-stage retained bytes, distinct
 # objects, token kinds, per-pass allocation, sampled allocation-by-type
 & $probe fe-mem --mode census --shapes dense_props,wide_decon --sizes 64k
@@ -486,6 +490,25 @@ low-token controls (whitespace, comments, long literals) and malformed `diag_tok
 established. The larger representative inputs improved, and the measured routes show the same
 memory reduction (`run`, `run-async`, `parse-async`, and the suspending module route). The measured
 geometric series (16 Ki → 2 Mi UTF-16 units) does not establish universal linear complexity.
+
+The table above is historical (2026-10-23). The static-structure resolver (`04225cf7`, 2026-10-30)
+raised `dense_props` from 452 to 1,222 MiB and `dense_funcs` from 405 to 1,114 MiB, and made a
+ceiling-size `wide_decon` a static entry-bound refusal; the bisect and attribution are in
+`docs/design/static-structure-resolver-2026-10.md` § 3. Re-measured
+November 16 2026 (same host, .NET 11.0.0, medians of three; `5d756643` → the same day's trims of that
+resolver's dead and empty per-body state; live peak with `--env FE_MEM_LIVE_SAMPLE_MS=50`, one run;
+minimum heap is the smallest `--heap-limit-mb` step of 32 MiB that completes), `Parser.Parse`:
+
+| shape (about 2 Mi UTF-16 units) | allocated GiB | retained MiB | peak commit MiB | live peak MiB | minimum heap MiB | time s |
+| --- | --- | --- | --- | --- | --- | --- |
+| dense_props | 2.57 → 2.50 | 151 → 140 | 1,262 → 1,132 | 655 → 545 | 704 → 576 | 6.0 → 5.5 |
+| dense_funcs | 2.37 → 2.34 | 150 → 144 | 1,059 → 1,091 | 490 → 458 | 544 → 512 | 6.1 → 5.2 |
+| dense_exprs | 2.40 → 2.37 | 106 → 100 | 905 → 913 | — | — | 5.1 → 5.2 |
+| wide_decon | refused | — | 1,058 → 1,032 (refusal) | — | — | — |
+
+The `dense_funcs` peak commit rose with two gen-2 collections fewer (10 → 8) while its live peak fell:
+default-GC peaks follow collector scheduling, so the heap-limit check above is the steadier gate.
+`SEC-S1` itself (`25cf9962`) still peaks at 456–460 MiB for `dense_props` on .NET 11.0.0.
 
 The historical "600-900 MB" figure in `SourceProcessingLimits` was introduced alongside
 `source-probe-child` in `4c5bb6b5`; the original measurement invocation is unavailable, so its

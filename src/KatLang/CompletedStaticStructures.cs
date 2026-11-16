@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Immutable;
 
 namespace KatLang;
@@ -17,7 +18,20 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     internal sealed record BodyFacts(Algorithm? Body, Selection Receiver, Selection Open,
         IReadOnlyDictionary<string, StaticScopeKey> Members, IReadOnlySet<string> Parameters, ImmutableArray<Selection> Providers,
         ImmutableHashSet<string>? UnavailableOpenNames = null, ImmutableHashSet<string>? AmbiguousOpenNames = null,
-        bool IsProvisional = false, Selection? RequirementReceiver = null, Selection? RequirementOpen = null);
+        bool IsProvisional = false, Selection? RequirementReceiver = null, Selection? RequirementOpen = null)
+    {
+        // One fact exists per published body, and most bodies (every constant row) have no member and no parameter: they
+        // share one immutable empty table of each kind, frozen with the comparer a nonempty one gets.
+        private static readonly FrozenDictionary<string, StaticScopeKey> NoMembers
+            = new Dictionary<string, StaticScopeKey>().ToFrozenDictionary(StringComparer.Ordinal);
+        private static readonly FrozenSet<string> NoParameters = Array.Empty<string>().ToFrozenSet(StringComparer.Ordinal);
+
+        internal static FrozenDictionary<string, StaticScopeKey> FreezeMembers(Dictionary<string, StaticScopeKey> members)
+            => members.Count == 0 ? NoMembers : members.ToFrozenDictionary(StringComparer.Ordinal);
+
+        internal static FrozenSet<string> FreezeParameters(HashSet<string> parameters)
+            => parameters.Count == 0 ? NoParameters : parameters.ToFrozenSet(StringComparer.Ordinal);
+    }
 
     private ImmutableDictionary<StaticScopeKey, BodyFacts> _bodies;
     private ImmutableDictionary<(StaticScopeKey Parent, object Declaration, object? Region), StaticScopeKey?> _children;

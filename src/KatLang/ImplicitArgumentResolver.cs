@@ -127,6 +127,27 @@ internal static partial class ImplicitArgumentResolver
         ArgumentNullException.ThrowIfNull(structuralOperation);
         structuralOperation.RequireDetectedRoot(root);
         structuralOperation.Queries.Observations = observations;
+        if (ResolveInRun(root, observations, diagnostics, hostOperations, modules, structuralOperation) is not { } resolved)
+            return root;
+        observations?.StageObserver?.Invoke("completed-publication", true);
+        structuralOperation.CompleteLookups(resolved);
+        observations?.StageObserver?.Invoke("completed-publication", false);
+        return resolved;
+    }
+
+    // The run's frame ends before the completed publication (SEC-S1's one frame per pass): unoptimized (tier-0) code
+    // reports a local live for its whole method, so a run local here kept its selection, analyzed bodies and region memo
+    // reachable while CompleteLookups built the completed facts on a ceiling-size source.
+    // Null when the selection was refused (nothing is rewritten or published).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static Algorithm? ResolveInRun(
+        Algorithm root,
+        FrontEndTraversalObservations? observations,
+        DiagnosticBag? diagnostics,
+        HostOperations? hostOperations,
+        ModuleUnits? modules,
+        StaticStructureOperation structuralOperation)
+    {
         var run = new ResolutionRun(structuralOperation)
         {
             Observations = observations,
@@ -143,7 +164,7 @@ internal static partial class ImplicitArgumentResolver
         {
             ReportRefusedSelection(run.Selected, run);
             run.ReleaseLevels();
-            return root;
+            return null;
         }
 
         var resolved = ProcessAlgorithm(
@@ -161,9 +182,6 @@ internal static partial class ImplicitArgumentResolver
         run.CommitDeferredChecks();
         RequireEveryAnalyzedBodyRewritten(run);
         run.ReleaseLevels();
-        observations?.StageObserver?.Invoke("completed-publication", true);
-        structuralOperation.CompleteLookups(resolved);
-        observations?.StageObserver?.Invoke("completed-publication", false);
         return resolved;
     }
 
@@ -457,8 +475,8 @@ internal static partial class ImplicitArgumentResolver
         public void AddWalkLevel(ResolverLevel level) => (_walkLevels ??= []).Add(level);
 
         /// <summary>
-        /// Ends the run's hold on its input (SEC-S1): every level its walk processed lets go of its input entries and
-        /// written opens (<see cref="ResolverLevel.Release"/>), because the published tree keeps entries — an alias's
+        /// Ends the run's hold on its input (SEC-S1): every level its walk processed lets go of its written opens,
+        /// static context and navigated body (<see cref="ResolverLevel.Release"/>), because the published tree keeps entries — an alias's
         /// recorded target is the processed entry of its target, which names its level — and the input must be unreachable
         /// once the pass returns. A run whose levels a deferred branch's context keeps leaves them whole: that context is
         /// part of the output, as it keeps the eager run's processed bodies and signature map.
@@ -804,7 +822,7 @@ internal static partial class ImplicitArgumentResolver
     /// itself declares and the enclosing level, so a static reference chase resolves a followed row from ITS OWN
     /// declarations outward — never in the map of the body that started the chase, where a nearer declaration
     /// could shadow the head or the head may not be visible at all (the evaluator's direct lookup from the
-    /// reference's own scope). A level the walk processes records its INPUT entries; a body a chase NAVIGATES into — a
+    /// reference's own scope). A level the walk processes keeps its declaring context; a body a chase NAVIGATES into — a
     /// provider's, a receiver's, a block's — is a level over that algorithm's own declared properties, ONE object per
     /// static scope (<see cref="StructuralProcessingViews.LevelOf"/>). A loaded module's body restarts the chain
     /// (Q-31 H-P). The operation keeps each level (<see cref="StaticStructureOperation.ResolverLevel"/>), so a level is
@@ -814,7 +832,11 @@ internal static partial class ImplicitArgumentResolver
     {
         private Algorithm? _body;
 
-        /// <summary>A level the walk processes; its entries are recorded once they are built (<see cref="Entries"/>).</summary>
+        /// <summary>
+        /// A level the walk processes. It keeps none of the walk's property entries: nothing reads them through a level, and
+        /// every walked body has one (two with the signature analysis), so keeping them held one table per level, empty for
+        /// a property-less body, for the whole resolution.
+        /// </summary>
         public ResolverLevel(DeclaringOwners owners, ResolverLevel? outer, IReadOnlyList<Expr>? opens = null, StaticStructureContext? staticContext = null)
         {
             Owners = owners;
@@ -846,13 +868,12 @@ internal static partial class ImplicitArgumentResolver
         public Algorithm? NavigatedBody => _body;
 
         /// <summary>
-        /// Lets go of what a level the walk processed holds of its input — its entries and written opens — once the run
-        /// that built it has ended: an entry the published tree keeps (an alias's recorded target) reaches its level, which
-        /// must then reach no input (SEC-S1, <see cref="ResolutionRun.ReleaseLevels"/>).
+        /// Lets go of what a level the walk processed holds of its input — its written opens, its static context and a
+        /// navigated body — once the run that built it has ended: an entry the published tree keeps (an alias's recorded
+        /// target) reaches its level, which must then reach no input (SEC-S1, <see cref="ResolutionRun.ReleaseLevels"/>).
         /// </summary>
         public void Release()
         {
-            Entries = null;
             Opens = [];
             StaticContext = null;
             _body = null;
@@ -869,9 +890,6 @@ internal static partial class ImplicitArgumentResolver
 
         /// <summary>The enclosing level; null at a chain's root.</summary>
         public ResolverLevel? Outer { get; }
-
-        /// <summary>A processed level's INPUT entries by name (set once, by the walk that builds them).</summary>
-        public IReadOnlyDictionary<string, VisibleProperty>? Entries { get; set; }
     }
 
     /// <summary>
@@ -2048,7 +2066,6 @@ internal static partial class ImplicitArgumentResolver
         // The level's own entries: every property's written value with its FINAL signature — the one the selection chose
         // (B3-5★) — so every read of a sibling, before or after its rewrite, sees the same signature.
         var (_, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
-        level.Entries = localEntriesByName;
 
         // Visible map = parent + local (local overrides), plus this level's `open` providers as the
         // innermost open level. When there are neither local properties nor opens — the common leaf

@@ -27,9 +27,11 @@ internal sealed record StaticProviderTree(StaticProviderTree? Left = null, Stati
 /// <summary>Q4's one immutable syntax index; public and branch-only surfaces remain distinct.</summary>
 internal sealed class StaticMembers
 {
-    private readonly Dictionary<string, Property> _declared = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Property> _public = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _branchOnly = new(StringComparer.Ordinal);
+    // One index exists per admitted body, and most bodies (every constant row) declare nothing: each table is created by
+    // its first entry, so an absent table is an empty one. Written only by the constructor.
+    private readonly Dictionary<string, Property>? _declared;
+    private readonly Dictionary<string, Property>? _public;
+    private readonly HashSet<string>? _branchOnly;
     private Property? _nullDeclared;
     private Property? _nullPublic;
 
@@ -47,8 +49,8 @@ internal sealed class StaticMembers
             }
             else
             {
-                _declared.TryAdd(property.Name, property);
-                if (property.IsPublic) _public.TryAdd(property.Name, property);
+                (_declared ??= new(StringComparer.Ordinal)).TryAdd(property.Name, property);
+                if (property.IsPublic) (_public ??= new(StringComparer.Ordinal)).TryAdd(property.Name, property);
             }
         }
         if (algorithm is Algorithm.Conditional conditional)
@@ -56,16 +58,16 @@ internal sealed class StaticMembers
                 foreach (var property in branch.Body.Properties)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    _branchOnly.Add(property.Name);
+                    (_branchOnly ??= new(StringComparer.Ordinal)).Add(property.Name);
                 }
     }
 
-    internal Property? Declared(string name) => name is null ? _nullDeclared : _declared.GetValueOrDefault(name);
-    internal Property? Public(string name) => name is null ? _nullPublic : _public.GetValueOrDefault(name);
-    internal bool IsBranchOnly(string name) => _branchOnly.Contains(name);
-    internal bool HasMembers => _declared.Count != 0 || _nullDeclared is not null || _branchOnly.Count != 0;
-    internal bool HasPublicMembers => _public.Count != 0 || _nullPublic is not null;
-    internal IEnumerable<Property> PublicProperties => _public.Values;
+    internal Property? Declared(string name) => name is null ? _nullDeclared : _declared?.GetValueOrDefault(name);
+    internal Property? Public(string name) => name is null ? _nullPublic : _public?.GetValueOrDefault(name);
+    internal bool IsBranchOnly(string name) => _branchOnly?.Contains(name) == true;
+    internal bool HasMembers => _declared is not null || _nullDeclared is not null || _branchOnly is not null;
+    internal bool HasPublicMembers => _public is not null || _nullPublic is not null;
+    internal IEnumerable<Property> PublicProperties => _public?.Values ?? Enumerable.Empty<Property>();
 }
 
 /// <summary>
@@ -81,8 +83,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     {
         internal Algorithm Body { get; } = body;
         internal StaticMembers Members { get; } = new(body, cancellationToken);
-        internal IReadOnlySet<string> Parameters { get; } = new HashSet<string>(body is Algorithm.User user
-            ? ParameterPattern.CapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns).Select(p => p.Name) : body.Params, StringComparer.Ordinal);
+        internal IReadOnlySet<string> Parameters { get; } = WrittenParameterNames(body);
         private StaticInputGraph? _graph;
         internal long InputGraphBuilds { get; private set; }
         internal long InputGraphNodeVisits { get; private set; }
@@ -98,6 +99,28 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
                 InputGraphNodeVisits += _graph.Nodes.Count;
                 return _graph;
             }
+        }
+
+        // Every body without a written parameter shares this set; it is never mutated.
+        private static readonly HashSet<string> NoParameters = new(StringComparer.Ordinal);
+
+        private static IReadOnlySet<string> WrittenParameterNames(Algorithm body)
+        {
+            IEnumerable<string> written;
+            if (body is Algorithm.User user)
+            {
+                var patterns = user.NameResolutionParameterPatterns;
+                if (patterns.Count == 0) return NoParameters;
+                written = ParameterPattern.CapturesExpandingSharedNodesOnce(patterns).Select(p => p.Name);
+            }
+            else
+            {
+                var parameters = body.Params;
+                if (parameters.Count == 0) return NoParameters;
+                written = parameters;
+            }
+            var names = new HashSet<string>(written, StringComparer.Ordinal);
+            return names.Count == 0 ? NoParameters : names;
         }
     }
 

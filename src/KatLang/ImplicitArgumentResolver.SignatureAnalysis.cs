@@ -1061,7 +1061,6 @@ internal static partial class ImplicitArgumentResolver
             run.ReferenceNameSets);
 
         var (_, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
-        level.Entries = localEntriesByName;
         var visibleParamMap = localEntriesByName.Count == 0 && alg.Opens.Count == 0
             ? parentParamMap
             : parentParamMap.Extend(localEntriesByName);

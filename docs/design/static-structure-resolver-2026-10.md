@@ -219,6 +219,39 @@ query nor prove a live-memory bound for every program. The envelope remains stru
 not a process-memory guarantee. A refusal costs about what acceptance costs, because the operation
 has done its work up to the bound.
 
+**Front-end memory since SEC-S1 (2026-11-16).** The `fe-mem` probe (`Parser.Parse`, 2-GiB heap hard
+limit, peak job commit; .NET 11.0.0) bisected over the first-parent history from SEC-S1 (`25cf9962`)
+to `5d756643` finds ONE step over 10%: this resolver's introduction, `04225cf7`. A ceiling-size
+constant-property source (`dense_props`, 136,430 rows) went from 452 to 1,222 MiB (SEC-S1 itself: 460
+MiB on .NET 11.0.0, 443 on RC2), retained 64.5 → 148 MiB and allocated 2.0 → 3.5 GiB; `dense_funcs`
+405 → 1,114 MiB; `wide_decon` went from accepted (1,213 MiB) to refused by the entry bound. Later
+commits only drifted (`c85254fa` +7%, 1,356 MiB at `96133491`, 1,240 after `bed42cf5`, 1,262 MiB at
+`5d756643`). The step is live state, not collector headroom: with a forced full collection every
+50 ms the live peak rose 188 → 718 MiB (655 at `5d756643`). Live-heap histograms (ClrMD, at the live
+peak, inside the resolution) put about 2 KB per body on this resolver: two query entries (152 B
+each), the lookup level (192 B), the body syntax with its member index, parameter set and input graph
+(about 1 KB), contexts, publications and keys; the operation's source, detected and resolved views
+(3–4 tree generations live at the peak, 1–2 before); and the resolver's per-level state. The result
+retains the completed facts (`BodyFacts` with their keys and tables, about 650 B per body). That is
+the price of the design — queries read the admitted source, views are publications, completed facts
+are published for deferred modules, tooling, exposure and diagnostics — and it stays. What was not intended, and was removed
+without changing any result, diagnostic, charge or counter: a write-only per-level entry table in the
+resolver (its reader went in `c85254fa`), empty per-body tables (Q4 member index, written parameters,
+input-graph name uses, completed members and parameters), one completed publication per body instead
+of one per table, and the resolution run kept reachable by its tier-0 frame while `CompleteLookups`
+built the completed facts. On `dense_props` the live peak fell 655 → 545 MiB, the smallest completing
+heap hard limit 704 → 576 MiB, the retained result 151 → 140 MiB and the probe's peak commit 1,262 →
+1,132 MiB; on `dense_funcs` the live peak fell 490 → 458 MiB and the limit 544 → 512 MiB, while its
+default-GC peak commit rose 1,059 → 1,091 MiB with two gen-2 collections fewer (10 → 8). Default-GC peaks follow
+collector scheduling by several percent either way, so heap-limit runs are the regression measure.
+The harness above, re-run on `5d756643` and after these trims (three runs each, commit MiB): alias
+29,124 rows 744–746 → 589–734, call 70,000 rows 1,025–1,032 → 864–945, constant 120,000 rows
+1,038–1,046 → 895–933, constant 136,000 rows 1,163–1,187 → 1,232–1,236 (one gen-2 collection more).
+On `5d756643` already, before these trims, 91,660 call rows are refused by the metadata bound, so the
+call-row boundary above is historical for `897887a1`. A ceiling-size `wide_decon` stays refused by the
+entry bound (about 1.0 GiB); the envelope's formulas are unchanged. Bisect table, logs and histograms:
+`artifacts/validation/front-end-memory-growth/` (local only).
+
 Open-level entries grow with providers × DISTINCT opened names read (P × D), not P². For one block
 that opens P one-member providers and sums D ≥ 4 distinct opened names, entries are exactly
 73 + 13P + D(2P + 17) (measured for P = 16 to 128 and D = 4 to 64): two per provider and distinct
