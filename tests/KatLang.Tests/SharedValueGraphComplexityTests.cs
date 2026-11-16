@@ -8,8 +8,10 @@ namespace KatLang.Tests;
 /// A <see cref="Result"/> value is a DAG, not a tree: an immutable child may be shared by many
 /// parents, so <c>W = [x, x]</c> applied n times reaches n+1 distinct nodes through 2^n
 /// root-to-leaf paths. Structural equality and structural hashing must therefore do work
-/// proportional to the distinct nodes (equality: distinct ordered reference PAIRS) they must
-/// decide, never to the paths that reach them — a path-expanding walk is exponential in n on
+/// proportional to the distinct nodes they must decide (equality: at most one expanded pair per
+/// union of two reference classes, <see cref="ReferenceClasses"/>; the exact-pair memo it replaced
+/// was bounded by the distinct ordered reference PAIRS), never to the paths that reach them — a
+/// path-expanding walk is exponential in n on
 /// values an ordinary in-budget loop builds, and no evaluation step budget bounds it, because the
 /// blow-up happens inside ONE value-level operation.
 ///
@@ -112,9 +114,10 @@ public partial class SharedValueGraphComplexityTests
     [Fact]
     public void Equality_SharedLeftNodeIsDecidedAgainstEachRightNodeSeparately()
     {
-        // The memo key is the ORDERED PAIR of references, never one side alone: the same left node
-        // is compared against an equal right node and then against an unequal one. A memo keyed on
-        // the left reference (or on value equality) would wrongly report equal here.
+        // The memo never answers by one side alone: the same left node is compared against an equal
+        // right node and then against an unequal one. Its reference class holds only the equal
+        // right node, so the second pair is still expanded. A memo keyed on the left reference (or
+        // on value equality) would wrongly report equal here.
         var (comparer, observations) = Observed();
         var shared = List(Atom(1), Atom(2));
 

@@ -24,12 +24,11 @@ internal sealed class ValueTraversalObservations
     /// observer's comparer performed — one increment per pair whose element sequences were actually
     /// walked (the top-level pair of one comparison, plus every nested pair descended into).
     /// The reference fast path, leaf comparisons, count/kind mismatches, empty collections, and
-    /// memo hits record nothing. For the context-free comparer's per-call walk a memo hit is an
-    /// already-expanded pair, so ONE top-level comparison stays bounded by the number of distinct
-    /// reachable <c>(leftReference, rightReference)</c> pairs. For the evaluator's charged walks
-    /// it is a pair whose references already share an equivalence class
-    /// (<see cref="ReferenceClasses"/>), so the count is near-linear in the distinct NODES reached.
-    /// Neither is ever the number of expanded tree paths.
+    /// memo hits record nothing. For every equality walk — the context-free comparer's per-call
+    /// walk and the evaluator's charged walks alike — a memo hit is a pair whose references already
+    /// share an equivalence class (<see cref="ReferenceClasses"/>), so the count is near-linear in
+    /// the distinct NODES reached, never the number of distinct reachable
+    /// <c>(leftReference, rightReference)</c> pairs nor of expanded tree paths.
     /// </summary>
     public long EqualityPairExpansionCount { get; private set; }
 

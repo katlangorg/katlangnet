@@ -41,14 +41,14 @@ namespace KatLang;
 /// through 2^n root-to-leaf paths), so a walk whose work is proportional to
 /// PATHS is exponential on legally built values. Every walk a shared node can
 /// blow up therefore memoizes by REFERENCE IDENTITY for the duration of ONE
-/// top-level operation: structural equality in <see cref="ValueComparer"/>
-/// expands each ordered <c>(left, right)</c> reference pair at most once; the
-/// evaluator's charged equality walks (<see cref="EvaluatorValueEquals"/> and
-/// the SEC-02 operation comparer) go further and keep EQUAL knowledge as
-/// equivalence classes of references (<see cref="ReferenceClasses"/>, union–find),
-/// so a pair whose two references are already known equal through any chain is
-/// skipped, and two equal values whose internal sharing differs (no node-to-node
-/// correspondence) cost O(|A| + |B|) instead of |A|·|B| reference pairs;
+/// top-level operation: structural equality — the context-free
+/// <see cref="ValueComparer"/> and the evaluator's charged walks
+/// (<see cref="EvaluatorValueEquals"/> and the SEC-02 operation comparer) alike —
+/// keeps EQUAL knowledge as equivalence classes of references
+/// (<see cref="ReferenceClasses"/>, union–find), so a pair whose two references
+/// are already known equal through any chain is skipped, and two equal values
+/// whose internal sharing differs (no node-to-node correspondence) cost
+/// O(|A| + |B|) instead of |A|·|B| reference pairs;
 /// structural hashing computes each node's hash at most once, the
 /// <see cref="Normalize"/> rebuild computes each node's normal form at most
 /// once, and the bounded atom collectors
@@ -64,8 +64,8 @@ namespace KatLang;
 /// bound can never stop — nor a wide atom-bearing one reached through many
 /// paths is re-walked per path. Each memo is the one deliberate exception to
 /// the O(nesting depth) rule above: it is O(distinct nodes actually reached)
-/// — O(distinct pairs reached) for the context-free comparer's per-call equality
-/// walk and the operation comparer's retained unequal/string verdicts — never
+/// — O(distinct pairs reached) only for the operation comparer's retained
+/// unequal/string verdicts — never
 /// O(paths), and it is allocated lazily so flat values still
 /// allocate none. Memo state belongs to one call and is discarded with it; no
 /// hash, comparison result, normal form, or atom run is ever cached on a
@@ -1322,11 +1322,13 @@ public closed record Result
     /// with each top-level call, so <c>contains</c> over N references to one deep value re-walked it
     /// N times — O(N × D) uncharged, uncancellable work from O(N + D) construction.</para>
     ///
-    /// <para>The evaluator's equality walks (the operation walk and the single-comparison walk,
-    /// <see cref="EqualsSingleWalk"/>) keep EQUAL knowledge as equivalence classes of references
+    /// <para>All three equality walks — the evaluator's operation walk and single-comparison walk
+    /// (<see cref="EqualsSingleWalk"/>), and the per-call walk of the context-free
+    /// <see cref="ValueComparer"/> — keep EQUAL knowledge as equivalence classes of references
     /// (<see cref="ReferenceClasses"/>), not as exact pairs. Their equal structural memo is O(distinct nodes reached),
     /// so two equal values whose internal sharing differs cost O(|A| + |B|), never |A|·|B| pairs.
-    /// The per-call walk of the context-free <see cref="ValueComparer"/> still keeps exact pairs.</para>
+    /// The context-free walk's classes belong to one call and use the committed layer only: it
+    /// returns false at its first mismatch and drops them, so it needs no undo log.</para>
     /// </summary>
     internal sealed class ValueSemanticComparer : IEqualityComparer<Result>
     {
@@ -1506,7 +1508,7 @@ public closed record Result
                 // `==` operator: NaN is the same value as NaN and quantum (trailing
                 // zeros) is ignored, exactly like .NET floating-point collection
                 // semantics. Structural equality must stay a reflexive equivalence
-                // relation — the reference fast path, the expanded-pair memo, and
+                // relation — the reference fast path, the reference classes, and
                 // every hashed consumer (distinct, contains) assume it — and this is
                 // the only choice consistent with GetHashCode. IEEE `NaN != NaN`
                 // ordering behavior belongs to the numeric comparison OPERATORS, not
@@ -1563,20 +1565,30 @@ public closed record Result
             // reference fast path applies at every level so shared subtrees
             // short-circuit.
             //
-            // EXPANDED-PAIR MEMO (this operation only): a nested pair is expanded at most once per
-            // top-level comparison, keyed by the ORDERED pair of object references. The reference
-            // fast path above helps only when the SAME object is on both sides; two independently
-            // built equal DAGs share no object at all, so without this memo the walk expands paths
-            // (2^n for the n-fold [x, x] shape) instead of deciding the n+1 distinct pairs.
-            // Recording a pair when it is DESCENDED INTO — before its children are compared — is
-            // what makes "already expanded" mean "already decided equal": the walk RETURNS FALSE
-            // the instant any mismatch is found anywhere, so a pair can only be re-encountered
-            // after its own subtree finished without one. A pair is never re-encountered while it
-            // is still in progress, since that needs a value reachable from itself (see
-            // InProgressHash) — and were such a graph ever handed in, skipping the repeat is
-            // exactly the coinductive answer and still terminates instead of hanging the host.
+            // REFERENCE CLASSES (this call only): EQUAL knowledge is equivalence classes of
+            // references (ReferenceClasses, union–find, committed layer only), and a nested pair is
+            // skipped whenever its two references already share a class — not only when that exact
+            // ordered pair was expanded before. The reference fast path above helps only when the
+            // SAME object is on both sides; two independently built equal DAGs share no object at
+            // all, so without a memo the walk expands paths (2^n for the n-fold [x, x] shape)
+            // instead of deciding the n+1 distinct pairs, and an exact-pair memo still reaches about
+            // |A|·|B| pairs when the two sides' sharing does not correspond node to node (a shift
+            // register against a path-mixing DAG). Classes need one entry per distinct node reached.
+            // A pair is recorded (its two references united) when it is DESCENDED INTO, before its
+            // children are compared, exactly where the exact-pair memo recorded it; the top-level
+            // pair is never recorded. The walk RETURNS FALSE the instant any mismatch is found
+            // anywhere, and the classes die with this call, so no union of an open level is ever
+            // read by a later comparison — no undo layer is needed, and the shared comparer keeps no
+            // state between calls or threads. Within the call, a skip joins two truly equal values:
+            // every union of a COMPLETED level is truly equal, and no chain of unions between two
+            // children of the current level can pass through an OPEN ancestor's union, because equal
+            // values have equal heights and both children sit strictly below every open level (the
+            // correctness note on EqualsInOperation). An open ancestor itself is met again only
+            // through a value reachable from itself (see InProgressHash) — were such a graph ever
+            // handed in, the skip is exactly the coinductive answer and still terminates instead of
+            // hanging the host.
             var suspended = new Stack<(IReadOnlyList<Result> Left, IReadOnlyList<Result> Right, int Next)>();
-            HashSet<ReferencePair>? expandedPairs = null;
+            ReferenceClasses? classes = null;
             var next = 0;
 
             while (true)
@@ -1635,9 +1647,9 @@ public closed record Result
                 if (childLeft.Count == 0) continue;
 
                 // Allocated on the first nested descent, so a comparison that never leaves the top
-                // level (two flat collections of leaves) allocates no memo at all.
-                expandedPairs ??= [];
-                if (!expandedPairs.Add(new ReferencePair(left, right))) continue;
+                // level (two flat collections of leaves) allocates no memo at all. Union returns
+                // false when the two references already share a class: known equal, skipped.
+                if (!(classes ??= new ReferenceClasses()).Union(left, right)) continue;
 
                 observations?.RecordEqualityPairExpansion();
 
@@ -2548,7 +2560,8 @@ public closed record Result
         }
 
         /// <summary>
-        /// One ordered pair of <see cref="Result"/> OBJECT REFERENCES, the equality memo's key.
+        /// One ordered pair of <see cref="Result"/> OBJECT REFERENCES, the key of an operation memo's
+        /// retained unequal pairs and string verdicts (equal knowledge is <see cref="ReferenceClasses"/>).
         /// Identity is deliberately <see cref="object.ReferenceEquals"/> plus
         /// <see cref="RuntimeHelpers.GetHashCode"/> on both sides — the same reference-identity
         /// discipline the AST preflight and the evaluator's caches use. Keying the memo on value

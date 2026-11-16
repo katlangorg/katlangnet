@@ -5,9 +5,10 @@ using System.Runtime.InteropServices;
 namespace KatLang;
 
 /// <summary>
-/// Equivalence classes of <see cref="Result"/> REFERENCES — the union–find memo of the evaluator's
-/// structural equality walks (the single-comparison walk and the operation walk of
-/// <see cref="Result.ValueSemanticComparer"/>). Two references in one class are already known equal,
+/// Equivalence classes of <see cref="Result"/> REFERENCES — the union–find memo of every structural
+/// equality walk of <see cref="Result.ValueSemanticComparer"/>: the evaluator's single-comparison
+/// walk and operation walk, and the per-call walk of the context-free <see cref="Result.ValueComparer"/>.
+/// Two references in one class are already known equal,
 /// so a walk skips any pair whose references share a class: the Hopcroft–Karp equivalence check.
 /// An exact-pair memo cannot do that, and two equal DAGs whose sharing does not correspond node
 /// to node reach about |A|·|B| distinct pairs. Classes need one entry per distinct node reached,
@@ -26,8 +27,8 @@ namespace KatLang;
 /// exactly the pairs marked COMPLETED (<see cref="MarkCompleted"/>). Path compression never rewrites
 /// a tentative link: a node's committed path is compressed only up to its committed root, the first
 /// node on its path whose own link is tentative. So the undo restores the committed forest exactly.
-/// The single-comparison walk discards its memo with the comparison and uses the committed layer
-/// only.</para>
+/// The single-comparison walk and the context-free per-call walk discard their memo with the
+/// comparison and use the committed layer only.</para>
 ///
 /// <para>Never static, never shared between operations, runs or threads, and never attached to a
 /// <see cref="Result"/>. It dies with the walk or operation that owns it.</para>
