@@ -8,9 +8,10 @@ open KatLang KatLang.CallReferenceGuards
 
 Every guard runs a whole program through the authoritative `runResult` / `runResultWithState`: the
 `"Algorithm"` arms of `evalDotCallCounted`, the link arm of `evalCallCountedExpr`, a supplied link's
-`evalSuppliedAt` / `projectNeedWrittenAt`, `NeedPlan.calleeCell` and `NeedLink.receiverCell`. They
-are executable evidence for the source facts `KatLangArityLaws/AlgorithmProjection.lean` cannot reach
-(the `partial` evaluator installs the total definitions). Heap observations follow
+`evalSuppliedAt` / `projectNeedWrittenAt`, `NeedPlan.calleeCell` and `NeedLink.receiverCell`. That
+those arms install the total definitions is proved (`KatLangArityLaws/EvaluatorInstallation.lean`);
+these guards are executable evidence for what the body equations do not give — the outcome, the
+heap and the execution counts of WHOLE programs. Heap observations follow
 `CallReferenceGuards`: every execution of `Sq(x) = Id(x * x)` allocates ONE cell for `x * x`, so the
 number of such cells counts target executions; the captured argument `5` is one cell, so one such
 cell means it was supplied once — never re-supplied to a fresh call.

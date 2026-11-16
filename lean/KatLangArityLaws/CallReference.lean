@@ -46,8 +46,12 @@ Explicit invocation reuses the M1.5 laws unchanged: `invoke_run` (fresh `execute
 `prepared_survives` (the supply is formed at most once) and `production_invocations_keep_value`
 (an invocation never rewrites a completed VALUE, under `ProductionDiscipline`).
 
-NOT claimed (source facts, executable guards in `CallReferenceGuards.lean`): that the `partial`
-evaluator's `Invoke` arm, the user-call driver and the dot route call these definitions; the
+That the evaluator's `Invoke` arm, the user-call driver and the dot route call these definitions is
+proved in `KatLangArityLaws/EvaluatorInstallation.lean` (`dot_invoke_arm`, `invoke_installs`,
+`invoke_production`; `user_supply_binds`, whose binder capabilities carry `NeedPlan.reference` by
+the definition of `NeedChannels.capabilities`); `CallReferenceGuards.lean` runs whole programs.
+
+NOT claimed: the
 reachable-state refinement (open, ledger E-18; refuted for META states) and `ProductionDiscipline` (open until R7; now
 the theorem `productionDiscipline_holds`, `EvaluatorDiscipline.lean`); run identity — Lean
 has one run per `EvalState` and no channel that brings a value into another run, so foreign-run

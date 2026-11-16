@@ -888,7 +888,8 @@ theorem bindPats_trailing_collecting (a : String) (x : Val) (r : String) (mid : 
 /-- In the algebra, a two-item callback supply binds `[x, *acc]` with the trailing collector
 collecting the one accumulator value, a sequence or a list alike (modelling
 `reduce([e], R, (1, 2))` with `R(x, *acc)` binding `acc = [(1, 2)]`; the production reducer
-dispatch is `partial`, guard-checked). -/
+passes exactly those two arguments, `EvaluatorInstallation.reduce_step_installs`, and its
+evaluation is guard-checked). -/
 theorem callback_accumulator_is_one_ordinary_argument (x r : String) (e acc : Val) :
     bindCallback [Pat.name x, Pat.collecting r] [e, acc] = some [(x, e), (r, collect [acc])] :=
   bindPats_trailing_collecting x e r [acc]
@@ -1036,9 +1037,12 @@ theorem fixed_parameter_binds_item_unchanged (x : String) (v : Val) :
 call binding of the supplied arguments (`map([e], F)` binding as `F(e)`, `reduce` as `R(e, acc)`).
 It is a fact of the algebra only. The production BINDER correspondence over formed supplies is a
 separate theorem (S5, `KatLangArityLaws/SupplyCorrespondence.lean`: `patterns_sim`,
-`ready_supplies_bind_correspondingly`); that both production paths reach `bindNeedPatterns`,
-inside `partial` definitions, stays a source fact, and callback ≡ direct-call EVALUATION stays
-open (Q-66, HO-02, R7). -/
+`ready_supplies_bind_correspondingly`, and without channel premises at production,
+`KatLangArityLaws/SupplyCorrespondenceProduction.lean`); that both production paths reach
+`bindNeedPatterns` is proved (`KatLangArityLaws/EvaluatorInstallation.lean`:
+`user_callback_installs`, `user_call_installs`, `user_supply_binds`), and callback ≡ direct-call
+EVALUATION stays open (Q-66, HO-02): it is a refinement of whole evaluations, which the total
+core of R7 makes statable and no theorem proves. -/
 theorem bindCallback_eq_bindArgs (ps : List Pat) (args : List Val) :
     bindCallback ps args = bindArgs ps args := rfl
 
@@ -1702,7 +1706,7 @@ spelling is C#-side, and the authoritative evaluator guards
 in `CoreTests/ListValues.lean`) pin the same behavior end to end through the full
 model's `Result.spreadItems` after `Result.normalize ∘ Result.sequenceValue`
 — exactly the composition `items ∘ capture` mirrors. They are executable
-`#guard`s over the `partial` evaluator on concrete values, not theorems; the
+`#guard`s over the evaluator on concrete values, not theorems; the
 first two compare the stacked and grouped spellings directly. Over the real
 `Result` model the same family is proved for the production reopening helpers
 the evaluator calls (`KatLangArityLaws.lean` § Repeated spread over the real
@@ -1711,8 +1715,9 @@ model: `reopen_spread_opens_only_a_lone_item`, `reopen_spread_zero`,
 `reopen_spread_fixed_iff`, `reopen_spread_is_not_recursive_flattening`), with
 the grouped spelling's capture layer proved to be the stacked step
 (`grouped_spread_layer_is_reopen`, through `combineOutputSlots`); the routing
-of the `partial` evaluator through those helpers is guard-checked
-(CoreTests `RepeatedSpread`). No `Expr`-level theorem — `E** ≡ (E*)*` over
+of the evaluator through those helpers is proved per route
+(`EvaluatorInstallation.spread_installs`, `capture_arm`, `rows_step`) and run on
+whole programs by CoreTests `RepeatedSpread`. No `Expr`-level theorem — `E** ≡ (E*)*` over
 evaluation itself — exists (Q-66).
 
 The theorems below prove the exact behavior of that composition:

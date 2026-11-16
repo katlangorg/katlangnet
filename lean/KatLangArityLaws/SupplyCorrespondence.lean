@@ -4,10 +4,13 @@ import KatLangArityLaws.CallReference
 
 open KatLang KatLang.BinderTrace KatLang.BinderCorrespondence
 
-/-! R7 checkpoint: the evaluator's recursive control is now total and completed production
-operations are connected by `EvaluatorCore.production_unfolds`. The source-only/partial-driver
-descriptions below are historical; the `hcal`/`hrec` correspondence premises and the binder-only
-observation boundary remain. Whole-body callback/direct-call refinement is still open. -/
+/-! R7 checkpoint: the evaluator's recursive control is total and completed production
+operations are connected by `EvaluatorCore.production_unfolds`. The general theorems below keep the
+`hcal`/`hrec` correspondence premises because they quantify over EVERY channel record; for the
+production channels both are theorems, and the R6 statements are restated without them in
+`KatLangArityLaws/SupplyCorrespondenceProduction.lean` (`production_recursive_edge_sim`,
+`production_callable_sim`, `production_ready_supplies_bind_correspondingly`). The binder-only
+observation boundary remains. Whole-body callback/direct-call refinement is still open. -/
 
 /-!
 # Callback / direct-call binder correspondence over formed supplies (R6, S5, October 2026)
@@ -18,8 +21,10 @@ A callback invocation (`evalUserCallbackCallCounted`, `evalConditionalCallbackCa
 (`evalNeedUserSupply` / `evalNeedFamilySupply`, whose binding is `bindNeedPatterns` /
 `selectNeedFamilyBranch`, i.e. the generic core `NeedBinder`). An ordinary written call forms its
 cells with `formNeedSupply` (`NeedSupply.form`), generally SUSPENDED expression cells. That both
-routes call the same arm is a fact of the `partial` source; that both reach the same BINDER is
-definitional (`bind_need_patterns_is_core`); that equal VALUES alone make the two supplies
+routes call the same arm is a pair of body equations (`EvaluatorInstallation.user_callback_installs`
+and `user_call_installs`, `family_callback_installs` and `family_call_installs`); that both reach
+the same BINDER is definitional (`production_binder_is_the_core`; `user_supply_binds`,
+`family_supply_selects`); that equal VALUES alone make the two supplies
 equivalent is false (a Ready cell has no CALLABLE identity and no META plan).
 
 THE OBSERVATION BOUNDARY. This module compares two BINDING RUNS — the binder's outcome (error,
@@ -31,7 +36,8 @@ continuation where the clause search activates it (`choose_branch_sim`).
 THREE LEVELS, kept apart:
 
 1. SAME CELLS, SAME CAPABILITIES, SAME STATE: both routes run one definition on one input, so
-   they agree by reflexivity. This is a source fact about the routes, not a theorem here, and
+   they agree by reflexivity. That the two routes do run one definition is the installation
+   (`KatLangArityLaws/EvaluatorInstallation.lean` § 4), not a theorem of this module, and
    it is NOT the R6 obligation.
 2. AFTER READY SUPPLY FORMATION (`ready_supplies_bind_correspondingly`): two Ready supplies of
    the SAME counted values in the SAME order — formed at any two states, so at DIFFERENT
@@ -49,10 +55,11 @@ THREE LEVELS, kept apart:
    bijection of addresses between Ready/collector cells with corresponding contents, for which
    the production allocator `allocateNeed`, the production META capability `NeedPlan.reference`
    and the production VALUE shell `NeedDemand.step` on Ready cells meet `CapCorr` as KERNEL
-   theorems (`heap_corr_capabilities`). Two premises stay explicit there: the CALLABLE channel
-   (`projectNeedCallable` is `partial`) and the recursive collector edge (`demandNeedRecursive`
-   is `partial`; the binder never demands a collector it allocates on a validated signature,
-   because collecting names are never repeated).
+   theorems (`heap_corr_capabilities`). Two premises stay explicit there, since the theorem is
+   stated for every channel record: the CALLABLE channel and the recursive collector edge. Both
+   are PROVED for the production channels (`SupplyCorrespondence.Production.production_callable_sim`,
+   `production_recursive_edge_sim`; also, the binder never demands a collector it allocates on a
+   validated signature, because collecting names are never repeated).
 
 BOUNDARIES THE PREMISES MAKE EXPLICIT (and the guards in `SupplyCorrespondenceGuards.lean`
 witness):
@@ -67,7 +74,7 @@ witness):
   simulation relates only if the transported cells themselves correspond — a value copy is a
   different, Ready, cell;
 * suspended expression cells are NOT in `HeapCorr`: relating a suspended written argument to a
-  Ready one needs their VALUE demands to agree, i.e. the evaluator's refinement (R7). The general
+  Ready one needs their VALUE demands to agree, i.e. a refinement of whole evaluations (open). The general
   simulation accepts any such relation as a premise; none is proved here.
 -/
 
@@ -1043,8 +1050,12 @@ theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResu
 /-- THE PRODUCTION CAPABILITIES CORRESPOND under `HeapCorr`: the binder's allocator
     `allocateNeed` and META capability `NeedPlan.reference` unconditionally, its VALUE shell
     `NeedDemand.step` given the recursive collector edge's correspondence, and its CALLABLE
-    channel given as a premise (`projectNeedCallable` is `partial`; that it answers a Ready or
-    collector cell from that cell's memo and suspension alone is a fact of its source). -/
+    channel given as a premise — both premises because `channels` and `recur` are arbitrary. For
+    the production channels they are theorems: `projectNeedCallable` answers a Ready or collector
+    cell from that cell's memo and suspension alone
+    (`SupplyCorrespondence.Production.production_projection_run`), and
+    `production_capabilities_correspond` / `binding_capabilities_correspond` are this theorem with
+    no premise. -/
 theorem heap_corr_capabilities (channels : NeedChannels)
     (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
@@ -1086,7 +1097,9 @@ theorem ready_formation_sim (args : List CountedResult) (t : Table) :
     both non-matches, or environments that bind the same names in the same order to corresponding
     cells, with corresponding final heaps. Every pattern kind is covered (fixed, collecting,
     nested structural, literal, META, repeated names) in either mode. The premises are the two
-    `partial` channels' correspondence (`hrec`, `hcal`). -/
+    channels' correspondence (`hrec`, `hcal`), for an arbitrary channel record; at the production
+    channels the theorem holds without them
+    (`SupplyCorrespondence.Production.production_ready_supplies_bind_correspondingly`). -/
 theorem ready_supplies_bind_correspondingly (channels : NeedChannels)
     (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
@@ -1128,8 +1141,8 @@ theorem ready_supplies_select_correspondingly {γ : Type} (channels : NeedChanne
     address-indexed expression evaluation `evalSuppliedAt` (META-S3-1: a supplied `.Algorithm` link's
     VALUE reads its own receiver cell) and the recursive edge
     (`NeedControl.Production.demand_specialization`), so the two premises left are exactly the
-    `partial` recursive edge `demandNeedRecursive` (reached only by collector cells) and the `partial`
-    projection `projectNeedCallable`. -/
+    recursive edge `demandNeedRecursive` (reached only by collector cells) and the projection
+    `projectNeedCallable` — both discharged in `KatLangArityLaws/SupplyCorrespondenceProduction.lean`. -/
 theorem public_channels_value :
     (⟨demandNeed, projectNeedCallable⟩ : NeedChannels).value =
       fun a => NeedDemand.step (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a := by

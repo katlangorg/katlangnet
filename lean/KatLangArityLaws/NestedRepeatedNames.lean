@@ -38,8 +38,10 @@ address is a COMPLETED successful VALUE or a SUSPENDED Ready cell, and its CALLA
 successful outcome or an UNPROJECTED Ready cell (identityless). VALUE demand and CALLABLE projection
 publish their memo; allocation appends; nothing else changes. The evaluator's binder call sites pass
 exactly `NeedChannels.shell evalSuppliedAt ⟨…⟩ demandNeedRecursive projectNeedWrittenAt`
-(`bindingChannels`): that wiring is a SOURCE fact of the `partial` call sites, the channel
-behaviour on this domain is a kernel theorem.
+(`bindingChannels`): that wiring is a theorem of the call sites' bodies
+(`EvaluatorInstallation.user_supply_binds`, `family_supply_selects`, `user_step_binds`, with
+`EvaluatorCore.bindingChannels_is_core` for production), and the channel behaviour on this domain
+is a kernel theorem.
 
 THE LAWS (per repeated name `X`, its contributions = its logged occurrences, `occ X log`):
 * `one_tracks`, `sources_tracks`: on success, `X`'s VIEW — its representative and agreement state

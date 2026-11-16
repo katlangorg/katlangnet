@@ -2,11 +2,12 @@ import KatLangArityLaws.CallReference
 
 open KatLang KatLang.CallPlan
 
-/-! R7 checkpoint: the recursive evaluator control is now the total `EvalBody`/`evalFuel` core.
-The `partial`/source-only installation descriptions below record the original proof boundary;
-`EvaluatorCore.production_unfolds` connects completed operations to those bodies. This does not
-prove reachable link-address validity, completed CALLABLE stability or end-to-end projection
-refinement. The local theorems below retain their stated premises.
+/-! R7 checkpoint: the recursive evaluator control is the total `EvalBody`/`evalFuel` core, and the
+installations this header lists are body equations of it, for every evaluator answer
+(`KatLangArityLaws/EvaluatorInstallation.lean` § 2, § 3 and § 6);
+`EvaluatorCore.production_unfolds` connects completed production operations to those bodies. This
+does not prove reachable link-address validity, completed CALLABLE stability or end-to-end
+projection refinement. The local theorems below retain their stated premises.
 
 FG-M1 (2026-10-23): completed CALLABLE stability and recorded-link preservation across intervening
 production evaluation are now proved in `EvaluatorMemoLinks.lean` (`production_keeps_memo_links`,
@@ -40,15 +41,18 @@ invocation's original argument supply (CR-13..CR-16). The authoritative definiti
   through the one receiver and the one callee cell;
 * `projectParameterWith` — the TYPED parameter projection of L2 (a failure is never absence).
 
-The `partial` evaluator installs them: `linkValue` = `NeedLink.value demandNeedRecursive`,
+The evaluator core installs them: `linkValue` = `NeedLink.value demandNeedRecursive`,
 `linkCallable` = `NeedLink.callable demandNeedRecursive projectNeedCallable`,
 `projectParameterCallable` = `projectParameterWith projectNeedCallable` (read by `resolveAlg`'s
 `.param` arm, `resolveDotReceiver?`'s and `projectNeedStructuralMember`'s parameter heads), the
 `"Algorithm"` arms of `evalDotCallCounted` (`algorithmOfValue`), the link arm of
 `evalCallCountedExpr` (`algorithmCalleeOf`), and `evalSuppliedAt` / `projectNeedWrittenAt`, the
-address-indexed VALUE and CALLABLE of a supplied cell. That installation is a SOURCE FACT of the
-`partial` definitions (Lean keeps them opaque), pinned by executable guards in
-`AlgorithmProjectionGuards.lean`.
+address-indexed VALUE and CALLABLE of a supplied cell. Each installation is a THEOREM
+(`KatLangArityLaws/EvaluatorInstallation.lean`: `linkValue_installs`, `linkCallable_installs`,
+`parameter_projection_installs`, `resolve_parameter`, `dot_receiver_parameter_head`,
+`structural_member_parameter_head`, `dot_algorithm_arm`, `algorithm_intrinsic_installs`,
+`written_call_installs`, `supplied_link`, `written_projection_of_link`);
+`AlgorithmProjectionGuards.lean` runs whole programs through them.
 
 Proved here, over the total definitions:
 
@@ -71,10 +75,15 @@ Proved here, over the total definitions:
   successful absence as absence (`parameter_projection_failure_propagates`,
   `parameter_projection_absence`, `parameter_projection_identity`, `parameter_without_cell`).
 
-NOT claimed here (source facts with executable guards, or C#-only): that the `partial` evaluator's
-arms call these definitions; fresh invocation with the NEW supply and ordinary family dispatch (P8,
-guards); that no result construction exports CALLABLE (P9: `Result` gains no constructor — a source
-fact of this candidate — and guards); C# concurrency, the CALLABLE single flight, asynchronous
+That the evaluator's arms call these definitions is the installation above. That an invocation with
+arguments is a FRESH ordinary call over the NEW supply (P8) is the intrinsic's body
+(`EvaluatorInstallation.algorithm_intrinsic_installs`: `evalResolvedCallCounted` of the captured
+callee with exactly the written arguments), which reaches the ordinary dispatch
+(`resolved_call_forms_supply`).
+
+NOT claimed here: the outcome of a whole program through these arms (guards); that no result
+construction exports CALLABLE (P9: META-S3-1 added no constructor to `Result` — a statement about
+the text of a definition, which is no theorem's subject — and guards); C# concurrency, the CALLABLE single flight, asynchronous
 resolution, cancellation, run ownership and resource terminality (C#-only, `NeedCell`,
 `Evaluator.ResolveAsync`, `CheckCallReferenceOwnership`).
 -/

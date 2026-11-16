@@ -2,9 +2,10 @@ import KatLangArityLaws.AlgorithmProjection
 
 open KatLang KatLang.CallPlan KatLang.AlgorithmProjectionLaws
 
-/-! R7 checkpoint: alias recursion now goes through the total `EvalBody`/`evalFuel` core and its
-production fuel search. The source-only descriptions below are historical limitations of these
-local theorems. `EvaluatorCore.production_unfolds` covers completed operations; reachable alias
+/-! R7 checkpoint: alias recursion goes through the total `EvalBody`/`evalFuel` core and its
+production fuel search, and the installation this header describes is a body equation of that core
+(`EvaluatorInstallation.alias_chase_installs`, `alias_value_installs`).
+`EvaluatorCore.production_unfolds` covers completed operations; reachable alias
 bindings, declaring activations and end-to-end alias refinement remain open. (M4★, ALIAS-UNIFY-1,
 October 2026, retired D4's first-observation claims and FWD-02's runtime eligibility gate; the
 whole-algorithm transport laws are `WholeAlgorithmTransport.lean`.) -/
@@ -29,8 +30,9 @@ read is the binding cell's VALUE (`aliasValue`). The authoritative definitions a
 
 The evaluator core installs them: `resolveAliasChase` takes the runtime step as
 `runtimeAliasStepWith projectNeedCallable` when `aliasStepIsRuntime` holds; the VALUE chase stops at the
-runtime alias, whose bare read `aliasValue` demands the SAME binding cell. That installation is pinned by
-executable guards (`RuntimeAliasGuards.lean`, the `runtime-alias-*` LanguageSpec cases, and
+runtime alias, whose bare read `aliasValue` demands the SAME binding cell. That installation is a theorem
+(`EvaluatorInstallation.alias_chase_installs`, `alias_value_installs`), and executable guards run whole
+programs through it (`RuntimeAliasGuards.lean`, the `runtime-alias-*` LanguageSpec cases, and
 `CoreTests/AliasForwarding`).
 
 Proved here, over the total definitions:
@@ -54,9 +56,10 @@ Proved here, over the total definitions:
 * a runtime reference is its own (empty) open namespace (`runtime_reference_opens_itself`);
 * the row classification (`runtime_rows`, `static_name_is_no_runtime_row`).
 
-NOT claimed here (source facts with executable guards, or C#-only): that the `partial` evaluator calls
-these definitions; that a call through the alias is the identity's FRESH call with exactly the written
-new supply (D3) and that a chain or cycle behaves as the guards show; the C# front end's Option A
+NOT claimed here (open statements about whole evaluations with executable guards, or C#-only): that a
+call through the alias is the identity's FRESH call with exactly the written
+new supply (D3) and that a chain or cycle behaves as the guards show — properties of whole chases on
+reachable bindings, beyond the one-step equation above; the C# front end's Option A
 classification and Q-75 inference (front-end facts, FORMAL-02: no theorem here concerns inference);
 C# concurrency, first-wins establishment, the CALLABLE single flight, Guard B, run pre-marking,
 asynchronous resolution and cancellation (C#-only, `RuntimeCallableAliasMechanismTests`).

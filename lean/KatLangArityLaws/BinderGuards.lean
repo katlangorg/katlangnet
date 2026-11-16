@@ -14,8 +14,9 @@ identities with equal values, an effect counter). They pin the concrete event sc
 theorems of `KatLangArityLaws.BinderTrace` and `KatLangArityLaws.FamilyDispatch` characterize,
 including allocation events and their addresses. A guard is a finite witness: the universal
 statements are the theorems. Since R5, public `demandNeed` is a total one-step specialization
-of `NeedDemand.step`; evaluator binding sites pass the partial `demandNeedRecursive` driver,
-which invokes the same shell. Their recursive connection remains source/guard evidence.
+of `NeedDemand.step`; evaluator binding sites pass the recursive driver `demandNeedRecursive`,
+which runs the same shell (`EvaluatorInstallation.demand_installs`,
+`EvaluatorCore.production_demand_unfolds`).
 -/
 
 namespace KatLang.BinderGuards

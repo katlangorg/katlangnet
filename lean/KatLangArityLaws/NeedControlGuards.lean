@@ -46,7 +46,7 @@ end KatLang.NeedControlGuards.Witnesses
 
 namespace KatLang.NeedControlGuards
 open KatLang.NeedControl.Collector
-/- Adversarial executable guards below exercise actual helpers or current opaque production. -/
+/- Adversarial executable guards below exercise the actual helpers or the production operations. -/
 def refuse (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply := throw Error.divByZero
 def ctx (name : Ident) (a : Nat) : EvalCtx := {callStack := [], needEnv := [(name, a)]}
 
@@ -182,8 +182,9 @@ def shrinkExpression (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult
 end KatLang.NeedControlGuards
 
 /-! ## Projection (META-S3-0a): the production `projectNeedCallable` runs `NeedProjection.step`.
-The partial driver is opaque to the kernel, so these executable guards witness its wiring
-to the total shell whose laws are `KatLang.NeedControl.Projection`. -/
+That wiring is a theorem (`EvaluatorInstallation.projection_installs`: the driver's body IS the
+total shell whose laws are `KatLang.NeedControl.Projection`); these executable guards run the
+production driver on concrete heaps. -/
 namespace KatLang.NeedControlGuards.Projection
 
 -- An active projection: re-entry is `demandCycle` and leaves the marker in place.

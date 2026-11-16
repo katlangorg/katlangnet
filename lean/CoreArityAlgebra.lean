@@ -92,9 +92,10 @@ bindDeconstruct                 the unpacking arm of bindNeedOne (spreadItems of
 bindCallback                    evalUserCallbackCallCounted: the ordinary binder
                                 bindNeedPatterns over ready cells, one per
                                 element (plus the reducer accumulator) —
-                                allocation proved via the bindPats row; the
-                                callback route itself (partial) is
-                                cross-checked by guards, not proved
+                                allocation proved via the bindPats row; that
+                                the callback route runs that binder is proved
+                                (KatLangArityLaws/EvaluatorInstallation.lean),
+                                its evaluation cross-checked by guards
 
 This file is not a full semantics of KatLang. It isolates only the arity
 machinery used by the paper.
@@ -357,8 +358,10 @@ modelled by `bindCallback ps [e]`, which is `bindArgs ps [e]` BY DEFINITION
 `bindCallback ps [e, acc]`. A structured element is one argument (`map([(1, 2)], Add)` with
 `Add(x, y)` is the ordinary arity failure), and only the callee's explicit structural pattern
 opens it. In production, `evalUserCallbackCallCounted` feeds `readyNeed` cells to
-`evalNeedUserSupply`, which binds them with `bindNeedPatterns` — a source fact cross-checked by
-guards; only the allocation step is proved (`algebra_binder_is_the_production_allocation`).
+`evalNeedUserSupply`, which binds them with `bindNeedPatterns` — body equations of the total
+evaluator core (`EvaluatorInstallation.user_callback_installs`, `user_supply_binds`, in
+`KatLangArityLaws/EvaluatorInstallation.lean`). Of the ALGEBRA's correspondence with that binder
+only the allocation step is proved (`algebra_binder_is_the_production_allocation`).
 -/
 def bindCallback (ps : List Pat) (args : List Val) : Option Env :=
   bindArgs ps args

@@ -14,7 +14,7 @@ total Model-C binder.
 This file proves laws over real KatLang `Result` constructors, normalization,
 value views and the total helpers of `KatLang.lean`.
 
-R7 NOTE (October 2026): the evaluator is no longer `partial`. Its operations are the bodies of the total fuel-indexed core (`KatLang.lean` § The fuel-indexed evaluator core), so a caller's use of a helper is now a kernel term, and `KatLangArityLaws/EvaluatorCore.lean` relates every completed production run to that core (`production_completes_iff`, `production_unfolds`). Statements below that call an evaluator definition `partial`, opaque, or a fact of its source are historical: they record what was proved WITHOUT that bridge, and no theorem here was strengthened by it unless it says so.
+R7 NOTE (October 2026; installation restated November 2026): the evaluator is not `partial`. Its operations are the bodies of the total fuel-indexed core (`KatLang.lean` § The fuel-indexed evaluator core), so a caller's use of a helper is a kernel term: `KatLangArityLaws/EvaluatorInstallation.lean` states each such use as an equation of the caller's body, for every evaluator answer, and `KatLangArityLaws/EvaluatorCore.lean` relates every completed production run to that core (`production_completes_iff`, `production_unfolds`; `EvaluatorInstallation.production_installed`). No theorem of THIS file was strengthened by it: each still says what its statement says, about the helper it names. A docstring below that points to `EvaluatorInstallation` names the theorem that connects the helper to its caller.
 
 EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
 
@@ -27,11 +27,12 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   R5 supply/demand control `NeedSupply` / `NeedDemand` and their total public entry points
   (proved in `KatLangArityLaws/NeedControl.lean`); the
   binder `bindNeedPatterns`, its generic core `NeedBinder` and the clause activation
-  `needActivateBranch`, and its allocation `needLevelSources`). It says nothing about the
-  `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeedRecursive`,
+  `needActivateBranch`, and its allocation `needLevelSources`). It is a statement about the
+  helper, not about the evaluator operations that call it (`evalCounted`, `demandNeedRecursive`,
   `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
-  a `partial` caller applies a helper is a fact of the source, checked by the CoreTests
-  guards and the Lean/C# differential corpora, never a kernel fact (see the R7 NOTE below);
+  a caller applies the helper is the caller's body equation, a theorem of
+  `KatLangArityLaws/EvaluatorInstallation.lean` (the R7 NOTE above); the CoreTests guards and the
+  Lean/C# differential corpora run whole programs through both;
 * a SPECIFICATION theorem — about a Lean specification of a C#-only front-end decision that
   the evaluator never calls (`liftsBareValueReference`, `forwardingSource`,
   `bareForwarding*`, `liftingSlotRole`, `familyLiftingSignature?`, the static alias chase
@@ -49,8 +50,9 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   definitions the production binder and dispatcher are) run in a local interpretation defined
   there (`TraceM`, the protected lifting `traced`, the schedule functions `oneEvents` …); it
   speaks of production through `trace_erasure` / `trace_erasure_dispatch`, which erase it to
-  the production run exactly, and like every theorem here says nothing about the `partial`
-  callers or C#;
+  the production run exactly, and like every theorem here it is about the binder core, not about
+  the evaluator operations that call it (their binder call sites are
+  `EvaluatorInstallation.user_supply_binds` / `family_supply_selects` / `user_step_binds`) or C#;
 * a CORRESPONDENCE theorem (R3, the submodule `KatLangArityLaws/BinderCorrespondence.lean`) — a
   PRODUCTION theorem over the generic core's `EvalM` runs at any capability record, which reads
   the schedule functions of `BinderTrace` (their meaning as the actual invocations is
@@ -60,7 +62,10 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   relating two runs of the generic core, at two capability records and two states, under an
   explicit address table and state relation (`CapCorr`, `Sim`); its production instance
   `HeapCorr` discharges the allocator, the META capability and the VALUE shell on Ready cells as
-  kernel theorems and keeps the two `partial` channels as premises;
+  kernel theorems; the general theorems keep the two channel premises, because they quantify over
+  every channel record, and `KatLangArityLaws/SupplyCorrespondenceProduction.lean` proves both for
+  the production channels (`production_recursive_edge_sim`, `production_callable_sim`), so the
+  production corollaries carry none;
 * a REPRESENTATIVE-FOLD theorem (S5, `KatLangArityLaws/RepeatedNameLaws.lean`) — a LOCAL theorem
   about the pure fold `retain` over stable completed contributions, made a statement about
   production by `name_step_production` / `production_flat_head_is_flatBind`, which prove the
@@ -100,7 +105,7 @@ channels on completed and Ready cells, and `KatLangArityLaws/CallableIdentityDom
 callable-identity transitivity to every pair without an identified/anonymous fallback, with
 `KatLangArityLaws/CallableIdentityProvenance.lean` deriving that from construction provenance; and
 `KatLangArityLaws/SupplyCorrespondence.lean` proves a heap-renaming SIMULATION of the whole binder
-and the callback route's Ready-supply correspondence (premises: the two `partial` channels). The outcomes of the pattern helpers (literal
+and the callback route's Ready-supply correspondence (premises: the two channels' correspondence, proved for the production channels in `KatLangArityLaws/SupplyCorrespondenceProduction.lean`). The outcomes of the pattern helpers (literal
 matching, kind-mismatch payload, duplicate-clause check) stay symbolic there — they need no more —
 although since R3′ (October 2026) those helpers are total and their laws are kernel theorems in
 `KatLangArityLaws/PatternHelpers.lean`;
@@ -109,7 +114,8 @@ witnesses. § Repeated spread over the real model (Q-66 item 4) proves the
 repeated-spread laws over `Result` and the production reopening helpers: shallow slot
 combination is ordinary capture on canonical slots, the grouped `(A*)*` layer is the stacked
 `A**` step, only a lone item opens one more boundary, and repeated spread never flattens (the
-`partial` evaluator's routing through those helpers is guard-checked by CoreTests.RepeatedSpread).
+evaluator's routing through those helpers is `EvaluatorInstallation.spread_installs` and
+`rows_step`; CoreTests.RepeatedSpread runs it on whole programs).
 The final section, § Number text, keeps the one law of the former string-interpolation section that is
 about a surviving operation: the text `.string` writes for a number (string interpolation itself was
 removed by STR-03, November 2026).
@@ -124,15 +130,18 @@ boundary (`x = 1, 2, 3`). It is NOT the collecting-binding operation: collecting
 materializes `collect : Supply -> ListValue` (value-level definition `collectSegment`; in
 production, `makeCollectionListResult` on the collector cell's VALUE demand), and the spread
 marker is `spread : Value -> Supply` (`Result.spreadItems`). The laws below relate the three
-operations at the value level; which operation a receiver applies is the evaluator's (a fact
-of its `partial` source, pinned by guards), proved here only for the collector's allocation
-over the production binder (`lone_collector_collects_every_supplied_cell`).
+operations at the value level; which operation a receiver applies is the evaluator's: its
+capture arm, spread evaluation and collector demand are body equations of
+`KatLangArityLaws/EvaluatorInstallation.lean` (`capture_arm`, `rows_combine_shallowly`,
+`spread_installs`, `demand_installs`), and the collector's allocation over the production binder
+is proved here (`lone_collector_collects_every_supplied_cell`).
 -/
 def captureForArityLaw (xs : List Result) : Result :=
   Result.normalize (Result.sequenceValue xs)
 
 /-- Every depth of written empty-sequence grouping builds the one canonical `()` (the total
-helper the `partial` evaluator's `.emptySequence` arm calls; that call is a source fact). -/
+helper the evaluator's `.emptySequence` arm calls: `EvaluatorInstallation.emptySequence_arm`,
+and from every state at production `emptySequence_production`). -/
 theorem build_empty_sequence_value_is_empty_sequence (depth : Nat) :
     buildEmptySequenceValue depth = Result.sequenceValue [] := rfl
 
@@ -216,8 +225,10 @@ the total `NeedDemand.materialize` helper materializes that cell's VALUE as
 count 1 (`make_collection_list_result_is_collect_segment`). R5 connects the total public
 `demandNeed` collector arm to that helper by kernel theorems (`KatLang.NeedControl.Production.demand_specialization`,
 `collector_specialization` and `collector_success` in `KatLangArityLaws/NeedControl.lean`). The
-internal partial `demandNeedRecursive` driver's use of the same shell remains source/guard
-evidence, pinned by CoreTests.ModelC. Deconstruction and nested structural patterns
+recursive driver `demandNeedRecursive` runs the same shell: its body is that shell over the
+evaluator's own callbacks (`EvaluatorInstallation.demand_installs`), and a completed production
+demand is it (`EvaluatorCore.production_demand_unfolds`); CoreTests.ModelC runs it on whole
+programs. Deconstruction and nested structural patterns
 open their one value before allocation. The laws below are the value-level exactness
 properties of that materialization.
 -/
@@ -287,7 +298,9 @@ theorem spreadItems_collectSegment (xs : List Result) :
     (collectSegment xs).spreadItems = xs := rfl
 
 /-- A collected list is one visible value: its `Result.valueCount` is 1, the empty collected
-list `[]` included. (That a boundary emits `valueCount` is the evaluator's source fact.) -/
+list `[]` included. (That a boundary emits `valueCount` is the evaluator's body at that boundary:
+`EvaluatorInstallation.capture_arm`, `emptySequence_arm`, `index_arm` through `selectionResult`,
+`user_supply_is_a_value_boundary` through `reCountValueBoundary`.) -/
 theorem valueCount_collectSegment (xs : List Result) :
     (collectSegment xs).valueCount = 1 := rfl
 
@@ -400,12 +413,16 @@ normalization (DOT-09; Q-18 C-B3): the callee law `resolveCalleeAlgWith project 
 a dot callee is `project`, then `normalize`, and a computed dot value with no structural member is
 `notAnAlgorithm`, for EVERY structural projection `project` and alias normalizer `normalize`. This is
 the definition of the total callee law's dot arm. Since META-S3-1 the production `resolveCalleeAlg` is
-a `partial` member of the evaluator recursion core (a runtime projection may demand VALUE) that
-installs `projectNeedStructuralMember`, `resolveAliasTarget` (since META-S3-2 a core member too: a
-runtime-target alias's step projects its binding cell) and `resolveAlg`; that installation, and that
-the supplied-argument projection (`projectNeedCallable`'s dot arm, `partial`) agrees with it — the
-single callable identity in every position, `(Box.G)(2)` as the member call `Box.G(2)` — are source
-facts pinned by guards, not part of this statement. -/
+a member of the evaluator recursion core (a runtime projection may demand VALUE) that installs
+`projectNeedStructuralMember`, `resolveAliasTarget` (since META-S3-2 a core member too: a
+runtime-target alias's step projects its binding cell) and `resolveAlg`. That installation is
+`EvaluatorInstallation.callee_installs`, and the supplied-argument projection's dot arm reads the
+SAME structural projection (`EvaluatorInstallation.written_projection_dot_arm`): one structural
+selection in both positions, the callee then normalizing with `resolveAliasTarget` and the argument
+with `resolveAliasStructure`. That the two normalizers agree on a selected member — the single
+callable identity in every position, `(Box.G)(2)` as the member call `Box.G(2)` — is NOT a theorem:
+it is a property of the alias chase on reachable members, pinned by guards, and no part of this
+statement. -/
 theorem dot_callee_resolution_is_structural_projection_then_alias
     (project : Expr → EvalCtx → EvalM (Option Algorithm))
     (normalize : Algorithm → EvalCtx → EvalM Algorithm) (resolve : Expr → EvalCtx → EvalM Algorithm)
@@ -435,8 +452,12 @@ dot-receiver laws), with `need_level_sources_around_the_collector` and
 `make_collection_list_result_is_collect_segment`. That a written argument forms ONE cell, and
 that computed spreads allocate Ready cells in opened-item order and known slices transport
 their exact addresses, is proved over the total `NeedSupply` core and public `formNeedSupply`
-specialization in `KatLangArityLaws/NeedControl.lean`. The partial evaluator's installation of
-`evalCounted` remains source/guard evidence, pinned by CoreTests `ExplicitValueOpening` / `ModelC`.
+specialization in `KatLangArityLaws/NeedControl.lean`. The evaluator's call sites install that
+former over their own spread capability (`EvaluatorInstallation.user_call_installs`,
+`family_call_installs`, `index_arm`; `NeedControl.Production.sourced_specialization` for the public
+entry), and an ordinary expression cell is evaluated by `evalCounted`
+(`EvaluatorInstallation.supplied_expression_is_evalCounted`); CoreTests `ExplicitValueOpening` /
+`ModelC` run whole programs.
 Dot-call and selection add
 nothing to the collector: a dot receiver is an ordinary leading slot
 (`dot_receiver_is_ordinary_leading_argument`) and a selection's result is the selected value
@@ -445,9 +466,11 @@ formation reads.
 -/
 
 /-- The spread VIEW opens a sequence and a list alike, exactly one level, and an atom gives
-itself: `Result.spreadItems`, which the `partial` spread arms of the evaluator read (a source
-fact; `Coll((1, 2)*)` and `Coll([1, 2]*)` both supply `1, 2` by supply formation, pinned by
-guards). Since Model C a spread of a collecting PARAMETER transports its cells instead
+itself: `Result.spreadItems`, which the spread evaluation of the evaluator reads through the checked
+opening (`EvaluatorInstallation.spread_installs`, `supply_spread_installs`;
+`ArgumentViewLaws.openSpreadItems_eq_reopen` relates the opening to this view; `Coll((1, 2)*)` and
+`Coll([1, 2]*)` both supply `1, 2` by supply formation, run by guards). Since Model C a spread of a
+collecting PARAMETER transports its cells instead
 (`formNeedSupplySourced`'s known-slice arm, `spreadCollectorSlice?`). -/
 theorem explicit_spread_opens_one_level (items : List Result) (n : Int) :
     (Result.sequenceValue items).spreadItems = items
@@ -847,7 +870,8 @@ theorem source_argument_fixed_capture_is_its_binding (x : Ident) :
     ParameterPattern.sourceArgument (.capture { name := x }) = .param x := rfl
 
 /-- A collecting capture is rebuilt as the spread of its binding, `xs*` (that the spread then
-re-supplies the collected range is supply formation, `partial`; FWD-01, NEED-07/08). -/
+re-supplies the collected range is supply formation, the total `NeedSupply` core:
+`NeedControl.Schedule.known_slot_exact`; FWD-01, NEED-07/08). -/
 theorem source_argument_collector_is_respread (xs : Ident) :
     ParameterPattern.sourceArgument (.capture { name := xs, kind := .collecting })
       = .sequenceSpread (.param xs) := rfl
@@ -1322,8 +1346,9 @@ VALUE demand; a flat call pattern binds whole supply cells
 (`call_binder_rejects_unaccepted_supply_before_any_effect`,
 `need_level_sources_around_the_collector`). The receiver is not a written structural pattern —
 it has no delimiter to select a kind — so it opens both kinds alike; the end-to-end contrast
-(deconstruction opens a lone value, a call keeps it whole) concerns the `partial` evaluator and is
-guard-checked (CoreTests `ListValues`, `ExplicitValueOpening`). These theorems live with the
+(deconstruction opens a lone value, a call keeps it whole) is a statement about whole evaluations of
+two programs, not one installation, and is guard-checked (CoreTests `ListValues`,
+`ExplicitValueOpening`). These theorems live with the
 production binder laws; this section only states the rule.
 -/
 
@@ -1449,9 +1474,12 @@ EVIDENCE. These laws are about the TOTAL helpers `Result.select?`, `Result.proje
 `Result.valueCount`, `Result.spreadItems`, `reCountValueBoundary`, `evalFirstCounted` /
 `evalLastCounted`, `countedSequenceCallbackItem` and `projectInvokingSlot`, and — in § Variadic
 postfix selection below — the selection core `selectPosition` / `selectWith` / `selectionResult`.
-The `.index` arm of `evalCounted`, the `first`/`last` builtin dispatch (with its empty policy,
-`applySequenceBuiltinEmptyPolicy`) and the callback dispatch are `partial`; that they apply these
-helpers is a source fact pinned by CoreTests `SelectionValueBoundary` / `VariadicSelection`.
+That the evaluator applies these helpers is stated per caller in
+`KatLangArityLaws/EvaluatorInstallation.lean`: the `.index` arm of `evalCounted` (`index_arm`), the
+`first`/`last` builtin dispatch (`first_arm`, `last_arm`) with its empty policy
+(`empty_selection_is_refused_by_the_policy`), and the callback dispatch (`callback_item_installs`,
+`reduce_step_installs`, `callback_slot_installs`). CoreTests `SelectionValueBoundary` /
+`VariadicSelection` run whole programs.
 -/
 
 /-- `select?` never rebuilds, normalizes, or opens the selected element: it
@@ -1510,7 +1538,10 @@ theorem last_is_select_last (x : Result) (xs : List Result) (s : EvalState) :
 own missing position, `badIndex` — the outcome of `()[0]` — never a count of their own (Q-27,
 decided 2026-10-05). In production the `first`/`last` builtins reach this through their empty
 policy first (`applySequenceBuiltinEmptyPolicy` reports `badIndex` with a "selects from an empty
-collection" context before the helper runs; a source fact pinned by CoreTests `ErrorTaxonomy`). -/
+collection" context before the helper runs: `EvaluatorInstallation.empty_selection_is_refused_by_the_policy`
+for the prepared input, `first_arm` / `last_arm` for the dispatch; that the binding prepares its
+input before the dispatch is the body `EvalBody.bindSequenceBuiltinArguments`, run by CoreTests
+`ErrorTaxonomy`). -/
 theorem first_empty_is_badIndex (s : EvalState) :
     (evalFirstCounted []).run s = (Except.error Error.badIndex : Except Error (CountedResult × EvalState)) := rfl
 
@@ -1564,8 +1595,9 @@ theorem empty_policy_follows_what_the_builtin_is :
   ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Q-06 (decided 2026-10-05): `projectInvokingSlot` — the projection the callback and loop-step
-slots call (`expectPreparedSequenceBuiltinAlgorithmSuffixArg`, the `while`/`repeat` steps; a
-source fact pinned by CoreTests `ErrorTaxonomy`) — makes an argument with no CALLABLE identity
+slots call (`expectPreparedSequenceBuiltinAlgorithmSuffixArg`, the `while`/`repeat` steps:
+`EvaluatorInstallation.callback_slot_installs`, `while_round_installs`,
+`FiniteLoop.repeatDriver_succ`, `FiniteLoopCorrespondence.lean`) — makes an argument with no CALLABLE identity
 `notAnAlgorithm` named by its role, and reads no VALUE (its input is the slot's optional
 callable). -/
 theorem invoking_slot_without_callable_is_notAnAlgorithm (role : String) (s : EvalState) :
@@ -1586,7 +1618,8 @@ theorem invoking_slot_roles_follow_the_shared_vocabulary :
 
 /-- The helper the callback builtins apply to each iterated item (`countedSequenceCallbackItem`)
 re-counts it at the ordinary value boundary, whatever count the iteration supplied. (That the
-`partial` callback dispatch applies it is a source fact.) -/
+callback dispatch applies it: `EvaluatorInstallation.callback_item_installs` for `map` and `filter`,
+`reduce_step_installs` for `reduce`.) -/
 theorem callback_item_is_a_value_boundary (item : Result) (n : Nat) :
     countedSequenceCallbackItem (item, n) = (item, Result.valueCount item) := rfl
 
@@ -1615,9 +1648,11 @@ once, forms the selector supply like a call's (`NeedSupply.addresses evalSupplyS
 the TOTAL core below (`selectWith`) with `fun cell => Prod.fst <$> demandNeedRecursive cell`;
 these laws are about that core
 and the ONE positional view it shares with `count`, `first` and `last`. The arm
-itself lives in the partial evaluator block: CoreTests `VariadicSelection` pins the
-instantiation (receiver once, spreads during formation, left-to-right demand, first
-failure) executably, and the C# twin pins the same traces.
+itself is a body of the total evaluator core, and that instantiation is a theorem
+(`EvaluatorInstallation.index_arm`: receiver once, the selector supply formed like a call's, the
+selection core over the recursive VALUE demand); CoreTests `VariadicSelection` runs the traces
+(spreads during formation, left-to-right demand, first failure), and the C# twin pins the same
+traces.
 -/
 
 /-! ### One immediate positional view -/
@@ -1632,8 +1667,10 @@ theorem positional_view_is_shared (v : Result) :
 /-- THE ONE-LEVEL VIEWS ARE ONE FUNCTION (Q-66 "view equality", R8/X-13): the spread view
 `Result.spreadItems` — what an explicit spread and the deconstruction unpacking receiver open —
 IS the positional view, hence (`positional_view_is_shared`) the post-binding collection view, for
-every value. (That each evaluator consumer reads its view is a source fact; the C# twins agree by
-inspection and tests.) -/
+every value. (Which view an evaluator consumer reads is that consumer's body: selection reads the
+positional view through `selectWith` — `EvaluatorInstallation.index_arm` —, the spread the checked
+opening — `spread_installs` —, and a collection builtin the post-binding view through
+`sequence_builtin_binding_installs`; the C# twins agree by inspection and tests.) -/
 theorem spread_view_is_the_positional_view (v : Result) :
     Result.spreadItems v = Result.projectionItems v := by
   cases v <;> rfl
@@ -1920,9 +1957,10 @@ cell, then `selectionResult` — give exactly the value-boundary re-count of the
 `reCountValueBoundary (selected, n)` for every count `n` the element carried: the stored value
 itself with `Result.valueCount`, its origin forgotten. The `.index` arm of `evalCounted`
 instantiates `demand` with `fun cell => Prod.fst <$> demandNeedRecursive cell` over the selector
-supply formed by `NeedSupply.addresses evalSupplySpread` and demands the receiver first; that arm is
-`partial`, so the instantiation (and that every evaluator selection route uses
-this core) is a source fact pinned by CoreTests `SelectionValueBoundary` / `VariadicSelection`.
+supply formed by `NeedSupply.addresses evalSupplySpread` and demands the receiver first: that
+instantiation is `EvaluatorInstallation.index_arm`, for every evaluator answer (an argument view
+and a retained collector receiver select through `selectViewWith` over the same demand); CoreTests
+`SelectionValueBoundary` / `VariadicSelection` run whole programs.
 (Strengthened from a restatement of `reCountValueBoundary_recounts` that never mentioned
 selection, R8/X-13.) -/
 theorem select_is_a_value_boundary {α : Type} (demand : α → EvalM Result)
@@ -1979,7 +2017,8 @@ helper over `v`'s collection view equals the selection core over `v` with the se
 (`selectionOf`, the pure-demand pipeline): the same value under the same value boundary, or the
 same `badIndex` when `v` has no positions. A law about one value in hand, not a rewrite of
 effectful expressions (`first(BuildData())` invokes once); the builtin's empty policy, which
-reports first on an empty collection, and the `partial` dispatch are guard-checked. -/
+reports first on an empty collection, and its dispatch are
+`EvaluatorInstallation.empty_selection_is_refused_by_the_policy` and `first_arm`. -/
 theorem first_is_selection_at_zero (v : Result) (s : EvalState) :
     (evalFirstCounted (builtinCollectionItems v)).runState s = (selectionOf v [.atom 0]).runState s := by
   rw [positional_view_is_shared, selectionOf_single]
@@ -1996,7 +2035,8 @@ helpers: on a value with no positions the index is `-1`, which the selection cor
 `badIndex` — exactly what the `last` helper reports; otherwise both select the last element
 under the same value boundary. Same caveats: a law about one value in hand
 (`last(BuildData())` invokes once, while `BuildData()[count(BuildData()) - 1]` invokes twice),
-and the builtin's empty policy and `partial` dispatch are guard-checked. -/
+and the builtin's empty policy and dispatch are
+`EvaluatorInstallation.empty_selection_is_refused_by_the_policy` and `last_arm`. -/
 theorem last_is_selection_at_count_minus_one (v : Result) (s : EvalState) :
     (evalLastCounted (builtinCollectionItems v)).runState s
       = (selectionOf v [.atom (Int.ofNat (builtinCollectionItems v).length - 1)]).runState s := by
@@ -2137,8 +2177,12 @@ theorem one_element_list_pattern_is_valid (x : Ident) :
 `ParameterPattern.signatureViolation?` is THE validity of a parameter-pattern list as a callable
 signature — the singleton rule, at most one collecting capture per pattern level, and no repeated
 name that includes a collecting binding. It is a PRODUCTION definition: the pre-evaluation gate
-`validateAlgorithmTree` reads it (a `partial` def, so "enforced before evaluation" is a source fact
-pinned by CoreTests `StructuralPatterns`). The C# front end holds every INFERRED signature to the
+`validateAlgorithmTree` reads it, and "enforced before evaluation" is a theorem since the validation
+is total (E-6 Tiers 2–3): the gate passes exactly on the admitted trees, whose every algorithm has
+no singleton sequence pattern, at most one collecting capture per level and no repeated name that
+includes a collecting binding (`AdmittedSet.validateAlgorithmTree_passes`, `AdmittedAlgorithm`), and
+the public run of any other tree is a validator error from its entry state
+(`AdmittedSet.public_refused`). The C# front end holds every INFERRED signature to the
 same rules (`ParameterPattern.FindSignatureViolation`; agreement rests on C# tests): formula
 lifting that would compose `K(a, *p, b, *q)` from `C1(a, *p)` and `C2(b, *q)` is the definition's
 front-end error. The laws prove two collectors at one level invalid IN GENERAL (top level and
@@ -2272,8 +2316,9 @@ whenever no compared level is decided by an identified/anonymous printed-declara
 premise (`KatLangArityLaws/CallableIdentityProvenance.lean`, `production_head_walk_follows`). Open:
 arbitrary suspended or failing contributions, that every CALLABLE of a real run lies in that domain
 (`ModelFollows` is a premise), and full transitivity (one residual about the opaque printer,
-`ReprSeparatesPresence`; the printer's layout loop is `partial`, and no kernel proof of the
-residual is supplied), roadmap R4. Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
+`ReprSeparatesPresence`: the printed strings go through `Std.Format.pretty`, whose layout loop is a
+`partial` definition of LEAN CORE — not of KatLang, whose own printers are total since E-6 Tier 3 —
+so the kernel cannot compute them and no proof of the residual is supplied), roadmap R4. Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
 (`repeatedNameCompatibilityAndFirstFailure`, `twoOccurrenceRepeatsKeepThePairwiseRule`,
 `repeatedSuccessfulCallablePermutationsKeepBothChannels`,
 `repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
@@ -2513,9 +2558,10 @@ end
 /-- Capture canonicity over `captureForArityLaw` (the normalizing construction of the
 spread value and the loop state; the written `.capture` arm combines its slots with the shallow
 `combineOutputSlots`, which equals it exactly on canonical slots —
-`combineOutputSlots_eq_capture_iff_canonical` in § Repeated spread over the real model — while
-that the arm applies it, and that its slots are canonical, stay facts of the `partial` source and
-the runtime invariant): a captured item supply
+`combineOutputSlots_eq_capture_iff_canonical` in § Repeated spread over the real model — the arm
+applies it by `EvaluatorInstallation.capture_arm` and `rows_combine_shallowly`, while that its
+slots are canonical is the runtime invariant, a property of whole runs that no theorem proves): a
+captured item supply
 is already canonical, so capture is a fixed point of `Result.normalize`
 (corollary of `normalize_idempotent`, since
 `captureForArityLaw xs = Result.normalize (Result.sequenceValue xs)`). -/
@@ -2631,7 +2677,9 @@ theorem toItems_empty : (Result.sequenceValue []).toItems = [] := rfl
 captured by `captureForArityLaw` changes nothing — while the UNSPREAD values stay visible
 one-item slots (`toItems_listValue_opaque`, `valueCount_empty_list`). These are the value-model
 faces of the core `capture_zero_item_spread_neutral` family; the surface forms `(n, ()*)` and
-`(n, []*)` are written `.capture` slots evaluated by the `partial` arm and pinned by guards.
+`(n, []*)` are written `.capture` slots evaluated by the capture arm's row loop
+(`EvaluatorInstallation.rows_step`: a spread row contributes its recovered items, possibly none)
+and run by guards.
 -/
 
 /-- Generic neutral open at the capture alias: any value whose spread view supplies no items
@@ -2720,19 +2768,22 @@ FOUR KINDS OF EVIDENCE, kept apart (S5): (a) the total-helper laws of this secti
 cell-transport laws of S2 (`openSpreadItems_eq_reopen`, `openSupplySpread_eq_items`,
 `openSpreadItems_refuses_view`, and `stacked_star_is_grouped_recapture`: the stacked star is the
 grouped recapture for the checked opening, argument-view refusal included, with no premise);
-(c) executable routing of the `partial` evaluator (CoreTests `RepeatedSpread`); (d) a future,
-qualified expression-level theorem.
+(c) the routing of the evaluator, a body equation per route
+(`KatLangArityLaws/EvaluatorInstallation.lean`), run on whole programs by CoreTests
+`RepeatedSpread`; (d) a future, qualified expression-level theorem.
 
-NOT PROVED HERE. That the `partial` evaluator evaluates a spread operand ONCE and routes `A**`
-through `openSpreadItems` and `(A*)*` through the capture arm's `countedTopLevelValues` /
-`combineOutputSlots` is a fact of its source, pinned by CoreTests `RepeatedSpread`; that every
-evaluated value is canonical is the intended runtime invariant, assumed where a theorem states
-`v.normalize = v` and never proved of the evaluator. An expression-level equation
+PROVED ELSEWHERE, NOT HERE. The evaluator evaluates a spread operand ONCE and routes `A**` through
+`openSpreadItems` (`EvaluatorInstallation.spread_installs`), and `(A*)*` through the capture arm's
+`countedTopLevelValues` / `combineOutputSlots` (`capture_arm`, `rows_step`,
+`rows_combine_shallowly`). NOT PROVED: that every evaluated value is canonical — the intended
+runtime invariant, a property of whole runs, assumed where a theorem states `v.normalize = v` and
+never proved of the evaluator. An expression-level equation
 `eval (E**) = eval ((E*)*)` is at most a VALUE-AND-ERROR equivalence: RESOURCE equivalence is
 FALSE under the C# policy, which Lean does not model — `[1, 2]**` materializes 6 items and
 `([1, 2]*)*` 8, so under `MaxMaterializedItems = 6` the stacked spelling succeeds and the grouped
 one fails (`SequenceConstructSpreadReviewTests.StackedAndGroupedSpreadAgreeInValueButCanDifferUnderAResourceLimit`).
-The qualified value/error theorem needs evaluator refinement (R7) and remains open (Q-66 item 4).
+The qualified value/error theorem is a refinement of whole evaluations — statable since R7's total
+core, proved by no theorem — and remains open (Q-66 item 4).
 -/
 
 /-! ### Shallow slot combination is ordinary capture on canonical slots -/
@@ -2742,8 +2793,8 @@ theorem combineOutputSlots_nil : combineOutputSlots [] = Result.sequenceValue []
 
 /-- One slot is returned WHOLE: a lone structured slot is not opened, and a lone `()` slot is
 returned as `()` — the same VALUE zero slots combine to (`combineOutputSlots_nil`); that a
-non-spread `()` row still counts as one visible slot is the row loop's emitted count, a fact of
-the `partial` source, not of this function. -/
+non-spread `()` row still counts as one visible slot is the row loop's emitted count
+(`EvaluatorInstallation.rows_step`), not a fact of this function. -/
 theorem combineOutputSlots_singleton (v : Result) : combineOutputSlots [v] = v := rfl
 
 /-- Two or more slots form ONE sequence of exactly those slots: no slot is dropped (a `()` slot
@@ -3391,8 +3442,10 @@ theorem shallow_spread_agrees_on_canonical_operand {v : Result} (hv : v.normaliz
 /-
 ## Result-boundary re-count laws
 
-`reCountValueBoundary` is the shared helper the evaluator applies (a fact of its `partial`
-source) at public property/call/builtin RESULT boundaries: the caller observes the same structural
+`reCountValueBoundary` is the shared helper the evaluator applies at public property/call/builtin
+RESULT boundaries (`EvaluatorInstallation.user_supply_is_a_value_boundary`, `family_supply_selects`,
+`algorithm_intrinsic_installs`, `dot_member_read_installs`; a zero-supply publication re-counts by
+`PropertyInvocationLaws.zero_supply_bound_invocation_requests_the_cache`): the caller observes the same structural
 value with emitted count `Result.valueCount` (0 for the empty sequence value,
 otherwise 1), whatever internal item-supply count the body produced.
 -/
@@ -3425,8 +3478,9 @@ theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .listValue _ => Nat.le_refl 1
 
 /-- The empty list is a visible value: `Result.valueCount []` is 1, unlike the empty sequence
-value `()` (0 by definition). That the evaluator emits `valueCount` at value boundaries is a
-source fact. -/
+value `()` (0 by definition). That the evaluator emits `valueCount` at value boundaries is its
+body at each boundary (`EvaluatorInstallation.capture_arm`, `emptySequence_arm`, `if_arm`, and
+`reCountValueBoundary` at result boundaries, `user_supply_is_a_value_boundary`). -/
 theorem valueCount_empty_list : (Result.listValue []).valueCount = 1 := rfl
 
 /-- A result boundary emits at most one value: after `reCountValueBoundary`
@@ -3438,8 +3492,9 @@ theorem reCountValueBoundary_count_le_one (p : CountedResult) :
 /-
 ## Loop results are value boundaries (Q-26, decided October 2026)
 
-A completed `while`/`repeat` returns `loopResultCounted finalSlots` (a fact of the `partial`
-loop evaluator's source, pinned by CoreTests `LoopCardinality`): the
+A completed `while`/`repeat` returns `loopResultCounted finalSlots` (a theorem:
+`FiniteLoop.repeat_builtin_iff` / `while_builtin_iff` through `Finished.materialized`,
+over the installed arms `repeat_arm` / `while_arm`; CoreTests `LoopCardinality` runs it): the
 canonical capture of its final state's slots, re-counted at the ordinary
 RESULT value boundary exactly like every builtin and call result. The laws
 below are instances of the re-count laws above: the loop's slot count is its
@@ -3464,14 +3519,16 @@ theorem loop_result_count_is_value_count (slots : List Result) :
     (loopResultCounted slots).snd = (loopStateResult slots).valueCount := rfl
 
 /-- `loopResultCounted`'s count is at most one (so a non-spread loop contributes at most one
-item to a row supply — a consequence for the `partial` row-supply construction, guard-checked). -/
+item to a row supply — by the row loop's own count rule, `EvaluatorInstallation.rows_step`, and
+`OutputRows.items` for a loop step's rows). -/
 theorem loop_result_count_le_one (slots : List Result) :
     (loopResultCounted slots).snd ≤ 1 :=
   reCountValueBoundary_count_le_one _
 
 /-- `loopResultCounted` does not depend on the slot count: two final states whose captures are
 equal complete to the same counted result (a one-slot state holding `(20, 30)` and the two-slot
-state `20, 30` alike). That the loop's consumers see only this result is a source fact. -/
+state `20, 30` alike). The loop's consumers see only this result: it is the builtin's whole
+outcome (`FiniteLoop.repeat_builtin_iff`, `while_builtin_iff`). -/
 theorem loop_result_depends_only_on_the_final_value (left right : List Result)
     (h : loopStateResult left = loopStateResult right) :
     loopResultCounted left = loopResultCounted right := by
@@ -3526,8 +3583,9 @@ is Boolean-only (`Result.asBool?` reads no atom view at all), so lists still
 have no truth value — the traversal laws here can never leak into `if`.
 -/
 
-/-- LOCAL mirror of the expression the `partial` `.atomsBuiltin` arm of `applyBuiltinCounted`
-returns for an evaluated argument value (agreement by inspection of the source, not proof). -/
+/-- LOCAL name for the expression the `.atomsBuiltin` arm of `applyBuiltinCounted` returns for an
+evaluated argument value; the arm returns exactly it (`EvaluatorInstallation.atoms_arm`, by
+`rfl`). -/
 def atomsBuiltinResultForLaw (r : Result) : CountedResult :=
   makeCollectionListResult ((Result.languageAtoms r).map Result.atom)
 
@@ -3681,8 +3739,9 @@ theorem asBool_list_none (rs : List Result) :
     Result.asBool? (Result.listValue rs) = none := rfl
 
 /-- Numbers have no truth value either: the Boolean view of a number is empty (the condition
-consumers — `if`, `filter`, `while`, the logical operators — read this view by design; that they
-do is a source fact). -/
+consumers — `if`, `filter`, `while`, the logical operators — read this view by design:
+`EvaluatorInstallation.if_arm`, `filter_step`, `logical_arm`, and for the `while` flag
+`WhileRoundProduction.production_cf5_nonboolean_flag`). -/
 theorem asBool_atom_none (n : Int) : Result.asBool? (Result.atom n) = none := rfl
 
 /-- Strings have no truth value. -/
@@ -3710,10 +3769,14 @@ theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl
 
 -- AT-MOST-ONCE ARGUMENT VALUE EVALUATION (Q-01) and REPEATED NAMES ARE CONSTRAINTS, NOT MERGES
 -- (Q-05) have NO theorem in this section. The first lives on the slot's need cell — the `.param`
--- arm of `evalCounted` demands it first through the partial `demandNeedRecursive` driver.
--- R5 proves completed reuse and qualified publication for the total `NeedDemand.step` shell
--- and its public `demandNeed` specialization in `KatLangArityLaws/NeedControl.lean`; the
--- recursive edge and whole-run at-most-once refinement remain open. This behavior is executed
+-- arm of `evalCounted` reads it through ONE recursive VALUE demand of the bound address
+-- (`EvaluatorInstallation.param_arm`), and that demand is the total `NeedDemand.step` shell
+-- (`EvaluatorInstallation.demand_installs`, `EvaluatorCore.production_demand_unfolds`).
+-- R5 proves completed reuse and qualified publication for that shell and its public `demandNeed`
+-- specialization in `KatLangArityLaws/NeedControl.lean`, and R7 that a completed VALUE survives
+-- every production operation (`EvaluatorDiscipline.productionDiscipline_holds`). A whole-run
+-- at-most-once theorem — that a program's every read of a parameter is this demand of this cell
+-- on a reachable state — is not stated. This behavior is executed
 -- by `CoreTests/ArgumentValueOutcome.lean` and `CoreTests/ModelC.lean`. The second is the
 -- production binder's per-occurrence inspection (`bindNeedName`), whose order and verdict are
 -- proved since R3 in `KatLangArityLaws/BinderTrace.lean` (`repeated_name_binding` and the
@@ -3734,9 +3797,12 @@ the call's failure. The laws below pin the metadata (`slotRole`, read by the lif
 specification), the call-item assembly `collectSequenceCallableCallItems` (which evaluates
 nothing), and the per-item preparation helper `prepareSequenceBuiltinSuffixArgItem`. Supply
 formation is the total `NeedSupply` core, with public `formNeedSupplySourced` specialization
-proved in `KatLangArityLaws/NeedControl.lean`. Its installation of `evalCounted` at the builtin
-call site and the per-slot demand (`demandSequenceBuiltinCallItemValue`) remain in the `partial`
-evaluator, pinned by `CoreTests/BuiltinArgumentRoles.lean`. -/
+proved in `KatLangArityLaws/NeedControl.lean`. A builtin's arguments are the supplied cells of that
+formation; a VALUE slot over a cell is the cell's one recursive VALUE demand
+(`EvaluatorInstallation.argument_value_of_a_cell`), whose expression is evaluated by `evalCounted`
+(`supplied_expression_is_evalCounted`), and the per-slot demand of a collection builtin is
+`sequence_builtin_item_demand_installs` / `sequence_builtin_control_step`; `CoreTests/BuiltinArgumentRoles.lean` runs
+whole programs. -/
 
 /-- The `collection` parameter is a VALUE slot of every collection builtin. -/
 theorem collection_position_is_a_value_slot (metadata : SequenceBuiltinMetadata) :
@@ -3753,7 +3819,8 @@ theorem control_position_role_follows_its_kind
   simp [SequenceBuiltinMetadata.slotRole, h]
 
 /-- A position past the fixed signature is SURPLUS (that supplying it is an arity error is the
-`partial` arity check's, which never consults `slotRole`). -/
+binding's arity gate, which reads the control count and never consults `slotRole`:
+`EvaluatorInstallation.sequence_builtin_arity_gate`). -/
 theorem position_past_the_signature_is_surplus
     (metadata : SequenceBuiltinMetadata) (slot : Nat) (h : metadata.suffixArgs.length < slot) :
     metadata.slotRole slot = .surplus := by
@@ -4273,17 +4340,19 @@ that instantiation. The other laws concern the binder's channel-free parts (the 
 paper algebra's correspondence with the allocation, or `makeCollectionListResult`.
 
 What they do NOT establish:
-* that the evaluator calls these definitions with `bindingChannels` — the
-  call sites are bodies of `partial` defs, so that link is a fact of the source (and of every
-  guard that runs a call), not of the kernel;
-* the behavior of the opaque recursive driver `demandNeedRecursive` or `evalCounted`.
+* in THIS file, that the evaluator calls these definitions with `bindingChannels` — the call
+  sites are bodies of the total core and that link is a theorem of
+  `KatLangArityLaws/EvaluatorInstallation.lean` (`user_supply_binds`, `family_supply_selects`,
+  `user_step_binds`, with `EvaluatorCore.bindingChannels_is_core` for production);
+* the behavior of the recursive driver `demandNeedRecursive` or of `evalCounted` beyond their
+  body equations (`EvaluatorInstallation.demand_installs`, the arms of § 1 there).
   Since R5, supply formation BEFORE the top-level gate and collector/completion control
   are total (`NeedSupply`, `NeedDemand`). Their public `formNeedSupplySourced`,
   `formNeedSupply` and `demandNeed` specializations, ordered exact-list materialization,
   failure retention and qualified completion publication are proved in
   `KatLangArityLaws/NeedControl.lean`. Public `demandNeed` is one unfolding of the same
-  `NeedDemand.step` used by the partial driver; this does not prove the recursive edge
-  or whole-run heap refinement;
+  `NeedDemand.step` the recursive driver runs (`EvaluatorCore.production_demand_unfolds`); whole-run
+  heap laws are `EvaluatorDiscipline.lean` and `AddressInvariantProduction.lean`, not this file;
 * in THIS section, the order of the VALUE demands and CALLABLE projections made by inspecting
   occurrences (repeated names, literals, structural patterns), or the nested levels' gates
   (they run after the container's VALUE demand and after its item cells are allocated;
@@ -4932,8 +5001,9 @@ theorem algebra_binder_is_the_production_allocation (ps : List CoreArityAlgebra.
     public `demandNeed` collector arm to `NeedDemand.materialize` by the kernel theorem
     `KatLang.NeedControl.Production.collector_specialization`; that helper constructs exactly
     this list of demanded slice values (`KatLang.NeedControl.Production.collector_success`).
-    The partial `demandNeedRecursive` driver's use of the same shell remains source/guard
-    evidence. Several collection builtins return this constructor too. -/
+    The recursive driver `demandNeedRecursive` runs the same shell
+    (`EvaluatorInstallation.demand_installs`). Several collection builtins return this constructor
+    too. -/
 theorem make_collection_list_result_is_collect_segment (items : List Result) :
     makeCollectionListResult items = (collectSegment items, 1) := rfl
 
@@ -4946,9 +5016,10 @@ dot-receiver laws (§ Exact collector laws, § Dot-receiver bridge laws) for eve
 They presuppose supply formation: the total `NeedSupply` core forms ONE cell per written
 non-spread argument — a dot receiver included — and transports known-slice addresses or
 allocates Ready cells for computed-spread items. R5 proves these formation contracts and the
-public `formNeedSupply` specialization in `KatLangArityLaws/NeedControl.lean`. The partial
-evaluator's use of that core at `evalCounted` remains source/guard evidence, pinned by CoreTests
-`ModelC` / `ExplicitValueOpening` / `DotReceiverSegments`.
+public `formNeedSupply` specialization in `KatLangArityLaws/NeedControl.lean`. The evaluator's call
+sites use that core (`EvaluatorInstallation.resolved_call_forms_supply`, `user_call_installs`,
+`family_call_installs`), and CoreTests `ModelC` / `ExplicitValueOpening` / `DotReceiverSegments`
+run whole programs.
 -/
 
 /-- A LONE COLLECTOR COLLECTS EVERY SUPPLIED CELL, in order, whatever the cells hold: a lone
@@ -4974,7 +5045,8 @@ supplied cells, for every channel pair and in either mode: nothing is demanded o
 no cell is reopened. With `make_collection_list_result_is_collect_segment`, the collector's value
 (through the total `NeedDemand.materialize` helper, with public `demandNeed` specialization
 and collector success proved in `KatLangArityLaws/NeedControl.lean`) is the exact list of the
-cells' values. The partial recursive driver's wiring remains source/guard evidence. This is the
+cells' values. The recursive driver runs the same shell (`EvaluatorInstallation.demand_installs`).
+This is the
 production face of the exact collector law and of collecting-parameter forwarding's target
 (`Target(*ys)` re-collects exactly the cells `xs*` transported). -/
 theorem lone_collecting_head_allocates_one_collector_over_its_supply (channels : NeedChannels)

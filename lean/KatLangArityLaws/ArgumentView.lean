@@ -44,9 +44,13 @@ Every theorem below is about those authoritative definitions. Proved here:
   for META-free programs, whose values never contain a view;
 * the run boundary refuses a value containing a view (`export_refuses_view`).
 
-NOT claimed (source facts, executable guards in `ArgumentViewGuards.lean`): that the `partial`
-evaluator's `Arguments` arm, `.index` arm, sequence-builtin binding and `evalSupplySpread` call
-these definitions; the reachable-state refinement (open, ledger E-18; refuted for META states) and `ProductionDiscipline`
+That the evaluator's `Arguments` arm, `.index` arm, sequence-builtin binding/dispatch and `evalSupplySpread`
+call these definitions is proved in `KatLangArityLaws/EvaluatorInstallation.lean`
+(`dot_arguments_arm`, `index_arm`, `view_cells_installs`, `view_builtin_installs`,
+`sequence_builtin_binding_installs`, `count_arm`,
+`first_arm`, `last_arm`, `supply_spread_installs`); `ArgumentViewGuards.lean` runs whole programs.
+
+NOT claimed: the reachable-state refinement (open, ledger E-18; refuted for META states) and `ProductionDiscipline`
 (which now also names `evalSupplySpread`; open until R7, now the theorem `productionDiscipline_holds`,
 `EvaluatorDiscipline.lean`); run identity and the ended-run, foreign-run and terminal
 refusals (C#-only obligations: Lean has one run per state); C# concurrency, cancellation and
@@ -504,8 +508,9 @@ theorem openSupplySpread_eq_items : ∀ (n : Nat) (v : Result),
     `(A*)`), then the remaining stars — and an argument view is refused at the same point with
     the same error. No premise: this composes S2's checked opening with the value-level grouped
     layer law (`grouped_spread_layer_is_reopen`). It is about the total helpers; that the
-    `partial` evaluator routes `A**` and `(A*)*` through them, and evaluates `A` once, stays a
-    fact of its source (CoreTests `RepeatedSpread`). It says nothing about resources: C#'s
+    evaluator routes `A**` and `(A*)*` through them, and evaluates `A` once, is
+    `EvaluatorInstallation.spread_installs`, `capture_arm` and `rows_step` (run on whole programs
+    by CoreTests `RepeatedSpread`). It says nothing about resources: C#'s
     grouped spelling reserves its inner supply a second time
     (`SequenceConstructSpreadReviewTests.StackedAndGroupedSpreadAgreeInValueButCanDifferUnderAResourceLimit`).
     `(V)*` — one star over a grouped VALUE — is a different spelling (`openSupplySpread 0`). -/

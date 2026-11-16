@@ -615,7 +615,9 @@ theorem evalM_associativity {α β γ : Type} (x : EvalM α) (f : α → EvalM �
   exact bind_assoc x.runState (fun a => (f a).runState) (fun b => (g b).runState)
 
 /-- The public sourced entry point is the ONE total formation core at `evalSupplySpread`.
-    Recursive callers install the same specialization directly (a source fact). -/
+    The evaluator's call sites install the same core over their own spread capability
+    (`EvaluatorInstallation.resolved_call_forms_supply`, `user_call_installs`,
+    `family_call_installs`, `index_arm`). -/
 theorem sourced_specialization (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     formNeedSupplySourced args ctx env = NeedSupply.form evalSupplySpread ctx env args := rfl
 
@@ -634,10 +636,12 @@ theorem address_projection_run (args : OutputBundle) (ctx : EvalCtx) (env : ValE
   simp only [address_projection, Collector.bind_run, h]
   rfl
 
-/-- The public demand entry point is total. The recursive edge is still opaque;
-    this does NOT assert a kernel equality to demandNeedRecursive. Since META-S3-1 its expression
-    evaluation is address-indexed (`evalSuppliedAt a`: a supplied `.Algorithm` link reads its own
-    receiver cell); every other expression is `evalCounted` (source fact of the `partial` body). -/
+/-- The public demand entry point is total. It is the SHELL of the recursive edge at the production
+    operations, not an equation with `demandNeedRecursive`: a completed recursive demand is this
+    shell (`EvaluatorCore.production_demand_unfolds`), the converse is not claimed. Since META-S3-1
+    its expression evaluation is address-indexed (`evalSuppliedAt a`: a supplied `.Algorithm` link
+    reads its own receiver cell); every other expression is `evalCounted`
+    (`EvaluatorInstallation.supplied_expression_is_evalCounted`). -/
 theorem demand_specialization (a : Nat) :
     demandNeed a = NeedDemand.step (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a := rfl
 
@@ -706,8 +710,9 @@ theorem collector_failure_prefix (recur : Nat → EvalM CountedResult)
   rfl
 
 /-- Conditional whole-list heap-size bridge. It concerns the concrete traversal,
-    including failed callbacks, without claiming whole-run heap preservation for the partial
-    `demandNeedRecursive` driver or its expression-evaluation callback. -/
+    including failed callbacks, for any callback meeting the premise; the production
+    `demandNeedRecursive` driver meets it (`EvaluatorInstallation.production_demand_nonshrinking`,
+    from the whole-run discipline of `EvaluatorDiscipline.lean`). -/
 theorem schedule_nonshrinking {α β : Type} (f : α → EvalM β) (xs : List α)
     (hf : ∀ a, Nonshrinking (f a)) (s : EvalState) :
     s.needs.size ≤ (schedule f xs s).2.needs.size := by
@@ -748,8 +753,9 @@ theorem collector_nonshrinking (recur : Nat → EvalM CountedResult)
     rw [he] at h
     exact h
 
-/-- The formation loop composes local size contracts across all slots and errors.
-    Discharging the slot premise for the actual partial spread evaluator remains R7. -/
+/-- The formation loop composes local size contracts across all slots and errors, for any spread
+    capability meeting the slot premise. For the production spread evaluator the conclusion is a
+    theorem with no premise (`EvaluatorInstallation.production_formation_nonshrinking`). -/
 theorem formation_nonshrinking (ev) (ctx : EvalCtx) (env : ValEnv)
     (hs : ∀ source, Nonshrinking (NeedSupply.slot ev ctx env source))
     (args : OutputBundle) : Nonshrinking (NeedSupply.form ev ctx env args) := by
@@ -787,10 +793,11 @@ end KatLang.NeedControl.Production
 ## CALLABLE projection control (META-S3-0a)
 
 PRODUCTION theorems over the total `NeedProjection.step` and `NeedProjection.suspended` in
-KatLang.lean; `projectNeedCallable` installs them (`NeedProjection.step (NeedProjection.suspended
-projectNeedWritten)`). That driver and `projectNeedWritten` are `partial`, so their wiring is
-source evidence and executable guards (`NeedControlGuards.lean`, projection section), not kernel
-equations. Lean is serial: nothing here concerns C# single flight, joining, cancellation,
+KatLang.lean; `projectNeedCallable` installs them at the cell's own address (`NeedProjection.step
+(NeedProjection.suspended (projectNeedWrittenAt a)) a`). That wiring is a kernel equation of the
+driver's body (`EvaluatorInstallation.projection_installs`, `written_projection_of_non_link`,
+`written_projection_of_link`), and `NeedControlGuards.lean` (projection section) runs the
+production driver. Lean is serial: nothing here concerns C# single flight, joining, cancellation,
 host exceptions or resource limits, which are C#-only (`NeedCellProjectionFlightTests`).
 -/
 namespace KatLang.NeedControl.Projection

@@ -46,7 +46,9 @@ discharged by §3 for entered and dispatched bodies; `RetainedAt` mentions no la
 NOT claimed: that `scopeInContext` selected the semantically intended declaration
 (`activeDeclaration?` decides mixed pairs by printed text, hence `childOfInContext_chain`'s selection
 premise), so which
-chain a given production read resolves stays a source fact pinned by guards; that every expression's
+chain a given production read resolves is NOT a theorem — the printed text goes through Lean core's
+opaque layout `Std.Format.pretty`, and no proof computes it (ledger E-12) — and is pinned by guards;
+that every expression's
 property reads route through `evalZeroArgPropertyAccessCounted`; `WiresDirectly` for a module or
 builtin, which rebuild a different chain or have none; reuse across a fresh owner activation or a
 rebuilt unrelated chain (their keys differ); explicit invocations, which never read an entry; that a

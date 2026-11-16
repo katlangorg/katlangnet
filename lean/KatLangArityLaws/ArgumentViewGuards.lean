@@ -13,7 +13,9 @@ observations count production `NeedCell`s: an `x * x` cell is one execution of `
 cell is one prepared argument of the captured call (so ZERO such cells means the captured call's
 supply was never prepared), and Ready `1` cells count executions of the spread `Pair()*`.
 Failure-order guards use arguments whose preparation fails (`Boom()*`) to show which phase ran.
-These guards are executable evidence for the source facts `ArgumentView.lean` cannot reach.
+The installation of the view's definitions in those arms is proved
+(`KatLangArityLaws/EvaluatorInstallation.lean`); these guards are executable evidence for the
+outcomes, heaps and phase order of WHOLE programs, which no body equation gives.
 -/
 
 namespace KatLang.ArgumentViewGuards

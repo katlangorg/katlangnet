@@ -9,9 +9,12 @@ Every guard runs a whole program through the authoritative `runResult` / `runRes
 over the generalized invocation domain (`NeedPlan.callShape?`: every written call, every
 argument-bearing dot edge), the plan route (`NeedPlan.routeOf` over `classifyPlanRouteWith`, which
 decides through the ordinary dot decision `selectDotEdge`) and the route-aware `execute`,
-`viewCells` and `calleeCell`. They are the executable evidence for the source facts the total laws
-of `InvocationRoute.lean` state over their capabilities: that the evaluator installs exactly that
-route on VALUE, `Invoke()`, the argument view, `.Algorithm` and loop setup.
+`viewCells` and `calleeCell`. That the evaluator installs exactly that route — the production route
+`productionPlanRoute` is the core's `EvalRec.planRoute` (`EvaluatorCore.productionPlanRoute_is_core`,
+by `rfl`) — on VALUE (`EvaluatorInstallation.demand_installs`), `Invoke()` (`invoke_installs`), the
+argument view (`view_cells_installs`), `.Algorithm` (`algorithm_intrinsic_installs`) and loop setup
+(`FiniteLoop.repeat_arm`, `while_arm`) is proved; these guards are the executable
+evidence for the outcomes of WHOLE programs over it.
 
 Sections A–C/E/S/N are the 26 META-S3-4-R research guards (scratch `MetaS34Guards.lean`, the
 motivating program first), promoted unchanged except that the intrinsic-route refusal now names its

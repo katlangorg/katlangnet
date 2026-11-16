@@ -29,10 +29,12 @@ The laws are stated at the layer they belong to:
 
 Not claimed here: anything about `Algorithm.hasDuplicateBranchPatterns` beyond its Boolean (total
 since R3′; `KatLangArityLaws/PatternHelpers.lean` characterizes it and proves the production
-dispatcher's rejection of a renamed duplicate head from `select_duplicate_first`), the partial callers that pass the channels (`evalNeedFamilySupply`,
-`runNeedStepSlots`), or C#. A raw family-mode `none` is a clause NON-MATCH; it is not the
-ordinary call's arity error — the ordinary driver `evalNeedUserSupply` (`partial`) turns an
-unexpected `none` into `badArity` itself, a source fact — and the raw binder returns `none` for
+dispatcher's rejection of a renamed duplicate head from `select_duplicate_first`), or C#. That the
+evaluator's callers pass the channels (`evalNeedFamilySupply`, `runNeedStepSlots`) is
+`EvaluatorInstallation.family_supply_selects` and `family_step_selects`. A raw
+family-mode `none` is a clause NON-MATCH; it is not the
+ordinary call's arity error — the ordinary driver `evalNeedUserSupply` turns an
+unexpected `none` into `badArity` itself (`EvaluatorInstallation.user_supply_binds`) — and the raw binder returns `none` for
 a literal mismatch in BOTH modes (`literal_mismatch_is_none_in_both_modes`).
 -/
 

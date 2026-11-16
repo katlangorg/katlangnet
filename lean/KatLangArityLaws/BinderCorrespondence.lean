@@ -2,10 +2,12 @@ import KatLangArityLaws.BinderTrace
 
 open KatLang KatLang.BinderTrace
 
-/-! R7 checkpoint: `EvaluatorDiscipline.productionDiscipline_holds` now proves the production
-channels preserve existing suspensions, completed VALUEs and prepared supplies. The historical
-partial-driver descriptions below predate that bridge. Address validity and the production
-instantiation of the schedule freshness premise below are not proved by this module. -/
+/-! R7 checkpoint: `EvaluatorDiscipline.productionDiscipline_holds` proves the production
+channels preserve existing suspensions, completed VALUEs and prepared supplies, hence never shrink
+the heap (`EvaluatorInstallation.production_nonshrinking`). Address validity is
+`AddressInvariantProduction.lean`. The production instantiation of the schedule freshness premise
+below is NOT proved: it needs each allocation address of a production schedule related to the heap
+size along that run, which no theorem states. -/
 
 /-!
 # Two correspondences of the Model-C binder (R3, October 2026)
@@ -34,8 +36,10 @@ core's `EvalM` runs, not trace theorems; they read the schedule functions of `Bi
   plain position AND an inspecting one is inspected. The freshness hypothesis is a schedule fact;
   with the production allocator every allocation returns the then-current heap size, so it holds
   whenever the cells lie below the initial heap size and the channels never shrink the heap —
-  supported for the internal partial `demandNeedRecursive` channel by source inspection, not
-  a whole-run theorem. R5 proves local/conditional heap laws and total public `demandNeed`
+  the latter a whole-run theorem for the production channels
+  (`EvaluatorInstallation.production_nonshrinking`, `production_demand_nonshrinking`), the
+  derivation of the freshness premise from it not carried out here. R5 proves local/conditional
+  heap laws and total public `demandNeed`
   specialization in `KatLangArityLaws/NeedControl.lean`; its callbacks still need the stated
   heap-preservation assumptions.
 * (c) MODE CORRESPONDENCE, every head — a clause attempt (`family = true`) and an ordinary
@@ -49,8 +53,9 @@ core's `EvalM` runs, not trace theorems; they read the schedule functions of `Bi
   non-match: "the ordinary binding raised an incompatibility-shaped error" does NOT imply "the
   attempt was a non-match" — the converse that holds is the one above, for differing outcomes.
 
-As everywhere in R3, helper outcomes that reach `partial` definitions stay symbolic, and nothing
-here concerns the `partial` callers or C#.
+As everywhere in R3, the pattern helpers' outcomes stay symbolic (they are total since R3′;
+`KatLangArityLaws/PatternHelpers.lean`), and nothing here concerns the evaluator operations that
+call the binder (`KatLangArityLaws/EvaluatorInstallation.lean` § 4) or C#.
 -/
 
 namespace KatLang.BinderCorrespondence
@@ -1561,8 +1566,9 @@ theorem production_ordinary_binding_is_never_a_non_match (c : NeedChannels) (ps 
 
 /-- The head of every ordinary signature never yields a non-match at the production binder, so the
     `badArity` that the three ordinary drivers (`evalNeedUserSupply`, `runNeedStepSlots`,
-    `evalZeroArgumentDemandOutputCounted`, all `partial`) raise for an unexpected `none` is
-    unreachable — given that they pass these heads, a fact of their source. -/
+    `evalZeroArgumentDemandOutputCounted`) raise for an unexpected `none` is unreachable — they
+    pass exactly these heads (`EvaluatorInstallation.user_supply_binds`, `user_step_binds`,
+    `zero_argument_demand_binds`). -/
 theorem production_signature_binding_is_never_a_non_match (c : NeedChannels) (a : Algorithm)
     (cells : List Nat) (s : EvalState) :
     ((bindNeedPatterns c ((Algorithm.parameterPatterns a).map NeedPattern.ofParameter) cells false).runState s).1

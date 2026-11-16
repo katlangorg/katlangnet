@@ -835,7 +835,8 @@ theorem traced_literal (k : NeedCapabilities EvalM) (literal : Pattern) (address
   rcases runEval (k.value address) s with ⟨_ | ⟨value, count⟩, t⟩ <;> simp
 
 /-- A literal mismatch is a NON-MATCH (`none`) in BOTH binder modes. The ordinary user-call
-    driver (`evalNeedUserSupply`, `partial`) turns an unexpected `none` into `badArity`, and
+    driver (`evalNeedUserSupply`; `EvaluatorInstallation.user_supply_binds`) turns an unexpected
+    `none` into `badArity`, and
     ordinary signatures contain no literals; so there is NO law "family `none` iff ordinary
     error" at the binder layer. What does hold, for every head, is that a clause attempt and the
     ordinary binding differ only where the ordinary binding raises an incompatibility error, and

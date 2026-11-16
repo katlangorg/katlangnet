@@ -132,10 +132,14 @@ value it passes — a `map`/`filter` element, a `reduce` element and accumulator
 — as ONE ordinary argument, so `map(xs, F)` is modelled by `bindCallback ps [e]`, which is
 `bindArgs ps [e]` by definition, the direct call `F(e)` (`bindCallback_eq_bindArgs`,
 `callback_element_is_one_ordinary_argument`). In production,
-`evalUserCallbackCallCounted` reaches the ordinary `bindNeedPatterns` — a cross-checked source
-fact. Its allocation step is proved (see Faithfulness), and since S5 so is the binder's
+`evalUserCallbackCallCounted` reaches the ordinary `bindNeedPatterns` — a theorem about the
+evaluator's bodies (`user_callback_installs`, `user_supply_binds`,
+`KatLangArityLaws/EvaluatorInstallation.lean`). Its allocation step is proved (see Faithfulness),
+and since S5 so is the binder's
 correspondence over two Ready supplies of the same counted values formed at any two heaps
-(`ready_supplies_bind_correspondingly`, `KatLangArityLaws/SupplyCorrespondence.lean`); a
+(`ready_supplies_bind_correspondingly`, `KatLangArityLaws/SupplyCorrespondence.lean`; with no
+channel premise at production, `production_ready_supplies_bind_correspondingly`,
+`KatLangArityLaws/SupplyCorrespondenceProduction.lean`); a
 suspended written argument and its Ready value correspond only under explicit channel premises
 (a Ready cell has no CALLABLE identity and no META plan). A structured element is one
 argument, so a two-fixed flat callee rejects it
@@ -321,7 +325,9 @@ is the real-model `canonicalSupply_items_of_canonical`; and the grouped spelling
 `(value*)*` is linked through the shallow `combineOutputSlots` of its capture arm
 (`grouped_spread_layer_is_reopen`, `stacked_spread_layer_is_grouped_layer`).
 That the evaluator routes both spellings through those helpers and
-evaluates the operand once is guard-checked (CoreTests `RepeatedSpread`). Since
+evaluates the operand once is proved per route (`spread_installs`, `capture_arm`,
+`rows_step`, `KatLangArityLaws/EvaluatorInstallation.lean`) and run on whole
+programs by CoreTests `RepeatedSpread`. Since
 CallReference S2 the evaluator opens through the checked `openSpreadItems`, which
 is these helpers wherever no opening exposes an argument view
 (`openSpreadItems_eq_reopen`), and the stacked star is the grouped recapture for

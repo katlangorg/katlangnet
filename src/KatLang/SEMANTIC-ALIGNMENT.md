@@ -1288,6 +1288,37 @@ than project `.fst` or forward: the `.counted` / `.alg` projections `evalAlgOutp
 `evalCaptureCountedCore`, `lookupLexical`, and the case-splitting `resolveAliasTarget`,
 `resolveAliasStructure`, `capturedCallee`, `needPlanNormalizeCallee`, `formOutputRow`.
 
+P14 — evaluator installation is a theorem, not a source fact (2026-11-16; proofs and prose only: NO
+language change, no definition of `KatLang.lean` changed, no C# change, no `#guard` changed, no
+theorem weakened). The law modules recorded "the `partial` evaluator calls this helper" as a *source
+fact* pinned by guards. That was accurate while the evaluator operations were opaque constants; since
+R7 each is a body `EvalBody.<name> rec …` of the total core, and since E-6 Tier 3 `KatLang.lean` has
+no `partial` definition, so the call is an EQUATION of that body. Two modules state it:
+`KatLangArityLaws/EvaluatorInstallation.lean` — one equation per installation, for every evaluator
+answer, each `rfl` or one unfolding (the arms of `evalCounted`; the VALUE and CALLABLE shells; callee
+resolution and the alias chase; supply formation and the binder call sites at `rec.bindingChannels` (ordinary and property demand,
+both loop-step arms; META builtin binding is `FiniteLoop.repeat_arm` / `while_arm`);
+the sequence-builtin binding/dispatch, its per-slot demand, arity gate and empty policy, `count`/`first`/`last`, `atoms`, `if`,
+`filter`, the logical operators, the callback item and the invoking slot; `Invoke`, `Arguments`,
+`.Algorithm`; the spread evaluation and the spread capability; the output-row loop), with
+`production_installed` carrying an equation to completed production runs through
+`production_unfolds`, and `production_nonshrinking` discharging, from the whole-run heap discipline,
+the heap-size premise that `NeedControl.lean` and `BinderCorrespondence.lean` supported "by source
+inspection"; and `KatLangArityLaws/SupplyCorrespondenceProduction.lean` — the two channel premises of
+the R6 binder correspondence (`hrec`, the recursive collector edge; `hcal`, the CALLABLE channel),
+kept "because the two channels are `partial`", PROVED for the production channels, so the R6
+theorems hold at production with no channel premise (`production_ready_supplies_bind_correspondingly`
+at `bindingChannels`; the public channels likewise). The general R6 theorems keep both premises:
+they quantify over every channel record. The recursive edge is not a simulation at a fixed fuel (an
+exhausted core run forgets its state); it is one under the production exhaustion convention
+(`fuelDemand_sim`), which is the convention production has (`production_demand_eventually`). KEPT, each
+with its reason in the module that states it: properties of whole runs (the canonical-value invariant;
+at-most-once on reachable states; the Q-66 expression-level equivalences; a fresh call through a
+runtime alias on reachable chases) — not installations; that the callee's and the argument's alias
+normalizers agree on a selected member — unproved; the schedule freshness premise at production — not
+derived; selection fidelity and printer separation — they go through Lean core's `Std.Format.pretty`,
+a `partial` definition of Lean core, opaque to the kernel. Ledger: E-19 (new), E-8.
+
 FG-H1 — need-heap address validity through allocation and supply formation (2026-10-23; proof-only,
 no Lean definition or C# change). Preserving old cells (`CellKept`) says nothing about the references
 a NEW cell or a returned supply carries. `KatLangArityLaws/HeapAddressValidity.lean` defines

@@ -55,8 +55,10 @@ Whole-run cache laws need no restatement: `cache_entries_survive` and `owner_set
 (`EvaluatorCacheLaws`) are proved over every body, the new one included, so published entries
 are never replaced and the owner set is restored. Stability of the owner context across later
 evaluation is `OwnerContextStability.lean`. NOT claimed: a whole-evaluator equivalence
-theorem, that the declaring activation found in context is the semantically intended one (a
-source fact of `scopeInContext`, pinned by the CoreTests D1 guards), or any C# behaviour.
+theorem, that the declaring activation found in context is the semantically intended one (NOT a
+theorem: `scopeInContext` decides a mixed identified/anonymous pair by printed text, through Lean
+core's opaque layout `Std.Format.pretty`, so its selection fidelity is unproved — ledger E-12 —
+and pinned by the CoreTests D1 guards), or any C# behaviour.
 -/
 
 namespace KatLang.PropertyOwnerContext

@@ -9,12 +9,14 @@ operation of a repeated spread as theorems over the TOTAL production helpers:
 `reopenSpreadItems` (one further layer, `spread(capture(items))`), `reopenSpreadLayers` (one
 step per extra written star), `spreadSupplyResult` (a spread expression's counted result), and
 the grouped layer through the capture arm's `countedTopLevelValues` / `combineOutputSlots`
-(`grouped_spread_layer_is_reopen`). That the `partial` evaluator APPLIES them is a fact of its
-source — `evalSequenceSpreadCounted` evaluates the operand once and returns `spreadSupplyResult`
+(`grouped_spread_layer_is_reopen`). That the evaluator APPLIES them is a theorem about its bodies
+(`KatLangArityLaws/EvaluatorInstallation.lean`: `spread_installs`, `capture_arm`, `rows_step`,
+`rows_combine_shallowly`) — `evalSequenceSpreadCounted` evaluates the operand once and returns `spreadSupplyResult`
 of the checked opening `openSpreadItems (layers - 1) value` (CallReference S2), which is
 `reopenSpreadLayers (layers - 1) value.spreadItems` when no opening at any layer exposes an
 argument view (`openSpreadItems_eq_reopen`; no operand value below contains one), and a written
-capture combines its spread row's recovered slots shallowly. These guards pin that routing executably:
+capture combines its spread row's recovered slots shallowly. These guards run that routing on whole
+programs, where the body equations say nothing about the values an operand evaluates to:
 
 1. for every mixed spelling with one to three written stars (`A*`, `A**`, `(A*)*`, `A***`,
    `(A**)*`, `(A*)**`, `((A*)*)*`), every adversarial operand value, and every way of writing the

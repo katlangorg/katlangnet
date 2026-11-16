@@ -10,9 +10,11 @@ the builtin META binding step of `applyBuiltinCounted` (`builtinDeclaresMeta`, t
 THE ONE binder `bindNeedPatterns` whose `.metaRef` arm is `NeedPlan.reference`), the captured
 plan's canonical callee cell (`NeedPlan.calleeCell`, CR-13) and ONE sticky supply
 (`argumentViewCells`, CR-9), and the unchanged loop kernels (`WhileRound.advance`,
-`runNeedWhileRound`, `runNeedStepSlots`, `loopResultCounted`). They are the executable evidence
-for the source facts the total laws of `MetaLoop.lean` state over their capabilities: that the
-evaluator installs that sequence, in that order (RP-1), on the plain and the dot route.
+`runNeedWhileRound`, `runNeedStepSlots`, `loopResultCounted`). That the evaluator installs that
+sequence, in that order (RP-1), on the plain and the dot route is proved
+(`FiniteLoop.repeat_arm`, `while_arm`, `repeat_setup_stages`, `while_setup_stages`;
+`DotFunnel.dot_repeat_funnel`, `dot_while_funnel`); these guards are the executable evidence for
+the outcomes and heaps of WHOLE programs over it.
 Serial Lean says nothing about C# async resolution, cancellation, J7 plan retention or
 diagnostics text; those are pinned by the C# suites (`MetaLoopInterfaceTests`).
 -/

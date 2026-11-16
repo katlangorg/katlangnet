@@ -7,8 +7,9 @@ open KatLang KatLang.SupplyCorrespondence
 # Executable guards for the callback / direct-call binder correspondence (R6, S5)
 
 Witnesses for `KatLangArityLaws/SupplyCorrespondence.lean` on real heaps with the production
-channels `⟨demandNeed, projectNeedCallable⟩` (the `partial` projection runs here; it is a premise
-of the theorems):
+channels `⟨demandNeed, projectNeedCallable⟩` (the production projection runs here; its
+correspondence is a premise of the general theorems and a THEOREM for these channels,
+`SupplyCorrespondence.Production.production_callable_sim`):
 
 1. the callback prefix (`args.mapM readyNeed`, then `bindNeedPatterns`) from an EMPTY heap and
    from a heap that already holds three cells binds every head of the matrix to corresponding

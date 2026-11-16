@@ -16,8 +16,10 @@ route's `Invoke` arm and the run result boundary). Heap observations count the p
   execution bound the SAME memoized argument;
 * the spread of `Pair()` opens into Ready item cells, so a single Ready `1` means the spread ran
   once.
-These guards are executable evidence for the source facts the theorems of
-`KatLangArityLaws/CallReference.lean` cannot reach (the `partial` evaluator).
+That the evaluator's arms install the definitions the theorems of
+`KatLangArityLaws/CallReference.lean` are about is proved
+(`KatLangArityLaws/EvaluatorInstallation.lean`); these guards are executable evidence for the
+outcomes, heaps and execution counts of WHOLE programs, which no body equation gives.
 -/
 
 namespace KatLang.CallReferenceGuards

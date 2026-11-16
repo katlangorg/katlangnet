@@ -52,7 +52,8 @@ That the evaluator's `applyBuiltinCounted` installs these definitions with
 proved in `FiniteLoopCorrespondence.lean` (FG-L1: `repeat_arm`, `while_arm`, `repeat_setup_stages`,
 `while_setup_stages`, `repeat_builtin_iff`, `while_builtin_iff`).
 
-NOT claimed (source facts pinned by `MetaLoopGuards.lean` and the regenerated corpora): the rest of
+NOT claimed (OPEN statements about whole evaluations, not installation facts; executable evidence
+in `MetaLoopGuards.lean` and the regenerated corpora): the rest of
 Q-66 at expression level — binder-result refinement, callback ≡ direct-call evaluation and
 `E** ≡ (E*)*` (items (1), (3) and (4); the dot-funnel item is `DotFunnel.lean`, E-17) — and anything
 about C# async resolution, cancellation, J7 plan retention or diagnostics (C#-only,
