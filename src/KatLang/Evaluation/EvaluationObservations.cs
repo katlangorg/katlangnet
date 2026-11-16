@@ -179,7 +179,13 @@ internal sealed class EvaluationObservations
     // PERF-STATE-1: the exact per-plan formation witness, keyed by plan identity. It lives here rather
     // than on every plan so an unobserved plan carries no test-only counter. A plan records into the
     // observations of the run that created it (its caller context's), from its first formation on.
-    private readonly Dictionary<Evaluator.InvocationPlan, int> _planSupplyFormations = new(ReferenceEqualityComparer.Instance);
+    // STORAGE FOLLOWS LIFETIME (identity-store retention audit, 2026-11-16): each plan is the partition of
+    // its own witness, held weakly and reclaimed promptly, so a witness dies with its plan. Only a holder of
+    // the plan can read it (PlanSupplyFormations), so a dead plan's witness could never be read again; a
+    // strong dictionary kept every plan of an observed run — its caller context, values and supply — alive
+    // until the run ended (about 1.4 KB per round of a META loop). The count above is unaffected.
+    private readonly Evaluation.Caching.PartitionedMap<Evaluator.InvocationPlan, System.Runtime.CompilerServices.StrongBox<int>> _planSupplyFormations =
+        new(ReferenceEqualityComparer.Instance, static plan => plan, promptReclaim: true);
 
     // Called by the plan's ONE supply publication (Evaluator.PublishPlanSupply) before the outcome is
     // published, so a reader that sees the outcome also sees the count. A run is ONE sequential flow
@@ -191,7 +197,9 @@ internal sealed class EvaluationObservations
     {
         lock (_planSupplyFormations)
         {
-            _planSupplyFormations[plan] = checked(_planSupplyFormations.GetValueOrDefault(plan) + 1);
+            if (!_planSupplyFormations.TryGetValue(plan, out var formations))
+                _planSupplyFormations.TryAdd(plan, formations = new());
+            formations.Value = checked(formations.Value + 1);
             PlanSupplyFormationCount = checked(PlanSupplyFormationCount + 1);
         }
     }
@@ -200,6 +208,16 @@ internal sealed class EvaluationObservations
     internal int PlanSupplyFormations(Evaluator.InvocationPlan plan)
     {
         lock (_planSupplyFormations)
-            return _planSupplyFormations.GetValueOrDefault(plan);
+            return _planSupplyFormations.TryGetValue(plan, out var formations) ? formations.Value : 0;
+    }
+
+    /// <summary>
+    /// TEST SEAM: the number of formation witnesses whose plan is still reachable (a dead plan's witness is
+    /// never counted). Retention tests read it after a forced full collection.
+    /// </summary>
+    internal int LivePlanSupplyWitnessCount()
+    {
+        lock (_planSupplyFormations)
+            return _planSupplyFormations.LivePartitionCount();
     }
 }

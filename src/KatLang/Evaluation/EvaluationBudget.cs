@@ -341,9 +341,17 @@ internal sealed class EvaluationBudget
     /// <summary>
     /// The run's callee-level transported names (<c>Evaluator.CalleeTransportedNames</c>), keyed by a callee's
     /// shared BODY lists so every per-call wiring of one body shares one entry. Guarded by <see cref="TransportedNames"/>.
+    /// <para>STORAGE FOLLOWS LIFETIME (identity-store retention audit, 2026-11-16; C#-only, unobservable): an entry
+    /// lives in the partition of its key's parameter-pattern list (<see cref="Evaluator.CalleeBodyKey.PartitionOf"/>),
+    /// held weakly and reclaimed promptly, in ONE table shared with <see cref="CalleeBuiltinSlotSummaries"/>. A
+    /// written callee's list belongs to the program, so its entry lives for the run; the user equivalent a
+    /// flat-binder family dispatches through mints a fresh list per call, whose entry dies with it instead of
+    /// accumulating one entry (and, through the view, one activation chain) per call.
+    /// <see cref="PartitionedMap{TKey, TValue}.AddedCount"/> is the entry count the run-wide dictionary had.</para>
     /// </summary>
-    internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.TransportNames> CalleeTransportedNames
-        => PlanAnalysis.CalleeNames ??= [];
+    internal PartitionedMap<Evaluator.CalleeBodyKey, Evaluator.TransportNames> CalleeTransportedNames
+        => PlanAnalysis.CalleeNames ??= new(
+            EqualityComparer<Evaluator.CalleeBodyKey>.Default, Evaluator.CalleeBodyKey.PartitionOf, PlanAnalysis.CalleePartitions, store: 0);
 
     /// <summary>
     /// The run's memo of per-node BUILTIN-AWARE transport summaries (<c>Evaluator.BuiltinSlotSummaryOf</c>, B9):
@@ -355,10 +363,12 @@ internal sealed class EvaluationBudget
 
     /// <summary>
     /// The run's callee-level builtin-aware summaries (<c>Evaluator.CalleeBuiltinSlotSummary</c>), keyed by a
-    /// callee's shared BODY lists like <see cref="CalleeTransportedNames"/>. Guarded by <see cref="TransportedNames"/>.
+    /// callee's shared BODY lists like <see cref="CalleeTransportedNames"/>, and partitioned like it, in slot 1 of
+    /// the same table. Guarded by <see cref="TransportedNames"/>.
     /// </summary>
-    internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary> CalleeBuiltinSlotSummaries
-        => PlanAnalysis.CalleeBuiltinSlotSummaries ??= [];
+    internal PartitionedMap<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary> CalleeBuiltinSlotSummaries
+        => PlanAnalysis.CalleeBuiltinSlotSummaries ??= new(
+            EqualityComparer<Evaluator.CalleeBodyKey>.Default, Evaluator.CalleeBodyKey.PartitionOf, PlanAnalysis.CalleePartitions, store: 1);
 
     private PerSitePlanState PlanAnalysis
     {
@@ -381,9 +391,12 @@ internal sealed class EvaluationBudget
         internal InvocationPlanTestSeam? TestSeam { get; } = testSeam;
         internal Evaluator.TransportNames? InheritedNames;
         internal Dictionary<object, Evaluator.TransportNames>? TransportedNames;
-        internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.TransportNames>? CalleeNames;
+        internal PartitionedMap<Evaluator.CalleeBodyKey, Evaluator.TransportNames>? CalleeNames;
         internal Dictionary<object, Evaluator.BuiltinSlotSummary>? BuiltinSlotSummaries;
-        internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary>? CalleeBuiltinSlotSummaries;
+        internal PartitionedMap<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary>? CalleeBuiltinSlotSummaries;
+        // The one weak table of the two callee memos: slot 0 the transported names, slot 1 the builtin-aware summaries.
+        private BindingContextPartitionTable? _calleePartitions;
+        internal BindingContextPartitionTable CalleePartitions => _calleePartitions ??= new(storeCount: 2, promptReclaim: true);
     }
 
     /// <summary>

@@ -813,6 +813,8 @@ public class ContinuousIntegrationPolicyTests
                 "its children measure peak working set, a memory-retention guard for identity-partitioned run caches; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
             ["KatLang.Tests.CallReferenceLoopRetentionProcessTests"] =
                 "its children measure peak working set, the flat-memory controls of the call-reference loop-retention pin; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
+            ["KatLang.Tests.IdentityKeyedRunStorePeakMemoryProcessTests"] =
+                "its children measure peak working set, the memory-retention guards of the identity-keyed run stores outside the caches (per-site callee memos, the observed plan-formation witness); retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
 
     /// <summary>

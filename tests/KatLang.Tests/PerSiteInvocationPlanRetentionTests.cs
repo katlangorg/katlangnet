@@ -315,12 +315,12 @@ public class PerSiteInvocationPlanRetentionTests
     public void TransportMemo_IsPerBody_NotPerCall()
     {
         // Dispatch wires a callee per call; the per-run memo must not grow with the number of calls.
-        int Entries(int n)
+        long Entries(int n)
         {
             var root = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Id(x) = x\nS(x) = Id(Id(Id(x + 1))), x < {n}\n\nS(0).while").Root);
             var (result, budget) = Evaluator.RunCountedObserved(root);
             Assert.True(result.IsOk);
-            return budget.TransportedNames.Count + budget.CalleeTransportedNames.Count;
+            return budget.TransportedNames.Count + budget.CalleeTransportedNames.AddedCount;
         }
         if (ForcedInvocationPlansHook.Forced) return; // no per-site run, no memo
         Assert.True(Entries(10) > 0);

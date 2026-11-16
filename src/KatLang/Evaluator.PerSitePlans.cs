@@ -363,7 +363,7 @@ public static partial class Evaluator
                     builder.AddStrict(TransportedNamesOf(child, budget));
             }
             var summary = builder.Result();
-            bodies[key] = summary;
+            bodies.TryAdd(key, summary);
             return summary;
         }
     }
@@ -517,6 +517,14 @@ public static partial class Evaluator
     /// entry per call. The names depend only on those shared lists — a user algorithm's opens, properties, output
     /// rows and parameter patterns (the own-row rule), a family's opens and branches; the parent link is never
     /// followed — so every wiring of one body shares one entry.
+    /// <para><b>Storage lifetime</b> (identity-store retention audit, 2026-11-16; C#-only, unobservable). A
+    /// flat-binder family dispatches through a fresh user EQUIVALENT per call (<c>TryGetFlatBinderUserEquivalent</c>:
+    /// the clause body's lists with a NEW parameter-pattern list), so its key differs on every call. The entry
+    /// therefore lives in the partition of the key's parameter-pattern list (<see cref="CalleeBodyKey.PartitionOf"/>,
+    /// <see cref="EvaluationBudget.CalleeTransportedNames"/>), held weakly: a written callee's list is part of the
+    /// program, so its entry lives for the run, and a view's entry dies with the view. The wired callee itself is
+    /// never a memo node (<c>memoizeRoot: false</c>): no later walk can reach that per-call record as a child, and
+    /// an entry for it kept every first call's activation chain alive.</para>
     /// </summary>
     private static TransportNames CalleeTransportedNames(Algorithm callee, EvaluationBudget budget)
     {
@@ -532,9 +540,9 @@ public static partial class Evaluator
             if (bodies.TryGetValue(key, out var known))
                 return known;
         }
-        var names = TransportedNamesOf(callee, budget);
+        var names = TransportedNamesOf(callee, budget, memoizeRoot: false);
         lock (budget.TransportedNames)
-            bodies[key] = names;
+            bodies.TryAdd(key, names);
         return names;
     }
 
@@ -545,6 +553,16 @@ public static partial class Evaluator
         private readonly object? _second = second;
         private readonly object? _third = third;
         private readonly object? _fourth = fourth;
+
+        /// <summary>
+        /// The partition identity of a key in the run's callee memos (<see cref="EvaluationBudget.CalleeTransportedNames"/>,
+        /// <see cref="EvaluationBudget.CalleeBuiltinSlotSummaries"/>): a user callee's PARAMETER-PATTERN LIST, the one
+        /// component a per-call view replaces (a flat-binder family's user equivalent; every other per-call wiring shares
+        /// the written lists). A key compares that list by reference and holds it, so once the list is unreachable no
+        /// key can present it again. A family's key, which has no such component, is stored for the run.
+        /// </summary>
+        internal static Func<CalleeBodyKey, object> PartitionOf { get; } =
+            static key => key._fourth ?? Evaluation.Caching.ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity;
 
         public bool Equals(CalleeBodyKey other)
             => ReferenceEquals(_first, other._first) && ReferenceEquals(_second, other._second)
@@ -578,9 +596,17 @@ public static partial class Evaluator
     /// <see cref="PerSiteAnalysisWidth"/> names, conservatively admitting every name. Wide heads likewise
     /// stay planned; native argument-name lists are summarized once per node, not once per incoming edge.
     /// No CLR recursion; nothing is charged.
+    /// <para>Two kinds of node are never memo keys (identity-store retention audit, 2026-11-16; unobservable,
+    /// the memo is a pure function): a <see cref="CaptureParameterPattern"/>, which has no child and adds no
+    /// name, so it contributes nothing — a flat-binder family's per-call user equivalent mints fresh ones on
+    /// every call — and, with <paramref name="memoizeRoot"/> false, the root itself: a callee wired for one
+    /// call (<see cref="CalleeTransportedNames"/>), which no later walk reaches as a child.</para>
     /// </summary>
-    internal static TransportNames TransportedNamesOf(object root, EvaluationBudget budget)
+    internal static TransportNames TransportedNamesOf(object root, EvaluationBudget budget, bool memoizeRoot = true)
     {
+        if (root is CaptureParameterPattern)
+            return NoTransportNames;
+
         var memo = budget.TransportedNames;
         lock (memo)
         {
@@ -588,7 +614,7 @@ public static partial class Evaluator
                 return known;
 
             var frames = new List<TransportFrame> { TransportFrame.Enter(root) };
-            while (frames.Count > 0)
+            while (true)
             {
                 var top = frames.Count - 1;
                 var frame = frames[top];
@@ -600,6 +626,9 @@ public static partial class Evaluator
                     {
                         case ScopeCtx:
                             // A parent scope link (host-attached parent): outside the owner.
+                            break;
+                        case CaptureParameterPattern:
+                            // No child and no name: nothing to add and nothing to memoize.
                             break;
                         case Expr.Param(var name):
                             if (!IsValueEdge(frame.Node, index, name))
@@ -625,18 +654,23 @@ public static partial class Evaluator
                 }
 
                 var names = frame.Result();
-                memo[frame.Node] = names;
                 frames.RemoveAt(top);
-                if (top > 0)
+                if (top == 0)
                 {
-                    var parent = frames[top - 1];
-                    parent.AddRange(names);
-                    frames[top - 1] = parent;
+                    if (memoizeRoot)
+                        memo[root] = names;
+                    return names;
                 }
+                memo[frame.Node] = names;
+                var parent = frames[top - 1];
+                parent.AddRange(names);
+                frames[top - 1] = parent;
             }
-            return memo[root];
         }
     }
+
+    // The empty KNOWN summary (a default TransportNames admits every name).
+    private static readonly TransportNames NoTransportNames = new([]);
 
     // Whether child `index` of `parent`, an occurrence of `name`, is a VALUE position (see TransportedNamesOf).
     private static bool IsValueEdge(object parent, int index, string name)
