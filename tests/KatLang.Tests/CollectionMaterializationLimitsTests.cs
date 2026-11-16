@@ -1,6 +1,7 @@
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
+using KatLang.Tests.AsyncEvaluation;
 
 namespace KatLang.Tests;
 
@@ -166,6 +167,53 @@ public class CollectionMaterializationLimitsTests
         const string source = "Big(x) = x > 3\nrange(1, 6).filter(Big).count";
         Assert.False(Eval(source, Items(6)).IsError);          // input needs 6, kept needs 3
         Assert.IsType<EvalError.CollectionSizeLimitExceeded>(ErrorOf(source, Items(5)));
+    }
+
+    /// <summary>
+    /// The generic <c>filter</c> records its kept positions in 64-bit words and builds the exact
+    /// list from them, and <c>map</c> hands over the array it filled (November 2026,
+    /// implementation-only). The reserved count is computed from those words, so it must stay the
+    /// TRUE kept count past one word: the whole run then materializes exactly the source plus the
+    /// result, a cumulative budget of that total admits it and one item less refuses it, and the
+    /// list holds the kept items in source order. Both routes, the synchronous generic one and the
+    /// asynchronous twin, are checked against each other.
+    /// </summary>
+    [Theory]
+    [InlineData("Keep(x) = x mod 3 == 1\nrange(1, 200).filter(Keep)", 200, 1, 199, 3)]
+    [InlineData("Keep(x) = x > 0\nrange(1, 128).filter(Keep)", 128, 1, 128, 1)]
+    [InlineData("Keep(x) = x mod 64 == 0\nrange(1, 200).filter(Keep)", 200, 64, 192, 64)]
+    [InlineData("Keep(x) = x > 500\nrange(1, 200).filter(Keep)", 200, 1, 0, 1)]
+    [InlineData("Triple(x) = x * 3\nrange(1, 130).map(Triple)", 130, 3, 390, 3)]
+    public async Task GenericFilterAndMap_ListTheResultInOrder_AndReserveItsTrueCount(
+        string source, int sourceCount, int first, int last, int step)
+    {
+        var expectedItems = first > last
+            ? []
+            : Enumerable.Range(0, ((last - first) / step) + 1).Select(i => first + (i * step)).ToArray();
+        var expected = new Result.ListValue(expectedItems.Select(static value => (Result)new Result.Atom(value)));
+        var exactTotal = sourceCount + expectedItems.Length;
+        var ast = AsyncEvaluationHarness.Ast(source);
+
+        foreach (var limits in new[] { null, Total(exactTotal), Total(exactTotal - 1) })
+        {
+            var (sync, syncBudget) = Evaluator.RunCountedObserved(ast, limits, enableOptimizations: false);
+            var (twin, twinBudget) = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
+                ast, limits, zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache()));
+
+            Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(twin));
+            Assert.Equal(syncBudget.MaterializedItems, twinBudget.MaterializedItems);
+            if (limits?.MaxMaterializedItems < exactTotal)
+            {
+                Assert.IsType<EvalError.MaterializationLimitExceeded>(sync.Error);
+                Assert.IsType<EvalError.MaterializationLimitExceeded>(twin.Error);
+                continue;
+            }
+
+            Assert.False(sync.IsError, sync.IsError ? sync.Error.ToString() : null);
+            Assert.Equal(expected, sync.Value.Value, Result.ValueComparer);
+            Assert.Equal(expected, twin.Value.Value, Result.ValueComparer);
+            Assert.Equal(exactTotal, syncBudget.MaterializedItems);
+        }
     }
 
     // ── atoms: the one expanding producer ────────────────────────────────────

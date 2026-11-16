@@ -2493,9 +2493,8 @@ public static partial class Evaluator
         var suffixArgsR = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
         if (suffixArgsR.IsError) return suffixArgsR.Error;
 
-        var iterationItems = collectionValues
-            .Select(static value => new CountedResult(value, 1))
-            .ToList();
+        // Each viewed item with emitted count 1, read on demand — see the synchronous twin.
+        var iterationItems = new CollectionIterationItems(collectionValues);
 
         return EvalResult<BoundSequenceBuiltinArguments>.Ok(
             new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgsR.Value));
@@ -2702,7 +2701,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var kept = new List<Result>();
+        var kept = NewFilterKeptPositions(items.Count);
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
@@ -2711,10 +2710,10 @@ public static partial class Evaluator
                 return truthR.Error;
 
             if (truthR.Value)
-                kept.Add(item.Value);
+                MarkFilterKeptPosition(kept, index);
         }
 
-        return MakeCollectionListResult(ctx, kept);
+        return MakeFilterKeptListResult(ctx, items, kept);
     }
 
     /// <summary>
@@ -2755,7 +2754,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var mapped = new List<Result>(items.Count);
+        var mapped = new Result[items.Count];
+        var index = 0;
         foreach (var item in items)
         {
             var transformR = WithCtx(
@@ -2764,10 +2764,10 @@ public static partial class Evaluator
             if (transformR.IsError) return transformR.Error;
 
             // The transform's ordinary call result is ONE element (HO-03).
-            mapped.Add(transformR.Value.Value);
+            mapped[index++] = transformR.Value.Value;
         }
 
-        return MakeCollectionListResult(ctx, mapped);
+        return MakeMappedListResult(ctx, mapped);
     }
 
     // ── Loop twins ──────────────────────────────────────────────────────────

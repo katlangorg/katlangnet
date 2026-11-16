@@ -120,6 +120,33 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The iteration items of an ordinarily bound collection builtin
+    /// (<see cref="BoundSequenceBuiltinArguments.IterationItems"/>): item <c>i</c> is the
+    /// bound collection's viewed item <c>i</c> with emitted count 1, read from that view on
+    /// demand instead of copied. The viewed items are immutable — a list or sequence value's
+    /// own read-only storage, or a fresh one-element view — so each read returns exactly the
+    /// item a copy made at binding would hold, and a builtin that never iterates
+    /// (<c>count</c>, <c>take</c>, …) pays nothing for them. Implementation-only
+    /// (November 2026): the copied <c>List&lt;CountedResult&gt;</c> was a 16-byte slot per
+    /// item, so every collection builtin over 100,000 items allocated a 1.6 MB
+    /// large-object-heap array, a share of the generic pipelines' Gen2 collections.
+    /// </summary>
+    private sealed class CollectionIterationItems(IReadOnlyList<Result> viewedItems) : IReadOnlyList<CountedResult>
+    {
+        public int Count => viewedItems.Count;
+
+        public CountedResult this[int index] => new(viewedItems[index], 1);
+
+        public IEnumerator<CountedResult> GetEnumerator()
+        {
+            for (var index = 0; index < viewedItems.Count; index++)
+                yield return new CountedResult(viewedItems[index], 1);
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>
     /// One prepared suffix argument of a sequence builtin (Lean:
     /// <c>PreparedSequenceBuiltinSuffixArg</c>): a C# <c>closed</c> record whose three sealed
     /// nested records are its only kinds. Its consumers are the per-kind projectors

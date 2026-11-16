@@ -14,6 +14,9 @@ internal static class BenchmarkSequenceStatsDiagnosticRunner
 		BenchmarkScenarioCatalog.SequenceFilterCountEvenRange,
 		BenchmarkScenarioCatalog.SequenceSquareFreeFilterCount1000,
 		BenchmarkScenarioCatalog.SequenceSquareFreeFilterCount10000,
+		BenchmarkScenarioCatalog.SequenceCheapFilterCount100k,
+		BenchmarkScenarioCatalog.SequenceRepeatedFilterCount100k,
+		BenchmarkScenarioCatalog.SequenceRepeatedShortFilterCount,
 	];
 
 	public static bool TryRun(string[] args)

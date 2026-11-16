@@ -1,0 +1,2 @@
+Pos(n) = n > 0
+count(filter(range(1, 100000), Pos))

@@ -1469,7 +1469,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var kept = new List<Result>();
+        var kept = NewFilterKeptPositions(items.Count);
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
@@ -1478,10 +1478,56 @@ public static partial class Evaluator
                 return truthR.Error;
 
             if (truthR.Value)
-                kept.Add(item.Value);
+                MarkFilterKeptPosition(kept, index);
         }
 
-        return MakeCollectionListResult(ctx, kept);
+        return MakeFilterKeptListResult(ctx, items, kept);
+    }
+
+    /// <summary>
+    /// The kept positions of one generic <c>filter</c> call over <paramref name="itemCount"/>
+    /// items: one bit per item, set when its predicate is true. Implementation-only
+    /// (November 2026): the kept items used to grow a <c>List&lt;Result&gt;</c> by doubling and
+    /// were then copied into the exact list, so a filter keeping 100,000 items allocated about
+    /// 2 MB of large-object-heap growth arrays before its 0.8 MB list; the bit set is 1/64 of
+    /// the item array and stays on the small-object heap up to about 680,000 items.
+    /// </summary>
+    private static ulong[] NewFilterKeptPositions(int itemCount)
+        => new ulong[(itemCount + 63) >> 6];
+
+    private static void MarkFilterKeptPosition(ulong[] kept, int index)
+        => kept[index >> 6] |= 1UL << (index & 63);
+
+    /// <summary>
+    /// The generic <c>filter</c> result: exactly what <see cref="MakeCollectionListResult(EvalCtx, IReadOnlyList{Result}, SourceSpan?)"/>
+    /// makes of the kept items in source order — the same reservation of the TRUE kept count at
+    /// the same point (after the last predicate call), before the exact list is allocated, so the
+    /// charges and a refusal are unchanged; then one exact array filled from the kept positions.
+    /// The kept items are the original items: the iteration items read the immutable bound view.
+    /// Out of line: both twins' filter frames stay live during every predicate call (frame-size discipline).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> MakeFilterKeptListResult(
+        EvalCtx ctx,
+        IReadOnlyList<CountedResult> items,
+        ulong[] kept)
+    {
+        var keptCount = 0;
+        foreach (var word in kept)
+            keptCount += BitOperations.PopCount(word);
+
+        if (ReserveCollection(ctx, keptCount) is { } error)
+            return error;
+
+        var keptItems = keptCount == 0 ? [] : new Result[keptCount];
+        var next = 0;
+        for (var wordIndex = 0; wordIndex < kept.Length; wordIndex++)
+        {
+            for (var bits = kept[wordIndex]; bits != 0; bits &= bits - 1)
+                keptItems[next++] = items[(wordIndex << 6) + BitOperations.TrailingZeroCount(bits)].Value;
+        }
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(keptItems), 1));
     }
 
     /// <summary>
@@ -1532,7 +1578,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var mapped = new List<Result>(items.Count);
+        var mapped = new Result[items.Count];
+        var index = 0;
         foreach (var item in items)
         {
             var transformR = WithCtx(
@@ -1540,11 +1587,26 @@ public static partial class Evaluator
                 EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, MapTransformFrameName));
             if (transformR.IsError) return transformR.Error;
 
-            mapped.Add(transformR.Value.Value);
+            mapped[index++] = transformR.Value.Value;
         }
 
-        return MakeCollectionListResult(ctx, mapped);
+        return MakeMappedListResult(ctx, mapped);
     }
+
+    /// <summary>
+    /// The generic <c>map</c> result: exactly what <see cref="MakeCollectionListResult(EvalCtx, IReadOnlyList{Result}, SourceSpan?)"/>
+    /// makes of the mapped items — the same reservation of the item count at the same point
+    /// (after the last transform), then the list. The exact array <see cref="EvalMapCounted"/>
+    /// filled (one slot per item, allocated before the first transform as the presized list
+    /// always was) is handed over instead of copied. Implementation-only (November 2026): the
+    /// copy was a second 0.8 MB large-object-heap array per 100,000-item map. Out of line: both
+    /// twins' map frames stay live during every transform call (frame-size discipline).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> MakeMappedListResult(EvalCtx ctx, Result[] mapped)
+        => ReserveCollection(ctx, mapped.Length) is { } error
+            ? error
+            : EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(mapped), 1));
 
     /// <summary>
     /// Collect top-level sequence items as single atomic numeric values.
@@ -1740,9 +1802,8 @@ public static partial class Evaluator
         var suffixArgsR = PrepareSequenceBuiltinControls(builtin, metadata, items, ctx, valEnv);
         if (suffixArgsR.IsError) return suffixArgsR.Error;
 
-        var iterationItems = collectionValues
-            .Select(static value => new CountedResult(value, 1))
-            .ToList();
+        // Each viewed item with emitted count 1, read on demand (never a copy per item).
+        var iterationItems = new CollectionIterationItems(collectionValues);
 
         return EvalResult<BoundSequenceBuiltinArguments>.Ok(
             new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgsR.Value));

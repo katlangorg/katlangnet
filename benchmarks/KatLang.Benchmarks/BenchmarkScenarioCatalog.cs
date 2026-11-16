@@ -220,6 +220,33 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-square-free-filter-count-10000.kat",
 			expectedAtoms: [6083m]));
 
+	private static readonly Lazy<BenchmarkScenario> SequenceCheapFilterCount100kScenario =
+		new(() => Load(
+			id: "sequence-cheap-filter-count-100k",
+			displayName: "Sequence cheap filter count 100k",
+			description: "One count(filter(range(1, 100000), Pos)) with the cheap predicate Pos(n) = n > 0: every item is kept, so the generic composition materializes a source and a kept list at the default 100,000-item ceiling.",
+			origin: "Filter-count fusion ON/OFF audit (2026-11-14) and generic-pipeline GC follow-up (2026-11-16).",
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-cheap-filter-count-100k.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceRepeatedFilterCount100kScenario =
+		new(() => Load(
+			id: "sequence-repeated-filter-count-100k",
+			displayName: "Sequence repeated filter count 100k",
+			description: "The audit program: map(range(1, 20), K).sum where K runs range(1, 100000).filter(IsEven).count, so one run makes 20 pipelines at the 100,000-item ceiling (2,000,000 predicate calls).",
+			origin: "Filter-count fusion ON/OFF audit (2026-11-14) and generic-pipeline GC follow-up (2026-11-16).",
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-repeated-filter-count-100k.kat",
+			expectedAtoms: [1000000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceRepeatedShortFilterCountScenario =
+		new(() => Load(
+			id: "sequence-repeated-short-filter-count",
+			displayName: "Sequence repeated short filter count",
+			description: "map(range(1, 2000), K).sum where K runs range(1, 1000).filter(IsEven).count: 2,000 short pipelines with the same 2,000,000 predicate calls as the 100k audit program (per-pipeline overhead, no large lists).",
+			origin: "Filter-count fusion ON/OFF audit (2026-11-14) and generic-pipeline GC follow-up (2026-11-16).",
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-repeated-short-filter-count.kat",
+			expectedAtoms: [1000000m]));
+
 	private static readonly Lazy<BenchmarkScenario> DispatchNonCandidateCallsScenario =
 		new(() => Load(
 			id: "dispatch-non-candidate-calls",
@@ -365,6 +392,12 @@ internal static class BenchmarkScenarioCatalog
 	public static BenchmarkScenario SequenceSquareFreeFilterCount1000 => SequenceSquareFreeFilterCount1000Scenario.Value;
 
 	public static BenchmarkScenario SequenceSquareFreeFilterCount10000 => SequenceSquareFreeFilterCount10000Scenario.Value;
+
+	public static BenchmarkScenario SequenceCheapFilterCount100k => SequenceCheapFilterCount100kScenario.Value;
+
+	public static BenchmarkScenario SequenceRepeatedFilterCount100k => SequenceRepeatedFilterCount100kScenario.Value;
+
+	public static BenchmarkScenario SequenceRepeatedShortFilterCount => SequenceRepeatedShortFilterCountScenario.Value;
 
 	public static BenchmarkScenario DispatchNonCandidateCalls => DispatchNonCandidateCallsScenario.Value;
 
