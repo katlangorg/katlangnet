@@ -31,15 +31,32 @@ internal sealed record SemanticCampaignOptions
     internal const int MaxSeedRange = 65_536;
     internal const int MaxCasesPerSeed = 1_000_000;
 
-    public required ulong FirstSeed { get; init; }
+    /// <summary>An exhaustive campaign's default time budget: long enough to complete either finite recipe.</summary>
+    internal const int DefaultExhaustiveMaxSeconds = 7_200;
 
-    public required ulong LastSeed { get; init; }
+    internal const int DefaultBatchSize = 64;
+    internal const int MaxBatchSize = 4_096;
+
+    /// <summary>The first seed of the plan (ignored by an exhaustive campaign).</summary>
+    public ulong FirstSeed { get; init; }
+
+    /// <summary>The last seed of the plan, inclusive (ignored by an exhaustive campaign).</summary>
+    public ulong LastSeed { get; init; }
 
     /// <summary>
     /// The seeded recipe searched (<c>--recipe</c>): one of <see cref="SemanticCorpus.SeededRecipes"/>,
     /// the id segment of every planned case. The default is the compositional <c>seed</c> recipe.
     /// </summary>
     public string Recipe { get; init; } = SemanticCorpus.SeedRecipe;
+
+    /// <summary>
+    /// <c>--exhaustive</c>: run EVERY program of a finite recipe (<see cref="SemanticCorpus.FiniteRecipes"/>,
+    /// enumerated by <see cref="SemanticExhaustive"/>) once, in enumeration order, instead of a seed plan.
+    /// </summary>
+    public bool Exhaustive { get; init; }
+
+    /// <summary>Members per supervised batch child of an exhaustive campaign (<c>--batch-size</c>).</summary>
+    public int BatchSize { get; init; } = DefaultBatchSize;
 
     public int CasesPerSeed { get; init; } = DefaultCasesPerSeed;
 
@@ -71,20 +88,37 @@ internal sealed record SemanticCampaignOptions
     /// </summary>
     public Func<string, string, SemanticReplay.Mode, SemanticWorkerCommand>? WorkerCommand { get; init; }
 
+    /// <summary>
+    /// Test seam over the batch child launch of an exhaustive campaign (the manifest path); default
+    /// <see cref="SemanticSupervisor.SelfBatchWorker"/>. The batch supervisor itself is unchanged.
+    /// </summary>
+    public Func<string, SemanticBatchWorkerCommand>? BatchWorkerCommand { get; init; }
+
     /// <summary>Test seam: the campaign clock (elapsed time since start); default a stopwatch.</summary>
     public Func<TimeSpan>? Clock { get; init; }
 
     public bool Supervised => InProcessRunner is null;
 
+    /// <summary>The seed plan's size (a seeded campaign; an exhaustive one plans its enumeration).</summary>
     public long PlannedCases => checked((long)(LastSeed - FirstSeed + 1) * CasesPerSeed);
 
     /// <summary>The bounds a campaign refuses to start without (null when valid).</summary>
     public string? Problem()
     {
         if (!SemanticCorpus.SeededRecipes.Contains(Recipe)) return "--recipe must be one of: " + SemanticCampaign.RecipeNames;
-        if (LastSeed < FirstSeed) return "the seed range is empty (LAST < FIRST)";
-        if (LastSeed - FirstSeed >= MaxSeedRange) return $"the seed range exceeds {MaxSeedRange.ToString(CultureInfo.InvariantCulture)} seeds";
-        if (CasesPerSeed is < 1 or > MaxCasesPerSeed) return $"--cases-per-seed must be 1..{MaxCasesPerSeed.ToString(CultureInfo.InvariantCulture)}";
+        if (Exhaustive)
+        {
+            if (!SemanticCorpus.FiniteRecipes.Contains(Recipe))
+                return $"--exhaustive needs a finite recipe ({string.Join(", ", SemanticCorpus.FiniteRecipes)}); '{Recipe}' is not finite";
+            if (BatchSize is < 1 or > MaxBatchSize) return $"--batch-size must be 1..{MaxBatchSize.ToString(CultureInfo.InvariantCulture)}";
+        }
+        else
+        {
+            if (LastSeed < FirstSeed) return "the seed range is empty (LAST < FIRST)";
+            if (LastSeed - FirstSeed >= MaxSeedRange) return $"the seed range exceeds {MaxSeedRange.ToString(CultureInfo.InvariantCulture)} seeds";
+            if (CasesPerSeed is < 1 or > MaxCasesPerSeed) return $"--cases-per-seed must be 1..{MaxCasesPerSeed.ToString(CultureInfo.InvariantCulture)}";
+        }
+
         if (MaxCases < 1) return "--max-cases must be at least 1";
         if (MaxTime <= TimeSpan.Zero) return "--max-seconds must be at least 1";
         if (Deadline <= TimeSpan.Zero || Deadline.TotalMilliseconds > uint.MaxValue - 1)
@@ -114,6 +148,9 @@ internal sealed record SemanticCampaignFailure(
     string? ReductionSkipped)
 {
     public string? ReductionStopped { get; init; }
+
+    /// <summary>The original batch reproducer, retained even when a standalone rerun passes.</summary>
+    public string? BatchManifest { get; init; }
 }
 
 /// <summary>The outcome of one campaign: what was planned, what was covered, and every failure.</summary>
@@ -129,30 +166,54 @@ internal sealed record SemanticCampaignResult(
     ImmutableArray<SemanticCampaignFailure> Failures,
     TimeSpan Elapsed)
 {
+    /// <summary>Distinct base sources among the executed cases: below <see cref="Executed"/>, the search revisited programs.</summary>
+    public int DistinctSources { get; init; }
+
+    /// <summary>Distinct (base source, execution profile) pairs among the executed cases.</summary>
+    public int DistinctSourceProfiles { get; init; }
+
+    /// <summary>An exhaustive campaign's choice sequences (its <see cref="Planned"/> counts the distinct programs); otherwise <c>null</c>.</summary>
+    public int? Sequences { get; init; }
+
+    /// <summary>An exhaustive campaign that executed every enumerated program.</summary>
+    public bool Complete => Options.Exhaustive && Stop == SemanticCampaignStop.Completed && Executed == Planned;
+
     public string Describe()
     {
         var uncovered = FirstUncovered is null ? "" : " first-uncovered=" + FirstUncovered;
+        var plan = Options.Exhaustive
+            ? string.Create(CultureInfo.InvariantCulture,
+                $"exhaustive ({Planned} programs from {Sequences} choice sequences, {(Options.Supervised ? $"batches of {Options.BatchSize}" : "in process")})")
+            : string.Create(CultureInfo.InvariantCulture, $"seeds {Options.FirstSeed:X}..{Options.LastSeed:X} x {Options.CasesPerSeed}");
+        var complete = Options.Exhaustive ? " complete=" + (Complete ? "yes" : "no") : "";
         return string.Create(CultureInfo.InvariantCulture,
-            $"semantic-campaign: recipe {Options.Recipe}, seeds {Options.FirstSeed:X}..{Options.LastSeed:X} x {Options.CasesPerSeed}: planned={Planned} executed={Executed} passed={Passed} failed={Failures.Length} stop={SemanticCampaign.StopName(Stop)}{uncovered} elapsed={Elapsed.TotalSeconds:F1}s");
+            $"semantic-campaign: recipe {Options.Recipe}, {plan}: planned={Planned} executed={Executed} passed={Passed} failed={Failures.Length} distinct-sources={DistinctSources} distinct-source-profiles={DistinctSourceProfiles} stop={SemanticCampaign.StopName(Stop)}{complete}{uncovered} elapsed={Elapsed.TotalSeconds:F1}s");
     }
 }
 
 /// <summary>
 /// <c>semantic-campaign</c> (SEM-2C, fuzz/README.md § Campaigns): a BOUNDED, deterministic search for
 /// failing generated cases. It enumerates the ids <c>sem2b/v1/&lt;recipe&gt;/&lt;seed&gt;/&lt;index&gt;</c> of ONE
-/// seeded recipe (<c>--recipe seed|seed-nested</c>, default <c>seed</c>; <see cref="SemanticCorpus.SeededRecipes"/>)
-/// for every seed of an inclusive hex range and every index below the cases-per-seed count, in that
-/// order, runs each under <see cref="SemanticSupervisor"/> (recipe mode, one child at a time, the
-/// descriptor persisted before dispatch), persists every failure with its signature, and — unless
-/// <c>--no-reduce</c> — reduces it with <see cref="SemanticReducer"/> (supervised, exact-source
-/// candidates) and writes the reduced artifacts. It stops at the first exhausted budget and reports
-/// what it covered. It writes only inside its own output directory, which must be new or empty.
+/// seeded recipe (<c>--recipe seed|seed-nested|seed-nested-wide</c>, default <c>seed</c>;
+/// <see cref="SemanticCorpus.SeededRecipes"/>) for every seed of an inclusive hex range and every
+/// index below the cases-per-seed count, in that order, runs each under <see cref="SemanticSupervisor"/>
+/// (recipe mode, one child at a time, the descriptor persisted before dispatch), persists every
+/// failure with its signature, and — unless <c>--no-reduce</c> — reduces it with
+/// <see cref="SemanticReducer"/> (supervised, exact-source candidates) and writes the reduced
+/// artifacts. With <c>--exhaustive</c> the plan is instead EVERY program of a finite recipe
+/// (<see cref="SemanticExhaustive"/>, ids <c>sem2b/v1/&lt;recipe&gt;/all/&lt;choices&gt;</c>), run in
+/// supervised batches (one child per batch, every descriptor persisted before dispatch, a member the
+/// batch could not answer rerun alone), with the same failure handling. It stops at the first
+/// exhausted budget and reports what it covered, including the distinct sources and (source,
+/// profile) pairs executed. It writes only inside its own output directory, which must be new or empty.
 /// </summary>
 internal static class SemanticCampaign
 {
     internal const string SummaryFormat = "kl-sem2c-campaign";
     internal const int SummaryFormatVersion = 1;
     internal const string SummaryFile = "campaign.json";
+    internal const string SeededMode = "seeded";
+    internal const string ExhaustiveMode = "exhaustive";
 
     private static readonly JsonWriterOptions WriterOptions = new()
     {
@@ -211,40 +272,31 @@ internal static class SemanticCampaign
         var passed = 0;
         var verdicts = new SortedDictionary<SemanticVerdict, int>();
         var failures = new List<SemanticCampaignFailure>();
+        var sources = new HashSet<string>(StringComparer.Ordinal);
+        var sourceProfiles = new HashSet<(string Source, string Profile)>();
         var stop = SemanticCampaignStop.Completed;
         string? firstUncovered = null;
         string? lastCovered = null;
         var timeExhausted = false;
 
-        foreach (var (seed, index) in Plan(options))
+        // Counts one executed case; a failure is persisted (descriptor with its result, and its
+        // signature) and then, unless --no-reduce, reduced by the case's own builder.
+        void Record(SemanticCaseBuilder builder, SemanticCase semanticCase, SemanticCaseResult result, string? batchManifest)
         {
-            var builder = SemanticCorpus.SeededBuilder(options.Recipe, seed, index);
-            if (timeExhausted || clock() >= options.MaxTime)
-            {
-                stop = SemanticCampaignStop.TimeBudget;
-                firstUncovered = builder.CaseId;
-                break;
-            }
-
-            if (executed >= options.MaxCases)
-            {
-                stop = SemanticCampaignStop.CaseBudget;
-                firstUncovered = builder.CaseId;
-                break;
-            }
-
-            var semanticCase = builder.Build();
-            var result = options.InProcessRunner is { } runner ? runner(semanticCase) : Supervise(semanticCase, workDir, options);
             executed++;
             lastCovered = semanticCase.CaseId;
             verdicts[result.Verdict] = verdicts.GetValueOrDefault(result.Verdict) + 1;
+            sources.Add(semanticCase.Source);
+            // Count observed base profiles, including expected front-end refusals, rather than
+            // claiming every requested profile when a worker died before writing any observation.
+            foreach (var run in result.Runs.Where(static r => r.Member == SemanticMember.BaseRole))
+                sourceProfiles.Add((semanticCase.Source, run.Profile));
             if (result.Passed)
             {
                 passed++;
-                continue;
+                return;
             }
 
-            // Persist the failure (descriptor with its result, and its signature) before reducing it.
             var signature = SemanticFailureSignature.Of(result);
             Directory.CreateDirectory(failuresDir);
             var safe = SemanticReplay.SafeName(semanticCase.CaseId);
@@ -256,7 +308,10 @@ internal static class SemanticCampaign
             log.WriteLine($"  descriptor={descriptor}");
 
             var failure = new SemanticCampaignFailure(semanticCase.CaseId, options.Recipe, result.Verdict, signature, Relative(outDir, descriptor),
-                Relative(outDir, signatureFile), null, null, null, null, null, null, 0, 0, options.Reduce ? null : "disabled (--no-reduce)");
+                Relative(outDir, signatureFile), null, null, null, null, null, null, 0, 0, options.Reduce ? null : "disabled (--no-reduce)")
+            {
+                BatchManifest = batchManifest is null ? null : Relative(outDir, batchManifest),
+            };
             if (options.Reduce)
             {
                 if (clock() >= options.MaxTime)
@@ -273,11 +328,147 @@ internal static class SemanticCampaign
             failures.Add(failure);
         }
 
-        var outcome = new SemanticCampaignResult(options, options.PlannedCases, executed, passed, stop, firstUncovered, lastCovered,
-            verdicts.ToImmutableSortedDictionary(), [.. failures], clock());
+        // The budgets, checked before every case (an exhaustive batch: before every batch).
+        bool Stopped(string nextCaseId)
+        {
+            if (timeExhausted || clock() >= options.MaxTime) stop = SemanticCampaignStop.TimeBudget;
+            else if (executed >= options.MaxCases) stop = SemanticCampaignStop.CaseBudget;
+            else return false;
+            firstUncovered = nextCaseId;
+            return true;
+        }
+
+        long planned;
+        int? sequences = null;
+        if (options.Exhaustive)
+        {
+            var enumeration = SemanticExhaustive.Enumerate(options.Recipe);
+            planned = enumeration.Programs.Length;
+            sequences = enumeration.Sequences;
+            log.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"semantic-campaign: {options.Recipe} enumerates {enumeration.Programs.Length} distinct programs from {enumeration.Sequences} choice sequences"));
+            var programs = enumeration.Programs;
+            var next = 0;
+            var batchNumber = 0;
+            while (next < programs.Length && !Stopped(programs[next].CaseId))
+            {
+                if (options.InProcessRunner is { } inProcess)
+                {
+                    var builder = SemanticCorpus.ExhaustiveBuilder(options.Recipe, programs[next].Choices);
+                    var semanticCase = builder.Build();
+                    Record(builder, semanticCase, inProcess(semanticCase), null);
+                    next++;
+                    continue;
+                }
+
+                var size = Math.Min(options.BatchSize, Math.Min(programs.Length - next, options.MaxCases - executed));
+                next += SuperviseBatch(programs.AsSpan(next, size).ToArray(), ++batchNumber, workDir, options, Record, log);
+            }
+        }
+        else
+        {
+            planned = options.PlannedCases;
+            foreach (var (seed, index) in Plan(options))
+            {
+                var builder = SemanticCorpus.SeededBuilder(options.Recipe, seed, index);
+                if (Stopped(builder.CaseId)) break;
+                var semanticCase = builder.Build();
+                Record(builder, semanticCase, options.InProcessRunner is { } runner ? runner(semanticCase) : Supervise(semanticCase, workDir, options), null);
+            }
+        }
+
+        var outcome = new SemanticCampaignResult(options, planned, executed, passed, stop, firstUncovered, lastCovered,
+            verdicts.ToImmutableSortedDictionary(), [.. failures], clock())
+        {
+            DistinctSources = sources.Count,
+            DistinctSourceProfiles = sourceProfiles.Count,
+            Sequences = sequences,
+        };
         File.WriteAllText(Path.Combine(outDir, SummaryFile), WriteSummary(outcome));
         if (Directory.Exists(workDir) && !Directory.EnumerateFileSystemEntries(workDir).Any()) Directory.Delete(workDir);
         return outcome;
+    }
+
+    /// <summary>
+    /// One supervised batch of an exhaustive campaign: every member's descriptor is persisted under
+    /// <c>work/</c> BEFORE the manifest is written and the child dispatched, the child replays them in
+    /// order (<see cref="SemanticSupervisor.RunBatch"/>), and each member with a result is recorded in
+    /// order. The first member WITHOUT one (in flight when the child crashed or timed out, or one the
+    /// child could not replay) runs alone under the single-case supervisor, which classifies and keeps
+    /// its evidence exactly as a seeded campaign does; the original batch failure is retained even
+    /// when that rerun passes. The members after it are left for the next batch. A failing batch's
+    /// entire manifest, descriptors, results and supervision record are kept together; a clean,
+    /// passing batch's evidence is removed. Returns how many members were recorded.
+    /// </summary>
+    private static int SuperviseBatch(
+        SemanticExhaustive.EnumeratedProgram[] programs, int batchNumber, string workDir, SemanticCampaignOptions options,
+        Action<SemanticCaseBuilder, SemanticCase, SemanticCaseResult, string?> record, TextWriter log)
+    {
+        Directory.CreateDirectory(workDir);
+        var stem = "batch-" + batchNumber.ToString("D5", CultureInfo.InvariantCulture);
+        var batchDir = Directory.CreateDirectory(Path.Combine(workDir, stem)).FullName;
+        var builders = programs.Select(p => SemanticCorpus.ExhaustiveBuilder(options.Recipe, p.Choices)).ToArray();
+        var members = new List<SemanticBatchMember>();
+        foreach (var builder in builders)
+        {
+            var semanticCase = builder.Build();
+            var descriptor = Path.Combine(batchDir, SemanticReplay.SafeName(semanticCase.CaseId) + ".json");
+            File.WriteAllText(descriptor, SemanticDescriptor.Write(semanticCase));
+            members.Add(new SemanticBatchMember(semanticCase, descriptor, descriptor + ".result.json"));
+        }
+
+        var manifest = Path.Combine(workDir, stem + ".txt");
+        SemanticSupervisor.WriteManifest(manifest, members.Select(static m => (m.DescriptorPath, m.ResultPath)));
+        var command = (options.BatchWorkerCommand ?? SemanticSupervisor.SelfBatchWorker)(manifest);
+        var run = SemanticSupervisor.RunBatch(command, members, options.Deadline);
+        if (run.ChildFailure is { } childFailure)
+            log.WriteLine($"  batch {batchNumber.ToString(CultureInfo.InvariantCulture)}: {childFailure} ({run.Detail}); manifest={manifest}");
+
+        // Decide before removing anything: a batch-only defect may depend on every preceding case.
+        var keep = run.ChildFailure is not null || run.Members.Any(static m => m.Verdict != SemanticVerdict.Passed);
+        var recorded = 0;
+        while (recorded < run.Members.Length)
+        {
+            var member = run.Members[recorded];
+            if (member.Verdict is not { } verdict)
+            {
+                var rerunDir = Path.Combine(batchDir, "rerun");
+                var alone = Supervise(member.Case, rerunDir, options);
+                if (!Directory.EnumerateFileSystemEntries(rerunDir).Any()) Directory.Delete(rerunDir);
+                log.WriteLine($"  batch member {member.Case.CaseId}: standalone rerun {alone.Verdict}; original batch failure retained; manifest={manifest}");
+                var original = new SemanticCaseResult(member.Case.CaseId,
+                    run.ChildFailure ?? SemanticVerdict.MissingObservation, [], [], SemanticPath.None, [], []);
+                record(builders[recorded++], member.Case, original, manifest);
+                break;
+            }
+
+            // Supervisor-classified failures carry no semantic finding location (as Supervise).
+            var result = member.Summary is { } summary && summary.Verdict == verdict
+                ? summary.CoverageResult
+                : new SemanticCaseResult(member.Case.CaseId, verdict, [], [], SemanticPath.None, [], []);
+            // A child can also die after writing its last result (including during shutdown).
+            // Attribute that failure to the final member while retaining its semantic result file.
+            if (recorded == run.Members.Length - 1 && run.ChildFailure is { } failure)
+            {
+                result = result with { Verdict = failure, Findings = [], FindingRecords = [] };
+            }
+
+            record(builders[recorded++], member.Case, result, manifest);
+        }
+
+        if (!keep)
+        {
+            foreach (var member in run.Members)
+            {
+                TryDelete(member.DescriptorPath);
+                TryDelete(member.ResultPath);
+            }
+            if (!Directory.EnumerateFileSystemEntries(batchDir).Any()) Directory.Delete(batchDir);
+            TryDelete(manifest);
+            TryDelete(manifest + ".supervision.txt");
+        }
+
+        return recorded;
     }
 
     /// <summary>One case in a bounded child (recipe mode); passing evidence is removed, failing evidence retained.</summary>
@@ -370,7 +561,12 @@ internal static class SemanticCampaign
     /// for a fixed recipe, seed range and bounds a campaign stopped by its case budget (or completed)
     /// writes the same bytes on every run. <c>recipe</c> (on the summary, on each failure and in the
     /// signature sidecar) is an ADDITIVE v1 field: a document without it was written before
-    /// <c>--recipe</c> existed and describes a <c>seed</c> campaign.
+    /// <c>--recipe</c> existed and describes a <c>seed</c> campaign. <c>mode</c>
+    /// (<c>seeded</c>/<c>exhaustive</c>), <c>distinctSources</c> and <c>distinctSourceProfiles</c> are
+    /// additive v1 fields as well (a document without <c>mode</c> is seeded). An exhaustive summary
+    /// writes <c>null</c> seeds and cases per seed, its <c>batchSize</c>, the enumeration's choice
+    /// <c>sequences</c> (its <c>planned</c> count is the distinct programs), <c>null</c> for an
+    /// unbounded <c>maxCases</c>, and <c>complete</c>: every enumerated program executed.
     /// </summary>
     internal static string WriteSummary(SemanticCampaignResult result)
     {
@@ -384,10 +580,25 @@ internal static class SemanticCampaign
             w.WriteString("generator", SemanticRecipe.GeneratorId);
             w.WriteNumber("recipeVersion", SemanticRecipe.RecipeVersion);
             w.WriteString("recipe", o.Recipe);
-            w.WriteString("firstSeed", o.FirstSeed.ToString("X", CultureInfo.InvariantCulture));
-            w.WriteString("lastSeed", o.LastSeed.ToString("X", CultureInfo.InvariantCulture));
-            w.WriteNumber("casesPerSeed", o.CasesPerSeed);
-            w.WriteNumber("maxCases", o.MaxCases);
+            w.WriteString("mode", o.Exhaustive ? ExhaustiveMode : SeededMode);
+            if (o.Exhaustive)
+            {
+                w.WriteNull("firstSeed");
+                w.WriteNull("lastSeed");
+                w.WriteNull("casesPerSeed");
+                w.WriteNumber("batchSize", o.BatchSize);
+                if (result.Sequences is { } sequences) w.WriteNumber("sequences", sequences);
+                else w.WriteNull("sequences");
+            }
+            else
+            {
+                w.WriteString("firstSeed", o.FirstSeed.ToString("X", CultureInfo.InvariantCulture));
+                w.WriteString("lastSeed", o.LastSeed.ToString("X", CultureInfo.InvariantCulture));
+                w.WriteNumber("casesPerSeed", o.CasesPerSeed);
+            }
+
+            if (o.Exhaustive && o.MaxCases == int.MaxValue) w.WriteNull("maxCases"); // unbounded
+            else w.WriteNumber("maxCases", o.MaxCases);
             w.WriteNumber("maxSeconds", (long)Math.Ceiling(o.MaxTime.TotalSeconds));
             w.WriteNumber("deadlineSeconds", (long)Math.Ceiling(o.Deadline.TotalSeconds));
             w.WriteBoolean("reduce", o.Reduce);
@@ -397,6 +608,9 @@ internal static class SemanticCampaign
             w.WriteNumber("executed", result.Executed);
             w.WriteNumber("passed", result.Passed);
             w.WriteNumber("failed", result.Failures.Length);
+            w.WriteNumber("distinctSources", result.DistinctSources);
+            w.WriteNumber("distinctSourceProfiles", result.DistinctSourceProfiles);
+            if (o.Exhaustive) w.WriteBoolean("complete", result.Complete);
             w.WriteString("stop", StopName(result.Stop));
             WriteNullable(w, "lastCovered", result.LastCovered);
             WriteNullable(w, "firstUncovered", result.FirstUncovered);
@@ -413,6 +627,7 @@ internal static class SemanticCampaign
                 WriteSignatureObject(w, f.Signature);
                 w.WriteString("descriptor", f.Descriptor);
                 w.WriteString("signatureFile", f.SignatureFile);
+                if (f.BatchManifest is { } batchManifest) w.WriteString("batchManifest", batchManifest);
                 w.WriteStartObject("reduction");
                 WriteNullable(w, "status", f.ReductionStatus);
                 WriteNullable(w, "skipped", f.ReductionSkipped);
@@ -524,13 +739,17 @@ internal static class SemanticCampaign
 
     internal static readonly string Usage =
         "usage: semantic-campaign --seeds FIRST[..LAST] [--recipe " + string.Join("|", SemanticCorpus.SeededRecipes) + "] " +
-        "[--cases-per-seed N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]";
+        "[--cases-per-seed N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]\n" +
+        "       semantic-campaign --exhaustive --recipe " + string.Join("|", SemanticCorpus.FiniteRecipes) + " " +
+        "[--batch-size N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]";
 
     /// <summary>
     /// <c>semantic-campaign</c>. Exit codes: 0 — every executed case passed (the summary says whether
-    /// the plan was covered or a budget stopped it); 1 — at least one failure (persisted, and reduced
-    /// unless <c>--no-reduce</c>), or a reduction observed a generator precondition failure; 2 — usage,
-    /// a refused output directory, or no case executed.
+    /// the plan was covered or a budget stopped it — for <c>--exhaustive</c>, whether it is
+    /// <c>complete</c>); 1 — at least one failure (persisted, and reduced unless <c>--no-reduce</c>),
+    /// or a reduction observed a generator precondition failure; 2 — usage (including
+    /// <c>--exhaustive</c> for a recipe that is not finite), a refused output directory, or no case
+    /// executed.
     /// </summary>
     public static int RunCampaign(string[] args) => RunCampaign(args, Console.Out, seams: null);
 
@@ -581,12 +800,14 @@ internal static class SemanticCampaign
         ulong? first = null;
         ulong? last = null;
         var recipe = SemanticCorpus.SeedRecipe;
-        var casesPerSeed = SemanticCampaignOptions.DefaultCasesPerSeed;
-        var maxCases = SemanticCampaignOptions.DefaultMaxCases;
-        var maxSeconds = SemanticCampaignOptions.DefaultMaxSeconds;
+        int? casesPerSeed = null;
+        int? maxCases = null;
+        int? maxSeconds = null;
         var deadlineSeconds = (int)SemanticSupervisor.DefaultDeadline.TotalSeconds;
         var maxAttempts = SemanticCampaignOptions.DefaultMaxAttempts;
+        int? batchSize = null;
         var reduce = true;
+        var exhaustive = false;
         string? outDir = null;
         for (var i = 1; i < args.Length; i++)
         {
@@ -594,6 +815,12 @@ internal static class SemanticCampaign
             if (arg == "--no-reduce")
             {
                 reduce = false;
+                continue;
+            }
+
+            if (arg == "--exhaustive")
+            {
+                exhaustive = true;
                 continue;
             }
 
@@ -632,9 +859,18 @@ internal static class SemanticCampaign
 
                     recipe = value;
                     break;
-                case "--cases-per-seed" when TryCount(value, out casesPerSeed):
-                case "--max-cases" when TryCount(value, out maxCases):
-                case "--max-seconds" when TryCount(value, out maxSeconds):
+                case "--cases-per-seed" when TryCount(value, out var count):
+                    casesPerSeed = count;
+                    break;
+                case "--max-cases" when TryCount(value, out var count):
+                    maxCases = count;
+                    break;
+                case "--max-seconds" when TryCount(value, out var count):
+                    maxSeconds = count;
+                    break;
+                case "--batch-size" when TryCount(value, out var count):
+                    batchSize = count;
+                    break;
                 case "--deadline-seconds" when TryCount(value, out deadlineSeconds):
                 case "--max-attempts" when TryCount(value, out maxAttempts):
                     break;
@@ -647,24 +883,46 @@ internal static class SemanticCampaign
             }
         }
 
-        if (first is null || last is null)
+        if (exhaustive)
         {
-            problem = "--seeds is required";
-            return false;
+            if (first is not null || casesPerSeed is not null)
+            {
+                problem = "--exhaustive enumerates the whole recipe: --seeds and --cases-per-seed do not apply";
+                return false;
+            }
+        }
+        else
+        {
+            if (batchSize is not null)
+            {
+                problem = "--batch-size applies only to --exhaustive";
+                return false;
+            }
+
+            if (first is null || last is null)
+            {
+                problem = "--seeds is required (or --exhaustive for a finite recipe)";
+                return false;
+            }
         }
 
+        var perSeed = casesPerSeed ?? SemanticCampaignOptions.DefaultCasesPerSeed;
         options = new SemanticCampaignOptions
         {
-            FirstSeed = first.Value,
-            LastSeed = last.Value,
+            FirstSeed = first ?? 0,
+            LastSeed = last ?? 0,
             Recipe = recipe,
-            CasesPerSeed = casesPerSeed,
-            MaxCases = maxCases,
-            MaxTime = TimeSpan.FromSeconds(maxSeconds),
+            Exhaustive = exhaustive,
+            BatchSize = batchSize ?? SemanticCampaignOptions.DefaultBatchSize,
+            CasesPerSeed = perSeed,
+            MaxCases = maxCases ?? (exhaustive ? int.MaxValue : SemanticCampaignOptions.DefaultMaxCases),
+            MaxTime = TimeSpan.FromSeconds(maxSeconds ?? (exhaustive ? SemanticCampaignOptions.DefaultExhaustiveMaxSeconds : SemanticCampaignOptions.DefaultMaxSeconds)),
             Deadline = TimeSpan.FromSeconds(deadlineSeconds),
             MaxAttempts = maxAttempts,
             Reduce = reduce,
-            OutputDirectory = outDir ?? DefaultOutputDirectory(first.Value, last.Value, casesPerSeed, recipe),
+            OutputDirectory = outDir ?? (exhaustive
+                ? DefaultOutputDirectory(recipe + "-" + ExhaustiveMode)
+                : DefaultOutputDirectory(first!.Value, last!.Value, perSeed, recipe)),
         };
         problem = "";
         return true;
@@ -674,13 +932,18 @@ internal static class SemanticCampaign
     /// <c>&lt;repository&gt;/artifacts/semantic-campaign/&lt;FIRST&gt;-&lt;LAST&gt;x&lt;N&gt;-&lt;UTC stamp&gt;</c> (git-ignored)
     /// when the current directory is inside a checkout, otherwise under the temporary directory. The
     /// default <c>seed</c> recipe keeps that name; any other recipe prefixes it
-    /// (<c>seed-nested-&lt;FIRST&gt;-…</c>), so two recipes over one range never share a directory.
+    /// (<c>seed-nested-&lt;FIRST&gt;-…</c>), so two recipes over one range never share a directory. An
+    /// exhaustive campaign's is <c>&lt;recipe&gt;-exhaustive-&lt;UTC stamp&gt;</c>.
     /// </summary>
     internal static string DefaultOutputDirectory(ulong first, ulong last, int casesPerSeed, string recipe)
     {
         var prefix = recipe == SemanticCorpus.SeedRecipe ? "" : recipe + "-";
-        var name = string.Create(CultureInfo.InvariantCulture,
-            $"{prefix}{first:X}-{last:X}x{casesPerSeed}-{DateTime.UtcNow:yyyyMMdd'T'HHmmss'Z'}");
+        return DefaultOutputDirectory(string.Create(CultureInfo.InvariantCulture, $"{prefix}{first:X}-{last:X}x{casesPerSeed}"));
+    }
+
+    private static string DefaultOutputDirectory(string plan)
+    {
+        var name = string.Create(CultureInfo.InvariantCulture, $"{plan}-{DateTime.UtcNow:yyyyMMdd'T'HHmmss'Z'}");
         for (var dir = new DirectoryInfo(Environment.CurrentDirectory); dir is not null; dir = dir.Parent)
         {
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))

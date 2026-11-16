@@ -12,8 +12,10 @@ namespace KatLang.ParserFuzz;
 /// semantic-replay [--exact-source] [--supervised] DESCRIPTOR...
 /// semantic-corpus [--supervised] [--out DIR] [--only PREFIX] [--deadline-seconds N]
 /// semantic-worker DESCRIPTOR RESULT [--exact-source]     (child process of a supervised run)
+/// semantic-batch-worker MANIFEST     (child process of an exhaustive campaign batch)
 /// semantic-reduce DESCRIPTOR|CASE-ID OUT [--max-attempts N] [--supervised]   (SemanticReduction.RunReduce)
-/// semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
+/// semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested|seed-nested-wide] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
+/// semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-size N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]
 /// </code>
 ///
 /// <para><b>Modes.</b> The default RECIPE mode rebuilds the case from its generator, recipe version
@@ -264,7 +266,9 @@ internal static class SemanticReplay
     }
 
     /// <param name="observationFilter">The runner's inert test seam, so a test worker can fail on a known shape; <c>semantic-worker</c> never passes it.</param>
-    internal static int Work(string descriptorPath, string resultPath, Mode mode, Func<SemanticProfileRun, SemanticProfileRun>? observationFilter = null)
+    /// <param name="report">Where the one-line report goes (default the console; a batch worker discards it).</param>
+    internal static int Work(string descriptorPath, string resultPath, Mode mode, Func<SemanticProfileRun, SemanticProfileRun>? observationFilter = null,
+        TextWriter? report = null)
     {
         var outcome = Replay(ReadBounded(descriptorPath), mode, observationFilter);
         if (outcome.Problem is not null)
@@ -280,8 +284,54 @@ internal static class SemanticReplay
         var temporary = resultPath + ".partial";
         File.WriteAllText(temporary, document);
         File.Move(temporary, resultPath, overwrite: true);
-        Console.WriteLine(outcome.Report);
+        (report ?? Console.Out).WriteLine(outcome.Report);
         return 0;
+    }
+
+    /// <summary>
+    /// <c>semantic-batch-worker MANIFEST</c>: the supervised child of one exhaustive-campaign batch
+    /// (<see cref="SemanticSupervisor.RunBatch"/>). It replays every <c>descriptor TAB result</c> line of
+    /// the manifest in order, exactly as <c>semantic-worker</c> replays one (recipe mode), writing each
+    /// result document atomically before the next member starts. A member it cannot replay gets no
+    /// result and the worker continues; it then exits 2.
+    /// </summary>
+    public static int RunBatchWorker(string[] args)
+    {
+        if (args.Length != 2)
+        {
+            Console.Error.WriteLine("usage: semantic-batch-worker MANIFEST");
+            return 2;
+        }
+
+        return WorkBatch(args[1], Mode.Recipe);
+    }
+
+    /// <param name="filterFor">The runner's inert test seam per member (a test batch can fail on a known shape); the command never passes it.</param>
+    internal static int WorkBatch(string manifestPath, Mode mode, Func<SemanticCase, Func<SemanticProfileRun, SemanticProfileRun>?>? filterFor = null)
+    {
+        var members = 0;
+        var unreplayed = 0;
+        foreach (var line in File.ReadLines(manifestPath))
+        {
+            if (line.Length == 0) continue;
+            members++;
+            var parts = line.Split('\t');
+            try
+            {
+                if (parts.Length != 2) throw new InvalidDataException("a manifest line is not 'descriptor TAB result'");
+                Func<SemanticProfileRun, SemanticProfileRun>? filter = null;
+                if (filterFor is not null && SemanticDescriptor.TryParse(ReadBounded(parts[0]), out var parsed, out _)) filter = filterFor(parsed.Case);
+                if (Work(parts[0], parts[1], mode, filter, TextWriter.Null) != 0) unreplayed++;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                Console.Error.WriteLine($"semantic-batch-worker: {line}: {exception.Message}");
+                unreplayed++;
+            }
+        }
+
+        Console.WriteLine($"semantic-batch-worker: {members} member(s), {unreplayed} without a result");
+        return unreplayed == 0 ? 0 : 2;
     }
 
     internal static string ReadBounded(string path)

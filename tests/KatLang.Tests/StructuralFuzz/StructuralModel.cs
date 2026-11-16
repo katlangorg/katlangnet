@@ -109,13 +109,26 @@ public abstract record MPattern
     /// <summary>A collecting name inside a structural pattern.</summary>
     public sealed record Collecting(Sym Symbol) : MPattern;
 
-    /// <summary>A sequence or exact-list pattern, preserving its nested delimiter structure.</summary>
-    public sealed record Structure(bool IsList, IReadOnlyList<MPattern> Items) : MPattern;
+    /// <summary>A sequence or exact-list pattern, preserving its nested delimiter structure.
+    /// <paramref name="Layout"/> (SEM-2B wide recipe) is presentation only — the written group's
+    /// extent: <see cref="TightLayout"/> <c>(a, b)</c>, <see cref="PaddedLayout"/> <c>( a , b )</c>
+    /// or <see cref="BrokenLayout"/>, one item per line. Every earlier production uses the tight
+    /// default, so its rendering is unchanged.</summary>
+    public sealed record Structure(bool IsList, IReadOnlyList<MPattern> Items, int Layout = TightLayout) : MPattern;
+
+    public const int TightLayout = 0;
+    public const int PaddedLayout = 1;
+    public const int BrokenLayout = 2;
 
     /// <summary>Top-level arity-2 literal pattern, e.g. <c>C(0, 0)</c>. Used
     /// ONLY by the IntroduceInvalidFamilyShape transform to violate the
     /// uniform-family-arity front-end rule on purpose.</summary>
     public sealed record LiteralPair(Decimal128 First, Decimal128 Second) : MPattern;
+
+    /// <summary>A whole explicit parameter list as one clause head (SEM-2B wide recipe),
+    /// <c>F([a, *r], z, *s)</c>: its items are the parameters, rendered without delimiters of
+    /// their own. Only ever the top-level pattern of a single-clause family.</summary>
+    public sealed record ParameterList(IReadOnlyList<MPattern> Items) : MPattern;
 }
 
 public sealed record MClause(MPattern Pattern, MExpr Body);
@@ -332,6 +345,9 @@ public sealed class ScopeGraph
                 break;
             case MPattern.Structure structure:
                 foreach (var item in structure.Items) DeclarePattern(scope, item);
+                break;
+            case MPattern.ParameterList parameters:
+                foreach (var item in parameters.Items) DeclarePattern(scope, item);
                 break;
         }
     }
@@ -650,10 +666,39 @@ public static class StructuralRenderer
         }
     }
 
-    private static void RenderPattern(MPattern pattern, IReadOnlyDictionary<Sym, string> names, StringBuilder sb)
+    /// <param name="depth">The structure nesting depth inside the clause head: the indentation of a
+    /// <see cref="MPattern.BrokenLayout"/> group's items (presentation only).</param>
+    private static void RenderPattern(MPattern pattern, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int depth = 0)
     {
         switch (pattern)
         {
+            case MPattern.Structure { Layout: not MPattern.TightLayout } laidOut:
+            {
+                var broken = laidOut.Layout == MPattern.BrokenLayout;
+                if (!broken && laidOut.Layout != MPattern.PaddedLayout)
+                    throw new InvalidOperationException($"Unknown pattern layout {laidOut.Layout}");
+                sb.Append(laidOut.IsList ? '[' : '(');
+                for (var i = 0; i < laidOut.Items.Count; i++)
+                {
+                    if (broken) sb.Append('\n').Append(new string(' ', (depth + 1) * 2));
+                    else sb.Append(i == 0 ? " " : " , ");
+                    RenderPattern(laidOut.Items[i], names, sb, depth + 1);
+                    if (broken && i < laidOut.Items.Count - 1) sb.Append(',');
+                }
+
+                if (!broken) sb.Append(' ');
+                sb.Append(laidOut.IsList ? ']' : ')');
+                break;
+            }
+
+            case MPattern.ParameterList parameters:
+                for (var i = 0; i < parameters.Items.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    RenderPattern(parameters.Items[i], names, sb, depth);
+                }
+
+                break;
             case MPattern.Literal literal:
                 sb.Append(FormatAtom(literal.Value));
                 break;
@@ -671,7 +716,7 @@ public static class StructuralRenderer
                 for (var i = 0; i < structure.Items.Count; i++)
                 {
                     if (i > 0) sb.Append(", ");
-                    RenderPattern(structure.Items[i], names, sb);
+                    RenderPattern(structure.Items[i], names, sb, depth + 1);
                 }
                 sb.Append(structure.IsList ? ']' : ')');
                 break;

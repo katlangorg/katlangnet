@@ -215,6 +215,16 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             Assert.DoesNotContain(root.FullName.Replace('\\', '/'), a.Replace("\\\\", "/"), StringComparison.OrdinalIgnoreCase);
             Assert.Equal(first.Verdicts, second.Verdicts);
 
+            // Saturation: the distinct sources and (source, profile) pairs of the executed cases.
+            SemanticCase[] ran = [SemanticCorpus.SeededCase(Seed, 0), SemanticCorpus.SeededCase(Seed, 1), SemanticCorpus.SeededCase(Seed + 1, 0)];
+            Assert.Equal(3, first.DistinctSources);
+            Assert.Equal(ran.Sum(static c => c.Profiles.Length), first.DistinctSourceProfiles);
+            Assert.Contains("\"mode\": \"seeded\"", a, StringComparison.Ordinal);
+            Assert.Contains("\"distinctSources\": 3,", a, StringComparison.Ordinal);
+            Assert.Contains("\"distinctSourceProfiles\": " + first.DistinctSourceProfiles.ToString(CultureInfo.InvariantCulture) + ",", a, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"complete\"", a, StringComparison.Ordinal);
+            Assert.Contains(" distinct-sources=3 distinct-source-profiles=" + first.DistinctSourceProfiles.ToString(CultureInfo.InvariantCulture) + " stop=case-budget", first.Describe(), StringComparison.Ordinal);
+
             // The whole plan without a binding budget: completed, nothing uncovered.
             var all = SemanticCampaign.Run(Tiny(Path.Combine(root.FullName, "c")) with { MaxCases = 10 }, TextWriter.Null);
             Assert.Equal(SemanticCampaignStop.Completed, all.Stop);
@@ -425,7 +435,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     [Fact]
     public void TheRecipeOption_DefaultsToSeed_AndEveryRecipeNameIsARebuildableIdSegment()
     {
-        Assert.Equal(["seed", "seed-nested"], SemanticCorpus.SeededRecipes.ToArray());
+        Assert.Equal(["seed", "seed-nested", "seed-nested-wide"], SemanticCorpus.SeededRecipes.ToArray());
         Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "0x10..12"], out var byDefault, out var problem), problem);
         Assert.Equal(SemanticCorpus.SeedRecipe, byDefault.Recipe);
         Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "0x10..12", "--recipe", "seed"], out var named, out problem), problem);
@@ -440,8 +450,9 @@ public class SemanticCampaignTests(ITestOutputHelper output)
         Assert.Equal(SemanticCampaign.Plan(byDefault).ToArray(), SemanticCampaign.Plan(nested).ToArray()); // the plan is recipe-independent
 
         Assert.False(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "1", "--recipe", "nested"], out _, out problem));
-        Assert.Contains("seed, seed-nested", problem, StringComparison.Ordinal);
-        Assert.Contains("[--recipe seed|seed-nested]", SemanticCampaign.Usage, StringComparison.Ordinal);
+        Assert.Contains("seed, seed-nested, seed-nested-wide", problem, StringComparison.Ordinal);
+        Assert.Contains("[--recipe seed|seed-nested|seed-nested-wide]", SemanticCampaign.Usage, StringComparison.Ordinal);
+        Assert.Contains("--exhaustive --recipe seed-nested|seed-nested-wide [--batch-size N]", SemanticCampaign.Usage, StringComparison.Ordinal);
         Assert.NotNull((byDefault with { Recipe = "nested" }).Problem()); // the seam path is validated too
 
         foreach (var recipe in SemanticCorpus.SeededRecipes)
@@ -509,12 +520,17 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             Assert.Contains("\"recipe\": \"seed-nested\"", a, StringComparison.Ordinal);
             Assert.Contains("\"firstUncovered\": \"sem2b/v1/seed-nested/5EED2B000002/1\"", a, StringComparison.Ordinal);
 
-            // The default recipe over the same range: the same summary apart from the recipe name.
+            // The default recipe over the same range: the same summary apart from the recipe name and
+            // the (source, profile) count, which follows each recipe's own profile selection.
             var s = File.ReadAllText(Path.Combine(root.FullName, "seed", SemanticCampaign.SummaryFile));
             Assert.Equal(SemanticCorpus.SeedRecipe, seeded.Options.Recipe);
             Assert.Contains("\"recipe\": \"seed\"", s, StringComparison.Ordinal);
             Assert.DoesNotContain("seed-nested", s, StringComparison.Ordinal);
-            Assert.Equal(s, a.Replace("seed-nested", "seed", StringComparison.Ordinal));
+            Assert.Equal(executed.Take(3).Sum(static c => c.Profiles.Length), first.DistinctSourceProfiles);
+            Assert.Equal((3, 3), (first.DistinctSources, seeded.DistinctSources));
+            static string WithoutPairs(string summary)
+                => string.Join("\n", summary.Split('\n').Where(static l => !l.Contains("\"distinctSourceProfiles\"", StringComparison.Ordinal)));
+            Assert.Equal(WithoutPairs(s), WithoutPairs(a.Replace("seed-nested", "seed", StringComparison.Ordinal)));
 
             var refused = Path.Combine(root.FullName, "refused");
             Assert.Throws<ArgumentException>(() => SemanticCampaign.Run(Tiny(refused) with { Recipe = "nested" }, TextWriter.Null));
@@ -683,6 +699,14 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     [InlineData("--seeds 1 --deadline-seconds 4294968")]
     [InlineData("--seeds 1 --recipe nested")]
     [InlineData("--seeds 1 --recipe SEED-NESTED")]
+    [InlineData("--exhaustive")]
+    [InlineData("--exhaustive --recipe seed")]
+    [InlineData("--exhaustive --recipe seed-nested --seeds 1")]
+    [InlineData("--exhaustive --recipe seed-nested --cases-per-seed 2")]
+    [InlineData("--exhaustive --recipe seed-nested --batch-size 0")]
+    [InlineData("--exhaustive --recipe seed-nested-wide --batch-size 4097")]
+    [InlineData("--seeds 1 --batch-size 4")]
+    [InlineData("--recipe seed-nested")]
     public void UsageErrors_ExitWithTwo_AndWriteNothing(string arguments)
     {
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-usage-");

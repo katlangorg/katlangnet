@@ -12,9 +12,11 @@ namespace KatLang.ParserFuzz;
 /// contexts, at most one failure, occasionally an invalid declaration). Enumerating the corpus only
 /// GENERATES; nothing is evaluated, so tests and replay can re-enumerate it cheaply.
 ///
-/// <para>Case ids are durable: <c>sem2b/v1/sys/…</c> or <c>sem2b/v1/seed/&lt;hex&gt;/&lt;index&gt;</c>.
-/// A seeded case draws from its own stream, so <see cref="TryReconstruct"/> rebuilds exactly that
-/// case without generating any other.</para>
+/// <para>Case ids are durable: <c>sem2b/v1/sys/…</c> or <c>sem2b/v1/&lt;recipe&gt;/&lt;hex&gt;/&lt;index&gt;</c>
+/// for a seeded recipe (<see cref="SeededRecipes"/>). A seeded case draws from its own stream, so
+/// <see cref="TryReconstruct"/> rebuilds exactly that case without generating any other. An
+/// enumerated program of a finite recipe is <c>sem2b/v1/&lt;recipe&gt;/all/&lt;choices&gt;</c>
+/// (<see cref="ExhaustiveLocalId"/>); the campaign-only recipes are not part of this fixed corpus.</para>
 /// </summary>
 internal static class SemanticCorpus
 {
@@ -315,19 +317,71 @@ internal static class SemanticCorpus
     internal const string NestedSeedRecipe = "seed-nested";
 
     /// <summary>
+    /// The WIDE nested-pattern seeded recipe (<see cref="SemanticNestedWide"/>): the id segment of
+    /// <c>seed-nested-wide/&lt;hex&gt;/&lt;index&gt;</c>. A new id, so <c>seed-nested</c> keeps its meaning.
+    /// </summary>
+    internal const string NestedWideSeedRecipe = "seed-nested-wide";
+
+    /// <summary>
     /// The seeded recipes, each named by the id segment of its cases. <see cref="TryBuilder"/> and
     /// <c>semantic-campaign --recipe</c> share this list and <see cref="SeededBuilder(string, ulong, int)"/>,
     /// so every id a campaign plans is an id that replay, export and reduction rebuild.
     /// </summary>
-    internal static readonly ImmutableArray<string> SeededRecipes = [SeedRecipe, NestedSeedRecipe];
+    internal static readonly ImmutableArray<string> SeededRecipes = [SeedRecipe, NestedSeedRecipe, NestedWideSeedRecipe];
+
+    /// <summary>
+    /// The recipes whose generation is a FINITE choice tree of named picks and two-way chances, so
+    /// <see cref="SemanticExhaustive"/> can enumerate every program they generate. <c>seed</c> is not
+    /// one: its tree is astronomically large (three fragments of any family, each with its own picks).
+    /// </summary>
+    internal static readonly ImmutableArray<string> FiniteRecipes = [NestedSeedRecipe, NestedWideSeedRecipe];
 
     /// <summary>The builder of <c>&lt;recipe&gt;/&lt;hex&gt;/&lt;index&gt;</c> for one of <see cref="SeededRecipes"/>.</summary>
     internal static SemanticCaseBuilder SeededBuilder(string recipe, ulong seed, int index) => recipe switch
     {
         SeedRecipe => SeededBuilder(seed, index),
         NestedSeedRecipe => NestedSeededBuilder(seed, index),
+        NestedWideSeedRecipe => NestedWideSeededBuilder(seed, index),
         _ => throw new ArgumentOutOfRangeException(nameof(recipe), recipe, "unknown seeded recipe"),
     };
+
+    // ── Exhaustive identities ───────────────────────────────────────────────
+
+    /// <summary>The id segment of an enumerated program: <c>&lt;recipe&gt;/all/&lt;choices&gt;</c>.</summary>
+    internal const string ExhaustiveSegment = "all";
+
+    /// <summary>The tier of an enumerated program; it runs every non-cancellation profile.</summary>
+    internal const string ExhaustiveTier = "exhaustive";
+
+    /// <summary>
+    /// One generation step of a finite recipe: (decisions, local id, tier, seed, index) to the
+    /// assembled case. The seeded builder and the exhaustive builder of a recipe share it.
+    /// </summary>
+    internal delegate SemanticBuiltCase RecipeBody(SemanticGrammar.Gen g, string localId, string tier, ulong? seed, int? index);
+
+    /// <summary>The generation step of a <see cref="FiniteRecipes"/> member, or <c>null</c>.</summary>
+    internal static RecipeBody? FiniteBody(string recipe) => recipe switch
+    {
+        NestedSeedRecipe => NestedBody,
+        NestedWideSeedRecipe => NestedWideBody,
+        _ => null,
+    };
+
+    /// <summary>
+    /// <c>&lt;recipe&gt;/all/&lt;v0&gt;.&lt;v1&gt;…</c>: the program's CANONICAL choice sequence
+    /// (<see cref="ChoiceTreeChooser"/>; a chance is recorded as <c>0</c> when it holds and as its
+    /// percentage when it does not). The id alone rebuilds the program.
+    /// </summary>
+    internal static string ExhaustiveLocalId(string recipe, IReadOnlyList<int> choices)
+        => recipe + "/" + ExhaustiveSegment + "/" + string.Join(".", choices.Select(static c => c.ToString(CultureInfo.InvariantCulture)));
+
+    /// <summary>The builder of one enumerated program: the recipe's own body, replaying its canonical choices.</summary>
+    internal static SemanticCaseBuilder ExhaustiveBuilder(string recipe, ImmutableArray<int> choices)
+    {
+        var body = FiniteBody(recipe) ?? throw new ArgumentOutOfRangeException(nameof(recipe), recipe, "not a finite recipe");
+        var localId = ExhaustiveLocalId(recipe, choices);
+        return new SemanticCaseBuilder(localId, () => new ReplayingChooser(choices), g => body(g, localId, ExhaustiveTier, null, null));
+    }
 
     /// <summary>The builder of <c>seed/&lt;hex&gt;/&lt;index&gt;</c>: its own SplitMix64 stream by default, any chooser on request.</summary>
     internal static SemanticCaseBuilder SeededBuilder(ulong seed, int index)
@@ -368,23 +422,37 @@ internal static class SemanticCorpus
     internal static SemanticCaseBuilder NestedSeededBuilder(ulong seed, int index)
     {
         var localId = NestedSeedRecipe + "/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
-        return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
-        {
-            var outer = g.Pick("nested.outer", 2) == 1;
-            var failing = g.Chance("nested.fail", 25);
-            SemanticFragment fragment;
-            using (g.Span("production"))
-                fragment = SemanticGrammar.NestedPattern(g, outer, failing);
-            var depth = 1 + g.Pick("nested.depth", 2);
-            var depthChoice = g.LastChoice;
-            for (var d = 0; d < depth; d++)
-            {
-                using var contextSpan = g.Span("context", governor: depthChoice);
-                SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("nested.context", SemanticGrammar.Contexts.Length - 1));
-            }
-            return Assemble(localId, "seeded", seed, index, g, [fragment], null, false);
-        });
+        return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g => NestedBody(g, localId, "seeded", seed, index));
     }
+
+    /// <summary>The <c>seed-nested</c> generation step (seeded and enumerated alike).</summary>
+    private static SemanticBuiltCase NestedBody(SemanticGrammar.Gen g, string localId, string tier, ulong? seed, int? index)
+    {
+        var outer = g.Pick("nested.outer", 2) == 1;
+        var failing = g.Chance("nested.fail", 25);
+        SemanticFragment fragment;
+        using (g.Span("production"))
+            fragment = SemanticGrammar.NestedPattern(g, outer, failing);
+        var depth = 1 + g.Pick("nested.depth", 2);
+        var depthChoice = g.LastChoice;
+        for (var d = 0; d < depth; d++)
+        {
+            using var contextSpan = g.Span("context", governor: depthChoice);
+            SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("nested.context", SemanticGrammar.Contexts.Length - 1));
+        }
+        return Assemble(localId, tier, seed, index, g, [fragment], null, false);
+    }
+
+    /// <summary>The builder of <c>seed-nested-wide/&lt;hex&gt;/&lt;index&gt;</c>.</summary>
+    internal static SemanticCaseBuilder NestedWideSeededBuilder(ulong seed, int index)
+    {
+        var localId = NestedWideSeedRecipe + "/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
+        return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g => NestedWideBody(g, localId, "seeded", seed, index));
+    }
+
+    /// <summary>The <c>seed-nested-wide</c> generation step: one <see cref="SemanticNestedWide"/> fragment.</summary>
+    private static SemanticBuiltCase NestedWideBody(SemanticGrammar.Gen g, string localId, string tier, ulong? seed, int? index)
+        => Assemble(localId, tier, seed, index, g, [SemanticNestedWide.Build(g)], null, false);
 
     /// <summary>
     /// Rebuilds one case from its durable id under THIS recipe version. Fails clearly for another
@@ -399,8 +467,9 @@ internal static class SemanticCorpus
     }
 
     /// <summary>
-    /// The builder behind a durable recipe id (seeded, nested-seeded or systematic) under THIS recipe
-    /// version, without generating any case. Reduced ids (<see cref="SemanticReduction.ReducedLocalPrefix"/>)
+    /// The builder behind a durable recipe id (seeded, nested-seeded, wide nested-seeded, enumerated
+    /// or systematic) under THIS recipe version, without generating any case (an enumerated id is
+    /// checked to be canonical by one generation). Reduced ids (<see cref="SemanticReduction.ReducedLocalPrefix"/>)
     /// are refused: a reduced case is rebuilt from its recorded choice sequence, never from a recipe id.
     /// </summary>
     internal static bool TryBuilder(string caseId, int recipeVersion, out SemanticCaseBuilder builder, out string problem)
@@ -429,6 +498,9 @@ internal static class SemanticCorpus
         if (SeededRecipes.FirstOrDefault(r => local.StartsWith(r + "/", StringComparison.Ordinal)) is { } recipe)
         {
             var parts = local.Split('/');
+            if (parts.Length == 3 && parts[1] == ExhaustiveSegment && FiniteRecipes.Contains(recipe))
+                return TryExhaustiveBuilder(caseId, recipe, parts[2], out builder, out problem);
+
             if (parts.Length != 3
                 || !ulong.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var seed)
                 || !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out var index)
@@ -451,6 +523,40 @@ internal static class SemanticCorpus
         }
 
         builder = found;
+        problem = "";
+        return true;
+    }
+
+    /// <summary>
+    /// The builder of <c>&lt;finite recipe&gt;/all/&lt;choices&gt;</c>. One generation checks that the
+    /// choices are the program's CANONICAL sequence (every value inside its dimension, a chance as
+    /// <c>0</c> or its percentage, the whole sequence consumed and nothing more), so each enumerated
+    /// program has exactly one id.
+    /// </summary>
+    private static bool TryExhaustiveBuilder(string caseId, string recipe, string text, out SemanticCaseBuilder builder, out string problem)
+    {
+        builder = null!;
+        var values = ImmutableArray.CreateBuilder<int>();
+        foreach (var part in text.Split('.'))
+        {
+            if (values.Count >= SemanticReduction.MaxRecordChoices
+                || !int.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var value) || part.Length > 9)
+            {
+                problem = $"malformed enumerated case id '{caseId}': expected <recipe>/{ExhaustiveSegment}/<v0>.<v1>… with at most {SemanticReduction.MaxRecordChoices} non-negative values.";
+                return false;
+            }
+
+            values.Add(value);
+        }
+
+        var choices = values.ToImmutable();
+        if (!SemanticExhaustive.IsCanonical(recipe, choices, out var reason))
+        {
+            problem = $"'{caseId}' is not an enumerated {recipe} program: {reason}.";
+            return false;
+        }
+
+        builder = ExhaustiveBuilder(recipe, choices);
         problem = "";
         return true;
     }
@@ -482,6 +588,9 @@ internal static class SemanticCorpus
         var decls = ordered.SelectMany(f => f.Decls).ToList();
         if (invalidProduction is { } production)
             decls.AddRange(SemanticGrammar.InvalidDeclarations(g, production));
+
+        // An added invalid production, or a fragment's own intended refusal (its naming stays valid).
+        var refusal = invalidProduction is { } added ? SemanticGrammar.InvalidProductions[added] : ordered.Select(f => f.Refusal).FirstOrDefault(r => r is not null);
         var program = g.Finish(new MScope(decls, ordered.Select(f => f.Row).ToList()));
         if (invalidProduction is null)
             program.ValidateNaming(); // a generator bug that changes binding identity fails HERE
@@ -520,9 +629,8 @@ internal static class SemanticCorpus
             features.Add("compose:" + string.Join("+", ordered.Select(f => f.Family).Order(StringComparer.Ordinal)));
 
         SemanticExpectation expected;
-        if (invalidProduction is { } p)
+        if (refusal is (var name, var code, var phase))
         {
-            var (name, code, phase) = SemanticGrammar.InvalidProductions[p];
             expected = new SemanticExpectation(SemanticCaseKind.InvalidFrontEnd, null, null, null, code, phase, []);
             features.Add("invalid-" + name);
             paths = SemanticPath.None;
@@ -550,7 +658,7 @@ internal static class SemanticCorpus
         }
 
         var members = new List<SemanticMember> { new(SemanticMember.BaseRole, program.Render()) };
-        if (invalidProduction is null)
+        if (refusal is null)
         {
             members.Add(new SemanticMember(SemanticMember.AlphaRenameRole, AlphaRename(program).Render()));
             if (program.Root.Decls.Count >= 2)
@@ -564,7 +672,7 @@ internal static class SemanticCorpus
         var caseId = SemanticRecipe.CasePrefix + localId;
         var semanticCase = new SemanticCase(
             caseId, tier, seed, index, expected, [.. members], families, [.. features], paths, minimumCacheHits,
-            Profiles(tier, index ?? 0, expected, invalidProduction is not null, cancellation));
+            Profiles(tier, index ?? 0, expected, refusal is not null, cancellation));
         return new SemanticBuiltCase(semanticCase, ordered.Count, program.AllDeclarations().Count);
     }
 
@@ -593,11 +701,13 @@ internal static class SemanticCorpus
             return [SemanticProfiles.SyncOptimized, SemanticProfiles.EngineRun, SemanticProfiles.EngineRunAsync];
 
         var systematic = tier == "systematic";
+        // An enumerated program runs ONCE, so it takes every non-cancellation profile.
+        var exhaustive = tier == ExhaustiveTier;
         var waits = expected.Events.Any(e => e.StartsWith("wait:", StringComparison.Ordinal));
         var profiles = new List<string> { SemanticProfiles.SyncGeneric, SemanticProfiles.SyncOptimized, SemanticProfiles.AsyncTwin };
-        if (systematic || index % 3 == 0) profiles.Add(SemanticProfiles.EngineRun);
-        if (waits || index % 4 == 1) profiles.Add(SemanticProfiles.EngineRunAsync);
-        if (systematic || index % 3 == 1) profiles.Add(SemanticProfiles.SyncOptimizedRerun);
+        if (systematic || exhaustive || index % 3 == 0) profiles.Add(SemanticProfiles.EngineRun);
+        if (waits || exhaustive || index % 4 == 1) profiles.Add(SemanticProfiles.EngineRunAsync);
+        if (systematic || exhaustive || index % 3 == 1) profiles.Add(SemanticProfiles.SyncOptimizedRerun);
         if (cancellation)
         {
             profiles.Add(SemanticProfiles.AsyncTwinCancel);

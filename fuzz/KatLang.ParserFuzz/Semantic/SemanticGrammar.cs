@@ -31,7 +31,12 @@ internal abstract class SemanticChooser
 {
     public abstract int Pick(string dimension, int count);
 
-    public bool Chance(string dimension, int percent) => Pick(dimension, 100) < percent;
+    /// <summary>
+    /// A <paramref name="percent"/> % chance, drawn as a pick of 100: every chooser but the
+    /// exhaustive enumerator (<see cref="ChoiceTreeChooser"/>, which branches it two ways) uses this
+    /// definition, so a chance is recorded and replayed as an ordinary pick.
+    /// </summary>
+    public virtual bool Chance(string dimension, int percent) => Pick(dimension, 100) < percent;
 
     internal static SemanticChooser Systematic(int index) => new SystematicChooser(index);
 
@@ -134,6 +139,13 @@ internal sealed class SemanticFragment(string family)
 
     /// <summary>The failure is raised when the run's VALUE is exported, after every row ran: it must be last.</summary>
     public bool FailsAtExport { get; set; }
+
+    /// <summary>
+    /// An INTENDED front-end refusal built into the fragment's own declarations (the wide nested
+    /// recipe): the program must be rejected with this diagnostic in this phase, exactly like a
+    /// <see cref="SemanticGrammar.InvalidProductions"/> entry. Its naming stays valid.
+    /// </summary>
+    public (string Name, DiagnosticCode Code, string Phase)? Refusal { get; set; }
 
     public bool Failing => FailureCategory is not null;
 }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
@@ -27,6 +28,43 @@ internal sealed record SemanticWorkerCommand(
 
     public TimeSpan StartupDeadline { get; init; } = TimeSpan.FromMinutes(5);
 }
+
+/// <summary>
+/// A batch worker launch (exhaustive campaigns): a known, repository-built executable with
+/// structured arguments and extra environment, and the manifest of descriptor/result pairs it
+/// replays in order.
+/// </summary>
+internal sealed record SemanticBatchWorkerCommand(
+    string FileName,
+    IReadOnlyList<string> Arguments,
+    IReadOnlyDictionary<string, string> Environment,
+    string ManifestPath);
+
+/// <summary>
+/// One member of a supervised batch: the persisted case, where its descriptor and result live, and —
+/// once its result was judged — the verdict, the result summary and the detail. A member without a
+/// verdict wrote no result: it was in flight when the child ended, or was never reached.
+/// </summary>
+internal sealed record SemanticBatchMember(
+    SemanticCase Case,
+    string DescriptorPath,
+    string ResultPath,
+    SemanticVerdict? Verdict = null,
+    SemanticDescriptor.ResultSummary? Summary = null,
+    string Detail = "");
+
+/// <summary>
+/// What one supervised batch child did: <see cref="ChildFailure"/> is <c>null</c> after a clean exit,
+/// else how the child ended (timeout, crash, harness failure, cancellation); every member as judged.
+/// </summary>
+internal sealed record SemanticBatchRun(
+    SemanticVerdict? ChildFailure,
+    int? ExitCode,
+    TimeSpan Elapsed,
+    string Stdout,
+    string Stderr,
+    string Detail,
+    ImmutableArray<SemanticBatchMember> Members);
 
 /// <summary>What one supervised execution produced. A timeout or a crash is never a semantic comparison.</summary>
 internal sealed record SemanticSupervisedRun(
@@ -71,15 +109,22 @@ internal static class SemanticSupervisor
     /// </summary>
     internal static SemanticWorkerCommand SelfWorker(string descriptorPath, string resultPath, SemanticReplay.Mode mode)
     {
+        var (host, arguments) = SelfLaunch();
+        arguments.AddRange(["semantic-worker", descriptorPath, resultPath]);
+        if (mode == SemanticReplay.Mode.ExactSource) arguments.Add("--exact-source");
+        return new SemanticWorkerCommand(host, arguments, new Dictionary<string, string>(), descriptorPath, resultPath);
+    }
+
+    /// <summary>This executable, and the entry assembly as the first argument when it runs under a host.</summary>
+    private static (string Host, List<string> Arguments) SelfLaunch()
+    {
         var host = System.Environment.ProcessPath ?? throw new InvalidOperationException("no process path");
         var entry = Assembly.GetEntryAssembly();
         var selfContained = entry is not null
             && string.Equals(Path.GetFileNameWithoutExtension(host), entry.GetName().Name, StringComparison.OrdinalIgnoreCase);
         var arguments = new List<string>();
         if (!selfContained && entry?.Location is { Length: > 0 } dll) arguments.Add(dll);
-        arguments.AddRange(["semantic-worker", descriptorPath, resultPath]);
-        if (mode == SemanticReplay.Mode.ExactSource) arguments.Add("--exact-source");
-        return new SemanticWorkerCommand(host, arguments, new Dictionary<string, string>(), descriptorPath, resultPath);
+        return (host, arguments);
     }
 
     internal static SemanticSupervisedRun Run(SemanticWorkerCommand command, TimeSpan deadline, CancellationToken cancellationToken = default)
@@ -177,61 +222,185 @@ internal static class SemanticSupervisor
         }
 
         var exitCode = process.ExitCode;
-        if (!File.Exists(command.ResultPath))
+        var (verdict, summary, detail) = JudgeResult(descriptor.Case, command.ResultPath, exitCode);
+        return Finish(new SemanticSupervisedRun(verdict, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
+            command.DescriptorPath, summary, detail));
+    }
+
+    /// <summary>
+    /// The classification of one worker result document against the recorded case, shared by a
+    /// single supervised run and every member of a batch (<see cref="RunBatch"/>): no result (a
+    /// missing observation after a clean exit, otherwise a crash), an unreadable or malformed one, a
+    /// nonzero exit, a result for another case, a required profile observation or path the worker
+    /// did not admit — else the worker's own verdict.
+    /// </summary>
+    internal static (SemanticVerdict Verdict, SemanticDescriptor.ResultSummary? Summary, string Detail) JudgeResult(
+        SemanticCase recorded, string resultPath, int exitCode)
+    {
+        if (!File.Exists(resultPath))
         {
-            return Finish(new SemanticSupervisedRun(exitCode == 0 ? SemanticVerdict.MissingObservation : SemanticVerdict.Crash,
-                exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                command.DescriptorPath, null, $"worker exited with {exitCode.ToString(CultureInfo.InvariantCulture)} and wrote no result"));
+            return (exitCode == 0 ? SemanticVerdict.MissingObservation : SemanticVerdict.Crash, null,
+                $"worker exited with {exitCode.ToString(CultureInfo.InvariantCulture)} and wrote no result");
         }
 
         string text;
         try
         {
-            text = SemanticReplay.ReadBounded(command.ResultPath);
+            text = SemanticReplay.ReadBounded(resultPath);
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException)
         {
-            return Finish(new SemanticSupervisedRun(SemanticVerdict.MalformedOutput, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                command.DescriptorPath, null, exception.Message));
+            return (SemanticVerdict.MalformedOutput, null, exception.Message);
         }
 
         if (!SemanticDescriptor.TryParseResult(text, out var summary, out var problem))
-        {
-            return Finish(new SemanticSupervisedRun(SemanticVerdict.MalformedOutput, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                command.DescriptorPath, null, problem));
-        }
+            return (SemanticVerdict.MalformedOutput, null, problem);
 
         if (exitCode != 0)
-        {
-            return Finish(new SemanticSupervisedRun(SemanticVerdict.Crash, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                command.DescriptorPath, summary, $"worker wrote a result but exited with {exitCode.ToString(CultureInfo.InvariantCulture)}"));
-        }
+            return (SemanticVerdict.Crash, summary, $"worker wrote a result but exited with {exitCode.ToString(CultureInfo.InvariantCulture)}");
 
-        if (summary.CaseId != descriptor.Case.CaseId)
-            return Finish(new SemanticSupervisedRun(SemanticVerdict.MalformedOutput, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                command.DescriptorPath, summary, "worker result belongs to a different case"));
+        if (summary.CaseId != recorded.CaseId)
+            return (SemanticVerdict.MalformedOutput, summary, "worker result belongs to a different case");
 
         // Every profile the recorded case requires must appear in the worker's observations.
         if (summary.Verdict != SemanticVerdict.RecipeDrift)
         {
-            var required = descriptor.Case.Profiles.Select(p => p + "/" + SemanticMember.BaseRole)
-                .Concat(descriptor.Case.Members.Skip(1).Select(m => SemanticProfiles.SyncOptimized + "/" + m.Role));
+            var required = recorded.Profiles.Select(p => p + "/" + SemanticMember.BaseRole)
+                .Concat(recorded.Members.Skip(1).Select(m => SemanticProfiles.SyncOptimized + "/" + m.Role));
             var missing = required.Where(p => !summary.ObservedProfiles.Contains(p, StringComparer.Ordinal))
                 .ToList();
             if (missing.Count > 0)
-            {
-                return Finish(new SemanticSupervisedRun(SemanticVerdict.MissingObservation, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                    command.DescriptorPath, summary, "no observation for " + string.Join(", ", missing)));
-            }
+                return (SemanticVerdict.MissingObservation, summary, "no observation for " + string.Join(", ", missing));
         }
 
         if (summary.Verdict == SemanticVerdict.Passed
-            && (descriptor.Case.Paths & ~summary.CoverageResult.PathsExercised) != SemanticPath.None)
-            return Finish(new SemanticSupervisedRun(SemanticVerdict.MissingObservation, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-                command.DescriptorPath, summary, "worker did not admit every required path"));
+            && (recorded.Paths & ~summary.CoverageResult.PathsExercised) != SemanticPath.None)
+            return (SemanticVerdict.MissingObservation, summary, "worker did not admit every required path");
 
-        return Finish(new SemanticSupervisedRun(summary.Verdict, exitCode, clock.Elapsed, stdout.Text, stderr.Text,
-            command.DescriptorPath, summary, summary.Findings.IsEmpty ? summary.CaseId : summary.Findings[0]));
+        return (summary.Verdict, summary, summary.Findings.IsEmpty ? summary.CaseId : summary.Findings[0]);
+    }
+
+    // ── Batches (exhaustive campaigns) ──────────────────────────────────────
+
+    /// <summary>
+    /// The fuzz consumer relaunching itself as <c>semantic-batch-worker MANIFEST</c>: one child that
+    /// replays every descriptor its manifest lists, in order, in RECIPE mode.
+    /// </summary>
+    internal static SemanticBatchWorkerCommand SelfBatchWorker(string manifestPath)
+    {
+        var (host, arguments) = SelfLaunch();
+        arguments.AddRange(["semantic-batch-worker", manifestPath]);
+        return new SemanticBatchWorkerCommand(host, arguments, new Dictionary<string, string>(), manifestPath);
+    }
+
+    /// <summary>
+    /// The manifest of a batch: one <c>descriptor TAB result</c> line per member, in order. The
+    /// caller has persisted every descriptor before it writes the manifest.
+    /// </summary>
+    internal static void WriteManifest(string manifestPath, IEnumerable<(string Descriptor, string Result)> members)
+        => File.WriteAllText(manifestPath, string.Concat(members.Select(static m => m.Descriptor + "\t" + m.Result + "\n")));
+
+    /// <summary>
+    /// Runs one batch child under the same bounds as a single worker: bounded output, the whole
+    /// tree killed and awaited on expiry. The deadline is a PROGRESS deadline: it restarts whenever
+    /// another member's result appears, so it bounds each member's execution as <see cref="Run"/>
+    /// bounds one case. Every member with a result is judged by <see cref="JudgeResult"/>; a member
+    /// without one (in flight when the child crashed or timed out, or never reached) is returned
+    /// unjudged, for the caller to rerun on its own. The child's supervision record is written next
+    /// to the manifest.
+    /// </summary>
+    internal static SemanticBatchRun RunBatch(
+        SemanticBatchWorkerCommand command, IReadOnlyList<SemanticBatchMember> members, TimeSpan deadline, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(members);
+        foreach (var member in members) File.Delete(member.ResultPath); // a stale result must never masquerade as the worker's output
+
+        var startInfo = new ProcessStartInfo(command.FileName)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in command.Arguments) startInfo.ArgumentList.Add(argument);
+        foreach (var (key, value) in command.Environment) startInfo.Environment[key] = value;
+        foreach (var key in startInfo.Environment.Keys.Where(k => k.StartsWith("KATLANG_REGENERATE_", StringComparison.OrdinalIgnoreCase)).ToList())
+            startInfo.Environment.Remove(key);
+
+        var clock = Stopwatch.StartNew();
+        using var process = new Process { StartInfo = startInfo };
+        var stdout = new BoundedText(MaxCapturedChars);
+        var stderr = new BoundedText(MaxCapturedChars);
+        SemanticVerdict? childFailure = null;
+        int? exitCode = null;
+        string detail;
+        try
+        {
+            process.Start();
+            process.StandardInput.Close();
+            var output = Task.WhenAll(ReadOutput(process.StandardOutput, stdout), ReadOutput(process.StandardError, stderr));
+            var progress = Stopwatch.StartNew();
+            var completed = 0;
+            while (!process.WaitForExit(TimeSpan.FromMilliseconds(100)))
+            {
+                var now = members.Count(static m => File.Exists(m.ResultPath));
+                if (now != completed)
+                {
+                    completed = now;
+                    progress.Restart();
+                }
+
+                if (cancellationToken.IsCancellationRequested || progress.Elapsed > deadline)
+                {
+                    childFailure = cancellationToken.IsCancellationRequested ? SemanticVerdict.SupervisorCancellation : SemanticVerdict.Timeout;
+                    Terminate(process);
+                    break;
+                }
+            }
+
+            if (childFailure is null)
+            {
+                // Bounded like the single worker: the readers must finish within the deadline too.
+                if (!output.Wait(deadline)) childFailure = SemanticVerdict.Timeout;
+                exitCode = process.ExitCode;
+                if (exitCode != 0) childFailure = SemanticVerdict.Crash;
+            }
+            else
+            {
+                output.Wait(TimeSpan.FromSeconds(5));
+            }
+
+            detail = childFailure switch
+            {
+                null => "batch worker exited with 0",
+                SemanticVerdict.Timeout => $"no member completed within {deadline.TotalSeconds.ToString(CultureInfo.InvariantCulture)}s; worker tree terminated",
+                SemanticVerdict.SupervisorCancellation => "supervisor cancelled; worker tree terminated",
+                _ => $"batch worker exited with {exitCode?.ToString(CultureInfo.InvariantCulture)}",
+            };
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            childFailure = SemanticVerdict.HarnessFailure;
+            detail = "batch worker could not be started: " + exception.Message;
+        }
+
+        // A member's result was written whole before the next member started: judge each on its own.
+        var judged = members.Select(member =>
+        {
+            if (!File.Exists(member.ResultPath)) return member;
+            var (verdict, summary, memberDetail) = JudgeResult(member.Case, member.ResultPath, 0);
+            return member with { Verdict = verdict, Summary = summary, Detail = memberDetail };
+        }).ToImmutableArray();
+        var run = new SemanticBatchRun(childFailure, exitCode, clock.Elapsed, stdout.Text, stderr.Text, detail, judged);
+        File.WriteAllText(command.ManifestPath + ".supervision.txt", JsonSerializer.Serialize(new
+        {
+            run.ChildFailure, run.ExitCode, run.Elapsed, command.ManifestPath, run.Detail, run.Stdout, run.Stderr,
+            Members = judged.Select(static m => new { m.Case.CaseId, m.Verdict, m.Detail }),
+        },
+            new JsonSerializerOptions { WriteIndented = true }));
+        return run;
     }
 
     private static async Task ReadOutput(StreamReader reader, BoundedText capture)
