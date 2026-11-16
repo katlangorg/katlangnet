@@ -205,7 +205,7 @@ public class AsyncRouteDecisionTests
             root =>
             {
                 var fact = Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null);
-                Assert.False(fact);
+                Assert.False(fact?.RequiresAsyncEvaluation);
                 var cache = Evaluator.CreateRunScopedZeroArgPropertyResultCache(
                     root, hostOperations: null, observationSink: null, fact);
                 Assert.IsType<RunScopedZeroArgPropertyResultCache>(cache);
@@ -294,7 +294,7 @@ public class AsyncRouteDecisionTests
 
         // Public entry: the once-decided fact pairs the async-capable cache, which routes to the twin path.
         var fact = Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null);
-        Assert.True(fact);
+        Assert.True(fact?.RequiresAsyncEvaluation);
         Assert.IsType<RunScopedAsyncZeroArgPropertyResultCache>(
             Evaluator.CreateRunScopedZeroArgPropertyResultCache(root, hostOperations: null, observationSink: null, fact));
         var result = await Evaluator.RunAsync(root, limits: null, CancellationToken.None);
@@ -317,7 +317,7 @@ public class AsyncRouteDecisionTests
     public async Task DeferredRegionRoot_WithASynchronousOnlyCache_StillFailsLoudWithTheCachePairingMessage(bool decided)
     {
         var root = await DeferredRegionRoot();
-        bool? fact = decided ? Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null) : null;
+        Evaluator.TreeRouteFact? fact = decided ? Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null) : null;
 
         var rejection = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await Evaluator.RunCountedWithTopLevelPropertiesAsync(
@@ -340,7 +340,7 @@ public class AsyncRouteDecisionTests
     public async Task DeferredRegionRoot_WithASynchronousOnlyCache_EveryTwinFunnelRaisesThePairingGuard_BeforeCancellation(bool decided)
     {
         var root = await DeferredRegionRoot();
-        bool? fact = decided ? Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null) : null;
+        Evaluator.TreeRouteFact? fact = decided ? Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null) : null;
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
 

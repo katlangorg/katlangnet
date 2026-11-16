@@ -35,6 +35,18 @@ internal sealed class EvaluationObservations
     public ClauseAttemptObservations? ClauseAttempts { get; init; }
 
     /// <summary>
+    /// Optional observer of the run's two admission passes, handed to the structural preflight and the
+    /// pre-evaluation validation walk exactly as their standalone observation overloads take one: the
+    /// preflight's edges and table capacity hint, the walk's base-walker counters, the tables it took over
+    /// from earlier passes and the alias-reach tables it built
+    /// (<see cref="FrontEndTraversalObservations.StructuralPreflightCapacityHints"/>,
+    /// <see cref="FrontEndTraversalObservations.PreEvaluationHandedOverTables"/>,
+    /// <see cref="FrontEndTraversalObservations.PreEvaluationAliasReachTables"/>). Supplied by the measuring
+    /// test; <c>null</c> records nothing.
+    /// </summary>
+    public FrontEndTraversalObservations? PreEvaluationTraversal { get; init; }
+
+    /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
     /// deconstruction group binds its shared N-capture pattern once per shared-bind execution (group,
     /// actual pattern list and source entry — <c>DeconstructionBindingExecution</c>; since OD-1 no reader

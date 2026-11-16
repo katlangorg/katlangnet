@@ -824,6 +824,17 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordStructuralPreflightEdge()
         => StructuralPreflightEdges = checked(StructuralPreflightEdges + 1);
 
+    /// <summary>
+    /// The capacity hints the structural preflight's height tables were created with, summed over the walks this
+    /// observer saw. An evaluator run's admission walk is handed the node count an earlier walk of the same run
+    /// counted (the synchronous entry guard's, or the async entry's tree fact), and 0 when none was made. Capacity
+    /// only: the hint decides nothing.
+    /// </summary>
+    public long StructuralPreflightCapacityHints { get; private set; }
+
+    internal void RecordStructuralPreflightCapacityHint(int hint)
+        => StructuralPreflightCapacityHints = checked(StructuralPreflightCapacityHints + hint);
+
     internal void RecordWalkerExpressionExpansion()
         => WalkerExpressionExpansions = checked(WalkerExpressionExpansions + 1);
 
@@ -872,6 +883,26 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordPreEvaluationParentScopeLink()
         => PreEvaluationParentScopeLinks = checked(PreEvaluationParentScopeLinks + 1);
+
+    /// <summary>
+    /// Alias-reach tables the pre-evaluation walk built or took over: one per walk that checks aliases over a
+    /// graph that may hold one, and none for a graph the run's admission walk proved alias-free
+    /// (<c>AstStructuralPreflight.AdmittedProgramFacts.IsAliasFree</c>) — such a walk asks no alias reach at all.
+    /// </summary>
+    public long PreEvaluationAliasReachTables { get; private set; }
+
+    internal void RecordPreEvaluationAliasReachTable()
+        => PreEvaluationAliasReachTables = checked(PreEvaluationAliasReachTables + 1);
+
+    /// <summary>
+    /// Tables the pre-evaluation walk took over, cleared, from an earlier pass of its run (<c>PreEvaluationTables</c>)
+    /// instead of allocating them: the entry guard's node set as its visited set, the structural preflight's height
+    /// table as its alias-reach table.
+    /// </summary>
+    public long PreEvaluationHandedOverTables { get; private set; }
+
+    internal void RecordPreEvaluationHandedOverTable()
+        => PreEvaluationHandedOverTables = checked(PreEvaluationHandedOverTables + 1);
 
     // ── Semantic model construction (editor) ──────────────────────────────────
 

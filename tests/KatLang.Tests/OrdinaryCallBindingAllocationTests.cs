@@ -295,16 +295,22 @@ public class OrdinaryCallBindingAllocationTests
     /// bound from the stored patterns, one names projection per call, no per-body duplicate-name
     /// set) and the presized pre-evaluation tables: ParameterizedCall 4,991.1 → 2,819.9,
     /// ConditionalCall 4,987.9 → 3,960.8, RecursiveFamily 2,371.0 → 2,305.3 (a Release build:
-    /// 3,710.7 → 2,531.5, 3,707.3 → 2,680.2, 1,587.1 → 1,521.4). Each bound is the new value plus
-    /// headroom, so losing the direct head binding or the table sizing fails its row, as does a
+    /// 3,710.7 → 2,531.5, 3,707.3 → 2,680.2, 1,587.1 → 1,521.4). On 2026-11-16 the run's
+    /// pre-evaluation passes began handing their table storage on (the entry guard's node set becomes
+    /// the validation walk's visited set) and an alias-free program stopped building the walk's
+    /// alias-reach table (<see cref="PreEvaluationTableHandOverTests"/>): ParameterizedCall
+    /// 2,797.5 → 2,491.6, ConditionalCall 3,946.3 → 3,640.4, RecursiveFamily 2,297.9 → 2,296.8 on the
+    /// same Debug entry (Release 2,509.1 → 2,203.2, 2,665.7 → 2,359.8, 1,514.0 → 1,512.9). Each bound
+    /// is the new value plus headroom and sits below the value before, so losing the direct head
+    /// binding, the table sizing or the hand-over and alias-free skip fails its row, as does a
     /// per-body set on the recursive family; the exact per-piece counts are the isolated child
     /// tests of <see cref="FlatCaptureHeadBindingTests"/>. Each window is the minimum of five runs,
     /// so one background-GC quantum moves a 201-call figure by at most about 41 bytes. Coarse
     /// in-process bounds, not strict counts.
     /// </summary>
     [Theory]
-    [InlineData("ParameterizedCall", 2_950)]
-    [InlineData("ConditionalCall", 4_100)]
+    [InlineData("ParameterizedCall", 2_650)]
+    [InlineData("ConditionalCall", 3_800)]
     [InlineData("RecursiveFamily", 2_340)]
     public void CallWorkload_AllocationPerUnit_StaysBelowTheMeasuredBound(string workload, int bound)
     {

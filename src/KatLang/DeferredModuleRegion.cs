@@ -826,9 +826,12 @@ internal sealed class DeferredModuleRegion
     /// visited: the whole graph when the answer is <c>false</c> (the walk then met every node the
     /// structural preflight enumerates), fewer when it stopped at a placeholder. The count is only a
     /// CAPACITY HINT for the reference-identity tables the run builds over the same graph next
-    /// (<c>Evaluator.PrepareSynchronousRun</c>); nothing is decided from it.
+    /// (<c>Evaluator.PrepareSynchronousRun</c>); nothing is decided from it. A walk that answers
+    /// <c>false</c> hands its visited set over to <paramref name="tables"/> as its last act, for the run's
+    /// validation walk to reuse the storage (<see cref="PreEvaluationTables"/>, which clears it); a walk that
+    /// stops at a placeholder refuses the synchronous run and hands nothing over.
     /// </summary>
-    internal static bool RequiresAsyncEvaluationCounting(Expr expr, out int visitedNodeCount)
+    internal static bool RequiresAsyncEvaluationCounting(Expr expr, out int visitedNodeCount, PreEvaluationTables? tables = null)
     {
         var pending = new Stack<object>();
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
@@ -849,6 +852,7 @@ internal sealed class DeferredModuleRegion
         }
 
         visitedNodeCount = visited.Count;
+        tables?.HandOver(visited);
         return false;
     }
 

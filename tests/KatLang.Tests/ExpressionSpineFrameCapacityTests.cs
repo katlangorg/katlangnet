@@ -194,14 +194,19 @@ public class ExpressionSpineFrameCapacityTests
     /// which grew by doubling over the larger tree. Since 2026-11-11 those tables are sized from the
     /// node count an earlier walk of the same run produced, and the slopes are 540.8 and 3,036.5
     /// (the twin's entry walks no tree first, so only its validation tables are sized); sixteen
-    /// frames would make them 1,324.8 and 3,820.5. The synchronous bound sits between the sized and
-    /// the unsized slope, so it fails both when sixteen frames return and when the sizing is lost;
-    /// the twin's sits near the midpoint to sixteen frames. Unrelated noise fails neither: each
+    /// frames would make them 1,324.8 and 3,820.5. Since 2026-11-16 the synchronous run's validation
+    /// walk also takes the entry guard's node set instead of allocating its own, and an alias-free
+    /// program — these are — builds no alias-reach table (<see cref="PreEvaluationTableHandOverTests"/>):
+    /// the synchronous slope fell from 524.8 to 228.6 on the same entry, and the twin's (which has no
+    /// guard set to take) by the alias-reach table alone, from 3,004.5 to 2,959.2. The synchronous bound sits
+    /// between that slope and the one before it, so it fails when sixteen frames return, when the
+    /// sizing is lost, and when the hand-over or the alias-free skip is; the twin's sits near the
+    /// midpoint to sixteen frames. Unrelated noise fails neither: each
     /// window is the minimum of five runs over 256 spine runs, so one background-GC quantum moves
     /// the slope by at most about 32 bytes. A coarse in-process ratio, not a strict count.
     /// </summary>
     [Theory]
-    [InlineData(false, 660)]
+    [InlineData(false, 380)]
     [InlineData(true, 3_400)]
     public void PerSpineRunAllocation_StaysBelowTheFormerSixteenFrameBuffer(bool asyncTwin, int bound)
     {

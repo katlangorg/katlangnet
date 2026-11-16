@@ -4970,11 +4970,19 @@ internal static class AlgorithmValidation
     /// <paramref name="nodeCountHint"/> is the capacity the walk's reference tables start with — the
     /// evaluator passes the node count its structural preflight just counted over this graph — and
     /// changes no verdict either: a count that is too small grows as before, and 0 is the former behavior.
+    /// The evaluator also passes its run's <paramref name="tables"/>: the walk takes the tables earlier
+    /// passes handed over, CLEARED, instead of allocating its own (storage only, never contents;
+    /// <see cref="PreEvaluationTables"/>). <paramref name="graphIsAliasFree"/> is the run's admission proof
+    /// that no node of this graph is an alias (<see cref="AstStructuralPreflight.AdmittedProgramFacts.IsAliasFree"/>):
+    /// every alias reach would answer <c>false</c>, so the walk builds no alias-reach table and asks none.
+    /// Pass <c>true</c> only with that proof for the same graph; <c>false</c> is always safe.
     /// </summary>
     internal static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(
-        Expr expr, FrontEndTraversalObservations? observations, int nodeCountHint = 0)
+        Expr expr, FrontEndTraversalObservations? observations, int nodeCountHint = 0,
+        PreEvaluationTables? tables = null, bool graphIsAliasFree = false)
     {
-        var walker = new PreEvaluationValidationWalker(stopAfterFirst: true, checkConditionalBranchArities: true, nodeCountHint)
+        var walker = new PreEvaluationValidationWalker(
+            stopAfterFirst: true, checkConditionalBranchArities: true, nodeCountHint, tables, graphIsAliasFree, observations)
         {
             TraversalObservations = observations,
         };
@@ -4983,7 +4991,12 @@ internal static class AlgorithmValidation
     }
 
     private sealed class PreEvaluationValidationWalker(
-        bool stopAfterFirst, bool checkConditionalBranchArities, int nodeCountHint = 0) : AstWalker
+        bool stopAfterFirst,
+        bool checkConditionalBranchArities,
+        int nodeCountHint = 0,
+        PreEvaluationTables? tables = null,
+        bool graphIsAliasFree = false,
+        FrontEndTraversalObservations? tableObservations = null) : AstWalker
     {
         /// <summary>
         /// Lean's default diagnostic label for a conditional reached outside a
@@ -5010,14 +5023,48 @@ internal static class AlgorithmValidation
         // enclosing property chain, so only subtrees reaching an alias need a contextual visit.
         // `nodeCountHint` is capacity only: the node count the evaluator's structural preflight just
         // counted over this graph (0 for every other caller), so both tables start at their final size.
-        private readonly HashSet<object> _visited = new(nodeCountHint, ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<object, bool> _aliasReach = new(nodeCountHint, ReferenceEqualityComparer.Instance);
+        // An evaluator run hands over the storage of its earlier passes' tables (`tables`), which
+        // arrive EMPTY: no entry of the entry guard's set or the preflight's heights is read here.
+        private readonly HashSet<object> _visited = TakeVisitedSet(tables, nodeCountHint, tableObservations);
+
+        // The alias-reach memo (AstStructuralPreflight.ReachesAlias), or null when no alias reach is
+        // ever asked: the parser's walk checks no alias, and on a graph the run's admission walk proved
+        // alias-free every reach would answer false, so the walk is the same without the table.
+        private readonly Dictionary<object, int>? _aliasReach = checkConditionalBranchArities && !graphIsAliasFree
+            ? TakeAliasReachTable(tables, nodeCountHint, tableObservations)
+            : null;
+
         private readonly Dictionary<int, HashSet<object>> _scopedVisits = [];
+
+        private static HashSet<object> TakeVisitedSet(
+            PreEvaluationTables? tables, int capacity, FrontEndTraversalObservations? observations)
+        {
+            if (tables?.TakeNodeSet(capacity) is { } handedOver)
+            {
+                observations?.RecordPreEvaluationHandedOverTable();
+                return handedOver;
+            }
+
+            return new(capacity, ReferenceEqualityComparer.Instance);
+        }
+
+        private static Dictionary<object, int> TakeAliasReachTable(
+            PreEvaluationTables? tables, int capacity, FrontEndTraversalObservations? observations)
+        {
+            observations?.RecordPreEvaluationAliasReachTable();
+            if (tables?.TakeNodeTable(capacity) is { } handedOver)
+            {
+                observations?.RecordPreEvaluationHandedOverTable();
+                return handedOver;
+            }
+
+            return new(capacity, ReferenceEqualityComparer.Instance);
+        }
 
         private bool FirstVisit(object node)
         {
             var first = _visited.Add(node);
-            if (!checkConditionalBranchArities || !AstStructuralPreflight.ReachesAlias(node, _aliasReach))
+            if (_aliasReach is null || !AstStructuralPreflight.ReachesAlias(node, _aliasReach))
                 return first;
 
             var context = (_aliasTargets ??= new(AstStructuralPreflight.AliasTargetHeads(node))).RegionOf(node, _chain);
@@ -5121,7 +5168,7 @@ internal static class AlgorithmValidation
             // innermost level.
             var held = _chain;
             _chain = [];
-            if (checkConditionalBranchArities && AstStructuralPreflight.ReachesAlias(scope, _aliasReach))
+            if (_aliasReach is not null && AstStructuralPreflight.ReachesAlias(scope, _aliasReach))
             {
                 var levels = new Stack<ScopeCtx>();
                 for (var current = scope; current is not null; current = current.Parent)

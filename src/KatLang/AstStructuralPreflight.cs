@@ -163,10 +163,25 @@ internal static class AstStructuralPreflight
         return heads;
     }
 
-    internal static bool ReachesAlias(object root, Dictionary<object, bool> memo)
+    /// <summary>
+    /// The alias nodes the pre-evaluation validation walk's contextual alias handling looks for
+    /// (<see cref="ReachesAlias"/>): a callable alias outside a deferred module region. The admission walk
+    /// tests every node it visits with the same predicate (<see cref="AdmittedProgramFacts.IsAliasFree"/>).
+    /// </summary>
+    internal static bool IsValidationAlias(object node) => node is Algorithm.Alias { DeferredRegion: null };
+
+    /// <summary>
+    /// Whether a <see cref="IsValidationAlias"/> node is reachable from <paramref name="root"/> through the
+    /// alias-validation children (<see cref="TryGetAliasValidationChild"/>, a sub-enumeration of
+    /// <see cref="TryGetChild"/>), memoized by reference identity in <paramref name="memo"/>: an entry is
+    /// <see cref="AliasReached"/> or <see cref="AliasNotReached"/>. The memo holds int answers, not
+    /// booleans, so the validation walk can reuse the storage of the structural preflight's height table
+    /// (<see cref="PreEvaluationTables"/>), which hands it over CLEARED: no height survives as an answer.
+    /// </summary>
+    internal static bool ReachesAlias(object root, Dictionary<object, int> memo)
     {
         if (memo.TryGetValue(root, out var known))
-            return known;
+            return known == AliasReached;
 
         var stack = new Stack<(object Node, int NextChild)>();
         stack.Push((root, 0));
@@ -174,14 +189,14 @@ internal static class AstStructuralPreflight
         {
             if (memo.ContainsKey(frame.Node))
                 continue;
-            if (frame.Node is Algorithm.Alias { DeferredRegion: null })
+            if (IsValidationAlias(frame.Node))
             {
-                memo[frame.Node] = true;
+                memo[frame.Node] = AliasReached;
                 continue;
             }
             if (!TryGetAliasValidationChild(frame.Node, frame.NextChild, out var child))
             {
-                memo[frame.Node] = false;
+                memo[frame.Node] = AliasNotReached;
                 continue;
             }
             if (!memo.TryGetValue(child, out var reaches))
@@ -189,9 +204,9 @@ internal static class AstStructuralPreflight
                 stack.Push(frame);
                 stack.Push((child, 0));
             }
-            else if (reaches)
+            else if (reaches == AliasReached)
             {
-                memo[frame.Node] = true;
+                memo[frame.Node] = AliasReached;
             }
             else
             {
@@ -199,8 +214,14 @@ internal static class AstStructuralPreflight
             }
         }
 
-        return memo[root];
+        return memo[root] == AliasReached;
     }
+
+    /// <summary>A <see cref="ReachesAlias"/> memo answer: an alias is reachable from the node.</summary>
+    internal const int AliasReached = 1;
+
+    /// <summary>A <see cref="ReachesAlias"/> memo answer: no alias is reachable from the node.</summary>
+    internal const int AliasNotReached = 0;
 
     // Alias metadata follows the validation walk: a deferred body's provisional content is opaque,
     // but its host parent is complete and validated now. The structural-safety walk below still
@@ -282,14 +303,22 @@ internal static class AstStructuralPreflight
     /// (<see cref="MayCaptureCalls"/>), its runtime-alias fact (<see cref="MayReachRuntimeAlias"/>) and
     /// whether it holds a deferred module region. Every node this walk can reach is visited exactly once,
     /// so the facts are the whole admitted graph's, with no second traversal of META-free programs.
+    /// <paramref name="nodeCountHint"/> is the capacity its height table starts with (an earlier walk's
+    /// count over this graph, or 0); capacity only. An ACCEPTED walk hands that table over to
+    /// <paramref name="tables"/> as its last act, for the run's validation walk to reuse the storage
+    /// (<see cref="PreEvaluationTables"/>); a rejecting walk hands nothing over. <paramref name="observations"/>
+    /// records the walk passively, as for <see cref="Check"/>.
     /// </summary>
     internal static AstStructuralRejection? CheckAdmittedProgram(
         object root,
         int maxDepth,
         AstConsumerProfile profile,
         out AdmittedProgramFacts facts,
-        int nodeCountHint = 0)
-        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, deferredMemo: null, out facts, out _, nodeCountHint);
+        int nodeCountHint = 0,
+        PreEvaluationTables? tables = null,
+        FrontEndTraversalObservations? observations = null)
+        => CheckCore(root, maxDepth, profile, observations, detectCallCapture: true, deferredMemo: null, out facts, out _,
+            nodeCountHint, tables);
 
     /// <summary>
     /// Completed, context-independent subtree facts for ONE run's deferred-body checks. Only
@@ -335,10 +364,17 @@ internal static class AstStructuralPreflight
     /// <see cref="NodeCount"/> is the number of distinct nodes this walk visited, shared or not: the size
     /// its own reference table reached. The evaluator hands it to the pre-evaluation validation walk as
     /// the capacity of that walk's tables over the same graph; it decides nothing.
+    /// <para><see cref="IsAliasFree"/> is <c>true</c> only when this COMPLETE walk (no deferred-admission memo,
+    /// so no subtree is skipped) visited every node of the admitted graph and none is a
+    /// <see cref="IsValidationAlias"/> node. It proves that <see cref="ReachesAlias"/> answers <c>false</c> for
+    /// every node of the graph — the alias reach follows a sub-enumeration of this walk's children — so the
+    /// validation walk, whose nodes all belong to the same graph, can skip building its alias-reach table
+    /// with no change to any visit, check or verdict. <c>false</c> (also the <c>default</c>) is the
+    /// conservative answer: the table is built and walked as before.</para>
     /// </summary>
     internal readonly record struct AdmittedProgramFacts(
         bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion, bool HasMetaBinder = false,
-        int TreeNodeCount = 0, int NodeCount = 0)
+        int TreeNodeCount = 0, int NodeCount = 0, bool IsAliasFree = false)
     {
         /// <summary>The J7 gate fired only through the builtin loops: no user META binder, no deferred region.</summary>
         internal bool IsLoopOnly => MayCaptureCalls && !HasMetaBinder && !HasDeferredModuleRegion;
@@ -398,12 +434,14 @@ internal static class AstStructuralPreflight
         DeferredAdmissionMemo? deferredMemo,
         out AdmittedProgramFacts facts,
         out int rootHeight,
-        int nodeCountHint = 0)
+        int nodeCountHint = 0,
+        PreEvaluationTables? tables = null)
     {
         var mayCaptureCalls = false;
         var mayReachRuntimeAlias = false;
         var hasDeferredRegion = false;
         var hasMetaBinder = false;
+        var hasValidationAlias = false;
         // Whether some node was reached through a second edge (shared, or a cycle): the graph is no tree.
         var reachedTwice = false;
         facts = default;
@@ -446,8 +484,9 @@ internal static class AstStructuralPreflight
         // reject.
         const int OnStack = OnStackHeight;
         // `nodeCountHint` is capacity only (an earlier walk's node count over this graph, or 0): the
-        // table starts at its final size instead of doubling up to it.
+        // table starts at its final size instead of doubling up to it. It decides nothing.
         var heights = new Dictionary<object, int>(nodeCountHint, ReferenceEqualityComparer.Instance);
+        observations?.RecordStructuralPreflightCapacityHint(nodeCountHint);
 
         var rootWeight = NodeWeight(root, profile);
         if (rootWeight > maxDepth)
@@ -464,6 +503,7 @@ internal static class AstStructuralPreflight
             mayReachRuntimeAlias = MayReachRuntimeAlias(root);
             hasDeferredRegion = root is Algorithm { DeferredRegion: not null };
             hasMetaBinder = IsMetaBinder(root);
+            hasValidationAlias = IsValidationAlias(root);
         }
 
         while (frameCount > 0)
@@ -548,6 +588,8 @@ internal static class AstStructuralPreflight
                     hasDeferredRegion = child is Algorithm { DeferredRegion: not null };
                 if (!hasMetaBinder)
                     hasMetaBinder = IsMetaBinder(child);
+                if (!hasValidationAlias)
+                    hasValidationAlias = IsValidationAlias(child);
             }
             if (frameCount == frames.Length)
             {
@@ -563,7 +605,11 @@ internal static class AstStructuralPreflight
 
         rootHeight = heights[root];
         facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion, hasMetaBinder,
-            TreeNodeCount: reachedTwice ? 0 : heights.Count, NodeCount: heights.Count);
+            TreeNodeCount: reachedTwice ? 0 : heights.Count, NodeCount: heights.Count,
+            // Only the admission walk tests the predicate, and only a memo-free walk visits every node.
+            IsAliasFree: detectCallCapture && deferredMemo is null && !hasValidationAlias);
+        // The table's last use: its storage moves on to the run's validation walk, which clears it.
+        tables?.HandOver(heights);
         return null;
     }
 

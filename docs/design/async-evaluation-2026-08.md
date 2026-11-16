@@ -476,6 +476,15 @@ configured asynchronous host operation. Enforcement:
 > The structural preflight still makes its own walk (folding the route into it would move
 > the pinned guard orders and the cache pairing). Pinned by `AsyncRouteDecisionTests`.
 
+> **Update 2026-11-16 (pre-evaluation table reuse).** The fact is now
+> `Evaluator.TreeRouteFact`: the same answer plus the number of distinct nodes the deciding walk
+> visited. The fast path's synchronous preparation and the twin path's preparation hand that
+> count to the structural preflight as its table's capacity — what the synchronous entry's own
+> guard walk already did — so async-entry routes are presized too. The count is a capacity hint
+> only and decides no route, refusal or verdict; like the answer, it lives only in the call. A
+> twin run routed by an asynchronous host operation or an async-capable cache has no decided
+> fact and starts from capacity 0, as before. Pinned by `PreEvaluationTableHandOverTests`.
+
 Strategy pinning is unchanged from Phase 2: the twin path pins the generic
 loop/sequence strategies; synchronous host operations on the synchronous pipeline
 coexist with the optimizers untouched (the loop planner already rejects every
