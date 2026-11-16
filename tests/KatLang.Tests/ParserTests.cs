@@ -3999,7 +3999,7 @@ public class ParserTests
         // target into a binding-pattern reading nor suppress the REAL binding
         // pattern that starts on the next line. The multi-line variant also
         // exercises the failed-scan memo in
-        // LookaheadIsBindingPatternAssignment: the new-line candidate `b`
+        // LookaheadIsBindingPatternAssignmentFrom: the new-line candidate `b`
         // scans forward and fails exactly AT `x` (identifier after
         // identifier), `c` sits inside that failed region (the memo answers
         // false — `c` stays a target), and the statement-level consult at `x`

@@ -46,7 +46,7 @@ public sealed class Parser
     // ParserTraversalObservations; it never influences parsing.
     private long _tokenSteps;
 
-    // One-entry memo of the most recent LookaheadThroughTildesToPropertyDef scan,
+    // One-entry memo of the most recent LookaheadThroughTildesToPropertyDefFrom scan,
     // keyed by the run's first significant token index (see that method).
     private int _graceRunScanStart = -1;
     private bool _graceRunScanVerdict;
@@ -1071,7 +1071,7 @@ public sealed class Parser
     // every call, so it is O(offset): use it for the fixed small offsets of a
     // declaration head only, NEVER in a loop over a token run — a run scan walks
     // indices from one cursor with NextSignificantIndex instead (see
-    // LookaheadThroughTildesToPropertyDef, LookaheadIsBindingPatternAssignment).
+    // LookaheadThroughTildesToPropertyDefFrom, LookaheadIsBindingPatternAssignmentFrom).
     private Token PeekSignificant(int offset)
     {
         var index = NextSignificantIndex(_pos);
@@ -1749,17 +1749,24 @@ public sealed class Parser
                 continue;
             }
 
+            // THE declaration-start classification of the row (ClassifyDeclarationStartAt).
+            // The row-boundary check and the dispatch below read this one verdict, and
+            // every boundary consumer stops at the same relation (StartsDeclaration), so
+            // the heads recovery leaves intact are exactly the heads parsed here as
+            // declarations. The binding-pattern arm is always included: the loop is at a
+            // row start, where a comma run belongs to the row's own form.
+            var declarationStart = ClassifyDeclarationStart(includeCommaSpanningBindingPatterns: true);
+
             // Only a real item has a row boundary. A stray '=' or a malformed
             // 'public' has its own UnexpectedToken recovery below; recommending
             // a comma before that token would be a cascade.
             if (itemsParsed && IsSamePhysicalLineAsPreviousToken()
-                && (CanStartExpression(Current.Kind)
-                    || StartsDeclaration(includeCommaSpanningBindingPatterns: true)))
+                && (CanStartExpression(Current.Kind) || declarationStart != DeclarationStart.None))
                 ReportUnseparatedSameLineItem(Current);
             itemsParsed = true;
 
-            // Check for invalid grace on property name: ~Name = ... or ~public Name = ...
-            if (Current.Kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDef())
+            // Invalid grace on a property name: ~Name = ... or ~public Name = ...
+            if (declarationStart == DeclarationStart.GracedPropertyDefinition)
             {
                 var firstMarker = Advance();
                 var lastMarker = firstMarker;
@@ -1769,106 +1776,108 @@ public sealed class Parser
                     DiagnosticCode.InvalidGraceMarker,
                     "Grace operator cannot be applied to property names.",
                     firstMarker, lastMarker);
-                // Fall through to normal property definition handling
+                // Fall through to normal property definition handling. The loop above
+                // consumed exactly the line-local marker run the grace scan walked, so the
+                // head after it is the `Name =` or `public Name =` that scan recognized.
+                declarationStart = ClassifyDeclarationStart(includeCommaSpanningBindingPatterns: true);
             }
 
-            // Open declaration: open target1, target2, ...
-            if (Current.Kind == TokenKind.KeywordOpen)
+            switch (declarationStart)
             {
-                var openToken = Current;
-                if (hasOpenDeclaration)
-                {
+                // Open declaration: open target1, target2, ...
+                case DeclarationStart.Open:
+                    {
+                        var openToken = Current;
+                        if (hasOpenDeclaration)
+                        {
+                            ReportError(
+                                DiagnosticCode.InvalidOpenDeclaration,
+                                "Only one 'open' declaration is allowed per algorithm.");
+                        }
+                        // The one open list is the body's import preamble (MOD-01): it precedes every
+                        // declaration and output row of the body. Clause definitions are buffered in
+                        // their families until the body ends, so they are counted here explicitly —
+                        // `P(a) = a` declares a property exactly as `P = a` does, and an `open` after
+                        // either, or between two clauses of one family, is equally misplaced.
+                        if (properties.Count > 0 || output.Count > 0 || clauseGroupsInSourceOrder.Count > 0)
+                        {
+                            ReportError(
+                                DiagnosticCode.InvalidOpenDeclaration,
+                                "'open' declaration must appear before any properties or output expressions.");
+                        }
+                        hasOpenDeclaration = true;
+                        Advance(); // consume 'open'
+                        var openExprs = ParseOpenTargetList();
+                        NormalizeAndValidateOpenForms(openExprs);
+                        if (!declarationsAllowed)
+                        {
+                            // The span covers the whole declaration, keyword through
+                            // the last parsed target.
+                            ReportErrorFrom(
+                                DiagnosticCode.DeclarationInParentheses,
+                                OpenDeclarationInParenthesesDiagnostic,
+                                openToken);
+                        }
+                        opens.AddRange(openExprs);
+                        break;
+                    }
+                // public open ... → reject
+                case DeclarationStart.PublicOpen:
                     ReportError(
                         DiagnosticCode.InvalidOpenDeclaration,
-                        "Only one 'open' declaration is allowed per algorithm.");
-                }
-                // The one open list is the body's import preamble (MOD-01): it precedes every
-                // declaration and output row of the body. Clause definitions are buffered in
-                // their families until the body ends, so they are counted here explicitly —
-                // `P(a) = a` declares a property exactly as `P = a` does, and an `open` after
-                // either, or between two clauses of one family, is equally misplaced.
-                if (properties.Count > 0 || output.Count > 0 || clauseGroupsInSourceOrder.Count > 0)
-                {
-                    ReportError(
-                        DiagnosticCode.InvalidOpenDeclaration,
-                        "'open' declaration must appear before any properties or output expressions.");
-                }
-                hasOpenDeclaration = true;
-                Advance(); // consume 'open'
-                var openExprs = ParseOpenTargetList();
-                NormalizeAndValidateOpenForms(openExprs);
-                if (!declarationsAllowed)
-                {
-                    // The span covers the whole declaration, keyword through
-                    // the last parsed target.
-                    ReportErrorFrom(
-                        DiagnosticCode.DeclarationInParentheses,
-                        OpenDeclarationInParenthesesDiagnostic,
-                        openToken);
-                }
-                opens.AddRange(openExprs);
-            }
-            // public open ... → reject
-            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicOpen())
-            {
-                ReportError(
-                    DiagnosticCode.InvalidOpenDeclaration,
-                    "'public' cannot be applied to open declarations.");
-                Advance(); // consume 'public'
-                // Fall through: next iteration will parse the open declaration
-                // normally. The consumed modifier's diagnostic owns the boundary
-                // before `open`, so the row check does not report it again.
-                OwnSameLineItem(Current);
-            }
-            // Check for public property definition: public Name = ...
-            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicPropertyDef())
-            {
-                ParsePropertyDefinition(isPublic: true);
-            }
-            // public clause definition: public Name(...) = ...
-            else if (Current.Kind == TokenKind.KeywordPublic && LookaheadIsPublicClauseDefinition())
-            {
-                ParseClauseDefinition(isPublic: true);
-            }
-            // The reserved Boolean literals in declaration-head position — `true = 1`,
-            // `false(x) = x`, `public true = 1` — are keywords, never names, so they
-            // can be neither declared nor shadowed. Report that intent precisely at
-            // the literal instead of the stray-'=' cascade, then skip the whole head.
-            else if (IsReservedLiteralDeclarationHead())
-            {
-                ReportReservedLiteralDeclaration();
-            }
-            // Check for property definition: Identifier '='
-            else if (Current.Kind == TokenKind.Identifier && LookaheadIsEquals())
-            {
-                ParsePropertyDefinition(isPublic: false);
-            }
-            // Deconstruction / collecting binding pattern: x, *y, z = RHS (including
-            // the collecting-led forms `*items = RHS` and `*first, rest = RHS`). A
-            // plain single `name = RHS` is handled by the property branch above.
-            else if ((Current.Kind is TokenKind.Identifier or TokenKind.Star)
-                && LookaheadIsBindingPatternAssignment())
-            {
-                ParseBindingPatternAssignment(
-                    properties, clauseGroups, declaredPropertyNames, declarationsAllowed, writtenRowIndex: output.Count);
-            }
-            // Clause definition: Name(pattern) = body
-            else if (Current.Kind == TokenKind.Identifier && LookaheadIsClauseDefinition())
-            {
-                ParseClauseDefinition(isPublic: false);
-            }
-            else
-            {
-                // Output expression row, or an additional output contribution
-                // separated from an earlier one by definitions. Within one
-                // contribution, commas and — in these contexts (root output,
-                // algorithm and brace bodies, explicit parenthesized groups, and
-                // call argument lists) — physical newlines separate the
-                // expression-list slots; a second slot on the same line without
-                // a comma is the SYN-07A separator error, reported and recovered
-                // as the next slot by ParseExpressionListOperand.
-                var exprs = ParseExpressionListOperand(allowNewlineSeparator: true);
-                AppendOutputContribution(output, exprs);
+                        "'public' cannot be applied to open declarations.");
+                    Advance(); // consume 'public'
+                    // Fall through: next iteration will parse the open declaration
+                    // normally. The consumed modifier's diagnostic owns the boundary
+                    // before `open`, so the row check does not report it again.
+                    OwnSameLineItem(Current);
+                    break;
+                // Public property definition: public Name = ...
+                case DeclarationStart.PublicPropertyDefinition:
+                    ParsePropertyDefinition(isPublic: true);
+                    break;
+                // Public clause definition: public Name(...) = ...
+                case DeclarationStart.PublicClauseDefinition:
+                    ParseClauseDefinition(isPublic: true);
+                    break;
+                // The reserved Boolean literals in declaration-head position — `true = 1`,
+                // `false(x) = x`, `public true = 1` — are keywords, never names, so they
+                // can be neither declared nor shadowed. Report that intent precisely at
+                // the literal instead of the stray-'=' cascade, then skip the whole head.
+                case DeclarationStart.ReservedLiteralHead:
+                    ReportReservedLiteralDeclaration();
+                    break;
+                // Property definition: Identifier '='
+                case DeclarationStart.PropertyDefinition:
+                    ParsePropertyDefinition(isPublic: false);
+                    break;
+                // Deconstruction / collecting binding pattern: x, *y, z = RHS (including
+                // the collecting-led forms `*items = RHS` and `*first, rest = RHS`). A
+                // plain single `name = RHS` is a property definition (classified first).
+                case DeclarationStart.BindingPattern:
+                    ParseBindingPatternAssignment(
+                        properties, clauseGroups, declaredPropertyNames, declarationsAllowed, writtenRowIndex: output.Count);
+                    break;
+                // Clause definition: Name(pattern) = body
+                case DeclarationStart.ClauseDefinition:
+                    ParseClauseDefinition(isPublic: false);
+                    break;
+                // No declaration starts here (DeclarationStart.None; a graced head never
+                // follows its own consumed marker run, see above).
+                default:
+                    {
+                        // Output expression row, or an additional output contribution
+                        // separated from an earlier one by definitions. Within one
+                        // contribution, commas and — in these contexts (root output,
+                        // algorithm and brace bodies, explicit parenthesized groups, and
+                        // call argument lists) — physical newlines separate the
+                        // expression-list slots; a second slot on the same line without
+                        // a comma is the SYN-07A separator error, reported and recovered
+                        // as the next slot by ParseExpressionListOperand.
+                        var exprs = ParseExpressionListOperand(allowNewlineSeparator: true);
+                        AppendOutputContribution(output, exprs);
+                        break;
+                    }
             }
         }
 
@@ -2273,14 +2282,8 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if the token after the current identifier is '='.
-    /// Used to distinguish property definitions from output expressions.
-    /// </summary>
-    private bool LookaheadIsEquals()
-        => LookaheadIsEqualsFrom(NextSignificantIndex(_pos));
-
-    /// <summary>
-    /// Index form of <see cref="LookaheadIsEquals"/>: true when the significant
+    /// The property-head lookahead that distinguishes a property definition from an
+    /// output expression: true when the significant
     /// token after the significant token at <paramref name="index"/> is '='
     /// AND lies on the same physical line (the declaration-head line rule). A
     /// declaration-level output-spreading marker run between the name and the
@@ -2470,8 +2473,9 @@ public sealed class Parser
     private int _bindingPatternScanFailBreak = -1;
 
     /// <summary>
-    /// Checks whether the tokens at the current position form a deconstruction
-    /// assignment with identifier targets. A plain single <c>name =</c> is left
+    /// Checks whether the tokens from the significant token at
+    /// <paramref name="start"/> form a deconstruction
+    /// assignment with identifier targets (a memoized scan). A plain single <c>name =</c> is left
     /// to the ordinary property path; <c>*name =</c> is the unambiguous
     /// lone-collecting-binding form. The prefix collect marker must be
     /// directly attached to its binding name; the scan is deliberately
@@ -2481,14 +2485,6 @@ public sealed class Parser
     /// enforced during parsing, never here. Targets are identifiers with an
     /// optional leading star run; anything else falls through to ordinary
     /// expression parsing.
-    /// </summary>
-    private bool LookaheadIsBindingPatternAssignment()
-        => LookaheadIsBindingPatternAssignmentFrom(NextSignificantIndex(_pos));
-
-    /// <summary>
-    /// Index form of <see cref="LookaheadIsBindingPatternAssignment"/>: the
-    /// same memoized scan, started at the significant token at
-    /// <paramref name="start"/>.
     /// </summary>
     private bool LookaheadIsBindingPatternAssignmentFrom(int start)
     {
@@ -2999,7 +2995,8 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if the current tilde sequence is followed by Identifier '=' or 'public Identifier ='.
+    /// Checks if the tilde sequence at the significant token at <paramref name="start"/>
+    /// is followed by Identifier '=' or 'public Identifier ='.
     /// Used to detect invalid grace on property definitions. The run and the
     /// declaration head share one physical line: a marker run followed by a
     /// declaration on a later line is the lone marker of ITS line (reported by
@@ -3009,20 +3006,13 @@ public sealed class Parser
     /// <see cref="PeekSignificant"/>, which restarts at <c>_pos</c> and is
     /// O(offset) per call, so calling it for offset 0..k over a k-marker run made
     /// one row-start run cost O(k²) — and its verdict is memoized by the run's
-    /// first significant token index, so the declaration-boundary consumers (the
-    /// algorithm loop and <see cref="StartsDeclaration"/>) scan one run at most
-    /// once between them: a run costs O(k) in total, never O(k) per consult. The
+    /// first significant token index, so the declaration-start classification
+    /// (<see cref="ClassifyDeclarationStartAt"/>), which the algorithm loop and every
+    /// boundary consumer read, scans one run at most once between them: a run costs
+    /// O(k) in total, never O(k) per consult. The
     /// verdict is a pure function of the immutable token array from that index,
     /// so the memo can never go stale. Lookahead answers, diagnostics, spans, and
     /// the produced tree are exactly those of the offset walk.</para>
-    /// </summary>
-    private bool LookaheadThroughTildesToPropertyDef()
-        => LookaheadThroughTildesToPropertyDefFrom(NextSignificantIndex(_pos));
-
-    /// <summary>
-    /// Index form of <see cref="LookaheadThroughTildesToPropertyDef"/>: the
-    /// same memoized scan, started at the significant token at
-    /// <paramref name="start"/>.
     /// </summary>
     private bool LookaheadThroughTildesToPropertyDefFrom(int start)
     {
@@ -3061,14 +3051,11 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if 'public' keyword is followed by 'open' keyword on the same
+    /// Checks if the 'public' keyword at <paramref name="publicIndex"/> is followed by
+    /// the 'open' keyword on the same
     /// physical line (the declaration-head line rule, see <see cref="IsHeadToken"/>).
     /// Used to detect and reject public open declarations.
     /// </summary>
-    private bool LookaheadIsPublicOpen()
-        => IsPublicOpenAt(NextSignificantIndex(_pos));
-
-    /// <summary>Index form of <see cref="LookaheadIsPublicOpen"/> for the 'public' at <paramref name="publicIndex"/>.</summary>
     private bool IsPublicOpenAt(int publicIndex)
     {
         var next = NextSignificantIndex(publicIndex + 1); // skip 'public'
@@ -3076,14 +3063,11 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if 'public' keyword is followed by Identifier '=' on the same
+    /// Checks if the 'public' keyword at <paramref name="publicIndex"/> is followed by
+    /// Identifier '=' on the same
     /// physical line (the declaration-head line rule, see <see cref="IsHeadToken"/>).
     /// Used to detect public property definitions.
     /// </summary>
-    private bool LookaheadIsPublicPropertyDef()
-        => IsPublicPropertyDefAt(NextSignificantIndex(_pos));
-
-    /// <summary>Index form of <see cref="LookaheadIsPublicPropertyDef"/> for the 'public' at <paramref name="publicIndex"/>.</summary>
     private bool IsPublicPropertyDefAt(int publicIndex)
     {
         var next = NextSignificantIndex(publicIndex + 1); // skip 'public'
@@ -3093,28 +3077,12 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if the current identifier is followed by '(' ... ')' '='.
-    /// Used to detect clause definitions: <c>Name(pattern) = body</c>.
-    /// Skips comment tokens during lookahead. Handles nested parentheses and
-    /// applies the declaration-head line rule.
-    /// </summary>
-    private bool LookaheadIsClauseDefinition()
-        => LookaheadIsParenEqualsAfterName(_pos);
-
-    /// <summary>
-    /// Whether the current row begins with a reserved Boolean literal written as a
-    /// declaration head — <c>true =</c>, <c>false(pattern) =</c>, optionally after
-    /// <c>public</c> — under the ordinary declaration-head line rule
+    /// Whether the tokens at <paramref name="index"/> begin a reserved Boolean literal
+    /// written as a declaration head — <c>true =</c>, <c>false(pattern) =</c>,
+    /// optionally after <c>public</c> — under the ordinary declaration-head line rule
     /// (<see cref="IsHeadToken"/>). The literals are keywords, never names, so such a
     /// head can never be a declaration; recognizing it lets the parser name the
     /// mistake instead of reporting a stray <c>'='</c>.
-    /// </summary>
-    private bool IsReservedLiteralDeclarationHead()
-        => IsReservedLiteralDeclarationHeadAt(NextSignificantIndex(_pos));
-
-    /// <summary>
-    /// Index form of <see cref="IsReservedLiteralDeclarationHead"/>: the reserved-literal
-    /// head (optionally after <c>public</c>) that begins at <paramref name="index"/>.
     /// </summary>
     private bool IsReservedLiteralDeclarationHeadAt(int index)
     {
@@ -3160,14 +3128,11 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// Checks if 'public' is followed by Identifier '(' ... ')' '=' (the name
+    /// Checks if the 'public' at <paramref name="publicIndex"/> is followed by
+    /// Identifier '(' ... ')' '=' (the name
     /// on the modifier's physical line, then the ordinary clause-head rule).
     /// Used to detect public clause definitions.
     /// </summary>
-    private bool LookaheadIsPublicClauseDefinition()
-        => IsPublicClauseDefinitionAt(NextSignificantIndex(_pos));
-
-    /// <summary>Index form of <see cref="LookaheadIsPublicClauseDefinition"/> for the 'public' at <paramref name="publicIndex"/>.</summary>
     private bool IsPublicClauseDefinitionAt(int publicIndex)
     {
         var next = NextSignificantIndex(publicIndex + 1); // skip 'public'
@@ -4282,37 +4247,87 @@ public sealed class Parser
     }
 
     /// <summary>
-    /// THE declaration-starter relation for boundary decisions: true when the
-    /// tokens at the current position begin a declaration the algorithm loop
-    /// owns — an <c>open</c> declaration, a property definition
-    /// <c>Name = ...</c>, a deconstruction binding pattern
+    /// The declaration form that begins at a row-start token, as decided by
+    /// <see cref="ClassifyDeclarationStartAt"/> — THE declaration-start relation. The
+    /// algorithm body loop dispatches on it, and <see cref="StartsDeclaration"/> (every
+    /// boundary consumer's question) is exactly "not <see cref="DeclarationStart.None"/>".
+    /// </summary>
+    internal enum DeclarationStart : byte
+    {
+        /// <summary>No declaration begins here: the body loop parses an output row.</summary>
+        None,
+
+        /// <summary><c>open target1, target2, …</c>.</summary>
+        Open,
+
+        /// <summary><c>public open …</c>: reported, then the <c>open</c> is parsed.</summary>
+        PublicOpen,
+
+        /// <summary><c>public Name = …</c>, also with an output-spreading marker run (<c>public Name* = …</c>).</summary>
+        PublicPropertyDefinition,
+
+        /// <summary><c>public Name(pattern) = …</c>, also <c>public Name(pattern)* = …</c>.</summary>
+        PublicClauseDefinition,
+
+        /// <summary>A reserved Boolean literal written as a head (<c>true = …</c>, <c>false(x) = …</c>, optionally after <c>public</c>): reported, then skipped.</summary>
+        ReservedLiteralHead,
+
+        /// <summary>The invalid-grace property prefix <c>~Name = …</c> / <c>~public Name = …</c>: reported, then the property is parsed.</summary>
+        GracedPropertyDefinition,
+
+        /// <summary><c>Name = …</c>, also with an output-spreading marker run (<c>Name* = …</c>).</summary>
+        PropertyDefinition,
+
+        /// <summary>A deconstruction binding pattern <c>x, *y, z = …</c>, including the collect-marker-led <c>*items = …</c>.</summary>
+        BindingPattern,
+
+        /// <summary><c>Name(pattern) = …</c>, also <c>Name(pattern)* = …</c>.</summary>
+        ClauseDefinition,
+    }
+
+    /// <summary>
+    /// <see cref="ClassifyDeclarationStartAt"/> at the current position.
+    /// </summary>
+    private DeclarationStart ClassifyDeclarationStart(bool includeCommaSpanningBindingPatterns)
+        => ClassifyDeclarationStartAt(NextSignificantIndex(_pos), includeCommaSpanningBindingPatterns);
+
+    /// <summary>
+    /// THE declaration-start relation: the declaration that the tokens from the
+    /// significant token at <paramref name="index"/> begin — an <c>open</c> declaration,
+    /// a property definition <c>Name = ...</c>, a deconstruction binding pattern
     /// <c>x, *y, z = ...</c> (including the collect-marker-led form
-    /// <c>*items = ...</c>), a clause definition <c>Name(pattern) = ...</c>,
-    /// the invalid-grace property prefix <c>~Name = ...</c>, a
-    /// <c>public</c>-led head, or a reserved-literal head (<c>true = …</c>,
-    /// <c>false(x) = …</c>) — exactly the forms the loop dispatches as
-    /// declarations. Every boundary consumer stops before this relation — the
-    /// slot-boundary rule (<see cref="StartsNextExpressionListSlot"/>),
-    /// semicolon recovery, open-target recovery
-    /// (<see cref="StartsOpenTargetAtom"/>), the star classifier
-    /// (<see cref="IsPostfixSpreadMarkerStar"/>), and operand recovery
-    /// (<see cref="RecoverAtOperandStart"/>) — so a following declaration stays
-    /// intact and its diagnostics stay owned by the algorithm loop; encoding the
-    /// set once keeps the decisions from drifting apart (the open-target copy
-    /// historically missed the binding-pattern form and tore <c>x, y = 1</c>
-    /// apart, and operand recovery must refuse EXACTLY the heads the list loop
-    /// stops at, or the loop would re-admit a head the operand parse refused).
+    /// <c>*items = ...</c>), a clause definition <c>Name(pattern) = ...</c>, the
+    /// invalid-grace property prefix <c>~Name = ...</c>, a <c>public</c>-led head, or a
+    /// reserved-literal head (<c>true = …</c>, <c>false(x) = …</c>) — or
+    /// <see cref="DeclarationStart.None"/>. It is encoded ONCE: the algorithm body loop
+    /// (<see cref="ParseAlgorithmBodyParts"/>) dispatches on this classification, and
+    /// every boundary consumer stops before it through <see cref="StartsDeclaration"/> —
+    /// the slot-boundary rule (<see cref="StartsNextExpressionListSlot"/>), semicolon
+    /// recovery, open-target recovery (<see cref="StartsOpenTargetAtom"/>), the star
+    /// classifier (<see cref="IsPostfixSpreadMarkerStar"/>), and operand recovery
+    /// (<see cref="RecoverAtOperandStart"/>) — so a following declaration stays intact and
+    /// its diagnostics stay owned by the algorithm loop. Separate encodings drifted
+    /// before: the open-target copy historically missed the binding-pattern form and tore
+    /// <c>x, y = 1</c> apart, and operand recovery must refuse EXACTLY the heads the list
+    /// loop stops at, or the loop would re-admit a head the operand parse refused.
+    ///
+    /// <para>Within one token kind the arms are tried in a fixed order and the first
+    /// match wins: a <c>public</c> head is an <c>open</c>, then a property, then a clause,
+    /// then a reserved literal; an identifier head is a property, then a binding pattern,
+    /// then a clause. Every arm is a pure function of the immutable token array (the
+    /// grace-run and binding-pattern memos only share verdicts), so the classification
+    /// of an index never depends on which consumer asked first.</para>
     ///
     /// <para><paramref name="includeCommaSpanningBindingPatterns"/> gates the
     /// ONE arm whose lookahead scans across commas (the deconstruction
     /// binding pattern). It is a consumer-position question, not a second
-    /// copy of the relation: the slot-boundary rule always includes it (its
-    /// expression list consumes commas before the boundary check, so trailing
-    /// commas always belong to the candidate), while open-target recovery
-    /// includes it after a separator comma or on a later physical line. The
-    /// first target on the open line retains the open list's own comma syntax;
-    /// an already-owed target that starts a declaration leaves that head intact.
-    /// (<c>open A,</c> newline <c>x, y = 1</c> keeps the whole
+    /// copy of the relation: the body loop and the slot-boundary rule always include it
+    /// (the loop is at a row start; the slot rule's expression list consumes commas
+    /// before the boundary check, so trailing commas always belong to the candidate),
+    /// while open-target recovery includes it after a separator comma or on a later
+    /// physical line. The first target on the open line retains the open list's own
+    /// comma syntax; an already-owed target that starts a declaration leaves that head
+    /// intact. (<c>open A,</c> newline <c>x, y = 1</c> keeps the whole
     /// deconstruction).</para>
     ///
     /// <para>`public` cannot start an expression (<see cref="CanStartExpression"/>),
@@ -4320,8 +4335,55 @@ public sealed class Parser
     /// operand recovery is reached AT a `public` after a dangling operator, and its arm
     /// keeps `1 +` newline `public Good = 41` a public declaration. The Star arm is
     /// unreachable through the expression-start filters (including the star
-    /// classifier's operand filter) except in operand recovery, and keeps the relation
-    /// faithful to the algorithm loop's own declaration dispatch.</para>
+    /// classifier's operand filter); only the body loop (<c>*items = …</c>) and operand
+    /// recovery reach it.</para>
+    /// </summary>
+    private DeclarationStart ClassifyDeclarationStartAt(int index, bool includeCommaSpanningBindingPatterns)
+    {
+        switch (_tokens[index].Kind)
+        {
+            case TokenKind.KeywordOpen:
+                return DeclarationStart.Open;
+            case TokenKind.KeywordPublic:
+                if (IsPublicOpenAt(index))
+                    return DeclarationStart.PublicOpen;
+                if (IsPublicPropertyDefAt(index))
+                    return DeclarationStart.PublicPropertyDefinition;
+                if (IsPublicClauseDefinitionAt(index))
+                    return DeclarationStart.PublicClauseDefinition;
+                return IsReservedLiteralDeclarationHeadAt(index)
+                    ? DeclarationStart.ReservedLiteralHead
+                    : DeclarationStart.None;
+            case TokenKind.KeywordTrue or TokenKind.KeywordFalse:
+                return IsReservedLiteralDeclarationHeadAt(index)
+                    ? DeclarationStart.ReservedLiteralHead
+                    : DeclarationStart.None;
+            case TokenKind.Tilde:
+                return LookaheadThroughTildesToPropertyDefFrom(index)
+                    ? DeclarationStart.GracedPropertyDefinition
+                    : DeclarationStart.None;
+            case TokenKind.Identifier:
+                if (LookaheadIsEqualsFrom(index))
+                    return DeclarationStart.PropertyDefinition;
+                if (includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignmentFrom(index))
+                    return DeclarationStart.BindingPattern;
+                return LookaheadIsParenEqualsAfterName(index)
+                    ? DeclarationStart.ClauseDefinition
+                    : DeclarationStart.None;
+            case TokenKind.Star:
+                return includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignmentFrom(index)
+                    ? DeclarationStart.BindingPattern
+                    : DeclarationStart.None;
+            default:
+                return DeclarationStart.None;
+        }
+    }
+
+    /// <summary>
+    /// The boundary consumers' form of THE declaration-start relation
+    /// (<see cref="ClassifyDeclarationStartAt"/>): true when the tokens at the current
+    /// position begin a declaration the algorithm loop owns — exactly the rows the loop
+    /// dispatches as declarations, because both read the one classification.
     /// </summary>
     private bool StartsDeclaration(bool includeCommaSpanningBindingPatterns)
         => StartsDeclarationAt(NextSignificantIndex(_pos), includeCommaSpanningBindingPatterns);
@@ -4337,24 +4399,26 @@ public sealed class Parser
     /// detached `A *` leaves the declaration to operand recovery.
     /// </summary>
     private bool StartsDeclarationAt(int index, bool includeCommaSpanningBindingPatterns)
+        => ClassifyDeclarationStartAt(index, includeCommaSpanningBindingPatterns) != DeclarationStart.None;
+
+    /// <summary>
+    /// Test-only entry: <see cref="ClassifyDeclarationStartAt"/> at the first significant
+    /// token of <paramref name="source"/>, lexed exactly as a parse lexes it. It parses
+    /// nothing; the agreement pins compare its verdict with what the body loop dispatches
+    /// and what the boundary consumers stop at.
+    /// </summary>
+    internal static DeclarationStart ClassifyDeclarationStartOf(string source, bool includeCommaSpanningBindingPatterns)
     {
-        var kind = _tokens[index].Kind;
-        return kind == TokenKind.KeywordOpen
-            || (kind == TokenKind.Identifier
-                && (LookaheadIsEqualsFrom(index)
-                    || (includeCommaSpanningBindingPatterns && LookaheadIsBindingPatternAssignmentFrom(index))
-                    || LookaheadIsParenEqualsAfterName(index)))
-            || (kind == TokenKind.Star
-                && includeCommaSpanningBindingPatterns
-                && LookaheadIsBindingPatternAssignmentFrom(index))
-            || (kind == TokenKind.Tilde && LookaheadThroughTildesToPropertyDefFrom(index))
-            || (kind == TokenKind.KeywordPublic
-                && (IsPublicOpenAt(index)
-                    || IsPublicPropertyDefAt(index)
-                    || IsPublicClauseDefinitionAt(index)
-                    || IsReservedLiteralDeclarationHeadAt(index)))
-            || (kind is TokenKind.KeywordTrue or TokenKind.KeywordFalse
-                && IsReservedLiteralDeclarationHeadAt(index));
+        var diagnostics = new DiagnosticBag();
+        var lexicalErrorStarts = new List<SourcePosition>();
+        var parser = new Parser(
+            Lexer.Tokenize(source, diagnostics, lexicalErrorStarts),
+            diagnostics,
+            lexicalErrorStarts,
+            comparisonObservations: null,
+            CancellationToken.None,
+            CancellationToken.None);
+        return parser.ClassifyDeclarationStartAt(parser.NextSignificantIndex(0), includeCommaSpanningBindingPatterns);
     }
 
     private static bool CanStartExpression(TokenKind kind) => kind switch
