@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using KatLang.ParserFuzz;
 
 namespace KatLang.Tests;
@@ -153,5 +154,55 @@ public class FrontEndMemoryProbeTests
             ? ["admit", "detect", "resolve", "collisions", "open-providers", "outputs", "exposure"]
             : ["admit", "detect", "resolve", "collisions", "outputs", "exposure"];
         Assert.Equal(passes.SelectMany(static pass => new[] { "+" + pass, "-" + pass }), stages);
+    }
+}
+
+/// <summary>
+/// The fe-mem probe's CENSUS mode (<c>fe-mem --mode census</c>) end to end, in a fresh process: every shape's census
+/// must complete and print its full result line. The probe lives outside the solution and CI only builds it
+/// (<c>scripts/build-standalone-tools.ps1</c>), so a pass that gains a required argument breaks the census at run time
+/// only: from the B3 resolver until November 2026 it threw <see cref="ArgumentNullException"/>, running detection and
+/// resolution without an admitted static-structure operation. The census forces full compacting collections and
+/// listens to runtime allocation events, so it runs in its own small process, never in the shared test host.
+/// </summary>
+public sealed class FrontEndMemoryProbeCensusProcessTests
+{
+    private const string Child = "KATLANG_FE_MEM_CENSUS_CHILD";
+    private const int CensusChars = 4096;
+
+    [Fact]
+    public async Task CensusMode_CompletesForEveryShape()
+    {
+        var start = SubprocessProbe.StartInfo(typeof(FrontEndMemoryProbeCensusProcessTests), nameof(CensusChild));
+        start.Environment[Child] = "1";
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var text = await output + await error;
+        Assert.True(process.ExitCode == 0, text);
+
+        var results = text.Split('\n').Select(static line => line.TrimEnd('\r'))
+            .Where(static line => line.StartsWith("RESULT census ", StringComparison.Ordinal)).ToArray();
+        Assert.True(results.Length == FrontEndMemoryProbe.ShapeIds.Count, text);
+        foreach (var line in results)
+        {
+            // Every stage reported: tokens, raw syntax, the elaborated result, the raw/elaborated sharing (the
+            // admit-detect-resolve-exposure composition that threw), per-pass allocation and the sampled profile.
+            foreach (var key in (string[])[" tokens=", " rawRetainedKb=", " parseRetainedKb=", " elabNodesSharedWithRaw=", " allocKb[lex=", ",admit=", ",resolve=", ",exposure=", " allocTop="])
+                Assert.True(line.Contains(key, StringComparison.Ordinal), $"missing '{key.Trim()}' in: {line}");
+        }
+    }
+
+    /// <summary>The census child: a no-op in the ordinary run; in the probe process, every shape's census.</summary>
+    [Fact]
+    public void CensusChild()
+    {
+        if (Environment.GetEnvironmentVariable(Child) != "1")
+            return;
+
+        foreach (var shape in FrontEndMemoryProbe.ShapeIds)
+            Assert.Equal(0, FrontEndMemoryProbe.RunCensus(shape, CensusChars, Console.Out));
+        Console.Out.Flush();
     }
 }

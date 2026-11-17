@@ -411,7 +411,10 @@ $probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
 # and fails the run (2026-11-16: completes at 576 MiB, not 544; 5d756643 needed 704 MiB)
 & $probe fe-mem --shapes dense_props --sizes 2m --routes parse --heap-limit-mb 640 --timeout-ms 600000
 # B — attribution (explicit retention, NOT production peaks): per-stage retained bytes, distinct
-# objects, token kinds, per-pass allocation, sampled allocation-by-type
+# objects, token kinds, per-pass allocation (admission separately), sampled allocation-by-type.
+# From 04225cf7 until 2026-11-17 the census threw ArgumentNullException (it ran detection and
+# resolution without an admitted operation); FrontEndMemoryProbeCensusProcessTests now runs every
+# shape's census at 4 KiB in a child process of the ordinary .NET suite
 & $probe fe-mem --mode census --shapes dense_props,wide_decon --sizes 64k
 # live set during the operation (forced full GCs every 5 ms: perturbs time on purpose)
 & $probe fe-mem --sizes 256k --env FE_MEM_LIVE_SAMPLE_MS=5
@@ -508,6 +511,15 @@ minimum heap is the smallest `--heap-limit-mb` step of 32 MiB that completes), `
 
 The `dense_funcs` peak commit rose with two gen-2 collections fewer (10 → 8) while its live peak fell:
 default-GC peaks follow collector scheduling, so the heap-limit check above is the steadier gate.
+
+Re-measured November 17 2026 (same host, .NET 11.0.0, medians of three; `77ac0578` → the same day's
+trims of empty per-body opens and properties lists, empty input-graph edge lists and a discarded
+entry table; design doc § 3), `Parser.Parse`:
+
+| shape (about 2 Mi UTF-16 units) | allocated GiB | retained MiB | peak commit MiB | minimum heap MiB | time s |
+| --- | --- | --- | --- | --- | --- |
+| dense_props | 2.49 → 2.46 | 139.6 → 131.3 | 1,130 → 1,117 | 576 → 576 | 6.2 → 6.0 |
+| dense_funcs | 2.33 → 2.31 | 143.9 → 138.0 | 1,086 → 1,082 | 512 → 512 | 5.6 → 5.6 |
 `SEC-S1` itself (`25cf9962`) still peaks at 456–460 MiB for `dense_props` on .NET 11.0.0.
 
 The historical "600-900 MB" figure in `SourceProcessingLimits` was introduced alongside

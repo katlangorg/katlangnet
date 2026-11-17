@@ -30,7 +30,8 @@ namespace KatLang.ParserFuzz;
 /// Diagnostic-only environment switches (never set by default): FE_MEM_LIVE_SAMPLE_MS (forced
 /// full collections during the operation — a live-set measurement that perturbs time),
 /// FE_MEM_DUMP_AT_MB / FE_MEM_DUMP_AFTER_RELEASE with FE_MEM_DUMP_TOOL / FE_MEM_DUMP_PATH (a heap
-/// dump at the live peak, with the measured thread suspended, or after release).
+/// dump at the live peak, with the measured thread suspended, or after release), and
+/// FE_MEM_DUMP_RETAINED=PATH (a heap dump with the result retained, after the retained measurement).
 ///
 /// FAITHFUL (mode A) runs exactly one public entry point (Lexer.Tokenize, Parser.Parse,
 /// Parser.ParseAsync, KatLangEngine.Run/RunAsync) on the generated source, after warming the
@@ -95,6 +96,8 @@ internal static class FrontEndMemoryProbe
     ];
 
     private static Shape? Find(string id) => Shapes.FirstOrDefault(s => s.Id == id);
+
+    internal static IReadOnlyList<string> ShapeIds => [.. Shapes.Select(static shape => shape.Id)];
 
     private const int DefaultSuffixReserve = 64;
 
@@ -435,7 +438,7 @@ internal static class FrontEndMemoryProbe
     {
         // Handshake: the parent assigns the job object before generation starts.
         _ = Console.In.ReadLine();
-        if (args.Length >= 4 && args[1] == "census") return RunCensus(args[2], ParseSize(args[3]));
+        if (args.Length >= 4 && args[1] == "census") return RunCensus(args[2], ParseSize(args[3]), Console.Out);
         if (args.Length >= 5 && args[1] == "faithful") return RunFaithful(args[2], args[3], ParseSize(args[4]));
         Console.Error.WriteLine("fe-mem-child faithful ROUTE SHAPE CHARS | fe-mem-child census SHAPE CHARS");
         return 2;
@@ -706,6 +709,11 @@ internal static class FrontEndMemoryProbe
 
         FullCollect();
         var retained = GC.GetTotalMemory(false) - heapBefore;
+        if (Environment.GetEnvironmentVariable("FE_MEM_DUMP_RETAINED") is { Length: > 0 } retainedDump)
+        {
+            using var dump = Process.Start(new ProcessStartInfo(Environment.GetEnvironmentVariable("FE_MEM_DUMP_TOOL") ?? "dotnet-dump", $"collect -p {Environment.ProcessId} --type Heap -o \"{retainedDump}\"") { UseShellExecute = false });
+            dump?.WaitForExit();
+        }
         GC.KeepAlive(result.Value);
         result.Value = null;
         FullCollect();
@@ -822,7 +830,8 @@ internal static class FrontEndMemoryProbe
         return GC.GetTotalMemory(false) - before;
     }
 
-    private static int RunCensus(string shapeId, int targetChars)
+    /// <summary>One census child's work, written to <paramref name="output"/> (the child's standard output).</summary>
+    internal static int RunCensus(string shapeId, int targetChars, TextWriter output)
     {
         var shape = Find(shapeId);
         if (shape is null) { Console.Error.WriteLine($"unknown shape {shapeId}"); return 2; }
@@ -898,15 +907,18 @@ internal static class FrontEndMemoryProbe
             sb.Append(" allocTop=").Append(listener.Top(12));
         }
 
-        Console.Out.WriteLine(sb.ToString());
+        output.WriteLine(sb.ToString());
         return 0;
     }
 
+    // Detection and resolution share ONE admitted static-structure operation, as FrontEndPipeline.CompleteBeforeExposure
+    // composes them (and the parse-stages route above): since the B3 resolver neither pass runs without one.
     private static Algorithm ElaborateLikePipeline(Algorithm root, DiagnosticBag bag)
     {
         var modules = new ModuleUnits();
-        var (detected, _) = ParameterDetector.DetectPrevalidated(root, null, diagnostics: bag, modules: modules);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, null, bag, null, modules);
+        var operation = StaticStructureAdmission.Create(root).Operation;
+        var (detected, _) = ParameterDetector.DetectPrevalidated(root, null, diagnostics: bag, modules: modules, structuralOperation: operation);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, null, bag, null, modules, operation);
         return PropertyExposureResolver.Resolve(resolved, null, null, modules);
     }
 
@@ -923,9 +935,11 @@ internal static class FrontEndMemoryProbe
         var t2 = Now();
         var bag = syntax.Diagnostics;
         var modules = new ModuleUnits();
-        var (detected, _) = ParameterDetector.DetectPrevalidated(syntax.Root, null, diagnostics: bag, modules: modules);
+        var operation = StaticStructureAdmission.Create(syntax.Root).Operation;
+        var tAdmit = Now();
+        var (detected, _) = ParameterDetector.DetectPrevalidated(syntax.Root, null, diagnostics: bag, modules: modules, structuralOperation: operation);
         var t3 = Now();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, null, bag, null, modules);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, null, bag, null, modules, operation);
         var t4 = Now();
         new ParameterPropertyCollisionValidator(bag, programRoot: resolved).VisitAlgorithm(resolved);
         OpenProviderValidator.Validate(resolved, bag, (HostOperations?)null);
@@ -934,7 +948,7 @@ internal static class FrontEndMemoryProbe
         var exposed = PropertyExposureResolver.Resolve(resolved, null, null, modules);
         var t6 = Now();
         GC.KeepAlive(exposed);
-        return $"allocKb[lex={(t1 - t0) / 1024},syntaxInclLex={(t2 - t1) / 1024},detect={(t3 - t2) / 1024}," +
+        return $"allocKb[lex={(t1 - t0) / 1024},syntaxInclLex={(t2 - t1) / 1024},admit={(tAdmit - t2) / 1024},detect={(t3 - tAdmit) / 1024}," +
                $"resolve={(t4 - t3) / 1024},validate={(t5 - t4) / 1024},exposure={(t6 - t5) / 1024}]";
     }
 

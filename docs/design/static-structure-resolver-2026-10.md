@@ -206,6 +206,8 @@ audit's spelling is not recorded); per-row costs depend on the exact shape.
   are accepted at 1,325 MiB (1,340 MiB); 91,661 are refused with "The static operation exceeded its
   metadata storage bound (16777216 slots)." at the same peak. 70,000 rows are accepted at 937 MiB
   (920 MiB). From 95,319 rows the entry cap refuses first (100,000 rows: 1,068 MiB, 1,075 MiB).
+  Since `0b78ed31` (2026-11-15) a call row costs about 195 slots: 86,019 rows are accepted and 86,020
+  are refused by the same metadata bound (re-measured on `77ac0578`; the bisect is below).
 - Constant rows reach neither bound inside the 2-MiB source ceiling. 136,000 rows (2,089,782
   characters, about 408,000 entries) are accepted at 1,173 MiB (1,172 MiB), and 120,000 rows at
   1,062 MiB, so other front-end and run state dominates there.
@@ -252,6 +254,39 @@ On `5d756643` already, before these trims, 91,660 call rows are refused by the m
 call-row boundary above is historical for `897887a1`. A ceiling-size `wide_decon` stays refused by the
 entry bound (about 1.0 GiB); the envelope's formulas are unchanged. Bisect table, logs and histograms:
 `artifacts/validation/front-end-memory-growth/` (local only).
+
+**Call-row boundary bisect (2026-11-17).** The same harness, one fresh Release process per run, bisected the
+first-parent commits from `897887a1` to `5d756643`. The boundary holds through `11bde9c0` (91,660 rows accepted,
+91,661 refused, as at `897887a1`) and moves with the next commit, `0b78ed31` ("Reuse selected lifting dependencies
+with ordered rewrite checks", 2026-11-15), to 86,019 accepted and 86,020 refused; main at `77ac0578` is unchanged.
+That is about 12 more slots per call row (16,777,216 / 91,661 ≈ 183.0 before, 16,777,216 / 86,020 ≈ 195.0 after).
+The commit removed the rewrite's second dependency walk, whose charges went with it, and added the rewrite-side
+record of the selection invariant, `ImplicitArgumentResolver.OpenBodyLiftLog`, which every open body's rewrite
+allocates whether or not it lifts anything: 4 slots for the log and its lists, then slots per row marker, per
+rewritten node frame and per list growth. Charging it is deliberate. §10.1 item 3 and the commit message say the
+log "charges its allocated storage and comparison work to the static ledger", which is the rule above (storage is
+charged where it is allocated), and the commit's pins bound the charges' linearity, not an absolute charge
+(`DottedCallSiteLedgerTests`). The SEMANTIC-ALIGNMENT row it touched (lookup, ownership and open; signature
+construction is C#-only) needs no Lean change. The charge and the bound stay as they are; only the ceiling it moved
+went unrecorded until now.
+
+**Follow-up trims (2026-11-17, implementation only).** Three more per-body objects went. Exposure gives a user body
+with output rows the shared empty arrays for its empty opens and properties, instead of two empty lists of its own; a
+body without rows and an alias keep theirs, because their record equality rests on them. An input-graph node creates
+its child and parent lists with its first edge. The resolver no longer builds the per-index entry table that both
+callers of `BuildPropertyEntries` discarded. No result, diagnostic, record equality, ledger charge or counter changed:
+a differential over 15,653 programs taken from test literals compared the diagnostics with spans, the normalized
+elaborated trees, the record-equality matrix of the root's bodies and the ledger's work, adapter work, metadata, peak
+and current storage, and found them identical; so were the probe's `fe-mem-diff` hashes of 461 inputs. A shared empty
+PARAMETER-PATTERN list was measured and rejected: that list is an identity input of FE-3's signature composition and
+bundle sharing, and sharing it merged compositions and bundles, which lowered the ledger's work and storage charges on
+40 of those programs. `fe-mem` `Parser.Parse` at 2 Mi (Release, medians of three, MiB): `dense_props` retained
+139.6 → 131.3 and allocated 2,550 → 2,515 (opens and properties: 8.3 retained, 20 allocated; input-graph lists: 8
+allocated; entry table: 5–8 allocated); `dense_funcs` retained 143.9 → 138.0 and allocated 2,388 → 2,368 (its closed
+bodies build no input graph, so that trim does not reach it). The smallest completing heap limits stay 576 and 512 MiB,
+and the default-GC peaks move within their noise. The probe's census mode, broken since `04225cf7` (it ran detection
+and resolution without an admitted operation), works again, and `FrontEndMemoryProbeCensusProcessTests` runs it for
+every shape. Logs: `artifacts/validation/front-end-memory-follow-ups/` (local only).
 
 Open-level entries grow with providers × DISTINCT opened names read (P × D), not P². For one block
 that opens P one-member providers and sums D ≥ 4 distinct opened names, entries are exactly

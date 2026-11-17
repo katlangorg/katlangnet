@@ -249,6 +249,169 @@ public class FrontEndMemoryRepresentationTests
         }
     }
 
+    // ── Retained empty lists and transient tables (November 2026 follow-up of the B3 memory growth) ──
+
+    private static string RowProgram(int rows)
+        => string.Concat(Enumerable.Range(0, rows).Select(i => $"A{i} = {i}\nF{i}(x) = x + {i}\n"))
+            + "B = {\n    P = 1\n    P + 0\n}\nA0 + F0(1) + B";
+
+    private static int EmptyScopeLists(Algorithm root)
+        => ObjectCensus.Of(root).CountObjects(static node => node is List<Property> { Count: 0 } or List<Expr> { Count: 0 });
+
+    /// <summary>
+    /// The elaborated result holds no empty opens or properties list object per body: a body with output rows reads the
+    /// shared zero-length arrays for them. Before, every body kept its own empty <see cref="List{T}"/> of each (8.3 MiB
+    /// retained on a 2-MiB constant-row source, two per row). The empty lists the result retains no longer grow with the
+    /// rows, and the bodies still evaluate. The parameter-pattern list stays the body's own: it is an identity input of
+    /// the resolver's signature composition and bundle sharing (FE-3), which a shared empty list would change.
+    /// </summary>
+    [Fact]
+    public void ElaboratedRowBodies_HoldTheSharedEmptyLists_NotOnePerBody()
+    {
+        var small = SourceProvenance.ParseValid(RowProgram(100)).Root;
+        var large = SourceProvenance.ParseValid(RowProgram(200)).Root;
+
+        var retained = EmptyScopeLists(large);
+        Assert.True(retained < 10, $"the result retains {retained} empty opens or properties lists");
+        Assert.Equal(EmptyScopeLists(small), retained);
+        var bodies = large.Properties.Select(property => Assert.IsType<Algorithm.User>(property.Value)).ToArray();
+        foreach (var (property, body) in large.Properties.Zip(bodies))
+        {
+            Assert.Same(Array.Empty<Expr>(), body.Opens);
+            if (property.Name != "B")
+                Assert.Same(Array.Empty<Property>(), body.Properties);
+        }
+
+        Assert.Equal(bodies.Length, bodies.Select(body => body.ParameterPatterns).Distinct(ReferenceEqualityComparer.Instance).Count());
+
+        Assert.Equal("2", Assert.IsType<RunResult.Success>(KatLangEngine.Run(RowProgram(200))).ToDisplayString());
+    }
+
+    /// <summary>
+    /// The shared empty lists are <see cref="Array.Empty{T}"/>: zero-length arrays, which no consumer can change. They
+    /// report read-only, refuse every list mutation and have no element to overwrite, so sharing one instance across
+    /// bodies cannot let one body's consumer alter another's lists.
+    /// </summary>
+    [Fact]
+    public void SharedEmptyLists_AreZeroLengthArrays_ThatRefuseEveryMutation()
+    {
+        var root = SourceProvenance.ParseValid("A = 1\nA").Root;
+        var body = Assert.IsType<Algorithm.User>(root.Properties.Single().Value);
+        var item = root.Properties.Single();
+
+        AssertImmutable(body.Properties, item);
+        AssertImmutable(body.Opens, body.Output[0]);
+
+        static void AssertImmutable<T>(IReadOnlyList<T> shared, T item)
+        {
+            var array = Assert.IsType<T[]>(shared);
+            Assert.Same(Array.Empty<T>(), array);
+            Assert.Empty(array);
+            var list = (IList<T>)array;
+            Assert.True(list.IsReadOnly);
+            Assert.Throws<NotSupportedException>(() => list.Add(item));
+            Assert.Throws<NotSupportedException>(() => list.Insert(0, item));
+            Assert.Throws<NotSupportedException>(list.Clear);
+            Assert.Throws<IndexOutOfRangeException>(() => array[0] = item);
+            Assert.Empty(Array.Empty<T>());
+        }
+    }
+
+    /// <summary>
+    /// Record equality of elaborated bodies is unchanged by the shared empty lists. Two row-less bodies (<c>X = {}</c>,
+    /// <c>Y = {}</c>) share the empty output bundle, so only their own lists tell them apart: they keep them, and stay
+    /// unequal. Bodies with rows each have an output bundle of their own, which compares by reference.
+    /// </summary>
+    [Fact]
+    public void BodiesWithoutRows_KeepTheirOwnLists_SoRecordEqualityIsUnchanged()
+    {
+        var root = SourceProvenance.ParseValid("X = {}\nY = {}\nA = 1\nB = 1\nA").Root;
+        Algorithm.User Body(string name) => Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == name).Value);
+        var (x, y, a, b) = (Body("X"), Body("Y"), Body("A"), Body("B"));
+
+        Assert.Same(x.Output, y.Output);
+        Assert.NotSame(x.Properties, y.Properties);
+        Assert.NotSame(x.Opens, y.Opens);
+        Assert.NotEqual(x, y);
+        Assert.Same(a.Properties, b.Properties);
+        Assert.NotEqual(a, b);
+    }
+
+    /// <summary>
+    /// An input-graph node creates its child and parent lists with its first edge: a leaf holds no child list and a row
+    /// root no parent list (a constant row's one node holds neither), instead of two empty lists per node while its
+    /// body is resolved (8 MiB live on a 2-MiB constant-row source). The edges read back unchanged.
+    /// </summary>
+    [Fact]
+    public void InputGraph_LeavesAndRowRootsHoldNoEdgeList()
+    {
+        var root = SourceProvenance.ParseValid("F(x, y) = x + y\nC = 7\nG = F(1, 2) * C\nG").Root;
+        Algorithm.User Body(string name) => Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == name).Value);
+
+        var constant = new StaticInputGraph(AstHelpers.WrittenRows(Body("C")));
+        Assert.Single(constant.Nodes);
+        Assert.Equal(0, ObjectCensus.Of(constant).CountWhere(type => type == typeof(List<StaticInputGraph.Link>)));
+
+        var formula = new StaticInputGraph(AstHelpers.WrittenRows(Body("G")));
+        var nodes = formula.Nodes.Values.ToArray();
+        var withChildren = nodes.Count(node => node.Children.Length > 0);
+        var withParents = nodes.Count(node => node.Parents.Length > 0);
+        Assert.True(withChildren < nodes.Length && withParents < nodes.Length);
+        Assert.Equal(withChildren + withParents, ObjectCensus.Of(formula).CountWhere(type => type == typeof(List<StaticInputGraph.Link>)));
+
+        // Every edge is read back from both ends: G's row `F(1, 2) * C` has the multiplication as its only root.
+        var rowRoot = Assert.Single(nodes, node => node.Parents.Length == 0);
+        Assert.Equal(1, rowRoot.Roots);
+        Assert.Equal(nodes.Sum(node => node.Parents.Length), nodes.Sum(node => node.Children.Length));
+        foreach (var node in nodes)
+            foreach (var child in node.Children)
+                Assert.Contains(formula.Nodes[child.Node].Parents.ToArray(), parent => ReferenceEquals(parent.Node, node.Expression));
+        Assert.Equal(nodes.Length, formula.Topological.Count);
+    }
+
+    /// <summary>
+    /// A level's input entries are built by name only. The per-index table both callers discarded was one array per
+    /// level and pass — a fresh empty one for every leaf body, and two LOH arrays at the root of a ceiling-size
+    /// source. An empty level now allocates its by-name table and nothing else (averaged over many calls, so a
+    /// background collection's quantum cannot decide it).
+    /// </summary>
+    [Fact]
+    public void LeafLevelEntries_AllocateNoIndexTable()
+    {
+        const int calls = 10_000;
+        var method = typeof(ImplicitArgumentResolver).GetMethod("BuildPropertyEntries", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var parameters = method.GetParameters();
+        var runType = parameters[3].ParameterType;
+        var operation = StaticStructureAdmission.Create(SourceProvenance.ParseValid("A = 1\nA").Root).Operation;
+        var run = Activator.CreateInstance(runType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, [operation, null], null)!;
+        var properties = System.Linq.Expressions.Expression.Parameter(typeof(IReadOnlyList<Property>));
+        var runParameter = System.Linq.Expressions.Expression.Parameter(typeof(object));
+        var build = System.Linq.Expressions.Expression.Lambda<Func<IReadOnlyList<Property>, object, object>>(
+            System.Linq.Expressions.Expression.Call(method, properties,
+                System.Linq.Expressions.Expression.Constant(DeclaringOwners.Root),
+                System.Linq.Expressions.Expression.Constant(null, parameters[2].ParameterType),
+                System.Linq.Expressions.Expression.Convert(runParameter, runType)),
+            properties, runParameter).Compile();
+        IReadOnlyList<Property> none = Array.Empty<Property>();
+
+        var entries = Assert.IsType<Dictionary<string, ImplicitArgumentResolver.VisibleProperty>>(build(none, run));
+        Assert.Empty(entries);
+        GC.KeepAlive(new Dictionary<string, ImplicitArgumentResolver.VisibleProperty>(StringComparer.Ordinal));
+
+        var level = PerCall(() => GC.KeepAlive(build(none, run)));
+        var table = PerCall(() => GC.KeepAlive(new Dictionary<string, ImplicitArgumentResolver.VisibleProperty>(StringComparer.Ordinal)));
+        Assert.True(level < table + 12, $"an empty level allocated {level:F1} B per call; its by-name table alone is {table:F1} B");
+
+        static double PerCall(Action action)
+        {
+            action();
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < calls; i++)
+                action();
+            return (GC.GetAllocatedBytesForCurrentThread() - before) / (double)calls;
+        }
+    }
+
     /// <summary>
     /// Physical HEAP objects reachable from a root through instance fields and array elements —
     /// struct fields and struct array elements (dictionary entries, buckets) included, since they
@@ -258,13 +421,17 @@ public class FrontEndMemoryRepresentationTests
     private sealed class ObjectCensus
     {
         private readonly Dictionary<Type, int> _counts = [];
+        private readonly HashSet<object> _objects = new(ReferenceEqualityComparer.Instance);
 
         public int CountWhere(Func<Type, bool> predicate) => _counts.Where(pair => predicate(pair.Key)).Sum(pair => pair.Value);
+
+        /// <summary>The reachable heap objects that satisfy <paramref name="predicate"/>, each counted once.</summary>
+        public int CountObjects(Func<object, bool> predicate) => _objects.Count(predicate);
 
         public static ObjectCensus Of(object root)
         {
             var census = new ObjectCensus();
-            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var seen = census._objects;
             var pending = new Stack<object>();
             pending.Push(root);
             while (pending.TryPop(out var node))

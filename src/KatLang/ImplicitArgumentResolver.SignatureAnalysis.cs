@@ -1089,7 +1089,7 @@ internal static partial class ImplicitArgumentResolver
                 : ParameterPattern.CapturesExpandingSharedNodesOnce(BranchBinderParameterPatterns(branchContext.Pattern)),
             run.ReferenceNameSets);
 
-        var (_, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
+        var localEntriesByName = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
         var visibleParamMap = localEntriesByName.Count == 0 && alg.Opens.Count == 0
             ? parentParamMap
             : parentParamMap.Extend(localEntriesByName);

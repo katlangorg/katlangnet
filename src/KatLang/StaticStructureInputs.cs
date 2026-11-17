@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace KatLang;
 
@@ -9,12 +10,24 @@ namespace KatLang;
 internal sealed class StaticInputGraph
 {
     internal sealed record Link(Expr Node, Expr.DotCall? Guard = null);
+
+    /// <summary>
+    /// One written occurrence. Its edge lists are created by the first edge (implementation only): a leaf has no
+    /// children and a row root no parents, so a constant row's one node, and every leaf, holds no empty list object
+    /// while its body is resolved. The edges are read as read-only spans, by index, never through a boxed enumerator.
+    /// </summary>
     internal sealed class Node(Expr expression)
     {
+        private List<Link>? _children;
+        private List<Link>? _parents;
         internal Expr Expression { get; } = expression;
-        internal List<Link> Children { get; } = [];
-        internal List<Link> Parents { get; } = [];
+        internal ReadOnlySpan<Link> Children => CollectionsMarshal.AsSpan(_children);
+        internal ReadOnlySpan<Link> Parents => CollectionsMarshal.AsSpan(_parents);
         internal int Roots;
+
+        internal void AddChild(Link child) => (_children ??= []).Add(child);
+
+        internal void AddParent(Link parent) => (_parents ??= []).Add(parent);
     }
     internal Dictionary<Expr, Node> Nodes { get; } = new(ReferenceEqualityComparer.Instance);
     // One graph exists per body whose inputs are asked for, and most bodies (every constant row) read no name: the use
@@ -53,9 +66,10 @@ internal sealed class StaticInputGraph
                 cancellationToken.ThrowIfCancellationRequested();
                 resourceBudget?.Metadata(2, cancellationToken: cancellationToken);
                 RetainedStorageUnits += 2;
-                node.Children.Add(child);
+                node.AddChild(child);
             }
-            for (var i = node.Children.Count - 1; i >= 0; i--) pending.Push(node.Children[i].Node);
+            var children = node.Children;
+            for (var i = children.Length - 1; i >= 0; i--) pending.Push(children[i].Node);
         }
         foreach (var row in rows) Nodes[row].Roots++;
         foreach (var node in Nodes.Values)
@@ -64,7 +78,7 @@ internal sealed class StaticInputGraph
                 cancellationToken.ThrowIfCancellationRequested();
                 resourceBudget?.Metadata(2, cancellationToken: cancellationToken);
                 RetainedStorageUnits += 2;
-                Nodes[child.Node].Parents.Add(new(node.Expression, child.Guard));
+                Nodes[child.Node].AddParent(new(node.Expression, child.Guard));
             }
         storage?.Add(3L * Nodes.Count, cancellationToken);
         var counts = new Dictionary<Node, int>();
@@ -72,8 +86,8 @@ internal sealed class StaticInputGraph
         foreach (var node in Nodes.Values)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            counts.Add(node, node.Parents.Count);
-            if (node.Parents.Count == 0) ready.Enqueue(node);
+            counts.Add(node, node.Parents.Length);
+            if (node.Parents.Length == 0) ready.Enqueue(node);
         }
         while (ready.TryDequeue(out var node))
         {
@@ -141,7 +155,7 @@ internal sealed partial class StaticStructureQueries
     {
         var node = context.Syntax.Nodes[expression];
         return node.Roots != 0 ? StaticFact.Yes : reader.Read(StaticQueryKey.Project(StaticQueryKind.IsInput, context.Key,
-            StaticQueryProjection.ActivationRange, node: expression, length: node.Parents.Count));
+            StaticQueryProjection.ActivationRange, node: expression, length: node.Parents.Length));
     }
     private StaticFact ActivationRange(BodyContext context, StaticQueryKey key, StaticQueryReader<StaticQueryKey, StaticFact> reader)
     {
@@ -295,7 +309,7 @@ internal sealed partial class StaticStructureQueries
                 undecided |= verdict.IsUnknown;
                 calleeFirst = verdict.IsUnknown ? undecidedAsLowered : verdict.Marker is not null;
             }
-            for (var i = children.Count - 1; i >= 0; i--)
+            for (var i = children.Length - 1; i >= 0; i--)
             {
                 // The callee (the fallback, child 1) before the receiver (child 0) of a lowered edge.
                 var child = children[calleeFirst && i <= 1 ? 1 - i : i];

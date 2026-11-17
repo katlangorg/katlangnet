@@ -1864,16 +1864,16 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The INPUT entries of one level's properties, per declaration index and by name (a later
-    /// declaration of a name wins the map, as ownership-first lookup reads one declaration).
+    /// The INPUT entries of one level's properties by name (a later declaration of a name wins the map, as
+    /// ownership-first lookup reads one declaration). No per-index table is built: no caller reads one (it was one
+    /// array per level and pass, a fresh empty one for every leaf body).
     /// </summary>
-    private static (VisibleProperty[] ByIndex, Dictionary<string, VisibleProperty> ByName) BuildPropertyEntries(
+    private static Dictionary<string, VisibleProperty> BuildPropertyEntries(
         IReadOnlyList<Property> properties,
         DeclaringOwners owners,
         ResolverLevel? level,
         ResolutionRun run)
     {
-        var byIndex = new VisibleProperty[properties.Count];
         var byName = new Dictionary<string, VisibleProperty>(StringComparer.Ordinal);
         var operation = run.StructuralOperation;
         for (var i = 0; i < properties.Count; i++)
@@ -1885,11 +1885,10 @@ internal static partial class ImplicitArgumentResolver
                 && SelectedSignatureOf(operation.ContextOf(context.Key, property.Value), property.Name, run) is { } selected
                     ? selected
                     : CallableSignature.FromAlgorithm(property.Name, property.Value);
-            byIndex[i] = new VisibleProperty(signature, property.Value, owners) { Level = level };
-            byName[property.Name] = byIndex[i];
+            byName[property.Name] = new VisibleProperty(signature, property.Value, owners) { Level = level };
         }
 
-        return (byIndex, byName);
+        return byName;
     }
 
     /// <summary>
@@ -2082,7 +2081,7 @@ internal static partial class ImplicitArgumentResolver
 
         // The level's own entries: every property's written value with its FINAL signature — the one the selection chose
         // (B3-5★) — so every read of a sibling, before or after its rewrite, sees the same signature.
-        var (_, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
+        var localEntriesByName = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
 
         // Visible map = parent + local (local overrides), plus this level's `open` providers as the
         // innermost open level. When there are neither local properties nor opens — the common leaf

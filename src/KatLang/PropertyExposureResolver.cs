@@ -785,7 +785,18 @@ internal static class PropertyExposureResolver
         // open providers below have their own memo because they resolve at the prelude.
         var memos = new ExposureWalkMemos(summaryMemo, observations, finalLevel, run);
         Func<ElaboratedPropertyScope?, int> ownerDepth = finalLevel.OwnerDepth;
-        var rewrittenProperties = new List<Property>(algorithm.Properties.Count);
+        // RETAINED-SIZE TRIM (implementation only): a user body WITH OUTPUT ROWS holds no empty opens or properties list of
+        // its own. They are the shared zero-length arrays (immutable, as the parser's row bodies already hold), instead of
+        // two list objects per body for the life of the result (8.3 MiB on a 2-MiB constant-row source). Record equality
+        // is unchanged: such a body's rewritten output is a bundle of its own, which compares by reference, so it still
+        // equals no other body. A body without rows (`X = {}`) and an alias (whose one row compares structurally) keep
+        // their own lists, the only thing that tells two of them apart. The parameter-pattern list is not shared: it is
+        // an identity input of the resolver's signature composition and bundle sharing (FE-3), so a shared empty list
+        // would merge compositions and lower the ledger's charges.
+        var sharesEmptyLists = algorithm is Algorithm.User { Output.Count: > 0 };
+        var rewrittenProperties = algorithm.Properties.Count == 0 && sharesEmptyLists
+            ? null
+            : new List<Property>(algorithm.Properties.Count);
         for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
         {
             var property = algorithm.Properties[propertyIndex];
@@ -804,16 +815,18 @@ internal static class PropertyExposureResolver
                 CaptureRequirements = RequiredAncestorList<CapturedParameterRequirement>.ForProperty(run.Outputs.Captures(summary, ownerDepth)),
                 RequiredAncestorParameters = RequiredAncestorList<string>.ForProperty(run.Outputs.Names(summary)),
             };
-            rewrittenProperties.Add(rewrittenProperty);
+            rewrittenProperties!.Add(rewrittenProperty);
         }
 
-        var rewrittenOpens = RewriteExprList(
-            algorithm.Opens,
-            new ExposureWalkMemos(summaryMemo, observations, finalLevel.Root, run));
+        IReadOnlyList<Expr> rewrittenOpens = algorithm.Opens.Count == 0 && sharesEmptyLists
+            ? Array.Empty<Expr>()
+            : RewriteExprList(
+                algorithm.Opens,
+                new ExposureWalkMemos(summaryMemo, observations, finalLevel.Root, run));
         var rewrittenOutput = RewriteExprList(algorithm.Output, memos);
 
         // The same variant back: a user's rewritten bundle, or an alias's one rewritten target row.
-        return algorithm.WithOwnScopeBody(rewrittenOpens, rewrittenProperties, rewrittenOutput);
+        return algorithm.WithOwnScopeBody(rewrittenOpens, rewrittenProperties ?? (IReadOnlyList<Property>)Array.Empty<Property>(), rewrittenOutput);
     }
 
     /// <summary>
