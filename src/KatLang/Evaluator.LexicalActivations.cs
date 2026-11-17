@@ -42,7 +42,7 @@ internal sealed class ParameterActivation
     /// (<see cref="Evaluator.AliasTargetKey"/>): an alias declared inside a call's body is resolved
     /// once per activation and forgotten with it. Runtime-only memoization, like the activation.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd> AliasTargets => AliasMemos;
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd> AliasTargets => Memos;
 
     /// <summary>
     /// The settled <c>.Algorithm</c> ROUTE DECISIONS of runtime-row aliases declared under this activation
@@ -52,26 +52,49 @@ internal sealed class ParameterActivation
     /// <see cref="Evaluation.EvaluationBudget.AliasBindingCells"/>, keyed by its binding identity —
     /// several activations share one.)
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> AliasRouteDecisions => AliasMemos.RouteDecisions;
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> AliasRouteDecisions => Memos.RouteDecisions;
 
-    // The alias memos hang off ONE lazily created holder (published first-wins, so racing chases meet in
-    // one dictionary): an activation that never meets an alias pays one null field.
-    private AliasMemo AliasMemos
-        => Volatile.Read(ref _aliasMemos)
-           ?? Interlocked.CompareExchange(ref _aliasMemos, new AliasMemo(), null)
-           ?? _aliasMemos!;
+    /// <summary>
+    /// The resolved open providers of this activation's LEVEL — the one scope this activation is the
+    /// <see cref="ScopeCtx.Activation"/> of (<see cref="Evaluator.ResolvedOpenLevel"/>) — memoized by the
+    /// first lexical lookup that consulted its opens, or null: every later read of the level in this
+    /// activation reuses it, and it is forgotten with the activation. A static level keeps its memo on its
+    /// scope instead (<see cref="ScopeCtx.StaticOpenLevel"/>).
+    /// </summary>
+    internal Evaluator.ResolvedOpenLevel? OpenLevel => Volatile.Read(ref _memos)?.OpenLevel;
 
-    private AliasMemo? _aliasMemos;
+    /// <summary>Memoizes <paramref name="level"/> as this activation's resolved open providers (see <see cref="OpenLevel"/>).</summary>
+    internal void PublishOpenLevel(Evaluator.ResolvedOpenLevel level) => Memos.OpenLevel = level;
 
-    // The alias-target memo itself, carrying the route-decision memo created on first use.
-    private sealed class AliasMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
+    // The activation's memos hang off ONE lazily created holder (published first-wins, so racing chases meet
+    // in one dictionary): an activation that never meets an alias or consults its level's opens pays one null
+    // field.
+    private ActivationMemo Memos
+        => Volatile.Read(ref _memos)
+           ?? Interlocked.CompareExchange(ref _memos, new ActivationMemo(), null)
+           ?? _memos!;
+
+    private ActivationMemo? _memos;
+
+    // The alias-target memo itself, carrying the route-decision memo created on first use and the level's
+    // resolved open providers.
+    private sealed class ActivationMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
     {
         private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _routeDecisions;
+        private Evaluator.ResolvedOpenLevel? _openLevel;
 
         public Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> RouteDecisions
             => Volatile.Read(ref _routeDecisions)
                ?? Interlocked.CompareExchange(ref _routeDecisions, [], null)
                ?? _routeDecisions!;
+
+        // A pure function of the level and the run (Evaluator.ResolvedOpenLevel), so a racing publication
+        // stores an equivalent memo and the last one wins.
+        public Evaluator.ResolvedOpenLevel? OpenLevel
+        {
+            get => Volatile.Read(ref _openLevel);
+            set => Volatile.Write(ref _openLevel, value);
+        }
     }
 
     /// <summary>
@@ -163,6 +186,15 @@ public static partial class Evaluator
     /// identity after binding its empty supply, COLLECT-CACHE-1). Other parameterless bodies need no activated head
     /// scope. Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>)
     /// and, with an inherited identity, <c>enterPropertyOwnerBody</c>.
+    /// <para>THE STATIC HEAD LEVEL (implementation-only, November 2026): a body that needs no activation but
+    /// declares <c>open</c>s — and has no parameter pattern at all — is entered with its plain declaring scope
+    /// (<see cref="AsScopeCtx"/>, no activation) as its head scope, built ONCE for this entry. That is exactly
+    /// the scope every consumer would otherwise rebuild per use (<see cref="SiteScope"/> and
+    /// <see cref="ScopeInContext"/> fall back to it, and with no pattern its parameter list and the head's
+    /// <c>Params</c> are both empty, which <see cref="CapturedParameterActivation"/> reads),
+    /// so the entry means what it meant. Being one object, it is the level's runtime state for the entry: the
+    /// level's resolved open providers are memoized there (<see cref="ScopeCtx.StaticOpenLevel"/>) and shared
+    /// by every read of the entry, its own rows' and those of the bodies wired under it alike.</para>
     /// </summary>
     internal static EvalCtx EnterAlgorithmBody(
         Algorithm algorithm,
@@ -173,7 +205,11 @@ public static partial class Evaluator
     {
         var names = parameterNames ?? algorithm.Params;
         if (names.Count == 0 && !HasLocalOnlyProperty(algorithm))
-            return ctx.Push(algorithm);
+        {
+            return algorithm.Opens.Count > 0 && algorithm.ParameterPatterns.Count == 0
+                ? ctx.Push(algorithm, AsScopeCtx(algorithm))
+                : ctx.Push(algorithm);
+        }
 
         var headScope = new ScopeCtx(algorithm.Parent, algorithm.Opens, algorithm.Properties, names)
         {

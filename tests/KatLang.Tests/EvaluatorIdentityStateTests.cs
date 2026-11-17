@@ -339,6 +339,32 @@ public class EvaluatorIdentityStateTests
     }
 
     [Fact]
+    public void EnterAlgorithmBody_GivesAParameterlessBodyWithOpens_ItsStaticHeadLevel()
+    {
+        // The static head level (implementation-only): the plain declaring scope every consumer would
+        // rebuild per use, built once per entry so the level's resolved opens have a home for the entry.
+        var ctx = Evaluator.EvalCtx.Empty.Push(new Algorithm.User(null, [], [], [], []));
+        var opening = new Algorithm.User(null, [], [new Expr.Resolve("Lib")],
+            [new Property("Lib", new Algorithm.User(null, [], [], [], OutputBundle.Empty))], [new Expr.Num(1)]);
+        var entered = Evaluator.EnterAlgorithmBody(opening, ctx, []);
+        var level = Assert.IsType<ScopeCtx>(entered.HeadScope);
+        Assert.Same(opening, level.Owner);
+        Assert.Null(level.Activation);
+        Assert.Empty(level.Parameters);
+        Assert.Same(opening.Opens, level.Opens);
+        Assert.Same(opening.Properties, level.Properties);
+        Assert.Null(level.StaticOpenLevel);
+        Assert.Equal(new ScopeCtx(opening.Parent, opening.Opens, opening.Properties, []), level);
+        // One object per entry: a second entry is a second level state.
+        Assert.NotSame(level, Evaluator.EnterAlgorithmBody(opening, ctx, []).HeadScope);
+
+        // A body that declares a parameter pattern keeps the plain push even when the call names no
+        // parameter, so the captured-parameter walk still reads the head's own parameter list.
+        var patterned = new Algorithm.User(null, [new CaptureParameterPattern("x")], opening.Opens, opening.Properties, [new Expr.Num(1)]);
+        Assert.Null(Evaluator.EnterAlgorithmBody(patterned, ctx, [], parameterNames: []).HeadScope);
+    }
+
+    [Fact]
     public void ParameterActivation_CapturesFirstBindingPerOwnedName_OnEveryTier()
     {
         var wide = Enumerable.Range(0, 12).Select(index => $"p{index}").ToArray();

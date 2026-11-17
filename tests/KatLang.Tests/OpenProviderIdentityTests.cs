@@ -211,12 +211,14 @@ public class OpenProviderIdentityTests
     }
 
     // ── The runtime declaration index (implementation-only, November 2026) ─────────────────────
-    // `Evaluator.ResolveAllOpens` resolves a consulted level's targets on every read and counts its
-    // providers by comparing each target only with the accepted targets of its OWN declaration
+    // `Evaluator.ResolveAllOpens` resolves a consulted level's targets and counts its providers by
+    // comparing each target only with the accepted targets of its OWN declaration
     // (`Evaluator.DeduplicateResolvedProviders`). The former scan compared every target with every
     // accepted one: R reads consulting a level of K distinct declarations made R·K(K−1)/2 identity
-    // comparisons, cubic when R = K. Counts come from the run's EvaluationObservations on a prepared
-    // root, on the synchronous route and the forced async twin alike (OpenProviderIndexing).
+    // comparisons, cubic when R = K. Since the level-state memo (`Evaluator.ResolvedOpenLevel`) those R
+    // reads resolve the level ONCE (OpenLevelResolutionReuseTests). Counts come from the run's
+    // EvaluationObservations on a prepared root, on the synchronous route and the forced async twin alike
+    // (OpenProviderIndexing).
 
     /// <summary>
     /// <c>open M0, …, M{K−1}</c> with <c>Mi = { public Vi = i }</c> (or <c>public Fi(x) = x + i</c>)
@@ -241,6 +243,9 @@ public class OpenProviderIdentityTests
     [InlineData(16)]
     [InlineData(32)]
     [InlineData(64)]
+    [InlineData(128)]
+    [InlineData(256)]
+    [InlineData(512)]
     public async Task DistinctDeclarations_AreIndexedWithoutAnyIdentityComparison(int width)
     {
         var expected = $"ok L[{string.Join(", ", Enumerable.Range(0, width))}]";
@@ -249,26 +254,28 @@ public class OpenProviderIdentityTests
         foreach (var callable in new[] { false, true })
         {
             // Every read is one lexical lookup that consults the root's open level (value reads, and
-            // callee resolution as the callable control): K levels of K targets each.
+            // callee resolution as the callable control): K consultations of ONE level of K targets, which
+            // the root entry's level state resolves once and reuses K − 1 times.
             var opened = await OpenProviderIndexing.OnBothRoutesAsync(WideOpen(width, callable, qualified: false));
-            Assert.Equal(new OpenProviderIndexing.Observation(expected, width, (long)width * width, width * keyComparisonsPerLevel, 0, 0), opened);
+            Assert.Equal(new OpenProviderIndexing.Observation(expected, 1, width, keyComparisonsPerLevel, 0, 0, width, width - 1), opened);
 
             // The qualified control reads the same members structurally and consults no open level.
             var qualified = await OpenProviderIndexing.OnBothRoutesAsync(WideOpen(width, callable, qualified: true));
-            Assert.Equal(new OpenProviderIndexing.Observation(expected, 0, 0, 0, 0, 0), qualified);
+            Assert.Equal(new OpenProviderIndexing.Observation(expected, 0, 0, 0, 0, 0, 0, 0), qualified);
         }
     }
 
     [Fact]
     public async Task ProviderIndexWorkPerConsultedLevel_GrowsLinearlyWithTheWidth()
     {
-        // K and 2K over the hashed path: the work per consulted level is the K index entries alone
-        // (the pairwise scan added K(K−1)/2 identity comparisons per level, 2,016 at K = 64).
+        // K and 2K over the hashed path: the work per resolved level is the K index entries alone
+        // (the pairwise scan added K(K−1)/2 identity comparisons per level, 2,016 at K = 64), and the
+        // K reads resolve the level once.
         long? previous = null;
         foreach (var width in new[] { 16, 32, 64, 128 })
         {
             var opened = await OpenProviderIndexing.OnBothRoutesAsync(WideOpen(width, callable: false, qualified: false));
-            Assert.Equal(width, opened.Levels);
+            Assert.Equal((1, width, width - 1), (opened.Levels, opened.Consultations, opened.Reuses));
             Assert.Equal(0, opened.IdentityComparisons);
             Assert.Equal(width, opened.WorkPerLevel);
             if (previous is { } half)

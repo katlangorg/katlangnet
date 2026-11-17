@@ -165,12 +165,13 @@ public class EvaluatorDefensiveBranchTests
         {
             var observed = await OpenProviderIndexing.OnBothRoutesAsync(program);
             Assert.True(outcome == observed.Outcome, $"{name}: expected {outcome}, got {observed.Outcome}");
-            Assert.Equal((0, 0), (observed.Levels, observed.Entries));
+            // One read consulted the level, and a failed resolution is memoized nowhere.
+            Assert.Equal((0, 0, 1, 0), (observed.Levels, observed.Entries, observed.Consultations, observed.Reuses));
         }
 
         // Control: two valid targets of two declarations are indexed once the level resolves.
         var resolved = await OpenProviderIndexing.OnBothRoutesAsync(Opening(Named("Lib", 6), Named("Other", 11)));
-        Assert.Equal(new OpenProviderIndexing.Observation("ok 1", 1, 2, 1, 0, 0), resolved);
+        Assert.Equal(new OpenProviderIndexing.Observation("ok 1", 1, 2, 1, 0, 0, 1, 0), resolved);
     }
 
     /// <summary>

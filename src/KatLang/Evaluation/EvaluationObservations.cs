@@ -111,10 +111,35 @@ internal sealed class EvaluationObservations
     /// <summary>
     /// Number of open levels whose resolved providers were deduplicated during this run (Q-19 D-I,
     /// <c>Evaluator.ResolveAllOpens</c>): one per resolution of a nonempty <c>open</c> list whose every
-    /// remaining written target resolved, so one per level a lexical lookup consults (each read
-    /// resolves the level's opens anew). A level whose resolution fails indexes nothing.
+    /// remaining written target resolved. A level is resolved once per level state
+    /// (<c>Evaluator.ResolvedOpenLevel</c>: an activation, a static head entry or a static wiring of the
+    /// level) and every later read of that state reuses it (<see cref="OpenLevelReuseCount"/>); a level
+    /// without such state — a host-constructed level, a head pushed without a head scope — is resolved
+    /// again on every read. A level whose resolution fails indexes nothing and is never memoized.
     /// </summary>
     public long OpenProviderLevelCount { get; private set; }
+
+    /// <summary>
+    /// Number of times a lexical lookup consulted a nonempty open level during this run — the head's own
+    /// level or an enclosing one: one per read per consulted level, resolved, reused or failed. With
+    /// <see cref="OpenProviderLevelCount"/> and <see cref="OpenLevelReuseCount"/> it separates READS of a
+    /// level from RESOLUTIONS of it.
+    /// </summary>
+    public long OpenLevelConsultationCount { get; private set; }
+
+    /// <summary>
+    /// The part of <see cref="OpenLevelConsultationCount"/> served by the level state's memoized providers
+    /// (<c>Evaluator.ResolvedOpenLevel</c>) without resolving any target: <c>R</c> reads of one level
+    /// state resolve it once and reuse it <c>R − 1</c> times.
+    /// </summary>
+    public long OpenLevelReuseCount { get; private set; }
+
+    internal void RecordOpenLevelConsultation(bool reused)
+    {
+        OpenLevelConsultationCount = checked(OpenLevelConsultationCount + 1);
+        if (reused)
+            OpenLevelReuseCount = checked(OpenLevelReuseCount + 1);
+    }
 
     /// <summary>
     /// Number of resolved open targets presented to provider deduplication during this run: the

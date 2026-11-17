@@ -653,8 +653,13 @@ public static partial class Evaluator
     /// <summary>Lean: Algorithm.lookupPropDefPublic? (public only — exposure is checked after selection).</summary>
     private static Property? LookupPublicPropBinding(Algorithm alg, string name)
     {
-        foreach (var prop in alg.Properties)
+        // Indexed, not `foreach`: no boxed enumerator per provider of every open read (PERF-ORD-1).
+        var properties = alg.Properties;
+        for (var i = 0; i < properties.Count; i++)
+        {
+            var prop = properties[i];
             if (prop.Name == name && prop.IsPublic) return prop;
+        }
         return null;
     }
 
@@ -1476,13 +1481,169 @@ public static partial class Evaluator
     /// Deduplication has already used the complete key. Lean's ResolvedOpen uses its
     /// unbounded spelling for both purposes; C# display limits are presentation policy.
     /// </summary>
-    private readonly record struct ResolvedOpen(string DisplayName, Expr Expr, Algorithm Lib);
+    internal readonly record struct ResolvedOpen(string DisplayName, Expr Expr, Algorithm Lib);
 
     /// <summary>
-    /// A single hit from open lookup: which provider supplied it, the library, and the child algorithm.
-    /// Lean: OpenHit (provider, lib, child).
+    /// THE RESOLVED OPEN PROVIDERS OF ONE LEVEL STATE (implementation-only optimization, November 2026):
+    /// <see cref="ResolveAllOpens"/>'s providers of a consulted level — written order, first
+    /// representatives, display names — together with the level state they were resolved for, so the
+    /// reads of that state resolve its targets ONCE instead of once per read.
+    /// <para><b>What the providers depend on.</b> Resolving a level's opens reads the level's own opens,
+    /// properties and parent chain and the activations ON that chain (target names are looked up directly
+    /// on it, a dotted target navigates declared members, and every access check and in-context wiring
+    /// compares the chain's declarations and activations by identity), plus the run's prelude level
+    /// (the call stack's bottom, where an unparented inline block is wired). It evaluates nothing, reads no
+    /// parameter value, projects no runtime alias and opens nothing (<see cref="OpenStructure"/>), charges
+    /// no budget and polls no cancellation. Every one of those inputs is fixed for a level object: a scope
+    /// is immutable, its parent chain and activations are fixed at construction, host-owned lists may not
+    /// change during a run (<see cref="Evaluation.PropertyBindingIndexCache"/>), and the prelude is the
+    /// run's. So the providers are a PURE FUNCTION of the level object and the run, and the head's own level
+    /// (resolved from the head with its head scope) and the same scope consulted as an ENCLOSING level
+    /// (<see cref="ForOpens"/>: an empty level over it) resolve the same providers — the enclosing form only
+    /// adds a bottom site level of a fresh declaration, which no lookup, access check or anchoring ever
+    /// matches. Only a host-stack refusal depends on where a read runs, and a FAILED resolution is never
+    /// memoized: a later read resolves again and reports the same first error in the same open frame at the
+    /// same span.</para>
+    /// <para><b>Where it lives.</b> On the level's runtime state, which a read already holds as the head
+    /// scope or a level of the head's parent chain, and with that state's lifetime: an activated level's
+    /// <see cref="ParameterActivation.OpenLevel"/>, or a static evaluator-owned level's own scope
+    /// (<see cref="ScopeCtx.StaticOpenLevel"/>) — the static head level of a body entry
+    /// (<see cref="EnterAlgorithmBody"/>) or a static wiring of a declaring scope. A host-constructed level
+    /// (shared across runs and threads) and a head pushed without a head scope have no such state and are
+    /// resolved on every read, as before. No table outlives the state, and nothing static or run-wide is
+    /// added; <see cref="Level"/> and <see cref="Run"/> are checked on every reuse, so a <c>with</c> copy of a
+    /// scope or a scope reached from another run resolves afresh.</para>
+    /// <para><b>Selection.</b> A memoized wide level (more than <see cref="OpenProviderLinearIndexLimit"/>
+    /// providers) that is read a SECOND time indexes its providers' PUBLIC members by name once
+    /// (<see cref="MemberIndex"/>), in provider order, each provider contributing its first public member of a
+    /// name (<see cref="LookupPublicPropBinding"/>), so later reads find their hits without scanning every
+    /// provider; a narrow, unmemoized or once-read level scans its providers in order. Either way a read sees
+    /// exactly the ordered hits the scan sees.</para>
     /// </summary>
-    private readonly record struct OpenHit(string Provider, Algorithm Lib, Property Binding);
+    internal sealed class ResolvedOpenLevel
+    {
+        private readonly IReadOnlyList<ResolvedOpen> _providers;
+
+        // A memoized wide level's member index, built by its second read and published whole; the read count
+        // that decides it may race, which at worst builds an equal index twice.
+        private MemberIndex? _index;
+        private int _reads;
+
+        internal ResolvedOpenLevel(ScopeCtx? level, Evaluation.EvaluationBudget run, IReadOnlyList<ResolvedOpen> providers)
+        {
+            Level = level;
+            Run = run;
+            _providers = providers;
+        }
+
+        /// <summary>The level state these providers were resolved for, or null for an unmemoized level.</summary>
+        internal ScopeCtx? Level { get; }
+
+        /// <summary>The run they were resolved in (its budget, one per run).</summary>
+        internal Evaluation.EvaluationBudget Run { get; }
+
+        /// <summary>The provider at <paramref name="position"/>, in written order.</summary>
+        internal ResolvedOpen this[int position] => _providers[position];
+
+        /// <summary>The providers publicly offering <paramref name="name"/>, in written order, for one read.</summary>
+        internal OfferCursor Offers(string name)
+        {
+            var index = Volatile.Read(ref _index);
+            if (index is null && Level is not null && _providers.Count > OpenProviderLinearIndexLimit && ++_reads > 1)
+            {
+                index = new MemberIndex(_providers);
+                Volatile.Write(ref _index, index);
+            }
+
+            return new OfferCursor(this, name, index);
+        }
+
+        /// <summary>
+        /// One read's walk over the offers of a name: the member index's chain when the level has one (taken
+        /// once, at the read's start), else a scan of the providers in order.
+        /// </summary>
+        internal struct OfferCursor(ResolvedOpenLevel level, string name, MemberIndex? index)
+        {
+            private int _next = index is null ? 0 : index.FirstOffer(name);
+
+            /// <summary>The position of the next provider publicly offering the name, with its member, or -1.</summary>
+            internal int Next(out Property? binding)
+            {
+                if (index is not null)
+                    return index.Offer(ref _next, out binding);
+
+                var providers = level._providers;
+                for (var position = _next; position < providers.Count; position++)
+                {
+                    if (LookupPublicPropBinding(providers[position].Lib, name) is { } found)
+                    {
+                        _next = position + 1;
+                        binding = found;
+                        return position;
+                    }
+                }
+
+                _next = providers.Count;
+                binding = null;
+                return -1;
+            }
+        }
+
+        /// <summary>
+        /// The public members of a wide level's providers by name: the name's first offer, each offer chained
+        /// to the next provider's offer of the same name (-1 ends a chain), in provider order. Immutable once
+        /// built.
+        /// </summary>
+        internal sealed class MemberIndex
+        {
+            private readonly Dictionary<string, int> _firstOffer = new(StringComparer.Ordinal);
+            private readonly List<(int Provider, Property Binding, int Next)> _offers = [];
+
+            internal MemberIndex(IReadOnlyList<ResolvedOpen> providers)
+            {
+                // Built backwards, so each offer is prepended to its name's chain: providers last to first, and
+                // each provider's members last to first, a later member of a name giving way to an earlier one.
+                for (var position = providers.Count - 1; position >= 0; position--)
+                {
+                    var members = providers[position].Lib.Properties;
+                    for (var index = members.Count - 1; index >= 0; index--)
+                    {
+                        var member = members[index];
+                        if (!member.IsPublic)
+                            continue;
+                        ref var first = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(
+                            _firstOffer, member.Name, out var known);
+                        if (known && _offers[first].Provider == position)
+                        {
+                            _offers[first] = (position, member, _offers[first].Next);
+                            continue;
+                        }
+
+                        _offers.Add((position, member, known ? first : -1));
+                        first = _offers.Count - 1;
+                    }
+                }
+            }
+
+            /// <summary>The first offer of <paramref name="name"/>, or -1.</summary>
+            internal int FirstOffer(string name) => _firstOffer.TryGetValue(name, out var first) ? first : -1;
+
+            /// <summary>The provider position of the offer at <paramref name="cursor"/>, advancing it, or -1 at a chain's end.</summary>
+            internal int Offer(ref int cursor, out Property? binding)
+            {
+                if (cursor < 0)
+                {
+                    binding = null;
+                    return -1;
+                }
+
+                var offer = _offers[cursor];
+                cursor = offer.Next;
+                binding = offer.Binding;
+                return offer.Provider;
+            }
+        }
+    }
 
     /// <summary>
     /// Resolve all opens of an algorithm upfront: the level's PROVIDERS, each counted once.
@@ -1578,8 +1739,9 @@ public static partial class Evaluator
     /// <para>Work per level of <c>K</c> targets: <c>K</c> index probes and no identity comparison
     /// across declarations (formerly <c>K(K−1)/2</c> for <c>K</c> distinct declarations), plus the
     /// comparisons inside each declaration's reaches — at most <c>B(B−1)/2</c> for <c>B</c> reaches
-    /// of one declaration, each a declaring-chain walk. Resolving the targets, and every read
-    /// re-resolving its level, cost what they did. Reported to <paramref name="observations"/>.</para>
+    /// of one declaration, each a declaring-chain walk. Resolving the targets costs what it did; a level
+    /// state is resolved, and so deduplicated, once (<see cref="ResolvedOpenLevel"/>), not once per read.
+    /// Reported to <paramref name="observations"/>.</para>
     /// </summary>
     private static void DeduplicateResolvedProviders(List<ResolvedOpen> resolved, EvaluationObservations? observations)
     {
@@ -1700,6 +1862,9 @@ public static partial class Evaluator
     /// accessibility is checked on the selected member afterwards (<see cref="IsAccessibleFrom"/>),
     /// so which declaration a name selects never depends on exposure and the front end can
     /// reproduce the selection before exposure is classified.
+    /// The level's providers are resolved once per level state and reused by every later read of it
+    /// (<see cref="ResolvedOpenLevel"/>); the hits, the access check and the wiring of the selected
+    /// member stay per read, in the reading context.
     /// Lean: lookupOpenProperties → EvalM (Option ResolvedProperty).
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty?> LookupOpens(
@@ -1707,41 +1872,117 @@ public static partial class Evaluator
     {
         if (alg.Opens.Count == 0) return EvalResult<ResolvedLexicalProperty?>.Ok(null);
 
+        var level = HeadOpenLevel(alg, ctx);
+        return level.IsError ? level.Error : SelectOpenHit(level.Value, name, ctx);
+    }
+
+    /// <summary>
+    /// The resolved providers of the HEAD's own level (<paramref name="alg"/>, the context's head: every
+    /// lexical lookup starts there). Its level state is the head scope when the head was entered with one
+    /// that describes it (<see cref="EnterAlgorithmBody"/>: an activated scope or the static head level);
+    /// a head pushed without one is resolved on every read.
+    /// </summary>
+    private static EvalResult<ResolvedOpenLevel> HeadOpenLevel(Algorithm alg, EvalCtx ctx)
+    {
+        var level = ctx.HeadScope is { } headScope && ReferenceEquals(headScope.Owner, alg) && ReferenceEquals(ctx.Head, alg)
+            ? headScope
+            : null;
+        System.Diagnostics.Debug.Assert(level is null
+            || (ReferenceEquals(level.Opens, alg.Opens) && ReferenceEquals(level.Properties, alg.Properties) && ReferenceEquals(level.Parent, alg.Parent)),
+            "A head scope describes its owner: the same opens, properties and parent chain.");
+        if (level is not null && MemoizedOpenLevel(level, ctx) is { } memoized)
+            return EvalResult<ResolvedOpenLevel>.Ok(memoized);
+
+        return ResolveOpenLevel(alg, level, ctx);
+    }
+
+    /// <summary>
+    /// The resolved providers of the ENCLOSING level <paramref name="scope"/> of the head's parent chain,
+    /// consulted through an empty level over it (<see cref="ForOpens"/>). An evaluator-owned level is its
+    /// own level state (memoized on its activation or on itself); an ownerless host level, which may be
+    /// shared across runs and threads, is resolved on every read.
+    /// </summary>
+    private static EvalResult<ResolvedOpenLevel> EnclosingOpenLevel(ScopeCtx scope, EvalCtx ctx)
+    {
+        var level = scope.Owner is not null ? scope : null;
+        if (level is not null && MemoizedOpenLevel(level, ctx) is { } memoized)
+            return EvalResult<ResolvedOpenLevel>.Ok(memoized);
+
+        return ResolveOpenLevel(ForOpens(scope), level, ctx);
+    }
+
+    /// <summary>The memoized providers of <paramref name="level"/> for this run, or null (<see cref="ResolvedOpenLevel"/>).</summary>
+    private static ResolvedOpenLevel? MemoizedOpenLevel(ScopeCtx level, EvalCtx ctx)
+    {
+        var memo = level.Activation is { } activation ? activation.OpenLevel : level.StaticOpenLevel;
+        if (memo is null || !ReferenceEquals(memo.Level, level) || !ReferenceEquals(memo.Run, ctx.Budget))
+            return null;
+
+        ctx.Observations?.RecordOpenLevelConsultation(reused: true);
+        return memo;
+    }
+
+    /// <summary>
+    /// Resolves the opens of <paramref name="opener"/> — the head, or the empty level over an enclosing
+    /// scope — and memoizes the providers on <paramref name="level"/> when it has a level state. A failure
+    /// is returned as it is and memoized nowhere. Kept out of line: only a level's first read pays for it.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<ResolvedOpenLevel> ResolveOpenLevel(Algorithm opener, ScopeCtx? level, EvalCtx ctx)
+    {
+        ctx.Observations?.RecordOpenLevelConsultation(reused: false);
+
         // The opens are resolved from the consulted level as its own site: the head keeps
         // its activated scope (a dotted target's captured member is judged from inside the
         // head's activation), a parent-chain wrapper is its plain scope.
         // Lean: `{ ctx.push a with headScope := some (scopeInContext a ctx) }`.
-        var innerCtx = ctx.Push(alg, ScopeInContext(alg, ctx));
-        var resolvedResult = ResolveAllOpens(alg, innerCtx);
+        var innerCtx = ctx.Push(opener, ScopeInContext(opener, ctx));
+        var resolvedResult = ResolveAllOpens(opener, innerCtx);
         if (resolvedResult.IsError) return resolvedResult.Error;
 
-        var hits = new List<OpenHit>();
-
-        // Public-only filtering: only public properties visible through opens
-        foreach (var ri in resolvedResult.Value)
+        var resolved = new ResolvedOpenLevel(level, ctx.Budget, resolvedResult.Value);
+        if (level is not null)
         {
-            var binding = LookupPublicPropBinding(ri.Lib, name);
-            if (binding is not null)
-                hits.Add(new OpenHit(ri.DisplayName, ri.Lib, binding));
+            if (level.Activation is { } activation)
+                activation.PublishOpenLevel(resolved);
+            else
+                level.PublishStaticOpenLevel(resolved);
         }
 
-        if (hits.Count == 0)
+        return EvalResult<ResolvedOpenLevel>.Ok(resolved);
+    }
+
+    /// <summary>
+    /// <see cref="LookupOpens"/>'s selection over a level's resolved providers: public-only, in provider
+    /// order. No provider offering <paramref name="name"/> is no hit; exactly one is the hit, checked for
+    /// access from the READING site (the original context's head, not the consulted level) and wired in
+    /// that context; two or more are the ambiguity naming every offering provider in order.
+    /// </summary>
+    private static EvalResult<ResolvedLexicalProperty?> SelectOpenHit(ResolvedOpenLevel level, string name, EvalCtx ctx)
+    {
+        var offers = level.Offers(name);
+        var first = offers.Next(out var binding);
+        if (first < 0)
             return EvalResult<ResolvedLexicalProperty?>.Ok(null);
-        if (hits.Count == 1)
+
+        var second = offers.Next(out _);
+        if (second < 0)
         {
-            var hit = hits[0];
-            // The site is the algorithm whose body reads the name (the original context's
-            // head), not the level whose opens are consulted.
-            if (!IsAccessibleFrom(hit.Binding, hit.Lib, ctx))
-                return LocalOnlyPropertyError(hit.Provider, hit.Binding);
+            var hit = level[first];
+            if (!IsAccessibleFrom(binding!, hit.Lib, ctx))
+                return LocalOnlyPropertyError(hit.DisplayName, binding!);
 
             return EvalResult<ResolvedLexicalProperty?>.Ok(
                 new ResolvedLexicalProperty(
                     hit.Lib,
-                    hit.Binding,
-                    ChildOfInContext(hit.Lib, hit.Binding.Value, ctx)));
+                    binding!,
+                    ChildOfInContext(hit.Lib, binding!.Value, ctx)));
         }
-        return new EvalError.AmbiguousOpen(name, hits.Select(h => h.Provider).ToList());
+
+        var providers = new List<string> { level[first].DisplayName, level[second].DisplayName };
+        for (var next = offers.Next(out _); next >= 0; next = offers.Next(out _))
+            providers.Add(level[next].DisplayName);
+        return new EvalError.AmbiguousOpen(name, providers);
     }
 
     /// <summary>The ONE constructor of the captured-member refusal, carrying the required names for the report.</summary>
@@ -1779,15 +2020,21 @@ public static partial class Evaluator
     /// evaluation stack, so this walk needs no host-stack probe of its own (Q-09a). Each level's
     /// open resolution returns before the next level is consulted, and that resolution probes
     /// per open-target link (<see cref="ResolveOpenPropAccess"/>) and per structure read
-    /// (<see cref="OpenStructure"/>).</para>
+    /// (<see cref="OpenStructure"/>). A level without opens is skipped before its empty level is
+    /// built (it could provide nothing), and a level with opens is read through its memoized providers
+    /// (<see cref="EnclosingOpenLevel"/>).</para>
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty?> LookupOpensInParentChain(
         ScopeCtx sc, string name, EvalCtx ctx)
     {
         for (ScopeCtx? current = sc; current is not null; current = current.Parent)
         {
-            var tempAlg = ForOpens(current);
-            var openResult = LookupOpens(tempAlg, name, ctx);
+            if (current.Opens.Count == 0)
+                continue;
+
+            var level = EnclosingOpenLevel(current, ctx);
+            if (level.IsError) return level.Error;
+            var openResult = SelectOpenHit(level.Value, name, ctx);
             if (openResult.IsError) return openResult.Error;
             if (openResult.Value is not null)
                 return EvalResult<ResolvedLexicalProperty?>.Ok(openResult.Value);
@@ -1800,7 +2047,10 @@ public static partial class Evaluator
     /// Open-based lookup across the algorithm chain (current first, then parents).
     /// Checks opens at each level of the parent chain as fallback.
     /// Lean: lookupOpensInChain → EvalM (Option Algorithm).
+    /// Never inlined: every lexical read enters <see cref="LookupLexicalRaw"/>, and most are decided by
+    /// the structural walk alone, so the open fallback's temporaries stay out of that frame.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<ResolvedLexicalProperty?> LookupOpensInChain(
         Algorithm alg, string name, EvalCtx ctx)
     {

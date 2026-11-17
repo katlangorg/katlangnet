@@ -15,7 +15,10 @@ internal static class OpenProviderIndexing
 {
     /// <summary>
     /// One run: <see cref="Outcome"/> is <c>ok</c> with the neutral value, or <c>err</c> with the
-    /// structured error (<see cref="Describe"/>); the counts are the run's provider-deduplication work.
+    /// structured error (<see cref="Describe"/>); the counts are the run's provider-deduplication work
+    /// (<see cref="Levels"/> counts level RESOLUTIONS), then its open-level READS: every consultation of a
+    /// nonempty level, and the part a level state's memoized providers served without resolving anything
+    /// (<c>Evaluator.ResolvedOpenLevel</c>).
     /// </summary>
     internal sealed record Observation(
         string Outcome,
@@ -23,7 +26,9 @@ internal static class OpenProviderIndexing
         long Entries,
         long KeyComparisons,
         long IdentityComparisons,
-        long CrossDeclarationIdentityComparisons)
+        long CrossDeclarationIdentityComparisons,
+        long Consultations,
+        long Reuses)
     {
         /// <summary>Index work per consulted level: entries, key comparisons and identity comparisons.</summary>
         public long WorkPerLevel => Levels == 0 ? 0 : (Entries + KeyComparisons + IdentityComparisons) / Levels;
@@ -47,7 +52,9 @@ internal static class OpenProviderIndexing
             observations.OpenProviderIndexEntryCount,
             observations.OpenProviderDeclarationKeyComparisonCount,
             observations.OpenProviderIdentityComparisonCount,
-            observations.OpenProviderCrossDeclarationIdentityComparisonCount);
+            observations.OpenProviderCrossDeclarationIdentityComparisonCount,
+            observations.OpenLevelConsultationCount,
+            observations.OpenLevelReuseCount);
     }
 
     /// <summary>The synchronous observation, after requiring the forced async twin to agree with it exactly.</summary>

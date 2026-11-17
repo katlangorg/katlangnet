@@ -5539,7 +5539,37 @@ public sealed record ScopeCtx(
     /// for a static scope or a parameterless user-body entry. A matched clause always
     /// has an activation, including when its pattern binds no names.
     /// </summary>
-    internal ParameterActivation? Activation { get; init; }
+    internal ParameterActivation? Activation
+    {
+        get => _runtimeState.Value as ParameterActivation;
+        init => _runtimeState = new(value);
+    }
+
+    // The runtime state of an evaluator-wired level, in ONE equality-transparent slot so a scope keeps its
+    // six fields: its activation (above) or, for a STATIC evaluator-owned level, the memo of its resolved
+    // open providers (StaticOpenLevel). An activated level keeps that memo on its activation instead
+    // (ParameterActivation.OpenLevel), so the two never compete for the slot. A `with` copy carries the
+    // slot like any field; the memo names the level it was resolved for, so a copy never reuses it.
+    private RuntimeStateSlot<object?> _runtimeState;
+
+    /// <summary>
+    /// The resolved open providers of this STATIC level (<see cref="Evaluator.ResolvedOpenLevel"/>), memoized
+    /// by the first lexical lookup that consulted its opens, or null. Never set on an activated or a
+    /// host-constructed scope (see <see cref="PublishStaticOpenLevel"/>). Runtime-only, like <see cref="Owner"/>.
+    /// </summary>
+    internal Evaluator.ResolvedOpenLevel? StaticOpenLevel => _runtimeState.Value as Evaluator.ResolvedOpenLevel;
+
+    /// <summary>
+    /// Memoizes <paramref name="level"/> as this static evaluator-owned level's resolved open providers. The
+    /// slot holds no activation here (an activation is set only at construction), so publication replaces at
+    /// most an earlier memo — a stale one carried by a <c>with</c> copy, or a racing equal one.
+    /// </summary>
+    internal void PublishStaticOpenLevel(Evaluator.ResolvedOpenLevel level)
+    {
+        System.Diagnostics.Debug.Assert(Owner is not null && _runtimeState.Value is not ParameterActivation,
+            "Only a static evaluator-owned level memoizes its open providers on itself.");
+        _runtimeState = new(level);
+    }
 
     /// <summary>The identity of the declaration this scope is a level of; null without an owner or for a builtin owner.</summary>
     internal DeclarationIdentity? Declaration => Owner?.Declaration;
