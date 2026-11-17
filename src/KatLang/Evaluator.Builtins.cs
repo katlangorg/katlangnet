@@ -1169,11 +1169,17 @@ public static partial class Evaluator
     /// explicit spreads demanded their operand there, an existing collector slice
     /// transported its cells) — and every item keeps its cell. After cardinality succeeds, each builtin demands its value
     /// controls in its established order and projects callbacks only when an invocation is
-    /// required. Shared by the sync and async engines (no suspending operation).
-    /// Lean: <c>collectSequenceCallableCallItems</c>.
+    /// required. Shared by the sync and async engines (no suspending operation). One direct
+    /// array fill in argument order, so a collection-builtin call allocates no LINQ iterator
+    /// here (as <see cref="ResolvedSupply"/>). Lean: <c>collectSequenceCallableCallItems</c>.
     /// </summary>
     private static IReadOnlyList<VariadicCallItem> BuildCallableCallItems(IReadOnlyList<ResolvedArgumentAlgorithm> args)
-        => args.Select(UnevaluatedCallItem).ToArray();
+    {
+        var items = new VariadicCallItem[args.Count];
+        for (var i = 0; i < items.Length; i++)
+            items[i] = UnevaluatedCallItem(args[i]);
+        return items;
+    }
 
     /// <summary>
     /// Call-item assembly preserves callable arguments without entering their bodies.
@@ -1811,7 +1817,8 @@ public static partial class Evaluator
 
     /// <summary>
     /// The fixed control arguments of a collection builtin, in order, each prepared by the ONE
-    /// <see cref="PrepareSequenceBuiltinSuffixArg"/>; the first failure ends them. Lean: <c>prepareControls</c>.
+    /// <see cref="PrepareSequenceBuiltinSuffixArg"/>; the first failure ends them. The control count is
+    /// fixed by the registry metadata, so they fill an exactly sized array. Lean: <c>prepareControls</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>> PrepareSequenceBuiltinControls(
         BuiltinId builtin,
@@ -1820,8 +1827,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var suffixArgs = new List<PreparedSequenceBuiltinSuffixArg>(metadata.SuffixArgs.Count);
-        for (var index = 0; index < metadata.SuffixArgs.Count; index++)
+        var suffixArgs = new PreparedSequenceBuiltinSuffixArg[metadata.SuffixArgs.Count];
+        for (var index = 0; index < suffixArgs.Length; index++)
         {
             var preparedArgR = PrepareSequenceBuiltinSuffixArg(
                 builtin,
@@ -1831,7 +1838,7 @@ public static partial class Evaluator
                 valEnv);
             if (preparedArgR.IsError) return preparedArgR.Error;
 
-            suffixArgs.Add(preparedArgR.Value);
+            suffixArgs[index] = preparedArgR.Value;
         }
 
         return EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>>.Ok(suffixArgs);
@@ -1890,24 +1897,30 @@ public static partial class Evaluator
         return RetainedObservationTerminal(ctx) is { } afterElement ? afterElement : CountValue(selected.Value.Value);
     }
 
-    private static EvalResult<T> ExpectPreparedSequenceBuiltinSuffixArgAt<T>(
+    /// <summary>
+    /// The prepared control at <paramref name="index"/>, when the metadata declares that position
+    /// as <paramref name="expectedKind"/> and it was prepared as that kind (<typeparamref name="TArg"/>);
+    /// any mismatch is an internal metadata error. Shared by the per-kind readers below, so a read
+    /// allocates no closure or delegate.
+    /// </summary>
+    private static EvalResult<TArg> ExpectPreparedSequenceBuiltinSuffixArgAt<TArg>(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
         int index,
-        SequenceBuiltinSuffixArgKind expectedKind,
-        Func<SequenceBuiltinSuffixArgDescriptor, PreparedSequenceBuiltinSuffixArg, EvalResult<T>> projector)
+        SequenceBuiltinSuffixArgKind expectedKind)
+        where TArg : PreparedSequenceBuiltinSuffixArg
     {
         if (descriptors.Count != args.Count)
         {
-            return InternalSequenceBuiltinSuffixArgMetadataError<T>(
+            return InternalSequenceBuiltinSuffixArgMetadataError<TArg>(
                 builtin,
                 "mismatched suffix arguments");
         }
 
         if ((uint)index >= (uint)descriptors.Count)
         {
-            return InternalSequenceBuiltinSuffixArgMetadataError<T>(
+            return InternalSequenceBuiltinSuffixArgMetadataError<TArg>(
                 builtin,
                 $"expected suffix argument {index + 1} to have metadata kind {DescribeSequenceBuiltinSuffixArgKind(expectedKind)}");
         }
@@ -1915,12 +1928,16 @@ public static partial class Evaluator
         var descriptor = descriptors[index];
         if (descriptor.Kind != expectedKind)
         {
-            return InternalSequenceBuiltinSuffixArgMetadataError<T>(
+            return InternalSequenceBuiltinSuffixArgMetadataError<TArg>(
                 builtin,
                 $"expected suffix argument {index + 1} ({descriptor.Name}) to have metadata kind {DescribeSequenceBuiltinSuffixArgKind(expectedKind)}, but found {DescribeSequenceBuiltinSuffixArgKind(descriptor.Kind)}");
         }
 
-        return projector(descriptor, args[index]);
+        return args[index] is TArg prepared
+            ? EvalResult<TArg>.Ok(prepared)
+            : InternalSequenceBuiltinSuffixArgMetadataError<TArg>(
+                builtin,
+                $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(expectedKind)}");
     }
 
     /// <summary>
@@ -2002,51 +2019,33 @@ public static partial class Evaluator
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
         int index)
-        => ExpectPreparedSequenceBuiltinSuffixArgAt(
-            builtin,
-            descriptors,
-            args,
-            index,
-            SequenceBuiltinSuffixArgKind.Algorithm,
-            (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.AlgorithmArg algorithmArg
-                ? ResolvePreparedCallback(builtin, algorithmArg)
-                : InternalSequenceBuiltinSuffixArgMetadataError<Algorithm>(
-                    builtin,
-                    $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Algorithm)}"));
+    {
+        var callbackR = ExpectPreparedSequenceBuiltinSuffixArgAt<PreparedSequenceBuiltinSuffixArg.AlgorithmArg>(
+            builtin, descriptors, args, index, SequenceBuiltinSuffixArgKind.Algorithm);
+        return callbackR.IsError ? callbackR.Error : ResolvePreparedCallback(builtin, callbackR.Value);
+    }
 
     private static EvalResult<Decimal128> ExpectPreparedWholeNumberSuffixArg(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
         int index)
-        => ExpectPreparedSequenceBuiltinSuffixArgAt(
-            builtin,
-            descriptors,
-            args,
-            index,
-            SequenceBuiltinSuffixArgKind.WholeNumber,
-            (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.WholeNumberArg(var value)
-                ? EvalResult<Decimal128>.Ok(value)
-                : InternalSequenceBuiltinSuffixArgMetadataError<Decimal128>(
-                    builtin,
-                    $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.WholeNumber)}"));
+    {
+        var countR = ExpectPreparedSequenceBuiltinSuffixArgAt<PreparedSequenceBuiltinSuffixArg.WholeNumberArg>(
+            builtin, descriptors, args, index, SequenceBuiltinSuffixArgKind.WholeNumber);
+        return countR.IsError ? countR.Error : EvalResult<Decimal128>.Ok(countR.Value.WholeNumberValue);
+    }
 
     private static EvalResult<Result> ExpectPreparedValueSuffixArg(
         BuiltinId builtin,
         IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
         int index)
-        => ExpectPreparedSequenceBuiltinSuffixArgAt(
-            builtin,
-            descriptors,
-            args,
-            index,
-            SequenceBuiltinSuffixArgKind.Value,
-            (descriptor, arg) => arg is PreparedSequenceBuiltinSuffixArg.ValueArg(var value)
-                ? EvalResult<Result>.Ok(value)
-                : InternalSequenceBuiltinSuffixArgMetadataError<Result>(
-                    builtin,
-                    $"prepared suffix argument {index + 1} ({descriptor.Name}) did not match metadata kind {DescribeSequenceBuiltinSuffixArgKind(SequenceBuiltinSuffixArgKind.Value)}"));
+    {
+        var valueR = ExpectPreparedSequenceBuiltinSuffixArgAt<PreparedSequenceBuiltinSuffixArg.ValueArg>(
+            builtin, descriptors, args, index, SequenceBuiltinSuffixArgKind.Value);
+        return valueR.IsError ? valueR.Error : EvalResult<Result>.Ok(valueR.Value.ResultValue);
+    }
 
     private static EvalResult<IReadOnlyList<Decimal128>> ExpectPreparedNumericItems(
         BuiltinId builtin,

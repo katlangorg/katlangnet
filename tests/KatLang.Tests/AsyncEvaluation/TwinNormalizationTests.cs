@@ -241,7 +241,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalArgumentAlgOutputCountedAsync", "Evaluator.EvalArgumentAlgOutputCounted", "bc79101f8c8e0ddd", SH, HopReason),
         new("Evaluator.BindSequenceBuiltinArgumentsAsync", "Evaluator.BindSequenceBuiltinArguments", "e1b25256c7ebe2a1", IH | RA,
             "BindSequenceBuiltinCollectionValue's body (demand, then SequenceBuiltinValueDemandError ?? BadArity) is inline; the retained collector's slice is read through RetainedCellSliceAsync(cell, ctx), the ResolveAsync adapter of RetainedCellSlice"),
-        new("Evaluator.PrepareSequenceBuiltinControlsAsync", "Evaluator.PrepareSequenceBuiltinControls", "912751df2fbcb68d", RA,
+        new("Evaluator.PrepareSequenceBuiltinControlsAsync", "Evaluator.PrepareSequenceBuiltinControls", "9023b13ac26f8668", RA,
             "a VALUE control is demanded asynchronously before the shared synchronous preparer reads it"),
         new("Evaluator.ApplyBuiltinCountedSequenceAsync", "Evaluator.ApplyBuiltinCountedSequence", "7671fa81e47769f6", RA,
             "algorithm controls are projected through ExpectPreparedAlgorithmSuffixArgAsync(..., ctx)"),

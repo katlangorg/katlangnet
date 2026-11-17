@@ -2508,8 +2508,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var suffixArgs = new List<PreparedSequenceBuiltinSuffixArg>(metadata.SuffixArgs.Count);
-        for (var index = 0; index < metadata.SuffixArgs.Count; index++)
+        var suffixArgs = new PreparedSequenceBuiltinSuffixArg[metadata.SuffixArgs.Count];
+        for (var index = 0; index < suffixArgs.Length; index++)
         {
             // A Value / WholeNumber control is a VALUE position, so it is demanded here —
             // asynchronously, before the shared synchronous preparation reads it (the
@@ -2527,7 +2527,7 @@ public static partial class Evaluator
                 valEnv);
             if (preparedArgR.IsError) return preparedArgR.Error;
 
-            suffixArgs.Add(preparedArgR.Value);
+            suffixArgs[index] = preparedArgR.Value;
         }
 
         return EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>>.Ok(suffixArgs);
