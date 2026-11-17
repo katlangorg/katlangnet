@@ -646,6 +646,30 @@ internal sealed class FrontEndTraversalObservations
         => SettlementShareStaleViews = checked(SettlementShareStaleViews + 1);
 
     /// <summary>
+    /// <see cref="SettlementShareHits"/> answered by a footprint candidate (<c>SettlementShare.Settled.Footprint</c>)
+    /// rather than by a settlement kept for its exact bound owners.
+    /// </summary>
+    public long SettlementShareCandidateHits { get; private set; }
+
+    internal void RecordSettlementShareCandidateHit()
+        => SettlementShareCandidateHits = checked(SettlementShareCandidateHits + 1);
+
+    /// <summary>Footprint candidates a share lookup or store examined (at most <c>SettlementShare.MaxCandidates</c> each).</summary>
+    public long SettlementShareCandidateVisits { get; private set; }
+
+    internal void RecordSettlementShareCandidateVisit()
+        => SettlementShareCandidateVisits = checked(SettlementShareCandidateVisits + 1);
+
+    /// <summary>
+    /// Footprint work of settlement reuse: one per bound-owner membership a frame records (read directly, or taken
+    /// from a nested frame or a reused result) and one per footprint membership a share lookup or store tests.
+    /// </summary>
+    public long SettlementFootprintWork { get; private set; }
+
+    internal void RecordSettlementFootprintWork(long memberships)
+        => SettlementFootprintWork = checked(SettlementFootprintWork + memberships);
+
+    /// <summary>
     /// Bound-owner work for settlement keys (<c>BoundOwnerSet</c>): one per owner offered to a set and the
     /// set's count when distinct sets with the same count and fingerprint reach the membership comparison.
     /// </summary>

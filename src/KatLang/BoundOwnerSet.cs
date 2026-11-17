@@ -16,6 +16,11 @@ namespace KatLang;
 /// every owner id into key text. On a lifted-terminal chain the accumulated sets grow with chain depth.
 /// Now only the incoming reference's owners are offered to the set. Distinct sets are retained only by
 /// the walks and caches that use them.</para>
+///
+/// <para>A settlement reads its set only through <see cref="Contains"/> (and whether there is one at all), and the
+/// run's settlement share answers a key whose set gives every such read the same answer, so sets that differ only in
+/// owners a settlement never read share its result (<c>PropertyExposureResolver.SettlementShare</c>, footprints).
+/// Exact equality remains the key of settlements in progress and within one run.</para>
 /// </summary>
 internal sealed class BoundOwnerSet : IEquatable<BoundOwnerSet>
 {

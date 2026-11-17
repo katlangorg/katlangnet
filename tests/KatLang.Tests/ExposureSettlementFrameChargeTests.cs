@@ -8,12 +8,15 @@ namespace KatLang.Tests;
 /// unit one unit of static work, so a program whose settlement outgrows its source is refused with one unpositioned
 /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> instead of running unmetered.
 ///
-/// <para>The shapes. A member chain whose links own a parameter binds one more owner at every link, so no settlement
-/// key repeats and the share serves nothing (<see cref="ExposureSettlementShareTests"/>): D² frames on the audit's
-/// reproduction, <c>P{i} = { public A(x) = P{i-1}.A(1) + 1 }</c>. When a link reads TWO members below it the bound
-/// owners depend on the path, and the frames grow exponentially: 17,639 at 16 links and 831,936 at 24 for
-/// <see cref="BranchingChain"/>, where the same program without parameters takes 159. That family is the feasible
-/// witness of a refusal under the unlowered work bound; the single chain reaches it only near 20,000 links.</para>
+/// <para>The shapes. A member chain whose links own a parameter binds one more owner at every link, so no exact
+/// settlement key repeats; no link reads those owners, so the share answers each walk by its footprint
+/// (<see cref="ExposureSettlementFootprintTests"/>): 4D − 4 frames on the audit's reproduction,
+/// <c>P{i} = { public A(x) = P{i-1}.A(1) + 1 }</c>, and 8D − 12 for <see cref="BranchingChain"/>, whose links read TWO
+/// members below (formerly D² and exponential: 17,639 frames at 16 links, refused from 25). The feasible witness of a
+/// refusal under the unlowered work bound is now the branching chain inside seventeen nested owners whose parameters
+/// its first member reads (<see cref="ExposureSettlementFootprintTests.NestedOwnerBranchingChain"/>): one more owner
+/// than a footprint records, so its settlements answer their exact bound owners only and the frames grow
+/// exponentially again (9,504 at 16 links, refused from 24).</para>
 ///
 /// <para>The work bound is operation-scaled (<see cref="StaticStructureAdmission"/>: 16,384 + 1,024 per admitted node
 /// and edge) and does not move with <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>: a lowered envelope
@@ -70,7 +73,7 @@ public sealed class ExposureSettlementFrameChargeTests
     }
 
     /// <summary>Every property's exposure metadata, by path, in declaration order.</summary>
-    private static string Metadata(Algorithm root)
+    internal static string Metadata(Algorithm root)
     {
         var lines = new StringBuilder();
         var pending = new Stack<(string Path, Algorithm Body)>();
@@ -190,9 +193,9 @@ public sealed class ExposureSettlementFrameChargeTests
     // ── 2. The work bound refuses the first frame beyond it ─────────────────────────────────────────
 
     /// <summary>
-    /// The audit's reproduction at 64 links takes 4,096 frames. Under a work bound that leaves room for exactly k of
-    /// them, k frames are admitted and the next is refused before it is counted or settled: the ledger fails at the
-    /// bound, and the unit is rejected unsealed, so nothing can be published from it.
+    /// The audit's reproduction at 64 links takes 252 frames (4D − 4; 4,096 before footprints). Under a work bound that
+    /// leaves room for exactly k of them, k frames are admitted and the next is refused before it is counted or
+    /// settled: the ledger fails at the bound, and the unit is rejected unsealed, so nothing can be published from it.
     /// </summary>
     [Fact]
     public void AWorkBoundTheFramesExceed_RefusesTheFirstFrameBeyondIt_AndPublishesNothing()
@@ -204,7 +207,7 @@ public sealed class ExposureSettlementFrameChargeTests
         var fundedObservations = new FrontEndTraversalObservations();
         _ = PropertyExposureResolver.Resolve(funded.Resolved, fundedObservations);
         var frames = fundedObservations.RequiredAncestorSettlementFrames;
-        Assert.Equal((long)Length * Length, frames);
+        Assert.Equal(4L * Length - 4, frames);
 
         foreach (var admitted in new[] { 0L, 1L, frames / 2, frames - 1 })
         {
@@ -252,23 +255,42 @@ public sealed class ExposureSettlementFrameChargeTests
     // ── 3. The source entries: eager parse and deferred materialization ─────────────────────────────
 
     /// <summary>
-    /// EAGER PARSE, unlowered envelope. Sixteen branching links elaborate (17,639 frames) with every member exported;
-    /// twenty-five need 1,346,161 frames against a work bound near 910,000 and are refused inside settlement with
-    /// exactly one unpositioned <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> naming the work bound.
-    /// The frames admitted before the refusal stay within the bound the admission measured.
+    /// EAGER PARSE, unlowered envelope. The branching chain elaborates in exactly 8D − 12 frames with every member
+    /// exported, at twenty-five links too, which were refused before footprints (1,346,161 frames against a work bound
+    /// near 910,000), and at 256.
     /// </summary>
     [Fact]
-    public void ABranchingMemberChain_IsRefusedByItsWorkBound_UnderTheDefaultEnvelope()
+    public void ABranchingMemberChain_IsAdmittedInLinearFrames_UnderTheDefaultEnvelope()
+    {
+        foreach (var length in new[] { 16, 25, 64, 256 })
+        {
+            var observations = new FrontEndTraversalObservations();
+            var admitted = Parser.ParseObserved(BranchingChain(length), options: null, observations);
+            Assert.Empty(admitted.Diagnostics);
+            AssertEveryMemberExported(admitted.Root, length);
+            Assert.Equal(8L * length - 12, observations.RequiredAncestorSettlementFrames);
+        }
+    }
+
+    /// <summary>
+    /// EAGER PARSE, unlowered envelope, past the footprint bound: the branching chain inside seventeen nested owners
+    /// elaborates at sixteen links (9,504 frames) and needs more frames than its work bound at twenty-four, so it is
+    /// refused inside settlement with exactly one unpositioned <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>
+    /// naming that bound, and nothing is published. The frames admitted before the refusal stay within the bound the
+    /// admission measured.
+    /// </summary>
+    [Fact]
+    public void AnOverCapFootprintChain_IsRefusedByItsWorkBound_UnderTheDefaultEnvelope()
     {
         const int Admitted = 16;
-        const int Refused = 25;
+        const int Refused = 24;
         var admittedObservations = new FrontEndTraversalObservations();
-        var admitted = Parser.ParseObserved(BranchingChain(Admitted), options: null, admittedObservations);
+        var admitted = Parser.ParseObserved(ExposureSettlementFootprintTests.NestedOwnerBranchingChain(17, Admitted),
+            options: null, admittedObservations);
         Assert.Empty(admitted.Diagnostics);
-        AssertEveryMemberExported(admitted.Root, Admitted);
-        Assert.InRange(admittedObservations.RequiredAncestorSettlementFrames, 1L << (Admitted / 2), 1L << (Admitted + 2));
+        Assert.InRange(admittedObservations.RequiredAncestorSettlementFrames, 1L << (Admitted / 2), 1L << (Admitted - 2));
 
-        var source = BranchingChain(Refused);
+        var source = ExposureSettlementFootprintTests.NestedOwnerBranchingChain(17, Refused);
         var bound = StaticStructureAdmission.Measure(SourceProvenance.ParseSyntaxValidRoot(source),
             BuiltinRegistry.SharedSemanticPreludeAlgorithm).Limits.MaxEvaluations;
         var observations = new FrontEndTraversalObservations();
@@ -282,14 +304,14 @@ public sealed class ExposureSettlementFrameChargeTests
     }
 
     /// <summary>
-    /// The work bound does not move with the envelope: under a 4-MiB envelope the same twenty-five links are refused by
-    /// the same bound, through the engine as a parse failure, and the sixteen still run.
+    /// The work bound does not move with the envelope: under a 4-MiB envelope the over-cap chain of twenty-four links
+    /// is refused by the same bound, through the engine as a parse failure, while twenty-five branching links run.
     /// </summary>
     [Fact]
     public void ALoweredEnvelope_LeavesTheWorkBoundWhereItIs()
     {
         var options = Envelope(4L * 1024 * 1024);
-        var source = BranchingChain(25);
+        var source = ExposureSettlementFootprintTests.NestedOwnerBranchingChain(17, 24);
         var bound = StaticStructureAdmission.Measure(SourceProvenance.ParseSyntaxValidRoot(source),
             BuiltinRegistry.SharedSemanticPreludeAlgorithm, options.SourceProcessingLimits).Limits.MaxEvaluations;
         Assert.Equal(bound, StaticStructureAdmission.Measure(SourceProvenance.ParseSyntaxValidRoot(source),
@@ -300,7 +322,7 @@ public sealed class ExposureSettlementFrameChargeTests
         Assert.Equal(KatLangErrorCode.StaticStructureLimitExceeded, error.Code);
         Assert.Contains($"exceeded its work bound ({bound})", error.Message, StringComparison.Ordinal);
 
-        Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run(BranchingChain(16), options)).ToDisplayString());
+        Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run(BranchingChain(25), options)).ToDisplayString());
     }
 
     /// <summary>
@@ -308,8 +330,9 @@ public sealed class ExposureSettlementFrameChargeTests
     /// unlowered run and the same frames: the charge refuses nothing there, because the work bound is not the
     /// envelope's. 4,096 links are refused with exactly one <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>,
     /// and by the envelope's own caps: the chain is far past them (8 MiB admits 440 links), so no settlement frame ran
-    /// and this refusal is NOT the frame charge's (it predates it). The frame charge refuses this chain from 20,392
-    /// links, under any envelope large enough to admit that many.
+    /// and this refusal is NOT the frame charge's (it predates it). The chain's 4D − 4 frames stay far below its work
+    /// bound (16,384 + 1,024F for its F ≈ 20D admitted nodes and edges), so the frame charge no longer refuses it at
+    /// any length an envelope admits.
     /// </summary>
     [Fact]
     public void UnderALoweredEnvelope_256LinksElaborateUnchanged_And4096AreRefusedBeforeSettlement()
@@ -325,7 +348,7 @@ public sealed class ExposureSettlementFrameChargeTests
         Assert.Empty(lowered.Diagnostics);
         AssertEveryMemberExported(lowered.Root, 256);
         Assert.Equal(Metadata(unlowered.Root), Metadata(lowered.Root));
-        Assert.Equal(256L * 256, loweredObservations.RequiredAncestorSettlementFrames);
+        Assert.Equal(4L * 256 - 4, loweredObservations.RequiredAncestorSettlementFrames);
         Assert.Equal(defaultObservations.RequiredAncestorSettlementFrames, loweredObservations.RequiredAncestorSettlementFrames);
 
         var observations = new FrontEndTraversalObservations();
@@ -346,24 +369,31 @@ public sealed class ExposureSettlementFrameChargeTests
             DownloadCode = (_, _) => ValueTask.FromResult("Z = 10\n0"),
         };
 
-    /// <summary>The branching chain inside a branch body that loads a module: a deferred unit, compiled when <c>G(1)</c> selects it.</summary>
-    private static string DeferredBranchingChain(int length)
-        => "G(0) = 0\nG(a) = {\n    M = load('https://" + ModuleHost + "/m.kat')\n" + BranchingLines(length, "    ") + "    M.Z + a\n}\nG(1)";
+    /// <summary>
+    /// <paramref name="lines"/> inside a branch body that loads a module: a deferred unit, compiled when <c>G(1)</c>
+    /// selects it.
+    /// </summary>
+    private static string InADeferredUnit(string lines)
+        => "G(0) = 0\nG(a) = {\n    M = load('https://" + ModuleHost + "/m.kat')\n" + lines + "    M.Z + a\n}\nG(1)";
 
     /// <summary>
-    /// DEFERRED MATERIALIZATION charges its own operation: the eager parse admits the program (the provisional branch
-    /// body is not settled level by level), a short chain in the selected branch runs, and a long one is refused when
-    /// the branch is materialized, with the structural resource error naming the work bound.
+    /// DEFERRED MATERIALIZATION charges its own operation: the eager parse admits both programs (the provisional branch
+    /// body is not settled level by level); the selected branch's twenty-eight branching links, refused at
+    /// materialization before footprints, now run; and the over-cap chain of twenty-four links is refused when the
+    /// branch is materialized, with the structural resource error naming the work bound.
     /// </summary>
     [Fact]
     public async Task ABranchingChainInADeferredUnit_IsChargedToItsMaterialization()
     {
-        Assert.Empty((await Parser.ParseAsync(DeferredBranchingChain(28), ModuleOptions())).Diagnostics);
+        var branching = InADeferredUnit(BranchingLines(28, "    "));
+        var overCap = InADeferredUnit(ExposureSettlementFootprintTests.NestedOwnerBranchingDeclaration(17, 24, "    "));
+        Assert.Empty((await Parser.ParseAsync(branching, ModuleOptions())).Diagnostics);
+        Assert.Empty((await Parser.ParseAsync(overCap, ModuleOptions())).Diagnostics);
 
-        var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(DeferredBranchingChain(12), ModuleOptions()));
+        var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(branching, ModuleOptions()));
         Assert.Equal("11", success.ToDisplayString());
 
-        var refused = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(DeferredBranchingChain(28), ModuleOptions()));
+        var refused = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(overCap, ModuleOptions()));
         Assert.Contains(refused.Errors, error => error.Code == KatLangErrorCode.StaticStructureLimitExceeded
             && error.Message.Contains("exceeded its work bound", StringComparison.Ordinal));
     }

@@ -10,11 +10,57 @@ internal static class PropertyExposureResolver
     internal readonly record struct Requirement(string Name, ElaboratedPropertyScope? Owner);
 
     /// <summary>
+    /// What a settlement reads of its bound owners (<see cref="BoundOwnerSet"/>) — every membership it consults, with
+    /// the answer, and whether it consulted that there are none at all — and whether one of its owner lookups found no
+    /// owner on its site's chain. The settlement's FOOTPRINT (<see cref="SettlementShare.Settled.Footprint"/>) is built
+    /// from these reads.
+    /// </summary>
+    internal interface ISettlementReader
+    {
+        /// <summary><paramref name="owner"/> was looked up in the bound owners: <paramref name="present"/> is the answer.</summary>
+        void NoteMembership(Algorithm owner, bool present);
+
+        /// <summary>Whether the bound owners are none at all (<paramref name="none"/>) decided a route.</summary>
+        void NoteNoBoundOwners(bool none);
+
+        /// <summary>A requirement's owner is on no level of the site's chain (it charged nothing there).</summary>
+        void NoteOwnerOffChain();
+    }
+
+    /// <summary>Whether a settlement consulted that its bound owners are none (<see cref="ISettlementReader.NoteNoBoundOwners"/>).</summary>
+    internal enum BoundOwnerEmptiness : byte
+    {
+        Unread,
+        ReadNone,
+        ReadSome,
+    }
+
+    /// <summary>
     /// TEST SEAM (C1 equivalence, <c>ExposureAccessCheckComplexityTests</c>): while set on the calling flow, every
     /// <see cref="PendingSelection.OpenWalks"/> reference is settled per reader with its own bound owners, the
     /// unshared settlement the shared one must equal. Never set by production code.
     /// </summary>
     internal static readonly AsyncLocal<bool> OpenWalksPerReaderForTesting = new();
+
+    /// <summary>
+    /// TEST SEAM (<c>ExposureSettlementFootprintTests</c>): the <see cref="SettlementShareMode"/> of every
+    /// <see cref="SettlementShare"/> created on the calling flow — the former exact keys, or no share at all (the
+    /// unshared settlement every summary must equal). Never set by production code.
+    /// </summary>
+    internal static readonly AsyncLocal<SettlementShareMode> SettlementShareModeForTesting = new();
+
+    /// <summary>How a resolution's <see cref="SettlementShare"/> reuses completed settlements (test seam only).</summary>
+    internal enum SettlementShareMode
+    {
+        /// <summary>The production rule: a settlement answers every bound-owner set that satisfies its footprint.</summary>
+        Footprint,
+
+        /// <summary>A settlement answers its exact bound owners only (the rule before footprints).</summary>
+        ExactBoundOwners,
+
+        /// <summary>Nothing is kept: every settlement is computed (the reference every reuse must agree with).</summary>
+        Unshared,
+    }
 
     /// <summary>
     /// One level of the resolver's lexical chain: the level's elaborated property scope (its
@@ -69,29 +115,36 @@ internal static class PropertyExposureResolver
         public IReadOnlySet<string> Parameters { get; }
         public Algorithm? Algorithm { get; }
 
-        public IEnumerable<Requirement> ResolveRequirements(IEnumerable<OwnerQualifiedParameter> requirements,
-            BoundOwnerSet? boundOwners = null)
+        public IEnumerable<Requirement> ResolveRequirements(IEnumerable<OwnerQualifiedParameter> requirements)
         {
             foreach (var requirement in requirements)
-                if (TryResolveRequirement(requirement, boundOwners, out var resolved, out _))
+                if (TryResolveRequirement(requirement, boundOwners: null, reader: null, out var resolved, out _))
                     yield return resolved;
         }
 
         /// <summary>
-        /// <see cref="ResolveRequirements(IEnumerable{OwnerQualifiedParameter}, BoundOwnerSet?)"/> with this
-        /// level as a settlement SITE, raising <paramref name="deepestLanding"/> to the depth of the deepest level an
-        /// owner lookup landed at (see <see cref="SettlementShare"/>): <see cref="NoOwnerLookup"/> stands when no
-        /// requirement walked the chain, and <see cref="int.MaxValue"/> when one found no owner on it, because another
-        /// site could hold that owner.
+        /// <see cref="ResolveRequirements(IEnumerable{OwnerQualifiedParameter})"/> with this level as a settlement
+        /// SITE and <paramref name="boundOwners"/> discharging what they own, raising <paramref name="deepestLanding"/>
+        /// to the depth of the deepest level an owner lookup landed at (see <see cref="SettlementShare"/>), and
+        /// <see cref="NoOwnerLookup"/> when no requirement walked the chain. Every membership of
+        /// <paramref name="boundOwners"/> consulted, present or absent, is reported to <paramref name="reader"/>, and so is
+        /// a lookup that found no owner on the chain (<see cref="ISettlementReader.NoteOwnerOffChain"/>).
         /// </summary>
         public List<Requirement> ResolveRequirementsFromSite(IEnumerable<OwnerQualifiedParameter> requirements,
-            BoundOwnerSet? boundOwners, ref int deepestLanding)
+            BoundOwnerSet? boundOwners, ISettlementReader? reader, ref int deepestLanding)
         {
             var resolved = new List<Requirement>();
             foreach (var requirement in requirements)
             {
-                if (!TryResolveRequirement(requirement, boundOwners, out var one, out var landing))
+                if (!TryResolveRequirement(requirement, boundOwners, reader, out var one, out var landing))
+                {
+                    // A lookup that found no owner raises no landing (as since the fail-closed entry was retired), so
+                    // the share keeps its settlement for its exact key. Another site below the level could hold that
+                    // owner, so it is never answered for other bound owners.
+                    if (landing == int.MaxValue)
+                        reader?.NoteOwnerOffChain();
                     continue;
+                }
                 resolved.Add(one);
                 deepestLanding = Math.Max(deepestLanding, landing);
             }
@@ -108,8 +161,10 @@ internal static class PropertyExposureResolver
         // no chain there can hold an activation of that owner. No successful read depends on such a check, so it
         // charges nothing (owner decision Q1 = (b), 2026-11-14; the former fail-closed entry, owner depth -1, is
         // retired). The path still fails with LocalOnlyProperty at the member the evaluator checks when it runs.
+        // The one bound-owner membership this reads (the owner's, present or absent) is reported to the reader: a
+        // settlement is reused under other bound owners only where every membership it read is the same.
         private bool TryResolveRequirement(OwnerQualifiedParameter requirement, BoundOwnerSet? boundOwners,
-            out Requirement resolved, out int landing)
+            ISettlementReader? reader, out Requirement resolved, out int landing)
         {
             landing = NoOwnerLookup;
             resolved = default;
@@ -126,7 +181,9 @@ internal static class PropertyExposureResolver
                 return false;
             }
 
-            if (boundOwners?.Contains(requirement.Owner) == true)
+            var bound = boundOwners?.Contains(requirement.Owner) == true;
+            reader?.NoteMembership(requirement.Owner, bound);
+            if (bound)
                 return false;
 
             var owner = this;
@@ -1076,6 +1133,38 @@ internal static class PropertyExposureResolver
     /// (<see cref="BoundOwnerSet"/>, equal by content) — never a spelling alone, so owners with
     /// same-named parameters stay apart.</para>
     ///
+    /// <para>THE FOOTPRINT: WHICH BOUND OWNERS A SETTLEMENT DEPENDS ON. A settlement reads its bound
+    /// owners in two ways only (<see cref="ISettlementReader"/>): one MEMBERSHIP at a time — a
+    /// requirement's owner (<c>SummaryScope.TryResolveRequirement</c>), a parameter head's owner, and
+    /// the level algorithms the open-walks route tests (<c>PendingResolution.SharedOpenWalksLevel</c>) —
+    /// and, on that route only, whether there are none at all. A frame records every membership it
+    /// read with its answer, present or absent, relative to its own bound owners, and the emptiness
+    /// read; a nested frame's reads reach its parent except a membership of an owner the nested
+    /// reference binds itself (present under any parent) and the emptiness read of a frame that binds
+    /// any (never empty under any parent); a reused result brings its own record; the level's one
+    /// unbound open-walks settlement (C1) is computed with no bound owners, so it reads none of its
+    /// reader's. The record of a whole settlement, kept with it, is its <see cref="Settled.Footprint"/>.
+    /// Every decision of a settlement — what a requirement charges, where its lookup lands, which route
+    /// a reference takes, which frames it opens — is a function of its key's other parts, the final
+    /// summaries and views it read, and those answers. Under bound owners that give the same answers
+    /// it therefore makes the same decisions in every frame it reaches, transitively, and its frames
+    /// correspond one to one with the same contributions (their bound owners extend the new ones by the
+    /// same references' own owners); an owner it never read takes part in no decision, so it cannot
+    /// expose a different dependency. Where a frame meets a key in progress (a cycle cut) may differ
+    /// under other owners, because bound-owner sets of two frames may become equal or unequal; it
+    /// changes no whole result, which is everything its reference reaches however its repeats are cut
+    /// (EXPOSURE-OPEN-1), and partial results are kept nowhere. So a kept settlement answers any key of
+    /// its content and level whose bound owners satisfy its footprint — by exact membership tests,
+    /// never a fingerprint — under the site, live-read and view rules above, which are unchanged. A
+    /// settlement that read more than <see cref="MaxFootprint"/> memberships, or reused such a result,
+    /// records no footprint and is kept for its exact bound owners only, as before; so is one whose
+    /// content and level already hold <see cref="MaxCandidates"/> footprint candidates. So is, finally,
+    /// one with an owner lookup that found no owner on its site's chain, or that reused such a result
+    /// (<see cref="Settled.OwnerOffChain"/>): such a lookup charges nothing there (Q1) and raises no
+    /// landing, so its settlement is kept as site-independent although another site below its level
+    /// can hold that owner and charge it. Its exact key keeps that former behavior; footprints do not
+    /// extend it to other bound owners.</para>
+    ///
     /// <para>LIFETIME AND SIZE. One share belongs to one resolution (<see cref="ExposureRun"/>),
     /// whose interner its results are sets of, and dies with it. Only completed settlements are
     /// stored, so a cancelled or failed resolution leaves nothing partial behind. What it retains is
@@ -1087,9 +1176,22 @@ internal static class PropertyExposureResolver
     {
         /// <summary>
         /// The retained weight the share stops storing at. A chain the share serves keeps a constant number
-        /// of small entries per link. Each entry charges its key and every fact-view record it retains.
+        /// of small entries per link. Each entry charges its key, every fact-view record and every footprint
+        /// membership it retains.
         /// </summary>
         internal const long DefaultCapacity = 1 << 19;
+
+        /// <summary>
+        /// The most bound-owner memberships a settlement's footprint records: one that reads more is answered
+        /// for its exact bound owners only, so recording, merging and comparing a footprint costs a constant.
+        /// </summary>
+        internal const int MaxFootprint = 16;
+
+        /// <summary>
+        /// The most footprint candidates one content and level keep: a lookup compares at most this many
+        /// footprints. A further settlement of them is kept for its exact bound owners.
+        /// </summary>
+        internal const int MaxCandidates = 8;
 
         /// <summary><see cref="Content"/> is a pending reference's content key or a seed.</summary>
         internal readonly record struct Key(object Content, SummaryScope Level, BoundOwnerSet? Bound)
@@ -1106,11 +1208,14 @@ internal static class PropertyExposureResolver
         /// <summary>
         /// A completed settlement and what its computation depended on beyond its key: the deepest landing
         /// of its site lookups (<see cref="SummaryScope.NoOwnerLookup"/> when it made none), whether it read
-        /// a summary of the level in progress, and the fact views it consulted with the versions it read
-        /// (<see cref="InconsistentViews"/>: it saw one view at two versions).
+        /// a summary of the level in progress, the fact views it consulted with the versions it read
+        /// (<see cref="InconsistentViews"/>: it saw one view at two versions), and what it read of its bound
+        /// owners (<see cref="Footprint"/>, <see cref="Emptiness"/>).
         /// </summary>
         internal sealed class Settled(RequirementSet result, int siteDepth, bool readLive,
-            (StaticLookupFacts Facts, int Version)[] views, bool inconsistentViews)
+            (StaticLookupFacts Facts, int Version)[] views, bool inconsistentViews,
+            (Algorithm Owner, bool Present)[]? footprint = null, BoundOwnerEmptiness emptiness = BoundOwnerEmptiness.Unread,
+            bool ownerOffChain = false)
         {
             public RequirementSet Result => result;
             public int SiteDepth => siteDepth;
@@ -1119,14 +1224,66 @@ internal static class PropertyExposureResolver
             public bool InconsistentViews => inconsistentViews;
 
             /// <summary>
+            /// Every bound-owner membership the computation read, with its answer for the bound owners it ran
+            /// under, each owner once (see the class summary); null when that is unknown — it read more than
+            /// <see cref="MaxFootprint"/> memberships or reused a result without a footprint, or the settlement was
+            /// built without one — and the result answers its exact bound owners only.
+            /// </summary>
+            public (Algorithm Owner, bool Present)[]? Footprint => footprint;
+
+            /// <summary>Whether the computation read that its bound owners are none, and the answer.</summary>
+            public BoundOwnerEmptiness Emptiness => emptiness;
+
+            /// <summary>
+            /// An owner lookup of the computation found no owner on its site's chain (see the class summary): the share
+            /// keeps the result for its exact bound owners only. Its footprint is still what a settlement that reuses it
+            /// read.
+            /// </summary>
+            public bool OwnerOffChain => ownerOffChain;
+
+            /// <summary>
             /// Whether this result, when its computation also saw no cycle cut, is the settlement of its key at
             /// <paramref name="level"/> from every site for the rest of the run while its views stand.
             /// </summary>
             public bool StandsFromEverySite(SummaryScope level)
                 => !readLive && !inconsistentViews && siteDepth <= level.Depth;
+
+            /// <summary>
+            /// Whether <paramref name="bound"/> gives every read of <see cref="Footprint"/> and
+            /// <see cref="Emptiness"/> the answer this computation had: exact membership by reference.
+            /// </summary>
+            internal bool Satisfies(BoundOwnerSet? bound, FrontEndTraversalObservations? observations)
+            {
+                if (footprint is null)
+                    throw new InvalidOperationException("A settlement without a footprint answers its exact bound owners only.");
+                if (emptiness != BoundOwnerEmptiness.Unread && (bound is null) != (emptiness == BoundOwnerEmptiness.ReadNone))
+                    return false;
+                for (var i = 0; i < footprint.Length; i++)
+                {
+                    observations?.RecordSettlementFootprintWork(1);
+                    if ((bound?.Contains(footprint[i].Owner) == true) != footprint[i].Present)
+                        return false;
+                }
+
+                return true;
+            }
+
+            /// <summary>Whether every view this computation consulted is still at the version it read.</summary>
+            internal bool ViewsStand()
+            {
+                foreach (var (facts, version) in views)
+                    if (facts.ViewVersion != version)
+                        return false;
+                return true;
+            }
         }
 
+        // Settlements answered for their exact bound owners: no footprint, or no room among their candidates.
         private readonly Dictionary<Key, Settled> _entries = [];
+
+        // Settlements answered by footprint, per content and level, with each one's retained weight.
+        private readonly Dictionary<(object Content, SummaryScope Level), List<(Settled Settled, long Weight)>> _candidates = [];
+        private readonly SettlementShareMode _mode = SettlementShareModeForTesting.Value;
         private long _retained;
 
         /// <summary>
@@ -1157,42 +1314,120 @@ internal static class PropertyExposureResolver
             }
         }
 
-        /// <summary>The settlement kept for <paramref name="key"/>, while every view it consulted stands.</summary>
+        /// <summary>
+        /// The settlement kept for <paramref name="key"/>, while every view it consulted stands: the one kept for its
+        /// exact bound owners, or else the first candidate of its content and level whose footprint its bound owners
+        /// satisfy. A stale entry met is dropped, and the key is then computed again.
+        /// </summary>
         public bool TryGet(Key key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Settled? settled)
         {
-            if (!_entries.TryGetValue(key, out settled))
-                return false;
-            foreach (var (facts, version) in settled.Views)
+            if (_mode == SettlementShareMode.Unshared)
             {
-                if (facts.ViewVersion == version)
-                    continue;
-                observations?.RecordSettlementShareStaleView();
-                _entries.Remove(key);
-                _retained -= RetainedWeight(key, settled);
                 settled = null;
                 return false;
             }
 
-            observations?.RecordSettlementShareHit();
-            return true;
+            if (_entries.TryGetValue(key, out settled))
+            {
+                if (!settled.ViewsStand())
+                {
+                    observations?.RecordSettlementShareStaleView();
+                    _entries.Remove(key);
+                    _retained -= RetainedWeight(key, settled);
+                    settled = null;
+                    return false;
+                }
+
+                observations?.RecordSettlementShareHit();
+                return true;
+            }
+
+            if (_mode == SettlementShareMode.Footprint && _candidates.TryGetValue((key.Content, key.Level), out var candidates))
+            {
+                for (var i = 0; i < candidates.Count; i++)
+                {
+                    observations?.RecordSettlementShareCandidateVisit();
+                    var (candidate, weight) = candidates[i];
+                    if (!candidate.Satisfies(key.Bound, observations))
+                        continue;
+                    if (!candidate.ViewsStand())
+                    {
+                        observations?.RecordSettlementShareStaleView();
+                        candidates.RemoveAt(i);
+                        if (candidates.Count == 0)
+                            _candidates.Remove((key.Content, key.Level));
+                        _retained -= weight;
+                        settled = null;
+                        return false;
+                    }
+
+                    observations?.RecordSettlementShareHit();
+                    observations?.RecordSettlementShareCandidateHit();
+                    settled = candidate;
+                    return true;
+                }
+            }
+
+            settled = null;
+            return false;
         }
 
         /// <summary>
         /// Keeps a settlement that completed without a cycle cut and <see cref="Settled.StandsFromEverySite"/>
-        /// at <paramref name="key"/>'s level; nothing once the share is full.
+        /// at <paramref name="key"/>'s level: as a candidate of its content and level when it has a footprint and
+        /// they hold fewer than <see cref="MaxCandidates"/>, for its exact bound owners otherwise; nothing when a
+        /// kept settlement already answers the key, or once the share is full.
         /// </summary>
         public void Store(Key key, Settled settled)
         {
             if (!settled.StandsFromEverySite(key.Level))
                 throw new InvalidOperationException("Only a settlement that stands from every site for the rest of the run is shared.");
+            if (_mode == SettlementShareMode.Unshared)
+                return;
             var weight = RetainedWeight(key, settled);
+            if (settled.Footprint is not null && !settled.OwnerOffChain && _mode == SettlementShareMode.Footprint)
+            {
+                _candidates.TryGetValue((key.Content, key.Level), out var candidates);
+                for (var i = 0; candidates is not null && i < candidates.Count; i++)
+                {
+                    observations?.RecordSettlementShareCandidateVisit();
+                    if (!candidates[i].Settled.Satisfies(key.Bound, observations))
+                        continue;
+                    if (candidates[i].Settled.ViewsStand())
+                        return;
+                    observations?.RecordSettlementShareStaleView();
+                    _retained -= candidates[i].Weight;
+                    candidates.RemoveAt(i--);
+                }
+
+                // The group itself retains its content and level. Release it even if the replacement cannot fit.
+                if (candidates is { Count: 0 })
+                {
+                    _candidates.Remove((key.Content, key.Level));
+                    candidates = null;
+                }
+
+                if ((candidates?.Count ?? 0) < MaxCandidates)
+                {
+                    if (_retained + weight > capacity)
+                        return;
+                    if (candidates is null)
+                        _candidates.Add((key.Content, key.Level), candidates = []);
+                    candidates.Add((settled, weight));
+                    _retained += weight;
+                    observations?.RecordSettlementShareStore();
+                    return;
+                }
+            }
+
             if (_retained + weight > capacity || !_entries.TryAdd(key, settled))
                 return;
             _retained += weight;
             observations?.RecordSettlementShareStore();
         }
 
-        private static long RetainedWeight(Key key, Settled settled) => key.Weight + settled.Views.Length;
+        private static long RetainedWeight(Key key, Settled settled)
+            => key.Weight + settled.Views.Length + (settled.Footprint?.Length ?? 0);
     }
 
     /// <summary>
@@ -1287,12 +1522,13 @@ internal static class PropertyExposureResolver
         /// cost their distinct keys and edges rather than their path count.
         ///
         /// <para>A frame also carries what its settlement depended on BEYOND its key — the deepest landing
-        /// of its site lookups, a read of a live summary, the fact views it consulted — for its own body,
-        /// every nested frame (<see cref="Absorb(Frame)"/>) and every result it reused
-        /// (<see cref="Reuse"/>), so a settlement never looks independent merely because what it depended
-        /// on arrived through a cache. <see cref="Complete"/> is that record with the result.</para>
+        /// of its site lookups, a read of a live summary, the fact views it consulted, the bound-owner
+        /// memberships it read (its footprint, <see cref="SettlementShare"/>) — for its own body, every
+        /// nested frame (<see cref="Absorb(Frame)"/>) and every result it reused (<see cref="Reuse"/>), so a
+        /// settlement never looks independent merely because what it depended on arrived through a cache.
+        /// <see cref="Complete"/> is that record with the result.</para>
         /// </summary>
-        private sealed class Frame
+        private sealed class Frame(FrontEndTraversalObservations? observations) : ISettlementReader
         {
             public IEnumerator<Frame> Body = null!;
             public RequirementSet Result;
@@ -1332,6 +1568,106 @@ internal static class PropertyExposureResolver
             private bool _inconsistentViews;
             private List<(StaticLookupFacts Facts, int Version)>? _views;
 
+            /// <summary>
+            /// The owners this frame's reference binds itself (<see cref="PendingReference.BoundOwners"/>): its bound
+            /// owners are its enclosing frame's extended by them, so each of them is present whatever the enclosing
+            /// frame's are. Null for a seed, an inner route frame and a reference that binds none.
+            /// </summary>
+            public IReadOnlyList<Algorithm>? OwnOwners;
+
+            /// <summary>
+            /// Set on the level's unbound open-walks settlement (C1): it runs with no bound owners whatever its
+            /// enclosing frame's are, so nothing it read of them is a read of the enclosing frame's.
+            /// </summary>
+            public bool RunsUnbound;
+
+            // The footprint (SettlementShare): each bound-owner membership read, with its answer for this frame's own
+            // bound owners, each owner once; null with _exactBoundOwners once it is unknown (MaxFootprint exceeded, or a
+            // result without one reused).
+            private List<(Algorithm Owner, bool Present)>? _footprint;
+            private bool _exactBoundOwners;
+            private BoundOwnerEmptiness _emptiness;
+
+            // An owner lookup found no owner on the site's chain, here or in what this settlement reached or reused. Its
+            // result may hold only from this site (SettlementShare), so it is never answered for other bound owners. A
+            // consulted-level walk is settled from its own level whoever reads it, so that bounds it (as SiteDepth).
+            private bool _ownerOffChain;
+
+            public bool OwnerOffChain => _ownerOffChain && SiteIsItsLevel is null;
+
+            public void NoteOwnerOffChain() => _ownerOffChain = true;
+
+            public void NoteMembership(Algorithm owner, bool present)
+            {
+                if (_exactBoundOwners)
+                    return;
+                observations?.RecordSettlementFootprintWork(1);
+                _footprint ??= [];
+                foreach (var (known, answer) in _footprint)
+                {
+                    if (!ReferenceEquals(known, owner))
+                        continue;
+                    if (answer != present)
+                        throw new InvalidOperationException("A settlement read one bound owner with two answers.");
+                    return;
+                }
+
+                if (_footprint.Count == SettlementShare.MaxFootprint)
+                {
+                    ReadExactBoundOwners();
+                    return;
+                }
+
+                _footprint.Add((owner, present));
+            }
+
+            public void NoteNoBoundOwners(bool none)
+            {
+                var read = none ? BoundOwnerEmptiness.ReadNone : BoundOwnerEmptiness.ReadSome;
+                if (_emptiness != BoundOwnerEmptiness.Unread && _emptiness != read)
+                    throw new InvalidOperationException("A settlement read its bound owners as both none and some.");
+                _emptiness = read;
+            }
+
+            private void ReadExactBoundOwners()
+            {
+                _exactBoundOwners = true;
+                _footprint = null;
+            }
+
+            // What a nested settlement read of its own bound owners, as reads of this frame's: a membership of an owner
+            // the nested reference binds itself, and its emptiness read once it binds any, read nothing of this frame's.
+            private void AbsorbFootprint(IReadOnlyList<(Algorithm Owner, bool Present)>? footprint, bool exact, BoundOwnerEmptiness emptiness,
+                IReadOnlyList<Algorithm>? ownOwners)
+            {
+                var bindsOwners = ownOwners is { Count: > 0 };
+                if (emptiness != BoundOwnerEmptiness.Unread && !bindsOwners)
+                    NoteNoBoundOwners(emptiness == BoundOwnerEmptiness.ReadNone);
+                if (exact)
+                {
+                    ReadExactBoundOwners();
+                    return;
+                }
+
+                if (footprint is null)
+                    return;
+                for (var i = 0; i < footprint.Count; i++)
+                {
+                    var (owner, present) = footprint[i];
+                    if (present && bindsOwners && BindsItself(ownOwners!, owner))
+                        continue;
+                    NoteMembership(owner, present);
+                }
+            }
+
+            private static bool BindsItself(IReadOnlyList<Algorithm> ownOwners, Algorithm owner)
+            {
+                for (var i = 0; i < ownOwners.Count; i++)
+                    if (ReferenceEquals(ownOwners[i], owner))
+                        return true;
+                return false;
+            }
+
             // The deepest landing this settlement depends on. Every lookup of a consulted-level walk starts at that
             // level, so one that found no owner is bounded by the level's own depth.
             private int SiteDepth => SiteIsItsLevel is { } own && _siteDepth == int.MaxValue ? own.Depth : _siteDepth;
@@ -1361,9 +1697,16 @@ internal static class PropertyExposureResolver
                 if (nested._views is { } views)
                     foreach (var (facts, version) in views)
                         NoteView(facts, version);
+                _ownerOffChain |= nested.OwnerOffChain;
+                if (!nested.RunsUnbound)
+                    AbsorbFootprint(nested._footprint, nested._exactBoundOwners,
+                        nested._emptiness, nested.OwnOwners);
             }
 
-            /// <summary>Takes a completed settlement as this frame's result, with everything it depended on.</summary>
+            /// <summary>
+            /// Takes a completed settlement as this frame's result, with everything it depended on: its footprint's
+            /// answers hold for this frame's bound owners, which are its exact ones or satisfy it.
+            /// </summary>
             public void Reuse(SettlementShare.Settled settled)
             {
                 Result = settled.Result;
@@ -1372,10 +1715,13 @@ internal static class PropertyExposureResolver
                 _inconsistentViews |= settled.InconsistentViews;
                 foreach (var (facts, version) in settled.Views)
                     NoteView(facts, version);
+                _ownerOffChain |= settled.OwnerOffChain;
+                AbsorbFootprint(settled.Footprint, exact: settled.Footprint is null, settled.Emptiness, ownOwners: null);
             }
 
             public SettlementShare.Settled Complete()
-                => new(Result, SiteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews);
+                => new(Result, SiteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews,
+                    _exactBoundOwners ? null : _footprint is null ? [] : [.. _footprint], _emptiness, OwnerOffChain);
 
             /// <summary><see cref="SettlementShare.Settled.StandsFromEverySite"/> of what this frame has recorded so far.</summary>
             public bool StandsFromEverySite(SummaryScope level)
@@ -1461,7 +1807,7 @@ internal static class PropertyExposureResolver
                 pending = pending.At(completed);
             ChargeFrame();
             memos.Observations?.RecordRequiredAncestorSettlementFrame(pending);
-            var frame = new Frame();
+            var frame = new Frame(memos.Observations);
             frame.Body = ResolveReference(frame, pending, level, site, boundOwners);
             return frame;
         }
@@ -1474,12 +1820,12 @@ internal static class PropertyExposureResolver
             var shareKey = new SettlementShare.Key(seed, level, boundOwners);
             if (shared.TryGet(shareKey, out var settled) || _completedSeeds.TryGetValue(key, out settled))
             {
-                var reused = new Frame { Body = NoFrames() };
+                var reused = new Frame(memos.Observations) { Body = NoFrames() };
                 reused.Reuse(settled);
                 return reused;
             }
 
-            var frame = new Frame { SeedCacheKey = key, ShareKey = shareKey };
+            var frame = new Frame(memos.Observations) { SeedCacheKey = key, ShareKey = shareKey };
             frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
             return frame;
         }
@@ -1535,9 +1881,14 @@ internal static class PropertyExposureResolver
             }
 
             // The walk's bound owners plus this reference's own: the set is extended, never copied or
-            // serialized (BoundOwnerSet), and is itself the bound part of both keys.
+            // serialized (BoundOwnerSet), and is itself the bound part of both keys. The share answers it from a
+            // settlement of the same content and level whose footprint it satisfies (SettlementShare); in progress
+            // and within the run, keys stay exact.
             if (pending.BoundOwners.Count > 0)
+            {
                 boundOwners = BoundOwnerSet.With(boundOwners, pending.BoundOwners, memos.Observations);
+                self.OwnOwners = pending.BoundOwners;
+            }
             var key = new SettlementKey(pending.ContentKey, level, site, boundOwners);
             var shareKey = new SettlementShare.Key(pending.ContentKey, level, boundOwners);
             if (shared.TryGet(shareKey, out var settled) || _completed.TryGetValue(key, out settled))
@@ -1560,12 +1911,14 @@ internal static class PropertyExposureResolver
             {
                 if (pending.Origin is null)
                     throw new InvalidOperationException("Requirement settlement requires an explicit structural context.");
-                if (pending.Selection == PendingSelection.OpenWalks && SharedOpenWalksLevel(pending, level, boundOwners) is { } opening)
+                if (pending.Selection == PendingSelection.OpenWalks && SharedOpenWalksLevel(self, pending, level, boundOwners) is { } opening)
                 {
                     // C1: the level's walks settled ONCE, at the level itself with no bound owners, answer every reader
                     // that consults it when that settlement stands from every site there (see SharedOpenWalksLevel).
+                    // That settlement reads none of this reader's bound owners: only the choice of this route does.
                     var unbound = ReferenceFrame(PropertyDependencyGraphBuilder.SummaryMemo.OpenWalksOf(pending.Origin),
                         opening, site, boundOwners: null);
+                    unbound.RunsUnbound = true;
                     yield return unbound;
                     if (unbound.IsWhole && unbound.StandsFromEverySite(opening))
                     {
@@ -1573,7 +1926,7 @@ internal static class PropertyExposureResolver
                         yield break;
                     }
                 }
-                var published = new Frame();
+                var published = new Frame(memos.Observations);
                 published.Body = ResolvePublishedReference(published, pending, level, site, boundOwners);
                 yield return published;
                 self.Result = published.Result;
@@ -1676,11 +2029,14 @@ internal static class PropertyExposureResolver
                 var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, pending.Head, ElaboratedScopeLookup.OwnParameterBindings.Instance);
                 if (owned.TryGetParameter(out var parameterOwner))
                 {
-                    if (parameterOwner.OwnerAlgorithm is not { } owner || boundOwners?.Contains(owner) != true)
+                    var bound = parameterOwner.OwnerAlgorithm is { } owner && boundOwners?.Contains(owner) == true;
+                    if (parameterOwner.OwnerAlgorithm is { } read)
+                        self.NoteMembership(read, bound);
+                    if (!bound)
                     {
                         var landing = SummaryScope.NoOwnerLookup;
                         self.Result = sets.From(site.ResolveRequirementsFromSite(
-                            [new OwnerQualifiedParameter(pending.Head, parameterOwner.OwnerAlgorithm)], boundOwners, ref landing));
+                            [new OwnerQualifiedParameter(pending.Head, parameterOwner.OwnerAlgorithm)], boundOwners, self, ref landing));
                         self.NoteSiteLanding(landing);
                     }
 
@@ -1774,7 +2130,7 @@ internal static class PropertyExposureResolver
                 return false;
             var landing = SummaryScope.NoOwnerLookup;
             self.Result = sets.Union(self.Result, sets.From(part.Level.ResolveRequirements(part.Seed.RequiredAncestorOwnedParameterNames)
-                .Concat((part.Site ?? site).ResolveRequirementsFromSite(part.Seed.OwnerQualifiedParameters, boundOwners, ref landing))));
+                .Concat((part.Site ?? site).ResolveRequirementsFromSite(part.Seed.OwnerQualifiedParameters, boundOwners, self, ref landing))));
             self.NoteSiteLanding(landing);
             return true;
         }
@@ -1968,18 +2324,30 @@ internal static class PropertyExposureResolver
         /// none is in B (2), so B discharges nothing the unbound walk charged. Readers of any bound owners at any depth
         /// below L′ thus reuse one settlement, kept in the run's share. Otherwise the result depends on the reader or
         /// the site, and it is settled per reader exactly as before.
+        ///
+        /// <para>The route reads B: whether it is empty (the null shortcut of (1), and the skipped test of (2)), and
+        /// each membership (2) tests up to the first owner found. Each read is noted on <paramref name="self"/>'s
+        /// footprint (<see cref="SettlementShare"/>), so a settlement reused under other bound owners takes this route
+        /// under them too.</para>
         /// </summary>
-        private SummaryScope? SharedOpenWalksLevel(PendingReference pending, SummaryScope level, BoundOwnerSet? boundOwners)
+        private SummaryScope? SharedOpenWalksLevel(Frame self, PendingReference pending, SummaryScope level, BoundOwnerSet? boundOwners)
         {
             if (OpenWalksPerReaderForTesting.Value) return null;
             var origin = memos.SharedMemo.RequirementContext(pending.Origin)!;
             SummaryScope? opening = level;
             while (opening is not null && !ReferenceEquals(opening.PropertyScope.CompletedContext?.Key, origin.Key))
                 opening = opening.Parent;
-            if (opening is null || ReferenceEquals(opening, level) && boundOwners is null) return null;
+            if (opening is null) return null;
+            self.NoteNoBoundOwners(boundOwners is null);
+            if (ReferenceEquals(opening, level) && boundOwners is null) return null;
             if (boundOwners is not null)
                 for (var at = opening; at is not null; at = at.Parent)
-                    if (at.Algorithm is { } owner && boundOwners.Contains(owner)) return null;
+                {
+                    if (at.Algorithm is not { } owner) continue;
+                    var bound = boundOwners.Contains(owner);
+                    self.NoteMembership(owner, bound);
+                    if (bound) return null;
+                }
             if (!ReferenceEquals(opening, level))
             {
                 var below = OpenWalkAnchorsBelow(opening, origin);
@@ -2184,7 +2552,7 @@ internal static class PropertyExposureResolver
         {
             var landing = SummaryScope.NoOwnerLookup;
             var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
-                .Concat(site.ResolveRequirementsFromSite(seed.OwnerQualifiedParameters, boundOwners, ref landing)));
+                .Concat(site.ResolveRequirementsFromSite(seed.OwnerQualifiedParameters, boundOwners, self, ref landing)));
             self.NoteSiteLanding(landing);
             foreach (var dependencyName in seed.VisiblePropertyDependencyNames)
             {

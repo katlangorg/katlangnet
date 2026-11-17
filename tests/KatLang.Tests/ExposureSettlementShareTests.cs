@@ -17,14 +17,30 @@ using SummaryScope = PropertyExposureResolver.SummaryScope;
 /// no other family reaches a cut-only frame (in the reproducer B family every cycle passes through a
 /// level summary, which ends the walk), so a share that kept cut results passes every other test.</para>
 ///
-/// <para>The bound owners in a settlement key are a <see cref="BoundOwnerSet"/>: a chain the share cannot
-/// serve (every link's member owning a parameter, lifted or written) still settles in quadratic frames. The
-/// owner visits are bounded by the frame count on the tested chains.</para>
+/// <para>The bound owners in a settlement key are a <see cref="BoundOwnerSet"/>. A chain whose every link's member
+/// owns a parameter, lifted or written, binds one more owner at every link, so no exact key repeats; such links read
+/// none of those owners, and the share answers them by footprint (<see cref="ExposureSettlementFootprintTests"/>):
+/// their frames are linear too. The owner visits are bounded by the frame count on the tested chains.</para>
 /// </summary>
 public sealed class ExposureSettlementShareTests
 {
-    private static string RootChain(int length, string last = "5")
+    internal static string RootChain(int length, string last = "5")
         => ExposureOpenChainComplexityTests.Chain("open", length, last, "") + ExposureOpenChainComplexityTests.Reader("open", "") + "R";
+
+    /// <summary>
+    /// A ring of <paramref name="size"/> libraries whose public members read one another through <c>open</c>s inside
+    /// <c>O(x)</c>, with the owner's input entering at member <paramref name="entry"/>, each member read through an open
+    /// (<c>A{i}</c>) and dotted (<c>C{i}</c>).
+    /// </summary>
+    internal static string OpenedMemberRing(int size, int entry)
+    {
+        var source = new System.Text.StringBuilder("O(x) = {\n");
+        for (var i = 0; i < size; i++)
+            source.Append($"    L{i} = {{\n        open L{(i + 1) % size}\n        public V{i} = V{(i + 1) % size}{(i == entry ? " + x" : "")}\n        1\n    }}\n");
+        for (var i = 0; i < size; i++)
+            source.Append($"    A{i} = {{\n        open L{i}\n        V{i}\n    }}\n    C{i} = L{i}.V{i}\n");
+        return source.Append("    1\n}\n1").ToString();
+    }
 
     private static string Source(string shape, int length) => shape switch
     {
@@ -93,13 +109,7 @@ public sealed class ExposureSettlementShareTests
     {
         for (var entry = 0; entry < size; entry++)
         {
-            var source = new System.Text.StringBuilder("O(x) = {\n");
-            for (var i = 0; i < size; i++)
-                source.Append($"    L{i} = {{\n        open L{(i + 1) % size}\n        public V{i} = V{(i + 1) % size}{(i == entry ? " + x" : "")}\n        1\n    }}\n");
-            for (var i = 0; i < size; i++)
-                source.Append($"    A{i} = {{\n        open L{i}\n        V{i}\n    }}\n    C{i} = L{i}.V{i}\n");
-            source.Append("    1\n}\n1");
-            var owner = ExposureOpenChainComplexityTests.Member(ExposureOpenChainComplexityTests.Exposed(source.ToString(), new()), "O").Value;
+            var owner = ExposureOpenChainComplexityTests.Member(ExposureOpenChainComplexityTests.Exposed(OpenedMemberRing(size, entry), new()), "O").Value;
             for (var i = 0; i < size; i++)
             {
                 ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(owner, $"L{i}", $"V{i}"), ("x", 1));
@@ -402,31 +412,36 @@ public sealed class ExposureSettlementShareTests
         Assert.False(right.Equals(left));
     }
 
-    private static string LiftedOwnerDefinition(int length, string owner)
+    internal static string LiftedOwnerDefinition(int length, string owner)
         => $"{owner}(p) = {{\n" + ExposureOpenChainComplexityTests.Chain("open", length, "p + q", "    ")
             + ExposureOpenChainComplexityTests.Reader("open", "    ") + "    R(0)\n}\n";
 
     /// <summary>
-    /// A chain whose terminal reads a name no level binds: every link's member lifts a parameter of its own, so
-    /// the settlement walk binds one more owner at every link and no key ever repeats. The share cannot serve it
-    /// and its frames stay quadratic. Each extension visits the incoming reference's own owners instead of
-    /// enumerating the accumulated set.
+    /// A chain whose terminal reads a name no level binds: every link's member lifts a parameter of its own, so the
+    /// settlement walk binds one more owner at every link and no exact key ever repeats. No link reads any of those
+    /// owners, so each walk below a link is answered by the footprint of the walk kept before it: 6N − 9 frames at the
+    /// root and 8N − 6 in the owner, exactly the frames of the unlifted root and captured-terminal chains (formerly N²
+    /// and N(N + 3)). Each extension visits the incoming reference's own owners instead of enumerating the accumulated
+    /// set.
     /// </summary>
     [Theory]
     [InlineData("root-p")]
     [InlineData("open-pq")]
-    public void LiftedTerminalChain_BoundOwnerVisitsStayWithinFrameCount(string shape)
+    public void LiftedTerminalChain_SettlesInLinearFrames_AndBoundOwnerVisitsStayWithinThem(string shape)
     {
-        foreach (var length in new[] { 32, 64, 128 })
+        foreach (var length in new[] { 32, 64, 128, 512 })
         {
             var source = shape == "root-p" ? RootChain(length, last: "p") : LiftedOwnerDefinition(length, "O") + "O(1)";
             var observations = new FrontEndTraversalObservations();
             var root = ExposureOpenChainComplexityTests.Exposed(source, observations);
 
-            // Still one walk of the links below from every link: nothing here is served by the share.
             var frames = observations.RequiredAncestorSettlementFrames;
-            Assert.InRange(frames, (long)length * length / 2, (long)length * (length + 3));
-            Assert.InRange(observations.SettlementShareHits, 0, 4);
+            Assert.Equal(shape == "root-p" ? 6L * length - 9 : 8L * length - 6, frames);
+            Assert.Equal(shape == "root-p" ? length - 3 : length - 2, observations.SettlementShareHits);
+            Assert.Equal(observations.SettlementShareHits, observations.SettlementShareCandidateHits);
+            Assert.Equal(observations.SettlementShareHits, observations.SettlementShareCandidateVisits);
+            // The nested shape reads its owner's p (absent) at three frames per link; the root shape reads none.
+            Assert.Equal(shape == "root-p" ? 0 : 3L * length, observations.SettlementFootprintWork);
             Assert.InRange(observations.SettlementBoundOwnerVisits, 1, frames);
 
             if (shape != "open-pq")
@@ -458,26 +473,30 @@ public sealed class ExposureSettlementShareTests
     }
 
     /// <summary>
-    /// The residual is not about lifting: a member chain whose links own a parameter, written here, read or not,
-    /// binds one more owner at every link exactly as the lifted-terminal chain does, so no settlement key repeats,
-    /// the share serves nothing, and the frames stay quadratic (D² as measured). Nothing escapes any link: each
-    /// member's parameter is its own. The frames are charged to the operation
-    /// (<see cref="ExposureSettlementFrameChargeTests"/>).
+    /// A member chain whose links own a parameter, written here, read or not, binds one more owner at every link
+    /// exactly as the lifted-terminal chain does, so no exact settlement key repeats (formerly D² frames). No link
+    /// reads a bound owner — each member's parameter is its own, and nothing escapes any link — so every footprint is
+    /// empty and each top-level settlement reuses the walk below its own link after three frames: exactly 4D − 4
+    /// frames, D − 2 share hits, one footprint compared per hit and none read, and 2D − 1 bound-owner visits. The
+    /// frames are charged to the operation (<see cref="ExposureSettlementFrameChargeTests"/>).
     /// </summary>
     [Theory]
     [InlineData("1")]
     [InlineData("x")]
-    public void ExplicitParameterMemberChain_FramesStayQuadratic(string argument)
+    public void ExplicitParameterMemberChain_SettlesInLinearFrames(string argument)
     {
-        foreach (var length in new[] { 128, 256, 512 })
+        foreach (var length in new[] { 16, 128, 512, 2048 })
         {
             var observations = new FrontEndTraversalObservations();
             var root = ExposureOpenChainComplexityTests.Exposed(ExplicitParameterMemberChain(length, argument), observations);
 
-            var frames = observations.RequiredAncestorSettlementFrames;
-            Assert.InRange(frames, (long)length * length / 2, (long)length * (length + 3));
-            Assert.InRange(observations.SettlementShareHits, 0, 4);
-            Assert.InRange(observations.SettlementBoundOwnerVisits, 1, frames);
+            Assert.Equal(4L * length - 4, observations.RequiredAncestorSettlementFrames);
+            Assert.Equal(length - 2, observations.SettlementShareHits);
+            Assert.Equal(length - 2, observations.SettlementShareCandidateHits);
+            Assert.Equal(length - 2, observations.SettlementShareCandidateVisits);
+            Assert.Equal(3L * length - 2, observations.SettlementShareStores);
+            Assert.Equal(0, observations.SettlementFootprintWork);
+            Assert.Equal(2L * length - 1, observations.SettlementBoundOwnerVisits);
 
             for (var i = 0; i <= length; i++)
             {
@@ -505,6 +524,11 @@ public sealed class ExposureSettlementShareTests
         Assert.True(large < 24 * small, $"Allocated {small:N0} and {large:N0} bytes at 128 and 512 links.");
     }
 
+    /// <summary>
+    /// An earlier lifted chain competes with a later captured chain for the share's capacity (the admission weights of
+    /// <see cref="SettlementShare.Key.Weight"/>): the captured chain still settles in linear frames. Before footprints
+    /// the lifted chain alone stored one entry per frame of its quadratic walk; it now settles in linear frames too.
+    /// </summary>
     [Fact]
     public void LiftedChain_DoesNotCrowdLaterCapturedChainOutOfTheShare()
     {
@@ -519,7 +543,6 @@ public sealed class ExposureSettlementShareTests
         Assert.Empty(parsed.Diagnostics);
         var owner = ExposureOpenChainComplexityTests.Member(parsed.Root, "O").Value;
         ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(owner, "R"), ("p", 0));
-        Assert.InRange(observations.RequiredAncestorSettlementFrames, 1,
-            liftedLength * (liftedLength + 3L) + 8 * capturedLength + 16);
+        Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 8L * liftedLength + 8 * capturedLength + 32);
     }
 }
