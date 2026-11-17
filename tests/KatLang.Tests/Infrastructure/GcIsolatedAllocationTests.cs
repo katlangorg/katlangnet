@@ -30,6 +30,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.ScopeVisibilityRepresentationTests.Queries_AllocateIndependentlyOfTheScopeWidth_GcIsolatedChild",
                 "KatLang.Tests.SemanticModelPositionLookupTests.PositionQueries_AllocateNothing_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.HostComparer_OneComparison_OfTheDifferentlySharedPair_AllocatesUnderEightMegabytes_GcIsolatedChild",
+                "KatLang.Tests.SharedValueGraphComplexityTests.ReferenceClassEntries_TheIsomorphicControlAndUnsharedTrees_StayUnderTheOneEntryBounds_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.ReferenceClasses_OneComparison_OfTheDifferentlySharedPair_AllocatesUnderEightMegabytes_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.ScalarFastPath_AllocatesNothing_GcIsolatedChild",
                 "KatLang.Tests.WideDeconstructionScalabilityTests.TargetMetadata_DoesNotAllocateBeyondTheHelperRecord_GcIsolatedChild",

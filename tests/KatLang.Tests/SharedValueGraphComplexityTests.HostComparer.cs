@@ -5,7 +5,7 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// The host-facing, context-free <see cref="Result.ValueComparer"/> decides structural equality with
-/// reference classes too (<see cref="ReferenceClasses"/>, union–find, one per call), like the
+/// reference classes too (<see cref="CommittedReferenceClasses"/>, union–find, one per call), like the
 /// evaluator's walks (<c>SharedValueGraphComplexityTests.ReferenceClasses.cs</c>). Its exact-pair memo
 /// reached about m² pairs per level of the shift-register witness: at m = 512, depth 40 one
 /// comparison expanded 8,388,097 pairs and allocated about 630 MB (Release, measured before the

@@ -1328,7 +1328,9 @@ public closed record Result
     /// (<see cref="ReferenceClasses"/>), not as exact pairs. Their equal structural memo is O(distinct nodes reached),
     /// so two equal values whose internal sharing differs cost O(|A| + |B|), never |A|·|B| pairs.
     /// The context-free walk's classes belong to one call and use the committed layer only: it
-    /// returns false at its first mismatch and drops them, so it needs no undo log.</para>
+    /// returns false at its first mismatch and drops them, so it needs no undo log. It and the
+    /// single-comparison walk keep them as <see cref="CommittedReferenceClasses"/>, one parent
+    /// entry per union; the operation walk keeps the stamped two-layer form.</para>
     /// </summary>
     internal sealed class ValueSemanticComparer : IEqualityComparer<Result>
     {
@@ -1566,7 +1568,7 @@ public closed record Result
             // short-circuit.
             //
             // REFERENCE CLASSES (this call only): EQUAL knowledge is equivalence classes of
-            // references (ReferenceClasses, union–find, committed layer only), and a nested pair is
+            // references (CommittedReferenceClasses, union–find, committed layer only), and a nested pair is
             // skipped whenever its two references already share a class — not only when that exact
             // ordered pair was expanded before. The reference fast path above helps only when the
             // SAME object is on both sides; two independently built equal DAGs share no object at
@@ -1588,7 +1590,7 @@ public closed record Result
             // handed in, the skip is exactly the coinductive answer and still terminates instead of
             // hanging the host.
             var suspended = new Stack<(IReadOnlyList<Result> Left, IReadOnlyList<Result> Right, int Next)>();
-            ReferenceClasses? classes = null;
+            CommittedReferenceClasses? classes = null;
             var next = 0;
 
             while (true)
@@ -1649,7 +1651,7 @@ public closed record Result
                 // Allocated on the first nested descent, so a comparison that never leaves the top
                 // level (two flat collections of leaves) allocates no memo at all. Union returns
                 // false when the two references already share a class: known equal, skipped.
-                if (!(classes ??= new ReferenceClasses()).Union(left, right)) continue;
+                if (!(classes ??= new CommittedReferenceClasses()).Union(left, right)) continue;
 
                 observations?.RecordEqualityPairExpansion();
 
@@ -1995,7 +1997,7 @@ public closed record Result
         ///
         /// <para>RECORDED, NOT FINALIZED. The walk returns <c>false</c> at its first mismatch, and its
         /// memo dies with it, so it needs no verdicts, only equivalence classes of references
-        /// (<see cref="ReferenceClasses"/>, committed layer only). A pair whose two references share a
+        /// (<see cref="CommittedReferenceClasses"/>, committed layer only). A pair whose two references share a
         /// class is skipped: known equal, or an open ancestor, which only an invalid cyclic graph
         /// allows and which is skipped coinductively. A pair is recorded (its two references united)
         /// once, at the same points as in the operation walk: when it is seeded (the moment it first
@@ -2024,7 +2026,7 @@ public closed record Result
             Stack<SingleFrame>? suspended = null;
             // The classes of recorded references: the walk needs no verdict, only whether a pair is
             // already known equal. Allocated at the first record.
-            ReferenceClasses? classes = null;
+            CommittedReferenceClasses? classes = null;
             // The current level's own pair, read only while the level is unsettled (not yet recorded);
             // the top-level pair is settled from the start, since it is never recorded.
             Result leftNode = null!, rightNode = null!;
@@ -2062,7 +2064,7 @@ public closed record Result
 
                 if (!settled)
                 {
-                    (classes ??= new ReferenceClasses()).Union(leftNode, rightNode);
+                    (classes ??= new CommittedReferenceClasses()).Union(leftNode, rightNode);
                     settled = true;
                 }
 
@@ -2082,7 +2084,7 @@ public closed record Result
                 (leftNode, rightNode, leftItems, rightItems, next) = (left, right, childLeft, childRight, 0);
                 settled = childLeft.Count >= RetainedWidth;
                 if (settled)
-                    (classes ??= new ReferenceClasses()).Union(left, right);
+                    (classes ??= new CommittedReferenceClasses()).Union(left, right);
             }
         }
 
