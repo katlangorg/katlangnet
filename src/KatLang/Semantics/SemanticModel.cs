@@ -124,7 +124,9 @@ public sealed class SemanticModel
         Root = root;
         IdentifierOccurrences = Array.AsReadOnly(identifierOccurrences.ToArray());
         Declarations = Array.AsReadOnly(declarations.ToArray());
-        IdentifierResolutions = Array.AsReadOnly(identifierResolutions.ToArray());
+        _identifierResolutions = identifierResolutions.ToArray();
+        IdentifierResolutions = Array.AsReadOnly(_identifierResolutions);
+        ResolutionSitesAreMonotone = SitesAreMonotone(_identifierResolutions);
         PropertyInfos = Array.AsReadOnly(propertyInfos.ToArray());
         ScopeVisibilities = Array.AsReadOnly(
             (scopeVisibilities ?? [new ScopeVisibility(Span: null, Symbols: [])]).ToArray());
@@ -144,6 +146,18 @@ public sealed class SemanticModel
 
     private readonly IReadOnlyDictionary<DeclarationOccurrence, PropertyInfo> _propertiesByDeclaration;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<PropertyInfo>> _propertiesByName;
+
+    // The array behind IdentifierResolutions, read in place by position queries.
+    private readonly IdentifierResolution[] _identifierResolutions;
+
+    /// <summary>
+    /// Whether the resolution sites' starts AND ends both never decrease in listing order. The
+    /// builder lists sites by start, then end, so this holds whenever no site strictly contains
+    /// another — the usual case for a parsed document, whose identifier sites are written names
+    /// that do not overlap. Position queries then binary-search the listing; otherwise (for
+    /// example a host-built tree with nested sites, or an unordered listing) they scan it.
+    /// </summary>
+    internal bool ResolutionSitesAreMonotone { get; }
 
     /// <summary>
     /// Root algorithm the model was built from.
@@ -294,7 +308,61 @@ public sealed class SemanticModel
     /// character is not).
     /// </summary>
     public IdentifierResolution? FindResolutionAt(SourcePosition position)
-        => IdentifierResolutions.FirstOrDefault(resolution => resolution.Occurrence.Span.Contains(position));
+    {
+        var resolutions = _identifierResolutions;
+        if (!ResolutionSitesAreMonotone)
+        {
+            foreach (var resolution in resolutions)
+            {
+                if (resolution.Occurrence.Span.Contains(position))
+                    return resolution;
+            }
+
+            return null;
+        }
+
+        // With starts and ends both non-decreasing, the sites containing the position are one
+        // contiguous run: every site before the first one that ends after the position ends at or
+        // before it, and every site from there on starts no earlier than that first one. So the
+        // first containing site in listing order is that first one, when it starts at or before
+        // the position, and there is none otherwise.
+        var low = 0;
+        var high = resolutions.Length;
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (resolutions[middle].Occurrence.Span.End > position)
+                high = middle;
+            else
+                low = middle + 1;
+        }
+
+        return low < resolutions.Length && resolutions[low].Occurrence.Span.Start <= position
+            ? resolutions[low]
+            : null;
+    }
+
+    /// <summary>
+    /// Whether the sites' starts and ends both never decrease in listing order, which makes
+    /// <see cref="FindResolutionAt"/> a binary search. A null entry fails the check, so the query
+    /// keeps the plain scan for it.
+    /// </summary>
+    private static bool SitesAreMonotone(IdentifierResolution[] resolutions)
+    {
+        SourceSpan? previous = null;
+        foreach (var resolution in resolutions)
+        {
+            if (resolution?.Occurrence is not { } occurrence)
+                return false;
+
+            var span = occurrence.Span;
+            if (previous is { } last && (span.Start < last.Start || span.End < last.End))
+                return false;
+            previous = span;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Finds all identifier resolutions with the supplied name.
