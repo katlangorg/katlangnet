@@ -209,4 +209,167 @@ public class OpenProviderIdentityTests
         var twin = ElaboratedScopeLookup.ResolveOpenProvider(rScope, new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("X", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))], [])))!.Value.Identity;
         Assert.NotEqual(viaName, twin);
     }
+
+    // ── The runtime declaration index (implementation-only, November 2026) ─────────────────────
+    // `Evaluator.ResolveAllOpens` resolves a consulted level's targets on every read and counts its
+    // providers by comparing each target only with the accepted targets of its OWN declaration
+    // (`Evaluator.DeduplicateResolvedProviders`). The former scan compared every target with every
+    // accepted one: R reads consulting a level of K distinct declarations made R·K(K−1)/2 identity
+    // comparisons, cubic when R = K. Counts come from the run's EvaluationObservations on a prepared
+    // root, on the synchronous route and the forced async twin alike (OpenProviderIndexing).
+
+    /// <summary>
+    /// <c>open M0, …, M{K−1}</c> with <c>Mi = { public Vi = i }</c> (or <c>public Fi(x) = x + i</c>)
+    /// and one row listing every opened name — or, as the control, every qualified member.
+    /// </summary>
+    private static string WideOpen(int width, bool callable, bool qualified)
+    {
+        var names = Enumerable.Range(0, width).ToArray();
+        var declarations = string.Concat(names.Select(i => callable
+            ? $"M{i} = {{ public F{i}(x) = x + {i} }}\n"
+            : $"M{i} = {{ public V{i} = {i} }}\n"));
+        var reads = names.Select(i => (qualified ? $"M{i}." : "") + (callable ? $"F{i}(0)" : $"V{i}"));
+        return $"open {string.Join(", ", names.Select(i => $"M{i}"))}\n{declarations}[{string.Join(", ", reads)}]";
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(4)]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(16)]
+    [InlineData(32)]
+    [InlineData(64)]
+    public async Task DistinctDeclarations_AreIndexedWithoutAnyIdentityComparison(int width)
+    {
+        var expected = $"ok L[{string.Join(", ", Enumerable.Range(0, width))}]";
+        // The narrow path scans declaration keys (at most 28 per level); a wider level hashes them.
+        long keyComparisonsPerLevel = width <= Evaluator.OpenProviderLinearIndexLimit ? width * (width - 1) / 2 : 0;
+        foreach (var callable in new[] { false, true })
+        {
+            // Every read is one lexical lookup that consults the root's open level (value reads, and
+            // callee resolution as the callable control): K levels of K targets each.
+            var opened = await OpenProviderIndexing.OnBothRoutesAsync(WideOpen(width, callable, qualified: false));
+            Assert.Equal(new OpenProviderIndexing.Observation(expected, width, (long)width * width, width * keyComparisonsPerLevel, 0, 0), opened);
+
+            // The qualified control reads the same members structurally and consults no open level.
+            var qualified = await OpenProviderIndexing.OnBothRoutesAsync(WideOpen(width, callable, qualified: true));
+            Assert.Equal(new OpenProviderIndexing.Observation(expected, 0, 0, 0, 0, 0), qualified);
+        }
+    }
+
+    [Fact]
+    public async Task ProviderIndexWorkPerConsultedLevel_GrowsLinearlyWithTheWidth()
+    {
+        // K and 2K over the hashed path: the work per consulted level is the K index entries alone
+        // (the pairwise scan added K(K−1)/2 identity comparisons per level, 2,016 at K = 64).
+        long? previous = null;
+        foreach (var width in new[] { 16, 32, 64, 128 })
+        {
+            var opened = await OpenProviderIndexing.OnBothRoutesAsync(WideOpen(width, callable: false, qualified: false));
+            Assert.Equal(width, opened.Levels);
+            Assert.Equal(0, opened.IdentityComparisons);
+            Assert.Equal(width, opened.WorkPerLevel);
+            if (previous is { } half)
+                Assert.Equal(2 * half, opened.WorkPerLevel);
+            previous = opened.WorkPerLevel;
+        }
+    }
+
+    /// <summary>
+    /// A host-built root opening inline blocks: <c>P</c> is ONE declaration pre-wired under the host
+    /// levels <paramref name="pLevels"/> (one block per entry, at that position), every other entry
+    /// (<c>null</c>) a distinct declaration of its own. Every block publicly provides <c>Z</c>, so the
+    /// read of <c>Z</c> is the evaluator's ambiguity naming EVERY provider of the level in order.
+    /// </summary>
+    private static Expr OneDeclarationAmongOthers(params ScopeCtx?[] pLevels)
+    {
+        static Algorithm.User Namespace(int value)
+            => new(null, [], [], [new Property("Z", new Algorithm.User(null, [], [], [], [new Expr.Num(value)]), IsPublic: true)], OutputBundle.Empty);
+
+        var p = Namespace(100);
+        var opens = pLevels.Select((level, i) => (Expr)new Expr.AlgorithmExpr(level is null ? Namespace(i) : p with { Parent = level })).ToArray();
+        return new Expr.AlgorithmExpr(new Algorithm.User(null, [], opens, [], [new Expr.Resolve("Z")]));
+    }
+
+    private static string AmbiguityOf(params int[] positions)
+        => $"AmbiguousOpen(Z: {string.Join(", ", positions.Select(static i => $"(inline#{i})"))}) @ ";
+
+    [Fact]
+    public async Task OneDeclarationUnderDistinctHostLevels_StaysDistinctProviders_OnTheNarrowPath()
+    {
+        ScopeCtx s1 = new(null, [], []), s2 = new(null, [], []);
+        // P@s1, D, P@s2, P@s1, D: the second P@s1 is the first one's provider; P@s2 is another
+        // (declaration bucketing never merges distinct declaring scopes).
+        var distinct = await OpenProviderIndexing.OnBothRoutesAsync(OneDeclarationAmongOthers(s1, null, s2, s1, null));
+        Assert.Contains(AmbiguityOf(0, 1, 2, 4), distinct.Outcome, StringComparison.Ordinal);
+        Assert.Equal((1, 5, 7, 2, 0), (distinct.Levels, distinct.Entries, distinct.KeyComparisons, distinct.IdentityComparisons, distinct.CrossDeclarationIdentityComparisons));
+
+        // Control: every P reach under ONE host level object is one provider.
+        var same = await OpenProviderIndexing.OnBothRoutesAsync(OneDeclarationAmongOthers(s1, null, s1, s1, null));
+        Assert.Contains(AmbiguityOf(0, 1, 4), same.Outcome, StringComparison.Ordinal);
+        Assert.Equal((1, 5, 5, 2, 0), (same.Levels, same.Entries, same.KeyComparisons, same.IdentityComparisons, same.CrossDeclarationIdentityComparisons));
+    }
+
+    [Fact]
+    public async Task OneDeclarationUnderDistinctHostLevels_StaysDistinctProviders_OnTheHashedPath()
+    {
+        ScopeCtx s1 = new(null, [], []), s2 = new(null, [], []), s3 = new(null, [], []);
+        // Twelve targets: P's reaches are compared only with P's accepted reaches, in acceptance
+        // order (P@s3 with P@s1 and P@s2; the later P@s2 matches the SECOND accepted reach).
+        var distinct = await OpenProviderIndexing.OnBothRoutesAsync(
+            OneDeclarationAmongOthers(s1, null, s2, null, s1, null, s3, null, s2, null, null, null));
+        Assert.Contains(AmbiguityOf(0, 1, 2, 3, 5, 6, 7, 9, 10, 11), distinct.Outcome, StringComparison.Ordinal);
+        Assert.Equal((1, 12, 0, 6, 0), (distinct.Levels, distinct.Entries, distinct.KeyComparisons, distinct.IdentityComparisons, distinct.CrossDeclarationIdentityComparisons));
+
+        var same = await OpenProviderIndexing.OnBothRoutesAsync(
+            OneDeclarationAmongOthers(s1, null, s1, null, s1, null, s1, null, s1, null, null, null));
+        Assert.Contains(AmbiguityOf(0, 1, 3, 5, 7, 9, 10, 11), same.Outcome, StringComparison.Ordinal);
+        Assert.Equal((1, 12, 0, 4, 0), (same.Levels, same.Entries, same.KeyComparisons, same.IdentityComparisons, same.CrossDeclarationIdentityComparisons));
+    }
+
+    private const string FallbackThroughOpens =
+        "Lib = {\n    public Sub = {\n        public X(v) = v\n    }\n}\nOther = {\n    public X(v) = v + 1\n}\nRef = Lib.Sub\nA = {\n    open §\n    K(q) = q.X\n    K(10)\n}\nA";
+
+    /// <summary>target list, providers of the runtime ambiguity in order (null: one provider, value 10), identity comparisons per level.</summary>
+    public static TheoryData<string, string?, int> FirstRepresentativeMatrix() => new()
+    {
+        { "Lib.Sub, Ref, Other", "Lib.Sub, Other", 1 },
+        { "Ref, Lib.Sub, Other", "Ref, Other", 1 },
+        { "Other, Ref, Lib.Sub", "Other, Ref", 1 },
+        { "Ref, Other, Lib.Sub, Ref", "Ref, Other", 1 },
+        { "Lib.Sub, Ref", null, 1 },
+        { "Lib.Sub, Other", "Lib.Sub, Other", 0 },
+    };
+
+    [Theory]
+    [MemberData(nameof(FirstRepresentativeMatrix))]
+    public async Task TheFirstRepresentative_NamesTheProvider_AndDeclarationsSkipEachOther(string targets, string? providers, int identityPerLevel)
+    {
+        // A transparent reference and a dotted path to one declaration are one provider named by its
+        // first target; the runtime ambiguity of a fallback the receiver decides (`q.X`) lists the
+        // providers in order. Only the two reaches of Sub's declaration are ever compared.
+        var source = FallbackThroughOpens.Replace("§", targets, StringComparison.Ordinal);
+        var observed = await OpenProviderIndexing.OnBothRoutesAsync(source);
+        if (providers is null)
+            Assert.Equal("ok 10", observed.Outcome);
+        else
+            Assert.Contains($"AmbiguousOpen(X: {providers}) @ ", observed.Outcome, StringComparison.Ordinal);
+        Assert.Equal(1, observed.Levels);
+        Assert.Equal(identityPerLevel, observed.IdentityComparisons);
+        Assert.Equal(0, observed.CrossDeclarationIdentityComparisons);
+
+        var engine = await SixRouteAgreement.OnEveryRouteAsync(source);
+        Assert.Equal(providers is null ? "ok" : "err", engine.Kind);
+    }
+
+    [Fact]
+    public async Task EqualInlineProviders_AreTwoDeclarations_NeverCompared()
+    {
+        const string source = "A = {\n    open { public X(v) = 101 }, { public X(v) = 101 }\n    K(q) = q.X\n    K(10)\n}\nA";
+        var observed = await OpenProviderIndexing.OnBothRoutesAsync(source);
+        Assert.Contains("AmbiguousOpen(X: (inline#0), (inline#1)) @ ", observed.Outcome, StringComparison.Ordinal);
+        Assert.Equal((1, 2, 1, 0), (observed.Levels, observed.Entries, observed.KeyComparisons, observed.IdentityComparisons));
+    }
 }

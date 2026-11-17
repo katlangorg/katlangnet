@@ -125,6 +125,55 @@ public class EvaluatorDefensiveBranchTests
     }
 
     /// <summary>
+    /// After the shape pass, <c>ResolveAllOpens</c> resolves the targets in written order and the
+    /// FIRST failure is the level's error — inside its open frame, at the target's span — before any
+    /// provider is indexed (<see cref="EvaluationObservations.OpenProviderLevelCount"/> stays zero).
+    /// The front end refuses each of these targets eagerly (<c>UnresolvedOpenTarget</c>,
+    /// <c>IllegalInOpen</c>, <c>BadOpenForm</c>), so the order is pinned on host-built roots, with the
+    /// complete payload compared between the synchronous route and the forced async twin.
+    /// </summary>
+    [Fact]
+    public async Task OpenTargets_ResolveInWrittenOrder_AndTheFirstFailureIsReportedBeforeIndexing()
+    {
+        static SourceSpan At(int column, int width) => new(1, column, 1, column + width);
+        Expr Named(string name, int column) => new Expr.Resolve(name) { Span = At(column, name.Length) };
+        Property[] libraries =
+        [
+            new("Lib", new Algorithm.User(null, [], [], [new Property("V", Value(1), IsPublic: true)], OutputBundle.Empty)),
+            new("Other", new Algorithm.User(null, [], [], [new Property("W", Value(2), IsPublic: true)], OutputBundle.Empty)),
+        ];
+        Expr Opening(params Expr[] opens) => Program(Root(opens: opens, properties: libraries, output: [new Expr.Resolve("V")]));
+
+        var cases = new (string Name, Expr Program, string Outcome)[]
+        {
+            // A malformed later target wins over an earlier target's resolution error (no open frame).
+            ("malformed later target", Opening(Named("count", 6), new Expr.Num(7) { Span = At(13, 1) }),
+                "err BadOpenForm { Span = , IsResourceLimit = False, Code = BadOpenForm, Reason = num: 7 } @  | BadOpenForm: Bad open form: num: 7 @ "),
+            // A valid-form later target whose resolution fails: the first failure in written order.
+            ("unresolved name after a valid target", Opening(Named("Lib", 6), Named("Gone", 11), Named("count", 17)),
+                "err [while resolving open: Gone @ [1:11, 1:15)] UnknownName { Span = [1:11, 1:15), IsResourceLimit = False, Code = UnknownName, Name = Gone } @ [1:11, 1:15)"
+                + " | UnknownName: while resolving open: Gone: Unknown name: Gone @ [1:11, 1:15)"),
+            ("builtin before an unresolved name", Opening(Named("Lib", 6), Named("count", 11), Named("Gone", 18)),
+                "err [while resolving open: count @ [1:11, 1:16)] IllegalInOpen { Span = [1:11, 1:16), IsResourceLimit = False, Code = IllegalInOpen, Reason = builtin 'count' } @ [1:11, 1:16)"
+                + " | IllegalInOpen: while resolving open: count: Illegal in open: builtin 'count' @ [1:11, 1:16)"),
+            ("missing member of a valid head", Opening(Named("Other", 6), new Expr.DotCall(Named("Lib", 13), "Nope", null) { Span = At(13, 8) }, Named("Gone", 23)),
+                "err [while resolving open: Lib.Nope @ [1:13, 1:21)] UnknownProperty { Span = [1:13, 1:21), IsResourceLimit = False, Code = UnknownProperty, ObjectDesc = Lib, PropertyName = Nope } @ [1:13, 1:21)"
+                + " | UnknownProperty: while resolving open: Lib.Nope: Unknown property 'Nope' on Lib @ [1:13, 1:21)"),
+        };
+
+        foreach (var (name, program, outcome) in cases)
+        {
+            var observed = await OpenProviderIndexing.OnBothRoutesAsync(program);
+            Assert.True(outcome == observed.Outcome, $"{name}: expected {outcome}, got {observed.Outcome}");
+            Assert.Equal((0, 0), (observed.Levels, observed.Entries));
+        }
+
+        // Control: two valid targets of two declarations are indexed once the level resolves.
+        var resolved = await OpenProviderIndexing.OnBothRoutesAsync(Opening(Named("Lib", 6), Named("Other", 11)));
+        Assert.Equal(new OpenProviderIndexing.Observation("ok 1", 1, 2, 1, 0, 0), resolved);
+    }
+
+    /// <summary>
     /// Runtime duplicate-property validation. The parser reports "Property 'X'
     /// is already defined", so this check is pure host-AST defense.
     /// </summary>

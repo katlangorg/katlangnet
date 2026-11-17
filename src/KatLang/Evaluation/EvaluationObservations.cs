@@ -109,6 +109,53 @@ internal sealed class EvaluationObservations
         => CallDiagnosticNameRenderCount = checked(CallDiagnosticNameRenderCount + 1);
 
     /// <summary>
+    /// Number of open levels whose resolved providers were deduplicated during this run (Q-19 D-I,
+    /// <c>Evaluator.ResolveAllOpens</c>): one per resolution of a nonempty <c>open</c> list whose every
+    /// remaining written target resolved, so one per level a lexical lookup consults (each read
+    /// resolves the level's opens anew). A level whose resolution fails indexes nothing.
+    /// </summary>
+    public long OpenProviderLevelCount { get; private set; }
+
+    /// <summary>
+    /// Number of resolved open targets presented to provider deduplication during this run: the
+    /// written targets left after the written-key skip, each indexed once per level resolution, so a
+    /// level with <c>K</c> such targets adds exactly <c>K</c>.
+    /// </summary>
+    public long OpenProviderIndexEntryCount { get; private set; }
+
+    /// <summary>
+    /// Number of declaration-key reference comparisons made by provider deduplication's small path
+    /// during this run: a level with at most <c>Evaluator.OpenProviderLinearIndexLimit</c> targets
+    /// compares each incoming provider's declaration with the earlier accepted ones' (allocation-free,
+    /// at most 28 per level); a wider level hashes the key instead and adds nothing here.
+    /// </summary>
+    public long OpenProviderDeclarationKeyComparisonCount { get; private set; }
+
+    /// <summary>
+    /// Number of exact provider-identity comparisons (<c>Evaluator.SameRepeatedCallableIdentity</c>)
+    /// made by provider deduplication during this run. Only providers of the SAME declaration are
+    /// compared, so <c>K</c> distinct declarations at a level add zero.
+    /// </summary>
+    public long OpenProviderIdentityComparisonCount { get; private set; }
+
+    /// <summary>
+    /// The part of <see cref="OpenProviderIdentityComparisonCount"/> whose two providers have
+    /// DIFFERENT declarations. Such a pair is never one provider, so the declaration index never makes
+    /// one and this stays zero; the former pairwise scan made <c>K(K−1)/2</c> per level of <c>K</c>
+    /// distinct declarations.
+    /// </summary>
+    public long OpenProviderCrossDeclarationIdentityComparisonCount { get; private set; }
+
+    internal void RecordOpenProviderIndexing(int entries, int keyComparisons, int identityComparisons, int crossDeclarationIdentityComparisons)
+    {
+        OpenProviderLevelCount = checked(OpenProviderLevelCount + 1);
+        OpenProviderIndexEntryCount = checked(OpenProviderIndexEntryCount + entries);
+        OpenProviderDeclarationKeyComparisonCount = checked(OpenProviderDeclarationKeyComparisonCount + keyComparisons);
+        OpenProviderIdentityComparisonCount = checked(OpenProviderIdentityComparisonCount + identityComparisons);
+        OpenProviderCrossDeclarationIdentityComparisonCount = checked(OpenProviderCrossDeclarationIdentityComparisonCount + crossDeclarationIdentityComparisons);
+    }
+
+    /// <summary>
     /// Number of per-item <c>filter</c> diagnostic contexts constructed during this run.
     /// Passing predicates and resource-limit failures observe zero; an ordinary predicate
     /// failure increments exactly once for the failing item whose context is attached.

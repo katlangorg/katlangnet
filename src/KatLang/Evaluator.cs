@@ -1496,7 +1496,10 @@ public static partial class Evaluator
     /// provider's diagnostic name; which providers the level has never depends on order.
     /// A repeated written-target key (<see cref="OpenTargetDedupKey"/>) is skipped before
     /// resolution as a pure optimization (it resolves the same target). Validates all open
-    /// expressions first for fail-fast diagnostics.
+    /// expressions first for fail-fast diagnostics, then resolves every remaining target in
+    /// written order — the first failure, with its open frame and span, is the level's error —
+    /// and only then counts the providers (<see cref="DeduplicateResolvedProviders"/>), as Lean
+    /// resolves the whole list before its fold.
     /// Lean: resolveAllOpens → EvalM (List ResolvedOpen).
     /// </summary>
     private static EvalResult<IReadOnlyList<ResolvedOpen>> ResolveAllOpens(
@@ -1524,8 +1527,8 @@ public static partial class Evaluator
                 return new EvalError.BadOpenForm($"{ExprKind(openExpr)}: {displayName}");
         }
 
-        // Then resolve with bounded diagnostic names, and count each semantic provider once:
-        // a target resolving to the callable identity of an earlier one is that provider.
+        // Then resolve every target in written order with its bounded diagnostic name; the
+        // first failure is the level's error.
         var result = new List<ResolvedOpen>(deduped.Count);
         foreach (var (displayName, openExpr) in deduped)
         {
@@ -1533,22 +1536,156 @@ public static partial class Evaluator
                 CtxOpen(displayName),
                 ResolveOpen(openExpr, ctx));
             if (libResult.IsError) return libResult.Error;
-            if (!IsResolvedProvider(result, libResult.Value))
-                result.Add(new ResolvedOpen(displayName, openExpr, libResult.Value));
+            result.Add(new ResolvedOpen(displayName, openExpr, libResult.Value));
         }
+
+        // Count each semantic provider once: a target resolving to the callable identity of an
+        // earlier one is that provider.
+        DeduplicateResolvedProviders(result, ctx.Observations);
         return EvalResult<IReadOnlyList<ResolvedOpen>>.Ok(result);
     }
 
-    /// <summary>Whether <paramref name="provider"/> is the semantic provider of an earlier resolved target (Q-19 D-I).</summary>
-    private static bool IsResolvedProvider(List<ResolvedOpen> resolved, Algorithm provider)
+    /// <summary>
+    /// The widest open level whose providers <see cref="DeduplicateResolvedProviders"/> scans
+    /// linearly by declaration key: allocation-free and at most 28 reference comparisons. A wider
+    /// level indexes its declarations in a hash table.
+    /// </summary>
+    internal const int OpenProviderLinearIndexLimit = 8;
+
+    /// <summary>Provider deduplication work of one level, for <see cref="EvaluationObservations"/>.</summary>
+    private struct OpenProviderIndexWork
     {
-        foreach (var earlier in resolved)
+        internal int KeyComparisons;
+        internal int IdentityComparisons;
+        internal int CrossDeclarationIdentityComparisons;
+    }
+
+    /// <summary>
+    /// Q-19 D-I's provider count over one level's resolved targets, IN PLACE: keeps the first target
+    /// of each semantic provider in written order and drops every later target whose provider is the
+    /// callable identity of an accepted one (<see cref="SameRepeatedCallableIdentity"/>, the accepted
+    /// provider first). The kept list is the level's providers, each named by its first target.
+    /// <para><b>The declaration index</b> (implementation-only optimization, November 2026). A
+    /// successful <see cref="ResolveOpen"/> never yields a builtin; every other algorithm carries a
+    /// <see cref="Algorithm.Declaration"/> fixed at construction and shared by its <c>with</c> copies;
+    /// and the identity of two non-builtins holds only for one object or for one declaration
+    /// reference. A target is therefore compared only with the accepted targets of its OWN
+    /// declaration, in acceptance order: an accepted target of another declaration could never have
+    /// matched, so skipping it hides nothing, and the kept list — members, first representatives,
+    /// display names and order — is the one the former scan over every accepted provider kept. The
+    /// declaring scope and activations still decide inside a declaration, so one block under two
+    /// host levels stays two providers.</para>
+    /// <para>Work per level of <c>K</c> targets: <c>K</c> index probes and no identity comparison
+    /// across declarations (formerly <c>K(K−1)/2</c> for <c>K</c> distinct declarations), plus the
+    /// comparisons inside each declaration's reaches — at most <c>B(B−1)/2</c> for <c>B</c> reaches
+    /// of one declaration, each a declaring-chain walk. Resolving the targets, and every read
+    /// re-resolving its level, cost what they did. Reported to <paramref name="observations"/>.</para>
+    /// </summary>
+    private static void DeduplicateResolvedProviders(List<ResolvedOpen> resolved, EvaluationObservations? observations)
+    {
+        var work = new OpenProviderIndexWork();
+        var entries = resolved.Count;
+        if (entries > 1)
         {
-            if (SameRepeatedCallableIdentity(earlier.Lib, provider))
-                return true;
+            var accepted = entries <= OpenProviderLinearIndexLimit
+                ? DeduplicateByDeclarationScan(resolved, ref work)
+                : DeduplicateByDeclarationTable(resolved, ref work);
+            resolved.RemoveRange(accepted, entries - accepted);
         }
 
-        return false;
+        observations?.RecordOpenProviderIndexing(entries, work.KeyComparisons, work.IdentityComparisons, work.CrossDeclarationIdentityComparisons);
+    }
+
+    /// <summary>
+    /// <see cref="DeduplicateResolvedProviders"/> for a narrow level: each target scans the accepted
+    /// targets' declaration keys in order and compares identity with those of its own declaration.
+    /// Returns the number of accepted targets, moved to the front in order.
+    /// </summary>
+    private static int DeduplicateByDeclarationScan(List<ResolvedOpen> resolved, ref OpenProviderIndexWork work)
+    {
+        var accepted = 0;
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            var candidate = resolved[i];
+            var declaration = ProviderDeclaration(candidate.Lib);
+            var duplicate = false;
+            for (var j = 0; j < accepted && !duplicate; j++)
+            {
+                work.KeyComparisons++;
+                var earlier = resolved[j].Lib;
+                if (ReferenceEquals(earlier.Declaration, declaration))
+                    duplicate = SameResolvedProvider(earlier, candidate.Lib, ref work);
+            }
+
+            if (!duplicate)
+                resolved[accepted++] = candidate;
+        }
+
+        return accepted;
+    }
+
+    /// <summary>
+    /// <see cref="DeduplicateResolvedProviders"/> for a wide level: a hash table maps each declaration
+    /// to its first accepted target, and the later accepted targets of the same declaration are
+    /// chained after it in acceptance order (<c>next</c>: position + 1, 0 ends the chain; allocated
+    /// only once some declaration keeps a second provider). Returns the number of accepted targets,
+    /// moved to the front in order.
+    /// </summary>
+    private static int DeduplicateByDeclarationTable(List<ResolvedOpen> resolved, ref OpenProviderIndexWork work)
+    {
+        var firstOfDeclaration = new Dictionary<DeclarationIdentity, int>(resolved.Count);
+        int[]? next = null;
+        var accepted = 0;
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            var candidate = resolved[i];
+            ref var first = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(
+                firstOfDeclaration, ProviderDeclaration(candidate.Lib), out var known);
+            if (!known)
+            {
+                first = accepted;
+                resolved[accepted++] = candidate;
+                continue;
+            }
+
+            var position = first;
+            var duplicate = false;
+            while (true)
+            {
+                if (SameResolvedProvider(resolved[position].Lib, candidate.Lib, ref work))
+                {
+                    duplicate = true;
+                    break;
+                }
+
+                var successor = next is null ? 0 : next[position];
+                if (successor == 0)
+                    break;
+                position = successor - 1;
+            }
+
+            if (duplicate)
+                continue;
+            next ??= new int[resolved.Count];
+            next[position] = accepted + 1;
+            resolved[accepted++] = candidate;
+        }
+
+        return accepted;
+    }
+
+    /// <summary>The index key of a resolved provider: its declaration (a builtin never resolves as one).</summary>
+    private static DeclarationIdentity ProviderDeclaration(Algorithm provider)
+        => provider.Declaration
+            ?? throw new System.Diagnostics.UnreachableException("Q-19: a resolved open provider is never a builtin, so it carries its declaration.");
+
+    /// <summary>Whether <paramref name="provider"/> is the semantic provider of the accepted <paramref name="earlier"/> (Q-19 D-I).</summary>
+    private static bool SameResolvedProvider(Algorithm earlier, Algorithm provider, ref OpenProviderIndexWork work)
+    {
+        work.IdentityComparisons++;
+        if (!ReferenceEquals(earlier.Declaration, provider.Declaration))
+            work.CrossDeclarationIdentityComparisons++;
+        return SameRepeatedCallableIdentity(earlier, provider);
     }
 
     /// <summary>

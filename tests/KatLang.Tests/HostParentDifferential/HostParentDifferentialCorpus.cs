@@ -568,6 +568,20 @@ public static class HostParentDifferentialCorpus
             }
             Case("HP-14t", "NEED-04: one block under two host levels and the prelude, at one depth, is three callables",
                 EqualDepthFork());
+
+            // Q-19 under the runtime declaration index (November 2026): ONE declaration reached under two
+            // DISTINCT empty host levels, interleaved with another declaration and a repeat of the first
+            // level. Only reaches of one declaration are compared; the repeat is the first reach's provider,
+            // while the second level's reach stays its own, so F is ambiguous. Under ONE level object the
+            // three reaches are one provider beside G's.
+            Expr Interleaved(ScopeCtx first, ScopeCtx second)
+                => Program([Block(provider with { Parent = first }), Block(Namespace(Public("G", Body(N(9))))),
+                            Block(provider with { Parent = second }), Block(provider with { Parent = first })],
+                    [], Add(R("F"), R("G")));
+            Case("HP-14u", "Q-19: one declaration under two DISTINCT empty host levels, interleaved with another provider and a repeat, stays two providers",
+                Interleaved(Scope(null), Scope(null)));
+            Case("HP-14v", "Q-19 control: the same interleaving under ONE empty host level object is one provider of F",
+                Interleaved(oneEmpty, oneEmpty), "F", "G");
         }
 
         // HP-15: DECON-CACHE-2 — parsed assignment deconstructions transformed with public record copies

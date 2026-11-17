@@ -25,6 +25,8 @@ public class ModuleIdentityTests
     private const string NestOpen = "https://mods.test/nest-open.kat";
     private const string NestFive = "https://mods.test/nest-five.kat";
     private const string FiveAlias = "https://MODS.test:443/./x.kat#alias";
+    private const string Tenfold = "https://mods.test/f.kat";
+    private const string TenfoldTwin = "https://mods.test/f2.kat";
     private const string RandomText = "public R = randomInt(0, 1000000)";
 
     private static Modules Server() => new(
@@ -36,7 +38,9 @@ public class ModuleIdentityTests
         (OutputDraw, "public R = randomInt(0, 1000000)\nrandomInt(0, 1000000)"),
         (Nest, $"S = load('{Random}')\npublic R2 = S.R"),
         (NestOpen, $"open '{Random}'\npublic R2 = R"),
-        (NestFive, $"public S = load('{Five}')"));
+        (NestFive, $"public S = load('{Five}')"),
+        (Tenfold, "public F(v) = v * 10"),
+        (TenfoldTwin, "public F(v) = v * 10"));
 
     private static async Task<string[]> Draws(string source, Route[]? routes = null)
     {
@@ -204,6 +208,36 @@ public class ModuleIdentityTests
             var observed = await OnEveryRouteAsync(source, Server);
             Assert.True(observed.Kind == "ok" && observed.Value == "5", $"{observed}\n{source}");
         }
+    }
+
+    /// <summary>source, outcome on both evaluator routes, identity comparisons of the one consulted level.</summary>
+    public static TheoryData<string, string, int> ModuleProviderIndexMatrix() => new()
+    {
+        // Two holders and two spellings of one URL reach ONE module declaration: the runtime index
+        // compares them (one exact identity comparison, which agrees) and keeps the first.
+        { $"open A, B\nA = load('{Five}')\nB = load('{Five}')\nX", "ok 5", 1 },
+        { $"open '{Five}', '{FiveAlias}'\nX", "ok 5", 1 },
+        { $"open A, B\nA = load('{Tenfold}')\nB = load('{Tenfold}')\nK(q) = q.F\nK(1)", "ok 10", 1 },
+        // Distinct canonical URLs serving identical bytes are two declarations, never compared: a
+        // fallback the receiver decides is the runtime ambiguity naming both holders in order.
+        { $"open A, B\nA = load('{Tenfold}')\nB = load('{TenfoldTwin}')\nK(q) = q.F\nK(1)", "AmbiguousOpen(F: A, B) @ ", 0 },
+        { $"open B, A\nA = load('{Tenfold}')\nB = load('{TenfoldTwin}')\nK(q) = q.F\nK(1)", "AmbiguousOpen(F: B, A) @ ", 0 },
+    };
+
+    [Theory]
+    [MemberData(nameof(ModuleProviderIndexMatrix))]
+    public async Task ModuleProviders_AreIndexedByTheirOneDeclaration(string source, string outcome, int identityComparisons)
+    {
+        var observed = await OnEveryRouteAsync(source, Server);
+        Assert.Equal(outcome.StartsWith("ok", StringComparison.Ordinal) ? "ok" : "err", observed.Kind);
+
+        var parsed = await SourceProvenance.ParseValidAsync(source, Server().Options());
+        var indexed = await OpenProviderIndexing.OnBothRoutesAsync(new Expr.AlgorithmExpr(parsed.Root));
+        if (outcome.StartsWith("ok", StringComparison.Ordinal))
+            Assert.Equal(outcome, indexed.Outcome);
+        else
+            Assert.Contains(outcome, indexed.Outcome, StringComparison.Ordinal);
+        Assert.Equal((1, 2, identityComparisons, 0), (indexed.Levels, indexed.Entries, indexed.IdentityComparisons, indexed.CrossDeclarationIdentityComparisons));
     }
 
     [Fact]
