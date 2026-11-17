@@ -783,7 +783,8 @@ internal sealed class DeferredModuleRegion
             if (diagnostics.HasReportedErrors) return null;
             new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite) { CancellationToken = cancellationToken }
                 .VisitAlgorithm(resolved);
-            OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite, cancellationToken: cancellationToken);
+            OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite,
+                completedModules: Loader.ModuleUnits, cancellationToken: cancellationToken);
             InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite, cancellationToken);
             if (diagnostics.HasReportedErrors) return null;
             var exposed = PropertyExposureResolver.ElaborateDeferredBranch(

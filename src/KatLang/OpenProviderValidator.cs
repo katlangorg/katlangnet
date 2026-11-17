@@ -43,6 +43,8 @@ internal sealed class OpenProviderValidator : AstWalker
     // refused imported open target — which has no span of its own — is reported. Starts at
     // the site a deferred region recorded for its body.
     private SourceSpan? _importSite;
+    // The module units earlier operations of the program completed (a materialized deferred unit only): see VisitAlgorithm.
+    private ModuleUnitRegistry? _completedModules;
 
     private OpenProviderValidator(
         DiagnosticBag diagnostics,
@@ -102,6 +104,8 @@ internal sealed class OpenProviderValidator : AstWalker
     /// <summary>
     /// Validates a materialized deferred branch body under the chain recorded at its branch,
     /// starting from the import site the region recorded for the body.
+    /// <paramref name="completedModules"/> is the program's module-unit registry: a module an earlier
+    /// operation completed is not validated again (see <see cref="VisitAlgorithm"/>).
     /// </summary>
     internal static void Validate(
         Algorithm root,
@@ -109,14 +113,30 @@ internal sealed class OpenProviderValidator : AstWalker
         ElaboratedPropertyScope parentScope,
         SourceSpan? importSite = null,
         FrontEndTraversalObservations? observations = null,
+        ModuleUnitRegistry? completedModules = null,
         CancellationToken cancellationToken = default)
-        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations, cancellationToken: cancellationToken).VisitAlgorithm(root);
+        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations, cancellationToken: cancellationToken)
+        {
+            _completedModules = completedModules,
+        }.VisitAlgorithm(root);
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {
         // A deferred region's provisional body is validated when it materializes, under the
         // chain recorded at its branch.
         if (algorithm.DeferredRegion is not null || !_openPresence.Contains(algorithm))
+            return;
+
+        // ONE MODULE DECLARATION, VALIDATED ONCE PER PROGRAM (Q-32 I-U). A materialized deferred unit RECEIVES every
+        // module an earlier error-free operation completed (the parse, or an earlier materialization) as the very
+        // declaration that operation elaborated: here, between the unit's resolution and its exposure, its resolved
+        // view. That operation judged the module's open targets in the module's own prelude-rooted region, which no
+        // holder can change (Q-31 H-P), and reported nothing, or it would have published nothing. So there is nothing
+        // to report again, and nothing to walk with: the lookup facts the unit inherits name every body of that
+        // module by its CLASSIFIED view (exposure replaced the resolved ones when the operation completed), so a level
+        // built over a resolved body of it is bound to no facts. The open targets of the unit that NAME such a module
+        // are still judged, at the unit's own levels (ValidateOpens), from those facts.
+        if (algorithm.IsModuleRoot && _completedModules?.HasCompleted(algorithm) == true)
             return;
 
         // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: its opens resolve

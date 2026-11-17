@@ -7,6 +7,22 @@ internal static partial class ImplicitArgumentResolver
         StaticStructureOperation operation, DiagnosticBag diagnostics, FrontEndTraversalObservations? observations,
         SourceSpan? importSite, ModuleUnits modules)
     {
+        if (ResolveDeferredBranchInRun(detectedBody, context, operation, diagnostics, observations, importSite, modules) is not { } resolved)
+            return detectedBody;
+        operation.CompleteLookups(resolved);
+        return resolved;
+    }
+
+    // The run's frame ends before the completed publication, as ResolveInRun's does for the eager program (SEC-S1's one
+    // frame per pass): unoptimized (tier-0) code reports a local live for its whole method, and a materialization runs
+    // this method once, so a run local beside the CompleteLookups call kept the unit's selection, analyzed bodies,
+    // signature map and region memo reachable while the completed facts of the unit were built. Implementation-only:
+    // the calls and their order are unchanged. Null when the selection was refused (nothing is rewritten or published).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static Algorithm? ResolveDeferredBranchInRun(Algorithm detectedBody, StaticStructureDeferredContext context,
+        StaticStructureOperation operation, DiagnosticBag diagnostics, FrontEndTraversalObservations? observations,
+        SourceSpan? importSite, ModuleUnits modules)
+    {
         var run = new ResolutionRun(operation, importSite)
         {
             Observations = observations,
@@ -28,7 +44,7 @@ internal static partial class ImplicitArgumentResolver
         {
             ReportRefusedSelection(run.Selected, run);
             run.ReleaseLevels();
-            return detectedBody;
+            return null;
         }
 
         var resolved = ProcessAlgorithm(detectedBody, map, forwardable, isRoot: false, observations, diagnostics, branch, run);
@@ -36,9 +52,9 @@ internal static partial class ImplicitArgumentResolver
         run.CommitDeferredChecks();
         RequireEveryAnalyzedBodyRewritten(run);
         run.ReleaseLevels();
-        // A branch this unit defers again was resolved provisionally (ResolveProvisionalBranch): no completed fact.
+        // A branch this unit defers again was resolved provisionally (ResolveProvisionalBranch): no completed fact, and
+        // the publication the caller builds next must not hold one.
         operation.RetractProvisionalResolutions();
-        operation.CompleteLookups(resolved);
         return resolved;
     }
 

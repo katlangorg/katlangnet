@@ -47,6 +47,16 @@ internal sealed class ModuleUnitRegistry
     internal bool TryGet(ModuleUnitPass pass, Algorithm module, [NotNullWhen(true)] out Algorithm? elaborated)
         => _published[(int)pass].TryGetValue(module, out elaborated);
 
+    /// <summary>
+    /// Whether <paramref name="resolved"/> is the RESOLVED declaration of a module an earlier error-free operation
+    /// carried through its whole pipeline: that operation's exposure received exactly this view, so every rule that
+    /// runs between resolution and exposure (the collision, open-provider and output rules) judged the module there,
+    /// and found nothing, or the operation would have published nothing. A later operation holds the same view at the
+    /// same point of its own pipeline (it receives the unit pass by pass), which is where a rule that validates a
+    /// module ONCE per program asks this.
+    /// </summary>
+    internal bool HasCompleted(Algorithm resolved) => _published[(int)ModuleUnitPass.Exposure].ContainsKey(resolved);
+
     internal void Publish(Dictionary<Algorithm, Algorithm>[] units, StaticStructureOperation.Continuation? continuation)
     {
         for (var pass = 0; pass < units.Length; pass++)

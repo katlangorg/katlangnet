@@ -288,6 +288,27 @@ and the default-GC peaks move within their noise. The probe's census mode, broke
 and resolution without an admitted operation), works again, and `FrontEndMemoryProbeCensusProcessTests` runs it for
 every shape. Logs: `artifacts/validation/front-end-memory-follow-ups/` (local only).
 
+**The same frame in a deferred unit (2026-11-17).** A materialization built its unit's completed facts
+beside its resolution run, as the eager entry did before the trim above:
+`ImplicitArgumentResolver.ElaborateStructuralDeferredBranch` held the run in a local across
+`CompleteLookups`, and a materialization runs that method once, unoptimized. The run now ends in
+`ResolveDeferredBranchInRun` first (the calls and their order are unchanged). Measured on an
+instrumented copy of the engine (a hook at the start and end of the unit's `CompleteLookups`, a weak
+reference to the run, a forced full blocking collection at each hook; Release, .NET 11.0.0,
+non-concurrent workstation collector) for a clause branch that opens a one-member module and holds
+dense constant properties. A branch is a unit under the materialization's own static bound, so its
+ceiling is lower than a document's: 71,886 rows (1.2 M UTF-16 units) is the largest size tried that
+completes, and 74,827 rows (1.25 M) is refused by the metadata bound (16,777,216 slots). At 71,886
+rows the live heap at the start of `CompleteLookups` fell 510.8 → 459.8 MiB and at its end 564.6 →
+513.6 MiB, with the run reachable before the split and unreachable after it (three runs each, equal to
+0.1 MiB); for parameterized rows (`F{i}(x) = x + {i}`, 42,586 rows) 383.7 → 361.7 and 421.3 → 399.3
+MiB. That is what the split buys: 6–10% less reachable while the facts are built. It does not lower
+the materialization's own live peak, which is not in that window: sampled with a forced collection
+every 25 ms, the peak is 694 MiB before and after, about 30 s after `CompleteLookups` ends and 2 s
+before an 80 s sampled run returns, in a later stage that this measurement does not attribute; the
+resolution frame has ended by then in both builds. Harness, logs:
+`artifacts/validation/deferred-branch-open-crash/part-b/` (local only).
+
 Open-level entries grow with providers × DISTINCT opened names read (P × D), not P². For one block
 that opens P one-member providers and sums D ≥ 4 distinct opened names, entries are exactly
 73 + 13P + D(2P + 17) (measured for P = 16 to 128 and D = 4 to 64): two per provider and distinct

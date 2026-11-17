@@ -539,9 +539,35 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
         if (!ReferenceEquals(previous, body))
         {
             _resources?.Metadata(2);
+            MarkSupersededModuleView(key, previous);
             _local[key] = facts with { Body = body };
             _viewVersion++;
         }
+    }
+
+    /// <summary>
+    /// A LOADED MODULE'S VIEW ONE PASS EARLIER (Q-32 I-U). Exposure replaces the view this table holds at a context with
+    /// the one it classified, and from then on the table names that context's definition by the classified view alone.
+    /// A loaded module is the one definition a LATER unit also holds one pass earlier: a deferred materialization
+    /// receives each module an earlier operation completed pass by pass (<see cref="ModuleUnitRegistry"/>), so between
+    /// its own resolution and its own exposure its tree holds the module as the RESOLVED view this table published
+    /// before the replacement, while the facts it inherits name the classified one. That view is the published
+    /// definition, never a supplied copy, and the questions asked about it (which structure it opens, what it is as a
+    /// receiver) are answered from these facts by its context. So the replaced view of a module root keeps the context
+    /// it was published at, on the publication it carries (<see cref="CompletedStructurePublication.SupersededAt"/>,
+    /// with the view itself, so that a copy of the view, which carries the same publication, is still a supplied
+    /// copy): a mark ON the view, read by <see cref="CompletedStructureContext.NamesSupersededView"/>. This table does
+    /// not refer to the view, so it retains no resolved tree, charges nothing and counts nothing for it, and a program
+    /// without a later unit is unchanged. Only a module root is marked: no other definition is handed to a later unit
+    /// by an earlier pass's view (a unit elaborates every other body it holds itself). The view is the first one the
+    /// context held, so a second replacement of the same context marks nothing new.
+    /// </summary>
+    private void MarkSupersededModuleView(StaticScopeKey key, Algorithm previous)
+    {
+        if (!previous.IsModuleRoot || previous.CompletedStructure is not { SupersededAt: null } carried
+            || !ReferenceEquals(carried.Facts, this))
+            return;
+        Attach(previous, carried with { SupersededAt = key, SupersededView = previous });
     }
 
     internal void Seal(CancellationToken cancellationToken = default)
@@ -806,8 +832,13 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     }
 }
 
-/// <summary>Carried metadata; the entry key is present only on a compilation unit's root.</summary>
-internal sealed record CompletedStructurePublication(CompletedStaticStructures Facts, StaticScopeKey? Entry = null, Algorithm? EntryView = null)
+/// <summary>
+/// Carried metadata; the entry key is present only on a compilation unit's root. <paramref name="SupersededAt"/> and
+/// <paramref name="SupersededView"/> are present only on a loaded module's root view that exposure replaced: the
+/// context the publication held that view at, and the view (<c>CompletedStaticStructures.MarkSupersededModuleView</c>).
+/// </summary>
+internal sealed record CompletedStructurePublication(CompletedStaticStructures Facts, StaticScopeKey? Entry = null, Algorithm? EntryView = null,
+    StaticScopeKey? SupersededAt = null, Algorithm? SupersededView = null)
 {
     internal bool MatchesEntry(Algorithm body)
         => Entry is { } entry && (Facts.Facts(entry)?.Body is { } published
@@ -888,7 +919,7 @@ internal sealed class CompletedStructureContext(StaticLookupFacts facts, StaticS
         var selected = Facts.Child(Key, body);
         if (selected is not null)
         {
-            if (Facts.Facts(selected)?.Body is { } published && !ReferenceEquals(published, body))
+            if (Facts.Facts(selected)?.Body is { } published && !ReferenceEquals(published, body) && !NamesSupersededView(selected, body))
                 throw new ArgumentException("The supplied view requires its own explicit structural admission.", nameof(body));
             return ReceiverAt(selected, caller);
         }
@@ -909,7 +940,8 @@ internal sealed class CompletedStructureContext(StaticLookupFacts facts, StaticS
     {
         RecordRead(declaring);
         var selectedKey = Facts.Child(Key, body);
-        if (selectedKey is not null && Facts.Facts(selectedKey)?.Body is { } published && !ReferenceEquals(published, body))
+        if (selectedKey is not null && Facts.Facts(selectedKey)?.Body is { } published && !ReferenceEquals(published, body)
+            && !NamesSupersededView(selectedKey, body))
             throw new ArgumentException("The supplied view requires its own explicit structural admission.", nameof(body));
         var context = selectedKey is not null ? Facts.Context(selectedKey) : For(body, declaring);
         if (context?.Facts.Facts(context.Key)?.Open is not { Kind: StaticFactKind.Structure, Target: { } target, Identity: { } identity }
@@ -943,9 +975,26 @@ internal sealed class CompletedStructureContext(StaticLookupFacts facts, StaticS
 
     internal bool OpenIsUnavailable(Algorithm body, ElaboratedPropertyScope declaring)
     {
-        var context = For(body, declaring);
+        // Only a view that carries the mark is looked up by its context: every other body is read exactly as before.
+        var context = body.CompletedStructure?.SupersededAt is { } supersededAt && NamesSupersededView(supersededAt, body)
+            && ReferenceEquals(Facts.Child(Key, body), supersededAt)
+                ? Facts.Context(supersededAt) : For(body, declaring);
         return context?.Facts.Facts(context.Key)?.Open.Kind is null or StaticFactKind.Unknown;
     }
+
+    /// <summary>
+    /// Whether <paramref name="body"/> is the view these facts held at <paramref name="key"/> before exposure replaced
+    /// it: a loaded module's root as a later unit holds it between its own resolution and its own exposure
+    /// (<c>CompletedStaticStructures.MarkSupersededModuleView</c>). Such a view is the published definition one pass
+    /// earlier, so a question about it is answered by its context, exactly as for the view the facts name now; every
+    /// other view that differs from the published one stays a supplied copy, a copy of the superseded view included
+    /// (it carries the mark of the view it was copied from). <see cref="For"/> does not accept it: no level is ever
+    /// built over a superseded view, whose nested bodies these facts no longer name, so a pass that walks INTO a
+    /// module it received skips it instead (<see cref="OpenProviderValidator"/>).
+    /// </summary>
+    private static bool NamesSupersededView(StaticScopeKey key, Algorithm body)
+        => body.CompletedStructure is { SupersededAt: { } supersededAt, SupersededView: { } view }
+            && ReferenceEquals(supersededAt, key) && ReferenceEquals(view, body);
 
     private static void RecordRead(ElaboratedPropertyScope caller)
     {
