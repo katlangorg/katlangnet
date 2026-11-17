@@ -73,7 +73,11 @@ internal interface IAsyncZeroArgPropertyResultCache : IZeroArgPropertyResultCach
 /// evaluator entry point routes the run through the async twin family; a run uses one of
 /// the two members throughout (sync entry points use the synchronous member, the async
 /// twin path awaits the asynchronous one), and within the async family each access is
-/// awaited before evaluation continues, so the store is never touched concurrently.
+/// awaited before evaluation continues, so the store is never touched concurrently. That is what
+/// lets its prompt-reclaim partition table (<see cref="BindingContextPartitionTable"/>), which is
+/// sequential, free dead entries in place without a lock: a continuation that resumes the run on
+/// another thread does so only after the previous step's table operation has returned, and the
+/// await hand-off publishes its writes to that thread.
 /// </summary>
 internal sealed class RunScopedAsyncZeroArgPropertyResultCache(RootPropertyObservationSink? observationSink = null)
     : IAsyncZeroArgPropertyResultCache
@@ -88,6 +92,9 @@ internal sealed class RunScopedAsyncZeroArgPropertyResultCache(RootPropertyObser
 
     /// <summary>TEST SEAM: live binding-context partitions of the published entries.</summary>
     internal int LivePartitionCount() => _results.LivePartitionCount();
+
+    /// <summary>TEST SEAM: the entry capacity of the published entries' prompt-reclaim partition table.</summary>
+    internal int PromptTableCapacity => _results.PromptTableCapacity;
 
     /// <summary>Keys whose owning evaluation is still running (zero between accesses).</summary>
     internal int ActiveOwnerCount => _results.ActiveOwnerCount;

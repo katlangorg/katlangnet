@@ -431,10 +431,11 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
 
     /// <summary>
     /// The store's PROMPT-RECLAIM partition table (the alias cells' form of
-    /// <see cref="BindingContextPartitionTable"/>): the same weak association as the property cache's
-    /// table — an entry lives while its identity is reachable, although the entry's key refers back to
-    /// the identity — but dead entries are freed in place when the table fills, so the table stays as
-    /// small as the identities alive between collections instead of waiting for finalizers.
+    /// <see cref="BindingContextPartitionTable"/>, and the property cache's since 2026-11-17): the same weak
+    /// association as the <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey, TValue}"/> form —
+    /// an entry lives while its identity is reachable, although the entry's key refers back to the identity —
+    /// but dead entries are freed in place when the table fills, so the table stays as small as the
+    /// identities alive between collections instead of waiting for finalizers.
     /// </summary>
     [Fact]
     public void ThePromptReclaimTable_KeepsLiveIdentities_AndFreesDeadOnesInPlace()

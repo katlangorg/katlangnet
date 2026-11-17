@@ -522,7 +522,12 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
 /// <para><b>Storage.</b> The published entries of LOCAL-ONLY keys are partitioned by their
 /// binding-context identity (<see cref="PartitionedMap{TKey, TValue}"/>), so they are stored as long as
 /// that identity is reachable; exported entries are stored for the run. No key can reach an entry
-/// after its identity is gone, so this decides no hit, miss or publication.</para>
+/// after its identity is gone, so this decides no hit, miss or publication. The partition table is the
+/// PROMPT-RECLAIM form (<see cref="BindingContextPartitionTable"/>, property-cache prompt reclaim,
+/// 2026-11-17): a dead identity's entry is freed in place when the table fills, instead of waiting for
+/// finalizers, so a loop that mints one identity per step keeps a flat peak. That form is sequential,
+/// and so is every access here: the run's one evaluation flow (above) performs each table operation to
+/// completion — none awaits or calls back into evaluation, and <c>evaluate</c> runs only between them.</para>
 /// </summary>
 internal sealed class ZeroArgPropertyPublications(
     RootPropertyObservationSink? sink = null,
@@ -531,10 +536,10 @@ internal sealed class ZeroArgPropertyPublications(
 {
     // Published entries, partitioned by binding-context identity: a local-only entry is stored while
     // its identity is reachable, an exported one for the run (PartitionedMap: storage only, never a
-    // change of which entry a key finds). A cache with further identity-partitioned stores passes the
-    // table they share and this store's slot in it.
+    // change of which entry a key finds), in a prompt-reclaim table. A cache with further
+    // identity-partitioned stores passes the table they share and this store's slot in it.
     private readonly PartitionedMap<ZeroArgPropertyCacheKey, ZeroArgPropertyResult> _published = partitions is null
-        ? new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey)
+        ? new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true)
         : new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, partitions, partitionStore);
     // Transient: only the owners on the current evaluation chain, so it stays a plain set.
     private readonly HashSet<ZeroArgPropertyCacheKey> _active = new(ZeroArgPropertyCacheKeyComparer.Instance);
@@ -547,6 +552,9 @@ internal sealed class ZeroArgPropertyPublications(
 
     /// <summary>TEST SEAM: live binding-context partitions of the published entries.</summary>
     internal int LivePartitionCount() => _published.LivePartitionCount();
+
+    /// <summary>TEST SEAM: the entry capacity of the published entries' prompt-reclaim partition table.</summary>
+    internal int PromptTableCapacity => _published.PromptTableCapacity;
 
     /// <summary>Number of keys whose owner is still evaluating (zero between accesses).</summary>
     internal int ActiveOwnerCount => _active.Count;
@@ -732,10 +740,10 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
 internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResultCache
 {
     // With statistics, the published entries and the two statistics key sets are partitioned by
-    // binding-context identity in ONE shared table, one weak entry per identity (slots: published, seen,
-    // missed). A local-only key leaves the statistics sets only when no key can name its identity again,
-    // so the distinct-key count (the seen set's monotonic AddedCount) and the repeated-miss count are
-    // unchanged. Without statistics the published entries keep a one-slot table of their own.
+    // binding-context identity in ONE shared prompt-reclaim table, one weak entry per identity (slots:
+    // published, seen, missed). A local-only key leaves the statistics sets only when no key can name its
+    // identity again, so the distinct-key count (the seen set's monotonic AddedCount) and the repeated-miss
+    // count are unchanged. Without statistics the published entries keep a one-slot table of their own.
     private const int PublishedStore = 0;
     private const int SeenKeysStore = 1;
     private const int MissedKeysStore = 2;
@@ -760,7 +768,7 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
             return;
         }
 
-        var partitions = new BindingContextPartitionTable(PartitionStoreCount);
+        var partitions = new BindingContextPartitionTable(PartitionStoreCount, promptReclaim: true);
         _results = new ZeroArgPropertyPublications(observationSink, partitions, PublishedStore);
         _statistics = new Statistics(partitions);
     }
@@ -830,6 +838,9 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
         => (_results.LivePartitionCount(),
             _statistics?.SeenKeys.LivePartitionCount() ?? 0,
             _statistics?.MissedKeysWithoutStore.LivePartitionCount() ?? 0);
+
+    /// <summary>TEST SEAM: the entry capacity of the prompt-reclaim partition table (shared by all stores with statistics).</summary>
+    internal int PromptTableCapacity => _results.PromptTableCapacity;
 
     /// <summary>
     /// The run's statistics so far.

@@ -815,6 +815,8 @@ public class ContinuousIntegrationPolicyTests
                 "its children measure peak working set, the flat-memory controls of the call-reference loop-retention pin; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
             ["KatLang.Tests.IdentityKeyedRunStorePeakMemoryProcessTests"] =
                 "its children measure peak working set, the memory-retention guards of the identity-keyed run stores outside the caches (per-site callee memos, the observed plan-formation witness); retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
+            ["KatLang.Tests.LocalOnlyLoopStepPeakMemoryProcessTests"] =
+                "its children measure peak working set, the flat-memory guards of a binding context minted per loop step (a local-only property, one holding a call reference, a local-only runtime alias) over the prompt-reclaim partition tables; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
 
     /// <summary>

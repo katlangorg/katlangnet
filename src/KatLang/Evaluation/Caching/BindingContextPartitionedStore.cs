@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime;
 using System.Runtime.CompilerServices;
@@ -9,12 +10,12 @@ namespace KatLang.Evaluation.Caching;
 /// hit, miss, publication, charge, diagnostic or value). A run-scoped, add-only store of cache keys
 /// whose entries carry a BINDING-CONTEXT IDENTITY (<see cref="ZeroArgPropertyCacheKey.ValueEnvironmentIdentity"/>:
 /// an activation's need-cell list, a value environment, or a planned loop's per-iteration identity)
-/// keeps every entry of one identity in that identity's own partition, held by a
-/// <see cref="ConditionalWeakTable{TKey, TValue}"/> keyed by the identity OBJECT
-/// (<see cref="BindingContextPartitionTable"/>). A partition therefore lives exactly as long as its
-/// identity is reachable. Every entry of an exported binding
-/// (<see cref="ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity"/>) stays in one strong, run-wide
-/// dictionary.
+/// keeps every entry of one identity in that identity's own partition, held weakly by a
+/// <see cref="BindingContextPartitionTable"/> keyed by the identity OBJECT (a
+/// <see cref="ConditionalWeakTable{TKey, TValue}"/>, or the prompt-reclaim form with the same weak
+/// semantics). A partition therefore lives exactly as long as its identity is reachable. Every entry
+/// of an exported binding (<see cref="ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity"/>) stays in
+/// one strong, run-wide dictionary.
 /// <para><b>Why dropping a partition is unobservable.</b> The key comparers compare the identity
 /// component by reference (<see cref="ZeroArgPropertyCacheKeyComparer"/>), so a key can equal a stored
 /// key only by presenting the very identity object, and every key holds its identity strongly. When an
@@ -229,17 +230,22 @@ internal sealed class PartitionedSet<TKey>
 /// and keys missed without a store — instead of one entry per store.
 /// <para>No identity or partition is retained outside the weak table. Even one strong last-access
 /// shortcut could keep an unbounded chain of otherwise dead binding environments alive.</para>
-/// <para><b>Prompt reclamation</b> (<c>promptReclaim</c>; the runtime-alias binding cells,
-/// ALIAS-CELL-LIFETIME). A <see cref="ConditionalWeakTable{TKey, TValue}"/> replaces its container
-/// whenever it fills, and each replaced container is a FINALIZABLE object that frees its dead entries'
-/// handles only in its second finalization — so in a loop that mints one identity per step, the dead
-/// entries wait for full collections and peak memory grows by about 40 bytes per step until one
-/// happens (measured on the alias cells, November 2026: 54 MB at 10⁵ steps, 90 MB at 10⁶ and 177 MB at
-/// 3·10⁶, against a flat 49 MB). The prompt form holds the
+/// <para><b>Prompt reclamation</b> (<c>promptReclaim</c>). A <see cref="ConditionalWeakTable{TKey, TValue}"/>
+/// replaces its container whenever it fills, and each replaced container is a FINALIZABLE object that
+/// frees its dead entries' handles only in its second finalization — so in a loop that mints one
+/// identity per step, the dead entries wait for full collections and peak memory grows by about 40
+/// bytes per step until one happens (measured on the alias cells, November 2026: 54 MB at 10⁵ steps,
+/// 90 MB at 10⁶ and 177 MB at 3·10⁶, against a flat 49 MB). The prompt form holds the
 /// same weak association in ONE table of its own (<see cref="EphemeronSlots"/>): the same
 /// dependent-handle (ephemeron) semantics — a partition is reachable only while its identity is, even
 /// when the partition refers back to the identity — with dead entries freed, in place and at once, when
-/// the table fills. Which entry a key finds is the same in both forms.</para>
+/// the table fills. Which entry a key finds is the same in both forms. Its users: the zero-argument
+/// property cache's published entries and statistics key sets (property-cache prompt reclaim,
+/// 2026-11-17; a local-only property per loop step measured 61.5 / 109 / 214 MiB peak in Release at
+/// 10⁵ / 10⁶ / 3·10⁶ steps with the other form), the runtime-alias binding cells
+/// (ALIAS-CELL-LIFETIME), the per-site callee memos and the observed plan-formation witness. The
+/// <see cref="ConditionalWeakTable{TKey, TValue}"/> form remains for the deconstruction shared-bind memo
+/// and the statistics key set of an uncached run.</para>
 /// </summary>
 internal sealed class BindingContextPartitionTable
 {
@@ -311,9 +317,19 @@ internal sealed class BindingContextPartitionTable
     /// it is still alive. So the table holds at most the identities that were alive at the last
     /// reclamation plus those minted since, and nothing waits for a finalizer except the handles a
     /// run still owns when its table becomes unreachable (the one finalizer below).
-    /// <para>Sequential, like the stores that use it: the caller serializes access (the alias cell
-    /// store's lock). A handle's target is read only for an identity the caller holds, which is
-    /// therefore alive for the whole lookup.</para>
+    /// <para>Sequential, like the stores that use it, and lock-free: the caller serializes access. The
+    /// alias cell store, the callee memos and the plan witness do so with their locks (internal test
+    /// seams read them from other threads while a run is suspended); the property cache by the run's ONE
+    /// evaluation flow, with no lock — no operation here awaits, calls back into evaluation or runs user
+    /// code, so the operations of one run never overlap, and an async continuation that moves the flow
+    /// to another thread starts only after the previous operation returned (the await hand-off publishes
+    /// its writes). A handle's target is read only for an identity the caller holds, which is therefore
+    /// alive for the whole lookup; <see cref="Reclaim"/> disposes a handle only once its target is gone,
+    /// which no live key can name, and moves only the entries, never a partition a caller holds. The
+    /// garbage collector clears a dead entry's target and dependent concurrently in either form; the one
+    /// finalizer runs only once the table itself is unreachable, and every operation keeps the table
+    /// alive until its last handle access. A DEBUG build checks the sequential premise: an operation that
+    /// begins while another is still running throws instead of racing a reclamation.</para>
     /// </summary>
     private sealed class EphemeronSlots
     {
@@ -329,6 +345,7 @@ internal sealed class BindingContextPartitionTable
         private int[] _buckets = new int[InitialCapacity]; // an entry's position plus one; 0 is an empty bucket
         private Entry[] _entries = new Entry[InitialCapacity];
         private int _used;
+        private int _operating; // 1 while an operation runs; touched only by DEBUG builds (the sequential tripwire)
 
         ~EphemeronSlots()
         {
@@ -341,6 +358,7 @@ internal sealed class BindingContextPartitionTable
 
         internal object?[]? Find(object identity)
         {
+            EnterOperation();
             var hashCode = RuntimeHelpers.GetHashCode(identity);
             for (var index = _buckets[hashCode & (_buckets.Length - 1)]; index != 0; index = _entries[index - 1].Next)
             {
@@ -354,16 +372,19 @@ internal sealed class BindingContextPartitionTable
                 // The array entry alone does not root its finalizable owner. Keep that owner
                 // alive until the native handle has been read, even on the store's last use.
                 GC.KeepAlive(this);
+                LeaveOperation();
                 return slots;
             }
 
             GC.KeepAlive(this);
+            LeaveOperation();
             return null;
         }
 
         /// <summary>Adds the slots of an identity the table does not hold (the caller looked it up).</summary>
         internal object?[] Add(object identity, object?[] slots)
         {
+            EnterOperation();
             if (_used == _entries.Length)
                 Reclaim();
 
@@ -375,11 +396,13 @@ internal sealed class BindingContextPartitionTable
             entry.Next = _buckets[bucket];
             _buckets[bucket] = ++_used;
             GC.KeepAlive(this);
+            LeaveOperation();
             return slots;
         }
 
         internal int LiveCount(int store)
         {
+            EnterOperation();
             var count = 0;
             for (var index = 0; index < _used; index++)
             {
@@ -390,8 +413,24 @@ internal sealed class BindingContextPartitionTable
             }
 
             GC.KeepAlive(this);
+            LeaveOperation();
             return count;
         }
+
+        // THE SEQUENTIAL TRIPWIRE (DEBUG builds; the calls are compiled out of release builds): an
+        // operation that begins while another one is still running throws, so a caller that breaks the
+        // serialization above fails loudly in the test suites instead of racing a reclamation. An
+        // operation that throws leaves the tripwire set (the table is then suspect anyway).
+        [Conditional("DEBUG")]
+        private void EnterOperation()
+        {
+            if (Interlocked.Exchange(ref _operating, 1) != 0)
+                throw new InvalidOperationException(
+                    "Two operations used one prompt-reclaim partition table at once; its users must serialize access.");
+        }
+
+        [Conditional("DEBUG")]
+        private void LeaveOperation() => Volatile.Write(ref _operating, 0);
 
         // The table is full: free the entries whose identity is gone, compact the rest to the front
         // and relink the buckets; double the table only when more than half of it is still alive.
