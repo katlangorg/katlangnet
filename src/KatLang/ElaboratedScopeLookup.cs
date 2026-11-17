@@ -442,6 +442,15 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
 {
     private Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope>? _completedLevels;
     internal Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope> CompletedLevels => _completedLevels ??= new();
+    private Dictionary<StaticLookupFacts, ElaboratedPropertyScope>? _openBlockHeadLevels;
+    /// <summary>
+    /// The prelude level at which the inline open targets of a unit are entered, by the completed facts that answer for
+    /// their block heads (<see cref="ElaboratedScopeLookup.OpenBlockHeadLevel"/>): one level per facts. It is kept apart
+    /// from <see cref="CompletedLevels"/>, whose entry under those facts and the prelude key may be a level that
+    /// carries other facts.
+    /// </summary>
+    internal Dictionary<StaticLookupFacts, ElaboratedPropertyScope> OpenBlockHeadLevels
+        => _openBlockHeadLevels ??= new(ReferenceEqualityComparer.Instance);
     internal void RecordCompletedRead() => observations?.RecordCompletedStaticStructureRead();
     private readonly Dictionary<Algorithm, OpenTargetMemberIndex> _indexes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ElaboratedPropertyScope, Dictionary<Algorithm, ElaboratedPropertyScope>> _bodyLevels = new();
@@ -1017,9 +1026,9 @@ internal static class ElaboratedScopeLookup
         ResolvedOpenTarget? selected;
         if (head is Expr.AlgorithmExpr block)
         {
-            var context = scope.BoundLookupContext();
-            selected = context.Facts.Context(context.Facts.PreludeKey).Open(block.Algorithm, scope.Root);
-            if (selected is null && context.Facts.Child(context.Facts.PreludeKey, block.Algorithm) is null)
+            var answering = OpenBlockHeadFacts(scope);
+            selected = answering.Open(block.Algorithm, scope.Root);
+            if (selected is null && answering.BodyKey(block.Algorithm) is null)
             {
                 // A host can ask about a new inline, already bound structure after compilation.
                 // Admit that graph explicitly at the open-head prelude boundary; never chase a raw row.
@@ -1043,6 +1052,58 @@ internal static class ElaboratedScopeLookup
             selected = bodyLevel.BoundLookupContext().Open(hit.Property.Value, bodyLevel);
         }
         return selected;
+    }
+
+    /// <summary>
+    /// WHICH FACTS ANSWER FOR A BLOCK HEAD: one decision, shared by resolution (<see cref="ResolvePublishedOpenExpression"/>)
+    /// and by the passes that walk into an inline open target (<see cref="OpenBlockHeadLevel"/>). An inline block
+    /// written as an open target is declared at the prelude: its region starts there, without the opener's
+    /// declarations. It is read at the prelude key of the completed facts the ASKING scope is bound to, the
+    /// publication of the unit that wrote the open, and never through whatever facts the chain's physical root level
+    /// carries. The two differ under a materialized deferred unit: its chain is the one recorded at the branch, whose
+    /// root level carries the eager program's facts, and those hold the block of the unit's PLACEHOLDER (the same
+    /// declaration, with no body) where the unit's own facts hold the block as materialized.
+    /// </summary>
+    private static CompletedStructureContext OpenBlockHeadFacts(ElaboratedPropertyScope scope)
+    {
+        var facts = scope.BoundLookupContext().Facts;
+        return facts.Context(facts.PreludeKey);
+    }
+
+    /// <summary>
+    /// THE LEVEL A BLOCK HEAD IS DECLARED AT, for the passes that walk INTO an inline open target (the description of
+    /// an unresolved target, open-provider validation): the prelude level that carries the facts answering for it
+    /// (<see cref="OpenBlockHeadFacts"/>). That is the chain's root level whenever it carries those facts, as in every
+    /// eagerly elaborated program; otherwise a prelude level over them, built as
+    /// <see cref="CompletedStructureContext.Level"/> builds a level the chain does not hold. Every level below it then
+    /// reads the block's structure from the facts that decided its resolution, so what is reported for a materialized
+    /// deferred unit is what the same text reports when nothing is deferred. A scope bound to no completed facts of
+    /// its own (a level of an admitting operation, or of a chain a standalone analysis answers for) keeps the chain's
+    /// root.
+    /// <para>ONE LEVEL PER UNIT. The level built here is shared through the chain's member-index cache, by the
+    /// answering facts (<see cref="OpenMemberIndexCache.OpenBlockHeadLevels"/>): every inline open target of a unit
+    /// is entered at the same level, as every one of an eager program is entered at the chain's root, so a unit with
+    /// K open targets builds one prelude level and open-provider validation keeps one visited set for it. The
+    /// completed-level cache cannot serve for this: under the unit's facts and the prelude key it can hold the EAGER
+    /// root (<see cref="CompletedStructureContext.Level"/> records the physical level whose key it was asked for,
+    /// whatever facts that level carries), which is why a level found there is taken only when it carries the
+    /// answering facts. A chain built without a cache has nothing to share through and builds a level per read.</para>
+    /// </summary>
+    internal static ElaboratedPropertyScope OpenBlockHeadLevel(ElaboratedPropertyScope scope)
+    {
+        var root = scope.Root;
+        if (scope.StaticContext is not null || scope.CompletedContext is null) return root;
+        var answering = OpenBlockHeadFacts(scope);
+        if (ReferenceEquals(root.CompletedContext?.Facts, answering.Facts)) return root;
+        var cache = scope.MemberIndexes;
+        if (cache is not null && cache.OpenBlockHeadLevels.TryGetValue(answering.Facts, out var shared)) return shared;
+        var level = cache is not null && cache.CompletedLevels.TryGetValue((answering.Facts, answering.Key), out var known)
+            && ReferenceEquals(known.CompletedContext?.Facts, answering.Facts)
+                ? known
+                : CreateScope(answering.Facts.Prelude, observations: scope.Observations, memberIndexes: cache,
+                    completedContext: answering);
+        cache?.OpenBlockHeadLevels.Add(answering.Facts, level);
+        return level;
     }
 
     /// <summary>
@@ -1076,7 +1137,10 @@ internal static class ElaboratedScopeLookup
                 break;
 
             case Expr.AlgorithmExpr(var block):
-                provider = new OpenStructureStep(block, OpenProviderIdentity.DeclaredAtRoot(block), scope.Root);
+                // The block is read from the facts that decided its resolution, never from a root level bound to
+                // another unit's (OpenBlockHeadFacts): a materialized deferred unit's block is described exactly as
+                // the same block is when nothing is deferred.
+                provider = new OpenStructureStep(block, OpenProviderIdentity.DeclaredAtRoot(block), OpenBlockHeadLevel(scope));
                 receiverDescription = Evaluator.OpenExprName(headExpr);
                 break;
 

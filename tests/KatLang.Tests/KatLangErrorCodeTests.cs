@@ -432,6 +432,7 @@ public class KatLangErrorCodeTests
             ["MixedOutputSpreadMarkers"] = 67,
             ["OutputSpreadMarkerOnDeconstructionTarget"] = 68,
             ["OutputSpreadReferenceNeedsCall"] = 69,
+            ["DeferredBranchForwardsEnclosingParameter"] = 70,
         };
 
         // The retired STR-02 values are no member's value.
@@ -533,6 +534,7 @@ public class KatLangErrorCodeTests
             ["MixedOutputSpreadMarkers"] = 89,
             ["OutputSpreadMarkerOnDeconstructionTarget"] = 90,
             ["OutputSpreadReferenceNeedsCall"] = 91,
+            ["DeferredBranchForwardsEnclosingParameter"] = 92,
         };
 
         // The retired STR-02 values (75-79) are no member's value.

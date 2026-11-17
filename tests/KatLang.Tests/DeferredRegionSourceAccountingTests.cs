@@ -517,7 +517,7 @@ public class DeferredRegionSourceAccountingTests
                     })
                     : scope.Summaries,
                 scope.Parameters, scope.Algorithm);
-        var region = original.WithExposure(new PropertyExposureResolver.DeferredBranchContext(GateDeclaringLevel(original.Exposure!.Scope)));
+        var region = original.WithExposure(original.Exposure! with { Scope = GateDeclaringLevel(original.Exposure!.Scope) });
         var budget = region.Loader.SourceBudget;
         var before = budget.AggregateSource;
 

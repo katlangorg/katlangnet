@@ -244,7 +244,7 @@ public class DeferredMaterializationCancellationTests
                     })
                     : scope.Summaries,
                 scope.Parameters, scope.Algorithm);
-        var region = original.WithExposure(new PropertyExposureResolver.DeferredBranchContext(GateDeclaringLevel(original.Exposure!.Scope)));
+        var region = original.WithExposure(original.Exposure! with { Scope = GateDeclaringLevel(original.Exposure!.Scope) });
 
         // The download completes synchronously, so the compile runs inline on this consumer's thread.
         var pending = Task.Run(() => region.MaterializeAsync(cancellation.Token).AsTask());

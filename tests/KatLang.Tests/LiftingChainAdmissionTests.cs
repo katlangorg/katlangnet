@@ -222,13 +222,13 @@ public class LiftingChainAdmissionTests
             observed.LiftingStorageUnitsCharged);
     }
 
-    // ── a deferred unit is charged to its own materialization ──────────────────────────────────────
+    // ── a deferred unit: what its module decides is charged to its materialization, the rest to the parse ──
 
-    private static RunOptions ModuleOptions(SourceProcessingLimits? limits = null)
+    private static RunOptions ModuleOptions(SourceProcessingLimits? limits = null, string module = "Z = 10\n0")
         => new()
         {
             AllowedHosts = [ModuleHost],
-            DownloadCode = (_, _) => ValueTask.FromResult("Z = 10\n0"),
+            DownloadCode = (_, _) => ValueTask.FromResult(module),
             SourceProcessingLimits = limits,
         };
 
@@ -237,19 +237,73 @@ public class LiftingChainAdmissionTests
         => "G(0) = 0\nG(a) = {\n    M = load('https://" + ModuleHost + "/m.kat')\n" + ChainLines(links, "    ") + "    M.Z + a\n}\nG(1)";
 
     /// <summary>
-    /// The deferred materialization's resolver charges its own operation: the eager parse admits the program, a short chain
-    /// in the selected branch runs, and a long one is refused at run time with the structural resource error.
+    /// A chain ONLY THE LOADED MODULE DECIDES: each link reads one name <c>S(i)</c>, which a block the root opens provides
+    /// as a constant and the branch's module provides as a member that needs a parameter (<c>S(i) = x(i) + 0</c>). With
+    /// the module treated as empty the names are the constants and nothing lifts; once it is loaded they are its members
+    /// (the branch's own open is consulted first) and the chain is the Θ(N²) one of <see cref="ChainLines"/>.
+    /// </summary>
+    private static string ModuleDecidedChain(int links)
+    {
+        var builder = new StringBuilder("open L\nL = {\n");
+        for (var i = 0; i <= links; i++)
+            builder.Append("    public S").Append(i).Append(" = 0\n");
+        builder.Append("}\nG(0) = 0\nG(a) = {\n    open 'https://" + ModuleHost + "/m.kat'\n    F0 = S0 + 0\n");
+        for (var i = 1; i <= links; i++)
+            builder.Append("    F").Append(i).Append(" = F").Append(i - 1).Append(" + S").Append(i).Append('\n');
+        return builder.Append("    Z + a\n}\nG(1)").ToString();
+    }
+
+    /// <summary>The module of <see cref="ModuleDecidedChain"/>: <c>Z</c>, and one member per link that needs one parameter.</summary>
+    private static string ChainModule(int links)
+    {
+        var builder = new StringBuilder("public Z = 10\n");
+        for (var i = 0; i <= links; i++)
+            builder.Append("public S").Append(i).Append(" = x").Append(i).Append(" + 0\n");
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// The deferred materialization's resolver charges its own operation. The chain here is one only the loaded module
+    /// decides, so the provisional body lifts nothing and the eager parse admits the program whatever its length; a short
+    /// chain in the selected branch runs, and a long one is refused at run time with the structural resource error.
     /// </summary>
     [Fact]
     public async Task AChainInADeferredUnit_IsChargedToItsMaterialization()
     {
         var limits = new SourceProcessingLimits { MaxStaticStructureBytes = SixtyFourMiB };
-        Assert.Empty((await Parser.ParseAsync(DeferredChain(1024), ModuleOptions(limits))).Diagnostics);
+        Assert.Empty((await Parser.ParseAsync(ModuleDecidedChain(1024), ModuleOptions(limits, ChainModule(1024)))).Diagnostics);
 
+        var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(ModuleDecidedChain(64), ModuleOptions(limits, ChainModule(64))));
+        Assert.Equal("11", success.ToDisplayString());
+
+        var refused = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(ModuleDecidedChain(1024), ModuleOptions(limits, ChainModule(1024))));
+        Assert.Contains(refused.Errors, error => error.Code == KatLangErrorCode.StaticStructureLimitExceeded);
+    }
+
+    /// <summary>
+    /// A chain the branch writes itself does not depend on its module, so it is resolved in the branch's PROVISIONAL body,
+    /// eagerly, like a chain in any other branch (the enclosing declarations are classified from that body, owner decision
+    /// 2026-11-16), and its storage is charged to the parse: a short chain is admitted and runs, and a long one is refused
+    /// by the parse with the structural resource error, whether or not a run would select the branch. Before, the eager
+    /// front end lifted nothing in a load-bearing branch, and this refusal waited for the branch's selection. A chain
+    /// over names the module would supply is no different: with the module treated as empty they are inferred parameters.
+    /// </summary>
+    [Fact]
+    public async Task AChainALoadBearingBranchWritesItself_IsChargedToTheParse_LikeAnyOtherBranch()
+    {
+        var limits = new SourceProcessingLimits { MaxStaticStructureBytes = SixtyFourMiB };
+        Assert.Empty((await Parser.ParseAsync(DeferredChain(64), ModuleOptions(limits))).Diagnostics);
         var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(DeferredChain(64), ModuleOptions(limits)));
         Assert.Equal("11", success.ToDisplayString());
 
-        var refused = Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(DeferredChain(1024), ModuleOptions(limits)));
-        Assert.Contains(refused.Errors, error => error.Code == KatLangErrorCode.StaticStructureLimitExceeded);
+        var refused = await Parser.ParseAsync(DeferredChain(1024), ModuleOptions(limits));
+        var refusal = Assert.Single(refused.Diagnostics);
+        Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, refusal.Code);
+        Assert.Null(refusal.Span);
+        var failure = Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(DeferredChain(1024), ModuleOptions(limits)));
+        Assert.Equal(KatLangErrorCode.StaticStructureLimitExceeded, Assert.Single(failure.Errors).Code);
+
+        // The same 1,024 links elaborate under the default envelope, in the parse and in the materialization.
+        Assert.False((await Parser.ParseAsync(DeferredChain(1024), ModuleOptions())).HasErrors);
     }
 }

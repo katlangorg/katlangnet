@@ -21,10 +21,29 @@ internal sealed partial class StaticStructureOperation
         var pending = new Queue<StaticScopeKey>();
         var seen = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
         var prelude = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance) { Queries.Keys.Root };
+        // A UNIT COMPLETES THE FACTS OF EVERY CONTEXT IT PUBLISHED ITSELF. A materialized unit's table starts from the
+        // publication it inherits (_completedBase), and an inherited entry stands for a context this operation did not
+        // publish. One key can name a context in BOTH: the module loader keeps a load-free branch of a clause family by
+        // reference (ModuleLoader.DeferOrKeepBranches), so below such a branch a loaded body is the very object graph the
+        // inherited operation admitted below the unit's placeholder; a static key is per source object under its parent,
+        // and a block written as an open target is keyed at the prelude wherever it is written, so that block and
+        // every context below it have ONE key in the inherited publication and in the unit. The inherited entry there
+        // is the placeholder's, with no body (its provisional resolution was retracted, RetractProvisionalResolutions);
+        // the unit resolved the context itself. So facts are built for a key the table has none for, as before, and
+        // also for a key whose inherited entry has NO BODY and for which THIS operation published a resolved view. An
+        // inherited entry that has a body is never rebuilt, and neither is a context this operation did not resolve;
+        // an operation that inherits nothing (every eager program) decides exactly as before; an entry this
+        // compilation built itself is in `seen` and is never built twice; and the question is asked only of the keys
+        // this operation names, never of the inherited table. The unit's entry overrides the inherited one in the
+        // unit's own layer (CompletedStaticStructures.Add); the inherited publication keeps saying what it knows.
+        bool NeedsFacts(StaticScopeKey at)
+            => graph.Facts(at) is not { } known
+                || known.Body is null && _completedBase is not null
+                    && _publications.TryGetValue(at, out var own) && own.Resolved is not null;
         void Include(StaticScopeKey key)
         {
             var chain = new Stack<StaticScopeKey>();
-            for (var at = key; graph.Facts(at) is null && seen.Add(at); at = at.Parent!)
+            for (var at = key; NeedsFacts(at) && seen.Add(at); at = at.Parent!)
             {
                 chain.Push(at);
                 if (at.Parent is null) break;

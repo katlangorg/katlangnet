@@ -248,6 +248,7 @@ public sealed class KatLangError
             DiagnosticCode.MixedOutputSpreadMarkers => KatLangErrorCode.MixedOutputSpreadMarkers,
             DiagnosticCode.OutputSpreadMarkerOnDeconstructionTarget => KatLangErrorCode.OutputSpreadMarkerOnDeconstructionTarget,
             DiagnosticCode.OutputSpreadReferenceNeedsCall => KatLangErrorCode.OutputSpreadReferenceNeedsCall,
+            DiagnosticCode.DeferredBranchForwardsEnclosingParameter => KatLangErrorCode.DeferredBranchForwardsEnclosingParameter,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

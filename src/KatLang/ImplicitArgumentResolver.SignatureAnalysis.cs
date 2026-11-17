@@ -565,9 +565,25 @@ internal static partial class ImplicitArgumentResolver
 
         private readonly Dictionary<(StaticScopeKey Key, string Name), CallableSignature> _signatures = [];
 
+        /// <summary>
+        /// The selection this one was made INSIDE: a deferred branch's provisional body is selected on its own, while the
+        /// rewrite of the resolution around it stands at its family (<see cref="ResolveProvisionalBranch"/>), so its
+        /// rewrite reads its own bodies here and every body around it in the enclosing selection, whose facts were final
+        /// before this one was made. Contexts are disjoint (a body is analyzed by exactly one of the two), so the chain
+        /// never chooses between two answers. Null for a resolution's own selection.
+        /// </summary>
+        internal SelectedSignatures? Enclosing { get; init; }
+
         /// <summary>The selected fact of the open body in context <paramref name="key"/>, read through the analysis's region aliases.</summary>
         internal bool TryGetFact(StaticScopeKey key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out SignatureFact fact)
-            => _facts.TryGetValue(_aliases.Resolve(key), out fact);
+        {
+            if (_facts.TryGetValue(_aliases.Resolve(key), out fact))
+                return true;
+            if (Enclosing is { } enclosing)
+                return enclosing.TryGetFact(key, out fact);
+            fact = null;
+            return false;
+        }
 
         /// <summary>
         /// The selected signature of the open body in context <paramref name="key"/>, displayed as <paramref name="name"/>: ONE
@@ -578,7 +594,7 @@ internal static partial class ImplicitArgumentResolver
         {
             var resolved = _aliases.Resolve(key);
             if (!_facts.TryGetValue(resolved, out var fact))
-                return null;
+                return Enclosing?.SignatureOf(key, name);
             // The fact's own signature under this name: one pattern list, the very one the selection composed with.
             if (!_signatures.TryGetValue((resolved, name), out var signature))
                 _signatures.Add((resolved, name), signature = fact.Signature.WithName(name));
@@ -652,6 +668,9 @@ internal static partial class ImplicitArgumentResolver
         ResolutionRun run)
     {
         var operation = run.StructuralOperation;
+        // A selection made while a rewrite stands at a deferred branch (ResolveProvisionalBranch): the selection of the
+        // resolution around it, whose facts are final. Null for a resolution's own selection.
+        var enclosing = run.Selected;
         var aliases = new SignatureKeyAliases(operation);
         var analysis = run.Analysis = new SignatureAnalysis { Aliases = aliases };
         try
@@ -685,9 +704,10 @@ internal static partial class ImplicitArgumentResolver
                 {
                     if (equationIndex.TryGetValue(aliases.Resolve(guard), out var linkIndex))
                         guardIndex = linkIndex;
-                    // A link this resolution did not analyze (an earlier operation's) has a FINAL class: a calculation keeps
-                    // the read, a runtime reference drops it.
-                    else if (!FinalLinkIsCalculation(guard, run))
+                    // A link this selection did not analyze (an earlier operation's, or one of the selection this one
+                    // was made inside) has a FINAL class: a calculation keeps the read, a runtime reference drops it.
+                    else if (!(enclosing is not null && enclosing.TryGetFact(guard, out var decided)
+                        ? decided.IsNonempty : FinalLinkIsCalculation(guard, run)))
                         continue;
                 }
 
@@ -697,10 +717,14 @@ internal static partial class ImplicitArgumentResolver
                     continue;
                 }
 
-                // A callee whose signature is FINAL here: a registry member, a family, a closed body, an earlier completion
-                // — named, like every signature the rewrite reads, by the endpoint's display name. An unnameable family
-                // contributes nothing to a signature (the rewrite reports it).
-                if (FinalLiftingSignature(endpoint, endpoint.DisplayName, run).Signature is { } external)
+                // A callee whose signature is FINAL here: a registry member, a family, a closed body, an earlier completion,
+                // an open body of the selection this one was made inside (its SELECTED signature, exactly what the
+                // rewrite reads: TargetOf) — named, like every signature the rewrite reads, by the endpoint's display name.
+                // An unnameable family contributes nothing to a signature (the rewrite reports it).
+                var final = endpoint.Key is { } outer && enclosing?.SignatureOf(outer, endpoint.DisplayName) is { } selectedOutside
+                    ? selectedOutside
+                    : FinalLiftingSignature(endpoint, endpoint.DisplayName, run).Signature;
+                if (final is { } external)
                     list.Add(new SignatureEquationReference(-1, external, endpoint.Identity, guardIndex, reference, displayName));
             }
 
@@ -759,13 +783,14 @@ internal static partial class ImplicitArgumentResolver
                 refusal.Outcome))
             .ToArray();
         if (refusals.Length != 0)
-            return new SelectedSignatures(facts, refusals, aliases);
+            return new SelectedSignatures(facts, refusals, aliases) { Enclosing = enclosing };
 
         // A record (including two optional value-type spans) and its array slot need two 64-byte ledger slots per body,
         // plus one for the array header. Charge construction work here; the reach walk charges its own work separately.
         operation.Queries.Resources.Metadata(2L * analysis.Order.Count + 1, work: analysis.Order.Count, cancellationToken: run.CancellationToken);
         return new SelectedSignatures(facts, refusals, aliases)
         {
+            Enclosing = enclosing,
             Analyzed = [.. analysis.Order.Select(static body => new AnalyzedBody(body.Key, body.Name, body.Span, body.ImportSite, body.Written))],
         };
     }
@@ -995,6 +1020,10 @@ internal static partial class ImplicitArgumentResolver
         {
             foreach (var branch in conditional.Branches)
             {
+                // A deferred branch's provisional body is no body of THIS selection: it is analyzed, selected and rewritten
+                // on its own when the rewrite reaches its family (ResolveProvisionalBranch), so the analysis and the
+                // rewrite of each selection walk the same bodies (THE REACH INVARIANT), and a group refused inside a
+                // provisional body never refuses the program around it.
                 if (branch.Body.DeferredRegion is not null)
                     continue;
                 AnalyzeAlgorithm(branch.Body, parentParamMap, forwardable, isRoot: false,

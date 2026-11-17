@@ -378,4 +378,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.OutputSpreadReferenceNeedsCall"/>.</summary>
     OutputSpreadReferenceNeedsCall = 91,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/>, reported when the branch is selected.</summary>
+    DeferredBranchForwardsEnclosingParameter = 92,
 }

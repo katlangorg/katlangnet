@@ -282,9 +282,13 @@ internal sealed class OpenProviderValidator : AstWalker
     protected override void VisitOpenExpression(Expr expression)
     {
         // An inline open target starts a separate region at the prelude, without the
-        // importing owner's declarations (ParameterDetector.ProcessOpenExprs).
+        // importing owner's declarations (ParameterDetector.ProcessOpenExprs): at the prelude
+        // level that carries the facts answering for a block head, which is the chain's root
+        // in an eagerly elaborated program. A block of a materialized deferred unit is entered
+        // with the unit's own structure, never with its placeholder's bodiless entry in the
+        // eager publication, so its own opens are validated like any other body's.
         var saved = _scope;
-        _scope = _scope.Root;
+        _scope = ElaboratedScopeLookup.OpenBlockHeadLevel(_scope);
         try { base.VisitOpenExpression(expression); }
         finally { _scope = saved; }
     }

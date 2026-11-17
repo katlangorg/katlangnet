@@ -76,9 +76,11 @@ public class WideSemanticContextComplexityTests
     /// <summary>
     /// W root properties and K clause families whose second branch owns an unresolved load (a
     /// DEFERRED region): no deferred branch copies the visible map. In each of the two B3-5★ phases
-    /// the root extends the empty map by its W + K signatures — 2(W + K) entries, nothing written
-    /// afterwards; a copying snapshot wrote W + K per deferred branch (and kept every copy alive in
-    /// the tree).
+    /// the root extends the empty map by its W + K signatures — 2(W + K) entries — and each deferred
+    /// branch's PROVISIONAL body, which is resolved on its own selection (the enclosing declarations
+    /// are classified from it), extends the map it sees by its ONE declaration, the holder <c>m</c>,
+    /// once per phase: 2K entries more, never W + K per branch. A copying snapshot wrote W + K per
+    /// deferred branch (and kept every copy alive in the tree).
     /// </summary>
     [Theory]
     [InlineData(300, 200)]
@@ -101,7 +103,7 @@ public class WideSemanticContextComplexityTests
         _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
 
         Assert.Empty(diagnostics);
-        Assert.Equal(2 * (width + families), observations.ContextEntriesWritten);
+        Assert.Equal(2 * (width + families) + 2 * families, observations.ContextEntriesWritten);
     }
 
     // ── Detector: parameter ownership and branch-body region keys ────────────

@@ -182,6 +182,9 @@ internal static partial class ImplicitArgumentResolver
         run.CommitDeferredChecks();
         RequireEveryAnalyzedBodyRewritten(run);
         run.ReleaseLevels();
+        // The provisional bodies of deferred branches are resolved in the tree only (ResolveProvisionalBranch): their
+        // resolved views are no completed facts, and the publication the caller builds next must not hold them.
+        structuralOperation.RetractProvisionalResolutions();
         return resolved;
     }
 
@@ -253,6 +256,13 @@ internal static partial class ImplicitArgumentResolver
 
         /// <summary>The analysis in progress (B3-5★): non-null only while <see cref="SelectSignatures"/> walks the input.</summary>
         public SignatureAnalysis? Analysis;
+
+        /// <summary>
+        /// How many provisional resolutions of deferred branches the walk is inside (<see cref="ResolveProvisionalBranch"/>):
+        /// nonzero while a placeholder's provisional body is selected and rewritten. A dimension of the region memo
+        /// (<see cref="AlgorithmRegionKey"/>), nothing else.
+        /// </summary>
+        public int ProvisionalResolutions;
 
         /// <summary>
         /// The selected Q8 facts of this resolution (B3-5★), decided before the rewrite starts: every open body's final
@@ -667,7 +677,10 @@ internal static partial class ImplicitArgumentResolver
     /// (<see cref="FrontEndRegionKeys.ClosedBranchSpecification"/>) — the head's whole structure,
     /// literal POSITIONS included, when the body is shaped like a bare-forwarding row
     /// (<see cref="FrontEndRegionKeys.BareForwardingBranchHead"/>, <see cref="HasLoneBareRowShape"/>);
-    /// and the reporting mode. Two
+    /// the reporting mode; and whether the rewrite belongs to a deferred branch's PROVISIONAL resolution
+    /// (<see cref="ResolveProvisionalBranch"/>): its processed bodies are views of the tree only, retracted from the
+    /// operation when the run ends, so one is never served to a reach outside a provisional resolution, nor the reverse,
+    /// whatever sink either was given. Two
     /// reaches with equal keys observe identical inputs, whatever path led to them and whatever
     /// else the property loop rewrote in between.
     /// </summary>
@@ -678,6 +691,7 @@ internal static partial class ImplicitArgumentResolver
         CanonicalNameSet ForwardableCollectingNames,
         int? ClosedSpecification,
         bool ReportsDiagnostics,
+        bool Provisional,
         OpenLevel? Opens)
     {
         public bool Equals(AlgorithmRegionKey? other)
@@ -688,6 +702,7 @@ internal static partial class ImplicitArgumentResolver
                 && ForwardableCollectingNames.Equals(other.ForwardableCollectingNames)
                 && ClosedSpecification == other.ClosedSpecification
                 && ReportsDiagnostics == other.ReportsDiagnostics
+                && Provisional == other.Provisional
                 && ReferenceEquals(Opens, other.Opens);
 
         public override int GetHashCode()
@@ -698,6 +713,7 @@ internal static partial class ImplicitArgumentResolver
                 ForwardableCollectingNames.GetHashCode(),
                 ClosedSpecification,
                 ReportsDiagnostics,
+                Provisional,
                 Opens is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Opens));
     }
 
@@ -1986,6 +2002,7 @@ internal static partial class ImplicitArgumentResolver
                 : HasLoneBareRowShape(alg) ? run.BranchContexts.BareForwardingHeadId(branchContext.Pattern)
                 : run.BranchContexts.ClosedSpecificationId(branchContext.Pattern),
             ReportsDiagnostics: diagnostics is not null,
+            Provisional: run.ProvisionalResolutions > 0,
             // The open chain is an input exactly when a free name reaches it: one the owner walk
             // (the map and the prelude) leaves undecided.
             OpensReadBy(freeNames, parentParamMap, run));
@@ -2401,15 +2418,20 @@ internal static partial class ImplicitArgumentResolver
                 if (branch.Body.DeferredRegion is { } region)
                 {
                     if (canonical is not null) continue;
-                    if (region.Structure is { } structural)
+                    if (region.Structure is not { } structural)
+                        throw new ArgumentException("Deferred resolution requires detection's shared structural context.", nameof(conditional));
+                    // B2c: a deferred module region. Its provisional body is resolved here like any other branch body,
+                    // as if the modules it loads on demand were empty and with nothing reported, on its own selection
+                    // (ResolveProvisionalBranch): the enclosing classification is made from a body that holds every
+                    // forwarding the modules do not decide. The view carries the region forked with the bindings the
+                    // demand-time run forwards from, once per family context.
+                    branches!.Add(branch with
                     {
-                        branches!.Add(branch with { Body = branch.Body with
-                        {
-                            DeferredRegion = region.WithStructure(structural with { Forwardable = forwardable }),
-                        }});
-                        continue;
-                    }
-                    throw new ArgumentException("Deferred resolution requires detection's shared structural context.", nameof(conditional));
+                        Body = ResolveProvisionalBranch(
+                            conditional, publicationKey, index, region.WithStructure(structural with { Forwardable = forwardable }),
+                            propertyName, parentParamMap, forwardable, observations, run),
+                    });
+                    continue;
                 }
 
                 // M4: the body is rewritten through the run's region memo — once per (body,
@@ -3124,7 +3146,7 @@ internal static partial class ImplicitArgumentResolver
 
     // `'a'`, `'a' and 'b'`, `'a', 'b', and 'c'` — rendered within the rendered-name bound, reading
     // only the names it shows; text that fits is exactly the unbounded spelling.
-    private static string FormatQuotedNameList(IReadOnlyList<string> values)
+    internal static string FormatQuotedNameList(IReadOnlyList<string> values)
     {
         var sink = new Rendering.BoundedDiagnosticSink(ExprNameRenderer.MaxRenderedNameLength);
         for (var index = 0; index < values.Count; index++)
@@ -3340,7 +3362,7 @@ internal static partial class ImplicitArgumentResolver
         if (target.Signature.Signature is not { } contract)
         {
             ReportUnforwardableCallable(row, writtenName, target, memos);
-            return alg;
+            return LeftAsWritten(alg, row, paramMap, memos);
         }
 
         var sources = branchContext is null
@@ -3362,7 +3384,7 @@ internal static partial class ImplicitArgumentResolver
         if (unforwardable is not null)
         {
             ReportUnforwardableParameters(row, writtenName, unforwardable, branchContext?.BranchName, memos);
-            return alg;
+            return LeftAsWritten(alg, row, paramMap, memos);
         }
 
         // Nothing to forward: every callee parameter is a collector that no binding of its name
@@ -3380,6 +3402,23 @@ internal static partial class ImplicitArgumentResolver
         {
             Output = [SpreadIfMarked(row, memos.SynthesizedImplicitCall(LoneRowCall(WithProcessedBlockHead(row, paramMap, memos), arguments)), paramMap, memos)],
         };
+    }
+
+    /// <summary>
+    /// A bare-forwarding row that forwards nothing because its callee cannot be supplied (Q-77): the row is LEFT AS
+    /// WRITTEN, no call synthesized. A block its member path is headed by (<c>{ … }.K</c>) is still a body of its own,
+    /// which the analysis recorded (D1a), so it is processed like the head of a completed row
+    /// (<see cref="WithProcessedBlockHead"/>): every analyzed body is rewritten whatever its row's verdict (THE REACH
+    /// INVARIANT). A row with no block head is the same body object, as before.
+    /// <para>The verdict is a reported front-end error in every reporting resolution, where the unprocessed head used to
+    /// fail the reach invariant instead of leaving the report standing. A deferred branch's provisional body reaches it
+    /// with nothing reported (<see cref="ResolveProvisionalBranch"/>: the callee's missing parameter can be a name only
+    /// the branch's module binds), and so does a document elaborated without its modules.</para>
+    /// </summary>
+    private static Algorithm.User LeftAsWritten(Algorithm.User alg, Expr row, SignatureMap paramMap, ResolverWalkMemos memos)
+    {
+        var processed = WithProcessedBlockHead(row, paramMap, memos);
+        return ReferenceEquals(processed, row) ? alg : alg with { Output = [processed] };
     }
 
     /// <summary>The operation's OD-D formation verdict on the body the walk is completing (its level's context), with no local cycle walk.</summary>

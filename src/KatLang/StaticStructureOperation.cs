@@ -50,6 +50,93 @@ internal sealed partial class StaticStructureOperation
     private Dictionary<StaticScopeKey, StaticScopeKey>? _detectedProcessing;
     private int _detectedProcessingCharged;
 
+    // PROVISIONAL RESOLUTIONS (B2c; owner decision 2026-11-16). Implicit-argument resolution resolves a deferred branch's
+    // provisional body in this operation, so that the tree holds its forwardings and the enclosing declarations are
+    // classified from them (ImplicitArgumentResolver.ResolveProvisionalBranch). The resolved views that resolution
+    // publishes, and the region aliases it adds, exist for the resolution itself — its reach check, its alias targets
+    // and its structure cells read them — and for nothing after it: PROVISIONAL FACTS ARE NOT COMPLETED FACTS (B3-2★:
+    // a unit that has not materialized publishes no completion). When the run that made them ends
+    // (RetractProvisionalResolutions) the operation takes back the two things through which a later reader could be
+    // HANDED a provisional view:
+    //   - the resolved PUBLICATIONS first made inside a provisional resolution (_provisionalPublications): each such
+    //     context keeps its detected view and loses its resolved one, and the source-to-resolved-view entry that
+    //     recorded it (_resolvedSources) goes with it;
+    //   - the REGION ALIASES recorded inside one (_provisionalRegionAliases), through which a context with no
+    //     publication of its own reads another's.
+    // It leaves three things, none of which a reader after the run can observe a provisional view through:
+    //   - the VIEW-TO-SOURCE entries of the provisional bodies (_sources). That map is keyed BY the view: it tells a
+    //     caller that already holds a body which admitted definition it is a view of (the placeholder bodies the tree
+    //     holds are such views) and hands a view to no one. Freeze exports the detected and resolved views of the
+    //     contexts that still hold a resolved view, and no other entry;
+    //   - STRUCTURE CELLS created or completed from a provisional view (_structureCells). A cell is keyed by its
+    //     terminal context. Publish, StructureCell and CompletePendingStructureCells read cells only while a run
+    //     rewrites, before the retraction; after it Freeze alone reads them, for the contexts that still hold a
+    //     resolved view. A retracted context's cell stays reachable only from the aliases of the provisional body
+    //     itself, in the tree;
+    //   - STATIC-LEDGER CHARGES, cumulative by policy: a limit observes the work that was done.
+    // So CompleteLookups finds no resolved view for those contexts and builds a placeholder's facts from its DETECTED
+    // view through its provisional channel, and the frozen continuation holds no provisional publication, view, alias
+    // or cell: a materialization cannot observe one. This rests on every such context being inside its placeholder —
+    // unreachable from outside it — or a block written as an open target inside it, which is keyed at the root level
+    // in the placeholder and in the materialized body alike and is why a fresh region key alone would not be enough.
+    // The region memo keys the provisional mode, so no reach outside a provisional resolution is ever aliased to a
+    // context processed inside one.
+    private List<StaticScopeKey>? _provisionalPublications;
+    private List<StaticScopeKey>? _provisionalRegionAliases;
+    private int _provisionalResolutions;
+
+    /// <summary>
+    /// Opens a PROVISIONAL RESOLUTION: until the returned scope is disposed, every resolved view this operation publishes
+    /// and every region alias it records is provisional, and is taken back by <see cref="RetractProvisionalResolutions"/>.
+    /// Scopes nest (a provisional body holds no placeholder of its own, but the count costs nothing).
+    /// </summary>
+    internal ProvisionalResolutionScope EnterProvisionalResolution()
+    {
+        Queries.EnsureUsable();
+        _provisionalResolutions++;
+        return new(this);
+    }
+
+    internal readonly struct ProvisionalResolutionScope(StaticStructureOperation operation) : IDisposable
+    {
+        public void Dispose() => operation._provisionalResolutions--;
+    }
+
+    /// <summary>
+    /// Takes back what the provisional resolutions of the run that is ending published (see the field comment): each
+    /// such context keeps its detected view and loses its resolved one (and the source-to-resolved-view entry that
+    /// recorded it), and each such region alias is forgotten. Nothing else is taken back: the view-to-source entries,
+    /// the structure cells and the ledger charges of those resolutions stay, unobservable for the reasons given there.
+    /// Called once the run has completed its own reads of them (pending targets, structure cells, the reach check) and
+    /// before the completed lookup facts are built; a run that resolved no deferred branch pays nothing.
+    /// </summary>
+    internal void RetractProvisionalResolutions()
+    {
+        Queries.EnsureUsable();
+        if (_provisionalResolutions != 0)
+            throw new InvalidOperationException("A provisional resolution cannot be retracted while it is in progress.");
+        if (_provisionalPublications is { } publications)
+        {
+            foreach (var scope in publications)
+            {
+                var publication = _publications[scope];
+                if (publication.Resolved is not { } view) continue;
+                publication.Resolved = null;
+                if (_resolvedSources.TryGetValue(publication.Source, out var recorded) && ReferenceEquals(recorded, view))
+                    _resolvedSources.Remove(publication.Source);
+            }
+
+            _provisionalPublications = null;
+        }
+
+        if (_provisionalRegionAliases is { } aliases)
+        {
+            foreach (var reach in aliases)
+                _regionAliases!.Remove(reach);
+            _provisionalRegionAliases = null;
+        }
+    }
+
     /// <summary>The bodies of this admission more than one path reaches; null when none is, and for a deferred unit.</summary>
     internal SharedBodyCensus? SharedBodies { get; init; }
 
@@ -250,6 +337,8 @@ internal sealed partial class StaticStructureOperation
         var existing = _sources.GetValueOrDefault(body) ?? _frozenViews.GetValueOrDefault(body);
         if (existing is not null && !ReferenceEquals(existing, publication.Source))
             throw new InvalidOperationException("A published body cannot represent two different raw sources.");
+        if (stage == StaticPublicationStage.Resolved && _provisionalResolutions > 0 && slot is null)
+            (_provisionalPublications ??= []).Add(scope);
         slot = body;
         if (!_sources.ContainsKey(body)) Queries.Resources.Metadata(2);
         _sources[body] = publication.Source;
@@ -382,7 +471,11 @@ internal sealed partial class StaticStructureOperation
             return;
         _regionAliases ??= new(ReferenceEqualityComparer.Instance);
         if (_regionAliases.TryAdd(reach, processed))
+        {
             Queries.Resources.Metadata(2);
+            if (_provisionalResolutions > 0)
+                (_provisionalRegionAliases ??= []).Add(reach);
+        }
     }
 
     /// <summary>

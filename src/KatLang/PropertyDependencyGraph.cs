@@ -2049,7 +2049,7 @@ internal static class PropertyDependencyGraphBuilder
             // nothing new, so skip BEFORE cloning or merging its potentially wide summary.
             if (!contributed.Add(key))
                 continue;
-            var contribution = CollectBranchBodySummarySeed(branch, binderNames, key, sharedMemo, observations, branchContext);
+            var contribution = CollectBranchBodySummarySeed(branch.Body, binderNames, key, sharedMemo, observations, branchContext);
             observations?.RecordBranchSummaryContribution(contribution.RequiredAncestorOwnedParameterNames.Count
                 + contribution.VisiblePropertyDependencyNames.Count + contribution.PendingReferences.Count
                 + contribution.OwnerQualifiedParameters.Count);
@@ -2069,19 +2069,19 @@ internal static class PropertyDependencyGraphBuilder
     /// (memo misses) only, like <see cref="CollectSharedAlgorithmSummarySeed"/>.
     /// </summary>
     private static SummarySeed CollectBranchBodySummarySeed(
-        CondBranch branch,
+        Algorithm body,
         IReadOnlySet<string> binderNames,
         BranchBodySummaryKey key,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
         CompletedStructureContext completedContext)
     {
-        completedContext = sharedMemo.SummaryRegion(completedContext, branch.Body);
-        completedContext = sharedMemo.SharedRegionContext(completedContext, branch.Body);
+        completedContext = sharedMemo.SummaryRegion(completedContext, body);
+        completedContext = sharedMemo.SharedRegionContext(completedContext, body);
         key = key with { Scope = completedContext.Key, Facts = completedContext.Facts };
         var independentKey = key with { Scope = null, Facts = null };
         var independent = sharedMemo.IndependentBranchSummaries ??= new();
-        var canShare = sharedMemo.BranchParametersAgree(branch.Body, binderNames, completedContext);
+        var canShare = sharedMemo.BranchParametersAgree(body, binderNames, completedContext);
         if (canShare && independent.TryGetValue(independentKey, out var shared)) return shared.Clone();
         var completedSummaries = sharedMemo.CompletedBranchBodySummaries ??= new();
         if (completedSummaries.TryGetValue(key, out var stored))
@@ -2093,11 +2093,48 @@ internal static class PropertyDependencyGraphBuilder
         var uses = sharedMemo.ContextUses;
         if (!canShare) sharedMemo.UseContext();
         observations?.RecordDependencyBranchBodySummaryComputation();
-        var seed = CollectSummarySeed(branch.Body, CreateNameSet(binderNames), sharedMemo, observations, completedContext);
+        var seed = CollectSummarySeed(body, CreateNameSet(binderNames), sharedMemo, observations, completedContext);
         if (canShare && uses == sharedMemo.ContextUses) independent.Add(independentKey, seed.Clone());
         else completedSummaries[key] = seed.Clone();
         return seed;
     }
+
+    /// <summary>
+    /// ONE branch body's contribution to its family's summary, exactly as the family's own walk computes it
+    /// (<see cref="CollectSummarySeed(Algorithm.Conditional, IReadOnlySet{string}, SummaryMemo, FrontEndTraversalObservations?, CompletedStructureContext)"/>):
+    /// the body summarized under the binder names of <paramref name="pattern"/> in its completed context
+    /// <paramref name="branchContext"/>, through the same branch-body memo, so a body the memo already holds is not
+    /// walked again. The binders are stripped; what the seed still carries is what the body requires from OUTSIDE its
+    /// family. The caller owns the returned seed.
+    /// <para>The one caller outside the family walk is a deferred module region's materialization (B2c, owner decision
+    /// 2026-11-15 "refuse at load"): the family's walk summarized the branch's PROVISIONAL body before its module
+    /// existed, and the materialized body's contribution is compared with what the family charged then
+    /// (<see cref="PropertyExposureResolver.DeferredBranchContext"/>).</para>
+    /// </summary>
+    internal static SummarySeed BranchBodyContribution(
+        Algorithm body,
+        Pattern pattern,
+        SummaryMemo sharedMemo,
+        FrontEndTraversalObservations? observations,
+        CompletedStructureContext branchContext)
+    {
+        var binders = sharedMemo.BranchContexts.NamesOf(pattern);
+        return CollectBranchBodySummarySeed(body, binders.Names,
+            new BranchBodySummaryKey(body, binders.Id, branchContext.Key, branchContext.Facts), sharedMemo, observations, branchContext);
+    }
+
+    /// <summary>
+    /// THE SUBSET PREDICATE over settled contributions: the requirements of <paramref name="contribution"/> that
+    /// <paramref name="charged"/> does not hold; the empty set exactly when the contribution is a subset. Elements are
+    /// compared by OWNER-QUALIFIED identity, the identity every FE-4a requirement set is built from
+    /// (<see cref="PropertyExposureResolver.Requirement"/>: the name AND the owning scope by reference), never by
+    /// spelling: a parameter <c>y</c> of an inner owner is not charged by a same-named <c>y</c> of an outer one.
+    /// Either operand may belong to another run's interner (a deferred materialization compares its own run's
+    /// contribution with the eager run's); <paramref name="sets"/> adopts it by its elements, whose owner scopes are
+    /// unchanged, so nothing is copied beyond the interner's one adoption per foreign set.
+    /// </summary>
+    internal static RequirementSet UnchargedRequirements(RequirementSet contribution, RequirementSet charged, RequirementSetInterner sets)
+        => contribution.IsEmpty ? default : sets.Except(contribution, charged);
 
     private static SummarySeed CollectSummarySeed(
         IReadOnlyList<Expr> expressions,

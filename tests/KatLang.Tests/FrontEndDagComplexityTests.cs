@@ -1480,10 +1480,19 @@ public class FrontEndDagComplexityTests
             Assert.Equal([1m], result.Value);
             Assert.Equal(1, downloads);
             Assert.Equal(depth * depth, demandObservations.DetectorBranchBodyRegionExpansions);
-            Assert.Equal(depth, demandObservations.ResolverBranchBodyRegionExpansions);
+            // The resolver now does what the detector does: ONE region for each materialized body, plus the
+            // provisional resolution of the two placeholders that body defers again, each a chain of the levels
+            // below it (the provisional body is resolved as if its modules were empty, so that the enclosing
+            // classification holds its forwardings: ImplicitArgumentResolver.ResolveProvisionalBranch). Level k
+            // of the selected path costs 1 + 2 * (depth - k): depth * depth in all, the detector's count above,
+            // never the 2^depth paths.
+            Assert.Equal(depth * depth, demandObservations.ResolverBranchBodyRegionExpansions);
             Assert.Equal(depth + 2, demandObservations.ExposureAlgorithmExpansions);
             Assert.Equal(4 * depth, demandObservations.LoaderWalkExpansions);
-            Assert.Equal(depth * (depth - 1), demandObservations.DependencyBranchBodySummaryComputations);
+            // depth * (depth - 1) for the nested provisional families of every materialized level, plus ONE per
+            // materialization: the materialized body's own contribution, which is compared with what its family
+            // charged eagerly (refuse at load, DeferredBranchForwardingRefusalTests). Linear in the selected path.
+            Assert.Equal(depth * depth, demandObservations.DependencyBranchBodySummaryComputations);
             Console.WriteLine($"Demand depth={depth}: detector={demandObservations.DetectorBranchBodyRegionExpansions}, "
                 + $"resolver={demandObservations.ResolverBranchBodyRegionExpansions}, exposure={demandObservations.ExposureAlgorithmExpansions}, "
                 + $"loader={demandObservations.LoaderWalkExpansions}, summaries={demandObservations.DependencyBranchBodySummaryComputations}");

@@ -9,7 +9,8 @@ namespace KatLang;
 /// initial module elaboration does not fetch, parse, elaborate, or budget-charge anything
 /// under it, and the eager front end elaborates it only PROVISIONALLY (the same walks with
 /// the diagnostics sink withheld, so binder and ancestor-parameter references become
-/// <see cref="Expr.Param"/>s for the exposure summary channel while nothing that could
+/// <see cref="Expr.Param"/>s and implicit arguments are lifted and forwarded as if the deferred
+/// modules were empty, for the exposure summary channel, while nothing that could
 /// depend on the deferred modules' members is reported). When evaluation SELECTS the branch,
 /// the region is materialized: its modules are loaded through the ordinary loader (same
 /// cache, budget, policy, cycle detection, and diagnostics), and the raw body is then
@@ -785,8 +786,20 @@ internal sealed class DeferredModuleRegion
             OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite, cancellationToken: cancellationToken);
             InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite, cancellationToken);
             if (diagnostics.HasReportedErrors) return null;
-            var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations, modules, cancellationToken);
+            var exposed = PropertyExposureResolver.ElaborateDeferredBranch(
+                resolved, Exposure!, structural.Pattern, out var uncharged, observations, modules, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            // REFUSE AT LOAD (owner decisions 2026-11-15 and 2026-11-16): the materialized body requires an enclosing
+            // binding the family's eager classification never charged. That classification was made from the
+            // provisional body with its implicit arguments resolved as if this branch's modules were empty, so the
+            // requirement is one the loaded modules decided. The comparison alone refuses: nothing asks which callee
+            // received the binding. Nothing is frozen or published, so the attempt is the ordinary unpublished,
+            // uncached failure: every later selection is judged, and refused, again.
+            if (uncharged.Count != 0)
+            {
+                ReportUnchargedEnclosingParameters(resolved, structural.Pattern, uncharged, diagnostics);
+                return null;
+            }
             continuation = operation.Freeze(cancellationToken);
             return exposed;
         }
@@ -805,6 +818,106 @@ internal sealed class DeferredModuleRegion
             return null;
         }
     }
+
+    /// <summary>
+    /// Reports <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/> once per enclosing binding the
+    /// materialized body requires and its family never charged (<c>PropertyExposureResolver.UnchargedByFamily</c>;
+    /// the list is never empty here, and every entry refuses). The report is POSITIONED at the first reference of the
+    /// body, in source order, whose synthesized call passes that binding
+    /// (<see cref="ImplicitArgumentResolver.FindEnclosingForwards"/>) and names that reference and the explicit call
+    /// (a reference with no spelling as a name path, <c>{ … }.K</c>, keeps its position and is not named). A
+    /// reference inside imported content has no location of its own (ONE COORDINATE SPACE PER RESULT), and a binding
+    /// no synthesized call passes has no reference at all: both are positioned like the region's other failures, at
+    /// the import site of the module the family sits in, otherwise at the branch's first load directive. A position is
+    /// never a condition of the refusal.
+    /// <para>THE WORDING follows what the eager classification could know. Ordinarily it was made from the provisional
+    /// body with its implicit arguments resolved, so the requirement is one the loaded modules decided and the report
+    /// says so. A region whose provisional body was LEFT UNRESOLVED (its own signature selection was refused:
+    /// <see cref="StaticStructureDeferredContext.UnresolvedProvisionalBodies"/>) charged none of its forwardings, so the
+    /// binding may be one the program's OWN callable receives: the report then says why the forwarding was not decided
+    /// before the load and names the refused bodies, and never that a module provides the reference. Outcome, code,
+    /// position and repair are the same in both.</para>
+    /// </summary>
+    private void ReportUnchargedEnclosingParameters(Algorithm resolved, Pattern pattern,
+        IReadOnlyList<PropertyExposureResolver.Requirement> uncharged, DiagnosticBag diagnostics)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var requirement in uncharged)
+            names.Add(requirement.Name);
+        var forwards = ImplicitArgumentResolver.FindEnclosingForwards(resolved, pattern, names);
+        LoadElaborationGuard.TryFindFirstUnresolvedLoad(RawBody, out var loadSite);
+        var unresolvedBodies = Structure?.UnresolvedProvisionalBodies;
+        // One report per binding: a reference reads the nearest binding of a name, so one name is one binding here.
+        foreach (var requirement in uncharged)
+        {
+            if (!names.Remove(requirement.Name))
+                continue;
+            var found = forwards.TryGetValue(requirement.Name, out var forward);
+            diagnostics.Report(
+                DiagnosticCode.DeferredBranchForwardsEnclosingParameter,
+                (found ? forward.Callee : null, unresolvedBodies) switch
+                {
+                    ({ } callee, null) => ForwardedEnclosingParameterMessage(requirement.Name, callee, forward.ExplicitCall),
+                    (null, null) => UnchargedEnclosingParameterMessage(requirement.Name),
+                    ({ } callee, { } refused) => UnresolvedBranchForwardedEnclosingParameterMessage(
+                        requirement.Name, callee, forward.ExplicitCall, refused),
+                    (null, { } refused) => UnresolvedBranchUnchargedEnclosingParameterMessage(requirement.Name, refused),
+                },
+                (found ? forward.Span : null) ?? ImportSite ?? loadSite);
+        }
+    }
+
+    /// <summary>
+    /// The wording of <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/> at a reference: the
+    /// reference that would receive the binding as the branch writes it (<paramref name="callee"/>: a member of the
+    /// loaded module, or a declaration of the branch that reaches one), the enclosing parameter, and the repair, the
+    /// explicit call (<paramref name="explicitCall"/>; null when an argument has no simple spelling).
+    /// </summary>
+    internal static string ForwardedEnclosingParameterMessage(string parameter, string callee, string? explicitCall)
+        => $"'{callee}' would receive the enclosing parameter '{parameter}' implicitly through a module this branch loads on demand. "
+            + "A branch that loads its module on demand passes enclosing parameters to what its module provides only explicitly: "
+            + (explicitCall is null ? $"pass '{parameter}' to '{callee}' as a written argument." : $"write {explicitCall}.");
+
+    /// <summary>
+    /// The wording of <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/> without a reference to
+    /// name: the reference that would receive the binding has no spelling as a name path, or no reference of the
+    /// branch passes the binding as an argument (what the loaded module provides made the branch depend on it another
+    /// way). It names the enclosing parameter and the same repair.
+    /// </summary>
+    internal static string UnchargedEnclosingParameterMessage(string parameter)
+        => $"This branch would depend on the enclosing parameter '{parameter}' implicitly through a module it loads on demand. "
+            + "A branch that loads its module on demand passes enclosing parameters to what its module provides only explicitly: "
+            + $"pass '{parameter}' as a written argument where the branch uses what its module provides.";
+
+    /// <summary>
+    /// The wording of <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/> at a reference of a branch
+    /// whose PROVISIONAL BODY WAS LEFT UNRESOLVED (<paramref name="unresolvedBodies"/>:
+    /// <see cref="StaticStructureDeferredContext.UnresolvedProvisionalBodies"/>). No forwarding of such a branch was
+    /// charged before its module loaded, so <paramref name="callee"/> may be a callable the program declares itself: the
+    /// text says nothing about who provides it. It names the reference as written, the enclosing parameter, why the
+    /// forwarding was not decided earlier (the refused bodies, in the bounded list form of the selection's own report),
+    /// and the same repair as <see cref="ForwardedEnclosingParameterMessage"/>.
+    /// </summary>
+    internal static string UnresolvedBranchForwardedEnclosingParameterMessage(
+        string parameter, string callee, string? explicitCall, IReadOnlyList<string> unresolvedBodies)
+        => $"'{callee}' would receive the enclosing parameter '{parameter}' implicitly. "
+            + UnresolvedBranchReason(unresolvedBodies)
+            + (explicitCall is null ? $"pass '{parameter}' to '{callee}' as a written argument." : $"write {explicitCall}.");
+
+    /// <summary>
+    /// <see cref="UnresolvedBranchForwardedEnclosingParameterMessage"/> without a reference to name (see
+    /// <see cref="UnchargedEnclosingParameterMessage"/>): the enclosing parameter, the same reason and the same repair.
+    /// </summary>
+    internal static string UnresolvedBranchUnchargedEnclosingParameterMessage(string parameter, IReadOnlyList<string> unresolvedBodies)
+        => $"This branch would depend on the enclosing parameter '{parameter}' implicitly. "
+            + UnresolvedBranchReason(unresolvedBodies)
+            + $"pass '{parameter}' as a written argument where the branch needs it.";
+
+    // Why the forwarding was not decided before the load: the refused bodies, rendered within the rendered-name bound.
+    private static string UnresolvedBranchReason(IReadOnlyList<string> unresolvedBodies)
+        => "This branch's implicit arguments could not be resolved before its module was loaded (the parameters of "
+            + $"{ImplicitArgumentResolver.FormatQuotedNameList(unresolvedBodies)} cannot be decided without it), "
+            + "so it passes enclosing parameters only explicitly: ";
 
     // ── Routing helpers (stateless) ─────────────────────────────────────────
 

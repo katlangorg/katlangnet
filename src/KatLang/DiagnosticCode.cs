@@ -543,4 +543,18 @@ public enum DiagnosticCode
     /// arguments as one value.
     /// </summary>
     OutputSpreadReferenceNeedsCall = 69,
+
+    /// <summary>
+    /// A clause branch that loads its module on demand was selected, and elaborating it would hand a
+    /// member of the module it loads an ENCLOSING parameter implicitly, by formula lifting or bare
+    /// forwarding (a member <c>X</c> that needs <c>y</c> would receive the <c>y</c> of the algorithm
+    /// the family is written in), although the family's clauses, as written, do not read that
+    /// parameter. The declarations around the family were classified before the module was known,
+    /// so the branch is refused when it is selected and its body never runs. A branch that loads
+    /// its module on demand passes enclosing parameters to that module only explicitly: write
+    /// <c>X(y)</c>. Reported by the selecting evaluation
+    /// (<see cref="KatLangErrorCode.DeferredBranchForwardsEnclosingParameter"/>), never by the parse;
+    /// a branch that is never selected is never judged.
+    /// </summary>
+    DeferredBranchForwardsEnclosingParameter = 70,
 }

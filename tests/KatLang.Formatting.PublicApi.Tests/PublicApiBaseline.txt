@@ -334,6 +334,7 @@ public enum KatLang.DiagnosticCode : int
   MixedOutputSpreadMarkers = 67
   OutputSpreadMarkerOnDeconstructionTarget = 68
   OutputSpreadReferenceNeedsCall = 69
+  DeferredBranchForwardsEnclosingParameter = 70
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1473,6 +1474,7 @@ public enum KatLang.KatLangErrorCode : int
   MixedOutputSpreadMarkers = 89
   OutputSpreadMarkerOnDeconstructionTarget = 90
   OutputSpreadReferenceNeedsCall = 91
+  DeferredBranchForwardsEnclosingParameter = 92
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

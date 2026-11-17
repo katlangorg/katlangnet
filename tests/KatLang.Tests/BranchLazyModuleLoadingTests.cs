@@ -1000,7 +1000,7 @@ public class BranchLazyModuleLoadingTests
                     Assert.True(release.Wait(WaitLimit));
                 }) : scope.Summaries,
                 scope.Parameters, scope.Algorithm);
-        var region = original.WithExposure(new PropertyExposureResolver.DeferredBranchContext(GateDeclaringLevel(recorded)));
+        var region = original.WithExposure(original.Exposure! with { Scope = GateDeclaringLevel(recorded) });
         var pending = region.MaterializeAsync(cancellation.Token).AsTask();
         await downloader.Started(ModuleA);
         downloader.Release(ModuleA, "public A = 1");

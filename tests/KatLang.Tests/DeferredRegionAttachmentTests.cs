@@ -364,8 +364,7 @@ public class DeferredRegionAttachmentTests
         Assert.Contains("complete elaboration context", rejection.Message, StringComparison.Ordinal);
 
         // A fork carries the incompleteness too, and the loader's placeholder has nothing.
-        var forked = incomplete.WithExposure(new PropertyExposureResolver.DeferredBranchContext(
-            RegionOf(Placeholder(CompleteLoaded(loaded))).Exposure!.Scope));
+        var forked = incomplete.WithExposure(RegionOf(Placeholder(CompleteLoaded(loaded))).Exposure!);
         Assert.Null(forked.Validation);
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await forked.MaterializeAsync(CancellationToken.None));
         await Assert.ThrowsAsync<InvalidOperationException>(

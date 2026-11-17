@@ -329,7 +329,7 @@ internal static class PropertyExposureResolver
             while (chain.TryPop(out var level))
                 parent = new(parent, level, NoSummaries,
                     level.CompletedContext?.Facts.Facts(level.CompletedContext.Key)?.Parameters, level.OwnerAlgorithm);
-            return ResolveInScope(root, parent!, observations, modules, context, sourceUnit, cancellationToken);
+            return ResolveInScope(root, parent!, observations, modules, context, sourceUnit, deferred: null, cancellationToken);
         }
         catch
         {
@@ -407,6 +407,7 @@ internal static class PropertyExposureResolver
         ModuleUnits? modules,
         CompletedStructureContext? structuralContext,
         bool sourceUnit,
+        DeferredBranchCheck? deferred,
         CancellationToken cancellationToken)
     {
         var run = new ExposureRun(observations, SettlementLedgerOf(CompletingUnit(root, structuralContext), sourceUnit),
@@ -415,9 +416,13 @@ internal static class PropertyExposureResolver
             Modules = modules ?? new(),
         };
         run.SharedBodies = SharedBodyCensus.Of(root, cancellationToken);
-        root = ProcessAlgorithm(root, parent,
-            new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies, CancellationToken = cancellationToken },
-            observations, run, structuralContext);
+        var summaryMemo = new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies, CancellationToken = cancellationToken };
+        var resolved = root;
+        root = ProcessAlgorithm(root, parent, summaryMemo, observations, run, structuralContext);
+        // A deferred branch is compared with its family's provisional contribution BEFORE its unit is sealed: the
+        // comparison is settlement work of this unit, charged to the materialization's ledger like the rest.
+        if (deferred is not null)
+            deferred.Uncharged = UnchargedByFamily(resolved, deferred, summaryMemo, observations, run);
         CompletedStaticStructures? sealedHere = null;
         if (root.CompletedStructure is { Entry: { } entry } completed && !completed.Facts.IsSealed
             && (structuralContext is null || ReferenceEquals(structuralContext.Facts, completed.Facts)))
@@ -1510,6 +1515,25 @@ internal static class PropertyExposureResolver
         /// <summary>The settlement of <paramref name="pending"/> at <paramref name="level"/> (a top-level settlement).</summary>
         public RequirementSet Resolve(PendingReference pending, SummaryScope level)
             => Run(ReferenceFrame(pending, level, site: null, boundOwners: null));
+
+        /// <summary>
+        /// The settlement of a whole CONTRIBUTION at <paramref name="level"/> (a top-level settlement): what a family's
+        /// summary seed, or one branch body's, requires of the owners at and above the level the family is written in,
+        /// as owner-qualified requirements. It is the settlement a level's equation gives a property whose value is
+        /// that seed (<see cref="ResolveSeed"/>: the seed's own requirements, each name it reads, each reference it
+        /// holds). The frame is charged and observed like every other, and keeps no entry of its own: its nested
+        /// settlements are cached and shared exactly as any reader's.
+        /// </summary>
+        public RequirementSet ResolveContribution(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level)
+        {
+            if (seed.IsEmptyWithoutFolding())
+                return default;
+            ChargeFrame();
+            memos.Observations?.RecordRequiredAncestorSettlementFrame(seed);
+            var frame = new Frame(memos.Observations);
+            frame.Body = ResolveSeed(frame, seed, level, level, boundOwners: null);
+            return Run(frame);
+        }
 
         /// <summary>
         /// ONE suspended settlement — a pending reference's or a seed's. Settlements nest as deep as a
@@ -2611,6 +2635,8 @@ internal static class PropertyExposureResolver
 
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
         var lookupFamily = ElaboratedScopeLookup.CreateScope(algorithm, memos.Scope.PropertyScope, completedContext: completedContext);
+        // Settled on the family's first deferred branch and handed to every one of them (one canonical set).
+        RequirementSet? provisionalContribution = null;
         foreach (var branch in algorithm.Branches)
         {
             var branchMemos = memos.ForBranch(algorithm, branch.Pattern);
@@ -2619,15 +2645,19 @@ internal static class PropertyExposureResolver
             {
                 // B2c: a deferred module region is not materialized eagerly (its provisional
                 // body is never evaluated; the FAMILY's classification reads the
-                // provisional body's captures through the summary channel above). This pass's
+                // provisional body through the summary channel above: its captures, and the
+                // forwardings implicit-argument resolution made in it as if its modules were
+                // empty, ImplicitArgumentResolver.ResolveProvisionalBranch). This pass's
                 // output view of the placeholder carries the region forked with the summary
                 // chain at the branch — the tree's final region, complete with every earlier
-                // context and the recorded validation bindings.
+                // context and the recorded validation bindings — and with what the family
+                // charged its enclosing declarations, which the materialized body is held to.
+                provisionalContribution ??= ProvisionalFamilyContribution(algorithm, memos);
                 rewrittenBranches.Add(branch with
                 {
                     Body = branch.Body with
                     {
-                        DeferredRegion = region.WithExposure(new DeferredBranchContext(branchMemos.Scope)),
+                        DeferredRegion = region.WithExposure(new DeferredBranchContext(branchMemos.Scope, provisionalContribution.Value)),
                     },
                 });
                 continue;
@@ -2658,23 +2688,134 @@ internal static class PropertyExposureResolver
 
     /// <summary>
     /// The exposure context of one deferred module region (B2c): the final summary chain the
-    /// eager walk held at the branch, so the demand-time run classifies the resolved body
-    /// under the same ancestor facts.
+    /// eager walk held at the branch (<paramref name="Scope"/>), so the demand-time run classifies the resolved body
+    /// under the same ancestor facts, and the FAMILY'S PROVISIONAL CONTRIBUTION
+    /// (<paramref name="FamilyContribution"/>, see <see cref="ProvisionalFamilyContribution"/>): what the family, with
+    /// this branch's provisional body, charged the declarations around it. The contribution is one canonical set of
+    /// the eager run's interner, shared by every deferred branch of the family and never copied per region.
     /// </summary>
-    internal sealed record DeferredBranchContext(SummaryScope Scope);
+    internal sealed record DeferredBranchContext(SummaryScope Scope, RequirementSet FamilyContribution);
+
+    /// <summary>
+    /// THE FAMILY'S PROVISIONAL CONTRIBUTION (audit of 2026-11-14 § 1.2; owner decisions 2026-11-15, option (C)
+    /// "refuse at load", and 2026-11-16, "resolve the provisional body"). Exposure classifies a family, and every
+    /// zero-argument property that reads it, from the union of its branches' summaries
+    /// (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c> of a conditional), and a load-bearing branch
+    /// contributes its PROVISIONAL body there, before its module exists: the body as detection and implicit-argument
+    /// resolution elaborated it with its on-demand modules treated as empty
+    /// (<c>ImplicitArgumentResolver.ResolveProvisionalBranch</c>), so it holds every written parameter read and every
+    /// formula lift and bare forwarding to a callable those modules do not decide. This is that
+    /// union, read from the resolution's summary memo (the enclosing level's equations already computed it: no
+    /// second summary walk) and SETTLED at the level the family is written in, <paramref name="memos"/>' scope, whose
+    /// summaries are final: owner-qualified requirements (<see cref="Requirement"/>: a name and the scope that binds
+    /// it, by reference) of the owners at and above that level. It is exactly what decides the enclosing
+    /// declarations' exposure: <see cref="ClassifyDeclaredProperty"/> reads nothing but a property's settled
+    /// requirement set, and that set is its value's seed settled the same way — the seed's required
+    /// ancestor-owned names and owner-qualified parameters, the summaries of the names it reads, and the settlement
+    /// of every reference that escapes the family (<c>PendingResolution.ResolveSeed</c>).
+    /// <para>A materialized branch may require nothing of an enclosing owner beyond this set
+    /// (<see cref="UnchargedByFamily"/>). The classification itself is never revised: it is static, decided before
+    /// evaluation, and independent of which branches a run selects.</para>
+    /// </summary>
+    private static RequirementSet ProvisionalFamilyContribution(Algorithm.Conditional family, ExposureWalkMemos memos)
+    {
+        var level = memos.Scope;
+        var walkMemos = ContributionWalkMemos(level, memos.SummaryMemo, memos.Observations);
+        return new PendingResolution(walkMemos, memos.Run.Requirements, level, memos.Run.Settlements,
+                memos.Run.SettlementLedger, memos.Run.CancellationToken)
+            .ResolveContribution(PropertyDependencyGraphBuilder.GetAlgorithmSummary(family, walkMemos).OutputSeed.Clone(), level);
+    }
+
+    // The walk memos of a contribution settled at a level: that level's completed context (a family-owned level of a
+    // host tree may hold none of its own; its nearest enclosing level's stands for it).
+    private static PropertyDependencyGraphBuilder.SummaryWalkMemos ContributionWalkMemos(
+        SummaryScope level, PropertyDependencyGraphBuilder.SummaryMemo summaryMemo, FrontEndTraversalObservations? observations)
+    {
+        for (var at = level; at is not null; at = at.Parent)
+            if (at.PropertyScope.CompletedContext is { } context)
+                return PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations, context);
+        throw new InvalidOperationException("Internal error: a deferred branch's family has no completed structural context.");
+    }
+
+    /// <summary>
+    /// One materialization's question and its answer: the branch pattern and eager context the materialized body is
+    /// judged under, and the requirements it contributes that its family never charged (<see cref="UnchargedByFamily"/>).
+    /// </summary>
+    private sealed class DeferredBranchCheck(DeferredBranchContext context, Pattern pattern)
+    {
+        public DeferredBranchContext Context => context;
+        public Pattern Pattern => pattern;
+        public IReadOnlyList<Requirement> Uncharged = [];
+    }
+
+    /// <summary>
+    /// REFUSE AT LOAD (owner decisions 2026-11-15 and 2026-11-16): the requirements the MATERIALIZED body of a deferred branch
+    /// contributes to its family that the family's provisional contribution did not hold; empty for a body the
+    /// eager classification already accounts for. The body's contribution is the one the family's own walk would
+    /// compute for it (<c>PropertyDependencyGraphBuilder.BranchBodyContribution</c>: the resolved body under the
+    /// branch pattern's binders, through this run's summary memo), settled at the level the family is written in
+    /// exactly as <see cref="ProvisionalFamilyContribution"/> settled the family's, and compared by owner-qualified
+    /// identity (<c>PropertyDependencyGraphBuilder.UnchargedRequirements</c>). The eager chain's scopes are the
+    /// very objects both runs resolve owners to, so a requirement is the same element in both sets.
+    /// <para>A non-empty answer means the loaded modules made the selected branch require an enclosing binding that
+    /// no declaration around the family was charged for (a member of a loaded module that formula lifting or bare
+    /// forwarding hands the binding, directly or through a declaration of the branch): an enclosing property
+    /// classified <see cref="PropertyExposure.Exported"/> would be cached run-wide across activations of that binding.
+    /// Every forwarding the modules do not decide is in the provisional contribution already, so the comparison is the
+    /// whole decision: the materialization is refused
+    /// (<see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/>, <c>DeferredModuleRegion</c>) exactly when
+    /// the answer is non-empty, with no question about which callee received the binding.</para>
+    /// </summary>
+    private static IReadOnlyList<Requirement> UnchargedByFamily(Algorithm resolvedBody, DeferredBranchCheck deferred,
+        PropertyDependencyGraphBuilder.SummaryMemo summaryMemo, FrontEndTraversalObservations? observations, ExposureRun run)
+    {
+        var branch = deferred.Context.Scope;
+        var level = branch.Parent ?? throw new InvalidOperationException(
+            "Internal error: a deferred branch's exposure context has no level its family is written in.");
+        // The body's own level context, derived exactly as the walk above derived it (ProcessScopeBody).
+        var bodyContext = CompletedStructureContext.For(resolvedBody, branch.PropertyScope)
+            ?? throw new InvalidOperationException("Internal error: a materialized deferred branch has no completed structural context.");
+        var contribution = PropertyDependencyGraphBuilder.BranchBodyContribution(
+            resolvedBody, deferred.Pattern, summaryMemo, observations, bodyContext);
+        var settled = new PendingResolution(ContributionWalkMemos(level, summaryMemo, observations), run.Requirements, level,
+                run.Settlements, run.SettlementLedger, run.CancellationToken)
+            .ResolveContribution(contribution, level);
+        var uncharged = PropertyDependencyGraphBuilder.UnchargedRequirements(settled, deferred.Context.FamilyContribution, run.Requirements);
+        if (uncharged.IsEmpty)
+            return [];
+        // Reported in a stable order: by name, then from the innermost owner outward.
+        var missing = uncharged.Elements.ToList();
+        missing.Sort((left, right) =>
+        {
+            var byName = StringComparer.Ordinal.Compare(left.Name, right.Name);
+            return byName != 0 ? byName : level.OwnerDepth(left.Owner).CompareTo(level.OwnerDepth(right.Owner));
+        });
+        return missing;
+    }
 
     /// <summary>
     /// Demand-time exposure classification of a deferred region's RESOLVED body — the
-    /// ordinary body walk under the ONE rule (<see cref="ClassifyDeclaredProperty"/>).
+    /// ordinary body walk under the ONE rule (<see cref="ClassifyDeclaredProperty"/>) — and its
+    /// comparison with the family's provisional contribution (<see cref="UnchargedByFamily"/>).
+    /// <paramref name="uncharged"/> is empty for a body the eager classification accounts for;
+    /// otherwise the caller refuses the materialization, and a refused body's unit is never frozen
+    /// or published.
     /// </summary>
     internal static Algorithm ElaborateDeferredBranch(
         Algorithm resolvedBody,
         DeferredBranchContext context,
+        Pattern pattern,
+        out IReadOnlyList<Requirement> uncharged,
         FrontEndTraversalObservations? observations = null,
         ModuleUnits? modules = null,
         CancellationToken cancellationToken = default)
-        => ResolveInScope(resolvedBody, context.Scope, observations, modules, structuralContext: null, sourceUnit: true,
-            cancellationToken);
+    {
+        var check = new DeferredBranchCheck(context, pattern);
+        var exposed = ResolveInScope(resolvedBody, context.Scope, observations, modules, structuralContext: null, sourceUnit: true,
+            check, cancellationToken);
+        uncharged = check.Uncharged;
+        return exposed;
+    }
 
     /// <summary>
     /// A call's argument bundle may be shared by several call edges — implicit lifting gives every

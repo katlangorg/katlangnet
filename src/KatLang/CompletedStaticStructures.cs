@@ -493,13 +493,13 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
         EnsureUsable();
         if (_local is null) throw new InvalidOperationException("A sealed structural publication is immutable.");
         HasProvisional |= facts.IsProvisional;
-        if (!_local.ContainsKey(key) && !_bodies.ContainsKey(key))
-            RetainedStorageUnits += 12 + 2L * facts.Members.Count + 4L * facts.Parameters.Count + 2L * facts.Providers.Length
-                + 2L * ((facts.UnavailableOpenNames?.Count ?? 0) + (facts.AmbiguousOpenNames?.Count ?? 0))
-                + (facts.IsProvisional ? 2 : 0);
-        else RetainedStorageUnits += 2L * ((facts.UnavailableOpenNames?.Count ?? 0)
-            + (facts.AmbiguousOpenNames?.Count ?? 0) - (Facts(key)?.UnavailableOpenNames?.Count ?? 0)
-            - (Facts(key)?.AmbiguousOpenNames?.Count ?? 0));
+        // The table retains ONE entry per key. A key it does not hold adds its entry. A key it holds exchanges it: the
+        // compilation's own entry, completed after every context's facts exist (only its open names differ), or an
+        // INHERITED entry that a unit completes itself (StaticStructureOperation.CompleteLookups): the unit's layer
+        // overrides it and Seal merges that layer over a copy, so the inherited table still holds, and counts, its
+        // own. What this table retains then changes by the difference of the two entries, whatever differs.
+        var replaced = _local.GetValueOrDefault(key) ?? _bodies.GetValueOrDefault(key);
+        RetainedStorageUnits += EntryStorageUnits(facts) - (replaced is null ? 0 : EntryStorageUnits(replaced));
         _local[key] = facts;
         if (key.Parent is { } parent)
         {
@@ -518,6 +518,12 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
             else if (!ReferenceEquals(existing, key)) _children = _children.SetItem(child, null);
         }
     }
+
+    /// <summary>The storage one entry retains: what <see cref="Add"/> counts for a key, and takes back when the entry is exchanged.</summary>
+    private static long EntryStorageUnits(BodyFacts facts)
+        => 12 + 2L * facts.Members.Count + 4L * facts.Parameters.Count + 2L * facts.Providers.Length
+            + 2L * ((facts.UnavailableOpenNames?.Count ?? 0) + (facts.AmbiguousOpenNames?.Count ?? 0))
+            + (facts.IsProvisional ? 2 : 0);
 
     internal void Retarget(StaticScopeKey key, Algorithm body)
     {
