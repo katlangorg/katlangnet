@@ -3,10 +3,14 @@ namespace KatLang.Rendering;
 /// <summary>
 /// Minimal text sink shared by canonical value rendering and presentation
 /// formatters. The core abstraction deliberately contains no formatter policy.
+/// The span overload carries text formatted into a stack buffer
+/// (<see cref="ValueTextRenderer.AppendAtom"/>); strings keep their own overload.
 /// </summary>
 internal interface IDisplaySink
 {
     bool Append(string text);
+
+    bool Append(ReadOnlySpan<char> text);
 
     bool Append(char c, int count);
 }

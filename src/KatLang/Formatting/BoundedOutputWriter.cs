@@ -53,7 +53,7 @@ public sealed class BoundedOutputWriter
     /// their minimum — exactly like canonical display.
     /// </summary>
     public bool AppendAtom(Decimal128 value)
-        => _core.Append(ValueTextRenderer.FormatAtom(value, _displayOptions));
+        => ValueTextRenderer.AppendAtom(value, _displayOptions, _core);
 
     /// <summary>Appends repeated spaces (indentation); each space is charged.</summary>
     public bool AppendSpaces(int count)

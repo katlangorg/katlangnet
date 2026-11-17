@@ -129,7 +129,9 @@ internal sealed class BoundedDiagnosticSink(int limit) : IDisplaySink
     /// </summary>
     internal int AppendAttempts { get; private set; }
 
-    public bool Append(string text)
+    public bool Append(string text) => Append(text.AsSpan());
+
+    public bool Append(ReadOnlySpan<char> text)
     {
         AppendAttempts++;
         if (Truncated) return false;
@@ -141,7 +143,7 @@ internal sealed class BoundedDiagnosticSink(int limit) : IDisplaySink
             return true;
         }
 
-        _builder.Append(text, 0, ExprNameRenderer.SafePrefixLength(text, room));
+        _builder.Append(text[..ExprNameRenderer.SafePrefixLength(text, room)]);
         Truncated = true;
         return false;
     }

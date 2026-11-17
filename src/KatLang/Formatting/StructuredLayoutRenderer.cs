@@ -467,9 +467,9 @@ internal static class StructuredLayoutRenderer
             }
 
             var structuredChildren = 0;
-            foreach (var item in items)
+            for (var i = 0; i < items.Count; i++)
             {
-                if (item is Result.SequenceValue or Result.ListValue && ++structuredChildren >= 2)
+                if (items[i] is Result.SequenceValue or Result.ListValue && ++structuredChildren >= 2)
                 {
                     if (asChild && items.Count >= PredicateCacheThreshold)
                         TryCache(_structuredChildLayoutCache, items, true);
@@ -554,9 +554,9 @@ internal static class StructuredLayoutRenderer
             var available = (long)_width - ColumnsOf(level) - (items.Count - 1);
             if (available < 0) return false;
 
-            foreach (var item in items)
+            for (var i = 0; i < items.Count; i++)
             {
-                if (SingleLineScalarLength(item, available) is not { } length) return false;
+                if (SingleLineScalarLength(items[i], available) is not { } length) return false;
                 available -= length;
             }
 
@@ -581,9 +581,9 @@ internal static class StructuredLayoutRenderer
         /// </summary>
         private bool BlockItemsAreSingleLine(IReadOnlyList<Result> items)
         {
-            foreach (var item in items)
+            for (var i = 0; i < items.Count; i++)
             {
-                if (item is Result.Str(var text)
+                if (items[i] is Result.Str(var text)
                     && (!_strings.TryClassify(text, out var facts) || facts.ContainsLineBreak))
                 {
                     return false;
@@ -636,7 +636,7 @@ internal static class StructuredLayoutRenderer
             switch (item)
             {
                 case Result.Atom(var number):
-                    var atomLength = ValueTextRenderer.FormatAtom(number, _displayOptions).Length;
+                    var atomLength = ValueTextRenderer.AtomLength(number, _displayOptions);
                     return atomLength <= available ? atomLength : null;
                 case Result.Bool(var flag):
                     var flagLength = ValueTextRenderer.FormatBool(flag).Length;

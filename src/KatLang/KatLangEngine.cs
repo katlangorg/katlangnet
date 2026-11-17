@@ -107,14 +107,15 @@ internal sealed class BoundedDisplayWriter(int limit) : ICapacityDisplaySink
 
     public bool Append(string text)
     {
-        if (LimitExceeded) return false;
-        if (text.Length > limit - _charged)
-        {
-            LimitExceeded = true;
-            return false;
-        }
+        if (!TryCharge(text.Length)) return false;
+        _builder.Append(text);
+        return true;
+    }
 
-        _charged += text.Length;
+    /// <summary>Appends text formatted into a buffer (a number's digits), charged its length.</summary>
+    public bool Append(ReadOnlySpan<char> text)
+    {
+        if (!TryCharge(text.Length)) return false;
         _builder.Append(text);
         return true;
     }
@@ -126,15 +127,27 @@ internal sealed class BoundedDisplayWriter(int limit) : ICapacityDisplaySink
     /// </summary>
     public bool Append(char c, int count)
     {
+        if (!TryCharge(count)) return false;
+        _builder.Append(c, count);
+        return true;
+    }
+
+    /// <summary>
+    /// The one limit check every append makes BEFORE writing: charges <paramref name="length"/>
+    /// when it fits, otherwise records the refusal, which then holds for every later append.
+    /// Inlined: it runs once per separator, string, and number of every rendering.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private bool TryCharge(int length)
+    {
         if (LimitExceeded) return false;
-        if (count > limit - _charged)
+        if (length > limit - _charged)
         {
             LimitExceeded = true;
             return false;
         }
 
-        _charged += count;
-        _builder.Append(c, count);
+        _charged += length;
         return true;
     }
 

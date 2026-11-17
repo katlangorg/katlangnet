@@ -42,7 +42,7 @@ internal static class ValueTextRenderer
         switch (value)
         {
             case Result.Atom atom:
-                return sink.Append(FormatAtom(atom.Value, displayOptions));
+                return AppendAtom(atom.Value, displayOptions, sink);
             case Result.Str str:
                 return stringPolicy.Append(str.Value, sink);
             case Result.Bool flag:
@@ -63,7 +63,9 @@ internal static class ValueTextRenderer
                 throw new InvalidOperationException("Unknown Result variant.");
         }
 
-        var suspended = new Stack<(IReadOnlyList<Result> Items, int Next, string Close)>();
+        // Created on the first nested structure only: a flat sequence or list
+        // (and every width-capped fit probe that stops inside one) needs none.
+        Stack<(IReadOnlyList<Result> Items, int Next, string Close)>? suspended = null;
         var next = 0;
 
         while (true)
@@ -71,7 +73,7 @@ internal static class ValueTextRenderer
             if (next >= items.Count)
             {
                 if (!sink.Append(close)) return false;
-                if (suspended.Count == 0) return true;
+                if (suspended is null || suspended.Count == 0) return true;
                 (items, next, close) = suspended.Pop();
                 continue;
             }
@@ -83,7 +85,7 @@ internal static class ValueTextRenderer
             switch (child)
             {
                 case Result.Atom atom:
-                    if (!sink.Append(FormatAtom(atom.Value, displayOptions))) return false;
+                    if (!AppendAtom(atom.Value, displayOptions, sink)) return false;
                     break;
                 case Result.Str str:
                     if (!stringPolicy.Append(str.Value, sink)) return false;
@@ -93,12 +95,12 @@ internal static class ValueTextRenderer
                     break;
                 case Result.SequenceValue sequence:
                     if (!sink.Append("(")) return false;
-                    suspended.Push((items, next, close));
+                    (suspended ??= new()).Push((items, next, close));
                     (items, next, close) = (sequence.Items, 0, ")");
                     break;
                 case Result.ListValue list:
                     if (!sink.Append("[")) return false;
-                    suspended.Push((items, next, close));
+                    (suspended ??= new()).Push((items, next, close));
                     (items, next, close) = (list.Items, 0, "]");
                     break;
                 case Result.CallReference reference:
@@ -129,6 +131,56 @@ internal static class ValueTextRenderer
     /// diagnostic fragments, and the neutral spec encoding). Lean: <c>Result.boolText</c>.
     /// </summary>
     internal static string FormatBool(bool value) => value ? "true" : "false";
+
+    /// <summary>Canonical atom text up to this many UTF-16 code units is written from a stack buffer.</summary>
+    internal const int AtomStackBufferLength = 64;
+
+    /// <summary>
+    /// Appends one atom's <see cref="FormatAtom"/> text to <paramref name="sink"/>. The canonical
+    /// path (a finite value with no decimal-places setting) formats into a stack buffer with the
+    /// same fixed-point format <see cref="FormatNumberInvariant"/> selects, so the sink receives
+    /// identical text without an intermediate string. Other values go through <see cref="FormatAtom"/>;
+    /// canonical text longer than the buffer uses the selected format's string path once.
+    /// </summary>
+    internal static bool AppendAtom(Decimal128 value, DisplayOptions displayOptions, IDisplaySink sink)
+    {
+        Span<char> buffer = stackalloc char[AtomStackBufferLength];
+        return sink.Append(AtomText(value, displayOptions, buffer));
+    }
+
+    /// <summary>The length of <see cref="FormatAtom"/>'s text, without building it on the canonical path.</summary>
+    internal static int AtomLength(Decimal128 value, DisplayOptions displayOptions)
+    {
+        Span<char> buffer = stackalloc char[AtomStackBufferLength];
+        return AtomText(value, displayOptions, buffer).Length;
+    }
+
+    private static ReadOnlySpan<char> AtomText(
+        Decimal128 value,
+        DisplayOptions displayOptions,
+        Span<char> destination)
+    {
+        if (displayOptions.HasDecimalPlaces || !Decimal128.IsFinite(value))
+            return FormatAtom(value, displayOptions);
+
+        var quantumExponent = Decimal128.ILogB(Decimal128.GetQuantum(value));
+        var format = FixedPointFormat(quantumExponent);
+        var signLength = Decimal128.IsNegative(value) ? 1 : 0;
+        // A failed TryFormat still formats the whole number. Skip that work when its
+        // fractional places (plus "0.") or integer digits already cannot fit. A finite
+        // Decimal128 has at most 34 coefficient digits, so only a positive quantum can
+        // make the integer part exceed this buffer. A zero with a large positive quantum
+        // may take the string path too; the choice affects only allocation, never text.
+        var tryBuffer = quantumExponent < 0
+            ? -quantumExponent <= destination.Length - signLength - 2
+            : quantumExponent == 0
+                || (quantumExponent < destination.Length - signLength
+                    && Decimal128.ILogB(value) < destination.Length - signLength);
+        if (tryBuffer && value.TryFormat(destination, out var length, format, CultureInfo.InvariantCulture))
+            return destination[..length];
+
+        return value.ToString(format, CultureInfo.InvariantCulture);
+    }
 
     /// <summary>
     /// Formats one numeric atom for display — the ONE implementation every rendering surface
@@ -292,12 +344,19 @@ internal static class ValueTextRenderer
         if (!Decimal128.IsFinite(value))
             return value.ToString(CultureInfo.InvariantCulture);
 
-        var quantumExponent = Decimal128.ILogB(Decimal128.GetQuantum(value));
+        return value.ToString(FixedPointFormat(Decimal128.ILogB(Decimal128.GetQuantum(value))), CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// The fixed-point format that writes a finite value's stored digits exactly from its
+    /// quantum exponent (see <see cref="FormatNumberInvariant"/>), shared with the stack-buffer path of
+    /// <see cref="AppendAtom"/>.
+    /// </summary>
+    private static string FixedPointFormat(int quantumExponent)
+    {
         var fractionalDigits = Math.Max(0, -quantumExponent);
-        var format = fractionalDigits < FixedPointFormats.Length
+        return fractionalDigits < FixedPointFormats.Length
             ? FixedPointFormats[fractionalDigits]
             : "F" + fractionalDigits.ToString(CultureInfo.InvariantCulture);
-
-        return value.ToString(format, CultureInfo.InvariantCulture);
     }
 }

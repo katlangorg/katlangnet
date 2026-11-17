@@ -14,15 +14,15 @@ internal sealed class CappedWidthSink : ICapacityDisplaySink
 
     public void Reset(int cap) => _remaining = cap;
 
-    public bool Append(string text)
-    {
-        _remaining -= text.Length;
-        return _remaining >= 0;
-    }
+    public bool Append(string text) => Charge(text.Length);
 
-    public bool Append(char c, int count)
+    public bool Append(ReadOnlySpan<char> text) => Charge(text.Length);
+
+    public bool Append(char c, int count) => Charge(count);
+
+    private bool Charge(int length)
     {
-        _remaining -= count;
+        _remaining -= length;
         return _remaining >= 0;
     }
 }

@@ -510,7 +510,7 @@ internal static class ExprNameRenderer
     /// <para>Shared with <see cref="Rendering.BoundedDiagnosticSink"/> so both bounded
     /// diagnostic fragments cut text at the same boundary.</para>
     /// </summary>
-    internal static int SafePrefixLength(string text, int maximumLength)
+    internal static int SafePrefixLength(ReadOnlySpan<char> text, int maximumLength)
     {
         var length = Math.Clamp(maximumLength, 0, text.Length);
         if (length > 0
