@@ -216,6 +216,64 @@ public class CollectionMaterializationLimitsTests
         }
     }
 
+    /// <summary>
+    /// <c>take</c>, <c>skip</c>, <c>distinct</c>, <c>order</c>, <c>orderDesc</c> and <c>atoms</c> reserve
+    /// their exact result count and fill one array that becomes the list (November 2026,
+    /// implementation-only): the list holds the same items in the same order (a prefix or suffix copied
+    /// item by item, a whole collection in bulk, first occurrences past one 64-item word, the stable sort
+    /// and its exact reverse), the whole run materializes exactly the source plus the result (plus the
+    /// mapped list feeding <c>distinct</c>), and a cumulative budget of that total admits it while one item
+    /// less refuses it, on the synchronous generic route and on the asynchronous twin alike.
+    /// </summary>
+    [Theory]
+    [InlineData("range(1, 200).take(130)", 200, "1..130")]
+    [InlineData("range(1, 200).take(500)", 200, "1..200")]
+    [InlineData("range(1, 200).take(0)", 200, "")]
+    [InlineData("range(1, 200).skip(70)", 200, "71..200")]
+    [InlineData("range(1, 200).skip(0)", 200, "1..200")]
+    [InlineData("range(1, 200).skip(300)", 200, "")]
+    [InlineData("range(200, 1).order", 200, "1..200")]
+    [InlineData("range(1, 200).orderDesc", 200, "200..1")]
+    [InlineData("Mod(x) = x mod 70\nrange(1, 200).map(Mod).distinct", 400, "1..69,0")]
+    [InlineData("atoms([range(1, 70), (range(71, 130))])", 132, "1..130")]
+    public async Task ExactListBuilders_ListTheResultInOrder_AndReserveItsTrueCount(string source, int sourceCount, string expectedItems)
+    {
+        var expectedValues = expectedItems.Length == 0
+            ? []
+            : expectedItems.Split(',').SelectMany(static part =>
+            {
+                var bounds = part.Split("..");
+                var from = int.Parse(bounds[0], System.Globalization.CultureInfo.InvariantCulture);
+                var to = int.Parse(bounds[^1], System.Globalization.CultureInfo.InvariantCulture);
+                return from <= to ? Enumerable.Range(from, to - from + 1) : Enumerable.Range(to, from - to + 1).Reverse();
+            }).ToArray();
+        var expected = new Result.ListValue(expectedValues.Select(static value => (Result)new Result.Atom(value)));
+        var exactTotal = sourceCount + expectedValues.Length;
+        var ast = AsyncEvaluationHarness.Ast(source);
+
+        foreach (var limits in new[] { null, Total(exactTotal), Total(exactTotal - 1) })
+        {
+            var (sync, syncBudget) = Evaluator.RunCountedObserved(ast, limits, enableOptimizations: false);
+            var (twin, twinBudget) = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
+                ast, limits, zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache()));
+
+            Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(twin));
+            Assert.Equal(syncBudget.MaterializedItems, twinBudget.MaterializedItems);
+            Assert.Equal(syncBudget.ConsumedSteps, twinBudget.ConsumedSteps);
+            if (limits?.MaxMaterializedItems < exactTotal)
+            {
+                Assert.IsType<EvalError.MaterializationLimitExceeded>(sync.Error);
+                Assert.IsType<EvalError.MaterializationLimitExceeded>(twin.Error);
+                continue;
+            }
+
+            Assert.False(sync.IsError, sync.IsError ? sync.Error.ToString() : null);
+            Assert.Equal(expected, sync.Value.Value, Result.ValueComparer);
+            Assert.Equal(expected, twin.Value.Value, Result.ValueComparer);
+            Assert.Equal(exactTotal, syncBudget.MaterializedItems);
+        }
+    }
+
     // ── atoms: the one expanding producer ────────────────────────────────────
 
     [Fact]

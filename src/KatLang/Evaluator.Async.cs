@@ -2701,7 +2701,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var kept = NewFilterKeptPositions(items.Count);
+        var kept = NewKeptPositions(items.Count);
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
@@ -2710,7 +2710,7 @@ public static partial class Evaluator
                 return truthR.Error;
 
             if (truthR.Value)
-                MarkFilterKeptPosition(kept, index);
+                MarkKeptPosition(kept, index);
         }
 
         return MakeFilterKeptListResult(ctx, items, kept);

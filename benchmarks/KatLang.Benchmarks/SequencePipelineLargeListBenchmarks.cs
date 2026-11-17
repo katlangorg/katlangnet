@@ -75,6 +75,76 @@ public class SequencePipelineRepeatedBenchmarks
 }
 
 /// <summary>
+/// The generic collection builtins that build or reduce a 100,000-item list, one per method: <c>take</c>,
+/// <c>skip</c>, <c>distinct</c>, <c>order</c>, <c>orderDesc</c>, <c>sum</c>, <c>avg</c>, <c>min</c> and
+/// <c>max</c> over <c>range(…)</c> (the scenario descriptions in <see cref="BenchmarkScenarioCatalog"/> name each program), plus
+/// <c>range(1, 100000).map(Inc).sum</c>. None of these shapes is fused, so there is no fusion mode
+/// parameter: the production configuration (both optimizers on) is measured. Each run also builds its
+/// 100,000-item source range (0.8 MB of list slots and 3.2 MB of numbers), so read the allocation column
+/// against <c>RangeCount100k</c>, which only builds and counts that source. Since 2026-11-17 the list
+/// builders allocate their exact result array once and hand it over, and the numeric builtins read the
+/// numbers through a view instead of a copied <c>List&lt;Decimal128&gt;</c>. Filter:
+/// <c>--filter *SequenceBuiltinLargeList*</c>. No <c>[RankColumn]</c>, as in
+/// <see cref="SequencePipelineLargeListBenchmarks"/>.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 20, invocationCount: 16)]
+public class SequenceBuiltinLargeListBenchmarks
+{
+	private static readonly BenchmarkScenario RangeCount100kScenario = BenchmarkScenarioCatalog.SequenceRangeCount100k;
+	private static readonly BenchmarkScenario Take100kScenario = BenchmarkScenarioCatalog.SequenceTake100k;
+	private static readonly BenchmarkScenario Skip100kScenario = BenchmarkScenarioCatalog.SequenceSkip100k;
+	private static readonly BenchmarkScenario Distinct100kScenario = BenchmarkScenarioCatalog.SequenceDistinct100k;
+	private static readonly BenchmarkScenario Order100kScenario = BenchmarkScenarioCatalog.SequenceOrder100k;
+	private static readonly BenchmarkScenario OrderDesc100kScenario = BenchmarkScenarioCatalog.SequenceOrderDesc100k;
+	private static readonly BenchmarkScenario Sum100kScenario = BenchmarkScenarioCatalog.SequenceSum100k;
+	private static readonly BenchmarkScenario Avg100kScenario = BenchmarkScenarioCatalog.SequenceAvg100k;
+	private static readonly BenchmarkScenario Min100kScenario = BenchmarkScenarioCatalog.SequenceMin100k;
+	private static readonly BenchmarkScenario Max100kScenario = BenchmarkScenarioCatalog.SequenceMax100k;
+	private static readonly BenchmarkScenario MapSum100kScenario = BenchmarkScenarioCatalog.SequenceMapSum100k;
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> RangeCount100k() => Run(RangeCount100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Take100k() => Run(Take100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Skip100k() => Run(Skip100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Distinct100k() => Run(Distinct100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Order100k() => Run(Order100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> OrderDesc100k() => Run(OrderDesc100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Sum100k() => Run(Sum100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Avg100k() => Run(Avg100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Min100k() => Run(Min100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Max100k() => Run(Max100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> MapSum100k() => Run(MapSum100kScenario);
+
+	private static IReadOnlyList<Decimal128> Run(BenchmarkScenario scenario)
+		=> KatLangBenchmarkRunner.RunPrepared(
+			scenario,
+			BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized,
+			BenchmarkSequencePipelineMode.Optimized);
+}
+
+/// <summary>
 /// The execution order of the sequence-pipeline ON/OFF classes: methods in declaration order, and each
 /// method's two modes back to back, <c>Generic</c> first — or <c>Optimized</c> first when the environment
 /// variable <see cref="OrderVariable"/> is <c>OptimizedFirst</c>. Two runs in opposite orders give an

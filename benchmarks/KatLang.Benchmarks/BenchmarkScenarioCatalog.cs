@@ -247,6 +247,107 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-repeated-short-filter-count.kat",
 			expectedAtoms: [1000000m]));
 
+	private const string CollectionResultOrigin = "Collection-builtin result hand-over and numeric views (2026-11-17).";
+
+	private static readonly Lazy<BenchmarkScenario> SequenceRangeCount100kScenario =
+		new(() => Load(
+			id: "sequence-range-count-100k",
+			displayName: "Sequence range count 100k",
+			description: "count(range(1, 100000)): the control of the collection-builtin 100k scenarios, which only builds and counts their 100,000-item source.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-range-count-100k.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceTake100kScenario =
+		new(() => Load(
+			id: "sequence-take-100k",
+			displayName: "Sequence take 100k",
+			description: "range(1, 100000).take(50000).count: take builds a 50,000-item list from a 100,000-item source.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-take-100k.kat",
+			expectedAtoms: [50000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceSkip100kScenario =
+		new(() => Load(
+			id: "sequence-skip-100k",
+			displayName: "Sequence skip 100k",
+			description: "range(1, 100000).skip(50000).count: skip builds a 50,000-item list from a 100,000-item source.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-skip-100k.kat",
+			expectedAtoms: [50000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceDistinct100kScenario =
+		new(() => Load(
+			id: "sequence-distinct-100k",
+			displayName: "Sequence distinct 100k",
+			description: "range(1, 100000).distinct.count: every item is a first occurrence, so distinct hashes 100,000 items and keeps them all.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-distinct-100k.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceOrder100kScenario =
+		new(() => Load(
+			id: "sequence-order-100k",
+			displayName: "Sequence order 100k",
+			description: "range(100000, 1).order.first: a stable ascending sort of 100,000 descending numbers.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-order-100k.kat",
+			expectedAtoms: [1m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceOrderDesc100kScenario =
+		new(() => Load(
+			id: "sequence-order-desc-100k",
+			displayName: "Sequence orderDesc 100k",
+			description: "range(1, 100000).orderDesc.first: the reverse of the stable ascending sort of 100,000 ascending numbers.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-order-desc-100k.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceSum100kScenario =
+		new(() => Load(
+			id: "sequence-sum-100k",
+			displayName: "Sequence sum 100k",
+			description: "range(1, 100000).sum: the left-to-right sum of 100,000 numbers.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-sum-100k.kat",
+			expectedAtoms: [5000050000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceAvg100kScenario =
+		new(() => Load(
+			id: "sequence-avg-100k",
+			displayName: "Sequence avg 100k",
+			description: "range(1, 100000).avg: the mean of 100,000 whole numbers (every addition exact, so the sum is divided once).",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-avg-100k.kat",
+			expectedAtoms: [50000.5m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceMin100kScenario =
+		new(() => Load(
+			id: "sequence-min-100k",
+			displayName: "Sequence min 100k",
+			description: "range(100000, 1).min: the minimum of 100,000 numbers.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-min-100k.kat",
+			expectedAtoms: [1m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceMax100kScenario =
+		new(() => Load(
+			id: "sequence-max-100k",
+			displayName: "Sequence max 100k",
+			description: "range(1, 100000).max: the maximum of 100,000 numbers.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-max-100k.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceMapSum100kScenario =
+		new(() => Load(
+			id: "sequence-map-sum-100k",
+			displayName: "Sequence map sum 100k",
+			description: "range(1, 100000).map(Inc).sum with Inc(n) = n + 1: a generic map of 100,000 items whose list is summed.",
+			origin: CollectionResultOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-map-sum-100k.kat",
+			expectedAtoms: [5000150000m]));
+
 	private static readonly Lazy<BenchmarkScenario> DispatchNonCandidateCallsScenario =
 		new(() => Load(
 			id: "dispatch-non-candidate-calls",
@@ -398,6 +499,28 @@ internal static class BenchmarkScenarioCatalog
 	public static BenchmarkScenario SequenceRepeatedFilterCount100k => SequenceRepeatedFilterCount100kScenario.Value;
 
 	public static BenchmarkScenario SequenceRepeatedShortFilterCount => SequenceRepeatedShortFilterCountScenario.Value;
+
+	public static BenchmarkScenario SequenceRangeCount100k => SequenceRangeCount100kScenario.Value;
+
+	public static BenchmarkScenario SequenceTake100k => SequenceTake100kScenario.Value;
+
+	public static BenchmarkScenario SequenceSkip100k => SequenceSkip100kScenario.Value;
+
+	public static BenchmarkScenario SequenceDistinct100k => SequenceDistinct100kScenario.Value;
+
+	public static BenchmarkScenario SequenceOrder100k => SequenceOrder100kScenario.Value;
+
+	public static BenchmarkScenario SequenceOrderDesc100k => SequenceOrderDesc100kScenario.Value;
+
+	public static BenchmarkScenario SequenceSum100k => SequenceSum100kScenario.Value;
+
+	public static BenchmarkScenario SequenceAvg100k => SequenceAvg100kScenario.Value;
+
+	public static BenchmarkScenario SequenceMin100k => SequenceMin100kScenario.Value;
+
+	public static BenchmarkScenario SequenceMax100k => SequenceMax100kScenario.Value;
+
+	public static BenchmarkScenario SequenceMapSum100k => SequenceMapSum100kScenario.Value;
 
 	public static BenchmarkScenario DispatchNonCandidateCalls => DispatchNonCandidateCallsScenario.Value;
 

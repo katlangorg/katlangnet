@@ -236,7 +236,12 @@ public static partial class Evaluator
         if (!value.TryLanguageAtomsObserved(limit, ctx.Observations?.StructuralTraversal, out var atoms, ctx.Budget))
             return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
 
-        return MakeCollectionListResult(ctx, atoms.Select(static n => (Result)new Result.Atom(n)).ToList(), span);
+        // The exact array, reserved as before and handed over (no intermediate list, no copy).
+        if (ReserveExactListItems(ctx, atoms.Count, out var items, span) is { } error)
+            return error;
+        for (var index = 0; index < items.Length; index++)
+            items[index] = new Result.Atom(atoms[index]);
+        return HandOverListResult(items);
     }
 
     /// <summary>
@@ -1475,7 +1480,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var kept = NewFilterKeptPositions(items.Count);
+        var kept = NewKeptPositions(items.Count);
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
@@ -1484,24 +1489,26 @@ public static partial class Evaluator
                 return truthR.Error;
 
             if (truthR.Value)
-                MarkFilterKeptPosition(kept, index);
+                MarkKeptPosition(kept, index);
         }
 
         return MakeFilterKeptListResult(ctx, items, kept);
     }
 
     /// <summary>
-    /// The kept positions of one generic <c>filter</c> call over <paramref name="itemCount"/>
-    /// items: one bit per item, set when its predicate is true. Implementation-only
-    /// (November 2026): the kept items used to grow a <c>List&lt;Result&gt;</c> by doubling and
-    /// were then copied into the exact list, so a filter keeping 100,000 items allocated about
-    /// 2 MB of large-object-heap growth arrays before its 0.8 MB list; the bit set is 1/64 of
-    /// the item array and stays on the small-object heap up to about 680,000 items.
+    /// The kept positions of one generic <c>filter</c> or <c>distinct</c> call over
+    /// <paramref name="itemCount"/> items: one bit per item, set when its predicate is true
+    /// (<c>filter</c>) or when it is a first occurrence (<c>distinct</c>). Implementation-only
+    /// (November 2026): the kept items used to grow a <c>List&lt;Result&gt;</c> by doubling (filter)
+    /// or fill one presized to every item (distinct) and were then copied into the exact list, so
+    /// a filter keeping 100,000 items allocated about 2 MB of large-object-heap growth arrays before
+    /// its 0.8 MB list; the bit set is 1/64 of the item array and stays on the small-object heap up
+    /// to about 680,000 items.
     /// </summary>
-    private static ulong[] NewFilterKeptPositions(int itemCount)
+    private static ulong[] NewKeptPositions(int itemCount)
         => new ulong[(itemCount + 63) >> 6];
 
-    private static void MarkFilterKeptPosition(ulong[] kept, int index)
+    private static void MarkKeptPosition(ulong[] kept, int index)
         => kept[index >> 6] |= 1UL << (index & 63);
 
     /// <summary>
@@ -1535,6 +1542,34 @@ public static partial class Evaluator
 
         return EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(keptItems), 1));
     }
+
+    /// <summary>
+    /// The result list of a collection builtin whose exact item count is known before its items
+    /// are placed (<c>take</c>, <c>skip</c>, <c>distinct</c>, <c>order</c>, <c>orderDesc</c>,
+    /// <c>atoms</c>): exactly what <see cref="MakeCollectionListResult(EvalCtx, IReadOnlyList{Result}, SourceSpan?)"/>
+    /// makes of those items — the same reservation of the same count with the same span, at the same
+    /// point (nothing observable happens between computing the count and placing the items) — then
+    /// ONE exactly sized array that the caller fills and hands over
+    /// (<see cref="HandOverListResult"/>). Implementation-only (November 2026): each of these
+    /// builtins built a list of its result items and <c>MakeCollectionListResult</c> copied it again,
+    /// a second 0.8 MB large-object-heap array per 100,000-item result. On a refusal no item array
+    /// is allocated.
+    /// </summary>
+    private static EvalError? ReserveExactListItems(EvalCtx ctx, int count, out Result[] items, SourceSpan? span = null)
+    {
+        if (ReserveCollection(ctx, count, span) is { } error)
+        {
+            items = [];
+            return error;
+        }
+
+        items = count == 0 ? [] : new Result[count];
+        return null;
+    }
+
+    /// <summary>The list value of an array filled after <see cref="ReserveExactListItems"/> (ownership transfer).</summary>
+    private static EvalResult<CountedResult> HandOverListResult(Result[] items)
+        => EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(items), 1));
 
     /// <summary>
     /// Evaluate a filter predicate with the same callback and Boolean-result rule
@@ -1622,23 +1657,23 @@ public static partial class Evaluator
     /// extraction so numeric shape failures are easier to debug. An element that
     /// is not one number is a present value of the wrong KIND — <c>TypeMismatch</c>
     /// (Q-27), never an arity error. Lean: <c>collectSingleAtomicNumbers</c>.
+    /// <para>Every item is checked here, in index order, before the builtin reads any number, so
+    /// the first non-number is the reported item exactly as before; the accepted numbers are then
+    /// read through a view over the checked items (<see cref="SingleAtomicNumberItems"/>) instead
+    /// of a copied list (implementation-only, November 2026).</para>
     /// </summary>
-    private static EvalResult<List<Decimal128>> CollectSingleAtomicNumbers(
+    private static EvalResult<SingleAtomicNumberItems> CollectSingleAtomicNumbers(
         BuiltinId builtin,
         IReadOnlyList<Result> elements)
     {
-        var numbers = new List<Decimal128>(elements.Count);
         for (var index = 0; index < elements.Count; index++)
         {
             var item = elements[index];
-            var numeric = item.SingleAtomicNumber();
-            if (numeric is null)
+            if (item.SingleAtomicNumber() is null)
                 return new EvalError.TypeMismatch(NumericSequenceItemErrorContext(builtin, index, item));
-
-            numbers.Add(numeric.Value);
         }
 
-        return EvalResult<List<Decimal128>>.Ok(numbers);
+        return EvalResult<SingleAtomicNumberItems>.Ok(new SingleAtomicNumberItems(elements));
     }
 
     private static EvalResult<PreparedSequenceBuiltinInput> PrepareSequenceBuiltinInput(
@@ -1649,7 +1684,7 @@ public static partial class Evaluator
         var validatedItemsR = ApplySequenceBuiltinEmptyPolicy(builtin, metadata, collected);
         if (validatedItemsR.IsError) return validatedItemsR.Error;
 
-        IReadOnlyList<Decimal128>? numericItems = null;
+        SingleAtomicNumberItems? numericItems = null;
         switch (metadata.ItemShapeConstraint)
         {
             case SequenceBuiltinItemShapeConstraint.Any:
@@ -2047,12 +2082,12 @@ public static partial class Evaluator
         return valueR.IsError ? valueR.Error : EvalResult<Result>.Ok(valueR.Value.ResultValue);
     }
 
-    private static EvalResult<IReadOnlyList<Decimal128>> ExpectPreparedNumericItems(
+    private static EvalResult<SingleAtomicNumberItems> ExpectPreparedNumericItems(
         BuiltinId builtin,
         PreparedSequenceBuiltinInput prepared)
     {
         if (prepared.NumericItems is { } numbers)
-            return EvalResult<IReadOnlyList<Decimal128>>.Ok(numbers);
+            return EvalResult<SingleAtomicNumberItems>.Ok(numbers);
 
         return new EvalError.WithContext(
             $"internal sequence metadata for {BuiltinDisplayName(builtin)} did not produce numeric items",
@@ -2068,7 +2103,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderCounted(
         EvalCtx ctx,
-        IReadOnlyList<Decimal128> numbers)
+        SingleAtomicNumberItems numbers)
     {
         // Decimal128.CompareTo is a total order over every value, including the IEEE
         // specials: NaN sorts before every other value (mirroring double), the
@@ -2077,15 +2112,18 @@ public static partial class Evaluator
         // written order, which is observable through the quantum and zero sign that
         // display preserves (`order((1.0, 1))` is `[1.0, 1]` however long the input) and
         // must not depend on the runtime sort algorithm.
-        return MakeCollectionListResult(ctx, SortStable(numbers).Select(static value => (Result)new Result.Atom(value)).ToList());
+        return MakeSortedNumberListResult(ctx, SortStable(numbers), descending: false);
     }
 
     /// <summary>
     /// Stable ascending sort under <see cref="Decimal128.CompareTo(Decimal128)"/>'s total
     /// order: equal-comparing values keep their input order (the index breaks ties), so
-    /// the arrangement never depends on the runtime's sort algorithm.
+    /// the arrangement never depends on the runtime's sort algorithm. The sorted keyed array
+    /// itself is returned and read in place (implementation-only, November 2026: it used to be
+    /// copied into a sorted <c>List&lt;Decimal128&gt;</c>, a 1.6 MB large-object-heap array per
+    /// 100,000 items).
     /// </summary>
-    private static List<Decimal128> SortStable(IReadOnlyList<Decimal128> numbers)
+    private static (Decimal128 Value, int Index)[] SortStable(SingleAtomicNumberItems numbers)
     {
         var keyed = new (Decimal128 Value, int Index)[numbers.Count];
         for (var i = 0; i < keyed.Length; i++)
@@ -2097,10 +2135,26 @@ public static partial class Evaluator
             return order != 0 ? order : left.Index.CompareTo(right.Index);
         });
 
-        var sorted = new List<Decimal128>(keyed.Length);
-        foreach (var (value, _) in keyed)
-            sorted.Add(value);
-        return sorted;
+        return keyed;
+    }
+
+    /// <summary>
+    /// The <c>order</c>/<c>orderDesc</c> result: one new number per sorted value, in ascending
+    /// order or its exact reverse, reserved and handed over as one exact array
+    /// (<see cref="ReserveExactListItems"/>) after the sort, as the copied list was.
+    /// </summary>
+    private static EvalResult<CountedResult> MakeSortedNumberListResult(
+        EvalCtx ctx,
+        (Decimal128 Value, int Index)[] sorted,
+        bool descending)
+    {
+        if (ReserveExactListItems(ctx, sorted.Length, out var items) is { } error)
+            return error;
+
+        var last = sorted.Length - 1;
+        for (var i = 0; i < sorted.Length; i++)
+            items[descending ? last - i : i] = new Result.Atom(sorted[i].Value);
+        return HandOverListResult(items);
     }
 
     /// <summary>
@@ -2112,12 +2166,10 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<CountedResult> EvalOrderDescCounted(
         EvalCtx ctx,
-        IReadOnlyList<Decimal128> numbers)
+        SingleAtomicNumberItems numbers)
     {
         // Lean `sortIntsDesc`: the reverse of the stable ascending order.
-        var sorted = SortStable(numbers);
-        sorted.Reverse();
-        return MakeCollectionListResult(ctx, sorted.Select(static value => (Result)new Result.Atom(value)).ToList());
+        return MakeSortedNumberListResult(ctx, SortStable(numbers), descending: true);
     }
 
     /// <summary>
@@ -2181,15 +2233,22 @@ public static partial class Evaluator
         return false;
     }
 
-    private static void KeepFirstOccurrences(Result.ValueSemanticComparer comparer, IReadOnlyList<Result> items, List<Result> distinctItems)
+    // Marks each item that is a first occurrence (the set's Add order is unchanged) and returns
+    // how many there are.
+    private static int KeepFirstOccurrences(Result.ValueSemanticComparer comparer, IReadOnlyList<Result> items, ulong[] firstOccurrences)
     {
         var seen = new HashSet<Result>(comparer);
+        var kept = 0;
         for (var i = 0; i < items.Count; i++)
         {
-            var item = items[i];
-            if (seen.Add(item))
-                distinctItems.Add(item);
+            if (seen.Add(items[i]))
+            {
+                MarkKeptPosition(firstOccurrences, i);
+                kept++;
+            }
         }
+
+        return kept;
     }
 
     /// <summary>
@@ -2204,16 +2263,20 @@ public static partial class Evaluator
     /// <see cref="Result.CreateOperationComparer"/>): node hashes and equality knowledge are reused
     /// across the whole collection, and the walks' work is charged to the run's budget before
     /// the kept items are materialized.</para>
+    /// <para>The first occurrences are recorded as kept positions (<see cref="NewKeptPositions"/>)
+    /// and their exact list is reserved and filled once, in source order
+    /// (<see cref="ReserveExactListItems"/>; implementation-only, November 2026).</para>
     /// </summary>
     private static EvalResult<CountedResult> EvalDistinctCounted(
         EvalCtx ctx,
         IReadOnlyList<Result> items)
     {
-        var distinctItems = new List<Result>(items.Count);
+        var firstOccurrences = NewKeptPositions(items.Count);
         var comparer = Result.CreateOperationComparer(ctx.Budget, ctx.Observations?.StructuralTraversal);
+        int keptCount;
         try
         {
-            KeepFirstOccurrences(comparer, items, distinctItems);
+            keptCount = KeepFirstOccurrences(comparer, items, firstOccurrences);
         }
         catch (StructuralWorkRefusedException refused)
         {
@@ -2223,7 +2286,17 @@ public static partial class Evaluator
         if (comparer.CompleteOperation() is { } error)
             return error;
 
-        return MakeCollectionListResult(ctx, distinctItems);
+        if (ReserveExactListItems(ctx, keptCount, out var distinctItems) is { } limitError)
+            return limitError;
+
+        var next = 0;
+        for (var wordIndex = 0; wordIndex < firstOccurrences.Length; wordIndex++)
+        {
+            for (var bits = firstOccurrences[wordIndex]; bits != 0; bits &= bits - 1)
+                distinctItems[next++] = items[(wordIndex << 6) + BitOperations.TrailingZeroCount(bits)];
+        }
+
+        return HandOverListResult(distinctItems);
     }
 
     /// <summary>
@@ -2274,10 +2347,35 @@ public static partial class Evaluator
         EvalCtx ctx,
         IReadOnlyList<Result> items,
         Decimal128 count)
-    {
-        IReadOnlyList<Result> taken = items.Take(TakeLength(count, items.Count)).ToList();
+        => MakeCollectionSliceListResult(ctx, items, 0, TakeLength(count, items.Count));
 
-        return MakeCollectionListResult(ctx, taken);
+    /// <summary>
+    /// The <c>take</c>/<c>skip</c> result: the <paramref name="length"/> items from
+    /// <paramref name="start"/>, in order, reserved and copied once into the exact array that
+    /// becomes the list (<see cref="ReserveExactListItems"/>). A whole collection is copied in bulk.
+    /// </summary>
+    private static EvalResult<CountedResult> MakeCollectionSliceListResult(
+        EvalCtx ctx,
+        IReadOnlyList<Result> items,
+        int start,
+        int length)
+    {
+        if (ReserveExactListItems(ctx, length, out var slice) is { } error)
+            return error;
+
+        if (length > 0 && length == items.Count && items is ICollection<Result> whole)
+        {
+            whole.CopyTo(slice, 0);
+        }
+        else
+        {
+            // Through a span: a store into the Result[] itself pays a covariant array-store check per item.
+            var destination = slice.AsSpan();
+            for (var i = 0; i < destination.Length; i++)
+                destination[i] = items[start + i];
+        }
+
+        return HandOverListResult(slice);
     }
 
     /// <summary>
@@ -2306,11 +2404,9 @@ public static partial class Evaluator
     {
         // Saturate before narrowing, mirroring EvalTakeCounted: an oversized count
         // means "skip everything" and must never reach the host (int) conversion.
-        IReadOnlyList<Result> remaining = count <= 0
-            ? items.ToList()
-            : items.Skip(count >= items.Count ? items.Count : (int)count).ToList();
+        var skipped = count <= 0 ? 0 : count >= items.Count ? items.Count : (int)count;
 
-        return MakeCollectionListResult(ctx, remaining);
+        return MakeCollectionSliceListResult(ctx, items, skipped, items.Count - skipped);
     }
 
     /// <summary>
@@ -2322,7 +2418,7 @@ public static partial class Evaluator
     /// Lean: <c>evalMinCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMinCounted(
-        IReadOnlyList<Decimal128> numbers)
+        SingleAtomicNumberItems numbers)
     {
         if (numbers.Count == 0)
             return new EvalError.IllegalInEval("min requires a non-empty collection");
@@ -2350,7 +2446,7 @@ public static partial class Evaluator
     /// Lean: <c>evalMaxCounted</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalMaxCounted(
-        IReadOnlyList<Decimal128> numbers)
+        SingleAtomicNumberItems numbers)
     {
         if (numbers.Count == 0)
             return new EvalError.IllegalInEval("max requires a non-empty collection");
@@ -2375,7 +2471,7 @@ public static partial class Evaluator
     /// to an infinity instead of raising an error.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
-    private static Decimal128 SumNumbers(IReadOnlyList<Decimal128> numbers)
+    private static Decimal128 SumNumbers(SingleAtomicNumberItems numbers)
         => SumNumbers(numbers, noteExactness: false, out _);
 
     /// <summary>
@@ -2389,13 +2485,15 @@ public static partial class Evaluator
     /// for the caller to decide exactness exactly. A NaN or infinite operand or result is
     /// never provably exact.
     /// </summary>
-    private static Decimal128 SumNumbers(IReadOnlyList<Decimal128> numbers, bool noteExactness, out bool provablyExact)
+    private static Decimal128 SumNumbers(SingleAtomicNumberItems numbers, bool noteExactness, out bool provablyExact)
     {
         Decimal128 total = Decimal128.Zero;
         var totalQuantumExponent = 0; // Decimal128.Zero's
         provablyExact = noteExactness;
-        foreach (var numeric in numbers)
+        // Indexed, left to right: the numbers are read from the checked items (SingleAtomicNumberItems).
+        for (var index = 0; index < numbers.Count; index++)
         {
+            var numeric = numbers[index];
             var next = total + numeric;
             if (provablyExact)
             {
@@ -2423,7 +2521,7 @@ public static partial class Evaluator
     /// from left to right.
     /// Lean: <c>evalSumCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalSumCounted(IReadOnlyList<Decimal128> numbers)
+    private static EvalResult<CountedResult> EvalSumCounted(SingleAtomicNumberItems numbers)
         => EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(SumNumbers(numbers)), 1));
 
     /// <summary>
@@ -2445,17 +2543,28 @@ public static partial class Evaluator
     /// not the C# runtime contract.
     /// Lean: <c>evalAvgCounted</c>.
     /// </summary>
-    private static EvalResult<CountedResult> EvalAvgCounted(IReadOnlyList<Decimal128> numbers)
+    private static EvalResult<CountedResult> EvalAvgCounted(SingleAtomicNumberItems numbers)
     {
         if (numbers.Count == 0)
             return new EvalError.IllegalInEval("avg requires a non-empty collection");
 
         var total = SumNumbers(numbers, noteExactness: true, out var provablyExact);
-        var average = provablyExact || numbers.Any(static number => !Decimal128.IsFinite(number))
+        var average = provablyExact || HasNonFiniteNumber(numbers)
             ? total / numbers.Count
             : AverageFiniteNumbersExactly(numbers, total);
 
         return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(average), 1));
+    }
+
+    private static bool HasNonFiniteNumber(SingleAtomicNumberItems numbers)
+    {
+        for (var index = 0; index < numbers.Count; index++)
+        {
+            if (!Decimal128.IsFinite(numbers[index]))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2473,14 +2582,15 @@ public static partial class Evaluator
     /// itself is the simplest case) is rounded once as the exact rational, to 34
     /// significant digits or the subnormal quantum floor.
     /// </summary>
-    private static Decimal128 AverageFiniteNumbersExactly(IReadOnlyList<Decimal128> numbers, Decimal128 sequentialTotal)
+    private static Decimal128 AverageFiniteNumbersExactly(SingleAtomicNumberItems numbers, Decimal128 sequentialTotal)
     {
         var coefficientsByExponent = new Dictionary<int, BigInteger>();
         var minimumExponent = 0; // the zero the left-to-right sum starts from
         var nonzeroMinimumExponent = int.MaxValue;
 
-        foreach (var number in numbers)
+        for (var index = 0; index < numbers.Count; index++)
         {
+            var number = numbers[index];
             var exponent = Decimal128Numerics.QuantumExponent(number);
             if (exponent < minimumExponent)
                 minimumExponent = exponent;

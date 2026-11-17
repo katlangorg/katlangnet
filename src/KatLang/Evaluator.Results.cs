@@ -109,12 +109,13 @@ public static partial class Evaluator
 
     /// <summary>
     /// Prepared input for current sequence builtin handlers.
-    /// Numeric builtins cache the flattened numeric projection of the collected
-    /// top-level items.
+    /// Numeric builtins carry the numeric projection of the collected top-level
+    /// items: a read-only view over the validated items
+    /// (<see cref="SingleAtomicNumberItems"/>), never a copied list.
     /// </summary>
     private readonly record struct PreparedSequenceBuiltinInput(
         CollectedSequenceBuiltinInput Collected,
-        IReadOnlyList<Decimal128>? NumericItems = null)
+        SingleAtomicNumberItems? NumericItems = null)
     {
         public IReadOnlyList<Result> FlattenedItems => Collected.FlattenedItems;
     }
@@ -144,6 +145,27 @@ public static partial class Evaluator
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>
+    /// The numeric projection of a numeric collection builtin's items
+    /// (<see cref="PreparedSequenceBuiltinInput.NumericItems"/>): number <c>i</c> is the
+    /// <see cref="Result.SingleAtomicNumber"/> of viewed item <c>i</c>, read on demand. It is
+    /// built only after <see cref="CollectSingleAtomicNumbers"/> has checked every item in
+    /// index order, so each read is the number that check accepted, and the viewed items are
+    /// immutable (see <see cref="CollectionIterationItems"/>). Implementation-only (November
+    /// 2026): the projection was a <c>List&lt;Decimal128&gt;</c>, a 16-byte slot per item, so
+    /// <c>sum</c>, <c>avg</c>, <c>min</c>, <c>max</c>, <c>order</c> and <c>orderDesc</c> over
+    /// 100,000 items each allocated a 1.6 MB large-object-heap array. The handlers take this
+    /// sealed type and read it by index: no interface dispatch per number (an
+    /// <c>IReadOnlyList&lt;Decimal128&gt;</c> view measured about 40% slower than the copied
+    /// list for <c>min</c> over a fresh 100,000-item range) and no enumerator.
+    /// </summary>
+    private sealed class SingleAtomicNumberItems(IReadOnlyList<Result> validatedItems)
+    {
+        public int Count => validatedItems.Count;
+
+        public Decimal128 this[int index] => validatedItems[index].SingleAtomicNumber()!.Value;
     }
 
     /// <summary>
