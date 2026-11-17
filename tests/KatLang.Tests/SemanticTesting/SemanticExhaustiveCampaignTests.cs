@@ -46,7 +46,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     [Fact]
     public void TheFiniteRecipes_EnumerateEveryProgramOnce_InDepthFirstOrder()
     {
-        Assert.Equal([SemanticCorpus.NestedSeedRecipe, SemanticCorpus.NestedWideSeedRecipe], SemanticCorpus.FiniteRecipes.ToArray());
+        Assert.Equal([SemanticCorpus.NestedSeedRecipe, SemanticCorpus.NestedWideSeedRecipe, SemanticCorpus.NestedWiderSeedRecipe], SemanticCorpus.FiniteRecipes.ToArray());
         foreach (var (enumeration, count) in new[] { (Nested.Value, NestedPrograms), (Wide.Value, WidePrograms) })
         {
             Assert.Equal(count, enumeration.Sequences);

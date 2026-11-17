@@ -1,0 +1,48 @@
+name: semantic nightly
+
+# Exhaustive sweeps of the finite semantic-campaign recipes (seed-nested, seed-nested-wide,
+# seed-nested-wider; fuzz/README.md § Campaigns). Scheduled and manual only: never on pull requests
+# or pushes, and separate from validate.yml, whose standalone-tool job stays build-only. The sweeps
+# took 913 s on a developer machine (83 + 620 + 210 s, 2026-11-17) plus the build; a hosted runner
+# is assumed to need about twice that, so the job allows 150 minutes and each sweep 40.
+# Failures are persisted and reduced, and their reproducers are uploaded when the job fails.
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  semantic-sweeps:
+    name: Exhaustive semantic sweeps
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install baseline .NET SDK from global.json
+        uses: ./.github/actions/setup-baseline-dotnet
+
+      - name: Run the exhaustive semantic sweeps
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/run-semantic-sweeps.ps1
+
+      # A failed, incomplete or timed-out sweep keeps its logs, summaries and every persisted
+      # reproducer (failures/, reduced/ and the failing batches under work/).
+      - name: Upload semantic sweep reproducers
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: semantic-sweep-reproducers
+          path: artifacts/validation/semantic-sweeps-*/
+          if-no-files-found: warn
+          retention-days: 30

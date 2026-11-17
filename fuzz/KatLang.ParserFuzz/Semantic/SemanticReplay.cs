@@ -13,9 +13,10 @@ namespace KatLang.ParserFuzz;
 /// semantic-corpus [--supervised] [--out DIR] [--only PREFIX] [--deadline-seconds N]
 /// semantic-worker DESCRIPTOR RESULT [--exact-source]     (child process of a supervised run)
 /// semantic-batch-worker MANIFEST     (child process of an exhaustive campaign batch)
+/// semantic-batch-replay MANIFEST [--deadline-seconds N]     (a persisted batch reproducer, one supervised child; SemanticBatchSequence)
 /// semantic-reduce DESCRIPTOR|CASE-ID OUT [--max-attempts N] [--supervised]   (SemanticReduction.RunReduce)
-/// semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested|seed-nested-wide] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
-/// semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-size N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]
+/// semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
+/// semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested-wider [--batch-size N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]
 /// </code>
 ///
 /// <para><b>Modes.</b> The default RECIPE mode rebuilds the case from its generator, recipe version
@@ -291,9 +292,11 @@ internal static class SemanticReplay
     /// <summary>
     /// <c>semantic-batch-worker MANIFEST</c>: the supervised child of one exhaustive-campaign batch
     /// (<see cref="SemanticSupervisor.RunBatch"/>). It replays every <c>descriptor TAB result</c> line of
-    /// the manifest in order, exactly as <c>semantic-worker</c> replays one (recipe mode), writing each
-    /// result document atomically before the next member starts. A member it cannot replay gets no
-    /// result and the worker continues; it then exits 2.
+    /// the manifest in order, exactly as <c>semantic-worker</c> replays one (recipe mode, or exact-source
+    /// after the manifest's <see cref="SemanticSupervisor.ExactSourceDirective"/>), writing each result
+    /// document atomically before the next member starts; relative paths are relative to the manifest's
+    /// directory, and other <c>#</c> lines are comments. A member it cannot replay gets no result and the
+    /// worker continues; it then exits 2.
     /// </summary>
     public static int RunBatchWorker(string[] args)
     {
@@ -311,17 +314,26 @@ internal static class SemanticReplay
     {
         var members = 0;
         var unreplayed = 0;
+        var directory = Path.GetDirectoryName(Path.GetFullPath(manifestPath)) ?? "";
         foreach (var line in File.ReadLines(manifestPath))
         {
             if (line.Length == 0) continue;
+            if (line.StartsWith('#'))
+            {
+                if (line == SemanticSupervisor.ExactSourceDirective) mode = Mode.ExactSource;
+                continue;
+            }
+
             members++;
             var parts = line.Split('\t');
             try
             {
                 if (parts.Length != 2) throw new InvalidDataException("a manifest line is not 'descriptor TAB result'");
+                var descriptor = Path.Combine(directory, parts[0]);
+                var result = Path.Combine(directory, parts[1]);
                 Func<SemanticProfileRun, SemanticProfileRun>? filter = null;
-                if (filterFor is not null && SemanticDescriptor.TryParse(ReadBounded(parts[0]), out var parsed, out _)) filter = filterFor(parsed.Case);
-                if (Work(parts[0], parts[1], mode, filter, TextWriter.Null) != 0) unreplayed++;
+                if (filterFor is not null && SemanticDescriptor.TryParse(ReadBounded(descriptor), out var parsed, out _)) filter = filterFor(parsed.Case);
+                if (Work(descriptor, result, mode, filter, TextWriter.Null) != 0) unreplayed++;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
             {

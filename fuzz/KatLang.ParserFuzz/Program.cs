@@ -64,6 +64,8 @@ internal static class Program
             return SemanticReplay.RunWorker(args);         // one supervised child execution
         if (args.Length > 0 && args[0] == "semantic-batch-worker")
             return SemanticReplay.RunBatchWorker(args);    // one supervised child for a batch of enumerated cases
+        if (args.Length > 0 && args[0] == "semantic-batch-replay")
+            return SemanticBatchSequence.RunReplay(args);  // replay a persisted batch reproducer in one supervised child
         if (args.Length > 0 && args[0] == "semantic-reduce")
             return SemanticReduction.RunReduce(args);      // shrink a failing generated case (SEM-2C)
         if (args.Length > 0 && args[0] == "semantic-campaign")

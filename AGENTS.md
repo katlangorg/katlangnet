@@ -373,6 +373,16 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   and writes its logs to a fresh ignored
   `artifacts/validation/standalone-tools-build-*` directory (uploaded with
   `if: always()`). `release.yml` does not run it.
+- `.github/workflows/semantic-nightly.yml` (job `semantic-sweeps`, 150 minutes)
+  runs nightly and on manual dispatch only, never on pull requests or pushes:
+  `scripts/run-semantic-sweeps.ps1` builds `fuzz/KatLang.ParserFuzz` (Debug)
+  and runs `semantic-campaign --exhaustive` over every finite recipe
+  (`SemanticCorpus.FiniteRecipes`), failing on a failure or an incomplete
+  sweep and uploading `artifacts/validation/semantic-sweeps-*` when the job
+  fails or is cancelled. It is a CI backstop, not a validation level, stays
+  separate from the build-only standalone-tool job, and the shared workflow
+  policies of `ContinuousIntegrationPolicyTests` cover it (fuzz/README.md
+  § Nightly sweeps).
 - `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
   the version already present in `KatLangVersion.props`. A push, merge, or tag
   never publishes a release automatically.

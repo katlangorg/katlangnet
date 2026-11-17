@@ -129,6 +129,15 @@ public abstract record MPattern
     /// <c>F([a, *r], z, *s)</c>: its items are the parameters, rendered without delimiters of
     /// their own. Only ever the top-level pattern of a single-clause family.</summary>
     public sealed record ParameterList(IReadOnlyList<MPattern> Items) : MPattern;
+
+    /// <summary>A LATER occurrence of a binder already written earlier in the same head (SEM-2B
+    /// wider recipe, NEED-04's group-aware repeated names): <c>F(((a, t), a))</c>. It declares
+    /// nothing — the name binds once, at its first written occurrence — and renders as that name.</summary>
+    public sealed record Repeat(Sym Symbol) : MPattern;
+
+    /// <summary>A META parameter <c>meta name</c> among the items of a
+    /// <see cref="ParameterList"/> head (SEM-2B wider recipe): <c>F(meta m, ((a, *r), t))</c>.</summary>
+    public sealed record Meta(Sym Symbol) : MPattern;
 }
 
 public sealed record MClause(MPattern Pattern, MExpr Body);
@@ -348,6 +357,14 @@ public sealed class ScopeGraph
                 break;
             case MPattern.ParameterList parameters:
                 foreach (var item in parameters.Items) DeclarePattern(scope, item);
+                break;
+            case MPattern.Meta meta:
+                Declare(scope, meta.Symbol, "metaParam");
+                break;
+            case MPattern.Repeat repeat:
+                // A repeated occurrence binds the SAME name again: it must follow its declaration in this head.
+                if (!scope.Declared.Contains(repeat.Symbol))
+                    throw new InvalidOperationException($"repeated binder {repeat.Symbol} precedes its first occurrence");
                 break;
         }
     }
@@ -707,6 +724,12 @@ public static class StructuralRenderer
                 break;
             case MPattern.Collecting collecting:
                 sb.Append('*').Append(names[collecting.Symbol]);
+                break;
+            case MPattern.Repeat repeat:
+                sb.Append(names[repeat.Symbol]);
+                break;
+            case MPattern.Meta meta:
+                sb.Append("meta ").Append(names[meta.Symbol]);
                 break;
             case MPattern.LiteralPair pair:
                 sb.Append(FormatAtom(pair.First)).Append(", ").Append(FormatAtom(pair.Second));

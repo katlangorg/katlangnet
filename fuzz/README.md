@@ -1594,6 +1594,7 @@ structural model.
 | Grammar model (symbols, scopes, renderer; SEM-2B adds dot edges, postfix selection, list literals, fixed-name primitives, binary operators, META parameters and list patterns) | `tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` (linked into this project) |
 | Productions (8 families), contexts, invalid productions | `Semantic/SemanticGrammar.cs` |
 | The wide nested-pattern production of `seed-nested-wide` | `Semantic/SemanticNestedWide.cs` |
+| The wider nested-pattern production of `seed-nested-wider` and its reference binder | `Semantic/SemanticNestedWider.cs` |
 | Case model, kinds, intended paths, expectation | `Semantic/SemanticCase.cs` |
 | Fixed corpus: systematic + seeded tiers, composition, transformations, profile selection, durable ids | `Semantic/SemanticCorpus.cs` |
 | Profile matrix and declared comparisons | `Semantic/SemanticProfiles.cs` over `Metamorphic/MetamorphicSurfaces.cs` |
@@ -1606,6 +1607,7 @@ structural model.
 | Choice-tree enumeration of the finite recipes (exhaustive campaigns) | `Semantic/SemanticExhaustive.cs` |
 | Per-id case builders, recording/replaying choosers, generation spans, the reducer, `kl-sem2b-reduction` records (SEM-2C) | `Semantic/SemanticReduction.cs` |
 | The bounded seeded or exhaustive `semantic-campaign` and its `kl-sem2c-campaign` summary (SEM-2C) | `Semantic/SemanticCampaign.cs` |
+| Batch-only classification, persisted batch reproducers, sequence reduction and `semantic-batch-replay` | `Semantic/SemanticBatchReproduction.cs` |
 | Tests | `tests/KatLang.Tests/SemanticTesting/` |
 
 ### Case kinds
@@ -1674,6 +1676,35 @@ so it is finite: 26,064 distinct programs (7,776 `pattern`, 7,776 `parameters`, 
 4,032 `deconstruct-result`, 1,152 `deconstruct-collector`, 144 refusals), each in one of the eight
 consumer contexts (refusals bare). The structural model gains `MPattern.Structure.Layout` and
 `MPattern.ParameterList` for it; every earlier production renders byte-identically.
+
+The WIDER nested-pattern production (`Semantic/SemanticNestedWider.cs`, recipe `seed-nested-wider`,
+ids `sem2b/v1/seed-nested-wider/<hex>/<index>`) writes what the wide one does not, in five shapes, each
+in one of the eight consumer contexts. `placement`: a two- or three-level pattern whose levels collect
+by any subset — the third level included — each collector placed first, in the middle or last (one
+choice, rotated per level), with two or no collected items, an extra item at the deepest
+non-collecting level or the deepest level's last item missing. `repeated`: one name written twice in
+nested positions (the deepest head and the outer tail, the deepest tail and its parent's tail, or the
+deepest head and tail; NEED-04's group-aware repeated names, ALIAS-UNIFY-1) with equal or unequal data,
+as a single pattern, a parameter list (the plain repeated parameter demands its own value) and a
+clause family with a catch-all (clauses cannot collect). `spread`: one level's data written through a
+spread — the whole level `((items)*)`, a leading pair `((i0, i1)*, …)` or an inserted `()*` — optionally
+with one item more inside the spread. `meta-head`: `F(meta m, (…), t)` or `F((…), t, meta m)` whose
+body counts `m.Arguments`, invokes `m` or ignores it, with a refused (non-call) META argument or a
+scalar where the deepest structure is expected. `meta-target`: `r = Cap(T(data))` over a nested head
+`T`, then two operations among `r.Arguments.count`, `r.Invoke()`, a fresh `r.Algorithm(…)` and the
+rebuilt `r.Algorithm(r.Arguments*)`, optionally followed by a fresh call whose deepest structure is a
+scalar. The expectation is computed by a reference binder over the written data: a structural pattern
+demands its whole argument first, every leaf in source order (NEED-04); spreads are spliced in place
+and a sequence of exactly one item is that item; a level checks its kind (`TypeMismatch`), then its
+count (`ArityMismatch`), then its items left to right, depth first; a repeated name that differs is
+`BadArity` (a non-match in a family); a parameter list binds in written order — a structural
+parameter whole, a repeated plain parameter its own value, a META parameter by inert capture (a value
+is `NotAnAlgorithm`), a plain parameter at the body; a captured call's cells run at most once. Every
+program parses cleanly (no intended refusal). The recipe is finite: 8,464 distinct programs, one per
+choice sequence (2,432 `placement`, 960 `repeated`, 1,872 `spread`, 1,152 `meta-head`, 2,048
+`meta-target`). The structural model gains `MPattern.Repeat` (a later occurrence of a written name)
+and `MPattern.Meta` (a META parameter in a parameter-list head); every earlier production renders
+byte-identically.
 
 The named path block `sem2b/v1/sys/path/<Path>/<shape>` (`SemanticCorpus.PathVariants`, appended
 after every other systematic case) widens the thin optimizer loop paths. Each case is the `loop`
@@ -1864,9 +1895,14 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 & $fuzz semantic-campaign --recipe seed-nested --seeds 5EED2C000001..5EED2C000010 --cases-per-seed 16 --max-cases 256 --max-seconds 600
 # ... and over the wide nested-pattern recipe (seed-nested-wide/<hex>/<index> ids)
 & $fuzz semantic-campaign --recipe seed-nested-wide --seeds 5EED2C000001..5EED2C000400 --cases-per-seed 24 --max-cases 1000000 --max-seconds 1800
-# EVERY program of a finite recipe, in supervised batches (3,472 and 26,064 programs; complete=yes when covered)
+# EVERY program of a finite recipe, in supervised batches (3,472, 26,064 and 8,464 programs; complete=yes when covered)
 & $fuzz semantic-campaign --exhaustive --recipe seed-nested
 & $fuzz semantic-campaign --exhaustive --recipe seed-nested-wide --batch-size 128
+& $fuzz semantic-campaign --exhaustive --recipe seed-nested-wider --batch-size 128
+# replay a persisted batch reproducer (complete or reduced) in one supervised batch child
+& $fuzz semantic-batch-replay artifacts/semantic-campaign/<run>/failures/<case>.batch/manifest.txt
+# the nightly job's sweeps of every finite recipe (.github/workflows/semantic-nightly.yml)
+pwsh -NoProfile -File ./scripts/run-semantic-sweeps.ps1
 ```
 
 Exit codes: 0 — every selected case passed; 1 — a failure (mismatch, drift, front end, harness,
@@ -1881,6 +1917,8 @@ reduce (no artifact is written). `semantic-campaign` uses 0 — every executed c
 the plan was covered or a budget stopped it; an exhaustive run reports `complete`); 1 — at least one
 failure, or a reduction stopped at a generator precondition failure; 2 — usage (including
 `--exhaustive` for a recipe that is not finite), a refused output directory, or no case executed.
+`semantic-batch-replay` uses 0 — every member passed; 1 — a member failed (the reproducer reproduces
+when its last member fails); 2 — usage or an unreadable manifest.
 
 ### Supervision
 
@@ -2022,12 +2060,13 @@ execution instead of two.
 ### Campaigns
 
 `semantic-campaign` searches for failures instead of replaying known ones. It is a manual, opt-in
-tool: CI runs only its in-process test-suite smoke (§ Exhaustive mode below).
+tool: pull-request CI runs only its in-process test-suite smoke (§ Exhaustive mode below), and the
+scheduled `semantic nightly` workflow sweeps the finite recipes exhaustively (§ Nightly sweeps).
 
 ```text
-semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested|seed-nested-wide] [--cases-per-seed N]
+semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider] [--cases-per-seed N]
                   [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
-semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-size N] [--max-cases N]
+semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested-wider [--batch-size N] [--max-cases N]
                   [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
 ```
 
@@ -2038,8 +2077,8 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   search new cases.
 * **Recipe.** `--recipe seed` (the default, so an invocation without the option is unchanged) searches
   the compositional recipe: 1–3 fragments from any family in nested contexts. `--recipe seed-nested`
-  searches the nested-pattern production and `--recipe seed-nested-wide` the wide nested-pattern
-  production (§ Families and interactions). The names are `SemanticCorpus.SeededRecipes`, the id
+  searches the nested-pattern production, `--recipe seed-nested-wide` the wide nested-pattern
+  production and `--recipe seed-nested-wider` the wider one (§ Families and interactions). The names are `SemanticCorpus.SeededRecipes`, the id
   segments `SemanticCorpus.TryBuilder` rebuilds, so a planned id is always a replayable one; any
   other name is a usage error (exit 2). One campaign searches one recipe; the (seed, index) plan is
   the same for every recipe. The nested recipe is FINITE: it has 3,472 distinct programs (2 pattern
@@ -2047,12 +2086,12 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   two contexts; digits are not chosen). The seed and index sample that space with replacement and
   unevenly, so a random campaign approaches it slowly: 8,400 cases reach about 2,400 of the programs
   and 96,000 reach all of them (counted by generation alone over seeds from `5EED2C110001`, 24
-  indices each, 2026-11-11). The wide recipe is finite too (26,064 programs). Saturation is visible
+  indices each, 2026-11-11). The wide and wider recipes are finite too (26,064 and 8,464 programs). Saturation is visible
   in every summary: `distinctSources` below `executed` means the search revisited programs.
   `distinctSourceProfiles` counts distinct (base source, profile) observations, so an unanswered
   worker does not claim its requested profiles as coverage.
 * **Exhaustive mode.** `--exhaustive` replaces the seed plan by EVERY program of a finite recipe
-  (`SemanticCorpus.FiniteRecipes`: `seed-nested`, `seed-nested-wide`; any other recipe is refused
+  (`SemanticCorpus.FiniteRecipes`: `seed-nested`, `seed-nested-wide`, `seed-nested-wider`; any other recipe is refused
   with exit 2, as are `--seeds` and `--cases-per-seed` beside it). `SemanticExhaustive.Enumerate` walks
   the recipe's choice tree depth first — a pick over its values, a chance two ways (it holds or not) —
   generating each choice sequence once, deduplicating by base source (two sequences of one source must
@@ -2064,22 +2103,24 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   descriptor is written under `work/` before a `semantic-batch-worker` child replays the batch's
   manifest in recipe mode, writing each member's result atomically before the next starts; each
   result is judged exactly as a single worker's (`SemanticSupervisor.JudgeResult`), and
-  `--deadline-seconds` is a progress deadline that restarts with every result. A member without a
-  result — in flight when the child crashed or timed out, or one it could not replay — runs alone
-  under the single-case supervisor, and the members after it go to the next batch. The original
-  batch failure remains a failure even when that standalone rerun passes; a child that crashes after
-  writing every result is also a failure, attributed to the last member. A failing batch retains its
-  whole manifest, descriptors, results and supervision record, including passing predecessors needed
-  to reproduce a batch-only defect; reruns have separate evidence. Each failure links its
-  `batchManifest` in the summary. Failures are persisted and reduced as below.
+  `--deadline-seconds` is a progress deadline that restarts with every result. Every failing member,
+  and a member without a result — in flight when the child crashed or timed out, or one it could not
+  replay — also runs alone under the single-case supervisor; the members after one without a result
+  go to the next batch. The original batch failure remains a failure whatever that standalone rerun
+  gives, and the rerun CLASSIFIES it (§ Batch-only failures); a child that crashes after writing every
+  result is also a failure, attributed to the last member. A failing batch retains its whole
+  manifest, descriptors, results and supervision record; reruns have separate evidence. Each failure
+  links its `batchManifest` in the summary. Failures are persisted and reduced as below.
   Defaults: no case budget, `--max-seconds 7200`; both budgets are checked before every batch (a
   batch runs to completion). The summary's `planned` is the program count, `sequences` the choice
   sequences, and `complete` is true only when every program executed. A cheap CI smoke runs in the
   test suite instead (`SemanticExhaustiveCampaignTests`: exact enumeration counts, completeness
   against seeded cases, id canonicality, an in-process prefix campaign, a strided in-process slice
-  of both recipes, and one supervised batch with a planted crash); the full sweeps are manual —
+  of both recipes, and one supervised batch with a planted crash; `SemanticNestedWiderTests` the
+  same for `seed-nested-wider`); the full sweeps run nightly (§ Nightly sweeps) or by hand —
   `seed-nested` took 98 s (batches of 64) and `seed-nested-wide` 661 s (batches of 128; Debug,
-  this machine, 2026-11-16).
+  this machine, 2026-11-16); through `scripts/run-semantic-sweeps.ps1` (Debug, batches of 128,
+  2026-11-17) `seed-nested` took 83 s, `seed-nested-wide` 620 s and `seed-nested-wider` 210 s.
 * **Execution.** Each case runs in a bounded `semantic-worker` child in RECIPE mode, one at a time,
   under the unchanged `SemanticSupervisor` (per-execution `--deadline-seconds`, default 60; crash
   isolation; bounded output). The descriptor is written before dispatch.
@@ -2097,7 +2138,7 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   reduced exactly as `semantic-reduce --supervised` would (exact-source candidate children) and the
   reduced descriptor and `kl-sem2b-reduction` v1 record are written. A failure whose reducer run
   passes or produces a different signature is reported as not reproduced; no reduction is written
-  for a different failure.
+  for a different failure. A batch-only failure is reduced as a SEQUENCE first (§ Batch-only failures).
 * **Determinism.** No randomness or unordered iteration takes part. For a fixed recipe, range and
   bounds, a campaign that completes or stops at its case budget writes byte-identical summaries and
   the same files; only a time-budget stop depends on the machine.
@@ -2111,7 +2152,13 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   ```text
   campaign.json                         kl-sem2c-campaign v1 summary (no clock, no absolute path)
   failures/<id>.json                    the failing kl-sem2b-case v1 descriptor with its result
-  failures/<id>.signature.json          its recipe, signature and first finding
+  failures/<id>.signature.json          its recipe, signature, first finding and classification
+  failures/<id>.batch/manifest.txt      a batch-only failure's COMPLETE batch reproducer: every member
+  failures/<id>.batch/<nnnnn>-<m>.json  before it and itself, in batch order (relative paths), and
+  failures/<id>.batch/batch.json        its kl-sem2c-batch-reproducer v1 record
+  reduced/<id>.sequence/manifest.txt    the REDUCED sequence (shortest reproducing prefix, then the case)
+  reduced/<id>.sequence/sequence.json   its kl-sem2c-sequence-reduction v1 record
+  reduced/<id>.sequence/program/        the reduced prefix, then the program reduced in it (exact-source)
   reduced/<id>/<reduced id>.json        the reduced descriptor (unless --no-reduce)
   reduced/<id>/<reduced id>.reduction.json
   reduced/<id>/evidence/                the reduction's candidate children
@@ -2132,8 +2179,14 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   campaign. `mode` (`seeded` or `exhaustive`; absent means seeded), `distinctSources` and
   `distinctSourceProfiles` are additive v1 fields too. An exhaustive summary writes `null` seeds and
   cases per seed, adds `batchSize`, `sequences` and `complete`, and writes an unbounded `maxCases` as
-  `null`. The console summary line carries the same counts (`distinct-sources=… distinct-source-profiles=…`,
-  and `complete=yes|no` for an exhaustive run). The failing `kl-sem2b-case` descriptor is unchanged;
+  `null`. `classifications` (failures per class: `standalone`, `batch-only`, `batch-dependent`) and,
+  on each failure, `classification` are additive v1 fields as well (absent: every failure is
+  standalone); a failure observed in a batch adds its `standalone` rerun (verdict and signature), and
+  a batch-only or batch-dependent one its `batchReproducer` manifest, its `sequenceReduction` (status,
+  `originalPrefix`, `reducedPrefix`, attempts, the reduced sequence's `manifest` and `record`) and
+  `reduction.context`, the reduced program's context manifest. The console summary line carries the
+  same counts (`distinct-sources=… distinct-source-profiles=…`, `batch-only=N` when any, and
+  `complete=yes|no` for an exhaustive run). The failing `kl-sem2b-case` descriptor is unchanged;
   its `caseId` already carries the recipe segment.
 * **Seams.** `SemanticCampaignOptions.InProcessRunner`, `WorkerCommand`, `BatchWorkerCommand` and
   `Clock` are internal test seams; the command never sets them. `SemanticCampaignTests` covers
@@ -2147,7 +2200,77 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
   the outer-list pattern (`[(`) found twice in seed `5EED2B000001` (a wrong value and a wrong
   outcome), persisted with its recipe and reduced to a single-context nested case (97 → 82 and
   95 → 66 characters).
-  `SemanticExhaustiveCampaignTests` covers `--exhaustive` and `seed-nested-wide` (§ Exhaustive mode).
+  `SemanticExhaustiveCampaignTests` covers `--exhaustive` and `seed-nested-wide` (§ Exhaustive mode),
+  `SemanticNestedWiderTests` the wider recipe, and `SemanticBatchOnlyCampaignTests` batch-only
+  failures end to end with the planted-fault seam (§ Batch-only failures).
+
+### Batch-only failures
+
+A batch child replays many programs in ONE process, so a defect can depend on what an earlier member
+left behind (a static cache, a pool, a lazily initialized table) and fail a program that passes alone.
+The single-program reducer reruns one program at a time, so it cannot even reproduce such a failure.
+An exhaustive campaign therefore reruns every failing batch member alone (the single-case supervisor,
+`semantic-worker` in recipe mode) and classifies the failure (`SemanticFailureClass`):
+
+* `standalone` — the rerun fails with the same signature (every seeded or in-process failure is
+  standalone too); it is reduced as a program, as before;
+* `batch-only` — the rerun PASSES;
+* `batch-dependent` — the rerun fails with another signature.
+
+A batch-only or batch-dependent failure keeps its COMPLETE batch reproducer under
+`failures/<id>.batch/`: the descriptors of every member that ran before it and its own, numbered in
+batch order, a `manifest.txt` of paths relative to it (replayable from anywhere) and a
+`kl-sem2c-batch-reproducer` v1 `batch.json` (class, in-batch signature, standalone verdict and
+signature, the original `work/` manifest, every member id). Unless `--no-reduce`, it is reduced in two
+steps, each candidate one fresh `semantic-batch-worker` child that runs a prefix and then the failing
+case, accepted when the child reaches the case and it fails with the original signature:
+
+1. **Sequence reduction** (`SemanticSequenceReducer`, delta debugging). The complete prefix must first
+   reproduce in a fresh child (else `NotReproduced`: nothing is reduced), then the case alone in a
+   batch child is tried, then chunks of the prefix and their complements, order preserved, to a
+   one-minimal prefix (`Reduced` or `Minimal`). The reduced sequence is persisted under
+   `reduced/<id>.sequence/` with a `kl-sem2c-sequence-reduction` v1 `sequence.json`.
+2. **Program reduction in context.** The failing case is reduced by its own builder exactly as a
+   standalone failure, but each candidate runs after the reduced prefix (exact-source children: a
+   manifest's `#mode exact-source` line replays every member in exact-source mode). The reduced case's
+   artifacts go to `reduced/<id>/`, and its context reproducer — the reduced prefix, then the reduced
+   case — to `reduced/<id>.sequence/program/`.
+
+Each step is bounded by `--max-attempts` executions and the time budget; the scratch directory of a
+judged candidate is removed. `semantic-batch-replay MANIFEST` replays any of these reproducers in one
+supervised batch child, copying it to a temporary directory first, and prints every member's verdict.
+
+The test-only PLANTED-FAULT seam (`tests/KatLang.Tests/SemanticTesting/SemanticPlantedFault.cs`) adds
+one host event the program never performed (`trace:4242`) to `base@sync-optimized`: a wrong
+observation that is well-formed for a success, an expected runtime failure and an intended refusal
+alike, so a supervised worker writes it and the result reader judges an ordinary `Mismatch`
+(`host-events`, or `front-end-effects` on a refusal). Forging a wrong VALUE instead is malformed
+output on an expected failure (its observation has no emitted count). A `Defect` installs the fault in
+one worker process through the runner's inert observation filter, optionally armed only after a
+trigger case ran in that process — a failure that exists only in a batch. `SemanticBatchOnlyCampaignTests`
+uses it through `SubprocessProbe` children to test detection (a success and an expected failure in
+one supervised batch: well-formed mismatches, classified standalone), classification (armed by
+program 2 of a batch of eight, program 6 fails in the batch and passes alone: batch-only, its
+seven-member reproducer replays) and sequence reduction (that prefix of six shrinks to the trigger
+alone, then program 6 is reduced in that context).
+
+### Nightly sweeps
+
+`.github/workflows/semantic-nightly.yml` runs `scripts/run-semantic-sweeps.ps1` every night (02:23
+UTC) and on manual dispatch, never on a pull request or a push; it is separate from `validate.yml`,
+whose standalone-tool job stays build-only, needs no secret and runs on a GitHub-hosted
+`ubuntu-24.04` runner. The script builds this project once (Debug, so the evaluator's DEBUG invariant
+checks run) and runs `semantic-campaign --exhaustive` over every finite recipe (`seed-nested`,
+`seed-nested-wide`, `seed-nested-wider`; batches of 128, failures persisted and reduced, each sweep
+bounded by `--max-seconds 2400`), writing every log, summary and reproducer to a fresh git-ignored
+`artifacts/validation/semantic-sweeps-*` directory and a table to the job summary. It fails when a
+sweep finds a failure or does not complete; the job then uploads that directory as
+`semantic-sweep-reproducers` (also when it times out or is cancelled). The three sweeps took 913 s
+(83 + 620 + 210 s) on a developer machine on 2026-11-17, plus about a minute of build; a hosted
+runner is assumed to need about twice that, well inside the job's 150 minutes and each sweep's
+40-minute budget. `ContinuousIntegrationPolicyTests`
+pins the triggers, the runner, the recipe list and the upload, and holds the workflow to the shared
+action-pinning, secret, checkout and cache policies.
 
 ### Extending it
 
@@ -2169,13 +2292,13 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide [--batch-si
 
 ### Remaining work (SEM-2C)
 
-Campaigns over more than the two seeded recipes (systematic ids, more families per case), an
-exhaustive enumeration of the finite nested recipe in place of random sampling (§ Campaigns,
-Recipe), spans inside productions (operation lists, patterns) so the reducer can drop one
-operation rather than a whole production, fault injection beyond the apparatus checks here, and Lean
-evidence beyond the identity-prelude members. Automatic reduction of generated failures, its
-structure-aware span moves (§ Reduction) and the bounded `semantic-campaign` over both seeded
-recipes (§ Campaigns) are implemented. Every valid generated case now has a per-case Lean guard on
+Campaigns over systematic ids and more families per case, spans inside productions (operation
+lists, patterns) so the reducer can drop one operation rather than a whole production, fault
+injection beyond the apparatus checks and the planted-fault seam here, and Lean evidence beyond the
+identity-prelude members. Automatic reduction of generated failures, its structure-aware span moves
+(§ Reduction), the bounded `semantic-campaign` over the seeded recipes, exhaustive sweeps of the
+finite ones with batch-only classification and sequence reduction, and their nightly job
+(§ Campaigns, § Batch-only failures, § Nightly sweeps) are implemented. Every valid generated case now has a per-case Lean guard on
 its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
 async and optimizer paths, and the two transformation members still rest on C# profile parity plus
 the independent constructed anchors. The thin optimizer loop paths now have named cases and an

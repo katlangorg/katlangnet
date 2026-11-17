@@ -16,6 +16,8 @@ public class ContinuousIntegrationPolicyTests
 {
     private const string ValidatePath = ".github/workflows/validate.yml";
     private const string ReleasePath = ".github/workflows/release.yml";
+    private const string SemanticNightlyPath = ".github/workflows/semantic-nightly.yml";
+    private const string SemanticSweepScriptPath = "scripts/run-semantic-sweeps.ps1";
     private const string DotNetSetupPath = ".github/actions/setup-baseline-dotnet";
     private const string LeanInstallPath = "scripts/install-lean-toolchain.sh";
 
@@ -817,6 +819,8 @@ public class ContinuousIntegrationPolicyTests
                 "its children measure peak working set, the memory-retention guards of the identity-keyed run stores outside the caches (per-site callee memos, the observed plan-formation witness); retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
             ["KatLang.Tests.FrontEndMemoryProbeCensusProcessTests"] =
                 "its child runs the fe-mem probe's census mode on small sources, a smoke test of the standalone memory tool, which forces full collections and listens to runtime events and so needs its own process; no frame-size frontier is swept",
+            ["KatLang.Tests.SemanticTesting.SemanticBatchOnlyCampaignTests"] =
+                "its children are the semantic campaign's planted batch and single-case workers (a planted wrong observation, batch-only classification and sequence reduction); they run small generated programs, not deep shapes, so no frame-size frontier is swept",
             ["KatLang.Tests.LocalOnlyLoopStepPeakMemoryProcessTests"] =
                 "its children measure peak working set, the flat-memory guards of a binding context minted per loop step (a local-only property, one holding a call reference, a local-only runtime alias) over the prompt-reclaim partition tables; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
@@ -939,6 +943,58 @@ public class ContinuousIntegrationPolicyTests
         Assert.Matches(@"(?m)^          path: artifacts/validation/standalone-tools-build-\*/$", section);
     }
 
+    /// <summary>
+    /// The nightly semantic sweep is its own workflow: scheduled or dispatched by hand, never on a pull
+    /// request or a push, one job on a GitHub-hosted runner with read-only contents and a timeout, and
+    /// neither the pull-request validation nor the build-only standalone-tool job runs the sweeps.
+    /// </summary>
+    [Fact]
+    public void SemanticNightly_IsScheduledOrManualOnly_AndStaysOutOfPullRequestValidation()
+    {
+        var source = Text(SemanticNightlyPath);
+        Assert.Matches(@"(?m)^on:\n  schedule:\n    - cron: ""[0-9*/, -]+""\n  workflow_dispatch:\n\n", source);
+        Assert.DoesNotMatch(@"(?m)^  (?:push|pull_request|pull_request_target|repository_dispatch|workflow_run|workflow_call):", source);
+        Assert.Matches(@"(?m)^permissions:\n  contents: read$", source);
+        Assert.Single(Regex.Matches(source, @"(?m)^  [a-z][a-z-]*:\n    name: ").Cast<Match>());
+        var job = JobSection(source, "semantic-sweeps");
+        Assert.Matches(@"(?m)^    runs-on: ubuntu-24\.04$", job);
+        Assert.DoesNotContain("self-hosted", source, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(job, @"(?m)^    timeout-minutes: [0-9]+$").Cast<Match>());
+
+        Assert.DoesNotContain(SemanticSweepScriptPath, Text(ValidatePath) + Text(ReleasePath), StringComparison.Ordinal);
+        Assert.DoesNotContain("semantic-campaign", Text(ValidatePath) + Text(ReleasePath) + Text(StandaloneBuildScriptPath), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The nightly job checks out, installs the baseline SDK and runs the sweep script, which sweeps
+    /// exactly the finite recipes exhaustively and fails on a failure or an incomplete sweep; the job
+    /// uploads the persisted reproducers when it fails or is cancelled.
+    /// </summary>
+    [Fact]
+    public void SemanticNightly_SweepsEveryFiniteRecipe_AndUploadsReproducersOnFailure()
+    {
+        var job = JobSection(Text(SemanticNightlyPath), "semantic-sweeps");
+        var checkout = job.IndexOf("uses: actions/checkout@", StringComparison.Ordinal);
+        var setup = job.IndexOf($"uses: ./{DotNetSetupPath}", StringComparison.Ordinal);
+        var run = job.IndexOf("run: pwsh -NoProfile -File ./" + SemanticSweepScriptPath, StringComparison.Ordinal);
+        var upload = job.IndexOf("name: semantic-sweep-reproducers", StringComparison.Ordinal);
+        Assert.True(checkout >= 0 && setup > checkout && run > setup && upload > run, "expected checkout, SDK setup, the sweeps and the upload in order");
+        var step = job[job.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
+        Assert.Contains("if: ${{ failure() || cancelled() }}", step, StringComparison.Ordinal);
+        Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^          path: artifacts/validation/semantic-sweeps-\*/$", job);
+
+        var script = Text(SemanticSweepScriptPath);
+        var list = Regex.Match(script, @"\[string\[\]\]\$Recipes = @\((?<body>[^)]*)\)");
+        Assert.True(list.Success, "the script must declare its default recipes");
+        var recipes = Regex.Matches(list.Groups["body"].Value, "\"(?<name>[^\"]+)\"").Select(static m => m.Groups["name"].Value).ToArray();
+        Assert.Equal(KatLang.ParserFuzz.SemanticCorpus.FiniteRecipes.ToArray(), recipes);
+        Assert.Contains("semantic-campaign --exhaustive --recipe $recipe", script, StringComparison.Ordinal);
+        Assert.Contains("if ($exit -ne 0 -or -not $complete)", script, StringComparison.Ordinal);
+        Assert.Contains("& git check-ignore -q -- \"$relative/semantic-sweeps.log\"", script, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"(?m)^[^#\n]*\bdotnet\s+(?:test|publish)\b", script);
+    }
+
     [Fact]
     public void ValidateWorkflow_ExposesTheStandaloneToolBuildCheckOnce()
     {
@@ -1038,8 +1094,9 @@ public class ContinuousIntegrationPolicyTests
         return section.Success ? section.Value : string.Empty;
     }
 
+    /// <summary>Every workflow: the shared policies (pins, secrets, checkouts, caches, canonical commands) cover each.</summary>
     private static string WorkflowText()
-        => Text(ValidatePath) + "\n" + Text(ReleasePath);
+        => Text(ValidatePath) + "\n" + Text(ReleasePath) + "\n" + Text(SemanticNightlyPath);
 
     private static string WorkflowAndLocalActionText()
         => string.Join("\n", LocalActionPaths.Select(path => Text($"{path}/action.yml")).Prepend(WorkflowText()));

@@ -435,7 +435,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     [Fact]
     public void TheRecipeOption_DefaultsToSeed_AndEveryRecipeNameIsARebuildableIdSegment()
     {
-        Assert.Equal(["seed", "seed-nested", "seed-nested-wide"], SemanticCorpus.SeededRecipes.ToArray());
+        Assert.Equal(["seed", "seed-nested", "seed-nested-wide", "seed-nested-wider"], SemanticCorpus.SeededRecipes.ToArray());
         Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "0x10..12"], out var byDefault, out var problem), problem);
         Assert.Equal(SemanticCorpus.SeedRecipe, byDefault.Recipe);
         Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "0x10..12", "--recipe", "seed"], out var named, out problem), problem);
@@ -450,9 +450,9 @@ public class SemanticCampaignTests(ITestOutputHelper output)
         Assert.Equal(SemanticCampaign.Plan(byDefault).ToArray(), SemanticCampaign.Plan(nested).ToArray()); // the plan is recipe-independent
 
         Assert.False(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "1", "--recipe", "nested"], out _, out problem));
-        Assert.Contains("seed, seed-nested, seed-nested-wide", problem, StringComparison.Ordinal);
-        Assert.Contains("[--recipe seed|seed-nested|seed-nested-wide]", SemanticCampaign.Usage, StringComparison.Ordinal);
-        Assert.Contains("--exhaustive --recipe seed-nested|seed-nested-wide [--batch-size N]", SemanticCampaign.Usage, StringComparison.Ordinal);
+        Assert.Contains("seed, seed-nested, seed-nested-wide, seed-nested-wider", problem, StringComparison.Ordinal);
+        Assert.Contains("[--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider]", SemanticCampaign.Usage, StringComparison.Ordinal);
+        Assert.Contains("--exhaustive --recipe seed-nested|seed-nested-wide|seed-nested-wider [--batch-size N]", SemanticCampaign.Usage, StringComparison.Ordinal);
         Assert.NotNull((byDefault with { Recipe = "nested" }).Problem()); // the seam path is validated too
 
         foreach (var recipe in SemanticCorpus.SeededRecipes)

@@ -294,11 +294,21 @@ internal static class SemanticSupervisor
     }
 
     /// <summary>
-    /// The manifest of a batch: one <c>descriptor TAB result</c> line per member, in order. The
-    /// caller has persisted every descriptor before it writes the manifest.
+    /// The manifest's directive line that replays every member in exact-source mode (a reduced or
+    /// candidate member is not a recipe case); without it a batch runs in recipe mode.
     /// </summary>
-    internal static void WriteManifest(string manifestPath, IEnumerable<(string Descriptor, string Result)> members)
-        => File.WriteAllText(manifestPath, string.Concat(members.Select(static m => m.Descriptor + "\t" + m.Result + "\n")));
+    internal const string ExactSourceDirective = "#mode exact-source";
+
+    /// <summary>
+    /// The manifest of a batch: one <c>descriptor TAB result</c> line per member, in order, after the
+    /// <see cref="ExactSourceDirective"/> when <paramref name="mode"/> is exact-source. A relative path
+    /// is relative to the manifest's own directory, so a persisted reproducer replays from anywhere.
+    /// The caller has persisted every descriptor before it writes the manifest.
+    /// </summary>
+    internal static void WriteManifest(
+        string manifestPath, IEnumerable<(string Descriptor, string Result)> members, SemanticReplay.Mode mode = SemanticReplay.Mode.Recipe)
+        => File.WriteAllText(manifestPath, (mode == SemanticReplay.Mode.ExactSource ? ExactSourceDirective + "\n" : "")
+            + string.Concat(members.Select(static m => m.Descriptor + "\t" + m.Result + "\n")));
 
     /// <summary>
     /// Runs one batch child under the same bounds as a single worker: bounded output, the whole

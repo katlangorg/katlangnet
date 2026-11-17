@@ -151,6 +151,26 @@ internal sealed record SemanticCampaignFailure(
 
     /// <summary>The original batch reproducer, retained even when a standalone rerun passes.</summary>
     public string? BatchManifest { get; init; }
+
+    /// <summary>How the failure relates to its batch (<see cref="SemanticFailureClass"/>): standalone outside a batch.</summary>
+    public string Classification { get; init; } = SemanticFailureClass.Standalone;
+
+    /// <summary>The single-case rerun of a failure observed in a batch; <c>null</c> outside a batch.</summary>
+    public SemanticCaseResult? StandaloneRerun { get; init; }
+
+    /// <summary>The complete batch reproducer of a batch-only or batch-dependent failure: every preceding member, then this one.</summary>
+    public string? BatchReproducer { get; init; }
+
+    /// <summary>The sequence reduction of a batch-only or batch-dependent failure (<see cref="SemanticSequenceReducer"/>).</summary>
+    public SemanticSequenceResult? Sequence { get; init; }
+
+    /// <summary>The reduced sequence's manifest (the shortest reproducing prefix, then this case) and its record.</summary>
+    public string? SequenceManifest { get; init; }
+
+    public string? SequenceRecord { get; init; }
+
+    /// <summary>The reduced program's context reproducer: the reduced prefix, then the reduced program (exact-source).</summary>
+    public string? ReductionContext { get; init; }
 }
 
 /// <summary>The outcome of one campaign: what was planned, what was covered, and every failure.</summary>
@@ -178,23 +198,31 @@ internal sealed record SemanticCampaignResult(
     /// <summary>An exhaustive campaign that executed every enumerated program.</summary>
     public bool Complete => Options.Exhaustive && Stop == SemanticCampaignStop.Completed && Executed == Planned;
 
+    /// <summary>The failures per <see cref="SemanticFailureClass"/>, in its order.</summary>
+    public ImmutableArray<(string Class, int Count)> Classifications
+        => [.. SemanticFailureClass.All.Select(c => (c, Failures.Count(f => f.Classification == c)))];
+
+    /// <summary>Failures that occur only in their batch (batch-only and batch-dependent).</summary>
+    public int BatchFailures => Failures.Count(static f => f.Classification != SemanticFailureClass.Standalone);
+
     public string Describe()
     {
         var uncovered = FirstUncovered is null ? "" : " first-uncovered=" + FirstUncovered;
+        var batchOnly = BatchFailures == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $" batch-only={BatchFailures}");
         var plan = Options.Exhaustive
             ? string.Create(CultureInfo.InvariantCulture,
                 $"exhaustive ({Planned} programs from {Sequences} choice sequences, {(Options.Supervised ? $"batches of {Options.BatchSize}" : "in process")})")
             : string.Create(CultureInfo.InvariantCulture, $"seeds {Options.FirstSeed:X}..{Options.LastSeed:X} x {Options.CasesPerSeed}");
         var complete = Options.Exhaustive ? " complete=" + (Complete ? "yes" : "no") : "";
         return string.Create(CultureInfo.InvariantCulture,
-            $"semantic-campaign: recipe {Options.Recipe}, {plan}: planned={Planned} executed={Executed} passed={Passed} failed={Failures.Length} distinct-sources={DistinctSources} distinct-source-profiles={DistinctSourceProfiles} stop={SemanticCampaign.StopName(Stop)}{complete}{uncovered} elapsed={Elapsed.TotalSeconds:F1}s");
+            $"semantic-campaign: recipe {Options.Recipe}, {plan}: planned={Planned} executed={Executed} passed={Passed} failed={Failures.Length}{batchOnly} distinct-sources={DistinctSources} distinct-source-profiles={DistinctSourceProfiles} stop={SemanticCampaign.StopName(Stop)}{complete}{uncovered} elapsed={Elapsed.TotalSeconds:F1}s");
     }
 }
 
 /// <summary>
 /// <c>semantic-campaign</c> (SEM-2C, fuzz/README.md § Campaigns): a BOUNDED, deterministic search for
 /// failing generated cases. It enumerates the ids <c>sem2b/v1/&lt;recipe&gt;/&lt;seed&gt;/&lt;index&gt;</c> of ONE
-/// seeded recipe (<c>--recipe seed|seed-nested|seed-nested-wide</c>, default <c>seed</c>;
+/// seeded recipe (<c>--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider</c>, default <c>seed</c>;
 /// <see cref="SemanticCorpus.SeededRecipes"/>) for every seed of an inclusive hex range and every
 /// index below the cases-per-seed count, in that order, runs each under <see cref="SemanticSupervisor"/>
 /// (recipe mode, one child at a time, the descriptor persisted before dispatch), persists every
@@ -202,8 +230,11 @@ internal sealed record SemanticCampaignResult(
 /// <see cref="SemanticReducer"/> (supervised, exact-source candidates) and writes the reduced
 /// artifacts. With <c>--exhaustive</c> the plan is instead EVERY program of a finite recipe
 /// (<see cref="SemanticExhaustive"/>, ids <c>sem2b/v1/&lt;recipe&gt;/all/&lt;choices&gt;</c>), run in
-/// supervised batches (one child per batch, every descriptor persisted before dispatch, a member the
-/// batch could not answer rerun alone), with the same failure handling. It stops at the first
+/// supervised batches (one child per batch, every descriptor persisted before dispatch, every failing
+/// member and the first member the batch could not answer rerun alone), with the same failure handling —
+/// except that a failure the standalone rerun does not reproduce is classified batch-only (or
+/// batch-dependent: another signature alone), keeps its complete batch reproducer, and is reduced first as
+/// a sequence (<see cref="SemanticSequenceReducer"/>) and then as a program in that sequence. It stops at the first
 /// exhausted budget and reports what it covered, including the distinct sources and (source,
 /// profile) pairs executed. It writes only inside its own output directory, which must be new or empty.
 /// </summary>
@@ -280,8 +311,10 @@ internal static class SemanticCampaign
         var timeExhausted = false;
 
         // Counts one executed case; a failure is persisted (descriptor with its result, and its
-        // signature) and then, unless --no-reduce, reduced by the case's own builder.
-        void Record(SemanticCaseBuilder builder, SemanticCase semanticCase, SemanticCaseResult result, string? batchManifest)
+        // signature), classified against its batch (a batch-only failure also keeps its complete
+        // batch reproducer) and then, unless --no-reduce, reduced: a standalone failure by the case's
+        // own builder, a batch-only one first as a sequence, then as a program in its reduced context.
+        void Record(SemanticCaseBuilder builder, SemanticCase semanticCase, SemanticCaseResult result, SemanticBatchContext? batch)
         {
             executed++;
             lastCovered = semanticCase.CaseId;
@@ -298,20 +331,36 @@ internal static class SemanticCampaign
             }
 
             var signature = SemanticFailureSignature.Of(result);
+            var classification = batch is null ? SemanticFailureClass.Standalone : SemanticFailureClass.Of(signature, batch.Standalone);
             Directory.CreateDirectory(failuresDir);
             var safe = SemanticReplay.SafeName(semanticCase.CaseId);
             var descriptor = Path.Combine(failuresDir, safe + ".json");
             var signatureFile = Path.Combine(failuresDir, safe + ".signature.json");
             File.WriteAllText(descriptor, SemanticDescriptor.Write(semanticCase, result));
-            File.WriteAllText(signatureFile, WriteSignature(semanticCase.CaseId, options.Recipe, signature, result));
+            File.WriteAllText(signatureFile, WriteSignature(semanticCase.CaseId, options.Recipe, signature, result, classification));
             log.WriteLine($"FAILURE {semanticCase.CaseId}: [{signature}] {(result.Findings.IsEmpty ? "-" : result.Findings[0])}");
             log.WriteLine($"  descriptor={descriptor}");
 
             var failure = new SemanticCampaignFailure(semanticCase.CaseId, options.Recipe, result.Verdict, signature, Relative(outDir, descriptor),
                 Relative(outDir, signatureFile), null, null, null, null, null, null, 0, 0, options.Reduce ? null : "disabled (--no-reduce)")
             {
-                BatchManifest = batchManifest is null ? null : Relative(outDir, batchManifest),
+                BatchManifest = batch is null ? null : Relative(outDir, batch.Manifest),
+                Classification = classification,
+                StandaloneRerun = batch?.Standalone,
             };
+            if (batch is not null && classification != SemanticFailureClass.Standalone)
+            {
+                // The complete batch reproducer: every member that ran before this one, then this one.
+                var reproducerDir = Path.Combine(failuresDir, safe + ".batch");
+                ImmutableArray<SemanticCase> members = [.. batch.Prefix, semanticCase];
+                var reproducer = SemanticBatchSequence.Persist(reproducerDir, members, SemanticReplay.Mode.Recipe);
+                File.WriteAllText(Path.Combine(reproducerDir, "batch.json"), SemanticBatchSequence.WriteReproducerRecord(
+                    options.Recipe, semanticCase.CaseId, classification, signature, batch.Standalone, Relative(outDir, batch.Manifest), members));
+                failure = failure with { BatchReproducer = Relative(outDir, reproducer) };
+                log.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"  {classification}: standalone rerun {batch.Standalone.Verdict}; batch reproducer={reproducer} ({members.Length} members)"));
+            }
+
             if (options.Reduce)
             {
                 if (clock() >= options.MaxTime)
@@ -319,9 +368,13 @@ internal static class SemanticCampaign
                     timeExhausted = true;
                     failure = failure with { ReductionSkipped = "time budget exhausted" };
                 }
-                else
+                else if (classification == SemanticFailureClass.Standalone)
                 {
                     failure = Reduce(builder, failure, Path.Combine(reducedDir, safe), outDir, options, clock, log);
+                }
+                else
+                {
+                    failure = ReduceInBatch(builder, semanticCase, batch!, failure, outDir, options, clock, log);
                 }
             }
 
@@ -393,16 +446,18 @@ internal static class SemanticCampaign
     /// One supervised batch of an exhaustive campaign: every member's descriptor is persisted under
     /// <c>work/</c> BEFORE the manifest is written and the child dispatched, the child replays them in
     /// order (<see cref="SemanticSupervisor.RunBatch"/>), and each member with a result is recorded in
-    /// order. The first member WITHOUT one (in flight when the child crashed or timed out, or one the
-    /// child could not replay) runs alone under the single-case supervisor, which classifies and keeps
-    /// its evidence exactly as a seeded campaign does; the original batch failure is retained even
-    /// when that rerun passes. The members after it are left for the next batch. A failing batch's
+    /// order. Every failing member, and the first member WITHOUT a result (in flight when the child
+    /// crashed or timed out, or one the child could not replay), also runs ALONE under the single-case
+    /// supervisor, which keeps its evidence exactly as a seeded campaign does; the original batch
+    /// failure is recorded whatever that rerun gives, and the rerun classifies it
+    /// (<see cref="SemanticFailureClass"/>) with the members before it as its context. The members
+    /// after a member without a result are left for the next batch. A failing batch's
     /// entire manifest, descriptors, results and supervision record are kept together; a clean,
     /// passing batch's evidence is removed. Returns how many members were recorded.
     /// </summary>
     private static int SuperviseBatch(
         SemanticExhaustive.EnumeratedProgram[] programs, int batchNumber, string workDir, SemanticCampaignOptions options,
-        Action<SemanticCaseBuilder, SemanticCase, SemanticCaseResult, string?> record, TextWriter log)
+        Action<SemanticCaseBuilder, SemanticCase, SemanticCaseResult, SemanticBatchContext?> record, TextWriter log)
     {
         Directory.CreateDirectory(workDir);
         var stem = "batch-" + batchNumber.ToString("D5", CultureInfo.InvariantCulture);
@@ -426,34 +481,29 @@ internal static class SemanticCampaign
 
         // Decide before removing anything: a batch-only defect may depend on every preceding case.
         var keep = run.ChildFailure is not null || run.Members.Any(static m => m.Verdict != SemanticVerdict.Passed);
+        var cases = run.Members.Select(static m => m.Case).ToImmutableArray();
         var recorded = 0;
         while (recorded < run.Members.Length)
         {
             var member = run.Members[recorded];
-            if (member.Verdict is not { } verdict)
+            // The member's result as judged; the child's own failure for the final member when the child
+            // died after writing it (its semantic result file retained); the child's failure (or a
+            // missing observation) for a member without a result.
+            var result = SemanticBatchSequence.MemberResult(run, recorded);
+            SemanticBatchContext? context = null;
+            if (!result.Passed)
             {
+                // Every failure observed in a batch also runs ALONE: one that depends on an earlier
+                // member is classified batch-only instead of falling through as "not reproduced".
                 var rerunDir = Path.Combine(batchDir, "rerun");
                 var alone = Supervise(member.Case, rerunDir, options);
-                if (!Directory.EnumerateFileSystemEntries(rerunDir).Any()) Directory.Delete(rerunDir);
-                log.WriteLine($"  batch member {member.Case.CaseId}: standalone rerun {alone.Verdict}; original batch failure retained; manifest={manifest}");
-                var original = new SemanticCaseResult(member.Case.CaseId,
-                    run.ChildFailure ?? SemanticVerdict.MissingObservation, [], [], SemanticPath.None, [], []);
-                record(builders[recorded++], member.Case, original, manifest);
-                break;
+                if (Directory.Exists(rerunDir) && !Directory.EnumerateFileSystemEntries(rerunDir).Any()) Directory.Delete(rerunDir);
+                log.WriteLine($"  batch member {member.Case.CaseId}: standalone rerun {alone.Verdict}{(member.Verdict is null ? "; original batch failure retained" : "")}; manifest={manifest}");
+                context = new SemanticBatchContext(manifest, cases[..recorded], alone);
             }
 
-            // Supervisor-classified failures carry no semantic finding location (as Supervise).
-            var result = member.Summary is { } summary && summary.Verdict == verdict
-                ? summary.CoverageResult
-                : new SemanticCaseResult(member.Case.CaseId, verdict, [], [], SemanticPath.None, [], []);
-            // A child can also die after writing its last result (including during shutdown).
-            // Attribute that failure to the final member while retaining its semantic result file.
-            if (recorded == run.Members.Length - 1 && run.ChildFailure is { } failure)
-            {
-                result = result with { Verdict = failure, Findings = [], FindingRecords = [] };
-            }
-
-            record(builders[recorded++], member.Case, result, manifest);
+            record(builders[recorded++], member.Case, result, context);
+            if (member.Verdict is null) break; // the members after one without a result go to the next batch
         }
 
         if (!keep)
@@ -552,6 +602,117 @@ internal static class SemanticCampaign
         };
     }
 
+    /// <summary>
+    /// Reduces a batch-only or batch-dependent failure in two steps, each candidate one fresh batch child
+    /// (<see cref="SemanticCampaignOptions.BatchWorkerCommand"/>) that runs a prefix and then the failing
+    /// case: first the SEQUENCE — the members before it shrink while the failure (its signature, the child
+    /// reaching it) recurs (<see cref="SemanticSequenceReducer"/>), the reduced sequence persisted under
+    /// <c>reduced/&lt;case&gt;.sequence/</c>; then the PROGRAM in that reduced context, by the case's own
+    /// builder (<see cref="SemanticReducer"/>, exact-source candidates), its artifacts under
+    /// <c>reduced/&lt;case&gt;/</c> and its context reproducer under <c>reduced/&lt;case&gt;.sequence/program/</c>.
+    /// Each step is bounded by <see cref="SemanticCampaignOptions.MaxAttempts"/> executions and the time budget.
+    /// </summary>
+    private static SemanticCampaignFailure ReduceInBatch(
+        SemanticCaseBuilder builder, SemanticCase failing, SemanticBatchContext batch, SemanticCampaignFailure failure, string outDir,
+        SemanticCampaignOptions options, Func<TimeSpan> clock, TextWriter log)
+    {
+        var safe = SemanticReplay.SafeName(failing.CaseId);
+        var sequenceDir = Path.Combine(outDir, "reduced", safe + ".sequence");
+        var evidence = Path.Combine(sequenceDir, "evidence");
+        var command = options.BatchWorkerCommand ?? SemanticSupervisor.SelfBatchWorker;
+        bool ShouldStop() => clock() >= options.MaxTime;
+        var executions = 0;
+
+        // One candidate in a fresh batch child: the last member's recorded result, or null when the
+        // child never reached it. The persisted reproducers are written separately, so a judged
+        // candidate's scratch directory is removed.
+        SemanticCaseResult? RunAfter(IReadOnlyList<SemanticCase> prefix, SemanticCase last, SemanticReplay.Mode mode)
+        {
+            var dir = Path.Combine(evidence, "run-" + (++executions).ToString("D4", CultureInfo.InvariantCulture));
+            try
+            {
+                return SemanticBatchSequence.LastResult(SemanticBatchSequence.Run(
+                    SemanticBatchSequence.Persist(dir, [.. prefix, last], mode), command, options.Deadline));
+            }
+            finally
+            {
+                SemanticBatchSequence.TryDeleteDirectory(dir);
+            }
+        }
+
+        try
+        {
+            var sequence = SemanticSequenceReducer.Reduce(
+                batch.Prefix,
+                prefix => RunAfter(prefix, failing, SemanticReplay.Mode.Recipe) is { } recurred && SemanticFailureSignature.Of(recurred) == failure.Signature,
+                options.MaxAttempts,
+                ShouldStop);
+            log.WriteLine("  sequence: " + sequence.Describe());
+            failure = failure with { Sequence = sequence };
+            if (sequence.Status == SemanticSequenceStatus.NotReproduced)
+            {
+                return failure with
+                {
+                    ReductionSkipped = sequence.Stopped ? "time budget exhausted"
+                        : sequence.AttemptLimitReached ? "no execution left (--max-attempts)"
+                        : "the batch failure did not reproduce in a fresh batch child",
+                    ReductionStopped = sequence.Stopped ? "time budget exhausted" : null,
+                };
+            }
+
+            var manifest = SemanticBatchSequence.Persist(sequenceDir, [.. sequence.Reduced, failing], SemanticReplay.Mode.Recipe);
+            var record = Path.Combine(sequenceDir, "sequence.json");
+            File.WriteAllText(record, SemanticBatchSequence.WriteSequenceRecord(failing.CaseId, failure.Signature, sequence));
+            failure = failure with { SequenceManifest = Relative(outDir, manifest), SequenceRecord = Relative(outDir, record) };
+            log.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  reduced sequence={manifest} ({sequence.Reduced.Length} preceding member(s))"));
+            if (sequence.Stopped || ShouldStop())
+                return failure with { ReductionSkipped = "time budget exhausted", ReductionStopped = "time budget exhausted" };
+
+            // The program itself, after the reduced prefix (exact-source: a candidate is not a recipe case).
+            var reduction = new SemanticReductionOptions
+            {
+                MaxAttempts = options.MaxAttempts,
+                Supervised = true,
+                RequiredSignature = failure.Signature,
+                ShouldStop = ShouldStop,
+                Runner = c => RunAfter(sequence.Reduced, c, SemanticReplay.Mode.ExactSource)
+                    ?? new SemanticCaseResult(c.CaseId, SemanticVerdict.HarnessFailure, ["the batch child did not reach the candidate"], [], SemanticPath.None, [], []),
+            };
+            var result = SemanticReducer.Reduce(builder, reduction);
+            log.WriteLine("  reduce in context: " + result.Describe());
+            if (result.Status == SemanticReductionStatus.NothingToReduce)
+            {
+                return failure with
+                {
+                    ReductionStatus = result.Status.ToString(),
+                    ReductionSkipped = "the failure did not reproduce after the reduced prefix (observed " + result.Signature + ")",
+                    ReductionAttempts = result.Attempts,
+                };
+            }
+
+            var (stem, reduced) = SemanticReduction.WriteArtifacts(result, Path.Combine(outDir, "reduced", safe));
+            var context = SemanticBatchSequence.Persist(Path.Combine(sequenceDir, "program"), [.. sequence.Reduced, reduced], SemanticReplay.Mode.ExactSource);
+            log.WriteLine($"  reduced={stem}.json ({reduced.Source.Length.ToString(CultureInfo.InvariantCulture)} source characters) in context={context}");
+            return failure with
+            {
+                ReductionStatus = result.Status.ToString(),
+                ReducedCaseId = reduced.CaseId,
+                ReducedDescriptor = Relative(outDir, stem + ".json"),
+                ReductionRecord = Relative(outDir, stem + ".reduction.json"),
+                OriginalSize = result.OriginalSize,
+                ReducedSize = result.ReducedSize,
+                ReductionAttempts = result.Attempts,
+                GenerationFailures = result.GenerationFailures.Length,
+                ReductionStopped = result.Stopped ? "time budget exhausted" : null,
+                ReductionContext = Relative(outDir, context),
+            };
+        }
+        finally
+        {
+            if (Directory.Exists(evidence) && !Directory.EnumerateFileSystemEntries(evidence).Any()) Directory.Delete(evidence);
+        }
+    }
+
     // ── Summary ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -567,6 +728,12 @@ internal static class SemanticCampaign
     /// writes <c>null</c> seeds and cases per seed, its <c>batchSize</c>, the enumeration's choice
     /// <c>sequences</c> (its <c>planned</c> count is the distinct programs), <c>null</c> for an
     /// unbounded <c>maxCases</c>, and <c>complete</c>: every enumerated program executed.
+    /// <c>classifications</c> (failures per <see cref="SemanticFailureClass"/>) and, on each failure,
+    /// <c>classification</c> are additive v1 fields too (absent: every failure is standalone); a failure
+    /// observed in a batch adds its <c>standalone</c> rerun, and a batch-only or batch-dependent one its
+    /// complete <c>batchReproducer</c> manifest and its <c>sequenceReduction</c> (status, prefix lengths,
+    /// executions, the reduced sequence's manifest and record), with the reduced program's
+    /// <c>reduction.context</c> manifest.
     /// </summary>
     internal static string WriteSummary(SemanticCampaignResult result)
     {
@@ -611,6 +778,9 @@ internal static class SemanticCampaign
             w.WriteNumber("distinctSources", result.DistinctSources);
             w.WriteNumber("distinctSourceProfiles", result.DistinctSourceProfiles);
             if (o.Exhaustive) w.WriteBoolean("complete", result.Complete);
+            w.WriteStartObject("classifications");
+            foreach (var (name, count) in result.Classifications) w.WriteNumber(name, count);
+            w.WriteEndObject();
             w.WriteString("stop", StopName(result.Stop));
             WriteNullable(w, "lastCovered", result.LastCovered);
             WriteNullable(w, "firstUncovered", result.FirstUncovered);
@@ -627,7 +797,31 @@ internal static class SemanticCampaign
                 WriteSignatureObject(w, f.Signature);
                 w.WriteString("descriptor", f.Descriptor);
                 w.WriteString("signatureFile", f.SignatureFile);
+                w.WriteString("classification", f.Classification);
                 if (f.BatchManifest is { } batchManifest) w.WriteString("batchManifest", batchManifest);
+                if (f.StandaloneRerun is { } alone)
+                {
+                    w.WriteStartObject("standalone");
+                    w.WriteString("verdict", alone.Verdict.ToString());
+                    WriteSignatureObject(w, SemanticFailureSignature.Of(alone));
+                    w.WriteEndObject();
+                }
+
+                if (f.BatchReproducer is { } reproducer) w.WriteString("batchReproducer", reproducer);
+                if (f.Sequence is { } sequence)
+                {
+                    w.WriteStartObject("sequenceReduction");
+                    w.WriteString("status", sequence.Status.ToString());
+                    w.WriteNumber("originalPrefix", sequence.Original.Length);
+                    w.WriteNumber("reducedPrefix", sequence.Reduced.Length);
+                    w.WriteNumber("attempts", sequence.Attempts);
+                    w.WriteBoolean("attemptLimitReached", sequence.AttemptLimitReached);
+                    w.WriteBoolean("stopped", sequence.Stopped);
+                    WriteNullable(w, "manifest", f.SequenceManifest);
+                    WriteNullable(w, "record", f.SequenceRecord);
+                    w.WriteEndObject();
+                }
+
                 w.WriteStartObject("reduction");
                 WriteNullable(w, "status", f.ReductionStatus);
                 WriteNullable(w, "skipped", f.ReductionSkipped);
@@ -639,6 +833,7 @@ internal static class SemanticCampaign
                 if (f.ReducedSize is { } after) w.WriteNumber("reducedSourceLength", after.SourceLength);
                 w.WriteNumber("attempts", f.ReductionAttempts);
                 w.WriteNumber("generationFailures", f.GenerationFailures);
+                if (f.ReductionContext is { } context) w.WriteString("context", context);
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
@@ -650,8 +845,9 @@ internal static class SemanticCampaign
         return Encoding.UTF8.GetString(stream.ToArray()) + "\n";
     }
 
-    /// <summary>The per-failure signature sidecar: the case id, its recipe, the signature and the first finding.</summary>
-    internal static string WriteSignature(string caseId, string recipe, SemanticFailureSignature signature, SemanticCaseResult result)
+    /// <summary>The per-failure signature sidecar: the case id, its recipe, the signature, the first finding and (additive) the failure's class.</summary>
+    internal static string WriteSignature(
+        string caseId, string recipe, SemanticFailureSignature signature, SemanticCaseResult result, string classification = SemanticFailureClass.Standalone)
     {
         using var stream = new MemoryStream();
         using (var w = new Utf8JsonWriter(stream, WriterOptions))
@@ -663,6 +859,7 @@ internal static class SemanticCampaign
             w.WriteString("recipe", recipe);
             WriteSignatureObject(w, signature);
             WriteNullable(w, "firstFinding", result.Findings.IsDefaultOrEmpty ? null : result.Findings[0]);
+            w.WriteString("classification", classification);
             w.WriteEndObject();
         }
 

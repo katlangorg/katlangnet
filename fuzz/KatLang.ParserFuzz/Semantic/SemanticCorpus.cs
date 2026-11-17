@@ -323,18 +323,26 @@ internal static class SemanticCorpus
     internal const string NestedWideSeedRecipe = "seed-nested-wide";
 
     /// <summary>
+    /// The WIDER nested-pattern seeded recipe (<see cref="SemanticNestedWider"/>): collectors at every
+    /// level and in every placement, repeated names in nested positions, spreads in nested data and META
+    /// parameters over nested patterns. The id segment of <c>seed-nested-wider/&lt;hex&gt;/&lt;index&gt;</c>;
+    /// a new id, so <c>seed-nested</c> and <c>seed-nested-wide</c> keep their meaning.
+    /// </summary>
+    internal const string NestedWiderSeedRecipe = "seed-nested-wider";
+
+    /// <summary>
     /// The seeded recipes, each named by the id segment of its cases. <see cref="TryBuilder"/> and
     /// <c>semantic-campaign --recipe</c> share this list and <see cref="SeededBuilder(string, ulong, int)"/>,
     /// so every id a campaign plans is an id that replay, export and reduction rebuild.
     /// </summary>
-    internal static readonly ImmutableArray<string> SeededRecipes = [SeedRecipe, NestedSeedRecipe, NestedWideSeedRecipe];
+    internal static readonly ImmutableArray<string> SeededRecipes = [SeedRecipe, NestedSeedRecipe, NestedWideSeedRecipe, NestedWiderSeedRecipe];
 
     /// <summary>
     /// The recipes whose generation is a FINITE choice tree of named picks and two-way chances, so
     /// <see cref="SemanticExhaustive"/> can enumerate every program they generate. <c>seed</c> is not
     /// one: its tree is astronomically large (three fragments of any family, each with its own picks).
     /// </summary>
-    internal static readonly ImmutableArray<string> FiniteRecipes = [NestedSeedRecipe, NestedWideSeedRecipe];
+    internal static readonly ImmutableArray<string> FiniteRecipes = [NestedSeedRecipe, NestedWideSeedRecipe, NestedWiderSeedRecipe];
 
     /// <summary>The builder of <c>&lt;recipe&gt;/&lt;hex&gt;/&lt;index&gt;</c> for one of <see cref="SeededRecipes"/>.</summary>
     internal static SemanticCaseBuilder SeededBuilder(string recipe, ulong seed, int index) => recipe switch
@@ -342,6 +350,7 @@ internal static class SemanticCorpus
         SeedRecipe => SeededBuilder(seed, index),
         NestedSeedRecipe => NestedSeededBuilder(seed, index),
         NestedWideSeedRecipe => NestedWideSeededBuilder(seed, index),
+        NestedWiderSeedRecipe => NestedWiderSeededBuilder(seed, index),
         _ => throw new ArgumentOutOfRangeException(nameof(recipe), recipe, "unknown seeded recipe"),
     };
 
@@ -364,6 +373,7 @@ internal static class SemanticCorpus
     {
         NestedSeedRecipe => NestedBody,
         NestedWideSeedRecipe => NestedWideBody,
+        NestedWiderSeedRecipe => NestedWiderBody,
         _ => null,
     };
 
@@ -454,6 +464,17 @@ internal static class SemanticCorpus
     private static SemanticBuiltCase NestedWideBody(SemanticGrammar.Gen g, string localId, string tier, ulong? seed, int? index)
         => Assemble(localId, tier, seed, index, g, [SemanticNestedWide.Build(g)], null, false);
 
+    /// <summary>The builder of <c>seed-nested-wider/&lt;hex&gt;/&lt;index&gt;</c>.</summary>
+    internal static SemanticCaseBuilder NestedWiderSeededBuilder(ulong seed, int index)
+    {
+        var localId = NestedWiderSeedRecipe + "/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
+        return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g => NestedWiderBody(g, localId, "seeded", seed, index));
+    }
+
+    /// <summary>The <c>seed-nested-wider</c> generation step: one <see cref="SemanticNestedWider"/> fragment.</summary>
+    private static SemanticBuiltCase NestedWiderBody(SemanticGrammar.Gen g, string localId, string tier, ulong? seed, int? index)
+        => Assemble(localId, tier, seed, index, g, [SemanticNestedWider.Build(g)], null, false);
+
     /// <summary>
     /// Rebuilds one case from its durable id under THIS recipe version. Fails clearly for another
     /// version or an unknown id; never reinterprets an id with a different generator.
@@ -467,7 +488,7 @@ internal static class SemanticCorpus
     }
 
     /// <summary>
-    /// The builder behind a durable recipe id (seeded, nested-seeded, wide nested-seeded, enumerated
+    /// The builder behind a durable recipe id (seeded, nested-seeded, wide or wider nested-seeded, enumerated
     /// or systematic) under THIS recipe version, without generating any case (an enumerated id is
     /// checked to be canonical by one generation). Reduced ids (<see cref="SemanticReduction.ReducedLocalPrefix"/>)
     /// are refused: a reduced case is rebuilt from its recorded choice sequence, never from a recipe id.
