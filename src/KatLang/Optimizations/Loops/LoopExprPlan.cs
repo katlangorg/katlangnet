@@ -530,10 +530,10 @@ internal static partial class LoopOptimizer
             return EvalResult<PlannedLoopValue>.Ok(value);
 
         // The generic miss evaluates the property's one output row through an EvalCounted head.
+        // This read and every later read of the entry receive one stored result.
         var tempR = EvalLoopExprPlan(temp.Plan, frame, LoopPlanDispatch.Head);
         if (tempR.IsError) return tempR.Error;
-        frame.SetTempSlot(index, tempR.Value);
-        return tempR;
+        return EvalResult<PlannedLoopValue>.Ok(frame.EstablishTempSlot(index, tempR.Value));
     }
 
     /// <summary>
@@ -640,12 +640,14 @@ internal static partial class LoopOptimizer
     }
 
     // CACHE-PUB-1: a local-only temp's zero-supply call establishes the iteration's memo when empty.
+    // The establishing call returns the stored result, just as the generic call returns the result
+    // it publishes. A call on an established entry returns its own fresh value.
     private static EvalResult<PlannedLoopValue> EvalMemoEstablishingLoopTempCall(LoopRunFrame frame, int index)
     {
         var tempR = EvalFreshLoopTemp(frame, index);
-        if (!tempR.IsError && !frame.TryGetTempSlot(index, out _))
-            frame.SetTempSlot(index, tempR.Value);
-        return tempR;
+        if (tempR.IsError || frame.TryGetTempSlot(index, out _))
+            return tempR;
+        return EvalResult<PlannedLoopValue>.Ok(frame.EstablishTempSlot(index, tempR.Value));
     }
 
     private static EvalResult<PlannedLoopValue> EvalFreshLoopTemp(

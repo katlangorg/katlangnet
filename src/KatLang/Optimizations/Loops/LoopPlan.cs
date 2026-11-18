@@ -56,8 +56,20 @@ internal readonly record struct PlannedLoopValue(
     public static PlannedLoopValue FromNumeric(Decimal128 value)
         => new(null, value, true, 1);
 
+    /// <summary>
+    /// The boxed form of this value. An unboxed numeric value has no <see cref="Result"/> yet, so each
+    /// call allocates a new atom. Code that hands on one value several times must box it once
+    /// (<see cref="WithResult"/>).
+    /// </summary>
     public Result ToResult()
         => Value ?? new Result.Atom(NumericValue);
+
+    /// <summary>
+    /// This value with its <see cref="Result"/> boxed once, keeping the unboxed numeric view for the
+    /// numeric fast paths. Every <see cref="ToResult"/> of the copy then returns that one object.
+    /// </summary>
+    public PlannedLoopValue WithResult()
+        => Value is null ? this with { Value = new Result.Atom(NumericValue) } : this;
 
     public Decimal128? AsNum()
         => HasNumericValue ? NumericValue : Value?.AsNum();
@@ -204,10 +216,20 @@ internal sealed class LoopRunFrame
         return _tempSlotHasValue[index];
     }
 
-    public void SetTempSlot(int index, PlannedLoopValue value)
+    /// <summary>
+    /// Establishes the per-iteration memo of local temp <paramref name="index"/> and returns the value
+    /// that every consumer of the entry receives: the reads, and the fresh call that first establishes
+    /// the entry. The generic property cache stores one <see cref="Result"/> for an entry, so the memo
+    /// boxes an unboxed numeric value once (<see cref="PlannedLoopValue.WithResult"/>). Without this, each
+    /// output read would box its own atom, and a host comparing two reads by reference would see two
+    /// objects. The numeric view stays available to the arithmetic fast paths.
+    /// </summary>
+    public PlannedLoopValue EstablishTempSlot(int index, PlannedLoopValue value)
     {
+        value = value.WithResult();
         _tempSlots[index] = value;
         _tempSlotHasValue[index] = true;
+        return value;
     }
 
     public void SetScratchSlot(int index, Result value)
