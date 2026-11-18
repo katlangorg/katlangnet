@@ -163,9 +163,6 @@ public class DirectAtomWritingTests
     [Fact]
     public void OversizedCanonicalNumbers_DoNotPayForFormattingTwice()
     {
-        // The failed stack-buffer attempt used to build the uncached "F6176" format
-        // before the fallback built it again. The generous per-call allowance is
-        // above background-GC counter noise and below that duplicate allocation.
         const int Calls = 2_000;
         var value = N("1e-6176");
         var canonical = DisplayOptions.Canonical(int.MaxValue);
@@ -195,9 +192,14 @@ public class DirectAtomWritingTests
         var viaText = GC.GetAllocatedBytesForCurrentThread() - before;
 
         Assert.Equal((Calls + 2L) * 6_178, lengths);
-        var allowance = Calls * 16L;
-        Assert.True(written <= viaText + allowance, $"AppendAtom allocated {written} bytes; via text {viaText}");
-        Assert.True(measured <= viaText + allowance, $"AtomLength allocated {measured} bytes; via text {viaText}");
+
+        // On .NET 11 win-x64, a gen-2 trim under high memory pressure can leave 32,832 bytes
+        // of pooled char buffers to refill. Rebuilding "6176" and "F6176" on fallback costs
+        // 64 bytes per call, or 128,000 bytes here. One refill plus ~8 KiB of GC counter noise
+        // fits on either side because 32,832 + 8,192 < 64,000 < 128,000 - 32,832 - 8,192.
+        var allowance = Calls * 32L;
+        Assert.True(written <= viaText + allowance, $"AppendAtom allocated {written} bytes; via text {viaText}; allowance {allowance}");
+        Assert.True(measured <= viaText + allowance, $"AtomLength allocated {measured} bytes; via text {viaText}; allowance {allowance}");
     }
 
     [Fact]
