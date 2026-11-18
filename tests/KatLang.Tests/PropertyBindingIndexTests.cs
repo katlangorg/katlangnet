@@ -222,6 +222,157 @@ public class PropertyBindingIndexTests
             await RepeatedNameConstraintTests.OnEveryRouteAsync(source)));
     }
 
+    // ── Public selection for open lookup (November 2026) ─────────────────────────────────────────
+    // Open selection asks every provider of a consulted level for its first PUBLIC member of the name
+    // (Lean `Algorithm.lookupPropDefPublic?`). A provider of at least MinimumIndexedPublicPropertyCount
+    // members is indexed once per run, keyed by its list like the any-visibility index; a smaller one is
+    // scanned. Selection only: the access check and wiring stay with the evaluator.
+
+    // The independent oracle: the ordered scan for the first public member of a name.
+    private static Property? LinearPublic(IReadOnlyList<Property> properties, string name)
+    {
+        foreach (var property in properties)
+            if (property.Name == name && property.IsPublic)
+                return property;
+        return null;
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(15)]
+    [InlineData(16)]
+    [InlineData(17)]
+    [InlineData(64)]
+    [InlineData(1024)]
+    public void PublicSelection_IsReferenceIdenticalToTheOrderedPublicScan(int width)
+    {
+        var random = new Random(4211 + width);
+        string[] names = ["A", "a", "", "İ", "I", "é", "é", "Aa", "BB", "count"];
+        var properties = Enumerable.Range(0, width).Select(i => Constant(
+            names[random.Next(names.Length)], i, isPublic: random.Next(3) != 0,
+            i % 3 == 0 ? PropertyExposure.LocalOnlyCapturedAncestorParameters : PropertyExposure.Exported)).ToArray();
+        var lookup = new PropertyBindingIndexCache();
+        foreach (var name in new[] { "missing" }.Concat(names).Concat(names.Reverse()).Append("MISSING"))
+        {
+            Assert.Same(LinearPublic(properties, name), lookup.LookupPublic(properties, name));
+            // The any-visibility index of the same list stays separate, with its own first member.
+            Assert.Same(Linear(properties, name), lookup.Lookup(properties, name));
+        }
+        Assert.Equal(width >= PropertyBindingIndexCache.MinimumIndexedPublicPropertyCount ? 1 : 0, lookup.PublicIndexCount);
+    }
+
+    [Fact]
+    public void PublicSelection_SkipsPrivateMembers_AndKeepsTheFirstPublicOne()
+    {
+        var hidden = Constant("X", 1);
+        var selected = Constant("X", 2, isPublic: true);
+        var later = Constant("X", 3, isPublic: true);
+        var onlyPrivate = Constant("Y", 4);
+        foreach (var padding in new[] { 0, 64 })
+        {
+            Property[] properties = [hidden, selected, later, onlyPrivate, .. Enumerable.Range(0, padding).Select(i => Constant($"Pad{i}", i, isPublic: true))];
+            var lookup = new PropertyBindingIndexCache();
+            Assert.Same(selected, lookup.LookupPublic(properties, "X"));
+            Assert.Null(lookup.LookupPublic(properties, "Y"));
+            Assert.Same(hidden, lookup.Lookup(properties, "X"));
+            Assert.Same(onlyPrivate, lookup.Lookup(properties, "Y"));
+            Assert.Equal(padding == 0 ? 0 : 1, lookup.PublicIndexCount);
+        }
+    }
+
+    [Fact]
+    public async Task AnUnnamedHostMemberPreservesNamedAndUnnamedPublicLookups()
+    {
+        var firstPublic = Constant(null!, 2, isPublic: true);
+        var valid = Constant("Valid", 4, isPublic: true);
+        Property[] members = [Constant(null!, 1), firstPublic, Constant(null!, 3, isPublic: true), valid,
+            .. Enumerable.Range(0, 16).Select(i => Constant($"Pad{i}", i))];
+        var cache = new PropertyBindingIndexCache();
+        Assert.Same(valid, cache.LookupPublic(members, "Valid"));
+        Assert.Same(firstPublic, cache.LookupPublic(members, null!));
+        Assert.Null(cache.LookupPublic(members, "absent"));
+
+        var program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [new Expr.Resolve("M")],
+            [new Property("M", Body(members))], [new Expr.Resolve("Valid"), new Expr.Resolve("Valid")]));
+        Assert.Equal("ok S[4, 4]", (await OpenProviderIndexing.OnBothRoutesAsync(program)).Outcome);
+    }
+
+    [Fact]
+    public void LargePublicList_IsReadOnce_WhileASmallOneKeepsItsEarlyExitScan()
+    {
+        var threshold = PropertyBindingIndexCache.MinimumIndexedPublicPropertyCount;
+        var lookup = new PropertyBindingIndexCache();
+        var large = new ObservedProperties(Enumerable.Range(0, threshold).Select(i => Constant($"P{i}", i, isPublic: true)).ToArray());
+        Assert.Null(lookup.LookupPublic(large, "missing"));
+        Assert.Equal(threshold, large.Reads);
+        for (var i = 0; i < threshold; i++)
+        {
+            Assert.Same(large.Items[i], lookup.LookupPublic(large, $"P{i}"));
+            Assert.Null(lookup.LookupPublic(large, $"missing{i}"));
+        }
+        Assert.Equal(threshold, large.Reads);
+
+        var small = new ObservedProperties(Enumerable.Range(0, threshold - 1).Select(i => Constant($"P{i}", i, isPublic: true)).ToArray());
+        Assert.Same(small.Items[0], lookup.LookupPublic(small, "P0"));
+        Assert.Equal(1, small.Reads);
+        Assert.Null(lookup.LookupPublic(small, "missing"));
+        Assert.Equal(threshold, small.Reads);
+        Assert.Equal(1, lookup.PublicIndexCount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task OpenReadsOfALargeProvider_ReadItsMembersOncePerRun(int route)
+    {
+        // `open M` over a host-built provider, read R times for its LAST public member. Formerly every read
+        // scanned the provider up to that member (R·P member reads); its members are now read once per run to
+        // index them, so 256 reads read exactly as many members as one. A provider one member below the
+        // threshold keeps the scan: each further read reads its whole list again.
+        async Task<int> MemberReads(int members, int reads)
+        {
+            var properties = new ObservedProperties(Enumerable.Range(0, members).Select(i => Constant($"P{i}", i, isPublic: true)).ToArray());
+            var rows = Enumerable.Range(0, reads).Select(_ => (Expr)new Expr.Resolve($"P{members - 1}")).ToArray();
+            var expr = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [new Expr.Resolve("M")],
+                [new Property("M", Body(properties))], new OutputBundle(rows)));
+            var (result, budget) = route == 2
+                ? await Evaluator.RunCountedObservedAsync(expr,
+                    zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache())
+                : Evaluator.RunCountedObserved(expr, enableOptimizations: route == 1);
+            Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+            Assert.Equal(Enumerable.Repeat((Decimal128)(members - 1), reads), result.Value.Value.ToHostAtoms());
+            Assert.Equal(members >= PropertyBindingIndexCache.MinimumIndexedPublicPropertyCount ? 1 : 0, budget.PropertyBindings.PublicIndexCount);
+            return properties.Reads;
+        }
+
+        var threshold = PropertyBindingIndexCache.MinimumIndexedPublicPropertyCount;
+        Assert.Equal(await MemberReads(64, 1), await MemberReads(64, 256));
+        Assert.Equal(await MemberReads(threshold, 1), await MemberReads(threshold, 256));
+        Assert.Equal(255 * (threshold - 1), await MemberReads(threshold - 1, 256) - await MemberReads(threshold - 1, 1));
+    }
+
+    [Fact]
+    public async Task HostProviderEdits_BetweenRuns_AreObservedByOpenSelection()
+    {
+        // One host-built provider list above the threshold, edited between runs: each run indexes the list it
+        // reads, so a replaced member, a member made private and an earlier public member all show.
+        var members = Enumerable.Range(0, 32).Select(i => Constant($"Pad{i}", i, isPublic: true)).ToList();
+        members.Add(Constant("X", 1, isPublic: true));
+        var expr = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [new Expr.Resolve("M")],
+            [new Property("M", Body(members))], [new Expr.Resolve("X")]));
+        async Task<string> Read() => (await OpenProviderIndexing.OnBothRoutesAsync(expr)).Outcome;
+
+        Assert.Equal("ok 1", await Read());
+        members[32] = Constant("X", 2, isPublic: true);
+        Assert.Equal("ok 2", await Read());
+        members[32] = Constant("X", 3);
+        Assert.Contains("UnknownName", await Read(), StringComparison.Ordinal);
+        members.Insert(0, Constant("X", 4, isPublic: true));
+        Assert.Equal("ok 4", await Read());
+    }
+
     private sealed class ObservedProperties(Property[] items) : IReadOnlyList<Property>
     {
         internal Property[] Items { get; } = items;

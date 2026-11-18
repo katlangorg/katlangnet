@@ -66,6 +66,17 @@ internal sealed class ParameterActivation
     /// <summary>Memoizes <paramref name="level"/> as this activation's resolved open providers (see <see cref="OpenLevel"/>).</summary>
     internal void PublishOpenLevel(Evaluator.ResolvedOpenLevel level) => Memos.OpenLevel = level;
 
+    /// <summary>
+    /// The spare plain head level for an unwired alias with <c>open</c>s declared under this
+    /// activation (<c>Evaluator.AliasHeadLevel</c>), or null: ONE slot, naming its alias by its
+    /// <see cref="ScopeCtx.Owner"/>, forgotten with the activation. A run keeps the slot of aliases declared
+    /// outside every activation (<see cref="EvaluationBudget.AliasHeadLevel"/>).
+    /// </summary>
+    internal ScopeCtx? AliasHeadLevel => Volatile.Read(ref _memos)?.AliasHeadLevel;
+
+    /// <summary>Keeps <paramref name="level"/> as this activation's alias head level (see <see cref="AliasHeadLevel"/>).</summary>
+    internal void PublishAliasHeadLevel(ScopeCtx level) => Memos.AliasHeadLevel = level;
+
     // The activation's memos hang off ONE lazily created holder (published first-wins, so racing chases meet
     // in one dictionary): an activation that never meets an alias or consults its level's opens pays one null
     // field.
@@ -76,12 +87,13 @@ internal sealed class ParameterActivation
 
     private ActivationMemo? _memos;
 
-    // The alias-target memo itself, carrying the route-decision memo created on first use and the level's
-    // resolved open providers.
+    // The alias-target memo itself, carrying the route-decision memo created on first use, the level's
+    // resolved open providers and the alias head level.
     private sealed class ActivationMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
     {
         private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _routeDecisions;
         private Evaluator.ResolvedOpenLevel? _openLevel;
+        private ScopeCtx? _aliasHeadLevel;
 
         public Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> RouteDecisions
             => Volatile.Read(ref _routeDecisions)
@@ -94,6 +106,13 @@ internal sealed class ParameterActivation
         {
             get => Volatile.Read(ref _openLevel);
             set => Volatile.Write(ref _openLevel, value);
+        }
+
+        // A competing publication can replace the slot. Each reader uses its own alias's scope.
+        public ScopeCtx? AliasHeadLevel
+        {
+            get => Volatile.Read(ref _aliasHeadLevel);
+            set => Volatile.Write(ref _aliasHeadLevel, value);
         }
     }
 

@@ -112,9 +112,9 @@ internal sealed class EvaluationObservations
     /// Number of open levels whose resolved providers were deduplicated during this run (Q-19 D-I,
     /// <c>Evaluator.ResolveAllOpens</c>): one per resolution of a nonempty <c>open</c> list whose every
     /// remaining written target resolved. A level is resolved once per level state
-    /// (<c>Evaluator.ResolvedOpenLevel</c>: an activation, a static head entry or a static wiring of the
-    /// level) and every later read of that state reuses it (<see cref="OpenLevelReuseCount"/>); a level
-    /// without such state — a host-constructed level, a head pushed without a head scope — is resolved
+    /// (<c>Evaluator.ResolvedOpenLevel</c>: an activation, a static head entry, an alias step's head level
+    /// or a static wiring of the level) and every later read of that state reuses it
+    /// (<see cref="OpenLevelReuseCount"/>); a host-constructed level, which has no such state, is resolved
     /// again on every read. A level whose resolution fails indexes nothing and is never memoized.
     /// </summary>
     public long OpenProviderLevelCount { get; private set; }

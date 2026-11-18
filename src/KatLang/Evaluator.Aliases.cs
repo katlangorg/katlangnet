@@ -433,7 +433,7 @@ public static partial class Evaluator
                 return ChaseAdvance.Continue;
             }
 
-            var stepCtx = frame.Ctx.Push(step);
+            var stepCtx = AliasStepContext(frame.Ctx, step);
             switch (step.Target)
             {
                 case Expr.Resolve(var name):
@@ -573,7 +573,7 @@ public static partial class Evaluator
             frame.Navigation = StepNavigation.Route;
             frame.Step = step;
             frame.Written = edge;
-            frame.StepCtx = frame.Ctx.Push(step);
+            frame.StepCtx = AliasStepContext(frame.Ctx, step);
             frame.Head = CollectEdges(frame, edge.Target);
             frame.Index = -1;
             frame.RouteTaints = _taints;
@@ -1106,8 +1106,56 @@ public static partial class Evaluator
     /// <summary>The value view of a value-only runtime reference: the alias's ordinary zero-parameter body, never the alias again (Lean <c>Algorithm.aliasPropertyView</c>).</summary>
     private static Algorithm.User TerminalAliasProperty(Algorithm.Alias alias) => new(alias);
 
+    /// <summary>
+    /// The context a STATIC step or a route decision of <paramref name="step"/> reads in: the alias pushed as
+    /// the head, so its written target resolves in its own scope (Lean <c>resolveAliasStepWith</c>,
+    /// <c>ctx.push step</c>).
+    /// <para>THE ALIAS HEAD LEVEL (implementation-only, November 2026). An alias that declares <c>open</c>s
+    /// (a carrier) is pushed with its plain declaring scope (<see cref="AsScopeCtx"/>, no activation) as its
+    /// head scope. That is exactly the scope every consumer would otherwise rebuild per use:
+    /// <see cref="SiteScope"/> and <see cref="ScopeInContext"/> fall back to it, and an alias has no parameter
+    /// list, so <see cref="CapturedParameterActivation"/> reads the same empty list either way. The SAME scope
+    /// object serves every step of the same evaluator wiring (<see cref="Algorithm.Alias.WiredOpenScope"/>).
+    /// Being one object, it is the level state the alias's resolved open providers are memoized on
+    /// (<see cref="ScopeCtx.StaticOpenLevel"/>, <see cref="ResolvedOpenLevel"/>): the chases that no binding
+    /// memo serves — an alias invoked through a parameter, an inline carrier passed as an argument — resolve
+    /// the alias's opens once per alias object instead of once per chase. An alias without opens is pushed as
+    /// before. Never inlined, so the chase's step frames keep their size.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalCtx AliasStepContext(EvalCtx ctx, Algorithm.Alias step)
+        => step.Opens.Count == 0
+            ? ctx.Push(step)
+            : ctx.Push(step, step.WiredOpenScope ?? AliasHeadLevel(step, ctx.Budget));
+
+    /// <summary>
+    /// The head level for an alias supplied directly to the chase without an evaluator wiring.
+    /// The last such plain scope is kept in a single slot of the alias's memo owner — the nearest
+    /// activation of its declaring chain (<see cref="ParameterActivation.AliasHeadLevel"/>), or the run
+    /// (<see cref="EvaluationBudget.AliasHeadLevel"/>) when the chain has none — the owner, and so the
+    /// lifetime, of its other pure memos. The slot names the alias object it was built for (the scope's
+    /// <see cref="ScopeCtx.Owner"/>), so a <c>with</c> copy or another alias builds its own scope; holding one
+    /// entry, it never grows with the aliases a run chases. Nothing is written into the alias, which may be
+    /// host-built and shared across runs and threads, and the scope's own memo still checks its level and
+    /// its run on every reuse.
+    /// </summary>
+    private static ScopeCtx AliasHeadLevel(Algorithm.Alias step, EvaluationBudget run)
+    {
+        var owner = AliasMemoOwner(step);
+        var known = owner is not null ? owner.AliasHeadLevel : run.AliasHeadLevel;
+        if (known is not null && ReferenceEquals(known.Owner, step))
+            return known;
+
+        var level = AsScopeCtx(step);
+        if (owner is not null)
+            owner.PublishAliasHeadLevel(level);
+        else
+            run.AliasHeadLevel = level;
+        return level;
+    }
+
     // The nearest activation of an alias's declaring chain, which owns its PURE memo entries (static ends,
-    // route decisions) and qualifies a chase visit. A binding cell is never owned by an activation.
+    // route decisions, the head level) and qualifies a chase visit. A binding cell is never owned by an activation.
     private static ParameterActivation? AliasMemoOwner(Algorithm wired)
     {
         for (var level = wired.Parent; level is not null; level = level.Parent)

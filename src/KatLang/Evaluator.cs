@@ -342,9 +342,16 @@ public static partial class Evaluator
         Algorithm.User { IsModuleElaborated: true } module => module with { Parent = ChainRoot(parent) },
         Algorithm.User user => user with { Parent = parent },
         Algorithm.Conditional family => family with { Parent = parent },
-        Algorithm.Alias { IsModuleElaborated: true } module => module with { Parent = ChainRoot(parent) },
-        Algorithm.Alias alias => alias with { Parent = parent },
+        Algorithm.Alias alias => WireAlias(alias, parent),
     };
+
+    /// <summary>Each wired alias with opens carries the plain scope for that wiring's steps.</summary>
+    internal static Algorithm.Alias WireAlias(Algorithm.Alias alias, ScopeCtx? parent)
+    {
+        var wired = alias with { Parent = alias.IsModuleElaborated ? ChainRoot(parent) : parent };
+        wired.WiredOpenScope = wired.Opens.Count == 0 ? null : AsScopeCtx(wired);
+        return wired;
+    }
 
     /// <summary>
     /// The root level of a scope chain — the prelude level every evaluation chain is rooted at
@@ -650,18 +657,14 @@ public static partial class Evaluator
     internal static string FormatOpenTargetIsBuiltin(string targetDescription)
         => $"'{targetDescription}' cannot be opened because it is a builtin callable; open imports only an algorithm that needs no call.";
 
-    /// <summary>Lean: Algorithm.lookupPropDefPublic? (public only — exposure is checked after selection).</summary>
-    private static Property? LookupPublicPropBinding(Algorithm alg, string name)
-    {
-        // Indexed, not `foreach`: no boxed enumerator per provider of every open read (PERF-ORD-1).
-        var properties = alg.Properties;
-        for (var i = 0; i < properties.Count; i++)
-        {
-            var prop = properties[i];
-            if (prop.Name == name && prop.IsPublic) return prop;
-        }
-        return null;
-    }
+    /// <summary>
+    /// Lean: Algorithm.lookupPropDefPublic? (public only — exposure is checked after selection): the
+    /// provider's first public member of the name, through the run's index of a LARGE member list and an
+    /// ordered scan of a small one (<see cref="PropertyBindingIndexCache.LookupPublic"/>), so one large opened
+    /// module read R times costs R index probes rather than R scans of its members.
+    /// </summary>
+    private static Property? LookupPublicPropBinding(Algorithm alg, string name, PropertyBindingIndexCache bindings)
+        => bindings.LookupPublic(alg.Properties, name);
 
     /// <summary>
     /// Human-readable constructor kind for diagnostics.
@@ -1508,21 +1511,33 @@ public static partial class Evaluator
     /// scope or a level of the head's parent chain, and with that state's lifetime: an activated level's
     /// <see cref="ParameterActivation.OpenLevel"/>, or a static evaluator-owned level's own scope
     /// (<see cref="ScopeCtx.StaticOpenLevel"/>) — the static head level of a body entry
-    /// (<see cref="EnterAlgorithmBody"/>) or a static wiring of a declaring scope. A host-constructed level
-    /// (shared across runs and threads) and a head pushed without a head scope have no such state and are
-    /// resolved on every read, as before. No table outlives the state, and nothing static or run-wide is
-    /// added; <see cref="Level"/> and <see cref="Run"/> are checked on every reuse, so a <c>with</c> copy of a
-    /// scope or a scope reached from another run resolves afresh.</para>
+    /// (<see cref="EnterAlgorithmBody"/>), the head level of an alias step (<see cref="AliasStepContext"/>:
+    /// one per evaluator wiring), the scope of a loop plan under construction, or a static wiring of a declaring scope. A
+    /// host-constructed level (shared across runs and threads) has no such state and is resolved on every
+    /// read, as before. A loop planner recognizes each written <c>if</c> in the step's scope. A prewired
+    /// host parent can supply it through the step's opens, so these reads share the planning scope.
+    /// Fully planned rounds read slots directly. A round that reads rows generically enters the step with
+    /// its own activation. A clause family pushed for its binding is never the head of a read (the selected
+    /// body is entered above it, under the family's activated scope). No table outlives
+    /// the state. A directly supplied alias without a wiring uses its memo owner's single spare head
+    /// scope. <see cref="Level"/> and <see cref="Run"/> are checked on every reuse, so a <c>with</c>
+    /// copy of a scope or a scope reached from another run resolves afresh.</para>
     /// <para><b>Selection.</b> A memoized wide level (more than <see cref="OpenProviderLinearIndexLimit"/>
     /// providers) that is read a SECOND time indexes its providers' PUBLIC members by name once
     /// (<see cref="MemberIndex"/>), in provider order, each provider contributing its first public member of a
     /// name (<see cref="LookupPublicPropBinding"/>), so later reads find their hits without scanning every
-    /// provider; a narrow, unmemoized or once-read level scans its providers in order. Either way a read sees
-    /// exactly the ordered hits the scan sees.</para>
+    /// provider; a narrow, unmemoized or once-read level asks its providers in order, each through the run's
+    /// index of a large member list (<see cref="Evaluation.PropertyBindingIndexCache.LookupPublic"/>, from
+    /// <see cref="Evaluation.PropertyBindingIndexCache.MinimumIndexedPublicPropertyCount"/> members) or a scan
+    /// of a small one. Either way a read sees exactly the ordered hits the scan sees.</para>
     /// </summary>
     internal sealed class ResolvedOpenLevel
     {
         private readonly IReadOnlyList<ResolvedOpen> _providers;
+
+        // The run's property indexes (Run.PropertyBindings), taken once here, so a read's provider walk loads a
+        // field instead of inlining the run's lazily created table.
+        private readonly PropertyBindingIndexCache _bindings;
 
         // A memoized wide level's member index, built by its second read and published whole; the read count
         // that decides it may race, which at worst builds an equal index twice.
@@ -1534,6 +1549,7 @@ public static partial class Evaluator
             Level = level;
             Run = run;
             _providers = providers;
+            _bindings = run.PropertyBindings;
         }
 
         /// <summary>The level state these providers were resolved for, or null for an unmemoized level.</summary>
@@ -1575,7 +1591,7 @@ public static partial class Evaluator
                 var providers = level._providers;
                 for (var position = _next; position < providers.Count; position++)
                 {
-                    if (LookupPublicPropBinding(providers[position].Lib, name) is { } found)
+                    if (LookupPublicPropBinding(providers[position].Lib, name, level._bindings) is { } found)
                     {
                         _next = position + 1;
                         binding = found;

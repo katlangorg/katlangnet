@@ -487,7 +487,11 @@ internal static partial class LoopOptimizer
         // construction. Output rows keep separate expression memos (including stack-sensitive
         // fallbacks).
         var loopCtx = ShadowLoopStepParameterEnvironments(ctx, stateNames);
-        var iterationCtx = loopCtx.Push(userStep);
+        // A prewired host step can resolve `if` through its opens. All recognition lookups in this
+        // plan see one plain scope over the admitted head. Each executing round owns its own state.
+        var planningScope = userStep.Opens.Count == 0 ? null
+            : new ScopeCtx(userStep.Parent, userStep.Opens, userStep.Properties, stateNames) { Owner = userStep };
+        var iterationCtx = loopCtx.Push(userStep, planningScope);
         var argumentMemo = new LoopTempCallArgumentMemo();
         var tempPlanBuild = BuildLoopTempPlans(
             userStep,

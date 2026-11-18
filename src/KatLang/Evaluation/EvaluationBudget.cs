@@ -459,6 +459,22 @@ internal sealed class EvaluationBudget
     private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _aliasRouteDecisions;
 
     /// <summary>
+    /// The spare plain head level for an unwired alias with <c>open</c>s declared OUTSIDE every
+    /// activation (<c>Evaluator.AliasHeadLevel</c>), or null: ONE slot, naming its alias by its
+    /// <see cref="ScopeCtx.Owner"/>, so repeated chases of one alias object share the level state its
+    /// resolved open providers are memoized on, and the slot never grows. One declared under an activation
+    /// keeps its slot on that activation (<see cref="ParameterActivation.AliasHeadLevel"/>). A racing
+    /// publication may replace the slot. Each reader keeps the scope it selected for its alias.
+    /// </summary>
+    internal ScopeCtx? AliasHeadLevel
+    {
+        get => Volatile.Read(ref _aliasHeadLevel);
+        set => Volatile.Write(ref _aliasHeadLevel, value);
+    }
+
+    private ScopeCtx? _aliasHeadLevel;
+
+    /// <summary>
     /// <b>Whether this run may reach a runtime-target alias</b> (FWD-02, META-S3-2): decided ONCE before
     /// evaluation from the structural preflight's walk over the admitted program
     /// (<see cref="AstStructuralPreflight.MayReachRuntimeAlias"/>). Such a run is PRE-MARKED as one with

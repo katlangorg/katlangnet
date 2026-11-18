@@ -4268,6 +4268,19 @@ public closed record Algorithm
             init => _hasRuntimeTarget = new(value);
         }
 
+        private RuntimeStateSlot<ScopeCtx?> _wiredOpenScope;
+
+        /// <summary>
+        /// The plain head scope created with an evaluator wiring that has opens. The input alias
+        /// may be shared by hosts. Only the newly wired copy receives a scope. A later record
+        /// copy can carry this slot, so the scope identifies its wiring by reference.
+        /// </summary>
+        internal ScopeCtx? WiredOpenScope
+        {
+            get => _wiredOpenScope.Value is { } scope && ReferenceEquals(scope.Owner, this) ? scope : null;
+            set => _wiredOpenScope = new(value);
+        }
+
         protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
 
         /// <summary>
@@ -4294,7 +4307,8 @@ public closed record Algorithm
                 _ => RecordGraphEquality.FieldEquals(IsModuleElaborated, alias.IsModuleElaborated)
                     && RecordGraphEquality.FieldEquals(_resolvedTarget, alias._resolvedTarget)
                     && RecordGraphEquality.FieldEquals(_resolvedStructure, alias._resolvedStructure)
-                    && RecordGraphEquality.FieldEquals(_hasRuntimeTarget, alias._hasRuntimeTarget),
+                    && RecordGraphEquality.FieldEquals(_hasRuntimeTarget, alias._hasRuntimeTarget)
+                    && RecordGraphEquality.FieldEquals(_wiredOpenScope, alias._wiredOpenScope),
             };
         }
 
@@ -4313,7 +4327,8 @@ public closed record Algorithm
             hash = RecordGraphEquality.Combine(hash, IsModuleElaborated);
             hash = RecordGraphEquality.Combine(hash, _resolvedTarget);
             hash = RecordGraphEquality.Combine(hash, _resolvedStructure);
-            return RecordGraphEquality.Combine(hash, _hasRuntimeTarget);
+            hash = RecordGraphEquality.Combine(hash, _hasRuntimeTarget);
+            return RecordGraphEquality.Combine(hash, _wiredOpenScope);
         }
     }
 }
