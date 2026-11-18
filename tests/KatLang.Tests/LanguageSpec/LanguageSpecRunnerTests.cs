@@ -274,6 +274,13 @@ public class LanguageSpecRunnerTests
             "ownership-open-target-parameter-without-farther-declaration",
             "ownership-open-qualified-target-parameter-rejected",
             "ownership-open-target-enclosing-parameter-rejected",
+            // ... and every other binding that owns an open head: a branch binder, a collecting
+            // parameter, a grouped binder, a binder captured by a nested body, an inferred parameter.
+            "ownership-open-target-branch-binder-rejected",
+            "ownership-open-target-collecting-parameter-rejected",
+            "ownership-open-target-grouped-binder-rejected",
+            "ownership-open-target-captured-branch-binder-rejected",
+            "ownership-open-target-inferred-parameter-rejected",
             "open-parameterized-provider-rejected",
             "semicolon-not-expression-syntax",
             "spread-not-binary-operand",

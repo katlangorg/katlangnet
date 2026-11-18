@@ -2654,6 +2654,17 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "forwarding-single-collector-by-shape",
+            Category = "variadic-calls",
+            Source = "Get([*xs]) = xs.count\nUse(*items) = [Get][0]\nUse(3, 4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Explanation = "At the value reference to Get, Use supplies its own collecting stream items to the grouped collector xs. The synthesized call is Get([items*]), so Get counts the two supplied elements.",
+        },
+        new()
+        {
             Id = "implicit-forwarding-is-by-binding-name",
             Category = "variadic-calls",
             Source = "F(x) = x + 1\nG(x) = x * 2\nH = F + G\n\nCommon(x, x) = x\nTwice = Common * 2\n\nH(3)\nTwice(7)",
@@ -4036,6 +4047,17 @@ public static class LanguageSpecCorpus
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A `public` member that captures an enclosing parameter is local-only, and local-only means local-context-dependent, not universally hidden: `Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`, so inside `Outer` — the owner of that parameter — `open Inner` provides `X` and `Inner.X` reaches it, from Outer's own body and from any sibling or nested scope under the same activation. Both channels apply the ONE accessibility rule: a local-only member may be used from every lexical context inside the owner of each parameter it captures.",
+        },
+        new()
+        {
+            Id = "open-local-only-member-read-by-inferring-sibling",
+            Category = "access-boundaries",
+            Source = "Outer(p) = {\n    open Lib\n    Lib = {\n        public X = p\n    }\n    Y = X + 0\n    Y\n}\nOuter(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Explanation = "A name an open provides is SELECTED by visibility and checked for accessibility where it is read: the formula `Y` infers no parameter from `X`, because `open Lib` provides it, and `Y` reads the local-only `X` inside the call `Outer(1)`, where the captured `p` is bound — exactly as `Outer`'s own body does (`open-local-only-member-inside-owner`).",
         },
         new()
         {
@@ -7672,6 +7694,51 @@ public static class LanguageSpecCorpus
             Outcome = SpecOutcome.ParseError,
             ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
             Explanation = "Ownership is inherited by nested bodies: `Inner`'s `open Lib` names the parameter `Lib` of the enclosing `Outer`, exactly as a reference to `Lib` written in `Inner` would, so it is rejected the same way.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-branch-binder-rejected",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public X = 7\n}\nF(0) = 0\nF(Lib) = {\n    open Lib\n    X\n}\nF(Lib)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "A clause binder is a parameter of its branch body: in the second clause the nearest binding of `Lib` is the binder, so `open Lib` names a parameter and is rejected, whatever the root `Lib` declares.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-collecting-parameter-rejected",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public X = 7\n}\nF(*Lib) = {\n    open Lib\n    X\n}\nF(Lib)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "A collecting parameter owns its name like any other: `open Lib` inside `F(*Lib)` names the collected parameter, not the root `Lib`.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-grouped-binder-rejected",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public X = 7\n}\nF((Lib, y)) = {\n    open Lib\n    X + y\n}\nF((Lib, 1))",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "A name bound inside a grouped parameter pattern is a parameter of the body too, so `open Lib` names that binder and is rejected.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-captured-branch-binder-rejected",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public X = 7\n}\nF(0) = 0\nF(Lib) = {\n    Inner = {\n        open Lib\n        X\n    }\n    Inner\n}\nF(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "A body nested in a clause body inherits the binder's ownership: `Inner`'s `open Lib` names the binder `Lib` of the enclosing clause, exactly as a reference to `Lib` written in `Inner` would.",
+        },
+        new()
+        {
+            Id = "ownership-open-target-inferred-parameter-rejected",
+            Category = "name-resolution",
+            Source = "Other = {\n    public X = 8\n}\nF = {\n    open Lib\n    Lib.X\n}\nF(Other)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.OpenTargetIsParameter,
+            Explanation = "With no visible `Lib`, the formula `F` infers the parameter `Lib` from the receiver `Lib.X`, and the inferred parameter owns the open target `Lib` exactly as a written one does.",
         },
         new()
         {

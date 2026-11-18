@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 581
-- excluded parse-level cases (Lean has no surface parser): 82
+- specification surface cases: 588
+- excluded parse-level cases (Lean has no surface parser): 87
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 475
+- Lean-guarded cases: 477
 - probe observations (C#-only by design): 1570
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -950,6 +950,11 @@ def case_repeated_equal_values_require_one_callable_identity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 5]), privateProp "B" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.num 5) (.dotCall (.param "xs") "count" none))]), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 1])])] [(.call (.resolve "P") [.resolve "A", .resolve "B"])])
 #guard obs case_repeated_equal_values_require_one_callable_identity == "err type"
 
+-- forwarding-single-collector-by-shape [variadic-calls]: Get([*xs]) = xs.count \n Use(*items) = [Get][0] \n Use(3, 4)
+def case_forwarding_single_collector_by_shape : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Get" (algWithParameterPatterns [.listValue [.capture { name := "xs", kind := .collecting }]] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "Use" (algWithParameters [{ name := "items", kind := .collecting }] [] [] [(.index (.listLiteral [(.call (.resolve "Get") [(.listLiteral [(.sequenceSpread (.param "items"))])])]) [.num 0])])] [(.call (.resolve "Use") [.num 3, .num 4])])
+#guard obs case_forwarding_single_collector_by_shape == "ok raw=2 n=1"
+
 -- implicit-forwarding-is-by-binding-name [variadic-calls]: F(x) = x + 1 \n G(x) = x * 2 \n H = F + G \n  \n Common(x, x) = x \n Twice = Common * 2 \n  \n H(3) \n Twice(7)
 def case_implicit_forwarding_is_by_binding_name : Expr :=
   .algorithmExpr (alg [] [] [privateProp "H" (alg ["x"] [] [] [(.binary .add (.call (.resolve "F") [.param "x"]) (.call (.resolve "G") [.param "x"]))]), privateProp "Twice" (alg ["x"] [] [] [(.binary .mul (.call (.resolve "Common") [.param "x", .param "x"]) (.num 2))]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "H") [.num 3]), (.call (.resolve "Twice") [.num 7])])
@@ -1265,6 +1270,11 @@ def case_closed_list_may_fallback_name_is_runtime : Expr :=
 def case_open_local_only_member_inside_owner : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [.resolve "Inner"] [privateProp "Inner" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (.alias none [] [] (.param "n"))) with requiredOwnerDepths := some [("n", some 1)] }] [])] [(.binary .add (.resolve "X") (.num 0))])] [(.call (.resolve "Outer") [.num 5])])
 #guard obs case_open_local_only_member_inside_owner == "ok raw=5 n=1"
+
+-- open-local-only-member-read-by-inferring-sibling [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { \n         public X = p \n     } \n     Y = X + 0 \n     Y \n } \n Outer(1)
+def case_open_local_only_member_read_by_inferring_sibling : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (.alias none [] [] (.param "p"))) with requiredOwnerDepths := some [("p", some 1)] }] []), { (privateLocalProp "Y" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Y"])] [(.call (.resolve "Outer") [.num 1])])
+#guard obs case_open_local_only_member_read_by_inferring_sibling == "ok raw=1 n=1"
 
 -- dot-local-only-member-outside-owner [access-boundaries]: Outer(n) = { \n     Inner = { \n         public X = n \n     } \n     Inner.X \n } \n Outer.Inner.X
 def case_dot_local_only_member_outside_owner : Expr :=
@@ -2580,7 +2590,7 @@ def case_output_spread_reference_certainly_read : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "P" (alg [] [] [] [(.index (.resolve "Q") [.num 0])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [.resolve "P", .resolve "Add", (.call (.resolve "Inc") [.param "x"])])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [(.unary .minus (.num 3))])])
 #guard obs case_output_spread_reference_certainly_read == "ok raw=1 n=1"
 
--- 475 canonical Lean-guarded specification cases.
+-- 477 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2738,6 +2748,7 @@ def specCaseIds : List String := [
   "repeated-name-binding-is-order-independent",
   "repeated-name-is-a-constraint-not-a-merge",
   "repeated-equal-values-require-one-callable-identity",
+  "forwarding-single-collector-by-shape",
   "implicit-forwarding-is-by-binding-name",
   "formula-lifting-is-one-law-for-every-callable",
   "formula-lifting-follows-the-consumers-role",
@@ -2801,6 +2812,7 @@ def specCaseIds : List String := [
   "computed-dot-callee-is-not-callable",
   "closed-list-may-fallback-name-is-runtime",
   "open-local-only-member-inside-owner",
+  "open-local-only-member-read-by-inferring-sibling",
   "dot-local-only-member-outside-owner",
   "dot-local-only-reference-target-walk",
   "dot-local-only-inline-block-head",
@@ -3064,6 +3076,6 @@ def specCaseIds : List String := [
   "output-spread-lifted-call-ends-known-positions",
   "output-spread-reference-certainly-read"
 ]
-#guard specCaseIds.length == 475
+#guard specCaseIds.length == 477
 
 end LanguageSpecCases
