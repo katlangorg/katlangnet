@@ -104,6 +104,17 @@ public sealed class ExposureSettlementFrameChargeTests
         }
     }
 
+    /// <summary>
+    /// The work-bound refusal's own last sentence: the bound does not move with the envelope, so the envelope
+    /// sentence ("a host may only lower it") would misstate the remedy.
+    /// </summary>
+    internal const string WorkBoundSentence =
+        "This bound scales with the size of the analyzed program (16,384 + 1,024 per node and edge) rather than with the host's static-structure envelope, so no envelope setting raises or lowers it.";
+
+    /// <summary>The complete text of a work-bound refusal under <paramref name="bound"/>.</summary>
+    internal static string WorkBoundRefusal(long bound)
+        => $"Static structure analysis exceeded its resource bound. The static operation exceeded its work bound ({bound}). {WorkBoundSentence}";
+
     private static void AssertOneUnpositionedWorkBoundRefusal(ParseResult refused)
     {
         var refusal = Assert.Single(refused.Diagnostics);
@@ -111,6 +122,9 @@ public sealed class ExposureSettlementFrameChargeTests
         Assert.Equal(DiagnosticSeverity.Error, refusal.Severity);
         Assert.Null(refusal.Span);
         Assert.Contains("exceeded its work bound", refusal.Message, StringComparison.Ordinal);
+        Assert.Matches(@"^Static structure analysis exceeded its resource bound\. The static operation exceeded its work bound \(\d+\)\. ", refusal.Message);
+        Assert.EndsWith(" " + WorkBoundSentence, refusal.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("may only lower it", refusal.Message, StringComparison.Ordinal);
         Assert.True(refused.HasErrors);
         // Nothing is published: an unevaluable placeholder root with no completed structure.
         Assert.Empty(refused.Root.Properties);
@@ -320,7 +334,7 @@ public sealed class ExposureSettlementFrameChargeTests
         var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source, options));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.StaticStructureLimitExceeded, error.Code);
-        Assert.Contains($"exceeded its work bound ({bound})", error.Message, StringComparison.Ordinal);
+        Assert.Equal(WorkBoundRefusal(bound), error.Message);
 
         Assert.Equal("0", Assert.IsType<RunResult.Success>(KatLangEngine.Run(BranchingChain(25), options)).ToDisplayString());
     }
@@ -357,6 +371,7 @@ public sealed class ExposureSettlementFrameChargeTests
         Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, refusal.Code);
         Assert.Null(refusal.Span);
         Assert.DoesNotContain("work bound", refusal.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" " + StaticStructureAdmission.EnvelopeSentence, refusal.Message, StringComparison.Ordinal);
         Assert.Equal(0, observations.RequiredAncestorSettlementFrames);
         Assert.Empty(refused.Root.Properties);
         Assert.Null(refused.Root.CompletedStructure);

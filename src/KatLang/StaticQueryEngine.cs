@@ -85,7 +85,17 @@ internal readonly record struct StaticQueryStatistics(
     long AuxiliaryWork = 0, int AuxiliaryPeakEntries = 0, long AdapterWork = 0,
     long StorageUnits = 0, long PeakStorageUnits = 0, long MetadataUnits = 0);
 
-internal sealed class StaticQueryLimitExceededException(string message) : Exception(message);
+/// <summary>
+/// A static-analysis resource refusal; its message names the exhausted counter. <see cref="IsWorkBound"/> marks the
+/// operation's WORK bound (<see cref="StaticQueryLimits.MaxEvaluations"/>), which scales with the admitted structure
+/// and not with the host's static-structure envelope, so its refusal explains a different remedy
+/// (<see cref="StaticStructureAdmission.Rejection"/>).
+/// </summary>
+internal sealed class StaticQueryLimitExceededException(string message, bool isWorkBound = false) : Exception(message)
+{
+    /// <summary>Whether the operation's work bound refused (<see cref="StaticQueryResourceBudget"/>).</summary>
+    internal bool IsWorkBound { get; } = isWorkBound;
+}
 
 /// <summary>
 /// A demand-driven monotone worklist and a separate graph of confirmed reference steps. Only the latter participates

@@ -68,6 +68,10 @@ public class DeclarationStartClassifierTests
         ("~~A = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),
         ("~ A = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),
         ("~public A = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),
+        ("~A* = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),           // output-spreading marker
+        ("~public A* = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),
+        ("~A * = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),          // detached marker
+        ("~A** = 1", Parser.DeclarationStart.GracedPropertyDefinition, ["A"]),          // repeated marker
 
         // Name = …
         ("A = 1", Parser.DeclarationStart.PropertyDefinition, ["A"]),
@@ -111,7 +115,7 @@ public class DeclarationStartClassifierTests
         ("true", Parser.DeclarationStart.None, []),
         ("true + 1", Parser.DeclarationStart.None, []),
         ("~A", Parser.DeclarationStart.None, []),
-        ("~A* = 1", Parser.DeclarationStart.None, []),                           // the grace scan admits no marker
+        ("~A*\n= 1", Parser.DeclarationStart.None, []),                          // heads never span a newline
         ("*items", Parser.DeclarationStart.None, []),
         ("* 2", Parser.DeclarationStart.None, []),
         ("x, 1 = 2", Parser.DeclarationStart.None, []),

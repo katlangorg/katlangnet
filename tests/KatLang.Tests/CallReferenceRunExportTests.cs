@@ -605,7 +605,7 @@ public class CallReferenceRunExportTests
         Assert.Equal(5000, scan.RunExportScanProbedStructures);
         Assert.Equal(0, scan.RunExportScanMemoRegistrations);
         Assert.Equal(0, scan.RunExportScanPeakPendingFrames);
-        Assert.False(Evaluator.ContainsCallReference(value));
+        Assert.False(Evaluator.ContainsCallReference(value, new Dictionary<Result, bool>(ReferenceEqualityComparer.Instance)));
     }
 
     [Theory]
@@ -674,7 +674,7 @@ public class CallReferenceRunExportTests
 
         var clean = kind == "clean-nested";
         Assert.Equal(clean, exported.IsOk);
-        Assert.Equal(!clean, Evaluator.ContainsCallReference(value));
+        Assert.Equal(!clean, Evaluator.ContainsCallReference(value, new Dictionary<Result, bool>(ReferenceEqualityComparer.Instance)));
         switch (kind)
         {
             case "reference" or "view":

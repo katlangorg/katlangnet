@@ -190,7 +190,11 @@ witnesses; it is not a total-process heap guarantee. Hosts needing less memory s
 
 **Measured program-size ceiling (2026-11-14, `897887a1`).** Because a host can only lower the
 envelope, these two caps are an absolute program-size ceiling; the refusal says so ("The program
-exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it)."). Method:
+exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it)."). The
+operation's work bound is not such a cap — it scales with the admitted nodes and edges and does not
+move with the envelope — so since November 2026 its refusal ends with its own sentence instead ("This
+bound scales with the size of the analyzed program (16,384 + 1,024 per node and edge) rather than
+with the host's static-structure envelope, so no envelope setting raises or lowers it."). Method:
 a scratch harness outside the repository ran one `KatLangEngine.Run` per fresh process (Release,
 Windows x64, .NET 11.0.0 workstation concurrent GC, no heap limit) and reported peak working set /
 peak commit in MiB (bytes divided by 1,048,576); entry counts came from the same source with a scratch counter on `StaticQueryEngine`

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace KatLang;
 
 /// <summary>How one observed conditional-clause attempt ended (<see cref="ClauseAttemptObservations"/>).</summary>
@@ -18,10 +20,15 @@ internal enum ClauseAttemptOutcome : byte
 
 /// <summary>
 /// One observed clause attempt: the dispatch it belongs to (numbered from 1 in the order the run's
-/// family dispatches made their first attempt), the family, the clause's index in written order, and
-/// its outcome.
+/// family dispatches made their first attempt), the family's DECLARATION identity
+/// (<see cref="Algorithm.Declaration"/>, shared by every wired copy of one written family), the
+/// number of the wired copy the dispatch reached (numbered from 1 in the order the run's dispatches
+/// first reached each copy; the same copy keeps its number), the clause's index in written order, and
+/// its outcome. Neither identity retains the copy, so a long observed run does not keep every
+/// attempted activation's scope chain alive.
 /// </summary>
-internal readonly record struct ClauseAttempt(int Dispatch, Algorithm Family, int Clause, ClauseAttemptOutcome Outcome);
+internal readonly record struct ClauseAttempt(
+    int Dispatch, DeclarationIdentity? Family, int Copy, int Clause, ClauseAttemptOutcome Outcome);
 
 /// <summary>
 /// Passive record of the conditional-clause attempts of one observed run (SEC-02-FU2), carried by
@@ -38,19 +45,27 @@ internal readonly record struct ClauseAttempt(int Dispatch, Algorithm Family, in
 /// run without it, records nothing and allocates nothing. Recording never influences evaluation —
 /// no demand, checkpoint, or effect is added — and one instance belongs to one run; it is
 /// synchronized so a run's asynchronous continuations may record from any thread.</para>
+///
+/// <para>It retains no wired family copy: a copy is recorded as its declaration identity and a copy
+/// number, which a weak table assigns (<see cref="ConditionalWeakTable{TKey, TValue}"/> keeps no key
+/// alive), so neither the attempt log nor a dispatch left active by an exception holds an
+/// activation's scope chain.</para>
 /// </summary>
 internal sealed class ClauseAttemptObservations
 {
     private readonly Lock gate = new();
     private readonly List<ClauseAttempt> attempts = [];
     private readonly Stack<Dispatch> active = new();
+    private readonly ConditionalWeakTable<Algorithm, StrongBox<int>> copies = new();
     private int dispatches;
+    private int copyCount;
 
     // Bookkeeping belongs to the opt-in observer, not the recursive evaluator frames. In
     // particular, a disabled observer adds no dispatch/attempt locals to either family driver.
-    private sealed class Dispatch(Algorithm family)
+    private sealed class Dispatch(DeclarationIdentity? family, int copy)
     {
-        internal readonly Algorithm Family = family;
+        internal readonly DeclarationIdentity? Family = family;
+        internal readonly int Copy = copy;
         internal int Number;
         internal int Attempt;
     }
@@ -81,7 +96,10 @@ internal sealed class ClauseAttemptObservations
     internal void BeginDispatch(Algorithm family)
     {
         lock (gate)
-            active.Push(new Dispatch(family));
+        {
+            var copy = copies.GetValue(family, _ => new StrongBox<int>(++copyCount)).Value;
+            active.Push(new Dispatch(family.Declaration, copy));
+        }
     }
 
     /// <summary>Records that the current dispatch begins binding the specified clause.</summary>
@@ -93,7 +111,7 @@ internal sealed class ClauseAttemptObservations
             if (dispatch.Number == 0)
                 dispatch.Number = ++dispatches;
             dispatch.Attempt = attempts.Count;
-            attempts.Add(new ClauseAttempt(dispatch.Number, dispatch.Family, clause, ClauseAttemptOutcome.Pending));
+            attempts.Add(new ClauseAttempt(dispatch.Number, dispatch.Family, dispatch.Copy, clause, ClauseAttemptOutcome.Pending));
         }
     }
 

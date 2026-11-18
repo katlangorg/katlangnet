@@ -140,6 +140,56 @@ public partial class SharedValueGraphComplexityTests
         Assert.NotSame(trace[0].Family, trace[1].Family);
         Assert.Same(trace[1].Family, trace[2].Family);
         Assert.Same(trace[0].Family, trace[3].Family);
+        // One dispatch reaches one wired copy, which keeps its number.
+        Assert.Equal(trace[0].Copy, trace[3].Copy);
+        Assert.Equal(trace[1].Copy, trace[2].Copy);
+        Assert.NotEqual(trace[0].Copy, trace[1].Copy);
+    }
+
+    /// <summary>
+    /// The attempt log retains no wired family copy: an attempt records the family's declaration
+    /// identity and a copy number, never the copy, so a long observed run does not keep every attempted
+    /// activation's scope chain alive. Neither a completed dispatch (in the log) nor one an exception
+    /// left active (on the dispatch stack) holds its copy; the same copy keeps one number while it lives.
+    /// </summary>
+    [Fact]
+    public void ClauseAttemptObservation_RetainsNoWiredCopy()
+    {
+        var attempts = new ClauseAttemptObservations();
+        var (completed, pending, declaration) = RecordOneCompletedAndOnePendingDispatch(attempts);
+
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+
+        Assert.False(completed.IsAlive);
+        Assert.False(pending.IsAlive);
+        Assert.Equal(
+            [(1, 1, 0, ClauseAttemptOutcome.NonMatch), (1, 1, 1, ClauseAttemptOutcome.Matched), (2, 2, 0, ClauseAttemptOutcome.Pending)],
+            attempts.Attempts.Select(static a => (a.Dispatch, a.Copy, a.Clause, a.Outcome)));
+        Assert.All(attempts.Attempts, attempt => Assert.Same(declaration, attempt.Family));
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (WeakReference Completed, WeakReference Pending, DeclarationIdentity Declaration) RecordOneCompletedAndOnePendingDispatch(
+        ClauseAttemptObservations attempts)
+    {
+        var family = new Algorithm.Conditional(Parent: null, Opens: [], Branches: []);
+        // Two wired copies of the one declaration, as two activations would wire it.
+        var first = family with { Opens = Array.Empty<Expr>() };
+        var second = family with { Opens = Array.Empty<Expr>() };
+
+        attempts.BeginDispatch(first);
+        attempts.RecordAttempt(0);
+        attempts.RecordOutcome(ClauseAttemptOutcome.NonMatch);
+        attempts.RecordAttempt(1);
+        attempts.RecordOutcome(ClauseAttemptOutcome.Matched);
+
+        // An attempt an exception abandoned: its dispatch stays on the stack.
+        attempts.BeginDispatch(second);
+        attempts.RecordAttempt(0);
+
+        return (new WeakReference(first), new WeakReference(second), Assert.IsType<DeclarationIdentity>(family.Declaration));
     }
 
     [Fact]

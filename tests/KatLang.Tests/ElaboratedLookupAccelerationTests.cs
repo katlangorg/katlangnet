@@ -180,6 +180,48 @@ public class ElaboratedLookupAccelerationTests
         Assert.Equal(1, observations.StaticOpenTargetComputations);
     }
 
+    private const string OpenedLibrary = """
+        Lib = {
+            public A = 1
+            public B = 2
+            public C = 3
+        }
+
+        """;
+
+    /// <summary>
+    /// <see cref="FrontEndTraversalObservations.LookupLevelVisits"/>: the scope-chain levels the counted
+    /// direct walks visit. In detection that walk is the Q-29 ambiguity check of each WRITTEN name
+    /// (<see cref="ElaboratedScopeLookup.FindAmbiguousOpenProviders"/>): in a chain with an <c>open</c>, the
+    /// name walks the direct chain outward from its own level and stops at the first level that declares
+    /// it, the prelude included, before any open level is consulted. Every visited level counts once:
+    /// an opened name in <c>Use</c> visits <c>Use</c>, the root and the prelude (3); one in a body nested
+    /// under <c>Use</c> also its own level (4); a name <c>Use</c> declares visits only <c>Use</c> (1). A chain
+    /// without an <c>open</c> (here the root's own rows) asks nothing, and the count is the same in a
+    /// second detection of the same tree.
+    /// </summary>
+    [Theory]
+    [InlineData("Use = {\n    open Lib\n    A\n}\nUse", 3)]
+    [InlineData("Use = {\n    open Lib\n    A + B + C + A + B + C\n}\nUse", 6 * 3)]
+    [InlineData("Use = {\n    W = {\n        open Lib\n        A\n    }\n    W\n}\nUse", 4)]
+    [InlineData("Use = {\n    open Lib\n    W = {\n        A\n    }\n    W\n}\nUse", 4 + 1)]
+    [InlineData("Use = {\n    open Lib\n    D = 2\n    D + D\n}\nUse", 2 * 1)]
+    [InlineData("Use = {\n    open Lib\n    Lib\n}\nUse", 2)]
+    [InlineData("Use = {\n    open Lib\n    1\n}\nUse", 0)]
+    [InlineData("Use = {\n    D = 1\n    D + D\n}\nUse", 0)]
+    public void OpenedNameAmbiguityCheck_VisitsEachDirectChainLevelOnce(string use, int levels)
+    {
+        var syntax = SourceProvenance.ParseSyntaxValidRoot(OpenedLibrary + use);
+        var first = new FrontEndTraversalObservations();
+        var second = new FrontEndTraversalObservations();
+
+        Assert.Equal(0, ParameterDetector.DetectPrevalidated(syntax, null, first).Diagnostics.ReportedErrorCount);
+        Assert.Equal(0, ParameterDetector.DetectPrevalidated(syntax, null, second).Diagnostics.ReportedErrorCount);
+
+        Assert.Equal(levels, first.LookupLevelVisits);
+        Assert.Equal(levels, second.LookupLevelVisits);
+    }
+
     /// <summary>
     /// Owned-name lookup never consults Q2. Other compiler obligations (including inference
     /// and eager open validity) can independently evaluate Q2, so measure the lookup demand

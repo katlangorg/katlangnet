@@ -232,6 +232,37 @@ public sealed class StaticStructureConsumerTests
         Assert.Null(direct.Span);
     }
 
+    /// <summary>
+    /// The WORK bound's refusal has its own last sentence. The bound scales with the admitted structure and does not
+    /// move with <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so the envelope sentence ("a host may
+    /// only lower it") would misstate the remedy: lowering the envelope never lowers the work bound. The ledger marks its
+    /// work refusal, and only that one; every other bound keeps the envelope sentence. The routes are pinned in
+    /// <c>ExposureSettlementFrameChargeTests</c>.
+    /// </summary>
+    [Fact]
+    public void WorkBoundRefusal_SaysTheBoundScalesWithTheProgram_NotThatTheHostMayLowerIt()
+    {
+        const string workBound = "This bound scales with the size of the analyzed program (16,384 + 1,024 per node and edge) rather than with the host's static-structure envelope, so no envelope setting raises or lowers it.";
+        const string envelope = "The program exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it).";
+
+        var work = Assert.Throws<StaticQueryLimitExceededException>(
+            () => new StaticQueryResourceBudget(new StaticQueryLimits(MaxEvaluations: 3, MaxRefinements: 4)).Work(4));
+        Assert.True(work.IsWorkBound);
+        var refusal = StaticStructureAdmission.Rejection(work);
+        Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, refusal.Code);
+        Assert.Null(refusal.Span);
+        Assert.Equal(
+            "Static structure analysis exceeded its resource bound. The static operation exceeded its work bound (3). " + workBound,
+            refusal.Message);
+
+        var storage = Assert.Throws<StaticQueryLimitExceededException>(
+            () => new StaticQueryResourceBudget(new StaticQueryLimits(MaxEvaluations: 100, MaxRefinements: 4, MaxStorageUnits: 3)).Reserve(4));
+        Assert.False(storage.IsWorkBound);
+        Assert.Equal(
+            "Static structure analysis exceeded its resource bound. The static operation exceeded its metadata storage bound (3 slots). " + envelope,
+            StaticStructureAdmission.Rejection(storage).Message);
+    }
+
     [Fact]
     public void PublishedAliasesDoNotRetainTheQueryOperation()
     {

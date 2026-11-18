@@ -403,12 +403,6 @@ internal static class SequencePipelineOptimizer
         return expression;
     }
 
-    private static bool TryGetSpreadOperand(Expr expression, out Expr supplied)
-    {
-        supplied = UnwrapSpread(expression);
-        return !ReferenceEquals(supplied, expression);
-    }
-
     private static FilterCountRecognitionStatus TryPrepareDotFilterCount(
         FilterCountPipelineSyntax syntax,
         SequencePipelineEvaluationServices services,

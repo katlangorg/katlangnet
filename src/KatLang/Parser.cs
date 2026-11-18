@@ -1099,8 +1099,6 @@ public sealed class Parser
     // contributes an empty extent, so no span ever pretends a missing character exists.
     private SourceSpan MakeSpan(Token start) => new(start.Span.Start, Previous.Span.End);
 
-    private static SourceSpan TokenSpan(Token t) => t.Span;
-
     private SourceSpan SpanFrom(Expr start) => new(start.Span?.Start ?? Previous.Span.Start, Previous.Span.End);
 
     // ── Span-carrying construction (frame-size discipline) ───────────────────
@@ -2988,7 +2986,12 @@ public sealed class Parser
 
     /// <summary>
     /// Checks if the tilde sequence at the significant token at <paramref name="start"/>
-    /// is followed by Identifier '=' or 'public Identifier ='.
+    /// is followed by Identifier '=' or 'public Identifier =', each also with a
+    /// declaration-level output-spreading marker run before the '=' (<c>~A* =</c>): the
+    /// head after the run is read by the property lookaheads themselves
+    /// (<see cref="LookaheadIsEqualsFrom"/>, <see cref="IsPublicPropertyDefAt"/>), so this
+    /// arm of the declaration-start relation admits exactly the property heads its
+    /// <c>Name</c> and <c>public</c> arms admit.
     /// Used to detect invalid grace on property definitions. The run and the
     /// declaration head share one physical line: a marker run followed by a
     /// declaration on a later line is the lone marker of ITS line (reported by
@@ -3003,8 +3006,7 @@ public sealed class Parser
     /// boundary consumer read, scans one run at most once between them: a run costs
     /// O(k) in total, never O(k) per consult. The
     /// verdict is a pure function of the immutable token array from that index,
-    /// so the memo can never go stale. Lookahead answers, diagnostics, spans, and
-    /// the produced tree are exactly those of the offset walk.</para>
+    /// so the memo can never go stale.</para>
     /// </summary>
     private bool LookaheadThroughTildesToPropertyDefFrom(int start)
     {
@@ -3017,23 +3019,22 @@ public sealed class Parser
             index = NextSignificantIndex(index + 1);
 
         // The declaration-head line rule (IsHeadToken): the markers, the name,
-        // and the '=' all share the first marker's physical line.
+        // and the '=' all share the first marker's physical line. After the run the
+        // head is read by the property lookaheads themselves, so it admits the
+        // output-spreading marker run (`~A* =`, `~public A* =`, and the malformed
+        // `~A * =` and `~A** =` the property parser reports) exactly like `A* =`.
         var verdict = false;
         if (_tokens[index].Line == line)
         {
-            var next = NextSignificantIndex(index + 1);
             if (_tokens[index].Kind == TokenKind.Identifier)
             {
                 // ~Name = ...
-                verdict = _tokens[next].Kind == TokenKind.Equals && IsHeadToken(next, line);
+                verdict = LookaheadIsEqualsFrom(index);
             }
-            else if (_tokens[index].Kind == TokenKind.KeywordPublic
-                && _tokens[next].Kind == TokenKind.Identifier
-                && _tokens[next].Line == line)
+            else if (_tokens[index].Kind == TokenKind.KeywordPublic)
             {
                 // ~public Name = ...
-                var equals = NextSignificantIndex(next + 1);
-                verdict = _tokens[equals].Kind == TokenKind.Equals && IsHeadToken(equals, line);
+                verdict = IsPublicPropertyDefAt(index);
             }
         }
 
@@ -4233,7 +4234,7 @@ public sealed class Parser
         /// <summary>A reserved Boolean literal written as a head (<c>true = …</c>, <c>false(x) = …</c>, optionally after <c>public</c>): reported, then skipped.</summary>
         ReservedLiteralHead,
 
-        /// <summary>The invalid-grace property prefix <c>~Name = …</c> / <c>~public Name = …</c>: reported, then the property is parsed.</summary>
+        /// <summary>The invalid-grace property prefix <c>~Name = …</c> / <c>~public Name = …</c>, also with an output-spreading marker run (<c>~Name* = …</c>): reported, then the property is parsed.</summary>
         GracedPropertyDefinition,
 
         /// <summary><c>Name = …</c>, also with an output-spreading marker run (<c>Name* = …</c>).</summary>

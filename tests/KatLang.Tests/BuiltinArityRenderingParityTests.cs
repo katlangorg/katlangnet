@@ -144,7 +144,12 @@ public class BuiltinArityRenderingParityTests
         var @while = BuiltinRegistry.GetBuiltin(BuiltinId.@while);
         Assert.Equal("repeat(meta step, count)", repeat.PlainSignature.DisplayText);
         Assert.Equal("while(meta step)", @while.PlainSignature.DisplayText);
-        Assert.Equal(("2", "1"), (repeat.DescribeArity(), @while.DescribeArity()));
+        Assert.Equal(
+            "Callable `repeat(meta step, count)` expects 2 arguments, but was called with 3 arguments.",
+            CallableSignatureDiagnostics.FormatBadArity(repeat.PlainSignature, 3));
+        Assert.Equal(
+            "Callable `while(meta step)` expects 1 argument, but was called with 2 arguments.",
+            CallableSignatureDiagnostics.FormatBadArity(@while.PlainSignature, 2));
         Assert.True(repeat.DeclaresMetaParameter && @while.DeclaresMetaParameter);
         foreach (var builtin in BuiltinRegistry.AllBuiltins)
         {

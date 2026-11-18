@@ -105,7 +105,7 @@ public class CallReferenceS1ReviewTests
             for (var i = 0; i < 20; i++) returned = new Result.ListValue([returned, returned]);
         // Internal normalization still transports a reference. The host return contract is
         // checked independently of J7, including a foreign handle injected by this test seam.
-        Assert.True(Evaluator.ContainsCallReference(returned.Normalize()));
+        Assert.True(Evaluator.ContainsCallReference(returned.Normalize(), new Dictionary<Result, bool>(ReferenceEqualityComparer.Instance)));
         Assert.Contains("Host operation 'Leak' returned a call reference",
             Assert.Throws<InvalidOperationException>(() => KatLangEngine.Run("Leak()", new RunOptions
             {

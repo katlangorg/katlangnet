@@ -1520,17 +1520,10 @@ public static partial class Evaluator
 
     /// <summary>
     /// Whether <paramref name="value"/> CONTAINS a call reference at any depth of its sequence and list
-    /// structure. Iterative and DAG-safe: each shared structure node is expanded once (reference-identity
-    /// memo) except a shallow leaf-only one, probed in place at each reference (<see cref="ShallowProbeMaxItems"/>),
-    /// and a call reference is a leaf — its plan, cells and context are never followed.
-    /// Lean: <c>Result.containsCallRef</c>.
-    /// </summary>
-    internal static bool ContainsCallReference(Result value)
-        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed: null, out _, out _);
-
-    /// <summary>
-    /// <see cref="ContainsCallReference(Result)"/> for one of SEVERAL values classified together, which may
-    /// share structure: <paramref name="completed"/> holds completed presence verdicts by reference
+    /// structure, for one of SEVERAL values classified together, which may share structure. Iterative and
+    /// DAG-safe: each shared structure node is expanded once, and a call reference is a leaf — its plan,
+    /// cells and context are never followed. Lean: <c>Result.containsCallRef</c>.
+    /// <paramref name="completed"/> holds completed presence verdicts by reference
     /// identity. A fully inspected structure is clean; finding a reference proves its open ancestors
     /// forbidden, never clean. Completed clean prefixes remain reusable even when a later sibling is
     /// forbidden. Both verdicts are reused across roots (the root-property observation snapshot).
@@ -1540,7 +1533,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// The HOST-ARGUMENT boundary (CallReference S1, J4; charged since SEC-01-FU): the
-    /// <see cref="ContainsCallReference(Result)"/> scan of one host-operation argument, charged to the run as
+    /// call-reference scan (<see cref="ScanForCallReference"/>) of one host-operation argument, charged to the run as
     /// structural work. Unlike the once-per-run result export, this scan repeats for EVERY host call, so a
     /// program passing one large nested value to many calls re-walked it uncharged and uncancellably per
     /// call. Each nested structure now costs one unit per slot plus one for the structure (the unit of
@@ -1564,7 +1557,7 @@ public static partial class Evaluator
     /// <summary>How <see cref="ScanForCallReference"/> uses the run budget it is given.</summary>
     private enum ScanBudgetUse : byte
     {
-        /// <summary>No budget: the context-free <see cref="ContainsCallReference(Result)"/>.</summary>
+        /// <summary>No budget: the context-free snapshot predicate <see cref="ContainsCallReference(Result, Dictionary{Result, bool})"/>.</summary>
         None,
 
         /// <summary>The host-argument boundary: nested structure work is charged (<see cref="HostArgumentBoundaryError"/>).</summary>
@@ -1576,8 +1569,8 @@ public static partial class Evaluator
 
     /// <summary>
     /// THE BOUNDED SHALLOW PROBE (SEC-01-FU3, an implementation-only allocation refinement). In the
-    /// uncharged single-scan modes (<see cref="ScanBudgetUse.None"/> without a snapshot memo, and
-    /// <see cref="ScanBudgetUse.ObserveCancellation"/>), a nested structure of at most this many slots is
+    /// uncharged single-scan mode (<see cref="ScanBudgetUse.ObserveCancellation"/>, the run-result export),
+    /// a nested structure of at most this many slots is
     /// inspected in place, left to right, instead of being registered in the expanded-node memo and
     /// suspended as a frame. A leaf-only one is completed there — never memoized, so each further
     /// reference to it re-inspects at most this many slots. The probe stops at its first structural
@@ -1597,7 +1590,7 @@ public static partial class Evaluator
     internal const int ShallowProbeMaxItems = 8;
 
     /// <summary>
-    /// The one call-reference scan (<see cref="ContainsCallReference(Result)"/>). With
+    /// The one call-reference scan (Lean <c>Result.containsCallRef</c>). With
     /// <see cref="ScanBudgetUse.ChargeStructuralWork"/> it charges nested structure work to
     /// <paramref name="budget"/> (<see cref="HostArgumentBoundaryError"/>), and a refused charge stops the
     /// scan with <paramref name="limit"/> set; with <see cref="ScanBudgetUse.ObserveCancellation"/> it charges
@@ -1605,7 +1598,7 @@ public static partial class Evaluator
     /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> slots were inspected since the last
     /// checkpoint (<see cref="RunExportBoundaryError"/>). A non-null <paramref name="completed"/> is the
     /// cross-scan memo of <see cref="ContainsCallReference(Result, Dictionary{Result, bool})"/>. The
-    /// uncharged single-scan modes probe shallow structures in place (<see cref="ShallowProbeMaxItems"/>).
+    /// uncharged single-scan mode probes shallow structures in place (<see cref="ShallowProbeMaxItems"/>).
     /// On a run-export refusal, <paramref name="exportedItemIndex"/> identifies the root structure's item
     /// containing the first reference, from the scan's existing continuation path; otherwise it is -1.
     /// </summary>
@@ -1628,7 +1621,7 @@ public static partial class Evaluator
         if (completed is not null && completed.TryGetValue(value, out var cached))
             return cached;
 
-        // The bounded shallow probe (SEC-01-FU3): only the uncharged, single-scan modes use it. The
+        // The bounded shallow probe (SEC-01-FU3): only the uncharged single-scan mode (the run export) uses it. The
         // charged host-argument scan bills each memoized structure once, and the snapshot memo records
         // verdicts per structure, so both keep the plain memoized walk.
         var probeShallow = budgetUse != ScanBudgetUse.ChargeStructuralWork && completed is null;

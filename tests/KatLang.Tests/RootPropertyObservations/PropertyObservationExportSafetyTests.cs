@@ -61,7 +61,7 @@ public class PropertyObservationExportSafetyTests
             else
             {
                 Assert.NotNull(observation.Value);
-                Assert.False(Evaluator.ContainsCallReference(observation.Value));
+                Assert.False(Evaluator.ContainsCallReference(observation.Value, new Dictionary<Result, bool>(ReferenceEqualityComparer.Instance)));
             }
         }
     }

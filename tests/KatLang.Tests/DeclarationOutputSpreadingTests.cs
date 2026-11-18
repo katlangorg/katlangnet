@@ -1103,6 +1103,48 @@ public class DeclarationOutputSpreadingTests
         Assert.NotNull(Assert.Single(parsed.Root.Properties, property => property.Name == name).Value.OutputSpread);
     }
 
+    private const string GraceOnPropertyNameMessage = "Grace operator cannot be applied to property names.";
+
+    /// <summary>
+    /// Grace before a MARKED head (<c>~A* = …</c>, <c>~public A* = …</c>) is the invalid-grace property
+    /// diagnostic, and the property is kept with its marker, exactly as for an unmarked head: the grace head
+    /// scan reads the head after its marker run through the property lookaheads, which admit the
+    /// output-spreading marker run. It used to admit none, so <c>~A* = 1</c> fell to stray-<c>=</c> recovery
+    /// (an <c>UnexpectedToken</c> at the <c>=</c>, no property) and <c>~public A* = 1</c> to the lone-marker
+    /// report (<c>Grace `~` can only be applied to a parameter or name occurrence.</c>). A malformed marker
+    /// run keeps its own report beside the grace diagnostic. The complete diagnostic list is pinned, in
+    /// reporting order, as <c>Code [span] Message</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("~A* = 1", false, "[1:3, 1:4)",
+        "InvalidGraceMarker [1:1, 1:2) " + GraceOnPropertyNameMessage)]
+    [InlineData("~public A* = 1", true, "[1:10, 1:11)",
+        "InvalidGraceMarker [1:1, 1:2) " + GraceOnPropertyNameMessage)]
+    [InlineData("~~A* = 1, 2\nA()", false, "[1:4, 1:5)",
+        "InvalidGraceMarker [1:1, 1:3) " + GraceOnPropertyNameMessage)]
+    [InlineData("~A * = 1, 2\nA()", false, "[1:4, 1:5)",
+        "InvalidGraceMarker [1:1, 1:2) " + GraceOnPropertyNameMessage,
+        "DetachedOutputSpreadMarker [1:4, 1:5) The output-spreading marker `*` must be directly attached to the declaration's name: write `A* = …`.")]
+    [InlineData("~A** = 1, 2\nA()", false, "[1:3, 1:4)",
+        "InvalidGraceMarker [1:1, 1:2) " + GraceOnPropertyNameMessage,
+        "RepeatedOutputSpreadMarker [1:3, 1:5) A declaration takes exactly one output-spreading marker: write `A* = …`.")]
+    [InlineData("~public A * = 1, 2\nA()", true, "[1:11, 1:12)",
+        "InvalidGraceMarker [1:1, 1:2) " + GraceOnPropertyNameMessage,
+        "DetachedOutputSpreadMarker [1:11, 1:12) The output-spreading marker `*` must be directly attached to the declaration's name: write `A* = …`.")]
+    public void GraceOnAMarkedHead_IsTheInvalidGraceDiagnostic_AndKeepsTheMarkedProperty(
+        string source, bool isPublic, string markerSpan, params string[] diagnostics)
+    {
+        var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+
+        Assert.Equal(diagnostics, parsed.Diagnostics.Select(d => $"{d.Code} {d.Span} {d.Message}"));
+        var declaration = Assert.Single(parsed.Root.Properties);
+        Assert.Equal("A", declaration.Name);
+        Assert.Equal(isPublic, declaration.IsPublic);
+        var marker = Assert.IsType<OutputSpreadMarker>(declaration.Value.OutputSpread);
+        Assert.Equal("A", marker.DeclarationName);
+        Assert.Equal(markerSpan, marker.Span.ToString());
+    }
+
     [Theory]
     [InlineData("a*, b = 1, 2\na", 1, 2)]
     [InlineData("x, y* = 1, 2\nx", 1, 5)]
@@ -1120,6 +1162,7 @@ public class DeclarationOutputSpreadingTests
     // Heads are line-local: the marker and the `=` share the name's (or the `)`'s) line.
     [InlineData("A = 1, 2\nA*\n= 3")]
     [InlineData("F(x) = x, x\nF(1)*\n= 3")]
+    [InlineData("A = 1, 2\n~A*\n= 3")]
     public void SplitHead_IsNoDeclaration(string source)
     {
         var parsed = SourceProvenance.ParseAllowingDiagnostics(source);

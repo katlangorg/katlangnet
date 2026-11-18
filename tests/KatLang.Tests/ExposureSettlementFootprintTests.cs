@@ -512,7 +512,7 @@ public sealed class ExposureSettlementFootprintTests
         var groups = Assert.IsAssignableFrom<System.Collections.IDictionary>(typeof(SettlementShare)
             .GetField("_candidates", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .GetValue(share));
-        Assert.Equal(0, groups.Count);
+        Assert.Empty(groups);
     }
 
     private sealed class VersionedFacts : StaticLookupFacts

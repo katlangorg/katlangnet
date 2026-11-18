@@ -253,7 +253,8 @@ public partial class SharedValueGraphComplexityTests
     public async Task SingleComparisonWalk_OnAliasedSelfReferentialGraphs_Terminates()
     {
         // The invariant-violating probe of Operation_AliasedSelfReferentialGraphTerminates, through
-        // the single-comparison walk: its expanded-pair record keeps it total.
+        // the single-comparison walk: its reference classes keep it total (a pair's two references are
+        // united when the walk descends into it, so the revisited pair already shares a class).
         var storage = new Result[1];
         var cyclic = Result.ListValue.TakeOwnership(storage);
         storage[0] = cyclic;

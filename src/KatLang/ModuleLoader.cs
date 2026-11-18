@@ -85,7 +85,6 @@ internal sealed partial class ModuleLoader
     // initial elaboration's own instance, or a materialization's, installed and restored by its
     // walk-context scope. Replaced only by that scope, never shared between walks.
     private InProgressModules _inProgress = InProgressModules.ForElaboration();
-    private readonly DiagnosticBag _diagnostics;
 
     /// <summary>
     /// One module-cache entry: the caller-independent import view every splice shares, the
@@ -738,7 +737,6 @@ internal sealed partial class ModuleLoader
         // exist, so no module-loading network request can originate from KatLang itself.
         ArgumentNullException.ThrowIfNull(downloadCode);
 
-        _diagnostics = diagnostics;
         _sink = diagnostics;
         _downloadCode = downloadCode;
         _sourceProcessingCancellationToken = sourceProcessingCancellationToken;

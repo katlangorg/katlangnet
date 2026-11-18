@@ -69,17 +69,6 @@ public class BuiltinRegistryParityTests
             {
                 failures.Add($"Evaluator unexpectedly exposes sequence metadata for fixed-arity builtin '{builtin.Name}'.");
             }
-
-            foreach (var argumentCount in Enumerable.Range(0, 16))
-            {
-                var expected = builtin.AcceptsArity(argumentCount);
-                var actual = BuiltinRegistryParitySnapshot.RuntimeBuiltinAcceptsArity(builtin.Id, argumentCount);
-                if (actual != expected)
-                {
-                    failures.Add(
-                        $"Evaluator arity acceptance for builtin '{builtin.Name}' at {argumentCount} argument(s) was {actual}, but BuiltinRegistry expects {expected}.");
-                }
-            }
         }
 
         AssertNoFailures(failures);
@@ -519,11 +508,6 @@ public class BuiltinRegistryParityTests
             "GetSequenceBuiltinMetadata",
             StaticNonPublic);
 
-        private static readonly MethodInfo RuntimeBuiltinAcceptsArityMethod = RequireMethod(
-            typeof(Evaluator),
-            "BuiltinAcceptsArity",
-            StaticNonPublic);
-
         public static IReadOnlyList<string> RuntimePreludeBuiltinNames()
             => GetUserAlgorithmStaticField(typeof(Evaluator), "PreludeAlg")
                 .Properties
@@ -587,9 +571,6 @@ public class BuiltinRegistryParityTests
             signature = new RuntimeSequenceSignature(suffixArgs);
             return true;
         }
-
-        public static bool RuntimeBuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
-            => InvokeStatic<bool>(RuntimeBuiltinAcceptsArityMethod, builtin, argumentCount);
 
         public static IReadOnlyDictionary<string, IReadOnlyList<string>> RuntimeMathMembers()
             => GetAlgorithmPropertyParameters(GetUserAlgorithmStaticField(typeof(Evaluator), "MathAlgorithm"));

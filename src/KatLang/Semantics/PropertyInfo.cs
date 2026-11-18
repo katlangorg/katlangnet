@@ -381,8 +381,11 @@ public sealed record PropertyInfo
 
     public PropertySignatureInfo? FindSignature(PropertyCallStyle callStyle)
     {
-        foreach (var signature in Signatures)
+        // Indexed: enumerating the interface would box an enumerator on every callable hover.
+        var signatures = _signatures;
+        for (var i = 0; i < signatures.Count; i++)
         {
+            var signature = signatures[i];
             if (signature.CallStyle == callStyle)
                 return signature;
         }

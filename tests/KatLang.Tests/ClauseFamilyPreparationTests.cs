@@ -144,7 +144,9 @@ public class ClauseFamilyPreparationTests
         Assert.False(result.IsError, result.IsError ? $"{route}: {result.Error}" : null);
         Assert.Equal(new Result.Atom(9), result.Value.Value, Result.ValueComparer);
         Assert.Equal(4, Dispatches(attempts));
-        Assert.True(attempts.Attempts.Select(static a => a.Family).Distinct(ReferenceEqualityComparer.Instance).Count() > 1,
+        // Every attempt belongs to F's one declaration, reached through distinct wired copies.
+        Assert.NotNull(Assert.Single(attempts.Attempts.Select(static a => a.Family).Distinct(ReferenceEqualityComparer.Instance)));
+        Assert.True(attempts.Attempts.Select(static a => a.Copy).Distinct().Count() > 1,
             "the calls should reach distinct wired copies of the family");
         Assert.Equal(1, observations.ClauseFamilyPreparationCount);
     }

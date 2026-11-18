@@ -74,15 +74,23 @@ internal static class StaticStructureAdmission
     }
 
     /// <summary>
-    /// The refusal names the exhausted counter (the exception's own sentence) and then says what a host can do: the
-    /// envelope never exceeds <see cref="SourceProcessingLimits.MaxSupportedStaticStructureBytes"/>, and configuration
-    /// may only lower it, so the remedy is a smaller program. Text only; the kind stays
+    /// The refusal names the exhausted counter (the exception's own sentence) and then says what a host can do. For an
+    /// envelope bound (<see cref="EnvelopeSentence"/>): the envelope never exceeds
+    /// <see cref="SourceProcessingLimits.MaxSupportedStaticStructureBytes"/>, and configuration may only lower it, so the
+    /// remedy is a smaller program. For the operation's WORK bound (<see cref="WorkBoundSentence"/>): the bound is
+    /// 16,384 + 1,024 per admitted node and edge (<see cref="Measurement.Limits"/>)
+    /// and does not move with <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so lowering the envelope
+    /// never lowers it and the envelope sentence would misstate the remedy. Text only; the kind stays
     /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.
     /// </summary>
     internal static Diagnostic Rejection(StaticQueryLimitExceededException error)
-        => new($"Static structure analysis exceeded its resource bound. {error.Message} {EnvelopeSentence}", DiagnosticSeverity.Error, null)
+        => new($"Static structure analysis exceeded its resource bound. {error.Message} {(error.IsWorkBound ? WorkBoundSentence : EnvelopeSentence)}",
+            DiagnosticSeverity.Error, null)
         { Code = DiagnosticCode.StaticStructureLimitExceeded };
 
     internal const string EnvelopeSentence =
         "The program exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it).";
+
+    internal const string WorkBoundSentence =
+        "This bound scales with the size of the analyzed program (16,384 + 1,024 per node and edge) rather than with the host's static-structure envelope, so no envelope setting raises or lowers it.";
 }

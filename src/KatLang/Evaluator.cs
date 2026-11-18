@@ -2550,10 +2550,6 @@ public static partial class Evaluator
     internal static string BuiltinDisplayName(BuiltinId builtin)
         => BuiltinRegistry.GetBuiltin(builtin).Name;
 
-    /// <summary>Lean: builtinAcceptsArity. Every builtin is fixed-arity (the loops <c>while(meta step)</c>/<c>repeat(meta step, count)</c> too, META-S3-3); collection builtins expect exactly one collection argument plus their fixed control arguments.</summary>
-    private static bool BuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
-        => BuiltinRegistry.GetBuiltin(builtin).AcceptsArity(argumentCount);
-
     private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);

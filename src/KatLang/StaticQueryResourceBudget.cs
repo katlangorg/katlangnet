@@ -38,7 +38,7 @@ internal sealed class StaticQueryResourceBudget(StaticQueryLimits limits)
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         if (count <= limits.MaxEvaluations - _work) return;
         Fail();
-        throw new StaticQueryLimitExceededException($"The static operation exceeded its work bound ({limits.MaxEvaluations}).");
+        throw new StaticQueryLimitExceededException($"The static operation exceeded its work bound ({limits.MaxEvaluations}).", isWorkBound: true);
     }
 
     private void CheckStorage(long units)

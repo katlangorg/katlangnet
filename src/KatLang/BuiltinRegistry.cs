@@ -186,9 +186,9 @@ internal sealed class BuiltinDescriptor
 
     /// <summary>
     /// The argument counts a call of this builtin ACCEPTS, read from its ONE signature
-    /// (<see cref="PlainSignature"/>): the arity contract <see cref="AcceptsArity"/>,
-    /// <see cref="DescribeArity"/> and the builtin arity error read (Lean <c>builtinAcceptsArity</c> /
-    /// <c>builtinArityDesc</c>), exactly <see cref="FixedArity"/>.
+    /// (<see cref="PlainSignature"/>): the arity contract <see cref="AcceptsArity"/> and the builtin
+    /// arity error read (Lean <c>builtinAcceptsArity</c> / <c>builtinArityDesc</c>), exactly
+    /// <see cref="FixedArity"/>.
     /// </summary>
     public CallableArityFacts ArityFacts { get; }
 
@@ -231,20 +231,6 @@ internal sealed class BuiltinDescriptor
     // Every builtin is an ordinary fixed-arity callable (`count(collection)` is exactly 1,
     // `take(collection, count)` is exactly 2, `repeat(meta step, count)` is exactly 2).
     public bool AcceptsArity(int count) => count == FixedArity;
-
-    public string DescribeArity()
-    {
-        if (SequenceMetadata is { } metadata)
-        {
-            var totalArgCountDesc = BuiltinRegistry.DescribeSequenceBuiltinTotalArgs(PlainSignature);
-            if (metadata.SuffixArgs.Count == 0)
-                return totalArgCountDesc;
-
-            return $"{totalArgCountDesc} arguments ({PlainSignature.DisplayText})";
-        }
-
-        return CallableSignatureDiagnostics.FormatExpectedArgumentCountWithoutNoun(ArityFacts);
-    }
 
     public CallableSignature GetSignature(BuiltinCallStyle callStyle)
         => callStyle == BuiltinCallStyle.Dot ? DotSignature : PlainSignature;
