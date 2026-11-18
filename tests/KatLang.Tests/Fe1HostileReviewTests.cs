@@ -401,24 +401,165 @@ public class Fe1HostileReviewTests
     }
 
     /// <summary>
-    /// One body shared by every branch of a family is SUMMARIZED once. Its contribution is still merged once per
-    /// branch: each literal branch is a completed context of its own, and a family skips a repeated contribution by
-    /// that context. The exposure pass does the same work, measured here through its own entry. (This test first
-    /// pinned ONE contribution per family, 300 entries. That held only in the contextless summary mode, which no
-    /// exposure run entered and which was deleted in November 2026; the count below is what exposure always did.)
+    /// One body shared by every branch of a family is SUMMARIZED once and CONTRIBUTES once (300 entries for 300 names
+    /// under 200 literal branches). Each literal branch is a completed context of its own, but all of them have ONE
+    /// summary representative (a binding-free body under one parent), whose summary every branch receives, so the family
+    /// skips a repeated representative before cloning or merging it. The exposure pass does the same work, measured
+    /// through its own entry. (History: this pin first held only in the contextless summary mode; when that mode was
+    /// deleted on November 16 2026, exposure was found merging one contribution per branch context, 60,000 entries, and
+    /// the pin recorded that until the family's skip was keyed by the representative on November 18 2026.)
     /// </summary>
     [Fact]
-    public void SharedWideBranch_IsSummarizedOnce_AndContributesOncePerBranchContext()
+    public void SharedWideBranch_IsSummarizedOnce_AndContributesOncePerFamily()
     {
         const int width = 300, branches = 200;
         var observations = new FrontEndTraversalObservations();
         _ = StandaloneSummaries.Build(SharedReferenceFamily(width, branches), observations: observations);
         Assert.Equal(1, observations.DependencyBranchBodySummaryComputations);
-        Assert.Equal((long)width * branches, observations.BranchSummaryContributionEntries);
+        Assert.Equal(width, observations.BranchSummaryContributionEntries);
 
         var exposure = new FrontEndTraversalObservations();
         _ = PropertyExposureResolver.Resolve(SharedReferenceFamily(width, branches), exposure);
         Assert.Equal(1, exposure.DependencyBranchBodySummaryComputations);
-        Assert.Equal((long)width * branches, exposure.BranchSummaryContributionEntries);
+        Assert.Equal(width, exposure.BranchSummaryContributionEntries);
+    }
+
+    private static Algorithm.User Reading(params Expr[] rows) => User() with { Output = new OutputBundle(rows) };
+
+    private static Algorithm.Conditional LiteralFamily(IEnumerable<Algorithm> bodies, Algorithm? catchAll = null)
+        => new(null, [],
+        [
+            .. bodies.Select((body, i) => new CondBranch(new Pattern.LitInt(i), body)),
+            .. catchAll is null ? [] : new[] { new CondBranch(new Pattern.Bind("x"), catchAll) },
+        ]);
+
+    /// <summary>
+    /// The family skips a repeated summary REPRESENTATIVE, never merely a repeated body: two bodies shared by alternating
+    /// literal branches contribute once each; a branch holding its own copy of a body (equal content, another reference)
+    /// is a representative of its own; a binder branch over a shared body is too (its binder is a parameter of its
+    /// region, which is therefore not the binding-free region of the literal branches); and another family sharing the
+    /// body contributes again, since the skip belongs to one family's walk.
+    /// </summary>
+    [Fact]
+    public void SharedBranchBodies_ContributeOncePerSummaryRepresentative()
+    {
+        Expr P(int i) => new Expr.Resolve($"p{i}");
+        var a = Reading(P(0), P(1));
+        var b = Reading(P(1), P(2));
+        // F: a, b, a copy of a, three times over, then a catch-all binder branch over a. G: b under four literals.
+        var f = LiteralFamily(Enumerable.Range(0, 9).Select(i => i % 3 == 0 ? a : i % 3 == 1 ? b : a with { }), catchAll: a);
+        var g = LiteralFamily(Enumerable.Repeat<Algorithm>(b, 4));
+        var root = User([Member("p0"), Member("p1"), Member("p2"), new Property("F", f), new Property("G", g)]);
+
+        var exposure = new FrontEndTraversalObservations();
+        _ = PropertyExposureResolver.Resolve(root, exposure);
+        // F: a once, b once, each of the three copies, and the binder branch (2 entries each); G: b once.
+        Assert.Equal(2L * (1 + 1 + 3 + 1) + 2, exposure.BranchSummaryContributionEntries);
+    }
+
+    /// <summary>
+    /// Merging one contribution per representative changes no published metadata: a family whose literal branches share
+    /// one body publishes, for every declaration (branch bodies and nested families included), the exposure, required
+    /// ancestor parameters and capture requirements of its UNSHARED TWIN, whose every branch holds its own copy of the
+    /// body, and both run alike. The shapes read an enclosing owner's parameter directly, through a local declaration,
+    /// through a family-owned <c>open</c>, through a dotted member path, and through a nested family whose branches share
+    /// a body too. The shared family contributes once per representative, the twin once per branch: one entry each
+    /// (the parameter, or the one reference that reads it), two for the dotted path (the path and the member name its edge
+    /// may fall back to); in the nested shape the twin's copies still share the nested family itself (a shallow copy), so
+    /// that family is summarized once and its three branch copies contribute once in all (5 + 3).
+    /// </summary>
+    [Theory]
+    [InlineData("direct", 1, 5)]
+    [InlineData("local", 1, 5)]
+    [InlineData("family-open", 1, 5)]
+    [InlineData("dotted", 2, 10)]
+    [InlineData("nested", 2, 8)]
+    public void SharedBranchBody_PublishesWhatItsUnsharedTwinPublishes(string shape, long sharedContributions, long twinContributions)
+    {
+        const int branches = 5;
+        var shared = Exposed(SharedFamilyShape(shape, branches, share: true), out var sharedRun, out var sharedEntries);
+        var twin = Exposed(SharedFamilyShape(shape, branches, share: false), out var twinRun, out var twinEntries);
+        Assert.Equal(PublishedMetadata(twin), PublishedMetadata(shared));
+        Assert.Contains("LocalOnlyCapturedAncestorParameters", PublishedMetadata(shared), StringComparison.Ordinal);
+        Assert.Equal("3", sharedRun);
+        Assert.Equal(twinRun, sharedRun);
+        Assert.Equal(sharedContributions, sharedEntries);
+        Assert.Equal(twinContributions, twinEntries);
+    }
+
+    private static Algorithm Exposed(Algorithm.User root, out string run, out long contributionEntries)
+    {
+        var observations = new FrontEndTraversalObservations();
+        var exposed = PropertyExposureResolver.Resolve(root, observations);
+        contributionEntries = observations.BranchSummaryContributionEntries;
+        var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(exposed));
+        run = result.IsError ? "error " + result.Error.Code : string.Join(",", result.Value);
+        return exposed;
+    }
+
+    // Outer(q) = { …; Family = <branches literal branches over one body>; Family(0) }, run as Outer(3). With share false
+    // every branch holds its own copy of the body (and of the nested family's body).
+    private static Algorithm.User SharedFamilyShape(string shape, int branches, bool share)
+    {
+        Algorithm Copy(Algorithm body) => share ? body : body with { };
+        Expr Q() => new Expr.Param("q");
+        Algorithm.User Value(Expr row) => Reading(row);
+        Expr Call(string name, int argument) => new Expr.Call(new Expr.Resolve(name), [new Expr.Num(argument)]);
+        var properties = new List<Property>();
+        Algorithm body;
+        switch (shape)
+        {
+            case "direct":
+                body = Reading(Q());
+                break;
+            case "local":
+                body = new Algorithm.User(null, [], [], [new Property("Local", Value(Q()), IsPublic: true)], [new Expr.Resolve("Local")]);
+                break;
+            case "family-open":
+                properties.Add(new Property("Lib", User([new Property("M", Value(Q()), IsPublic: true)])));
+                body = Reading(new Expr.Resolve("M"));
+                break;
+            case "dotted":
+                properties.Add(new Property("Lib", User([new Property("V", Value(Q()), IsPublic: true)])));
+                body = Reading(new Expr.DotCall(new Expr.Resolve("Lib"), "V", null));
+                break;
+            case "nested":
+                var inner = Reading(Q());
+                body = new Algorithm.User(null, [], [],
+                    [new Property("Inner", LiteralFamily(Enumerable.Range(0, 3).Select(_ => Copy(inner))))], [Call("Inner", 0)]);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape));
+        }
+
+        var family = LiteralFamily(Enumerable.Range(0, branches).Select(_ => Copy(body)));
+        if (shape == "family-open") family = family with { Opens = [new Expr.Resolve("Lib")] };
+        properties.Add(new Property("Family", family));
+        var outer = new Algorithm.User(null, [new CaptureParameterPattern("q")], [], properties, [Call("Family", 0)]);
+        return User([new Property("Outer", outer)]) with { Output = new OutputBundle([Call("Outer", 3)]) };
+    }
+
+    // Every declaration's exposure, required ancestor parameters and capture requirements, branch bodies and nested
+    // families included, by declaration path.
+    private static string PublishedMetadata(Algorithm root)
+    {
+        var lines = new List<string>();
+        var pending = new Stack<(Algorithm Algorithm, string Path)>();
+        pending.Push((root, "root"));
+        while (pending.TryPop(out var item))
+        {
+            if (item.Algorithm is Algorithm.Conditional conditional)
+            {
+                for (var b = 0; b < conditional.Branches.Count; b++) pending.Push((conditional.Branches[b].Body, $"{item.Path}#{b}"));
+                continue;
+            }
+            foreach (var property in item.Algorithm.Properties)
+            {
+                lines.Add($"{item.Path}.{property.Name}: {property.Exposure} [{string.Join(",", property.RequiredAncestorParameters)}] "
+                    + $"[{string.Join(",", (property.CaptureRequirements ?? []).Select(r => $"{r.Name}@{r.OwnerDepth}"))}]");
+                pending.Push((property.Value, $"{item.Path}.{property.Name}"));
+            }
+        }
+        return string.Join("\n", lines);
     }
 }

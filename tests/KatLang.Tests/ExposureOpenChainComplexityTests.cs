@@ -540,7 +540,6 @@ public sealed class ExposureOpenChainComplexityTests
         Assert.Null(lastLevel!.ExpandedSeeds);
         var fresh = Settle(new PropertyDependencyGraphBuilder.SummaryMemo(), failAt: null);
         Assert.Equal(fresh.ContentKey, retried.ContentKey);
-        Assert.Equal(0, shared.ExpansionCycleCuts);
     }
 
     // A level's member map whose lookup fails for one member (the level expansion asks it whether the

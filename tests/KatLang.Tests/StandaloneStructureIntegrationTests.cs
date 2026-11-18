@@ -217,7 +217,16 @@ public sealed class StandaloneStructureIntegrationTests(ITestOutputHelper output
             Assert.DoesNotContain(obsolete, graph);
             Assert.DoesNotContain(obsolete, exposure);
         }
+        // The level expansion's never-written cycle-cut epoch and its frame driver (deleted November 2026): an expansion
+        // reads only its level's member map, cuts no cycle and nests nothing, so it is one loop.
+        foreach (var obsolete in new[] { "ExpansionCycleCuts", "ExpansionFrame", "ExpandFrame", "RunExpansion", "EscapingFrame", "ExpandAtLevelCore" })
+        {
+            Assert.DoesNotContain(obsolete, graph);
+            Assert.DoesNotContain(obsolete, exposure);
+        }
         Assert.DoesNotContain("CompletedStructureContext? completedContext = null", graph);
+        // Raw visible names belong to the level's summary graph. Settlement receives expanded seeds.
+        Assert.DoesNotContain(".VisiblePropertyDependencyNames", exposure);
         var lookup = File.ReadAllText(Path.Combine(root, "src/KatLang/ElaboratedScopeLookup.cs"));
         foreach (var obsolete in new[] { "IsComplete", "DeclaredWithin", "EscapedThrough", "CompletedAt" })
             Assert.DoesNotContain(obsolete, lookup);

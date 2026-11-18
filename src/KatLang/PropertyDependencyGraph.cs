@@ -898,11 +898,10 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal sealed class SummaryMemo(FrontEndTraversalObservations? observations = null)
     {
-        internal long ExpansionCycleCuts;
-
         /// <summary>
         /// The source-processing token of the exposure resolution this memo spans (none for a standalone
-        /// <see cref="BuildSummaries"/> call), observed once per frame of the level-expansion driver.
+        /// <see cref="BuildSummaries"/> call), observed when a level expansion starts and before each name it carries
+        /// outward (<see cref="ExpandAtLevel"/>).
         /// </summary>
         internal CancellationToken CancellationToken { get; init; }
 
@@ -1742,95 +1741,27 @@ internal static class PropertyDependencyGraphBuilder
     /// selected here: the owning level's settlement does both, from the completed structure
     /// (<see cref="PropertyExposureResolver"/>). The requirements this level's own parameters
     /// bind are owner-qualified on the way out.
+    /// <para>The member map is stable during this call. Anchoring an escaping name requires no further expansion,
+    /// so each result is complete. A nonempty expansion observes <see cref="SummaryMemo.CancellationToken"/> on entry
+    /// and before anchoring each escaping bare name, the checkpoints of the former frame driver.</para>
     /// </summary>
     internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
     {
-        // A seed with no requirement, name or reference has nothing to resolve, escape or qualify at any level, and a cycle
-        // cut cannot change that: its expansion is the empty seed, whatever the level.
-        return baseSeed.IsEmpty ? new SummarySeed() : RunExpansion(ExpandFrame(baseSeed, level), level.Memos.SharedMemo).Seed!;
-    }
+        // A seed with no requirement, name or reference has nothing to resolve, escape or qualify at any level: its
+        // expansion is the empty seed, whatever the level.
+        if (baseSeed.IsEmpty)
+            return new SummarySeed();
 
-    /// <summary>
-    /// OOS-22: ONE suspended step of the level expansion — an expansion at a level
-    /// (<see cref="ExpandAtLevelCore"/>) or the carrying of one escaping reference
-    /// (<see cref="AddEscaping"/>). The steps never recurse on the host stack: each is a heap frame
-    /// whose body yields the nested frame it needs next, and <see cref="RunExpansion"/> resumes it
-    /// with that frame's result exactly where a recursive form would have returned. When an escaping
-    /// step still settled an opened member's charge at the owner, the steps re-entered one another
-    /// once per link of an opened chain; an escaping step now only carries its reference, so an
-    /// expansion nests no deeper than the two kinds of step. The cancellation checkpoints and the
-    /// unwinding of <see cref="RunExpansion"/> are unchanged.
-    /// </summary>
-    private sealed class ExpansionFrame
-    {
-        public IEnumerator<ExpansionFrame> Body = null!;
-        public SummarySeed? Seed;
-    }
-
-    /// <summary>
-    /// Runs <paramref name="root"/> to completion over an explicit stack: a frame yielding a nested
-    /// frame is suspended until that frame completes. An exception unwinds every suspended frame
-    /// innermost first, so each one's active key and level cache are released exactly as the
-    /// recursion's <c>finally</c> blocks released them; no partial result is stored on that path.
-    /// Each frame pushed is one cancellation checkpoint of <paramref name="memo"/>'s token (2.06), so a
-    /// cancelled expansion unwinds the same way.
-    /// </summary>
-    private static ExpansionFrame RunExpansion(ExpansionFrame root, SummaryMemo memo)
-    {
-        var frames = new Stack<ExpansionFrame>();
-        frames.Push(root);
-        try
-        {
-            memo.ObserveCancellation();
-            while (frames.TryPeek(out var frame))
-            {
-                if (frame.Body.MoveNext())
-                {
-                    frames.Push(frame.Body.Current);
-                    memo.ObserveCancellation();
-                }
-                else
-                    frames.Pop();
-            }
-        }
-        finally
-        {
-            while (frames.TryPop(out var suspended))
-                suspended.Body.Dispose();
-        }
-
-        return root;
-    }
-
-    private static ExpansionFrame ExpandFrame(SummarySeed baseSeed, LevelContext level)
-    {
-        var frame = new ExpansionFrame();
-        frame.Body = ExpandAtLevelCore(frame, baseSeed, level);
-        return frame;
-    }
-
-    private static ExpansionFrame EscapingFrame(SummarySeed expanded, PendingReference pending, LevelContext level)
-    {
-        var frame = new ExpansionFrame();
-        frame.Body = AddEscaping(expanded, pending, level);
-        return frame;
-    }
-
-    /// <summary>One expansion at <paramref name="level"/>; its result is <paramref name="self"/>'s <see cref="ExpansionFrame.Seed"/>.</summary>
-    private static IEnumerator<ExpansionFrame> ExpandAtLevelCore(ExpansionFrame self, SummarySeed baseSeed, LevelContext level)
-    {
+        var memo = level.Memos.SharedMemo;
+        memo.ObserveCancellation();
         var outermost = level.ExpandedSeeds is null;
         var completed = level.ExpandedSeeds ??= new(StringComparer.Ordinal);
         try
         {
             var cacheKey = baseSeed.ContentKeyFor(level.Memos.Observations);
             if (completed.TryGetValue(cacheKey, out var cached))
-            {
-                self.Seed = cached.Clone();
-                yield break;
-            }
+                return cached.Clone();
 
-            var cuts = level.Memos.SharedMemo.ExpansionCycleCuts;
             var expanded = new SummarySeed(
                 requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
                 ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
@@ -1843,17 +1774,19 @@ internal static class PropertyDependencyGraphBuilder
                     continue;
                 }
 
-                yield return EscapingFrame(expanded, new PendingReference(dependencyName, []), level);
+                var escaping = new PendingReference(dependencyName, []);
+                memo.ObserveCancellation();
+                AddEscaping(expanded, escaping, level);
             }
 
             var context = level.Memos.CompletedContext;
             foreach (var pending in baseSeed.PendingReferences)
             {
-                level.Memos.SharedMemo.UseContext();
+                memo.UseContext();
                 // The same Q1-proved local equation bridge used by SolveMemberSeeds applies
                 // when anchoring an external seed through this owner. Read the live map so
                 // expansion-cache dependency tracking and invalidation remain unchanged.
-                if (level.Memos.SharedMemo.SelectsLocalMember(pending, context)
+                if (memo.SelectsLocalMember(pending, context)
                     && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
                 {
                     expanded.AbsorbCompleted(local);
@@ -1863,10 +1796,8 @@ internal static class PropertyDependencyGraphBuilder
             }
 
             expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
-            // A partial expansion depends on the active path. It must never be served elsewhere.
-            if (cuts == level.Memos.SharedMemo.ExpansionCycleCuts)
-                completed.TryAdd(cacheKey, expanded.Clone());
-            self.Seed = expanded;
+            completed.TryAdd(cacheKey, expanded.Clone());
+            return expanded;
         }
         finally
         {
@@ -1879,11 +1810,10 @@ internal static class PropertyDependencyGraphBuilder
     /// Carries a requirement's context without settling a raw path or provider: the escaping reference is anchored
     /// at the level's completed context, so no expansion leaves a bare name or an origin-less path behind.
     /// </summary>
-    private static IEnumerator<ExpansionFrame> AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
+    private static void AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
     {
         level.Memos.SharedMemo.UseContext();
         expanded.PendingReferences.Add(pending.At(level.Memos.CompletedContext));
-        yield break;
     }
 
     /// <summary>Stops lexical requirement escape at the prelude without evaluating a provider.</summary>
@@ -2036,20 +1966,17 @@ internal static class PropertyDependencyGraphBuilder
         var contributed = new HashSet<BranchBodySummaryKey>();
         foreach (var branch in algorithm.Branches)
         {
-            // Branch bodies deliberately bypass the node-keyed completed-summary memo: their
-            // binder-name context varies per branch, so their summaries are NOT pure
-            // functions of the body node (see SummaryMemo). They are pure functions of
-            // (body, binder names), which the branch-body memo keys on — so a body shared by
-            // several families under the same binders is summarized once (M4).
+            // The pattern supplies the branch's binders. The representative supplies the context in which
+            // its summary's escaping references are anchored.
             var context = sharedMemo.BranchContexts.NamesOf(branch.Pattern);
             var binderNames = context.Names;
             var branchContext = ChildContext(completedContext, branch.Body, branch.Pattern, algorithm.Opens.Count == 0);
-            var key = new BranchBodySummaryKey(branch.Body, context.Id, branchContext.Key, branchContext.Facts);
-            // Union is idempotent. One family's repeated reach of the same region contributes
-            // nothing new, so skip BEFORE cloning or merging its potentially wide summary.
+            var representative = BranchSummaryRepresentative(branch.Body, sharedMemo, branchContext);
+            var key = new BranchBodySummaryKey(branch.Body, context.Id, representative.Key, representative.Facts);
+            // Every branch with this key receives the same seed. Skip its clone and union on later visits in this family.
             if (!contributed.Add(key))
                 continue;
-            var contribution = CollectBranchBodySummarySeed(branch.Body, binderNames, key, sharedMemo, observations, branchContext);
+            var contribution = CollectBranchBodySummarySeed(branch.Body, binderNames, key, sharedMemo, observations, representative);
             observations?.RecordBranchSummaryContribution(contribution.RequiredAncestorOwnedParameterNames.Count
                 + contribution.VisiblePropertyDependencyNames.Count + contribution.PendingReferences.Count
                 + contribution.OwnerQualifiedParameters.Count);
@@ -2064,9 +1991,20 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
-    /// Memo-shared branch-body summary for one (body, binder-name set) — see
-    /// <see cref="SummaryMemo.CompletedBranchBodySummaries"/>. Records completed computations
-    /// (memo misses) only, like <see cref="CollectSharedAlgorithmSummarySeed"/>.
+    /// The context whose summary stands for a branch body's in <paramref name="branchContext"/>: the body's binding-free
+    /// summary region (<see cref="SummaryMemo.SummaryRegion"/>), then that region's shared-body representative
+    /// (<see cref="SummaryMemo.SharedRegionContext"/>). Branches of one body and binder-name set with one representative
+    /// receive one summary, whose anchored origins lie in the representative.
+    /// </summary>
+    private static CompletedStructureContext BranchSummaryRepresentative(Algorithm body, SummaryMemo sharedMemo,
+        CompletedStructureContext branchContext)
+        => sharedMemo.SharedRegionContext(sharedMemo.SummaryRegion(branchContext, body), body);
+
+    /// <summary>
+    /// Memo-shared branch-body summary for one (body, binder-name set) at its summary representative
+    /// <paramref name="representative"/> (<see cref="BranchSummaryRepresentative"/>), which <paramref name="key"/> names —
+    /// see <see cref="SummaryMemo.CompletedBranchBodySummaries"/>. Records completed computations (memo misses) only,
+    /// like <see cref="CollectSharedAlgorithmSummarySeed"/>.
     /// </summary>
     private static SummarySeed CollectBranchBodySummarySeed(
         Algorithm body,
@@ -2074,14 +2012,11 @@ internal static class PropertyDependencyGraphBuilder
         BranchBodySummaryKey key,
         SummaryMemo sharedMemo,
         FrontEndTraversalObservations? observations,
-        CompletedStructureContext completedContext)
+        CompletedStructureContext representative)
     {
-        completedContext = sharedMemo.SummaryRegion(completedContext, body);
-        completedContext = sharedMemo.SharedRegionContext(completedContext, body);
-        key = key with { Scope = completedContext.Key, Facts = completedContext.Facts };
         var independentKey = key with { Scope = null, Facts = null };
         var independent = sharedMemo.IndependentBranchSummaries ??= new();
-        var canShare = sharedMemo.BranchParametersAgree(body, binderNames, completedContext);
+        var canShare = sharedMemo.BranchParametersAgree(body, binderNames, representative);
         if (canShare && independent.TryGetValue(independentKey, out var shared)) return shared.Clone();
         var completedSummaries = sharedMemo.CompletedBranchBodySummaries ??= new();
         if (completedSummaries.TryGetValue(key, out var stored))
@@ -2093,7 +2028,7 @@ internal static class PropertyDependencyGraphBuilder
         var uses = sharedMemo.ContextUses;
         if (!canShare) sharedMemo.UseContext();
         observations?.RecordDependencyBranchBodySummaryComputation();
-        var seed = CollectSummarySeed(body, CreateNameSet(binderNames), sharedMemo, observations, completedContext);
+        var seed = CollectSummarySeed(body, CreateNameSet(binderNames), sharedMemo, observations, representative);
         if (canShare && uses == sharedMemo.ContextUses) independent.Add(independentKey, seed.Clone());
         else completedSummaries[key] = seed.Clone();
         return seed;
@@ -2119,8 +2054,9 @@ internal static class PropertyDependencyGraphBuilder
         CompletedStructureContext branchContext)
     {
         var binders = sharedMemo.BranchContexts.NamesOf(pattern);
+        var representative = BranchSummaryRepresentative(body, sharedMemo, branchContext);
         return CollectBranchBodySummarySeed(body, binders.Names,
-            new BranchBodySummaryKey(body, binders.Id, branchContext.Key, branchContext.Facts), sharedMemo, observations, branchContext);
+            new BranchBodySummaryKey(body, binders.Id, representative.Key, representative.Facts), sharedMemo, observations, representative);
     }
 
     /// <summary>

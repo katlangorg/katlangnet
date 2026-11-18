@@ -1533,7 +1533,7 @@ internal static class PropertyExposureResolver
         /// The settlement of a whole CONTRIBUTION at <paramref name="level"/> (a top-level settlement): what a family's
         /// summary seed, or one branch body's, requires of the owners at and above the level the family is written in,
         /// as owner-qualified requirements. It is the settlement a level's equation gives a property whose value is
-        /// that seed (<see cref="ResolveSeed"/>: the seed's own requirements, each name it reads, each reference it
+        /// that seed (<see cref="ResolveSeed"/>: the seed's own requirements and each reference it
         /// holds). The frame is charged and observed like every other, and keeps no entry of its own: its nested
         /// settlements are cached and shared exactly as any reader's.
         /// </summary>
@@ -2158,12 +2158,12 @@ internal static class PropertyExposureResolver
         /// <summary>
         /// A member an open-target walk selects whose seed names parameters only: its requirements are resolved here, at
         /// the frame's site, exactly as <see cref="ResolveSeed"/> resolves them, without a frame of their own (the walk
-        /// that selected it is the settlement that is kept). A seed that reads a name or holds a reference is settled
-        /// as every seed is (false).
+        /// that selected it is the settlement that is kept). A seed that holds a reference is settled as every seed is
+        /// (false). Level expansion has already resolved or anchored the member's bare names.
         /// </summary>
         private bool TryResolveInPlace(Frame self, AnchoredSeed part, SummaryScope site, BoundOwnerSet? boundOwners)
         {
-            if (!part.OpenWalkMember || part.Seed.VisiblePropertyDependencyNames.Count != 0 || part.Seed.PendingReferences.Count != 0)
+            if (!part.OpenWalkMember || part.Seed.PendingReferences.Count != 0)
                 return false;
             var landing = SummaryScope.NoOwnerLookup;
             self.Result = sets.Union(self.Result, sets.From(part.Level.ResolveRequirements(part.Seed.RequiredAncestorOwnedParameterNames)
@@ -2581,8 +2581,9 @@ internal static class PropertyExposureResolver
         }
 
         /// <summary>
-        /// The requirements of a seed relative to <paramref name="level"/>, resolved from there outward;
-        /// the result is <paramref name="self"/>'s (see <see cref="Frame"/>).
+        /// The requirements of a seed relative to <paramref name="level"/>, resolved from there outward: its own
+        /// requirements and the settlement of each reference it holds. The result is <paramref name="self"/>'s (see
+        /// <see cref="Frame"/>). Member and branch contributions contain only expanded requirements and references.
         /// </summary>
         private IEnumerator<Frame> ResolveSeed(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level,
             SummaryScope site, BoundOwnerSet? boundOwners)
@@ -2591,20 +2592,6 @@ internal static class PropertyExposureResolver
             var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
                 .Concat(site.ResolveRequirementsFromSite(seed.OwnerQualifiedParameters, boundOwners, self, ref landing)));
             self.NoteSiteLanding(landing);
-            foreach (var dependencyName in seed.VisiblePropertyDependencyNames)
-            {
-                // A bare visible name (see ResolveVisibleName): the chain's property first.
-                if (TryLookupSummary(level, dependencyName, out _, out _, out var summary))
-                {
-                    names = sets.Union(names, sets.Adopt(summary));
-                    continue;
-                }
-
-                var provided = ReferenceFrame(new PendingReference(dependencyName, []), level, site, boundOwners);
-                yield return provided;
-                names = sets.Union(names, provided.Result);
-            }
-
             foreach (var pending in seed.PendingReferences)
             {
                 var settled = ReferenceFrame(pending, level, site, boundOwners);
@@ -2724,7 +2711,7 @@ internal static class PropertyExposureResolver
     /// it, by reference) of the owners at and above that level. It is exactly what decides the enclosing
     /// declarations' exposure: <see cref="ClassifyDeclaredProperty"/> reads nothing but a property's settled
     /// requirement set, and that set is its value's seed settled the same way — the seed's required
-    /// ancestor-owned names and owner-qualified parameters, the summaries of the names it reads, and the settlement
+    /// ancestor-owned names and owner-qualified parameters, and the settlement
     /// of every reference that escapes the family (<c>PendingResolution.ResolveSeed</c>).
     /// <para>A materialized branch may require nothing of an enclosing owner beyond this set
     /// (<see cref="UnchargedByFamily"/>). The classification itself is never revised: it is static, decided before

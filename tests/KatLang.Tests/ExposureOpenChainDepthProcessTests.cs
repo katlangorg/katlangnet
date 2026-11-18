@@ -8,8 +8,9 @@ namespace KatLang.Tests;
 /// the next link's, and so on, recursing on the host stack once per link; a program of a few hundred
 /// links killed the process: on a 1 MiB Release thread the opened chain
 /// (<c>NestedOwnerChain(700, last: "p")</c>) overflowed after about 560 links, the dotted chain after
-/// about 1,280, the mixed chain sooner. The level expansion now runs on an explicit stack and carries
-/// an escaping reference outward without settling it (<c>ExpandAtLevel</c>, <c>AddEscaping</c>), and
+/// about 1,280, the mixed chain sooner. The level expansion now carries an escaping reference outward
+/// without settling it (<c>ExpandAtLevel</c>, <c>AddEscaping</c>), so nothing in it nests (it first ran on an
+/// explicit stack and is one loop since November 2026), and
 /// the exposure settlement that resolves it is iterative too. A stack overflow cannot be
 /// caught, so the probe runs in a child process — the source is generated before the constrained
 /// thread starts, and only the front-end operation itself runs on a thread of exactly 1 MiB
