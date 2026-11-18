@@ -196,8 +196,12 @@ internal sealed class PartitionedSet<TKey>
 {
     private readonly PartitionedMap<TKey, bool> _entries;
 
-    internal PartitionedSet(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf)
-        => _entries = new PartitionedMap<TKey, bool>(comparer, partitionOf);
+    /// <summary>
+    /// A set with a partition table of its own; <paramref name="promptReclaim"/> selects the table's
+    /// reclamation (<see cref="BindingContextPartitionTable"/>).
+    /// </summary>
+    internal PartitionedSet(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf, bool promptReclaim = false)
+        => _entries = new PartitionedMap<TKey, bool>(comparer, partitionOf, promptReclaim);
 
     /// <summary>A set whose partitions live in slot <paramref name="store"/> of a shared table.</summary>
     internal PartitionedSet(
@@ -219,6 +223,9 @@ internal sealed class PartitionedSet<TKey>
 
     /// <summary>TEST SEAM: see <see cref="PartitionedMap{TKey, TValue}.LivePartitionCount"/>.</summary>
     internal int LivePartitionCount() => _entries.LivePartitionCount();
+
+    /// <summary>TEST SEAM: see <see cref="PartitionedMap{TKey, TValue}.PromptTableCapacity"/>.</summary>
+    internal int PromptTableCapacity => _entries.PromptTableCapacity;
 }
 
 /// <summary>
@@ -242,10 +249,12 @@ internal sealed class PartitionedSet<TKey>
 /// the table fills. Which entry a key finds is the same in both forms. Its users: the zero-argument
 /// property cache's published entries and statistics key sets (property-cache prompt reclaim,
 /// 2026-11-17; a local-only property per loop step measured 61.5 / 109 / 214 MiB peak in Release at
-/// 10⁵ / 10⁶ / 3·10⁶ steps with the other form), the runtime-alias binding cells
-/// (ALIAS-CELL-LIFETIME), the per-site callee memos and the observed plan-formation witness. The
-/// <see cref="ConditionalWeakTable{TKey, TValue}"/> form remains for the deconstruction shared-bind memo
-/// and the statistics key set of an uncached run.</para>
+/// 10⁵ / 10⁶ / 3·10⁶ steps with the other form), the deconstruction shared-bind memo and the statistics
+/// key set of an uncached run (deconstruction-memo prompt reclaim, 2026-11-18; a local-only
+/// deconstruction per loop step measured 63.6 / 101.3 / 156.3 MiB with the other form), the
+/// runtime-alias binding cells (ALIAS-CELL-LIFETIME), the per-site callee memos and the observed
+/// plan-formation witness. No library store uses the <see cref="ConditionalWeakTable{TKey, TValue}"/>
+/// form any more; it remains the stores' default, which the store-level tests exercise.</para>
 /// </summary>
 internal sealed class BindingContextPartitionTable
 {
@@ -309,6 +318,29 @@ internal sealed class BindingContextPartitionTable
     internal int PromptCapacity => _prompt?.Capacity ?? 0;
 
     /// <summary>
+    /// TEST SEAM (null in production): called before each array the prompt-reclaim table's reclamation
+    /// allocates — it allocates only when it doubles the table —, with which array it is, so a test can fail
+    /// that allocation (throw an <see cref="OutOfMemoryException"/>) and check that the table is left exactly
+    /// as it was. Only the prompt-reclaim form has the hook.
+    /// </summary>
+    internal Action<ReclaimAllocation>? PromptReclaimAllocationTestHook
+    {
+        get => _prompt?.AllocationTestHook;
+        set => (_prompt ?? throw new InvalidOperationException("Only a prompt-reclaim table reclaims in place."))
+            .AllocationTestHook = value;
+    }
+
+    /// <summary>The arrays a reclamation that doubles the prompt-reclaim table allocates (<see cref="PromptReclaimAllocationTestHook"/>).</summary>
+    internal enum ReclaimAllocation
+    {
+        /// <summary>The doubled entry array.</summary>
+        Entries,
+
+        /// <summary>The doubled bucket array.</summary>
+        Buckets,
+    }
+
+    /// <summary>
     /// The PROMPT-RECLAIM weak association identity OBJECT → slots: a chained hash table of
     /// <see cref="DependentHandle"/>s (ephemerons — the slots are reachable through the table only
     /// while their identity is reachable, even when they refer back to it), hashed and compared by
@@ -319,17 +351,22 @@ internal sealed class BindingContextPartitionTable
     /// run still owns when its table becomes unreachable (the one finalizer below).
     /// <para>Sequential, like the stores that use it, and lock-free: the caller serializes access. The
     /// alias cell store, the callee memos and the plan witness do so with their locks (internal test
-    /// seams read them from other threads while a run is suspended); the property cache by the run's ONE
-    /// evaluation flow, with no lock — no operation here awaits, calls back into evaluation or runs user
+    /// seams read them from other threads while a run is suspended); the property cache, the
+    /// deconstruction shared-bind memo and the uncached statistics set by the run's ONE evaluation flow,
+    /// with no lock — no operation here awaits, calls back into evaluation or runs user
     /// code, so the operations of one run never overlap, and an async continuation that moves the flow
     /// to another thread starts only after the previous operation returned (the await hand-off publishes
-    /// its writes). A handle's target is read only for an identity the caller holds, which is therefore
-    /// alive for the whole lookup; <see cref="Reclaim"/> disposes a handle only once its target is gone,
+    /// its writes). A lookup reads a dependent only after matching the target to the identity the caller
+    /// holds for the whole lookup; <see cref="Reclaim"/> disposes a handle only once its target is gone,
     /// which no live key can name, and moves only the entries, never a partition a caller holds. The
     /// garbage collector clears a dead entry's target and dependent concurrently in either form; the one
     /// finalizer runs only once the table itself is unreachable, and every operation keeps the table
     /// alive until its last handle access. A DEBUG build checks the sequential premise: an operation that
     /// begins while another is still running throws instead of racing a reclamation.</para>
+    /// <para><b>Failure atomicity.</b> If either array allocation in <see cref="Reclaim"/> fails, the
+    /// entries, handles and bucket chains retain their original layout. If the subsequent handle allocation
+    /// in <see cref="Add"/> fails, the table retains the completed reclamation. In either case the attempted
+    /// addition publishes nothing, all live associations remain reachable, and a later addition can retry.</para>
     /// </summary>
     private sealed class EphemeronSlots
     {
@@ -346,6 +383,9 @@ internal sealed class BindingContextPartitionTable
         private Entry[] _entries = new Entry[InitialCapacity];
         private int _used;
         private int _operating; // 1 while an operation runs; touched only by DEBUG builds (the sequential tripwire)
+
+        // TEST SEAM (null in production): see BindingContextPartitionTable.PromptReclaimAllocationTestHook.
+        internal Action<ReclaimAllocation>? AllocationTestHook;
 
         ~EphemeronSlots()
         {
@@ -385,19 +425,29 @@ internal sealed class BindingContextPartitionTable
         internal object?[] Add(object identity, object?[] slots)
         {
             EnterOperation();
-            if (_used == _entries.Length)
-                Reclaim();
+            // A failed allocation preserves all live associations. Release the tripwire on the way out.
+            // In a release build the finally is empty, and the optimizing JIT
+            // removes it: the tier-1 code of this method has no exception-handling region.
+            try
+            {
+                if (_used == _entries.Length)
+                    Reclaim();
 
-            var hashCode = RuntimeHelpers.GetHashCode(identity);
-            ref var entry = ref _entries[_used];
-            entry.Handle = new DependentHandle(identity, slots);
-            entry.HashCode = hashCode;
-            var bucket = hashCode & (_buckets.Length - 1);
-            entry.Next = _buckets[bucket];
-            _buckets[bucket] = ++_used;
-            GC.KeepAlive(this);
-            LeaveOperation();
-            return slots;
+                var hashCode = RuntimeHelpers.GetHashCode(identity);
+                ref var entry = ref _entries[_used];
+                // The handle is allocated before the entry changes.
+                entry.Handle = new DependentHandle(identity, slots);
+                entry.HashCode = hashCode;
+                var bucket = hashCode & (_buckets.Length - 1);
+                entry.Next = _buckets[bucket];
+                _buckets[bucket] = ++_used;
+                GC.KeepAlive(this);
+                return slots;
+            }
+            finally
+            {
+                LeaveOperation();
+            }
         }
 
         internal int LiveCount(int store)
@@ -419,8 +469,9 @@ internal sealed class BindingContextPartitionTable
 
         // THE SEQUENTIAL TRIPWIRE (DEBUG builds; the calls are compiled out of release builds): an
         // operation that begins while another one is still running throws, so a caller that breaks the
-        // serialization above fails loudly in the test suites instead of racing a reclamation. An
-        // operation that throws leaves the tripwire set (the table is then suspect anyway).
+        // serialization above fails loudly in the test suites instead of racing a reclamation. The
+        // rejected operation touched nothing and releases nothing. Add, the one operation that can fail,
+        // releases the tripwire when it fails too: a failed allocation leaves the table usable.
         [Conditional("DEBUG")]
         private void EnterOperation()
         {
@@ -434,11 +485,37 @@ internal sealed class BindingContextPartitionTable
 
         // The table is full: free the entries whose identity is gone, compact the rest to the front
         // and relink the buckets; double the table only when more than half of it is still alive.
+        // FAILURE-ATOMIC: the doubled arrays — the only allocations — exist before anything changes,
+        // so a failed allocation leaves the entries, their handles and the bucket chains as they were.
+        // (Compacting first and doubling after, as this did until 2026-11-18, left chains that named
+        // moved entries when the doubling failed: a later lookup missed an identity the table still
+        // held, and its next addition stored a second entry for it.)
         private void Reclaim()
         {
             var entries = _entries;
+            var used = _used;
+
+            // Count the entries whose identity is alive, changing nothing. The collector can clear more
+            // targets before the compaction below, never revive one, so this bounds what it keeps.
+            var alive = 0;
+            for (var index = 0; index < used; index++)
+            {
+                if (entries[index].Handle.Target is not null)
+                    alive++;
+            }
+
+            var compacted = entries;
+            var buckets = _buckets;
+            if (alive > entries.Length / 2)
+            {
+                compacted = AllocateForReclaim<Entry>(entries.Length * 2, ReclaimAllocation.Entries);
+                buckets = AllocateForReclaim<int>(entries.Length * 2, ReclaimAllocation.Buckets);
+            }
+
+            // Nothing below allocates or throws.
+            var doubled = !ReferenceEquals(compacted, entries);
             var live = 0;
-            for (var index = 0; index < _used; index++)
+            for (var index = 0; index < used; index++)
             {
                 if (entries[index].Handle.Target is null)
                 {
@@ -446,33 +523,37 @@ internal sealed class BindingContextPartitionTable
                     continue;
                 }
 
-                if (live != index)
-                    entries[live] = entries[index];
+                if (doubled || live != index)
+                    compacted[live] = entries[index];
                 live++;
             }
 
-            // Every slot past the live prefix holds a freed handle or a moved entry's stale copy.
-            Array.Clear(entries, live, _used - live);
-            _used = live;
-
-            if (live > entries.Length / 2)
+            if (!doubled)
             {
-                Array.Resize(ref _entries, entries.Length * 2);
-                entries = _entries;
-                _buckets = new int[entries.Length];
-            }
-            else
-            {
-                Array.Clear(_buckets);
+                // Every slot past the live prefix holds a freed handle or a moved entry's stale copy.
+                Array.Clear(entries, live, used - live);
+                Array.Clear(buckets);
             }
 
-            var mask = _buckets.Length - 1;
+            // A doubled table drops the old array whole: its copies of the moved handles are never
+            // disposed, and the finalizer reads only the current array.
+            var mask = buckets.Length - 1;
             for (var index = 0; index < live; index++)
             {
-                var bucket = entries[index].HashCode & mask;
-                entries[index].Next = _buckets[bucket];
-                _buckets[bucket] = index + 1;
+                var bucket = compacted[index].HashCode & mask;
+                compacted[index].Next = buckets[bucket];
+                buckets[bucket] = index + 1;
             }
+
+            _entries = compacted;
+            _buckets = buckets;
+            _used = live;
+        }
+
+        private T[] AllocateForReclaim<T>(int length, ReclaimAllocation allocation)
+        {
+            AllocationTestHook?.Invoke(allocation);
+            return new T[length];
         }
     }
 }

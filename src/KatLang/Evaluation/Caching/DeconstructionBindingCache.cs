@@ -154,15 +154,32 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
 /// under a limit it formerly reached. Skipping the source read also skips its invocation depth level,
 /// so a deeper later consumer may lower peak depth and avoid a depth refusal. Values, effects, effect
 /// order and non-resource errors are unchanged.</para>
+/// <para><b>Storage and access (deconstruction-memo prompt reclaim, 2026-11-18).</b> The stored binds'
+/// binding-context partitions live in the PROMPT-RECLAIM form of <see cref="BindingContextPartitionTable"/>:
+/// a dead identity's bind is freed in place the next time the table fills, instead of when the replaced,
+/// finalizable containers of a <see cref="ConditionalWeakTable{TKey, TValue}"/> are finalized, so a loop
+/// that deconstructs a local-only value per step keeps a flat peak. Which bind an execution finds is the
+/// same. That form is sequential and takes no lock, and every access here is sequential: the evaluator
+/// constructs one memo per run (<c>Evaluator.CreateRootCtx</c>; the stateless
+/// <see cref="UncachedDeconstructionBindingCache"/> serves contexts built outside a run), and only that
+/// run's ONE evaluation flow reaches it — the synchronous evaluator, or the async twin, which awaits each
+/// <see cref="GetOrBindAsync"/> before it continues. Each table operation (the lookup, the addition, the
+/// live-partition test seam) runs to completion without awaiting, calling back into evaluation or running
+/// user code: <c>bind</c>, a nested bind of any group included, runs strictly between the lookup and the
+/// addition, and a bind that fails or throws (a host exception, cancellation) adds nothing and leaves only
+/// the transient group guard to unwind. A continuation that resumes the flow on another thread does so
+/// after the previous operation returned, and the await hand-off publishes its writes. A DEBUG build
+/// checks the premise: an operation that begins while another is running throws.</para>
 /// </summary>
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {
     // Stored binds, partitioned by the binding-context identity of their SOURCE entry
     // (PartitionedMap): a bind over a local-only source is stored while that identity is reachable, a
     // bind over an exported source for the run. The comparer compares that identity by reference
-    // (through the source key), so no execution can reach a bind after its identity is gone.
+    // (through the source key), so no execution can reach a bind after its identity is gone. The
+    // partition table is the prompt-reclaim form (see the class remarks).
     private readonly PartitionedMap<DeconstructionBindingExecution, IReadOnlyDictionary<string, NeedCell>> _results =
-        new(DeconstructionBindingCacheKeyComparer.Instance, BindingContextPartitions.OfDeconstruction);
+        new(DeconstructionBindingCacheKeyComparer.Instance, BindingContextPartitions.OfDeconstruction, promptReclaim: true);
 
     // Transient: group identity -> number of its binds currently running (absent when none).
     private readonly Dictionary<object, int> _runningBinds = new(ReferenceEqualityComparer.Instance);
@@ -172,6 +189,9 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
 
     /// <summary>TEST SEAM: live binding-context partitions of the stored binds.</summary>
     internal int LivePartitionCount() => _results.LivePartitionCount();
+
+    /// <summary>TEST SEAM: the entry capacity of the stored binds' prompt-reclaim partition table.</summary>
+    internal int PromptTableCapacity => _results.PromptTableCapacity;
 
     /// <summary>Number of groups with a bind still running (zero between accesses).</summary>
     internal int RunningGroupCount => _runningBinds.Count;

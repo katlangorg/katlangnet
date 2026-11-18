@@ -822,7 +822,7 @@ public class ContinuousIntegrationPolicyTests
             ["KatLang.Tests.SemanticTesting.SemanticBatchOnlyCampaignTests"] =
                 "its children are the semantic campaign's planted batch and single-case workers (a planted wrong observation, batch-only classification and sequence reduction); they run small generated programs, not deep shapes, so no frame-size frontier is swept",
             ["KatLang.Tests.LocalOnlyLoopStepPeakMemoryProcessTests"] =
-                "its children measure peak working set, the flat-memory guards of a binding context minted per loop step (a local-only property, one holding a call reference, a local-only runtime alias) over the prompt-reclaim partition tables; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
+                "its children measure peak working set, the flat-memory guards of a binding context minted per loop step (a local-only property, one holding a call reference, a local-only runtime alias, a local-only deconstruction, and that deconstruction under the uncached cache's statistics) over the prompt-reclaim partition tables; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
 
     /// <summary>

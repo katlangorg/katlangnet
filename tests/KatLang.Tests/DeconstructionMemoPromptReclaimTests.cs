@@ -1,0 +1,470 @@
+using System.Globalization;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using KatLang.Evaluation;
+using KatLang.Evaluation.Caching;
+using Xunit.Abstractions;
+
+namespace KatLang.Tests;
+
+/// <summary>
+/// DECONSTRUCTION-MEMO PROMPT RECLAIM (2026-11-18; C#-only storage, implementation-only, Lean unchanged): the
+/// deconstruction shared-bind memo (<see cref="RunScopedDeconstructionBindingCache"/>) and the seen-key statistics of
+/// <see cref="UncachedZeroArgPropertyResultCache.CreateForRun"/> keep their binding-context partitions in the
+/// PROMPT-RECLAIM form of <see cref="BindingContextPartitionTable"/>, like the property cache since 2026-11-17. That
+/// form is sequential and takes no lock: the memo relies on a run being ONE evaluation flow, which an async
+/// continuation may move to another thread only after the previous table operation returned.
+/// <para>These tests drive that model through <see cref="RunScopedDeconstructionBindingCache.GetOrBindAsync"/>:
+/// several independent memos at once, each a sequential flow that reads a partition on two threads and suspends
+/// inside owning binds while collections clear dead identities. The flows bind, hit, nest, fail and cancel. Every
+/// bind, stored bind and hit is the one the memo's store invariant gives, no bind a live execution can name is lost,
+/// dead partitions leave the table, and the table stays far smaller than the identities that passed through it. In
+/// DEBUG builds the table also fails loudly if two operations ever overlap.</para>
+/// </summary>
+public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper output)
+{
+    private const int Flows = 8;
+    private const int Rounds = 4_096;
+    private const int KeepEvery = 128;
+    private const int CollectEvery = 256;
+
+    [Fact]
+    public void TheDeconstructionMemoAndTheUncachedStatistics_UseThePromptReclaimTable()
+    {
+        // The ConditionalWeakTable form reports a capacity of 0.
+        Assert.True(new RunScopedDeconstructionBindingCache().PromptTableCapacity > 0);
+        Assert.True(UncachedZeroArgPropertyResultCache.CreateForRun().PromptTableCapacity > 0);
+        Assert.Equal(0, UncachedZeroArgPropertyResultCache.Instance.PromptTableCapacity); // no statistics, no table
+
+        // The memo a run constructs for itself.
+        var observations = new EvaluationObservations();
+        var parsed = Parser.Parse("a, b = 1, 2\na + b");
+        Assert.False(parsed.HasErrors);
+        var (result, _) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(parsed.Root), observations: observations);
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+        Assert.True(observations.DeconstructionBindingCache!.PromptTableCapacity > 0);
+    }
+
+    [Fact]
+    public async Task AsyncMemo_BindsHitsAndDropsPartitions_FromSeveralThreads()
+    {
+        var reports = await Task.WhenAll(Enumerable.Range(0, Flows).Select(_ => Task.Run(RunFlowAsync)));
+        ForceFullCollection();
+
+        foreach (var report in reports)
+        {
+            var flow = report.Flow;
+            var live = flow.Memo.LivePartitionCount();
+            output.WriteLine(
+                $"flow: {flow.Threads.Count} threads, {flow.Binds} binds, {flow.Memo.Count} stored, "
+                + $"table capacity {report.Capacity} after {Rounds} identities, {live} live partitions ({report.Kept.Count} kept)");
+
+            // The sequential flow really moved between threads.
+            Assert.True(flow.Threads.Count >= 2, $"one flow ran on {flow.Threads.Count} thread(s)");
+            Assert.Equal(flow.ExpectedBinds, flow.Binds);
+            Assert.Equal(flow.ExpectedStored, flow.Memo.Count);
+            Assert.Equal(0, flow.Memo.RunningGroupCount);
+            // Dead identities were freed in place: the table never held all of them.
+            Assert.InRange(report.Capacity, 8, Rounds / 2);
+            // Only the kept identities still own partitions (a straggler or two may await its collection).
+            Assert.InRange(live, report.Kept.Count, report.Kept.Count + 2);
+
+            // No bind a live execution can name was lost: every kept identity still hits both of its stored binds.
+            foreach (var kept in report.Kept)
+            {
+                Assert.Same(kept.Owned, await flow.HitAsync(flow.Owned(kept.Identity)));
+                Assert.Same(kept.OtherGroup, await flow.HitAsync(flow.OtherGroup(kept.Identity)));
+            }
+
+            Assert.Same(flow.ExportedBind, await flow.HitAsync(flow.Exported()));
+            GC.KeepAlive(report.Kept);
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentAsyncRuns_OfALoopWithALocalDeconstructionThatSuspendsEveryStep_DropTheirPartitions()
+    {
+        const int runs = 4;
+        const int steps = 20_000;
+        var outcomes = await Task.WhenAll(Enumerable.Range(0, runs).Select(_ => Task.Run(async () =>
+        {
+            var observations = new EvaluationObservations();
+            var live = -1;
+            var operations = HostOperations.Create(
+                // Every step's deconstruction source suspends the run inside the shared bind: GetOrBindAsync's
+                // continuation, and with it the bind's addition to the table, may resume on another thread.
+                HostOperation.CreateAsync("hop", async (_, _) =>
+                {
+                    await Task.Yield();
+                    return new Result.Atom(0);
+                }),
+                HostOperation.CreateAsync("probe", async (_, _) =>
+                {
+                    await Task.Yield();
+                    ForceFullCollection();
+                    live = observations.DeconstructionBindingCache!.LivePartitionCount();
+                    return new Result.Atom(0);
+                }));
+            var source = "Step(x) = { a, b = x + 1 + hop() * 0, x\na + b * 0 }\n"
+                + $"Step(0).repeat({steps.ToString(CultureInfo.InvariantCulture)}) + probe() * 0";
+            var parsed = await SourceProvenance.ParseValidAsync(source, new RunOptions { HostOperations = operations });
+            var (result, _) = await Evaluator.RunCountedObservedAsync(
+                new Expr.AlgorithmExpr(parsed.Root),
+                zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(),
+                observations: observations,
+                hostOperations: operations);
+            var memo = observations.DeconstructionBindingCache!;
+            return (Result: result, Stored: memo.Count, FullBinds: observations.DeconstructionFullBindCount,
+                Capacity: memo.PromptTableCapacity, Live: live);
+        })));
+
+        foreach (var outcome in outcomes)
+        {
+            output.WriteLine($"run: {outcome.Stored} stored binds, {outcome.FullBinds} full binds, "
+                + $"table capacity {outcome.Capacity}, {outcome.Live} live partitions at the probe");
+            Assert.True(outcome.Result.IsOk, outcome.Result.IsError ? outcome.Result.Error.ToString() : "");
+            Assert.Equal(steps.ToString(CultureInfo.InvariantCulture), SixRouteAgreement.Neutral(outcome.Result.Value.Value));
+            // One stored bind per step, which the step's second target reads instead of binding again.
+            Assert.Equal(steps, outcome.Stored);
+            Assert.Equal(steps, outcome.FullBinds);
+            Assert.InRange(outcome.Live, 0, 64);
+            Assert.InRange(outcome.Capacity, 8, steps / 2);
+        }
+    }
+
+    // ── One sequential flow: one memo, used from whatever thread its continuations reach ──
+
+    private sealed record Kept(object Identity, IReadOnlyDictionary<string, NeedCell> Owned, IReadOnlyDictionary<string, NeedCell> OtherGroup);
+
+    private sealed record FlowReport(Flow Flow, List<Kept> Kept, int Capacity);
+
+    private static async Task<FlowReport> RunFlowAsync()
+    {
+        var flow = new Flow();
+        await flow.BindExportedAsync();
+        var kept = new List<Kept>();
+        for (var round = 0; round < Rounds; round++)
+        {
+            // The round's identity lives in the round's own state machine, so it dies when the round ends
+            // unless the round returns it to be kept.
+            if (await flow.RoundAsync(round, keep: round % KeepEvery == 0) is { } identity)
+                kept.Add(identity);
+            if (round % CollectEvery == CollectEvery - 1)
+                GC.Collect(1, GCCollectionMode.Forced, blocking: true);
+        }
+
+        return new FlowReport(flow, kept, flow.Memo.PromptTableCapacity);
+    }
+
+    private sealed class Flow
+    {
+        private readonly object _run = new();
+        private readonly object _owner = new();
+        // One group's actual pattern list, and its source bindings: the group's own source, and a second source a
+        // nested bind of the same group reads.
+        private readonly object _group = new();
+        private readonly object _pattern = new();
+        private readonly object _source = new();
+        private readonly object _nestedSource = new();
+        // A second group, bound inside the first group's running bind (so it is stored), and a group that fails or
+        // is cancelled.
+        private readonly object _otherGroup = new();
+        private readonly object _otherPattern = new();
+        private readonly object _failingGroup = new();
+        private readonly object _exportedGroup = new();
+
+        internal RunScopedDeconstructionBindingCache Memo { get; } = new();
+        internal HashSet<int> Threads { get; } = [];
+        internal IReadOnlyDictionary<string, NeedCell>? ExportedBind { get; private set; }
+        internal int Binds { get; private set; }
+        internal int ExpectedBinds { get; private set; }
+        internal int ExpectedStored { get; private set; }
+
+        internal DeconstructionBindingExecution Owned(object identity) => new(_group, _pattern, Key(_source, identity));
+
+        internal DeconstructionBindingExecution OtherGroup(object identity) => new(_otherGroup, _otherPattern, Key(_source, identity));
+
+        internal DeconstructionBindingExecution Exported()
+            => new(_exportedGroup, _pattern, Key(_source, ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity));
+
+        private DeconstructionBindingExecution Nested(object identity) => new(_group, _pattern, Key(_nestedSource, identity));
+
+        private DeconstructionBindingExecution Failing(object identity) => new(_failingGroup, _pattern, Key(_source, identity));
+
+        private ZeroArgPropertyCacheKey Key(object binding, object identity) => new(_owner, binding, identity, _run);
+
+        internal async Task<IReadOnlyDictionary<string, NeedCell>> HitAsync(DeconstructionBindingExecution execution)
+        {
+            var hit = await Memo.GetOrBindAsync(execution, MustHit);
+            Assert.True(hit.IsOk);
+            return hit.Value;
+        }
+
+        internal async Task BindExportedAsync()
+        {
+            ExportedBind = Value(await Memo.GetOrBindAsync(Exported(), () => Bind(-7)));
+            ExpectedBinds++;
+            ExpectedStored++;
+        }
+
+        /// <summary>One loop step's binding context: returns what the step kept, only when it is kept.</summary>
+        internal async Task<Kept?> RoundAsync(int round, bool keep)
+        {
+            var identity = new object();
+            Note();
+
+            // An owning bind that suspends and, while its group runs, binds the same group again
+            // (never stored) and binds another group (stored).
+            IReadOnlyDictionary<string, NeedCell>? otherGroup = null;
+            var owned = Value(await Memo.GetOrBindAsync(Owned(identity), async () =>
+            {
+                Binds++;
+                await Task.Yield();
+                Note();
+                Assert.Equal(1, Memo.RunningGroupCount);
+                var nested = Value(await Memo.GetOrBindAsync(Nested(identity), () => Bind(round + 1)));
+                Assert.Equal(round + 1, ValueOf(nested));
+                otherGroup = Value(await Memo.GetOrBindAsync(OtherGroup(identity), () => Bind(-round)));
+                Assert.Same(otherGroup, await HitAsync(OtherGroup(identity)));
+                return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(round));
+            }));
+            ExpectedBinds += 3;
+            ExpectedStored += 2;
+            Assert.Equal(round, ValueOf(owned));
+            Note();
+            Assert.Same(owned, await HitAsync(Owned(identity)));
+            if (round == 0)
+            {
+                // Read this local partition on a dedicated thread. A yield can resume on the same worker.
+                var hit = await Task.Factory.StartNew(() =>
+                {
+                    Note();
+                    return HitAsync(Owned(identity));
+                }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+                Assert.Same(owned, hit);
+            }
+            Assert.Same(ExportedBind, await HitAsync(Exported()));
+
+            // The nested execution was not stored: outside its group's running bind it binds again, and is stored now.
+            var rebound = Value(await Memo.GetOrBindAsync(Nested(identity), () => Bind(round + 2)));
+            Assert.Equal(round + 2, ValueOf(rebound));
+            Assert.Same(rebound, await HitAsync(Nested(identity)));
+            ExpectedBinds++;
+            ExpectedStored++;
+
+            if (round % 7 == 2)
+            {
+                // A failure is never stored: the next request binds again.
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    var failed = await Memo.GetOrBindAsync(Failing(identity), async () =>
+                    {
+                        Binds++;
+                        await Task.Yield();
+                        return new EvalError.ArityMismatch(2, 1);
+                    });
+                    ExpectedBinds++;
+                    Assert.True(failed.IsError);
+                    Assert.Equal(0, Memo.RunningGroupCount);
+                }
+            }
+
+            if (round % 11 == 3)
+            {
+                // Cancellation propagates, releases the group guard and stores nothing; a later request binds.
+                using var stop = new CancellationTokenSource();
+                await stop.CancelAsync();
+                var thrown = await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+                    await Memo.GetOrBindAsync(Failing(identity), async () =>
+                    {
+                        Binds++;
+                        await Task.Yield();
+                        stop.Token.ThrowIfCancellationRequested();
+                        return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(0));
+                    }));
+                Assert.Equal(stop.Token, thrown.CancellationToken);
+                Assert.Equal(0, Memo.RunningGroupCount);
+                var bound = Value(await Memo.GetOrBindAsync(Failing(identity), () => Bind(round + 3)));
+                Assert.Same(bound, await HitAsync(Failing(identity)));
+                ExpectedBinds += 2;
+                ExpectedStored++;
+            }
+
+            Note();
+            return keep ? new Kept(identity, owned, otherGroup!) : null;
+        }
+
+        private ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> Bind(int value)
+        {
+            Binds++;
+            return new(EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(value)));
+        }
+
+        private void Note() => Threads.Add(Environment.CurrentManagedThreadId);
+    }
+
+    private static IReadOnlyDictionary<string, NeedCell> Bound(int value)
+        => new Dictionary<string, NeedCell>(StringComparer.Ordinal) { ["x"] = NeedCell.Ready(new(new Result.Atom(value), 1)) };
+
+    private static ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> MustHit()
+        => throw new InvalidOperationException("a stored bind must be served without binding");
+
+    private static IReadOnlyDictionary<string, NeedCell> Value(EvalResult<IReadOnlyDictionary<string, NeedCell>> result)
+    {
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+        return result.Value;
+    }
+
+    private static int ValueOf(IReadOnlyDictionary<string, NeedCell> bound)
+    {
+        var demanded = bound["x"].Demand();
+        Assert.True(demanded.IsOk);
+        return int.Parse(SixRouteAgreement.Neutral(demanded.Value.Value), CultureInfo.InvariantCulture);
+    }
+
+    private static void ForceFullCollection()
+    {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+    }
+}
+
+/// <summary>
+/// FAILURE ATOMICITY of the prompt-reclaim partition table (2026-11-18): a reclamation allocates only when it doubles the
+/// table, and it allocates both doubled arrays before it changes anything. An allocation that fails — injected here
+/// through the table's test seam (<see cref="BindingContextPartitionTable.PromptReclaimAllocationTestHook"/>) — leaves
+/// every entry, handle and bucket chain as it was: every identity the table held is still found with its very slots,
+/// the failed addition added nothing, a DEBUG build's overlap tripwire is released, and the next addition reclaims and
+/// succeeds. Before, the table compacted its entries first and doubled after, so a failure there left bucket chains that
+/// named moved entries, and a lookup missed identities the table still held.
+/// </summary>
+public sealed class PromptReclaimTableFailureAtomicityTests
+{
+    private const int InitialCapacity = 8;
+    private const int Dead = 2;
+
+    [Theory]
+    [InlineData(nameof(BindingContextPartitionTable.ReclaimAllocation.Entries))]
+    [InlineData(nameof(BindingContextPartitionTable.ReclaimAllocation.Buckets))]
+    public void AFailedReclaimAllocation_LeavesTheTableAsItWas_AndTheNextAdditionSucceeds(string failingAllocation)
+    {
+        var failing = Enum.Parse<BindingContextPartitionTable.ReclaimAllocation>(failingAllocation);
+        var table = new BindingContextPartitionTable(storeCount: 1, promptReclaim: true);
+        // The first entries' identities die, so a reclamation would move every later entry down.
+        AddDeadIdentities(table, Dead);
+        var live = Enumerable.Range(0, InitialCapacity - Dead).Select(_ => new object()).ToArray();
+        var slots = live.Select(identity => Add(table, identity)).ToArray();
+        ForceFullCollection();
+        Assert.Equal(InitialCapacity, table.PromptCapacity);
+        Assert.Equal(InitialCapacity, Used(table)); // full: the next addition reclaims, and doubles (6 of 8 alive)
+
+        var requested = new List<BindingContextPartitionTable.ReclaimAllocation>();
+        var injected = new OutOfMemoryException("injected allocation failure");
+        table.PromptReclaimAllocationTestHook = allocation =>
+        {
+            requested.Add(allocation);
+            if (allocation == failing)
+                throw injected;
+        };
+
+        var extra = new object();
+        Assert.Same(injected, Assert.Throws<OutOfMemoryException>(() => table.GetOrCreate(extra)));
+        Assert.Equal(failing == BindingContextPartitionTable.ReclaimAllocation.Entries ? 1 : 2, requested.Count);
+        Assert.Equal(failing, requested[^1]);
+
+        // Nothing changed: every held identity found with its very slots, nothing added, the same capacity and entries.
+        AssertTripwireReleased(table);
+        // Check before traversing chains: partial compaction can leave a chain pointing back into itself.
+        Assert.Equal(InitialCapacity, table.PromptCapacity);
+        Assert.Equal(InitialCapacity, Used(table));
+        for (var index = 0; index < live.Length; index++)
+            Assert.Same(slots[index], table.Find(live[index]));
+        Assert.Null(table.Find(extra));
+        Assert.Equal(live.Length, table.LivePartitionCount(0));
+
+        // The next addition reclaims the dead entries, doubles the table and adds.
+        table.PromptReclaimAllocationTestHook = null;
+        var extraSlots = Add(table, extra);
+        Assert.Equal(2 * InitialCapacity, table.PromptCapacity);
+        Assert.Equal(live.Length + 1, Used(table));
+        for (var index = 0; index < live.Length; index++)
+            Assert.Same(slots[index], table.Find(live[index]));
+        Assert.Same(extraSlots, table.Find(extra));
+        Assert.Equal(live.Length + 1, table.LivePartitionCount(0));
+        GC.KeepAlive(live);
+        GC.KeepAlive(extra);
+    }
+
+    [Fact]
+    public void AReclamationThatDoesNotDouble_AllocatesNothing()
+    {
+        var table = new BindingContextPartitionTable(storeCount: 1, promptReclaim: true);
+        // Half or fewer of the entries alive: the reclamation compacts in place.
+        AddDeadIdentities(table, InitialCapacity / 2);
+        var live = Enumerable.Range(0, InitialCapacity / 2).Select(_ => new object()).ToArray();
+        var slots = live.Select(identity => Add(table, identity)).ToArray();
+        ForceFullCollection();
+        table.PromptReclaimAllocationTestHook = allocation => throw new OutOfMemoryException($"unexpected {allocation} allocation");
+
+        var extra = new object();
+        var extraSlots = Add(table, extra);
+        Assert.Equal(InitialCapacity, table.PromptCapacity);
+        Assert.Equal(live.Length + 1, Used(table));
+        for (var index = 0; index < live.Length; index++)
+            Assert.Same(slots[index], table.Find(live[index]));
+        Assert.Same(extraSlots, table.Find(extra));
+        GC.KeepAlive(live);
+        GC.KeepAlive(extra);
+    }
+
+    [Fact]
+    public void OnlyThePromptReclaimForm_HasTheAllocationHook()
+    {
+        var table = new BindingContextPartitionTable(storeCount: 1);
+        Assert.Null(table.PromptReclaimAllocationTestHook);
+        Assert.Throws<InvalidOperationException>(() => table.PromptReclaimAllocationTestHook = static _ => { });
+    }
+
+    private static object?[] Add(BindingContextPartitionTable table, object identity)
+    {
+        var slots = table.GetOrCreate(identity);
+        slots[0] = new object(); // store 0's partition, as a PartitionedMap would add it
+        return slots;
+    }
+
+    // A separate frame, so no dead identity stays reachable from the asserting method's locals.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void AddDeadIdentities(BindingContextPartitionTable table, int count)
+    {
+        for (var index = 0; index < count; index++)
+            Add(table, new object());
+    }
+
+    // The table's private state, read by name (pinned here and by the DEBUG tripwire test, so a rename fails them).
+    private static object Slots(BindingContextPartitionTable table)
+        => typeof(BindingContextPartitionTable).GetField("_prompt", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(table)!;
+
+    private static int Used(BindingContextPartitionTable table)
+    {
+        var slots = Slots(table);
+        return (int)slots.GetType().GetField("_used", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(slots)!;
+    }
+
+    private static void AssertTripwireReleased(BindingContextPartitionTable table)
+    {
+#if DEBUG
+        var slots = Slots(table);
+        Assert.Equal(0, (int)slots.GetType().GetField("_operating", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(slots)!);
+#else
+        GC.KeepAlive(table);
+#endif
+    }
+
+    private static void ForceFullCollection()
+    {
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+    }
+}

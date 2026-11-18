@@ -660,7 +660,11 @@ internal sealed class ZeroArgPropertyPublications(
 
 internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResultCache
 {
-    // Statistics only, partitioned by binding-context identity like the stores of the run-scoped cache.
+    // Statistics only, partitioned by binding-context identity like the stores of the run-scoped cache, in
+    // a prompt-reclaim table (deconstruction-memo prompt reclaim, 2026-11-18), which is sequential. So is
+    // every access: a statistics cache is made for a run (CreateForRun) and evaluated only synchronously —
+    // it is no IAsyncZeroArgPropertyResultCache, so the async twin never takes it —, and GetOrEvaluate adds
+    // the key before `evaluate` runs, never during it.
     private readonly PartitionedSet<ZeroArgPropertyCacheKey>? _seenKeys;
     private readonly ZeroArgPropertyResultCacheStatsCollector? _stats;
     private int _repeatedMissRequests;
@@ -683,7 +687,7 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
     {
         if (trackStatistics)
         {
-            _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey);
+            _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true);
             _stats = new();
         }
     }
@@ -719,6 +723,9 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
 
     /// <summary>TEST SEAM: live binding-context partitions of the seen-key statistics (zero without statistics).</summary>
     internal int LivePartitionCount() => _seenKeys?.LivePartitionCount() ?? 0;
+
+    /// <summary>TEST SEAM: the entry capacity of the seen-key statistics' prompt-reclaim partition table (zero without statistics).</summary>
+    internal int PromptTableCapacity => _seenKeys?.PromptTableCapacity ?? 0;
 }
 
 /// <summary>

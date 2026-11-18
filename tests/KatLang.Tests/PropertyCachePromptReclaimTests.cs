@@ -312,15 +312,21 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
 }
 
 /// <summary>
-/// The peak-memory guards of a binding context minted per loop step (property-cache prompt reclaim, 2026-11-17): a
-/// local-only property per step, a local-only property holding a call reference per step, and a local-only runtime
-/// alias per step. Each program runs in a fresh <see cref="SubprocessProbe"/> child on the default engine
-/// (<see cref="KatLangEngine.Run"/>), which reports its peak working set; the parent compares 10⁵ with 10⁶ rounds.
-/// Measured in Release, one process per run, peak working set at 10⁵ / 10⁶ / 3·10⁶ rounds (the live heap after a
-/// forced collection stayed under 4 MiB in every run): with the property cache's former ConditionalWeakTable the
-/// property loop grew 61.5 / 109.0 / 214.3 MiB and the call-reference loop 61.7 / 103.6 / 170.0 MiB; with the
-/// prompt-reclaim table they stay at 56.5 / 57.0 / 57.2 and 57.6 / 58.1 / 58.1 MiB. The alias loop, whose cells moved
-/// to that table first (ALIAS-CELL-LIFETIME), stays at 57.0 / 57.6 / 57.7 MiB.
+/// The peak-memory guards of a binding context minted per loop step (property-cache prompt reclaim, 2026-11-17;
+/// deconstruction-memo prompt reclaim, 2026-11-18): a local-only property per step, a local-only property holding a
+/// call reference per step, a local-only runtime alias per step, a local-only deconstruction per step, and that
+/// deconstruction under the uncached property cache's statistics. Each program runs in a fresh
+/// <see cref="SubprocessProbe"/> child — on the default engine (<see cref="KatLangEngine.Run"/>), except the
+/// uncached-statistics loop, which no engine run takes and the child runs on the internal evaluator with
+/// <see cref="UncachedZeroArgPropertyResultCache.CreateForRun"/> — and reports its peak working set; the parent
+/// compares 10⁵ with 10⁶ rounds. Measured in Release, one process per run, peak working set at 10⁵ / 10⁶ / 3·10⁶
+/// rounds (the live heap after a forced collection stayed under 4 MiB in every run): with the property cache's
+/// former ConditionalWeakTable the property loop grew 61.5 / 109.0 / 214.3 MiB and the call-reference loop
+/// 61.7 / 103.6 / 170.0 MiB; with the prompt-reclaim table they stay at 56.5 / 57.0 / 57.2 and 57.6 / 58.1 / 58.1 MiB.
+/// The alias loop, whose cells moved to that table first (ALIAS-CELL-LIFETIME), stays at 57.0 / 57.6 / 57.7 MiB. With
+/// the deconstruction memo's former ConditionalWeakTable the deconstruction loop grew 63.6 / 101.3 / 156.3 MiB, and
+/// under the uncached cache, whose seen-key set had that table too, 65.0 / 104.7 / 191.9 MiB; with the prompt-reclaim
+/// table they stay at 58.7 / 59.7 / 59.2 and 58.8 / 59.1 / 59.1 MiB.
 /// </summary>
 public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper output)
 {
@@ -328,9 +334,10 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
     private const string Variant = "KATLANG_LOOP_STEP_PEAK_VARIANT";
     private const string Rounds = "KATLANG_LOOP_STEP_PEAK_ROUNDS";
     private const string Marker = "KATLANG_LOOP_STEP_PEAK_MARKER";
+    private const string UncachedStatisticsDeconstruction = "uncached-statistics-deconstruction";
     private const int FewRounds = 100_000;
     private const int ManyRounds = 1_000_000;
-    // The former table grew by 42–48 MiB between the two sizes; the flat profile by about 1 MiB.
+    // The former tables grew by 38–48 MiB between the two sizes in Release; the flat profile by about 1 MiB.
     private const long AllowedGrowthBytes = 16L * 1024 * 1024;
 
     /// <summary>The loop of <paramref name="variant"/> over <paramref name="rounds"/> rounds; its value is the round count.</summary>
@@ -341,6 +348,8 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
             "local-property" => "G(v) = v + 1\nStep(x) = { P = x.G + 0\nP + 0 }",
             "call-reference-property" => "Cap(meta r) = r\nInc(y) = y + 1\nStep(n) = { R = Cap(Inc(n))\nn + 1 + R.Invoke() * 0 }",
             "runtime-alias" => "G(v) = v + 1\nStep(x) = { A = x.G\nA + 0 }",
+            // Both targets read one shared bind of the step's local-only source.
+            "local-deconstruction" or UncachedStatisticsDeconstruction => "Step(x) = { a, b = x + 1, x\na + b * 0 }",
             _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, "Unknown loop-step variant."),
         };
         return step + "\nStep(0).repeat(" + rounds.ToString(CultureInfo.InvariantCulture) + ")";
@@ -350,6 +359,8 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
     [InlineData("local-property")]
     [InlineData("call-reference-property")]
     [InlineData("runtime-alias")]
+    [InlineData("local-deconstruction")]
+    [InlineData(UncachedStatisticsDeconstruction)]
     public async Task PeakWorkingSet_StaysWithinSixteenMiB_FromTenToTheFifthToTenToTheSixthRounds(string variant)
     {
         var few = await PeakWorkingSetAsync(variant, FewRounds);
@@ -367,8 +378,24 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
             return;
 
         var rounds = int.Parse(Environment.GetEnvironmentVariable(Rounds)!, CultureInfo.InvariantCulture);
-        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(Program(Environment.GetEnvironmentVariable(Variant)!, rounds)));
-        Assert.Equal(rounds.ToString(CultureInfo.InvariantCulture), success.ToDisplayString());
+        var variant = Environment.GetEnvironmentVariable(Variant)!;
+        var source = Program(variant, rounds);
+        if (variant == UncachedStatisticsDeconstruction)
+        {
+            var parsed = Parser.Parse(source);
+            Assert.False(parsed.HasErrors);
+            var cache = UncachedZeroArgPropertyResultCache.CreateForRun();
+            var result = Evaluator.RunCounted(new Expr.AlgorithmExpr(parsed.Root), cache);
+            Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+            Assert.Equal(rounds.ToString(CultureInfo.InvariantCulture), SixRouteAgreement.Neutral(result.Value.Value));
+            // Every step's source and two targets are seen keys of the step's own binding context.
+            Assert.Equal(3 * rounds, cache.GetSnapshot().DistinctKeysCreated);
+        }
+        else
+        {
+            var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
+            Assert.Equal(rounds.ToString(CultureInfo.InvariantCulture), success.ToDisplayString());
+        }
 
         using var process = Process.GetCurrentProcess();
         process.Refresh();
