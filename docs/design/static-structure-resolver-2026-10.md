@@ -305,9 +305,34 @@ rows the live heap at the start of `CompleteLookups` fell 510.8 → 459.8 MiB an
 MiB. That is what the split buys: 6–10% less reachable while the facts are built. It does not lower
 the materialization's own live peak, which is not in that window: sampled with a forced collection
 every 25 ms, the peak is 694 MiB before and after, about 30 s after `CompleteLookups` ends and 2 s
-before an 80 s sampled run returns, in a later stage that this measurement does not attribute; the
-resolution frame has ended by then in both builds. Harness, logs:
+before an 80 s sampled run returns. The resolution frame has ended by then in both builds. The stage
+measurements below locate the corresponding peak on `cafe9fc1`. Harness and logs are in
 `artifacts/validation/deferred-branch-open-crash/part-b/` (local only).
+
+**The live peak of a deferred unit (2026-11-18).** On `cafe9fc1`, six sampler-only runs of 71,886
+constant rows peaked near the end of `StaticStructureOperation.Freeze` (682.5–683.7 MiB above the
+pre-run live heap). With 42,586 parameterized rows the boundary measured 570.7–570.8 MiB there. At
+the constant-row peak, 480.2 MiB survived materialization. The published continuation dominated
+322.0 MiB when materialization returned. The peak dump also shows 134.1 MiB held by the exporting
+operation, 45.6 MiB exclusive to the preceding snapshot and 2.0 MiB held by the finished collision
+validator. Taking back the attempt's lookup-cache entries released another 21.7 MiB. All four body
+generations had direct stack references at the peak and surviving heap paths after the compile frame
+returned. For constant and parameterized rows respectively, the deferred parse retained 224.8 and
+202.2 MiB before selection. The eager twins retained 65.6 and 60.1 MiB. Their sampled peaks were
+283.3–284.8 and 203.3–214.9 MiB. After either one or two selections the deferred results retained
+480.2 and 410.1 MiB. The eager tree keeps the provisional branch. Its operation retracts provisional
+resolved publications before freezing the placeholder's structural metadata. At full size the new
+units inherit 81.05 and 101.08 persistent slots per row, respectively. `Freeze` itself adds 32.00
+and 56.00 slots per row, including 26.00 for the parameterized rows' input graphs. The units finish
+at 228.06 and 268.09 slots per row, against 105.05 and 101.09 for the eager twins. The metadata
+bound first refuses 73,567 and 62,587 rows, respectively. The twins first hit the source-length
+limit at 122,070 and 88,306. The result tree, completed facts and published continuation account for
+the largest share under the current design, so no production trim was made. In two scratch
+comparisons on an 8 MiB heap-limit grid, ending the validator frame and taking the cache entries
+back before `Freeze` moved the first tested success from 696 to 672 MiB for constant rows.
+Parameterized rows first completed at 584 and 592 MiB in the baseline runs and at 560 MiB in both
+prototype runs. Stage tables, heap paths and charge sites are in
+`artifacts/validation/deferred-materialization-peak/` (local only).
 
 Open-level entries grow with providers × DISTINCT opened names read (P × D), not P². For one block
 that opens P one-member providers and sums D ≥ 4 distinct opened names, entries are exactly
