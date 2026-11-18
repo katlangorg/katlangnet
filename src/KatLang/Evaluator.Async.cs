@@ -2471,7 +2471,7 @@ public static partial class Evaluator
             var retainedControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
             return retainedControls.IsError
                 ? retainedControls.Error
-                : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], retainedControls.Value, null, retained));
+                : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, retainedControls.Value, null, retained));
         }
 
         // The `collection` parameter is a VALUE position — see the synchronous twin.
@@ -2482,7 +2482,7 @@ public static partial class Evaluator
         // An argument view bound as the whole collection (CallReference S2) — see the synchronous twin.
         if (collectionItem.Value is Result.CallReference { IsArgumentView: true } view)
             return ReadsArgumentView(builtin)
-                ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], [], view))
+                ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], view))
                 : ArgumentViewUnsupported(builtin);
 
         var collectionValues = BuiltinCollectionItems(collectionItem.Value);
@@ -2494,11 +2494,8 @@ public static partial class Evaluator
         var suffixArgsR = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
         if (suffixArgsR.IsError) return suffixArgsR.Error;
 
-        // Each viewed item with emitted count 1, read on demand — see the synchronous twin.
-        var iterationItems = new CollectionIterationItems(collectionValues);
-
         return EvalResult<BoundSequenceBuiltinArguments>.Ok(
-            new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgsR.Value));
+            new BoundSequenceBuiltinArguments(preparedInputR.Value, suffixArgsR.Value));
     }
 
     /// <summary>MIRROR OF <see cref="PrepareSequenceBuiltinControls"/> — keep in lock-step.</summary>
@@ -2509,7 +2506,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var suffixArgs = new PreparedSequenceBuiltinSuffixArg[metadata.SuffixArgs.Count];
+        var suffixArgs = metadata.SuffixArgs.Count == 0 ? [] : new PreparedSequenceBuiltinSuffixArg[metadata.SuffixArgs.Count];
         for (var index = 0; index < suffixArgs.Length; index++)
         {
             // A Value / WholeNumber control is a VALUE position, so it is demanded here —
@@ -2550,7 +2547,9 @@ public static partial class Evaluator
             return await EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: true).ConfigureAwait(false);
 
         // An ordinary call: the view and slice routes have returned above.
-        var (preparedInput, iterationItems, suffixArgs, _, _) = boundR.Value;
+        var (preparedInput, suffixArgs, _, _) = boundR.Value;
+        // The callback arms iterate these items through a CollectionIterationItems view made in the arm.
+        var collectionItems = preparedInput.FlattenedItems;
 
         // Only the callback-driven builtins (filter, map, reduce) await. Every other builtin is the
         // synchronous ApplyValueSequenceBuiltinCounted, shared with the synchronous twin.
@@ -2558,22 +2557,22 @@ public static partial class Evaluator
         {
             case BuiltinId.@filter:
                 {
-                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
                     var predicateR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (predicateR.IsError) return predicateR.Error;
 
-                    return await EvalFilterCountedAsync(iterationItems, predicateR.Value, ctx, valEnv).ConfigureAwait(false);
+                    return await EvalFilterCountedAsync(new CollectionIterationItems(collectionItems), predicateR.Value, ctx, valEnv).ConfigureAwait(false);
                 }
 
             case BuiltinId.@map:
                 {
-                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
                     var transformR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (transformR.IsError) return transformR.Error;
 
-                    return await EvalMapCountedAsync(iterationItems, transformR.Value, ctx, valEnv).ConfigureAwait(false);
+                    return await EvalMapCountedAsync(new CollectionIterationItems(collectionItems), transformR.Value, ctx, valEnv).ConfigureAwait(false);
                 }
 
             case BuiltinId.@reduce:
@@ -2584,14 +2583,14 @@ public static partial class Evaluator
                         suffixArgs,
                         1);
                     if (initialR.IsError) return initialR.Error;
-                    if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+                    if (collectionItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
 
                     // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
                     var stepR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (stepR.IsError) return stepR.Error;
 
                     return await EvalReduceCountedAsync(
-                        iterationItems,
+                        new CollectionIterationItems(collectionItems),
                         stepR.Value,
                         initialR.Value,
                         ctx,

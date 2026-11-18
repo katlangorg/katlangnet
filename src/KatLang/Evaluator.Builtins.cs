@@ -236,7 +236,6 @@ public static partial class Evaluator
         if (!value.TryLanguageAtomsObserved(limit, ctx.Observations?.StructuralTraversal, out var atoms, ctx.Budget))
             return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
 
-        // The exact array, reserved as before and handed over (no intermediate list, no copy).
         if (ReserveExactListItems(ctx, atoms.Count, out var items, span) is { } error)
             return error;
         for (var index = 0; index < items.Length; index++)
@@ -1122,9 +1121,11 @@ public static partial class Evaluator
     // whose cells the builtin reads instead of a collection value (Lean `BoundSequenceBuiltinArguments.view?`).
     // `RetainedSlice` (NEED-07): a retained collector bound as the whole collection of count/first/last/take,
     // whose cells the builtin reads instead of a collection value (Lean `slice?`).
+    // The callback builtins (filter, map, reduce) iterate the prepared input's items through a
+    // CollectionIterationItems view made in their own dispatch arms (implementation-only, November 2026:
+    // the view was made at binding for every collection builtin, 24 bytes per call that only these read).
     private readonly record struct BoundSequenceBuiltinArguments(
         PreparedSequenceBuiltinInput PreparedInput,
-        IReadOnlyList<CountedResult> IterationItems,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs,
         Result.CallReference? ArgumentView = null,
         IReadOnlyList<NeedCell>? RetainedSlice = null);
@@ -1823,7 +1824,7 @@ public static partial class Evaluator
             var retainedControls = PrepareSequenceBuiltinControls(builtin, metadata, items, ctx, valEnv);
             return retainedControls.IsError
                 ? retainedControls.Error
-                : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], retainedControls.Value, null, retained));
+                : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, retainedControls.Value, null, retained));
         }
 
         var collectionValueR = BindSequenceBuiltinCollectionValue(items[0], ctx, valEnv);
@@ -1832,7 +1833,7 @@ public static partial class Evaluator
         // its cells; every other builtin refuses it before any control argument is demanded.
         if (collectionValueR.Value is Result.CallReference { IsArgumentView: true } view)
             return ReadsArgumentView(builtin)
-                ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], [], view))
+                ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], view))
                 : ArgumentViewUnsupported(builtin);
         var collectionValues = BuiltinCollectionItems(collectionValueR.Value);
 
@@ -1843,17 +1844,16 @@ public static partial class Evaluator
         var suffixArgsR = PrepareSequenceBuiltinControls(builtin, metadata, items, ctx, valEnv);
         if (suffixArgsR.IsError) return suffixArgsR.Error;
 
-        // Each viewed item with emitted count 1, read on demand (never a copy per item).
-        var iterationItems = new CollectionIterationItems(collectionValues);
-
         return EvalResult<BoundSequenceBuiltinArguments>.Ok(
-            new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgsR.Value));
+            new BoundSequenceBuiltinArguments(preparedInputR.Value, suffixArgsR.Value));
     }
 
     /// <summary>
     /// The fixed control arguments of a collection builtin, in order, each prepared by the ONE
     /// <see cref="PrepareSequenceBuiltinSuffixArg"/>; the first failure ends them. The control count is
-    /// fixed by the registry metadata, so they fill an exactly sized array. Lean: <c>prepareControls</c>.
+    /// fixed by the registry metadata, so they fill an exactly sized array — the shared empty array for a
+    /// builtin without controls (<c>count</c>, <c>sum</c>, <c>first</c>, …; implementation-only,
+    /// November 2026: 24 bytes per call). Lean: <c>prepareControls</c>.
     /// </summary>
     private static EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>> PrepareSequenceBuiltinControls(
         BuiltinId builtin,
@@ -1862,7 +1862,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var suffixArgs = new PreparedSequenceBuiltinSuffixArg[metadata.SuffixArgs.Count];
+        var suffixArgs = metadata.SuffixArgs.Count == 0 ? [] : new PreparedSequenceBuiltinSuffixArg[metadata.SuffixArgs.Count];
         for (var index = 0; index < suffixArgs.Length; index++)
         {
             var preparedArgR = PrepareSequenceBuiltinSuffixArg(
@@ -1915,14 +1915,19 @@ public static partial class Evaluator
             var countR = ExpectPreparedWholeNumberSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
             if (countR.IsError) return countR.Error;
             var length = TakeLength(countR.Value, slice.Count);
-            var taken = new List<Result>(length);
+            // The prefix fills the exact array that becomes the list (implementation-only, November 2026:
+            // it filled a List<Result> of this length that the list then copied). The list is reserved
+            // after the last demand and the terminal check, as before, with the same count.
+            var taken = length == 0 ? [] : new Result[length];
             for (var index = 0; index < length; index++)
             {
                 var element = await DemandCell(slice[index], asynchronous).ConfigureAwait(false);
                 if (element.IsError) return element.Error;
-                taken.Add(element.Value.Value);
+                taken.AsSpan()[index] = element.Value.Value;
             }
-            return RetainedObservationTerminal(ctx) is { } afterPrefix ? afterPrefix : MakeCollectionListResult(ctx, taken);
+            if (RetainedObservationTerminal(ctx) is { } afterPrefix)
+                return afterPrefix;
+            return ReserveCollection(ctx, length) is { } limitError ? limitError : HandOverListResult(taken);
         }
 
         if (slice.Count == 0)
@@ -2112,49 +2117,42 @@ public static partial class Evaluator
         // written order, which is observable through the quantum and zero sign that
         // display preserves (`order((1.0, 1))` is `[1.0, 1]` however long the input) and
         // must not depend on the runtime sort algorithm.
-        return MakeSortedNumberListResult(ctx, SortStable(numbers), descending: false);
+        return MakeSortedNumberListResult(ctx, numbers, descending: false);
     }
 
     /// <summary>
-    /// Stable ascending sort under <see cref="Decimal128.CompareTo(Decimal128)"/>'s total
-    /// order: equal-comparing values keep their input order (the index breaks ties), so
-    /// the arrangement never depends on the runtime's sort algorithm. The sorted keyed array
-    /// itself is returned and read in place (implementation-only, November 2026: it used to be
-    /// copied into a sorted <c>List&lt;Decimal128&gt;</c>, a 1.6 MB large-object-heap array per
-    /// 100,000 items).
-    /// </summary>
-    private static (Decimal128 Value, int Index)[] SortStable(SingleAtomicNumberItems numbers)
-    {
-        var keyed = new (Decimal128 Value, int Index)[numbers.Count];
-        for (var i = 0; i < keyed.Length; i++)
-            keyed[i] = (numbers[i], i);
-
-        Array.Sort(keyed, static (left, right) =>
-        {
-            var order = left.Value.CompareTo(right.Value);
-            return order != 0 ? order : left.Index.CompareTo(right.Index);
-        });
-
-        return keyed;
-    }
-
-    /// <summary>
-    /// The <c>order</c>/<c>orderDesc</c> result: one new number per sorted value, in ascending
-    /// order or its exact reverse, reserved and handed over as one exact array
-    /// (<see cref="ReserveExactListItems"/>) after the sort, as the copied list was.
+    /// Sort the input positions by the validated numbers, breaking ties by position.
+    /// Reserve the result after sorting, where the budget also checks for cancellation,
+    /// then write one fresh atom per item in the ascending order or its exact reverse.
     /// </summary>
     private static EvalResult<CountedResult> MakeSortedNumberListResult(
         EvalCtx ctx,
-        (Decimal128 Value, int Index)[] sorted,
+        SingleAtomicNumberItems numbers,
         bool descending)
     {
-        if (ReserveExactListItems(ctx, sorted.Length, out var items) is { } error)
-            return error;
+        var positions = new int[numbers.Count];
+        for (var i = 0; i < positions.Length; i++)
+            positions[i] = i;
+        if (positions.Length > 1)
+            Array.Sort(positions, new StableNumberOrder(numbers));
 
-        var last = sorted.Length - 1;
-        for (var i = 0; i < sorted.Length; i++)
-            items[descending ? last - i : i] = new Result.Atom(sorted[i].Value);
+        if (ReserveExactListItems(ctx, positions.Length, out var items) is { } error)
+            return error;
+        for (var i = 0; i < positions.Length; i++)
+        {
+            var position = positions[descending ? positions.Length - 1 - i : i];
+            items[i] = new Result.Atom(numbers[position]);
+        }
         return HandOverListResult(items);
+    }
+
+    private sealed class StableNumberOrder(SingleAtomicNumberItems numbers) : IComparer<int>
+    {
+        public int Compare(int left, int right)
+        {
+            var order = numbers.AtomAt(left).Value.CompareTo(numbers.AtomAt(right).Value);
+            return order != 0 ? order : left.CompareTo(right);
+        }
     }
 
     /// <summary>
@@ -2169,7 +2167,7 @@ public static partial class Evaluator
         SingleAtomicNumberItems numbers)
     {
         // Lean `sortIntsDesc`: the reverse of the stable ascending order.
-        return MakeSortedNumberListResult(ctx, SortStable(numbers), descending: true);
+        return MakeSortedNumberListResult(ctx, numbers, descending: true);
     }
 
     /// <summary>
@@ -2233,22 +2231,108 @@ public static partial class Evaluator
         return false;
     }
 
-    // Marks each item that is a first occurrence (the set's Add order is unchanged) and returns
-    // how many there are.
+    /// <summary>
+    /// Marks first occurrences in input order. Small inputs keep the ordinary BCL set.
+    /// For a large input, grow storage with the number of distinct keys actually observed.
+    /// </summary>
     private static int KeepFirstOccurrences(Result.ValueSemanticComparer comparer, IReadOnlyList<Result> items, ulong[] firstOccurrences)
     {
+        // A BCL set smaller than this input threshold fits in small-object storage.
+        if (items.Count >= 4_000)
+            return MarkDistinctPositions(comparer, items, firstOccurrences);
+
         var seen = new HashSet<Result>(comparer);
-        var kept = 0;
         for (var i = 0; i < items.Count; i++)
         {
             if (seen.Add(items[i]))
-            {
                 MarkKeptPosition(firstOccurrences, i);
-                kept++;
-            }
+        }
+        return seen.Count;
+    }
+
+    private static int MarkDistinctPositions(IEqualityComparer<Result> comparer, IReadOnlyList<Result> items, ulong[] firstOccurrences)
+    {
+        var seen = new DistinctPositionSet();
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (seen.Add(items, i, comparer))
+                MarkKeptPosition(firstOccurrences, i);
+        }
+        return seen.Count;
+    }
+
+    // An append-only set over immutable input positions. A slot stores both one bucket head
+    // and one entry. Links are one-based, with zero marking the end of a chain. Pages keep
+    // entries off the large-object heap and stay in place when the bucket count doubles.
+    private sealed class DistinctPositionSet
+    {
+        private const int PageSize = 1024;
+        private struct Slot
+        {
+            public int Head, Next, Hash, Position;
         }
 
-        return kept;
+        private Slot[][] pages = [new Slot[4]];
+        private int capacity = 4;
+        internal int Count { get; private set; }
+
+        private ref Slot At(int i) => ref pages[i / PageSize][i % PageSize];
+        private int Bucket(int hash) => hash & (capacity - 1);
+
+        internal bool Add(IReadOnlyList<Result> items, int position, IEqualityComparer<Result> comparer)
+        {
+            var item = items[position];
+            var hash = item is null ? 0 : comparer.GetHashCode(item);
+            var bucket = Bucket(hash);
+            for (int link = At(bucket).Head; link != 0;)
+            {
+                ref var entry = ref At(link - 1);
+                if (entry.Hash == hash && comparer.Equals(items[entry.Position], item))
+                    return false;
+                link = entry.Next;
+            }
+
+            if (Count == capacity)
+            {
+                Grow();
+                bucket = Bucket(hash);
+            }
+
+            ref var added = ref At(Count);
+            ref var head = ref At(bucket).Head;
+            added.Hash = hash;
+            added.Position = position;
+            added.Next = head;
+            head = ++Count;
+            return true;
+        }
+
+        private void Grow()
+        {
+            capacity *= 2;
+            if (capacity <= PageSize)
+                Array.Resize(ref pages[0], capacity);
+            else
+            {
+                var previous = pages.Length;
+                Array.Resize(ref pages, capacity / PageSize);
+                for (var i = previous; i < pages.Length; i++)
+                    pages[i] = new Slot[PageSize];
+            }
+
+            // Re-bucket stored hashes in insertion order. As in HashSet, an Add compares
+            // equal raw hashes newest first, including across resizes, with no comparer
+            // calls during rehash. The value comparer supplies the mixed hash.
+            for (var i = 0; i < Count; i++)
+                At(i).Head = 0;
+            for (var i = 0; i < Count; i++)
+            {
+                ref var entry = ref At(i);
+                ref var head = ref At(Bucket(entry.Hash)).Head;
+                entry.Next = head;
+                head = i + 1;
+            }
+        }
     }
 
     /// <summary>
@@ -2660,7 +2744,9 @@ public static partial class Evaluator
         if (boundR.Value.RetainedSlice is { } retainedSlice)
             return EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: false).GetAwaiter().GetResult();
         // An ordinary call: the view and slice routes have returned above.
-        var (preparedInput, iterationItems, suffixArgs, _, _) = boundR.Value;
+        var (preparedInput, suffixArgs, _, _) = boundR.Value;
+        // The callback arms iterate these items through a CollectionIterationItems view made in the arm.
+        var collectionItems = preparedInput.FlattenedItems;
 
         // Only the callback-driven builtins (filter, map, reduce) are dispatched here, because the
         // asynchronous twin awaits exactly these. Every other builtin goes to the shared
@@ -2669,20 +2755,20 @@ public static partial class Evaluator
         {
             case BuiltinId.@filter:
                 {
-                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     var predicateR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
                     if (predicateR.IsError) return predicateR.Error;
 
-                    return EvalFilterCounted(iterationItems, predicateR.Value, ctx, valEnv);
+                    return EvalFilterCounted(new CollectionIterationItems(collectionItems), predicateR.Value, ctx, valEnv);
                 }
 
             case BuiltinId.@map:
                 {
-                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     var transformR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
                     if (transformR.IsError) return transformR.Error;
 
-                    return EvalMapCounted(iterationItems, transformR.Value, ctx, valEnv);
+                    return EvalMapCounted(new CollectionIterationItems(collectionItems), transformR.Value, ctx, valEnv);
                 }
 
             case BuiltinId.@reduce:
@@ -2693,13 +2779,13 @@ public static partial class Evaluator
                         suffixArgs,
                         1);
                     if (initialR.IsError) return initialR.Error;
-                    if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+                    if (collectionItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
 
                     var stepR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
                     if (stepR.IsError) return stepR.Error;
 
                     return EvalReduceCounted(
-                        iterationItems,
+                        new CollectionIterationItems(collectionItems),
                         stepR.Value,
                         initialR.Value,
                         ctx,

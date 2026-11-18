@@ -764,39 +764,25 @@ public closed record Result
     /// </summary>
     internal bool TryLanguageAtoms(
         long maxItems, out IReadOnlyList<Decimal128> atoms, Evaluation.EvaluationBudget? budget = null)
-        => TryLanguageAtomsCore(maxItems, observations: null, budget, out atoms);
+        => TryLanguageAtomsObserved(maxItems, observations: null, out atoms, budget);
 
     /// <summary>
-    /// <see cref="TryLanguageAtoms"/> with an optional passive observer recording the structural
-    /// work the collection walk performs. The observer changes neither the collected atoms, the
-    /// verdict, the memoization, the cancellation checkpoints, nor the traversal order, and
-    /// belongs to one measured operation; the <c>atoms</c> builtin passes its run's
-    /// <c>EvaluationObservations.StructuralTraversal</c>, which is <c>null</c> in every ordinary
-    /// run. Used only by the shared-value-graph complexity regressions.
+    /// The bounded language walk, with an optional observer of its slot visits, replays and
+    /// cancellation checkpoints. A contiguous numeric prefix already lives in the immutable
+    /// root. Only atoms after a gap or inside a nested value need storage during traversal.
     /// </summary>
     internal bool TryLanguageAtomsObserved(
         long maxItems,
         ValueTraversalObservations? observations,
         out IReadOnlyList<Decimal128> atoms,
         Evaluation.EvaluationBudget? budget = null)
-        => TryLanguageAtomsCore(maxItems, observations, budget, out atoms);
-
-    private bool TryLanguageAtomsCore(
-        long maxItems,
-        ValueTraversalObservations? observations,
-        Evaluation.EvaluationBudget? budget,
-        out IReadOnlyList<Decimal128> atoms)
     {
-        var collected = new List<Decimal128>();
-        atoms = collected;
-
         IReadOnlyList<Result> items;
         switch (this)
         {
             case Atom(var single):
-                if (collected.Count >= maxItems) return false;
-                collected.Add(single);
-                return true;
+                atoms = maxItems < 1 ? [] : [single];
+                return maxItems >= 1;
             case SequenceValue(var rootItems):
                 items = rootItems;
                 break;
@@ -804,8 +790,12 @@ public closed record Result
                 items = rootItems;
                 break;
             default:
-                return true; // strings and any other non-numeric leaves contribute no atoms
+                atoms = [];
+                return true;
         }
+
+        var collected = new CollectedLanguageAtoms(items);
+        atoms = collected;
 
         observations?.RecordLanguageAtomsStructureExpansion();
 
@@ -855,9 +845,9 @@ public closed record Result
             IReadOnlyList<Result> childItems;
             switch (child)
             {
-                case Atom(var n):
+                case Atom atom:
                     if (collected.Count >= maxItems) return false;
-                    collected.Add(n);
+                    collected.Add(atom, suspended.Count == 0 ? next - 1 : -1);
                     continue;
                 case SequenceValue(var sequenceItems):
                     childItems = sequenceItems;
@@ -880,17 +870,15 @@ public closed record Result
                 // its first `room` atoms and then the refusal its next atom would cause.
                 var room = maxItems - collected.Count;
                 var copied = run.Length <= room ? run.Length : (int)Math.Max(room, 0L);
-                // Capacity first, so the span over the list's own storage stays valid while
-                // AddRange copies the earlier run to the end. Split at each checkpoint so
-                // even one long replay is cancellable and leftover units are never dropped.
-                collected.EnsureCapacity(checked(collected.Count + copied));
+                // Capacity first, so a replay copying the earlier run to the end reads storage
+                // that stays in place. Split at each checkpoint so even one long replay is
+                // cancellable and leftover units are never dropped.
+                collected.EnsureReplayCapacity(copied);
                 for (var replayed = 0; replayed < copied;)
                 {
                     var chunk = (int)Math.Min(copied - replayed,
                         ValueSemanticComparer.UnitsPerCharge - uncheckedUnits);
-                    ReadOnlySpan<Decimal128> replay = System.Runtime.InteropServices.CollectionsMarshal
-                        .AsSpan(collected).Slice(run.Start + replayed, chunk);
-                    collected.AddRange(replay);
+                    collected.Replay(run.Start + replayed, chunk);
                     replayed += chunk;
                     uncheckedUnits += chunk;
                     if (uncheckedUnits >= ValueSemanticComparer.UnitsPerCharge)
@@ -909,6 +897,46 @@ public closed record Result
             suspended.Push((node, items, next, collectedAtEntry));
             (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
         }
+    }
+
+    // The first PrefixCount output slots are numeric items of the root in place. Once a
+    // nested or later noncontiguous atom is seen, keep its reference and every later one.
+    // The builtin constructs fresh numbers only after reserving the completed output.
+    private sealed class CollectedLanguageAtoms(IReadOnlyList<Result> root) : IReadOnlyList<Decimal128>
+    {
+        private int prefixCount;
+        private readonly List<Atom> tail = [];
+
+        public int Count => prefixCount + tail.Count;
+
+        public Decimal128 this[int index] =>
+            index < prefixCount ? ((Atom)root[index]).Value : tail[index - prefixCount].Value;
+
+        public void Add(Atom atom, int rootIndex)
+        {
+            if (rootIndex == prefixCount && tail.Count == 0)
+                prefixCount++;
+            else
+                tail.Add(atom);
+        }
+
+        // Every replayed run came from a nested node, so its atoms already lie in the tail.
+        public void EnsureReplayCapacity(int count) => tail.EnsureCapacity(checked(tail.Count + count));
+
+        public void Replay(int start, int count)
+        {
+            ReadOnlySpan<Atom> run = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(tail)
+                .Slice(start - prefixCount, count);
+            tail.AddRange(run);
+        }
+
+        public IEnumerator<Decimal128> GetEnumerator()
+        {
+            for (var i = 0; i < Count; i++)
+                yield return this[i];
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>

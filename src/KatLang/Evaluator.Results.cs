@@ -121,13 +121,14 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The iteration items of an ordinarily bound collection builtin
-    /// (<see cref="BoundSequenceBuiltinArguments.IterationItems"/>): item <c>i</c> is the
+    /// The iteration items of a callback collection builtin (<c>filter</c>, <c>map</c>,
+    /// <c>reduce</c>), made in its dispatch arm over the prepared input's items, and of the
+    /// fused filter→count source read through the dot-receiver adapter: item <c>i</c> is the
     /// bound collection's viewed item <c>i</c> with emitted count 1, read from that view on
     /// demand instead of copied. The viewed items are immutable — a list or sequence value's
     /// own read-only storage, or a fresh one-element view — so each read returns exactly the
     /// item a copy made at binding would hold, and a builtin that never iterates
-    /// (<c>count</c>, <c>take</c>, …) pays nothing for them. Implementation-only
+    /// (<c>count</c>, <c>take</c>, …) never makes one. Implementation-only
     /// (November 2026): the copied <c>List&lt;CountedResult&gt;</c> was a 16-byte slot per
     /// item, so every collection builtin over 100,000 items allocated a 1.6 MB
     /// large-object-heap array, a share of the generic pipelines' Gen2 collections.
@@ -166,6 +167,9 @@ public static partial class Evaluator
         public int Count => validatedItems.Count;
 
         public Decimal128 this[int index] => validatedItems[index].SingleAtomicNumber()!.Value;
+
+        // The binding pass admitted exactly Result.Atom. The index sort compares those immutable leaves.
+        public Result.Atom AtomAt(int index) => (Result.Atom)validatedItems[index];
     }
 
     /// <summary>

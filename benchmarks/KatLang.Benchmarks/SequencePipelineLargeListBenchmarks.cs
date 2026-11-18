@@ -13,8 +13,11 @@ namespace KatLang.Benchmarks;
 /// composition materializes 100,000-item lists: <c>count(filter(range(1, 100000), Pos))</c> with the cheap
 /// predicate <c>Pos(n) = n &gt; 0</c>, so the source and the kept list are both at the default ceiling. The
 /// generic path's large lists and the survival of their items cost Gen1/Gen2 collections that the fused
-/// path does not have, so read the GC columns beside the time. Prepared evaluation with the loop optimizer
-/// on (the production configuration). Filter: <c>--filter *SequencePipelineLargeList*</c>.
+/// path does not have, so read the GC columns beside the time. <c>PropertyFilterCount100k</c> (2026-11-18)
+/// is the same pipeline over a property source, <c>R.filter(Pos).count</c> with <c>R = range(1, 100000)</c>:
+/// it is no written range, so the fused strategy reads its items through the dot-receiver adapter. Prepared
+/// evaluation with the loop optimizer on (the production configuration). Filter:
+/// <c>--filter *SequencePipelineLargeList*</c>.
 /// <para>No <c>[RankColumn]</c>: BenchmarkDotNet 0.14.0's rank column throws while the summary is built
 /// under <c>--job dry</c> (benchmarks/README.md, Exit Code), so this class stays runnable with any job.
 /// The execution order follows <see cref="SequencePipelineModeOrderConfig"/>.</para>
@@ -25,6 +28,7 @@ namespace KatLang.Benchmarks;
 public class SequencePipelineLargeListBenchmarks
 {
 	private static readonly BenchmarkScenario CheapFilterCount100kScenario = BenchmarkScenarioCatalog.SequenceCheapFilterCount100k;
+	private static readonly BenchmarkScenario PropertyFilterCount100kScenario = BenchmarkScenarioCatalog.SequencePropertyFilterCount100k;
 
 	[Params(BenchmarkSequencePipelineMode.Generic, BenchmarkSequencePipelineMode.Optimized)]
 	public BenchmarkSequencePipelineMode SequencePipelineMode { get; set; }
@@ -33,6 +37,14 @@ public class SequencePipelineLargeListBenchmarks
 	public IReadOnlyList<Decimal128> CheapFilterCount100k()
 		=> KatLangBenchmarkRunner.RunPrepared(
 			CheapFilterCount100kScenario,
+			BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized,
+			SequencePipelineMode);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> PropertyFilterCount100k()
+		=> KatLangBenchmarkRunner.RunPrepared(
+			PropertyFilterCount100kScenario,
 			BenchmarkCacheMode.Stage1,
 			BenchmarkLoopMode.Optimized,
 			SequencePipelineMode);
@@ -83,7 +95,9 @@ public class SequencePipelineRepeatedBenchmarks
 /// 100,000-item source range (0.8 MB of list slots and 3.2 MB of numbers), so read the allocation column
 /// against <c>RangeCount100k</c>, which only builds and counts that source. Since 2026-11-17 the list
 /// builders allocate their exact result array once and hand it over, and the numeric builtins read the
-/// numbers through a view instead of a copied <c>List&lt;Decimal128&gt;</c>. Filter:
+/// numbers through a view instead of a copied <c>List&lt;Decimal128&gt;</c>. <c>Atoms100k</c> and
+/// <c>RetainedTake100k</c> (2026-11-18) add <c>atoms</c> over the same source and a 50,000-item
+/// <c>take</c> of a retained collector (NEED-07) holding its 100,000 cells. Filter:
 /// <c>--filter *SequenceBuiltinLargeList*</c>. No <c>[RankColumn]</c>, as in
 /// <see cref="SequencePipelineLargeListBenchmarks"/>.
 /// </summary>
@@ -102,6 +116,8 @@ public class SequenceBuiltinLargeListBenchmarks
 	private static readonly BenchmarkScenario Min100kScenario = BenchmarkScenarioCatalog.SequenceMin100k;
 	private static readonly BenchmarkScenario Max100kScenario = BenchmarkScenarioCatalog.SequenceMax100k;
 	private static readonly BenchmarkScenario MapSum100kScenario = BenchmarkScenarioCatalog.SequenceMapSum100k;
+	private static readonly BenchmarkScenario Atoms100kScenario = BenchmarkScenarioCatalog.SequenceAtoms100k;
+	private static readonly BenchmarkScenario RetainedTake100kScenario = BenchmarkScenarioCatalog.SequenceRetainedTake100k;
 
 	[Benchmark]
 	public IReadOnlyList<Decimal128> RangeCount100k() => Run(RangeCount100kScenario);
@@ -135,6 +151,12 @@ public class SequenceBuiltinLargeListBenchmarks
 
 	[Benchmark]
 	public IReadOnlyList<Decimal128> MapSum100k() => Run(MapSum100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> Atoms100k() => Run(Atoms100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> RetainedTake100k() => Run(RetainedTake100kScenario);
 
 	private static IReadOnlyList<Decimal128> Run(BenchmarkScenario scenario)
 		=> KatLangBenchmarkRunner.RunPrepared(

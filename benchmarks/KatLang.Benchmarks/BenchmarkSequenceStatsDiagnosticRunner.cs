@@ -17,6 +17,7 @@ internal static class BenchmarkSequenceStatsDiagnosticRunner
 		BenchmarkScenarioCatalog.SequenceCheapFilterCount100k,
 		BenchmarkScenarioCatalog.SequenceRepeatedFilterCount100k,
 		BenchmarkScenarioCatalog.SequenceRepeatedShortFilterCount,
+		BenchmarkScenarioCatalog.SequencePropertyFilterCount100k,
 	];
 
 	public static bool TryRun(string[] args)

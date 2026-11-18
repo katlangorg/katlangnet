@@ -168,6 +168,13 @@ public static partial class Evaluator
     /// receiver is the collection-argument demand rejection, and the bound value opens
     /// through the shared post-binding collection view. The fused and generic
     /// strategies therefore evaluate, charge, and reject the receiver identically.
+    /// <para>The items are the generic binding's own view (<see cref="CollectionIterationItems"/>):
+    /// each viewed item with emitted count 1, read on demand. Implementation-only (November
+    /// 2026): the adapter copied them into a <c>List&lt;CountedResult&gt;</c> counted by
+    /// <c>ValueCount()</c>, a 1.6 MB large-object-heap array per 100,000-item receiver. The count
+    /// was never observable: the fused executor reads only the number of items and hands each
+    /// item to <see cref="EvalFilterPredicateTruth"/>, whose callback item is re-counted from its
+    /// value (<c>CountedSequenceCallbackItem</c>).</para>
     /// </summary>
     private static EvalResult<IReadOnlyList<CountedResult>> EvaluateDotReceiverIterationItemsForSequenceOptimizer(
         Expr receiver,
@@ -189,10 +196,7 @@ public static partial class Evaluator
         if (collectionValuesR.IsError)
             return collectionValuesR.Error;
 
-        return EvalResult<IReadOnlyList<CountedResult>>.Ok(
-            collectionValuesR.Value
-                .Select(static item => new CountedResult(item, item.ValueCount()))
-                .ToList());
+        return EvalResult<IReadOnlyList<CountedResult>>.Ok(new CollectionIterationItems(collectionValuesR.Value));
     }
 
     /// <summary>

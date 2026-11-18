@@ -259,8 +259,6 @@ public class CollectionBuiltinDispatchTests
     private static Evaluator.ResolvedArgumentAlgorithm Supplied(Result value)
         => new(null) { Cell = NeedCell.Ready(new(value, value.ValueCount())) };
 
-    private static readonly Type IterationItemsType = typeof(Evaluator).GetNestedType("CollectionIterationItems", BindingFlags.NonPublic)!;
-
     [Fact]
     public void CallItems_AllocateExactlyTheirItemArray_GcIsolatedChild()
     {
@@ -279,10 +277,12 @@ public class CollectionBuiltinDispatchTests
     }
 
     [Fact]
-    public void ZeroControlDispatch_AllocatesOnlyItsItemsControlsAndView_GcIsolatedChild()
+    public void ZeroControlDispatch_AllocatesOnlyItsCallItems_GcIsolatedChild()
     {
         // first([5, 6, 7]) selects a stored element, so its dispatch allocates exactly the one-item call
-        // items, the empty controls and the iteration view — no iterator and no list.
+        // items — no iterator, no list, no iteration view (made only by filter, map and reduce) and no
+        // control array (a builtin without controls shares the empty one). Before 2026-11-18 it also
+        // allocated the empty control array and the view, 24 bytes each.
         if (!GcIsolatedAllocation.EnterChild())
             return;
 
@@ -293,8 +293,7 @@ public class CollectionBuiltinDispatchTests
         Assert.True(warm.IsOk, warm.IsError ? warm.Error.ToString() : null);
         Assert.Equal(5m, Assert.IsType<Result.Atom>(warm.Value.Value).Value);
 
-        var expected = ArrayBytes(ItemType, 1) + ArrayBytes(PreparedType, 0) + ObjectBytes(IterationItemsType);
-        Assert.Equal(expected, Bytes(() => _ = Apply(BuiltinId.first, args, ctx, values)));
+        Assert.Equal(ArrayBytes(ItemType, 1), Bytes(() => _ = Apply(BuiltinId.first, args, ctx, values)));
         GcIsolatedAllocation.Complete();
     }
 
@@ -302,8 +301,9 @@ public class CollectionBuiltinDispatchTests
     public void ControlReadingDispatch_AllocatesNoClosureOrDelegate_GcIsolatedChild()
     {
         // reduce([], Add, 0) prepares its callback and VALUE control and reads the initial accumulator,
-        // which is its result: the dispatch allocates exactly the call items, the exact control array, the
-        // two prepared controls and the iteration view.
+        // which is its result: the dispatch allocates exactly the call items, the exact control array and the
+        // two prepared controls. An empty collection is never iterated, so no iteration view is made (before
+        // 2026-11-18 every collection-builtin call made one at binding, 24 bytes).
         if (!GcIsolatedAllocation.EnterChild())
             return;
 
@@ -320,8 +320,7 @@ public class CollectionBuiltinDispatchTests
         Assert.Equal(0m, Assert.IsType<Result.Atom>(warm.Value.Value).Value);
 
         var expected = ArrayBytes(ItemType, 3) + ArrayBytes(PreparedType, 2)
-            + ObjectBytes(PreparedType.GetNestedType("AlgorithmArg")!) + ObjectBytes(PreparedType.GetNestedType("ValueArg")!)
-            + ObjectBytes(IterationItemsType);
+            + ObjectBytes(PreparedType.GetNestedType("AlgorithmArg")!) + ObjectBytes(PreparedType.GetNestedType("ValueArg")!);
         Assert.Equal(expected, Bytes(() => _ = Apply(BuiltinId.reduce, args, ctx, values)));
         GcIsolatedAllocation.Complete();
     }

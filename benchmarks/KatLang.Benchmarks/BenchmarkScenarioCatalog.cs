@@ -348,6 +348,35 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-map-sum-100k.kat",
 			expectedAtoms: [5000150000m]));
 
+	private const string LargeObjectOrigin = "Collection-builtin large-object follow-ups (2026-11-18).";
+
+	private static readonly Lazy<BenchmarkScenario> SequenceAtoms100kScenario =
+		new(() => Load(
+			id: "sequence-atoms-100k",
+			displayName: "Sequence atoms 100k",
+			description: "range(1, 100000).atoms.count: atoms collects the 100,000 numbers of a flat list and builds a 100,000-item list.",
+			origin: LargeObjectOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-atoms-100k.kat",
+			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceRetainedTake100kScenario =
+		new(() => Load(
+			id: "sequence-retained-take-100k",
+			displayName: "Sequence retained take 100k",
+			description: "Prefix(range(1, 100000)*) with Prefix(*xs) = take(xs, 50000).count: take observes the retained collector xs (NEED-07) and builds a 50,000-item list from its cells.",
+			origin: LargeObjectOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-retained-take-100k.kat",
+			expectedAtoms: [50000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequencePropertyFilterCount100kScenario =
+		new(() => Load(
+			id: "sequence-property-filter-count-100k",
+			displayName: "Sequence property filter count 100k",
+			description: "R.filter(Pos).count with R = range(1, 100000) and Pos(n) = n > 0: a filter→count pipeline whose source is a property, not a written range, so the fused strategy reads the receiver through its dot-receiver adapter.",
+			origin: LargeObjectOrigin,
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-property-filter-count-100k.kat",
+			expectedAtoms: [100000m]));
+
 	private static readonly Lazy<BenchmarkScenario> DispatchNonCandidateCallsScenario =
 		new(() => Load(
 			id: "dispatch-non-candidate-calls",
@@ -521,6 +550,12 @@ internal static class BenchmarkScenarioCatalog
 	public static BenchmarkScenario SequenceMax100k => SequenceMax100kScenario.Value;
 
 	public static BenchmarkScenario SequenceMapSum100k => SequenceMapSum100kScenario.Value;
+
+	public static BenchmarkScenario SequenceAtoms100k => SequenceAtoms100kScenario.Value;
+
+	public static BenchmarkScenario SequenceRetainedTake100k => SequenceRetainedTake100kScenario.Value;
+
+	public static BenchmarkScenario SequencePropertyFilterCount100k => SequencePropertyFilterCount100kScenario.Value;
 
 	public static BenchmarkScenario DispatchNonCandidateCalls => DispatchNonCandidateCallsScenario.Value;
 
