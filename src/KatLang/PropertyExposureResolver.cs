@@ -2914,6 +2914,10 @@ internal static class PropertyExposureResolver
 
             Expr.ListLiteral list => list with { Items = RewriteExprList(list.Items, memos) },
 
+            // The sealed facts of an inherited inline block name this exact classified view and its members.
+            Expr.AlgorithmExpr block when memos.Scope.Parent is null && !block.Algorithm.IsModuleRoot
+                && block.Algorithm.CompletedStructure?.Facts.IsSealed == true
+                && memos.Run.Modules.Registry?.StructuralContinuation?.HasClassifiedOpenBlock(block.Algorithm) == true => block,
             Expr.AlgorithmExpr block => block with { Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, memos) },
 
             // A capture owns no names and no properties, so its rows rewrite

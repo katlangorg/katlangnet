@@ -319,6 +319,7 @@ internal sealed partial class ModuleLoader
     // The set is cleared at the loader's elaboration boundary so a reusable loader does
     // not retain every caller-owned input tree for the rest of its lifetime.
     private readonly HashSet<object> _loadBearing = new(ReferenceEqualityComparer.Instance);
+    private PlaceholderOpenBlocks? _placeholderBlocks;
 
     // DAG-safety memos of the rewrite walks. Load-free synchronous subtrees are keyed by
     // LoadContext alone. Load-bearing async-spine nodes additionally key by their effective
@@ -858,6 +859,7 @@ internal sealed partial class ModuleLoader
         finally
         {
             _spliceLedger = enclosingLedger;
+            _placeholderBlocks = null;
             _loadBearing.Clear();
             Array.Clear(_exprWalkMemos);
             Array.Clear(_algorithmWalkMemos);
@@ -907,7 +909,12 @@ internal sealed partial class ModuleLoader
     /// than the number of root-to-node paths.</para>
     /// </summary>
     private void MarkLoadBearing(Algorithm root)
-        => new LoadBearingMarker(_loadBearing, TraversalObservations, loads: null).VisitAlgorithm(root);
+    {
+        var marker = new LoadBearingMarker(_loadBearing, TraversalObservations, loads: null);
+        marker.VisitAlgorithm(root);
+        _placeholderBlocks = marker.HasSharedChildren && _loadBearing.Contains(root)
+            ? PlaceholderOpenBlocks.Find(root, _loadBearing, _cancellationToken) : null;
+    }
 
     /// <summary>
     /// <see cref="MarkLoadBearing"/> for a fetched module's import view, which also returns the
@@ -951,6 +958,7 @@ internal sealed partial class ModuleLoader
         List<Expr>? loads) : AstWalker
     {
         private readonly List<object> _path = [];
+        internal bool HasSharedChildren { get; private set; }
 
         // Completion-marked visited set: a node is added only after its subtree scan
         // finished, so its marked-ness is final whenever a later reach consults it
@@ -974,6 +982,7 @@ internal sealed partial class ModuleLoader
             FrontEndStack.Ensure();
             if (_visited.Contains(algorithm))
             {
+                HasSharedChildren = true;
                 if (marked.Contains(algorithm))
                     MarkCurrentPath();
                 return;
@@ -998,6 +1007,7 @@ internal sealed partial class ModuleLoader
             FrontEndStack.Ensure();
             if (_visited.Contains(expr))
             {
+                HasSharedChildren |= AstTraversalDagSafety.HasTraversableExprChildren(expr);
                 if (marked.Contains(expr))
                     MarkCurrentPath();
                 return;
@@ -1339,7 +1349,7 @@ internal sealed partial class ModuleLoader
             }
 
             var rawBody = branch.Body.DeferredRegion is null ? branch.Body : branch.Body with { DeferredRegion = null };
-            var placeholder = rawBody with
+            var placeholder = (_placeholderBlocks?.View(branch.Body) ?? rawBody) with
             {
                 DeferredRegion = new DeferredModuleRegion(
                     this, rawBody, context, depth + 1, _nestedTraversalBase, _importSite, CurrentImportChain()),
@@ -1502,6 +1512,7 @@ internal sealed partial class ModuleLoader
         {
             // As at the elaboration boundary: the walk memos and the load-bearing set never
             // outlive one walk. The scope has already restored the enclosing walk context.
+            _placeholderBlocks = null;
             _loadBearing.Clear();
             Array.Clear(_exprWalkMemos);
             Array.Clear(_algorithmWalkMemos);

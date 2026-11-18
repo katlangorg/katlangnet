@@ -80,7 +80,8 @@ internal sealed partial class StaticStructureOperation
     // unreachable from outside it — or a block written as an open target inside it, which is keyed at the root level
     // in the placeholder and in the materialized body alike and is why a fresh region key alone would not be enough.
     // The region memo keys the provisional mode, so no reach outside a provisional resolution is ever aliased to a
-    // context processed inside one.
+    // context processed inside one. A block shared across that boundary gets its placeholder source
+    // view before admission (ModuleLoader.PlaceholderOpenBlocks), including when the placeholder comes first.
     private List<StaticScopeKey>? _provisionalPublications;
     private List<StaticScopeKey>? _provisionalRegionAliases;
     private int _provisionalResolutions;
@@ -441,6 +442,24 @@ internal sealed partial class StaticStructureOperation
     }
 
     /// <summary>
+    /// A kept branch may hold an inline open block that an earlier unit already completed at the prelude.
+    /// Detection receives its detected view. At the resolver's output the entire block can be installed in
+    /// its final form: the inherited open/member facts already name those classified bodies by reference.
+    /// Loaded modules use their own pass-by-pass registry.
+    /// </summary>
+    internal Algorithm? InheritedOpenBlock(Algorithm block, StaticPublicationStage stage)
+    {
+        Queries.EnsureUsable();
+        if (_frozenPublications.IsEmpty || block.IsModuleRoot
+            || Queries.Keys.KnownDefinitionIn(Queries.Keys.Root, RawBody(block), null) is not { } key
+            || !_frozenPublications.TryGetValue(key, out var publication)) return null;
+        if (stage == StaticPublicationStage.Detected) return publication.Detected;
+        if (!ReferenceEquals(block, publication.Detected)) return null;
+        return _completedBase?.Facts(key)?.Body
+            ?? throw new InvalidOperationException("An inherited open block requires its completed lookup facts.");
+    }
+
+    /// <summary>
     /// The resolved view an EARLIER operation completed for <paramref name="scope"/> (the frozen continuation a deferred
     /// unit materializes from) — never one this operation published — read like <see cref="ResolvedView"/>.
     /// </summary>
@@ -658,6 +677,11 @@ internal sealed partial class StaticStructureOperation
             CompletedStaticStructures? completed, long retainedStorageUnits)
             => (_snapshot, _publications, _views, _resolvedSources, _regionAliases, _detectedAliases, _completed, _retainedStorageUnits)
                 = (snapshot, publications, views, resolvedSources, regionAliases, detectedAliases, completed, retainedStorageUnits);
+
+        /// <summary>An exact classified inline block from the prelude of this successful compilation.</summary>
+        internal bool HasClassifiedOpenBlock(Algorithm block)
+            => _completed?.Child(_completed.PreludeKey, block) is { } key
+                && ReferenceEquals(_completed.Facts(key)?.Body, block);
 
         internal Algorithm Prelude => _snapshot.Contexts[_snapshot.Keys.Root].Body;
 

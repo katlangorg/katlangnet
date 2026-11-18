@@ -851,6 +851,13 @@ internal static class ParameterDetector
         /// <summary>Open-target algorithms this run elaborated with its diagnostics, by node.</summary>
         public readonly Dictionary<Algorithm, Algorithm> OpenBlocks = new(ReferenceEqualityComparer.Instance);
 
+        /// <summary>
+        /// Open-target algorithms this run elaborated PROVISIONALLY (a deferred region's body, diagnostics withheld), by node:
+        /// one map per run like <see cref="OpenBlocks"/>, because a block written as an open target is one context per
+        /// operation (<see cref="ProcessSharedOpenAlgorithm"/>). Created on first use.
+        /// </summary>
+        public Dictionary<Algorithm, Algorithm>? ProvisionalOpenBlocks;
+
         /// <summary>What this admission shares across paths; null when nothing is, and in a deferred unit's own run.</summary>
         public SharedBodyCensus? SharedBodies;
 
@@ -1194,17 +1201,17 @@ internal static class ParameterDetector
     /// (open-form rewriting) and <see cref="ProcessExpr"/>
     /// (transparent argument/capture rewriting) — with different results for the same node, so
     /// each keeps its own map; both contexts are constant for the region (the open-parent
-    /// prelude scope, empty captured names, one diagnostics sink). The two algorithm maps stay
-    /// separate for the same reason: the open walk elaborates nested algorithms WITH the
-    /// diagnostics sink, the transparent walk without one.
+    /// prelude scope, empty captured names, one diagnostics sink). The open walk's BLOCKS are not
+    /// memoized here: a block written as an open target is one context per operation, so the run
+    /// keeps them (<see cref="DetectionRun.OpenBlocks"/>, <see cref="DetectionRun.ProvisionalOpenBlocks"/>);
+    /// the transparent walk keeps its own algorithm map, because it elaborates nested algorithms
+    /// without the diagnostics sink.
     /// </summary>
     private sealed class OpenWalkMemo(DetectionRun run, FrontEndTraversalObservations? observations)
     {
         public readonly Dictionary<Expr, Expr> OpenRewrites = new(ReferenceEqualityComparer.Instance);
 
         public Dictionary<Expr, Expr>? TransparentRewrites;
-
-        public Dictionary<Algorithm, Algorithm>? OpenAlgorithms;
 
         public Dictionary<Algorithm, Algorithm>? TransparentAlgorithms;
 
@@ -1562,9 +1569,8 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Region-memoized inline-algorithm processing for the open-target walk: two
-    /// distinct <see cref="Expr.AlgorithmExpr"/> wrappers over ONE shared algorithm
-    /// elaborate it once per open-target region.
+    /// Elaborates a prelude-rooted open target once per source object and reporting mode, across open lists.
+    /// A materialization that inherits the completed definition receives its detected view.
     /// </summary>
     private static Algorithm ProcessSharedOpenAlgorithm(
         Algorithm algorithm,
@@ -1573,16 +1579,17 @@ internal static class ParameterDetector
         DiagnosticBag? diagnostics,
         OpenWalkMemo memo)
     {
-        // Prelude-rooted: one context for the whole run, whichever region of a shared body reaches the block.
-        var processedBlocks = diagnostics is null ? memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance) : memo.Run.OpenBlocks;
-        if (!processedBlocks.TryGetValue(algorithm, out var processedAlgorithm))
-        {
-            using var site = memo.Run.EnterImportSite(importSite);
-            processedAlgorithm = ProcessAlgorithm(
-                algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, memo.Run);
-            processedBlocks[algorithm] = processedAlgorithm;
-        }
+        var run = memo.Run;
+        var blocks = diagnostics is null
+            ? run.ProvisionalOpenBlocks ??= new(ReferenceEqualityComparer.Instance)
+            : run.OpenBlocks;
+        if (blocks.TryGetValue(algorithm, out var processedAlgorithm)) return processedAlgorithm;
+        if (openParentScope.StaticContext?.Operation.InheritedOpenBlock(algorithm, StaticPublicationStage.Detected) is { } inherited)
+            return inherited;
 
+        using var site = run.EnterImportSite(importSite);
+        processedAlgorithm = ProcessAlgorithm(algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, run);
+        blocks.Add(algorithm, processedAlgorithm);
         return processedAlgorithm;
     }
 

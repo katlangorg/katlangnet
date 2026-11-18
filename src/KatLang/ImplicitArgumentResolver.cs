@@ -2555,7 +2555,8 @@ internal static partial class ImplicitArgumentResolver
         {
             Expr.AlgorithmExpr block => block with
             {
-                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations), memos),
+                Algorithm = memos.Run.StructuralOperation.InheritedOpenBlock(block.Algorithm, StaticPublicationStage.Resolved)
+                    ?? ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations), memos),
             },
 
             // Capture targets own no scope; rows recurse without lifting,
