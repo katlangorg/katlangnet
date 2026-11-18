@@ -252,6 +252,16 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
                 (defaults.Exhaustive, defaults.MaxCases, defaults.MaxTime, defaults.BatchSize));
             Assert.Contains("/artifacts/semantic-campaign/seed-nested-exhaustive-", defaults.OutputDirectory.Replace('\\', '/'), StringComparison.Ordinal);
             Assert.Null(defaults.Problem());
+
+            // The rerun budget of failing batch members: a default, settable down to none, exhaustive only.
+            Assert.Equal(SemanticCampaignOptions.DefaultMaxReruns, defaults.MaxReruns);
+            Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--exhaustive", "--recipe", "seed-nested", "--max-reruns", "0"], out var noReruns, out problem), problem);
+            Assert.Equal(0, noReruns.MaxReruns);
+            Assert.Null(noReruns.Problem());
+            Assert.Equal("--max-reruns must be non-negative", (defaults with { MaxReruns = -1 }).Problem());
+            Assert.False(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "1", "--max-reruns", "3"], out _, out problem));
+            Assert.Equal("--max-reruns applies only to --exhaustive", problem);
+            Assert.Contains("[--batch-size N] [--max-reruns N]", SemanticCampaign.Usage, StringComparison.Ordinal);
         }
         finally
         {

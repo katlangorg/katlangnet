@@ -8,7 +8,7 @@ namespace KatLang.ParserFuzz;
 /// <summary>
 /// How a campaign failure relates to the batch it was observed in (fuzz/README.md § Campaigns). A
 /// failure observed alone — every seeded or in-process case — is <see cref="Standalone"/>; a failure
-/// observed in a supervised batch is rerun alone in a single-case child and classified by that rerun.
+/// observed in a supervised batch is classified by its standalone rerun when the budget permits one.
 /// </summary>
 internal static class SemanticFailureClass
 {
@@ -21,7 +21,13 @@ internal static class SemanticFailureClass
     /// <summary>Failed in its batch child; the standalone rerun failed with ANOTHER signature.</summary>
     internal const string BatchDependent = "batch-dependent";
 
-    internal static readonly ImmutableArray<string> All = [Standalone, BatchOnly, BatchDependent];
+    /// <summary>
+    /// Failed in its batch child and was NOT rerun alone: the campaign had spent its standalone reruns
+    /// (<c>--max-reruns</c>), so whether it is standalone, batch-only or batch-dependent is unknown.
+    /// </summary>
+    internal const string Unclassified = "unclassified";
+
+    internal static readonly ImmutableArray<string> All = [Standalone, BatchOnly, BatchDependent, Unclassified];
 
     /// <summary>The class of a batch failure with signature <paramref name="inBatch"/> whose standalone rerun gave <paramref name="alone"/>.</summary>
     internal static string Of(SemanticFailureSignature inBatch, SemanticCaseResult alone)
@@ -29,10 +35,10 @@ internal static class SemanticFailureClass
 }
 
 /// <summary>
-/// The batch a failing member was observed in: the original manifest, every member BEFORE it (in
-/// order), and its standalone rerun.
+/// The original manifest of a failing batch member. A standalone rerun also carries the preceding
+/// batch members in order for reproduction. An unclassified failure needs only the manifest.
 /// </summary>
-internal sealed record SemanticBatchContext(string Manifest, ImmutableArray<SemanticCase> Prefix, SemanticCaseResult Standalone);
+internal sealed record SemanticBatchContext(string Manifest, ImmutableArray<SemanticCase> Prefix, SemanticCaseResult? Standalone);
 
 /// <summary>What <see cref="SemanticSequenceReducer"/> concluded.</summary>
 internal enum SemanticSequenceStatus

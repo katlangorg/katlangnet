@@ -281,7 +281,7 @@ public partial class SharedValueGraphComplexityTests
                         var completed = random.Next(3) == 0;
                         if (completed)
                         {
-                            classes.MarkCompleted(union);
+                            classes.MarkCompleted(union, nodes[i], nodes[j]);
                             model.MarkCompleted(union);
                         }
 
@@ -459,12 +459,15 @@ public partial class SharedValueGraphComplexityTests
         //   unshared depth 14   single 1,211,840 → 452,296   operation 1,737,024 → 1,106,288   host 2,520,528 → 942,808
         //   unshared depth 8    single    29,040 → 10,656    operation    37,600 → 22,032      host    62,104 → 22,704
         //   unshared depth 5    single     2,856 → 1,240     operation     3,984 → 2,600       host     6,040 → 2,256
+        // The operation walk's tentative log then went from 32 to 16 bytes per union (2026-11-18,
+        // SharedValueGraphComplexityTests.TentativeLog.cs), and its bounds fail the 32-byte log:
+        //   operation  isomorphic 2,265,992 → 1,741,768   depth 14 1,106,288 → 844,208   depth 8 22,032 → 18,000   depth 5 2,600 → 2,152
         var cases = new (string Shape, Func<(Result Left, Result Right)> Values, long Single, long Operation, long Host)[]
         {
-            ("isomorphic", () => Witness("isomorphic"), 1_100_000, 2_600_000, 2_300_000),
-            ("unshared depth 14", () => (UnsharedTree(14), UnsharedTree(14)), 540_000, 1_300_000, 1_100_000),
-            ("unshared depth 8", () => (UnsharedTree(8), UnsharedTree(8)), 13_000, 26_000, 27_000),
-            ("unshared depth 5", () => (UnsharedTree(5), UnsharedTree(5)), 1_500, 3_100, 2_700),
+            ("isomorphic", () => Witness("isomorphic"), 1_100_000, 2_000_000, 2_300_000),
+            ("unshared depth 14", () => (UnsharedTree(14), UnsharedTree(14)), 540_000, 975_000, 1_100_000),
+            ("unshared depth 8", () => (UnsharedTree(8), UnsharedTree(8)), 13_000, 20_000, 27_000),
+            ("unshared depth 5", () => (UnsharedTree(5), UnsharedTree(5)), 1_500, 2_400, 2_700),
         };
 
         foreach (var (shape, values, single, operation, host) in cases)

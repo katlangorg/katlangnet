@@ -45,13 +45,23 @@ namespace KatLang;
 ///
 /// <para>TWO LAYERS. <see cref="Union"/> links COMMITTED classes. <see cref="UnionTentatively"/>
 /// links two committed or tentative roots in the TENTATIVE layer of the running walk. Each tentative
-/// link is logged and stamped with the current generation. <see cref="Commit"/> keeps every
-/// tentative link. <see cref="Rollback"/> undoes them in reverse and then re-links, as committed,
-/// exactly the pairs marked COMPLETED (<see cref="MarkCompleted"/>). Path compression never rewrites
-/// a tentative link: a node's committed path is compressed only up to its committed root, the first
-/// node on its path whose own link is tentative. So the undo restores the committed forest exactly.
-/// An undone link leaves its entry behind as a representative's (no parent), so a later link of
-/// the same node reuses it.</para>
+/// link is logged and stamped with its own number, at or above the running walk's first stamp.
+/// <see cref="Commit"/> keeps every tentative link. <see cref="Rollback"/> undoes them in reverse and
+/// then re-links, as committed, exactly the pairs marked COMPLETED (<see cref="MarkCompleted"/>).
+/// Path compression never rewrites a tentative link: a node's committed path is compressed only up to
+/// its committed root, the first node on its path whose own link is tentative. So the undo restores
+/// the committed forest exactly. An undone link leaves its entry behind as a representative's (no
+/// parent), so a later link of the same node reuses it.</para>
+///
+/// <para>A 16-BYTE LOG (implementation only). A tentative union logs two references, not three
+/// references and a flag: an OPEN union logs the representative its link attached below another one
+/// (the link to undo), and <see cref="MarkCompleted"/> overwrites that with the completed pair, the
+/// one thing a rollback re-links. A completed union's link is found again when it is undone, by its
+/// stamp: its child was the representative of one node of the pair when it was linked, so it is still
+/// on that node's path (links are only added above representatives, and compression never rewrites a
+/// tentative link), usually as the node itself. Every link, undo and re-link is exactly the one the
+/// former 32-byte log (the pair, the child and a flag) made, so the forest, its entries and every
+/// class it answers are unchanged.</para>
 ///
 /// <para>Never static, never shared between operations, runs or threads, and never attached to a
 /// <see cref="Result"/>. It dies with the walk or operation that owns it.</para>
@@ -65,10 +75,11 @@ internal sealed class ReferenceClasses
     private List<TentativeUnion>? tentative;
 
     /// <summary>
-    /// The stamp of the running walk's tentative links. Committed links carry 0, and every
-    /// <see cref="Commit"/> or <see cref="Rollback"/> advances it, so an older stamp reads as committed.
+    /// The stamp of the running walk's first tentative link: its tentative union number <c>i</c> is
+    /// stamped <c>firstStamp + i</c>. Committed links carry 0, and every <see cref="Commit"/> or
+    /// <see cref="Rollback"/> moves it past the walk's stamps, so an older stamp reads as committed.
     /// </summary>
-    private int generation = 1;
+    private long firstStamp = 1;
 
     private struct Entry
     {
@@ -78,23 +89,33 @@ internal sealed class ReferenceClasses
         /// </summary>
         internal Result? Parent;
 
-        /// <summary>The generation of the tentative link to <see cref="Parent"/>, or 0 for a committed link.</summary>
-        internal int Generation;
+        /// <summary>The stamp of the tentative link to <see cref="Parent"/>, or 0 for a committed link.</summary>
+        internal long Stamp;
     }
 
+    /// <summary>One logged tentative union (see the class remarks on the 16-byte log).</summary>
     private struct TentativeUnion
     {
-        internal Result Left;
-        internal Result Right;
+        /// <summary>
+        /// While the union is open, the representative its link attached below another one (the link
+        /// to undo); once it is completed, the left reference of its pair.
+        /// </summary>
+        internal Result ChildOrLeft;
 
-        /// <summary>The representative the link attached below another one: the link to undo.</summary>
-        internal Result Child;
-
-        internal bool Completed;
+        /// <summary><c>null</c> while the union is open; once it is completed, the right reference of its pair.</summary>
+        internal Result? CompletedRight;
     }
 
     /// <summary>The recorded references: one per node ever linked below another one (for tests).</summary>
     internal int RecordedReferences => entries.Count;
+
+    /// <summary>Reads a recorded link without compressing it. A rolled-back root has an entry with a null parent.</summary>
+    internal bool TryGetRecordedParent(Result node, out Result? parent)
+    {
+        var recorded = entries.TryGetValue(node, out var entry);
+        parent = entry.Parent;
+        return recorded;
+    }
 
     /// <summary>
     /// The links from <paramref name="node"/> up to its representative, read without compressing
@@ -103,7 +124,7 @@ internal sealed class ReferenceClasses
     internal int PathLength(Result node)
     {
         var length = 0;
-        for (var current = node; entries.TryGetValue(current, out var entry) && entry.Parent is { } parent; current = parent)
+        for (var current = node; TryGetRecordedParent(current, out var parent) && parent is not null; current = parent)
             length++;
         return length;
     }
@@ -118,7 +139,7 @@ internal sealed class ReferenceClasses
     internal bool Union(Result left, Result right)
     {
         Debug.Assert(tentative is not { Count: not 0 }, "A committed union while tentative links exist.");
-        return Link(left, right, tentatively: false, out _);
+        return Link(left, right, stamp: 0, out _);
     }
 
     /// <summary>
@@ -128,22 +149,35 @@ internal sealed class ReferenceClasses
     /// </summary>
     internal int UnionTentatively(Result left, Result right)
     {
-        if (!Link(left, right, tentatively: true, out var child))
+        var union = tentative?.Count ?? 0;
+        if (!Link(left, right, firstStamp + union, out var child))
             return NoUnion;
-        (tentative ??= []).Add(new TentativeUnion { Left = left, Right = right, Child = child });
-        return tentative.Count - 1;
+        (tentative ??= []).Add(new TentativeUnion { ChildOrLeft = child });
+        return union;
     }
 
-    /// <summary>Records that the walk COMPLETED the pair of tentative union <paramref name="union"/>.</summary>
-    internal void MarkCompleted(int union) => CollectionsMarshal.AsSpan(tentative)[union].Completed = true;
+    /// <summary>
+    /// Records that the walk COMPLETED the pair of tentative union <paramref name="union"/>: the
+    /// <paramref name="left"/> and <paramref name="right"/> references the union was made for, which
+    /// a <see cref="Rollback"/> re-links as committed.
+    /// </summary>
+    internal void MarkCompleted(int union, Result left, Result right)
+    {
+        ref var logged = ref CollectionsMarshal.AsSpan(tentative)[union];
+        Debug.Assert(logged.CompletedRight is null, "A tentative union completed twice.");
+        Debug.Assert(
+            OnPath(left, logged.ChildOrLeft) || OnPath(right, logged.ChildOrLeft),
+            "A tentative union completed with a pair it did not unite.");
+        logged = new TentativeUnion { ChildOrLeft = left, CompletedRight = right };
+    }
 
     /// <summary>Keeps every tentative link: the walk that made them decided its pair EQUAL.</summary>
     internal void Commit()
     {
         if (tentative is not { Count: not 0 })
             return;
+        firstStamp += tentative.Count;
         tentative.Clear();
-        generation++;
     }
 
     /// <summary>
@@ -162,19 +196,67 @@ internal sealed class ReferenceClasses
             // Undone newest first: later links have been undone, and compression never rewrites a
             // tentative link, so the child's entry still holds exactly this link. Nothing is stored
             // about the parent, so nothing else needs restoring.
-            ref var child = ref CollectionsMarshal.GetValueRefOrNullRef(entries, log[i].Child);
+            var stamp = firstStamp + i;
+            ref var child = ref log[i].CompletedRight is { } completedRight
+                ? ref StampedLink(log[i].ChildOrLeft, completedRight, stamp)
+                : ref CollectionsMarshal.GetValueRefOrNullRef(entries, log[i].ChildOrLeft);
+            Debug.Assert(!Unsafe.IsNullRef(ref child) && child.Stamp == stamp, "An undone union lost its link.");
             child.Parent = null;
-            child.Generation = 0;
+            child.Stamp = 0;
         }
 
-        generation++;
+        firstStamp += log.Length;
         foreach (ref readonly var union in log)
         {
-            if (union.Completed)
-                _ = Link(union.Left, union.Right, tentatively: false, out _);
+            if (union.CompletedRight is { } right)
+                _ = Link(union.ChildOrLeft, right, stamp: 0, out _);
         }
 
         tentative.Clear();
+    }
+
+    /// <summary>
+    /// The entry of the child of the completed union stamped <paramref name="stamp"/>, the newest link
+    /// not yet undone. That child was the representative of <paramref name="left"/> or of
+    /// <paramref name="right"/> when the union linked it, and links are only ever added above a
+    /// representative while compression never rewrites a tentative link, so it is still on the path of
+    /// one of them; no other entry carries the stamp. Usually it is the first node of that path.
+    /// </summary>
+    private ref Entry StampedLink(Result left, Result right, long stamp)
+    {
+        ref var fromLeft = ref StampedLinkOnPath(left, stamp);
+        return ref Unsafe.IsNullRef(ref fromLeft) ? ref StampedLinkOnPath(right, stamp) : ref fromLeft;
+    }
+
+    /// <summary>
+    /// The entry on the path of <paramref name="node"/> whose link carries <paramref name="stamp"/>,
+    /// read without compressing anything, or a null reference when none does.
+    /// </summary>
+    private ref Entry StampedLinkOnPath(Result node, long stamp)
+    {
+        for (var current = node; ;)
+        {
+            ref var entry = ref CollectionsMarshal.GetValueRefOrNullRef(entries, current);
+            if (Unsafe.IsNullRef(ref entry) || entry.Parent is not { } parent)
+                return ref Unsafe.NullRef<Entry>();
+            if (entry.Stamp == stamp)
+                return ref entry;
+            current = parent;
+        }
+    }
+
+    /// <summary>Whether <paramref name="target"/> is on the path of <paramref name="node"/> to its root (a debug check).</summary>
+    private bool OnPath(Result node, Result target)
+    {
+        Result? current = node;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, target))
+                return true;
+            current = entries.TryGetValue(current, out var entry) ? entry.Parent : null;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -194,7 +276,7 @@ internal sealed class ReferenceClasses
                 break;
             if (committedRoot is null)
             {
-                if (entry.Generation == generation)
+                if (entry.Stamp >= firstStamp)
                     committedRoot = current;
                 else
                     committedLinks++;
@@ -220,7 +302,11 @@ internal sealed class ReferenceClasses
         return current;
     }
 
-    private bool Link(Result left, Result right, bool tentatively, out Result child)
+    /// <summary>
+    /// Links the representatives of <paramref name="left"/> and <paramref name="right"/>, stamping the
+    /// link <paramref name="stamp"/> (0 for a committed link). Returns <c>false</c> when they are one class.
+    /// </summary>
+    private bool Link(Result left, Result right, long stamp, out Result child)
     {
         var leftRoot = Find(left);
         var rightRoot = Find(right);
@@ -236,7 +322,7 @@ internal sealed class ReferenceClasses
         (child, parent) = LinksBelow(leftRoot, rightRoot) ? (leftRoot, rightRoot) : (rightRoot, leftRoot);
         ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(entries, child, out _);
         entry.Parent = parent;
-        entry.Generation = tentatively ? generation : 0;
+        entry.Stamp = stamp;
         return true;
     }
 

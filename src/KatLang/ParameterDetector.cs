@@ -407,7 +407,9 @@ internal static class ParameterDetector
         // cite the property NAME, which differs per referencing property.
         Dictionary<Algorithm, Algorithm>? processedSharedValues =
             alg.Properties.Count > 1 ? new(ReferenceEqualityComparer.Instance) : null;
-        var newProperties = new List<Property>(alg.Properties.Count);
+        // ALLOCATION TRIM (implementation only, AstHelpers.SharesEmptyPropertyList): a body with output rows and no
+        // property gets the shared empty array instead of an empty list of its own (one per leaf body `A = expr`).
+        var newProperties = AstHelpers.SharesEmptyPropertyList(alg) ? null : new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
         {
             run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
@@ -416,17 +418,17 @@ internal static class ParameterDetector
                 // Hoisted deconstruction right-hand side: its rows were collected with this
                 // body's rows above and are rewritten with them below (never as a nested
                 // scope of its own, which would make its free names ITS parameters).
-                newProperties.Add(prop);
+                newProperties!.Add(prop);
             }
             else if (prop.Value is Algorithm.Conditional condAlg)
             {
-                newProperties.Add(prop.WithValue(ProcessConditionalProperty(
+                newProperties!.Add(prop.WithValue(ProcessConditionalProperty(
                     condAlg, prop.Name, scope, bodyParameters, diagnostics, observations, run)));
             }
             else if (processedSharedValues is null)
             {
                 using var importSite = run.EnterImportSite(ImportSite.OfProperty(prop));
-                newProperties.Add(prop.WithValue(ProcessAlgorithm(
+                newProperties!.Add(prop.WithValue(ProcessAlgorithm(
                     prop.Value,
                     scope,
                     bodyParameters,
@@ -449,7 +451,7 @@ internal static class ParameterDetector
                     processedSharedValues[prop.Value] = processedBody;
                 }
 
-                newProperties.Add(prop.WithValue(processedBody));
+                newProperties!.Add(prop.WithValue(processedBody));
             }
         }
 
@@ -474,10 +476,14 @@ internal static class ParameterDetector
             run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
             rewrittenOutput.Add(RewriteParams(expr, scope, bodyParameters, rewriteMemo));
         }
-        AstHelpers.RewriteDeconstructionSourceRows(
-            alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo),
-            (source, view) => scope.StaticContext!.Operation.Publish(
-                scope.StaticContext.Operation.ContextOf(scope.StaticContext.Key, source), StaticPublicationStage.Detected, view));
+        // A body without properties has no deconstruction source to rewrite.
+        if (newProperties is not null)
+        {
+            AstHelpers.RewriteDeconstructionSourceRows(
+                alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo),
+                (source, view) => scope.StaticContext!.Operation.Publish(
+                    scope.StaticContext.Operation.ContextOf(scope.StaticContext.Key, source), StaticPublicationStage.Detected, view));
+        }
 
         // Lean: withParams on the processed body — the merged pattern list keeps every written
         // or earlier-inferred pattern and appends a fresh capture per newly inferred name.
@@ -488,7 +494,7 @@ internal static class ParameterDetector
             ParameterPatterns = hasExplicitParameterList
                 ? alg.ParameterPatterns.ToList()
                 : Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
-            Properties = newProperties,
+            Properties = (IReadOnlyList<Property>?)newProperties ?? Array.Empty<Property>(),
             Output = rewrittenOutput,
         };
         if (scope.StaticContext is { } completedContext)
@@ -1738,7 +1744,8 @@ internal static class ParameterDetector
         // remain occurrence-specific because their branch diagnostics cite prop.Name.
         Dictionary<Algorithm, Algorithm>? processedSharedValues =
             body.Properties.Count > 1 ? new(ReferenceEqualityComparer.Instance) : null;
-        var newProperties = new List<Property>(body.Properties.Count);
+        // The allocation trim of ProcessUserAlgorithm (AstHelpers.SharesEmptyPropertyList).
+        var newProperties = AstHelpers.SharesEmptyPropertyList(body) ? null : new List<Property>(body.Properties.Count);
         foreach (var prop in body.Properties)
         {
             run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
@@ -1747,7 +1754,7 @@ internal static class ParameterDetector
             {
                 // Hoisted deconstruction right-hand side: collected with the body's rows
                 // above and rewritten with them below (see WrittenRows).
-                newProperties.Add(prop);
+                newProperties!.Add(prop);
                 continue;
             }
 
@@ -1780,7 +1787,7 @@ internal static class ParameterDetector
                 processedSharedValues[prop.Value] = processedProp;
             }
 
-            newProperties.Add(prop.WithValue(processedProp));
+            newProperties!.Add(prop.WithValue(processedProp));
         }
 
         // The shared owner walk selects both branch binders and ancestor parameters.
@@ -1798,15 +1805,18 @@ internal static class ParameterDetector
             run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
             rewrittenOutput.Add(RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
         }
-        AstHelpers.RewriteDeconstructionSourceRows(
-            body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo),
-            (source, view) => bodyScope.StaticContext!.Operation.Publish(
-                bodyScope.StaticContext.Operation.ContextOf(bodyScope.StaticContext.Key, source), StaticPublicationStage.Detected, view));
+        if (newProperties is not null)
+        {
+            AstHelpers.RewriteDeconstructionSourceRows(
+                body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo),
+                (source, view) => bodyScope.StaticContext!.Operation.Publish(
+                    bodyScope.StaticContext.Operation.ContextOf(bodyScope.StaticContext.Key, source), StaticPublicationStage.Detected, view));
+        }
 
         var rewritten = body with
         {
             ParameterPatterns = [],  // No implicit params — bindings come from pattern matching
-            Properties = newProperties,
+            Properties = (IReadOnlyList<Property>?)newProperties ?? Array.Empty<Property>(),
             Output = rewrittenOutput,
         };
         if (bodyScope.StaticContext is { } context)

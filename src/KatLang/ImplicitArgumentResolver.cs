@@ -1868,12 +1868,18 @@ internal static partial class ImplicitArgumentResolver
     /// ownership-first lookup reads one declaration). No per-index table is built: no caller reads one (it was one
     /// array per level and pass, a fresh empty one for every leaf body).
     /// </summary>
-    private static Dictionary<string, VisibleProperty> BuildPropertyEntries(
+    private static IReadOnlyDictionary<string, VisibleProperty> BuildPropertyEntries(
         IReadOnlyList<Property> properties,
         DeclaringOwners owners,
         ResolverLevel? level,
         ResolutionRun run)
     {
+        // ALLOCATION TRIM (implementation only): a level without properties — every leaf body, in both passes — gets the
+        // one shared empty map instead of an empty dictionary of its own. Both callers only count it and copy it into a
+        // new signature map (SignatureMap.Extend); nothing keeps or writes it.
+        if (properties.Count == 0)
+            return System.Collections.ObjectModel.ReadOnlyDictionary<string, VisibleProperty>.Empty;
+
         var byName = new Dictionary<string, VisibleProperty>(StringComparer.Ordinal);
         var operation = run.StructuralOperation;
         for (var i = 0; i < properties.Count; i++)
@@ -1890,6 +1896,14 @@ internal static partial class ImplicitArgumentResolver
 
         return byName;
     }
+
+    /// <summary>
+    /// The properties of the rewrite of <paramref name="body"/>, which has none (an allocation trim, implementation only):
+    /// the shared empty array when <see cref="AstHelpers.SharesEmptyPropertyList"/> allows it, otherwise an empty list
+    /// of its own, as every rewrite had before.
+    /// </summary>
+    private static IReadOnlyList<Property> EmptyPropertiesOf(Algorithm.User body)
+        => AstHelpers.SharesEmptyPropertyList(body) ? Array.Empty<Property>() : new List<Property>();
 
     /// <summary>
     /// Processes an algorithm: processes each of its properties (in declaration order: every signature it reads is
@@ -2099,7 +2113,10 @@ internal static partial class ImplicitArgumentResolver
         // no processing order, sibling-order channel, on-demand processing or demand nesting exists, and none could change
         // what a read sees. The map is never re-written while the level is processed, so a body shared by two properties
         // keys one rewrite region whatever was processed in between.
-        var processedProperties = new Property[alg.Properties.Count];
+        // ALLOCATION TRIM (implementation only): the processed properties are added in declaration order to the list the
+        // body keeps (each iteration below adds exactly one), not written to an array and then copied, and a body without
+        // properties allocates none here: each return below gives it the list AstHelpers.SharesEmptyPropertyList allows.
+        var newProperties = alg.Properties.Count == 0 ? null : new List<Property>(alg.Properties.Count);
         var loopImportSite = run.ImportSite;
         for (var idx = 0; idx < alg.Properties.Count; idx++)
         {
@@ -2111,7 +2128,7 @@ internal static partial class ImplicitArgumentResolver
                 // Hoisted deconstruction right-hand side: written as rows of THIS body, so it
                 // is rewritten in the output phase below with this body's own context and
                 // acquires no parameters of its own (see RewriteDeconstructionSourceRows).
-                processedProperties[idx] = prop;
+                newProperties!.Add(prop);
             }
             else if (prop.Value is Algorithm.Conditional condAlg)
             {
@@ -2122,7 +2139,7 @@ internal static partial class ImplicitArgumentResolver
                 {
                     var processedFamily = ProcessConditionalProperty(
                         condAlg, prop.Name, visibleParamMap, nestedForwarding, observations, diagnostics, run);
-                    processedProperties[idx] = prop.WithValue(processedFamily);
+                    newProperties!.Add(prop.WithValue(processedFamily));
                     run.CompleteStructure(condAlg, processedFamily, run.StructuralOperation.ContextOf(level.StaticContext!.Key, condAlg));
                 }
             }
@@ -2137,11 +2154,9 @@ internal static partial class ImplicitArgumentResolver
                 }
 
                 run.CompleteStructure(prop.Value, processedBody, run.StructuralOperation.ContextOf(level.StaticContext!.Key, prop.Value));
-                processedProperties[idx] = prop.WithValue(processedBody);
+                newProperties!.Add(prop.WithValue(processedBody));
             }
         }
-
-        var newProperties = processedProperties.ToList();
 
         // ONE memo bundle spans this algorithm's whole output-rewrite phase: the property
         // loop above has completed, so visibleParamMap's contents are final for every
@@ -2160,7 +2175,7 @@ internal static partial class ImplicitArgumentResolver
         // Every other body keeps formula lifting below.
         // A lone row completes to a user body or a callable alias; either keeps its variant.
         if (!isRoot && TryCompleteLoneCalleeRow(alg, branchContext, visibleParamMap, ownForwarding, walkMemos) is { } completed)
-            return completed.WithOwnScope(newOpens, newProperties);
+            return completed.WithOwnScope(newOpens, (IReadOnlyList<Property>?)newProperties ?? new List<Property>());
 
         // A lone bare row FWD-02 did not complete stays what it is — a bare reference, the cached
         // zero-argument read — and is never formula-lifted: which callables a lone row can alias or
@@ -2209,18 +2224,21 @@ internal static partial class ImplicitArgumentResolver
                     walkMemos));
             }
 
-            AstHelpers.RewriteDeconstructionSourceRows(
-                alg,
-                newProperties,
-                expr => SpreadIfMarked(
-                    expr, RewriteImplicitCalls(expr, visibleParamMap, explicitContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
-                (source, view) => run.StructuralOperation.Publish(
-                    run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view));
+            if (newProperties is not null)
+            {
+                AstHelpers.RewriteDeconstructionSourceRows(
+                    alg,
+                    newProperties,
+                    expr => SpreadIfMarked(
+                        expr, RewriteImplicitCalls(expr, visibleParamMap, explicitContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
+                    (source, view) => run.StructuralOperation.Publish(
+                        run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view));
+            }
 
             return alg with
             {
                 Opens = newOpens,
-                Properties = newProperties,
+                Properties = (IReadOnlyList<Property>?)newProperties ?? EmptyPropertiesOf(alg),
                 Output = newOutput,
             };
         }
@@ -2278,14 +2296,18 @@ internal static partial class ImplicitArgumentResolver
         }
 
         lifts.EndRows();
-        AstHelpers.RewriteDeconstructionSourceRows(
-            alg,
-            newProperties,
-            expr => SpreadIfMarked(
-                expr, RewriteImplicitCalls(expr, visibleParamMap, liftedContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
-            (source, view) => run.StructuralOperation.Publish(
-                run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view),
-            source => lifts.EnterSource(source.AssignmentDeconstructionRowIndex!.Value));
+        if (newProperties is not null)
+        {
+            AstHelpers.RewriteDeconstructionSourceRows(
+                alg,
+                newProperties,
+                expr => SpreadIfMarked(
+                    expr, RewriteImplicitCalls(expr, visibleParamMap, liftedContext, LiftingRole.Value, walkMemos), visibleParamMap, walkMemos),
+                (source, view) => run.StructuralOperation.Publish(
+                    run.StructuralOperation.ContextOf(level.StaticContext!.Key, source), StaticPublicationStage.Resolved, view),
+                source => lifts.EnterSource(source.AssignmentDeconstructionRowIndex!.Value));
+        }
+
         lifts.EndSources();
 
         // Every written row is rewritten: the callees it lifted are exactly the ones the selected signature was composed from.
@@ -2303,7 +2325,7 @@ internal static partial class ImplicitArgumentResolver
             ForwardingParameterStart = alg.ForwardingParameterStart
                 ?? (lifting.Lifted ? alg.ParameterPatterns.Count : null),
             Opens = newOpens,
-            Properties = newProperties,
+            Properties = (IReadOnlyList<Property>?)newProperties ?? EmptyPropertiesOf(alg),
             Output = rewrittenOutput,
         };
 
@@ -2318,7 +2340,11 @@ internal static partial class ImplicitArgumentResolver
             return lifted;
         }
 
-        var runtimeAlias = new Algorithm.Alias(lifted, runtimeRow) { HasRuntimeTarget = true };
+        // An alias compares its one row structurally, so it keeps an empty properties list of its own
+        // (AstHelpers.SharesEmptyPropertyList), never the shared array the body above may hold.
+        var runtimeAlias = new Algorithm.Alias(
+            newProperties is null && AstHelpers.SharesEmptyPropertyList(alg) ? lifted with { Properties = new List<Property>() } : lifted,
+            runtimeRow) { HasRuntimeTarget = true };
         ReportOutputSpreadMarkerOnAlias(runtimeAlias, targetName: "", target: null, walkMemos);
         return runtimeAlias;
     }

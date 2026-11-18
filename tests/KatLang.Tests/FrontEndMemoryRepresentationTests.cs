@@ -337,6 +337,54 @@ public class FrontEndMemoryRepresentationTests
         Assert.NotEqual(a, b);
     }
 
+    [Fact]
+    public void IntermediateTrees_ShareEmptyPropertiesForRows_AndKeepDistinctAliasScopes()
+    {
+        const string program = """
+            A = 1
+            B = 1
+            E = {}
+            F = {}
+            AliasA = A
+            AliasB = A
+            Capture(meta op) = op
+            Inc(v) = v + 1
+            R = Capture(Inc(0))
+            LinkA = R.Algorithm
+            LinkB = R.Algorithm
+            A
+            """;
+        var detected = ParameterDetector.Detect(SourceProvenance.ParseSyntaxValidRoot(program));
+        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        Assert.Empty(detected.Diagnostics);
+
+        foreach (var root in new[] { detected.Root, resolved })
+        {
+            var (a, b) = (Body(root, "A"), Body(root, "B"));
+            Assert.Same(Array.Empty<Property>(), a.Properties);
+            Assert.Same(a.Properties, b.Properties);
+            Assert.NotSame(a.Output, b.Output);
+            Assert.NotEqual(a, b);
+
+            var (e, f) = (Body(root, "E"), Body(root, "F"));
+            Assert.Same(e.Output, f.Output);
+            Assert.NotSame(e.Properties, f.Properties);
+            Assert.NotEqual(e, f);
+        }
+
+        foreach (var (first, second, runtime) in new[] { ("AliasA", "AliasB", false), ("LinkA", "LinkB", true) })
+        {
+            var a = Assert.IsType<Algorithm.Alias>(Body(resolved, first));
+            var b = Assert.IsType<Algorithm.Alias>(Body(resolved, second));
+            Assert.Equal(runtime, a.HasRuntimeTarget);
+            Assert.Equal(runtime, b.HasRuntimeTarget);
+            Assert.NotSame(a.Properties, b.Properties);
+            Assert.NotEqual(a, b);
+        }
+
+        static Algorithm Body(Algorithm root, string name) => root.Properties.Single(p => p.Name == name).Value;
+    }
+
     /// <summary>
     /// An input-graph node creates its child and parent lists with its first edge: a leaf holds no child list and a row
     /// root no parent list (a constant row's one node holds neither), instead of two empty lists per node while its
@@ -372,11 +420,13 @@ public class FrontEndMemoryRepresentationTests
     /// <summary>
     /// A level's input entries are built by name only. The per-index table both callers discarded was one array per
     /// level and pass — a fresh empty one for every leaf body, and two LOH arrays at the root of a ceiling-size
-    /// source. An empty level now allocates its by-name table and nothing else (averaged over many calls, so a
-    /// background collection's quantum cannot decide it).
+    /// source. An empty level then allocated its by-name table and nothing else; since 2026-11-18 it allocates
+    /// nothing: every empty level, in both passes, gets the one shared, immutable empty map (both callers only count
+    /// it and copy it into a signature map), while a level with properties still gets a by-name dictionary of its
+    /// own. Bytes are averaged over many calls, so a background collection's quantum cannot decide them.
     /// </summary>
     [Fact]
-    public void LeafLevelEntries_AllocateNoIndexTable()
+    public void LeafLevelEntries_AllocateNoTable()
     {
         const int calls = 10_000;
         var method = typeof(ImplicitArgumentResolver).GetMethod("BuildPropertyEntries", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -394,13 +444,17 @@ public class FrontEndMemoryRepresentationTests
             properties, runParameter).Compile();
         IReadOnlyList<Property> none = Array.Empty<Property>();
 
-        var entries = Assert.IsType<Dictionary<string, ImplicitArgumentResolver.VisibleProperty>>(build(none, run));
+        var entries = Assert.IsType<System.Collections.ObjectModel.ReadOnlyDictionary<string, ImplicitArgumentResolver.VisibleProperty>>(build(none, run));
         Assert.Empty(entries);
-        GC.KeepAlive(new Dictionary<string, ImplicitArgumentResolver.VisibleProperty>(StringComparer.Ordinal));
-
+        Assert.Same(entries, build(new List<Property>(), run));
         var level = PerCall(() => GC.KeepAlive(build(none, run)));
-        var table = PerCall(() => GC.KeepAlive(new Dictionary<string, ImplicitArgumentResolver.VisibleProperty>(StringComparer.Ordinal)));
-        Assert.True(level < table + 12, $"an empty level allocated {level:F1} B per call; its by-name table alone is {table:F1} B");
+        Assert.True(level < 4, $"an empty level allocated {level:F1} B per call");
+
+        // A level with properties keeps a by-name dictionary of its own.
+        var declared = SourceProvenance.ParseValid("A = 1\nA").Root.Properties;
+        var own = Assert.IsType<Dictionary<string, ImplicitArgumentResolver.VisibleProperty>>(build(declared, run));
+        Assert.Equal(new[] { "A" }, own.Keys.ToArray());
+        Assert.NotSame(own, build(declared, run));
 
         static double PerCall(Action action)
         {

@@ -292,6 +292,25 @@ and the default-GC peaks move within their noise. The probe's census mode, broke
 and resolution without an admitted operation), works again, and `FrontEndMemoryProbeCensusProcessTests` runs it for
 every shape. Logs: `artifacts/validation/front-end-memory-follow-ups/` (local only).
 
+**Intermediate-tree trims (2026-11-18, implementation only).** Three allocations of the detector's and the resolver's
+intermediate trees went. The detector gives a body with output rows and no property the shared empty array instead of
+an empty list of its own (`AstHelpers.SharesEmptyPropertyList`, the rule of the exposure trim above: a body without rows
+keeps its list); the resolver adds its processed properties to the list the body keeps instead of filling an array and
+copying it, and gives a property-less body the same shared array where that rule allows it (a lone-callee completion
+and a runtime-target alias keep a list of their own, since an alias compares its row structurally); and
+`BuildPropertyEntries` returns one shared empty read-only map for a level without properties, in both passes, instead
+of an empty dictionary per leaf level (both callers only count it and copy it into a signature map). The 2026-11-16
+census had also shown an empty frozen member table and parameter set per body. Since `1222b63f`,
+`CompletedStaticStructures.BodyFacts` shares both empties. On `5fee88d9`, the 2 Mi `dense_props` census records
+136,497 body facts and neither empty type ranks among its top 200 retained types by bytes.
+The baseline and candidate differential outputs matched on 15,756 test-literal inputs. Checks included diagnostics,
+ledger charges, normalized detected and resolved trees, and pairwise record equality for up to 80 sampled bodies
+per intermediate or exposed tree and up to 40 root property values. The `fe-mem-diff` hashes of 461 inputs also
+matched. `fe-mem` `Parser.Parse` at 2 Mi (Release, medians of three,
+one process per run, MiB allocated): `dense_props` 2,513.5 → 2,443.1 (detector 16.3, resolver 30.5, entry maps 18.7,
+each measured alone), `dense_funcs` 2,367.7 → 2,323.7 (13.1, 16.1, 14.5); retained 131.3 and 138.0 unchanged (these
+trees die before the result). Logs: `artifacts/validation/small-follow-ups-2026-11-17b/` (local only).
+
 **The same frame in a deferred unit (2026-11-17).** A materialization built its unit's completed facts
 beside its resolution run, as the eager entry did before the trim above:
 `ImplicitArgumentResolver.ElaborateStructuralDeferredBranch` held the run in a local across

@@ -37,6 +37,13 @@ internal sealed record SemanticCampaignOptions
     internal const int DefaultBatchSize = 64;
     internal const int MaxBatchSize = 4_096;
 
+    /// <summary>
+    /// An exhaustive campaign's default budget of standalone reruns of failing batch members: every failure
+    /// of an ordinary defect is rerun and classified as before, while a generator regression that fails
+    /// hundreds of members stops spending a child (up to the deadline each) per member after this many.
+    /// </summary>
+    internal const int DefaultMaxReruns = 64;
+
     /// <summary>The first seed of the plan (ignored by an exhaustive campaign).</summary>
     public ulong FirstSeed { get; init; }
 
@@ -57,6 +64,13 @@ internal sealed record SemanticCampaignOptions
 
     /// <summary>Members per supervised batch child of an exhaustive campaign (<c>--batch-size</c>).</summary>
     public int BatchSize { get; init; } = DefaultBatchSize;
+
+    /// <summary>
+    /// The most standalone reruns of failing batch members one exhaustive campaign runs (<c>--max-reruns</c>;
+    /// 0 reruns none). A failing member past the budget is recorded with its batch failure and classified
+    /// <see cref="SemanticFailureClass.Unclassified"/>, with no rerun and no reduction.
+    /// </summary>
+    public int MaxReruns { get; init; } = DefaultMaxReruns;
 
     public int CasesPerSeed { get; init; } = DefaultCasesPerSeed;
 
@@ -111,6 +125,7 @@ internal sealed record SemanticCampaignOptions
             if (!SemanticCorpus.FiniteRecipes.Contains(Recipe))
                 return $"--exhaustive needs a finite recipe ({string.Join(", ", SemanticCorpus.FiniteRecipes)}); '{Recipe}' is not finite";
             if (BatchSize is < 1 or > MaxBatchSize) return $"--batch-size must be 1..{MaxBatchSize.ToString(CultureInfo.InvariantCulture)}";
+            if (MaxReruns < 0) return "--max-reruns must be non-negative";
         }
         else
         {
@@ -155,7 +170,7 @@ internal sealed record SemanticCampaignFailure(
     /// <summary>How the failure relates to its batch (<see cref="SemanticFailureClass"/>): standalone outside a batch.</summary>
     public string Classification { get; init; } = SemanticFailureClass.Standalone;
 
-    /// <summary>The single-case rerun of a failure observed in a batch; <c>null</c> outside a batch.</summary>
+    /// <summary>The single-case result when a failing batch member was rerun.</summary>
     public SemanticCaseResult? StandaloneRerun { get; init; }
 
     /// <summary>The complete batch reproducer of a batch-only or batch-dependent failure: every preceding member, then this one.</summary>
@@ -203,12 +218,16 @@ internal sealed record SemanticCampaignResult(
         => [.. SemanticFailureClass.All.Select(c => (c, Failures.Count(f => f.Classification == c)))];
 
     /// <summary>Failures that occur only in their batch (batch-only and batch-dependent).</summary>
-    public int BatchFailures => Failures.Count(static f => f.Classification != SemanticFailureClass.Standalone);
+    public int BatchFailures => Failures.Count(static f => f.Classification is SemanticFailureClass.BatchOnly or SemanticFailureClass.BatchDependent);
+
+    /// <summary>Batch failures recorded without a standalone rerun, the campaign's reruns being spent (<c>--max-reruns</c>).</summary>
+    public int UnclassifiedFailures => Failures.Count(static f => f.Classification == SemanticFailureClass.Unclassified);
 
     public string Describe()
     {
         var uncovered = FirstUncovered is null ? "" : " first-uncovered=" + FirstUncovered;
-        var batchOnly = BatchFailures == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $" batch-only={BatchFailures}");
+        var batchOnly = (BatchFailures == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $" batch-only={BatchFailures}"))
+            + (UnclassifiedFailures == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $" unclassified={UnclassifiedFailures}"));
         var plan = Options.Exhaustive
             ? string.Create(CultureInfo.InvariantCulture,
                 $"exhaustive ({Planned} programs from {Sequences} choice sequences, {(Options.Supervised ? $"batches of {Options.BatchSize}" : "in process")})")
@@ -234,7 +253,9 @@ internal sealed record SemanticCampaignResult(
 /// member and the first member the batch could not answer rerun alone), with the same failure handling —
 /// except that a failure the standalone rerun does not reproduce is classified batch-only (or
 /// batch-dependent: another signature alone), keeps its complete batch reproducer, and is reduced first as
-/// a sequence (<see cref="SemanticSequenceReducer"/>) and then as a program in that sequence. It stops at the first
+/// a sequence (<see cref="SemanticSequenceReducer"/>) and then as a program in that sequence. The standalone
+/// reruns are budgeted (<c>--max-reruns</c>, <see cref="SemanticCampaignOptions.DefaultMaxReruns"/> by default):
+/// a failing member past the budget is recorded unclassified, without a rerun or a reduction. It stops at the first
 /// exhausted budget and reports what it covered, including the distinct sources and (source,
 /// profile) pairs executed. It writes only inside its own output directory, which must be new or empty.
 /// </summary>
@@ -331,7 +352,9 @@ internal static class SemanticCampaign
             }
 
             var signature = SemanticFailureSignature.Of(result);
-            var classification = batch is null ? SemanticFailureClass.Standalone : SemanticFailureClass.Of(signature, batch.Standalone);
+            var classification = batch is null ? SemanticFailureClass.Standalone
+                : batch.Standalone is { } rerun ? SemanticFailureClass.Of(signature, rerun)
+                : SemanticFailureClass.Unclassified;
             Directory.CreateDirectory(failuresDir);
             var safe = SemanticReplay.SafeName(semanticCase.CaseId);
             var descriptor = Path.Combine(failuresDir, safe + ".json");
@@ -348,22 +371,28 @@ internal static class SemanticCampaign
                 Classification = classification,
                 StandaloneRerun = batch?.Standalone,
             };
-            if (batch is not null && classification != SemanticFailureClass.Standalone)
+            if (batch?.Standalone is { } alone && classification != SemanticFailureClass.Standalone)
             {
                 // The complete batch reproducer: every member that ran before this one, then this one.
                 var reproducerDir = Path.Combine(failuresDir, safe + ".batch");
                 ImmutableArray<SemanticCase> members = [.. batch.Prefix, semanticCase];
                 var reproducer = SemanticBatchSequence.Persist(reproducerDir, members, SemanticReplay.Mode.Recipe);
                 File.WriteAllText(Path.Combine(reproducerDir, "batch.json"), SemanticBatchSequence.WriteReproducerRecord(
-                    options.Recipe, semanticCase.CaseId, classification, signature, batch.Standalone, Relative(outDir, batch.Manifest), members));
+                    options.Recipe, semanticCase.CaseId, classification, signature, alone, Relative(outDir, batch.Manifest), members));
                 failure = failure with { BatchReproducer = Relative(outDir, reproducer) };
                 log.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"  {classification}: standalone rerun {batch.Standalone.Verdict}; batch reproducer={reproducer} ({members.Length} members)"));
+                    $"  {classification}: standalone rerun {alone.Verdict}; batch reproducer={reproducer} ({members.Length} members)"));
             }
 
             if (options.Reduce)
             {
-                if (clock() >= options.MaxTime)
+                if (classification == SemanticFailureClass.Unclassified)
+                {
+                    // Reducing it would rerun it alone, the very execution the budget withheld; its batch's manifest,
+                    // descriptors and results are kept (work/), so it can be replayed in its batch later.
+                    failure = failure with { ReductionSkipped = "not rerun alone (--max-reruns spent): an unclassified failure is not reduced" };
+                }
+                else if (clock() >= options.MaxTime)
                 {
                     timeExhausted = true;
                     failure = failure with { ReductionSkipped = "time budget exhausted" };
@@ -403,6 +432,7 @@ internal static class SemanticCampaign
             var programs = enumeration.Programs;
             var next = 0;
             var batchNumber = 0;
+            var rerunsLeft = options.MaxReruns;
             while (next < programs.Length && !Stopped(programs[next].CaseId))
             {
                 if (options.InProcessRunner is { } inProcess)
@@ -415,7 +445,7 @@ internal static class SemanticCampaign
                 }
 
                 var size = Math.Min(options.BatchSize, Math.Min(programs.Length - next, options.MaxCases - executed));
-                next += SuperviseBatch(programs.AsSpan(next, size).ToArray(), ++batchNumber, workDir, options, Record, log);
+                next += SuperviseBatch(programs.AsSpan(next, size).ToArray(), ++batchNumber, workDir, options, ref rerunsLeft, Record, log);
             }
         }
         else
@@ -450,14 +480,16 @@ internal static class SemanticCampaign
     /// crashed or timed out, or one the child could not replay), also runs ALONE under the single-case
     /// supervisor, which keeps its evidence exactly as a seeded campaign does; the original batch
     /// failure is recorded whatever that rerun gives, and the rerun classifies it
-    /// (<see cref="SemanticFailureClass"/>) with the members before it as its context. The members
+    /// (<see cref="SemanticFailureClass"/>) with the members before it as its context. Each rerun spends one of
+    /// the campaign's <paramref name="rerunsLeft"/>; once none is left, a failing member is recorded with no
+    /// rerun (<see cref="SemanticFailureClass.Unclassified"/>). The members
     /// after a member without a result are left for the next batch. A failing batch's
     /// entire manifest, descriptors, results and supervision record are kept together; a clean,
     /// passing batch's evidence is removed. Returns how many members were recorded.
     /// </summary>
     private static int SuperviseBatch(
         SemanticExhaustive.EnumeratedProgram[] programs, int batchNumber, string workDir, SemanticCampaignOptions options,
-        Action<SemanticCaseBuilder, SemanticCase, SemanticCaseResult, SemanticBatchContext?> record, TextWriter log)
+        ref int rerunsLeft, Action<SemanticCaseBuilder, SemanticCase, SemanticCaseResult, SemanticBatchContext?> record, TextWriter log)
     {
         Directory.CreateDirectory(workDir);
         var stem = "batch-" + batchNumber.ToString("D5", CultureInfo.InvariantCulture);
@@ -491,15 +523,24 @@ internal static class SemanticCampaign
             // missing observation) for a member without a result.
             var result = SemanticBatchSequence.MemberResult(run, recorded);
             SemanticBatchContext? context = null;
-            if (!result.Passed)
+            if (!result.Passed && rerunsLeft > 0)
             {
                 // Every failure observed in a batch also runs ALONE: one that depends on an earlier
                 // member is classified batch-only instead of falling through as "not reproduced".
+                rerunsLeft--;
                 var rerunDir = Path.Combine(batchDir, "rerun");
                 var alone = Supervise(member.Case, rerunDir, options);
                 if (Directory.Exists(rerunDir) && !Directory.EnumerateFileSystemEntries(rerunDir).Any()) Directory.Delete(rerunDir);
                 log.WriteLine($"  batch member {member.Case.CaseId}: standalone rerun {alone.Verdict}{(member.Verdict is null ? "; original batch failure retained" : "")}; manifest={manifest}");
                 context = new SemanticBatchContext(manifest, cases[..recorded], alone);
+            }
+            else if (!result.Passed)
+            {
+                // The campaign's reruns are spent (--max-reruns): a generator regression that fails hundreds of
+                // members must not spend a child per member. The batch failure is recorded, unclassified.
+                log.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"  batch member {member.Case.CaseId}: no standalone rerun (all {options.MaxReruns} reruns spent, --max-reruns); unclassified; manifest={manifest}"));
+                context = new SemanticBatchContext(manifest, [], Standalone: null);
             }
 
             record(builders[recorded++], member.Case, result, context);
@@ -729,8 +770,10 @@ internal static class SemanticCampaign
     /// <c>sequences</c> (its <c>planned</c> count is the distinct programs), <c>null</c> for an
     /// unbounded <c>maxCases</c>, and <c>complete</c>: every enumerated program executed.
     /// <c>classifications</c> (failures per <see cref="SemanticFailureClass"/>) and, on each failure,
-    /// <c>classification</c> are additive v1 fields too (absent: every failure is standalone); a failure
-    /// observed in a batch adds its <c>standalone</c> rerun, and a batch-only or batch-dependent one its
+    /// <c>classification</c> are additive v1 fields too (absent: every failure is standalone), as are an exhaustive
+    /// summary's <c>maxReruns</c> and the <c>unclassified</c> class (a batch failure recorded without a rerun once
+    /// the campaign's reruns were spent; a document without it reran every one); a failure
+    /// observed in a batch adds its <c>standalone</c> rerun when it had one, and a batch-only or batch-dependent one its
     /// complete <c>batchReproducer</c> manifest and its <c>sequenceReduction</c> (status, prefix lengths,
     /// executions, the reduced sequence's manifest and record), with the reduced program's
     /// <c>reduction.context</c> manifest.
@@ -754,6 +797,7 @@ internal static class SemanticCampaign
                 w.WriteNull("lastSeed");
                 w.WriteNull("casesPerSeed");
                 w.WriteNumber("batchSize", o.BatchSize);
+                w.WriteNumber("maxReruns", o.MaxReruns);
                 if (result.Sequences is { } sequences) w.WriteNumber("sequences", sequences);
                 else w.WriteNull("sequences");
             }
@@ -938,7 +982,7 @@ internal static class SemanticCampaign
         "usage: semantic-campaign --seeds FIRST[..LAST] [--recipe " + string.Join("|", SemanticCorpus.SeededRecipes) + "] " +
         "[--cases-per-seed N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]\n" +
         "       semantic-campaign --exhaustive --recipe " + string.Join("|", SemanticCorpus.FiniteRecipes) + " " +
-        "[--batch-size N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]";
+        "[--batch-size N] [--max-reruns N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]";
 
     /// <summary>
     /// <c>semantic-campaign</c>. Exit codes: 0 — every executed case passed (the summary says whether
@@ -1003,6 +1047,7 @@ internal static class SemanticCampaign
         var deadlineSeconds = (int)SemanticSupervisor.DefaultDeadline.TotalSeconds;
         var maxAttempts = SemanticCampaignOptions.DefaultMaxAttempts;
         int? batchSize = null;
+        int? maxReruns = null;
         var reduce = true;
         var exhaustive = false;
         string? outDir = null;
@@ -1068,6 +1113,9 @@ internal static class SemanticCampaign
                 case "--batch-size" when TryCount(value, out var count):
                     batchSize = count;
                     break;
+                case "--max-reruns" when TryCount(value, out var count):
+                    maxReruns = count;
+                    break;
                 case "--deadline-seconds" when TryCount(value, out deadlineSeconds):
                 case "--max-attempts" when TryCount(value, out maxAttempts):
                     break;
@@ -1096,6 +1144,12 @@ internal static class SemanticCampaign
                 return false;
             }
 
+            if (maxReruns is not null)
+            {
+                problem = "--max-reruns applies only to --exhaustive";
+                return false;
+            }
+
             if (first is null || last is null)
             {
                 problem = "--seeds is required (or --exhaustive for a finite recipe)";
@@ -1111,6 +1165,7 @@ internal static class SemanticCampaign
             Recipe = recipe,
             Exhaustive = exhaustive,
             BatchSize = batchSize ?? SemanticCampaignOptions.DefaultBatchSize,
+            MaxReruns = maxReruns ?? SemanticCampaignOptions.DefaultMaxReruns,
             CasesPerSeed = perSeed,
             MaxCases = maxCases ?? (exhaustive ? int.MaxValue : SemanticCampaignOptions.DefaultMaxCases),
             MaxTime = TimeSpan.FromSeconds(maxSeconds ?? (exhaustive ? SemanticCampaignOptions.DefaultExhaustiveMaxSeconds : SemanticCampaignOptions.DefaultMaxSeconds)),

@@ -221,6 +221,18 @@ internal static class AstHelpers
     }
 
     /// <summary>
+    /// Whether the detector's or the resolver's rewrite of <paramref name="body"/> holds the shared
+    /// empty array as its properties instead of an empty list of its own (an allocation trim,
+    /// implementation only): a body with no property and with OUTPUT ROWS, whose rewrite gives it a
+    /// fresh bundle of rows. That bundle compares by reference, so the rewritten body still equals no
+    /// other body. A body without rows holds the shared empty bundle, so its own lists are what tell
+    /// two of them apart, as in exposure's trim of the final tree. A caller whose rewrite can
+    /// produce an alias, whose one row compares structurally, keeps a list of its own for it.
+    /// </summary>
+    internal static bool SharesEmptyPropertyList(Algorithm.User body)
+        => body.Properties.Count == 0 && body.Output.Count > 0;
+
+    /// <summary>
     /// Rewrites each shared hoisted source once in its enclosing row context, in property order;
     /// <paramref name="enterSource"/> observes each source just before its rows are rewritten.
     /// </summary>

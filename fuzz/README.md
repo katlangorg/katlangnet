@@ -2066,8 +2066,8 @@ scheduled `semantic nightly` workflow sweeps the finite recipes exhaustively (§
 ```text
 semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider] [--cases-per-seed N]
                   [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
-semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested-wider [--batch-size N] [--max-cases N]
-                  [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
+semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested-wider [--batch-size N] [--max-reruns N]
+                  [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
 ```
 
 * **Plan.** The ids `sem2b/v1/<recipe>/<seed>/<index>` of ONE seeded recipe for every seed of the
@@ -2107,7 +2107,11 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested
   and a member without a result — in flight when the child crashed or timed out, or one it could not
   replay — also runs alone under the single-case supervisor; the members after one without a result
   go to the next batch. The original batch failure remains a failure whatever that standalone rerun
-  gives, and the rerun CLASSIFIES it (§ Batch-only failures); a child that crashes after writing every
+  gives, and the rerun CLASSIFIES it (§ Batch-only failures). The reruns are BUDGETED: `--max-reruns`
+  (default 64, 0 for none) bounds the standalone reruns of one campaign, so a generator regression that
+  fails hundreds of members cannot spend a child (up to its deadline each) per member; a failing member
+  past the budget is recorded with its batch failure, `unclassified`, with no rerun, no batch reproducer
+  and no reduction (its failing batch keeps its manifest under `work/`). A child that crashes after writing every
   result is also a failure, attributed to the last member. A failing batch retains its whole
   manifest, descriptors, results and supervision record; reruns have separate evidence. Each failure
   links its `batchManifest` in the summary. Failures are persisted and reduced as below.
@@ -2178,14 +2182,16 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested
   v1 field: a document without it was written before the option existed and describes a `seed`
   campaign. `mode` (`seeded` or `exhaustive`; absent means seeded), `distinctSources` and
   `distinctSourceProfiles` are additive v1 fields too. An exhaustive summary writes `null` seeds and
-  cases per seed, adds `batchSize`, `sequences` and `complete`, and writes an unbounded `maxCases` as
-  `null`. `classifications` (failures per class: `standalone`, `batch-only`, `batch-dependent`) and,
+  cases per seed, adds `batchSize`, `maxReruns`, `sequences` and `complete`, and writes an unbounded `maxCases` as
+  `null`. `classifications` (failures per class: `standalone`, `batch-only`, `batch-dependent`,
+  `unclassified`) and,
   on each failure, `classification` are additive v1 fields as well (absent: every failure is
-  standalone); a failure observed in a batch adds its `standalone` rerun (verdict and signature), and
+  standalone; a document without `unclassified` reran every batch failure); a failure observed in a batch
+  adds its `standalone` rerun (verdict and signature) when it had one, and
   a batch-only or batch-dependent one its `batchReproducer` manifest, its `sequenceReduction` (status,
   `originalPrefix`, `reducedPrefix`, attempts, the reduced sequence's `manifest` and `record`) and
   `reduction.context`, the reduced program's context manifest. The console summary line carries the
-  same counts (`distinct-sources=… distinct-source-profiles=…`, `batch-only=N` when any, and
+  same counts (`distinct-sources=… distinct-source-profiles=…`, `batch-only=N` and `unclassified=N` when any, and
   `complete=yes|no` for an exhaustive run). The failing `kl-sem2b-case` descriptor is unchanged;
   its `caseId` already carries the recipe segment.
 * **Seams.** `SemanticCampaignOptions.InProcessRunner`, `WorkerCommand`, `BatchWorkerCommand` and
@@ -2210,12 +2216,15 @@ A batch child replays many programs in ONE process, so a defect can depend on wh
 left behind (a static cache, a pool, a lazily initialized table) and fail a program that passes alone.
 The single-program reducer reruns one program at a time, so it cannot even reproduce such a failure.
 An exhaustive campaign therefore reruns every failing batch member alone (the single-case supervisor,
-`semantic-worker` in recipe mode) and classifies the failure (`SemanticFailureClass`):
+`semantic-worker` in recipe mode), within its `--max-reruns` budget, and classifies the failure
+(`SemanticFailureClass`):
 
 * `standalone` — the rerun fails with the same signature (every seeded or in-process failure is
   standalone too); it is reduced as a program, as before;
 * `batch-only` — the rerun PASSES;
-* `batch-dependent` — the rerun fails with another signature.
+* `batch-dependent` — the rerun fails with another signature;
+* `unclassified` — not rerun: the campaign had spent its `--max-reruns` reruns. It is not reduced either
+  (a reduction would rerun it alone); replay its batch from `work/` to classify it.
 
 A batch-only or batch-dependent failure keeps its COMPLETE batch reproducer under
 `failures/<id>.batch/`: the descriptors of every member that ran before it and its own, numbered in

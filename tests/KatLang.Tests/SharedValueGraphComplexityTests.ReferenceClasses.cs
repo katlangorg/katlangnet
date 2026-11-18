@@ -318,7 +318,7 @@ public partial class SharedValueGraphComplexityTests
             pending.Add((left, right));
             if (completed)
             {
-                classes.MarkCompleted(union);
+                classes.MarkCompleted(union, nodes[left], nodes[right]);
                 retained.Add((left, right));
             }
         }

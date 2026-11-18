@@ -143,6 +143,80 @@ public class SemanticBatchOnlyCampaignTests(ITestOutputHelper output)
         }
     }
 
+    // ── The rerun budget ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// THE RERUN BUDGET (<c>--max-reruns</c>): a fault planted on three programs across two batches, with a
+    /// budget of ONE standalone rerun. The first failing member is rerun and classified standalone, exactly as
+    /// without a budget; the two after it are recorded with their batch failure, UNCLASSIFIED — no standalone
+    /// rerun, no batch reproducer, no reduction (reducing would rerun them alone) — and the summary, the log
+    /// and <c>Describe</c> say so. The default budget (<see cref="SemanticCampaignOptions.DefaultMaxReruns"/>)
+    /// reruns every failure of the detection test above.
+    /// </summary>
+    [Fact]
+    public void TheRerunBudget_LeavesTheFailuresPastItUnclassified_WithoutARerunOrAReduction()
+    {
+        var root = Directory.CreateTempSubdirectory("katlang-sem2c-planted-reruns-");
+        try
+        {
+            var planted = new Planted([Id(3), Id(5), Id(8)], Trigger: null);
+            var log = new StringWriter();
+            var options = planted.Campaign(root.FullName, members: 10, reduce: true, maxAttempts: 0) with { BatchSize = 6, MaxReruns = 1 };
+            Assert.Equal(64, SemanticCampaignOptions.DefaultMaxReruns);
+            var result = SemanticCampaign.Run(options, log);
+            output.WriteLine(log.ToString());
+
+            Assert.Equal((10, 7), (result.Executed, result.Passed));
+            Assert.Equal(
+                [(Id(3), SemanticFailureClass.Standalone), (Id(5), SemanticFailureClass.Unclassified), (Id(8), SemanticFailureClass.Unclassified)],
+                result.Failures.Select(static f => (f.CaseId, f.Classification)).ToArray());
+            var rerun = result.Failures[0];
+            Assert.Equal(
+                ["work/batch-00001.txt", "work/batch-00001.txt", "work/batch-00002.txt"],
+                result.Failures.Select(static f => f.BatchManifest!).ToArray());
+            Assert.Equal(SemanticPlantedFault.ValidSignature, SemanticFailureSignature.Of(rerun.StandaloneRerun!));
+            Assert.NotEqual("not rerun alone (--max-reruns spent): an unclassified failure is not reduced", rerun.ReductionSkipped);
+            foreach (var unclassified in result.Failures.Skip(1))
+            {
+                Assert.Equal(SemanticPlantedFault.ValidSignature, unclassified.Signature);
+                Assert.Null(unclassified.StandaloneRerun);
+                Assert.Null(unclassified.BatchReproducer);
+                Assert.Null(unclassified.Sequence);
+                Assert.Null(unclassified.ReductionStatus);
+                Assert.Equal(0, unclassified.ReductionAttempts);
+                Assert.Equal("not rerun alone (--max-reruns spent): an unclassified failure is not reduced", unclassified.ReductionSkipped);
+                Assert.True(File.Exists(Path.Combine(root.FullName, unclassified.BatchManifest!)));
+                Assert.Contains($"batch member {unclassified.CaseId}: no standalone rerun (all 1 reruns spent, --max-reruns); unclassified; manifest=",
+                    log.ToString(), StringComparison.Ordinal);
+            }
+
+            Assert.Equal((0, 2), (result.BatchFailures, result.UnclassifiedFailures));
+            Assert.Contains(" failed=3 unclassified=2 ", result.Describe(), StringComparison.Ordinal);
+            Assert.False(Directory.Exists(Path.Combine(root.FullName, "failures", Safe(5) + ".batch")));
+
+            using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(root.FullName, SemanticCampaign.SummaryFile)));
+            var json = document.RootElement;
+            Assert.Equal(1, json.GetProperty("maxReruns").GetInt32());
+            Assert.Equal((1, 0, 0), Classifications(json));
+            Assert.Equal(2, json.GetProperty("classifications").GetProperty("unclassified").GetInt32());
+            var failures = json.GetProperty("failures").EnumerateArray().ToArray();
+            Assert.True(failures[0].TryGetProperty("standalone", out _));
+            foreach (var failure in failures.Skip(1))
+            {
+                Assert.Equal("unclassified", failure.GetProperty("classification").GetString());
+                Assert.False(failure.TryGetProperty("standalone", out _));
+                Assert.False(failure.TryGetProperty("batchReproducer", out _));
+            }
+
+            var signature = File.ReadAllText(Path.Combine(root.FullName, "failures", Safe(8) + ".signature.json"));
+            Assert.Contains("\"classification\": \"unclassified\"", signature, StringComparison.Ordinal);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     // ── Classification ──────────────────────────────────────────────────────
 
     /// <summary>

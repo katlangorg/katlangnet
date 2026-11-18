@@ -1903,8 +1903,9 @@ public closed record Result
                     // A singleton chain can finish thousands of frames without inspecting another
                     // child. Account for completion too, so that unwind remains cancellable.
                     op.Charge(observations);
+                    // A level's tentative union is always the union of the level's own pair.
                     if (union != ReferenceClasses.NoUnion)
-                        classes!.MarkCompleted(union);
+                        classes!.MarkCompleted(union, leftNode, rightNode);
                     if (suspended is not { Count: not 0 })
                     {
                         // EQUAL: every tentative union belongs to a completed level. A wide top-level
