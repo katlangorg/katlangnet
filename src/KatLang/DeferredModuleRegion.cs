@@ -306,7 +306,11 @@ internal sealed class DeferredModuleRegion
     /// cached inside the attempt keeps its full weight, so its next splice
     /// charges again. Under an aggregate limit that exactly fits the program, a retry after such
     /// an attempt can therefore stay refused until the tree is parsed again — over-refusal
-    /// only, by design. A published attempt keeps every charge: the program grew by them.</para>
+    /// only, by design. A published attempt keeps every charge: the program grew by them. Every
+    /// attempt, published or not, takes back what its passes added to the lookup cache of the chain
+    /// recorded at the branch (<see cref="OpenMemberIndexCache"/>), also before the gate is released:
+    /// that cache lives as long as the tree, so a branch refused at every selection retains nothing
+    /// in it.</para>
     ///
     /// <para><b>Cancellation and shared demand.</b> A materialization exists only because an
     /// evaluation selected the branch, so the requesting evaluation's lifetime governs it:
@@ -677,6 +681,10 @@ internal sealed class DeferredModuleRegion
                 // The attempt's own splice ledger: released below, under the gate, unless the
                 // attempt publishes (see MaterializeAsync, Accounting of an attempt).
                 var attemptLedger = Loader.CreateMaterializationLedger();
+                // The attempt's own writes to the lookup cache of the chain recorded at the branch: its
+                // demand-time passes run under that chain, whose cache lives as long as the tree. They are
+                // taken back below, under the gate, however the attempt ends (OpenMemberIndexCache).
+                var lookupWrites = Exposure!.Scope.PropertyScope.MemberIndexes?.BeginMaterializationAttempt();
                 var published = false;
                 try
                 {
@@ -716,11 +724,21 @@ internal sealed class DeferredModuleRegion
                 }
                 finally
                 {
-                    // An attempt that published nothing added nothing to the program, whatever
-                    // the reason: release its own splices (exactly once; a release during the
-                    // load on cancellation already zeroed the ledger). Downloads stay charged.
-                    if (!published)
-                        Loader.ReleaseUnpublishedSplices(attemptLedger);
+                    try
+                    {
+                        // An attempt that published nothing added nothing to the program, whatever
+                        // the reason: release its own splices (exactly once; a release during the
+                        // load on cancellation already zeroed the ledger). Downloads stay charged.
+                        if (!published)
+                            Loader.ReleaseUnpublishedSplices(attemptLedger);
+                    }
+                    finally
+                    {
+                        // An attempt leaves nothing in the recorded chain's lookup cache, published or
+                        // not: a published unit is the tree it returned, and a region its body defers
+                        // again records its own chain. Refused selections therefore retain nothing.
+                        lookupWrites?.TakeBack();
+                    }
                 }
             }
             finally

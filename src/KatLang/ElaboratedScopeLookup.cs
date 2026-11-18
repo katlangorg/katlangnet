@@ -34,7 +34,9 @@ namespace KatLang;
 /// prelude level, never static. A chain retained past its operation for a deferred
 /// module region's demand-time continuation keeps its cache with it; those
 /// continuations belong to the same parse and are serialized by its loader's
-/// materialization gate, so the cache is never used by two operations at once. Only
+/// materialization gate, so the cache is never used by two operations at once, and
+/// each of them is an operation of its own: what a materialization attempt adds to
+/// the cache is taken back when the attempt ends (<see cref="OpenMemberIndexCache"/>). Only
 /// the target index is shared: which providers a level has, their dedup, ambiguity,
 /// and precedence stay per level.</para>
 /// </summary>
@@ -437,39 +439,191 @@ internal sealed class OpenTargetMemberIndex
 /// remarks); it is never static and never reachable from a target or from the
 /// process-shared prelude level, so nothing outlives the chain it serves and no two parses
 /// or model builds share it.
+///
+/// <para><b>A materialization attempt is an operation of its own.</b> The chain a deferred module region
+/// records at its branch outlives the parse, and this cache with it, because the region's demand-time
+/// passes run under that chain (open-provider validation, exposure and its provenance finalizer). Every
+/// level those passes create registers here, wherever it hangs: below the branch, directly under the
+/// chain's root (an inline open target, a module) or as a prelude level of its own
+/// (<see cref="ElaboratedScopeLookup.OpenBlockHeadLevel"/>); a cache owned by the unit's root level would
+/// see only the first kind. So the cache itself journals what an attempt adds to its four tables
+/// (<see cref="BeginMaterializationAttempt"/>) and removes exactly those entries when the attempt ends
+/// (<see cref="AttemptWrites.TakeBack"/>, called by <c>DeferredModuleRegion.RunCoreAsync</c> under the
+/// loader's materialization gate), however it ends: refused, cancelled, faulted or published. Between
+/// attempts the cache holds what the parse left in it and nothing else, so an attempt never retains its
+/// facts, its levels or its elaborated body here, and a branch that is refused at every selection adds
+/// nothing per selection. Inside one attempt nothing changes: its passes share its entries until it
+/// ends, as the passes of one parse do. The take-back costs what the attempt wrote, never the size of the
+/// cache. Every table is a work cache (a miss rebuilds an equal answer from the completed facts and the
+/// chain), so no lookup result depends on an entry an earlier attempt left. Before, such entries stayed:
+/// one set per refused selection, and under each key the eager publication shares with the unit (an
+/// inline open target of its placeholder) the level of the FIRST attempt, for every later one to find.</para>
 /// </summary>
 internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observations = null)
 {
-    private Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope>? _completedLevels;
-    internal Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope> CompletedLevels => _completedLevels ??= new();
-    private Dictionary<StaticLookupFacts, ElaboratedPropertyScope>? _openBlockHeadLevels;
+    private LevelTable<(StaticLookupFacts Facts, StaticScopeKey Key)>? _completedLevels;
+    internal LevelTable<(StaticLookupFacts Facts, StaticScopeKey Key)> CompletedLevels => _completedLevels ??= new(this);
+    private LevelTable<StaticLookupFacts>? _openBlockHeadLevels;
     /// <summary>
     /// The prelude level at which the inline open targets of a unit are entered, by the completed facts that answer for
     /// their block heads (<see cref="ElaboratedScopeLookup.OpenBlockHeadLevel"/>): one level per facts. It is kept apart
     /// from <see cref="CompletedLevels"/>, whose entry under those facts and the prelude key may be a level that
     /// carries other facts.
     /// </summary>
-    internal Dictionary<StaticLookupFacts, ElaboratedPropertyScope> OpenBlockHeadLevels
-        => _openBlockHeadLevels ??= new(ReferenceEqualityComparer.Instance);
+    internal LevelTable<StaticLookupFacts> OpenBlockHeadLevels
+        => _openBlockHeadLevels ??= new(this, ReferenceEqualityComparer.Instance);
     internal void RecordCompletedRead() => observations?.RecordCompletedStaticStructureRead();
     private readonly Dictionary<Algorithm, OpenTargetMemberIndex> _indexes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ElaboratedPropertyScope, Dictionary<Algorithm, ElaboratedPropertyScope>> _bodyLevels = new();
+    // The materialization attempt whose passes are writing this cache, and what it added to the member indexes
+    // and the body levels, oldest first; all null outside an attempt (see AttemptWrites; the two level tables
+    // journal their own adds). A body-level entry with no body stands for the parent's table itself.
+    private AttemptWrites? _attempt;
+    private List<Algorithm>? _attemptIndexes;
+    private List<(ElaboratedPropertyScope Parent, Algorithm? Body)>? _attemptBodyLevels;
     public ElaboratedPropertyScope BodyLevel(Algorithm body, ElaboratedPropertyScope parent)
     {
         if (!_bodyLevels.TryGetValue(parent, out var levels))
+        {
             _bodyLevels.Add(parent, levels = new(ReferenceEqualityComparer.Instance));
-        if (!levels.TryGetValue(body, out var level)) levels.Add(body, level = ElaboratedScopeLookup.CreateScope(body, parent));
+            if (_attempt is not null) (_attemptBodyLevels ??= []).Add((parent, null));
+        }
+        if (!levels.TryGetValue(body, out var level))
+        {
+            levels.Add(body, level = ElaboratedScopeLookup.CreateScope(body, parent));
+            if (_attempt is not null) (_attemptBodyLevels ??= []).Add((parent, body));
+        }
         return level;
     }
     internal int Count => _indexes.Count;
+    /// <summary>How many body levels the cache holds, over every parent (<see cref="BodyLevel"/>). Test-observable only, never a decision input.</summary>
+    internal int BodyLevelCount
+    {
+        get
+        {
+            var count = 0;
+            foreach (var levels in _bodyLevels.Values) count += levels.Count;
+            return count;
+        }
+    }
     public OpenTargetMemberIndex IndexOf(Algorithm target)
     {
         if (!_indexes.TryGetValue(target, out var index))
         {
             observations?.RecordLookupOpenMemberIndexBuild();
             _indexes.Add(target, index = OpenTargetMemberIndex.Build(target));
+            if (_attempt is not null) (_attemptIndexes ??= []).Add(target);
         }
         return index;
+    }
+
+    /// <summary>
+    /// Starts journaling what ONE materialization attempt adds to this cache (see the class remarks). The attempts of
+    /// a recorded chain belong to one parse and are serialized by its loader's materialization gate, so at most one
+    /// is in flight; a second one is an internal error, never a shared journal.
+    /// </summary>
+    internal AttemptWrites BeginMaterializationAttempt()
+    {
+        if (_attempt is not null)
+            throw new InvalidOperationException(
+                "Internal error: a materialization attempt began on a lookup cache that another attempt is still writing. " +
+                "The attempts of one recorded chain are serialized by its loader's materialization gate.");
+        return _attempt = new AttemptWrites(this);
+    }
+
+    private void TakeBack(AttemptWrites attempt)
+    {
+        if (!ReferenceEquals(_attempt, attempt))
+            throw new InvalidOperationException(
+                "Internal error: a materialization attempt ended on a lookup cache it is not the one writing.");
+        _attempt = null;
+        _completedLevels?.TakeBackAttemptAdds();
+        _openBlockHeadLevels?.TakeBackAttemptAdds();
+        if (_attemptIndexes is { } indexes)
+        {
+            _attemptIndexes = null;
+            foreach (var target in indexes) _indexes.Remove(target);
+        }
+        if (_attemptBodyLevels is { } bodyLevels)
+        {
+            _attemptBodyLevels = null;
+            // Newest first: a parent's table goes after the bodies the attempt added to it.
+            for (var index = bodyLevels.Count - 1; index >= 0; index--)
+            {
+                var (parent, body) = bodyLevels[index];
+                if (body is null) _bodyLevels.Remove(parent);
+                else if (_bodyLevels.TryGetValue(parent, out var levels)) levels.Remove(body);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The writes of ONE materialization attempt to the cache of the chain recorded at its branch, from
+    /// <see cref="BeginMaterializationAttempt"/> until <see cref="TakeBack"/> removes exactly them. It holds no
+    /// entry itself: the journal lives with the tables, and this is the attempt's claim on it.
+    /// </summary>
+    internal sealed class AttemptWrites
+    {
+        private OpenMemberIndexCache? _cache;
+
+        internal AttemptWrites(OpenMemberIndexCache cache) => _cache = cache;
+
+        /// <summary>
+        /// Removes every entry the attempt added, in all four tables, and ends the journal: the cache then holds
+        /// what it held when the attempt began. Idempotent. Work is proportional to what the attempt wrote.
+        /// </summary>
+        internal void TakeBack()
+        {
+            if (_cache is not { } cache) return;
+            _cache = null;
+            cache.TakeBack(this);
+        }
+    }
+
+    /// <summary>
+    /// A table of levels that the levels themselves and the completed contexts write directly
+    /// (<see cref="CompletedLevels"/>, <see cref="OpenBlockHeadLevels"/>): entries are only ever added, and each add
+    /// made while a materialization attempt is in flight is journaled for that attempt's take-back, so no writer
+    /// needs to know whether one is.
+    /// </summary>
+    internal sealed class LevelTable<TKey>(OpenMemberIndexCache cache, IEqualityComparer<TKey>? comparer = null)
+        where TKey : notnull
+    {
+        private readonly Dictionary<TKey, ElaboratedPropertyScope> _levels = new(comparer);
+        // The keys the attempt in flight added here; null outside an attempt and until its first add.
+        private List<TKey>? _attemptAdds;
+
+        internal int Count => _levels.Count;
+
+        /// <summary>The keys the table holds. Test-observable only, never a decision input.</summary>
+        internal IEnumerable<TKey> Keys => _levels.Keys;
+
+        internal ElaboratedPropertyScope this[TKey key] => _levels[key];
+
+        internal bool ContainsKey(TKey key) => _levels.ContainsKey(key);
+
+        internal bool TryGetValue(TKey key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out ElaboratedPropertyScope level)
+            => _levels.TryGetValue(key, out level);
+
+        internal bool TryAdd(TKey key, ElaboratedPropertyScope level)
+        {
+            if (!_levels.TryAdd(key, level)) return false;
+            if (cache._attempt is not null) (_attemptAdds ??= []).Add(key);
+            return true;
+        }
+
+        internal void Add(TKey key, ElaboratedPropertyScope level)
+        {
+            _levels.Add(key, level);
+            if (cache._attempt is not null) (_attemptAdds ??= []).Add(key);
+        }
+
+        internal void TakeBackAttemptAdds()
+        {
+            if (_attemptAdds is not { } added) return;
+            _attemptAdds = null;
+            foreach (var key in added) _levels.Remove(key);
+        }
     }
 }
 
