@@ -569,7 +569,16 @@ theorem withState_evaluating_active (a : Nat) (s : EvalState) (cell : NeedCell)
   ⟨{ cell with state := .evaluating }, by simp [withState, modify_get, hc], rfl⟩
 
 /-- The per-body keeping obligation for `A ∧ R` when `A` is kept globally: from `A ∧ R`, a
-    completed body run that ends in `A` ends in `R`. -/
+    completed body run that ends in `A` ends in `R`.
+
+    **Unsatisfiable at the reference-free instance (2026-11-18).** The obligation assumes of the
+    recursive answer only that it keeps a STATE predicate; it says nothing of the value the answer
+    RETURNS, and a body stores what it is given (the VALUE demand of a cell writes the outcome into
+    the cell). If `Q` contains a VALUE demand at an address distinct from the active plan cell `a`,
+    `PlanConservativityKeepsGuards.bodyKeepsGiven_distinctDemand_refuted` refutes this premise.
+    At plan cell 0 and demand 1, `bodyKeepsGiven_refuted` and `bodyKeeps_activeRefFree_refuted`
+    refute the relative and undivided forms respectively. Demanding just the active cell leaves
+    the state unchanged (`bodyKeepsGiven_onlyActiveDemand`). -/
 def BodyKeepsGiven (Q : EvalCall → Prop) (A R : EvalState → Prop) : Prop :=
   ∀ rec : EvalRec, (∀ c, Q c → Keeps (fun s => A s ∧ R s) (rec c)) → ∀ c, Q c → ∀ s, A s → R s →
     ((evalStep rec c).runState s).1 ≠ .error .fuelExhausted → A ((evalStep rec c).runState s).2 →
@@ -703,7 +712,14 @@ theorem formAdmissible_activeRefFree (a : Nat) (ctx : EvalCtx) (env : ValEnv)
     `keeps_active_production`) and is oblivious (`hoB`), containing the plan's admissible calls,
     with the output contracts and a reference-free captured value environment: one production
     execution of a fresh call or extension plan at an `ActiveRefFree` state is the ordinary call up
-    to the plan's own record. -/
+    to the plan's own record.
+
+    **Keeping premise (2026-11-18).** Whenever the domain `Q` admits a VALUE demand of a cell
+    distinct from `a`, the premise `hkB` is unsatisfiable
+    (`PlanConservativityKeepsGuards.bodyKeepsGiven_distinctDemand_refuted`). At plan cell 0 and
+    demand 1, `bodyKeepsGiven_refuted` proves this for `hkB` and `bodyKeeps_activeRefFree_refuted`
+    for the undivided form. The theorem therefore gives no instance on such a domain. A keeping
+    theorem that also constrains returned values remains open. -/
 theorem production_fresh_plan_refFree (Q : EvalCall → Prop) (a : Nat) (RT RN : Algorithm → Prop)
     (hkB : BodyKeepsGiven Q (Active a) StoredRefFree) (hoB : BodyObliviousOn Q (ActiveRefFree a) a)
     (shape : NeedPlan.CallShape) (r : PlanRoute)

@@ -1360,7 +1360,12 @@ requirements (reachable-state invariants, callback ≡ direct call, complete Q-3
 laws, the dot funnel, Q-25, plan conservativity and the admitted public-run bridge) are recorded in
 `experimental/features/s6d-r7-whole-run-evaluator-refinement.md` (git-ignored; optional reading). The
 tracked status of plan conservativity, still OPEN (narrowed and refuted for META states by PC-1 below; admissible contracts and the active mark by PC-2), is row E-18 of
-`docs/design/formal-correspondence-ledger.md`. The `Error.fuelExhausted`
+`docs/design/formal-correspondence-ledger.md`. As of 2026-11-18 the keeping premise of PC-2's reference-free instance is
+refuted in its state-only form (`PlanConservativityKeepsGuards.lean`), and C#'s plan-retention gate
+(`AstStructuralPreflight.MayCaptureCalls`) has a Lean twin checked against it on the differential corpora
+(`Expr.mayCaptureCalls` in `MayCaptureCalls.lean`, the generated `MayCaptureCallsCorpus.lean`; ledger E-21) — Lean proofs,
+guards and one generated agreement file only, with no language change and no change to `KatLang.lean` or to C# production
+code; that a program which cannot capture calls never creates or stores a call reference remains unproved. The `Error.fuelExhausted`
 constructor required one line in the shared generated-artifact template (`LeanObsTemplate`) and the
 regenerated `SemanticExplorerCases.lean` / `LanguageSpecCases.lean` headers.
 
