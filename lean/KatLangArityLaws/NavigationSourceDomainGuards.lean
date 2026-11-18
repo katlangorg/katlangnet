@@ -26,8 +26,12 @@ program expression. This module checks them on trees, and bounds what they can b
   requirement (or the rule's condition) removed, refused by `SourceDomain` (`*_refused`); in
   `AccessChecks` the counterfactual is the pre-fix front end's own tree (E-18 exposure access
   checks, owner decision 2026-11-13).
+* `ModuleProviders` (end of the module) — a loaded module is ONE open provider wherever it is
+  reached: the model's selection beside production's on every route, and a reader whose requirement
+  comes only from the walk of an open level that two holders of one module decide, refused when
+  that requirement is removed (E-18 model correction, 2026-11-18).
 
-## 2. Source trees inside the domain (`OutsideContainer`, `EscapedContainer`, `FrontEnd`, `SelectionGaps`, `SelectionRoutes`, `AccessChecks`)
+## 2. Source trees inside the domain (`OutsideContainer`, `EscapedContainer`, `FrontEnd`, `SelectionGaps`, `SelectionRoutes`, `AccessChecks`, `ModuleProviders`)
 
 The two reached-state fixtures, five public-entry guards, the four `FrontEnd` programs, the three
 `SelectionGaps` sources, the eight `SelectionRoutes` sources and the ten `AccessChecks` sources below
@@ -35,7 +39,9 @@ are the C# front end's own elaborated trees of the quoted sources, encoded by `L
 Maintained C# fidelity tests check those thirty-two encodings (`NavigationSourceDomainWitnessTests`;
 `moduleCut` through the asynchronous front end with its loaded module). Each is in `SourceDomain`; the `ExposureFragment`
 and `OpenedFragment` examples and every `Exported` / host-built counterfactual are intentionally
-host-corrupted.
+host-corrupted. The same tests check the twelve `ModuleProviders` encodings through the asynchronous
+front end: eight verbatim, and four whose source reads an ambiguous name (a front-end error), encoded
+from the same source with the output row `1` and that row replaced.
 
 ## 3. The two former counterexamples, under the anchoring of a container's chain
 
@@ -1256,5 +1262,444 @@ theorem blockHeadedOpen_hostBuilt_refused : ¬ SourceDomain blockHeadedOpenHostB
 #guard (match runResult blockHeadedOpen with | .ok (.atom 5) => true | _ => false)
 
 end CheckSites
+
+/-! ## One loaded module is one open provider (E-18 model correction, 2026-11-18)
+
+A loaded module is ONE declaration wherever it is held or written (`PropertyIdentity.module`, Q-32
+I-U), so `resolveAllOpens` counts every reach of it as one provider (`sameRepeatedCallableIdentity`):
+two holders, a holder and a written `load`, a member of it reached through either, a transparent
+reference to one of those. The model keyed every declaration by its POSITION, so two holders were two
+providers: it selected nothing where production selects the member, and required nothing of the
+reader. `Located.providerKey` compares module roots by token and shared descendants in their
+declaring scopes. `openedAt` compares the providers before looking up the name.
+
+Selection — `rootSelection`, the model's decision for the root's read of `X`, beside production's:
+
+* `twoHolders`, `holderAndWrittenLoad`, `memberHolder`, `descendant`, `descendantReference`,
+  `writtenLoadDescendant`: one provider. The member is selected through the FIRST reach (its location
+  is that holder's), after the walk of every target, a repeated reach's included.
+* `twoModules`, `twoModuleDescendants` (two canonical URLs, equal bytes), `distinctDescendants` (two
+  declarations of one module) and `writtenBlocks` (two written blocks): two providers. Nothing is
+  selected, as before, and production answers `ambiguousOpen`.
+* `failingTarget`: a target that fails beside a repeated provider fails the level.
+* Host-built identities (the encoder emits none of them from source): `twoViews` — two views of one
+  module declaration are one provider (`PropertyIdentity.callableDeclaration` erases the own view) —
+  `viewDescendants` — their members are two (`sameDeclaringScope` keeps a declaring scope's view) —
+  `referenceTargets` — so are the targets of a reference-rooted module's two views — and
+  `sharedMember` — two providers that provide one module as their member are two (providers are
+  counted, never members).
+
+Exposure — `captureWitness`: `R` reads `X` through `F`'s opens `Lib.Sub, A, B`. Production resolves all
+three targets, checks `Sub` (which needs `F`'s `y`) and selects the one module's `X`, so `R` requires
+`y`; the front end marks it so. `captureWitnessHostBuilt` is that tree with `R`'s requirement removed.
+The baseline model admitted it (two providers selected nothing, so the walk of `Lib.Sub` was never
+charged); the model now refuses it, and production shows what the missing requirement costs: `F(7),
+F.R` reads `R` outside the call from the call's cache entry. `captureTwoModulesHostBuilt`, the same
+copy over two module identities, is still admitted: nothing is selected there. `selfNested` is the
+same reader INSIDE a module (host-built), where the module's level is on the reader's own stack.
+
+Each `def` documented as `LeanAstEncoder`'s encoding is checked against the asynchronous front end's
+own tree by `NavigationSourceDomainWitnessTests` (`ModuleProviderWitness_*`,
+`ModuleProviderCaptureWitness_*`); the same tests check that the two host-built copies of the capture
+witness are its encoding with `R`'s property replaced and nothing else.
+-/
+
+namespace ModuleProviders
+
+/-- What the model decides for a name an `open` provides. -/
+inductive Selection where
+  /-- One provider: the selected member's key, the keys of the declarations access-checked on the
+      way, and the property each level of the member's declaring stack is the body of. -/
+  | member (key : List String) (trail : List (List String)) (declaredIn : List (Option Ident))
+  /-- No selection: no provider, two or more (`ambiguousOpen`), or a failing target. -/
+  | nothing
+  /-- Not decided statically (`runtime`, `stuck`). -/
+  | undecided
+  deriving BEq
+
+/-- The model's decision for the read of `X` written at the program root. -/
+def rootSelection (program : Expr) : Selection :=
+  match program with
+  | .algorithmExpr a =>
+      let root := levelOf [] none a
+      match openedAt [root] (selFuel [root] (.resolve "X")) "X" [root] (readerMap [root] 0) with
+      | .found h => .member h.loc.key (h.trail.map (·.key)) (h.loc.stack.map (·.self))
+      | .miss _ => .nothing
+      | _ => .undecided
+  | _ => .undecided
+
+/-- Production's `ambiguousOpen` for `X`. -/
+def ambiguousX (program : Expr) : Bool :=
+  match runResult program with
+  | .error e => (match innermost e with | .ambiguousOpen "X" _ => true | _ => false)
+  | .ok _ => false
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open A, B` / `A = load('x.kat')` /
+    `B = load('x.kat')` / `X`, the module `public X = 5`: two holders of one module. -/
+def twoHolders : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] []))] [.resolve "X"])
+
+#guard rootSelection twoHolders == .member ["A", "X"] [["A", "X"]] [some "A"]
+#guard (match runResult twoHolders with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open A, load('x.kat')` / `A = load('x.kat')` / `X`:
+    a holder and a written `load` of one module. -/
+def holderAndWrittenLoad : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", (.algorithmExpr (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])))] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] []))] [.resolve "X"])
+
+#guard rootSelection holderAndWrittenLoad == .member ["A", "X"] [["A", "X"]] [some "A"]
+#guard (match runResult holderAndWrittenLoad with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open Box.M, A` / `Box = { public M = load('x.kat') }` /
+    `A = load('x.kat')` / `X`: the module held by a MEMBER of a container, and by a holder. The step
+    `M` is access-checked on the way. -/
+def memberHolder : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "Box") "M" none), .resolve "A"] [privateProp "Box" (alg [] [] [publicProp "M" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] []))] []), privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] []))] [.resolve "X"])
+
+#guard rootSelection memberHolder == .member ["Box", "M", "X"] [["Box", "M"], ["Box", "M", "X"]] [some "M"]
+#guard (match runResult memberHolder with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open A.Sub, B.Sub` / `A = load('sub.kat')` /
+    `B = load('sub.kat')` / `X`, the module `public Sub = { public X = 5 }`: one member of one module
+    through both holders. Both targets are walked; the member is the first reach's. -/
+def descendant : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "A") "Sub" none), (.dotCall (.resolve "B") "Sub" none)] [privateProp "A" (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] []))] [.resolve "X"])
+
+#guard rootSelection descendant ==
+  .member ["A", "Sub", "X"] [["A", "Sub"], ["B", "Sub"], ["A", "Sub", "X"]] [some "Sub", some "A"]
+#guard (match runResult descendant with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open A.Sub, L` / `A = load('sub.kat')` /
+    `B = load('sub.kat')` / `L = B.Sub` / `X`: a transparent reference to the other holder's route. -/
+def descendantReference : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "A") "Sub" none), .resolve "L"] [privateProp "A" (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] [])), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "B") "Sub" none)))] [.resolve "X"])
+
+#guard rootSelection descendantReference ==
+  .member ["A", "Sub", "X"] [["A", "Sub"], ["B", "Sub"], ["A", "Sub", "X"]] [some "Sub", some "A"]
+#guard (match runResult descendantReference with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of `open load('sub.kat').Sub, A.Sub` /
+    `A = load('sub.kat')` / `X`: the member through a written `load` head and through a holder. -/
+def writtenLoadDescendant : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.algorithmExpr (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] []))) "Sub" none), (.dotCall (.resolve "A") "Sub" none)] [privateProp "A" (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] []))] [.resolve "X"])
+
+#guard rootSelection writtenLoadDescendant ==
+  .member ["#open0", "Sub", "X"] [["#open0", "Sub"], ["A", "Sub"], ["#open0", "Sub", "X"]] [some "Sub", none]
+#guard (match runResult writtenLoadDescendant with | .ok (.atom 5) => true | _ => false)
+
+theorem oneModule_sourceDomain :
+    SourceDomain twoHolders ∧ SourceDomain holderAndWrittenLoad ∧ SourceDomain memberHolder ∧
+      SourceDomain descendant ∧ SourceDomain descendantReference ∧ SourceDomain writtenLoadDescendant :=
+  ⟨⟨by cbv, by cbv⟩, ⟨by cbv, by cbv⟩, ⟨by cbv, by cbv⟩, ⟨by cbv, by cbv⟩, ⟨by cbv, by cbv⟩, ⟨by cbv, by cbv⟩⟩
+
+/-- `open A, B` / `A = load('x.kat')` / `B = load('y.kat')` / `X`, two canonical URLs serving the bytes
+    `public X = 5`: `LeanAstEncoder`'s encoding of the front end's tree of the same source with the
+    output row `1`, that row replaced by `X` (the front end refuses the read: `AmbiguousOpen`). -/
+def twoModules : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"] [privateProp "A" (Algorithm.withDeclarationId (some (.module 0)) (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] []))] [.resolve "X"])
+
+#guard rootSelection twoModules == .nothing
+#guard ambiguousX twoModules
+
+/-- `open A.Sub, B.Sub` / `A = load('sub.kat')` / `B = load('sub2.kat')` / `X`, two canonical URLs serving
+    the bytes `public Sub = { public X = 5 }`: the encoding of the source with the output row `1`,
+    that row replaced by `X`. -/
+def twoModuleDescendants : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "A") "Sub" none), (.dotCall (.resolve "B") "Sub" none)] [privateProp "A" (Algorithm.withDeclarationId (some (.module 0)) (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])] []))] [.resolve "X"])
+
+#guard rootSelection twoModuleDescendants == .nothing
+#guard ambiguousX twoModuleDescendants
+
+/-- `open A.S1, B.S2` / `A = load('two.kat')` / `B = load('two.kat')` / `X`, the module
+    `public S1 = { public X = 5 }` / `public S2 = { public X = 5 }`: the encoding of the source with the
+    output row `1`, that row replaced by `X`. Two declarations of one module are two providers. -/
+def distinctDescendants : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "A") "S1" none), (.dotCall (.resolve "B") "S2" none)] [privateProp "A" (Algorithm.withDeclarationId (some (.module 4)) (alg [] [] [{ (publicProp "S1" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }, { (publicProp "S2" (Algorithm.withDeclarationId (some (.shared 3)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [.num 5]))) with identity := some (.shared 3) }] []))) with identity := some (.shared 2) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 4)) (alg [] [] [{ (publicProp "S1" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }, { (publicProp "S2" (Algorithm.withDeclarationId (some (.shared 3)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [.num 5]))) with identity := some (.shared 3) }] []))) with identity := some (.shared 2) }] []))] [.resolve "X"])
+
+#guard rootSelection distinctDescendants == .nothing
+#guard ambiguousX distinctDescendants
+
+/-- `open { public X = 5 }, { public X = 5 }` / `X`: the encoding of the source with the output row `1`,
+    that row replaced by `X`. Two written blocks are two providers, keyed by position. -/
+def writtenBlocks : Expr :=
+  .algorithmExpr (alg [] [(.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] [])), (.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] []))] [] [.resolve "X"])
+
+#guard rootSelection writtenBlocks == .nothing
+#guard ambiguousX writtenBlocks
+
+/-- The module `public X = 5` with declaration identity `id`, its member as the encoder marks it. -/
+def xModule (id : PropertyIdentity) : Algorithm :=
+  Algorithm.withDeclarationId (some id) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])
+
+/-- The module `public Sub = { public X = 5 }` with declaration identity `id`. -/
+def subModule (id : PropertyIdentity) : Algorithm :=
+  Algorithm.withDeclarationId (some id) (alg [] [] [{ (publicProp "Sub" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }] [])
+
+/-- Host-built: `twoHolders` with a third target `Missing` that no level declares. The level fails. -/
+def failingTarget : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B", .resolve "Missing"]
+    [privateProp "A" (xModule (.module 1)), privateProp "B" (xModule (.module 1))] [.resolve "X"])
+
+#guard rootSelection failingTarget == .nothing
+#guard (match runResult failingTarget with
+  | .error e => (match innermost e with | .unknownName "Missing" => true | _ => false)
+  | .ok _ => false)
+
+/-- Host-built: two VIEWS of one module declaration, held by `A` and `B`. One provider. -/
+def twoViews : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"]
+    [privateProp "A" (xModule (.moduleView 1 1)), privateProp "B" (xModule (.moduleView 1 2))] [.resolve "X"])
+
+#guard rootSelection twoViews == .member ["A", "X"] [["A", "X"]] [some "A"]
+#guard (match runResult twoViews with | .ok (.atom 5) => true | _ => false)
+
+/-- Host-built: `open A.Sub, B.Sub` over two views of one module declaration. A view is a declaring
+    scope of its own, so the two `Sub` are two providers. -/
+def viewDescendants : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "A") "Sub" none), (.dotCall (.resolve "B") "Sub" none)]
+    [privateProp "A" (subModule (.moduleView 2 1)), privateProp "B" (subModule (.moduleView 2 2))] [.resolve "X"])
+
+#guard rootSelection viewDescendants == .nothing
+#guard ambiguousX viewDescendants
+
+/-- Host-built: the same targets over ONE view. One provider. -/
+def sameViewDescendants : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.resolve "A") "Sub" none), (.dotCall (.resolve "B") "Sub" none)]
+    [privateProp "A" (subModule (.moduleView 2 1)), privateProp "B" (subModule (.moduleView 2 1))] [.resolve "X"])
+
+#guard rootSelection sameViewDescendants ==
+  .member ["A", "Sub", "X"] [["A", "Sub"], ["B", "Sub"], ["A", "Sub", "X"]] [some "Sub", some "A"]
+#guard (match runResult sameViewDescendants with | .ok (.atom 5) => true | _ => false)
+
+/-- Host-built: two written providers `P` and `Q` whose member `X` is one module. The PROVIDERS are
+    two, although the member they provide is one declaration. -/
+def sharedMember : Expr :=
+  .algorithmExpr (alg [] [.resolve "P", .resolve "Q"]
+    [privateProp "P" (alg [] [] [publicProp "X" (xModule (.module 1))] []),
+     privateProp "Q" (alg [] [] [publicProp "X" (xModule (.module 1))] [])] [.dotCall (.resolve "X") "X" none])
+
+#guard rootSelection sharedMember == .nothing
+#guard ambiguousX sharedMember
+
+/-- A module whose ROOT is a transparent reference to its own member `T = { public X = 5 }`, with
+    declaration identity `id`. -/
+def referenceModule (id : PropertyIdentity) : Algorithm :=
+  .alias none []
+    [{ (publicProp "T" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }]
+    (.resolve "T") (some id) true
+
+/-- Host-built: `open A, B` over two holders of `referenceModule`. The provider is the reference's
+    TARGET, a member of the module: one under one view, two under two views. -/
+def referenceTargets (a b : PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"]
+    [privateProp "A" (referenceModule a), privateProp "B" (referenceModule b)] [.resolve "X"])
+
+-- The member's key and trail only: the model does not cut a REFERENCE root's chain at the module
+-- (`structureOf` walks its target on the holder's stack), so its location is not asserted here.
+#guard (match rootSelection (referenceTargets (.moduleView 1 1) (.moduleView 1 1)) with
+  | .member key trail _ => key == ["A", "T", "X"] && trail == [["A", "T", "X"]]
+  | _ => false)
+#guard (match runResult (referenceTargets (.moduleView 1 1) (.moduleView 1 1)) with | .ok (.atom 5) => true | _ => false)
+#guard rootSelection (referenceTargets (.moduleView 1 1) (.moduleView 1 2)) == .nothing
+#guard ambiguousX (referenceTargets (.moduleView 1 1) (.moduleView 1 2))
+
+/-- Host-built descendants with independent control of the member and parent identities. -/
+private def openDescendants (a b : Algorithm) (path : List Ident) : Expr :=
+  let target name := path.foldl (fun e step => Expr.dotCall e step none) (.resolve name)
+  .algorithmExpr (alg [] [target "A", target "B"] [privateProp "A" a, privateProp "B" b] [.resolve "X"])
+
+private def holding (parent : PropertyIdentity) (name : Ident) (member : Algorithm) : Algorithm :=
+  (alg [] [] [publicProp name member] []).withDeclarationId (some parent)
+
+private def subWithId (id : Option PropertyIdentity) : Algorithm :=
+  (alg [] [] [publicProp "X" (alg [] [] [] [.num 5])] []).withDeclarationId id
+
+private def memberPair (a b : Option PropertyIdentity) : Expr :=
+  openDescendants (holding (.module 2) "Sub" (subWithId a)) (holding (.module 2) "Sub" (subWithId b)) ["Sub"]
+
+-- Production assigns a fresh syntax id to each unmarked occurrence. The same member name under a
+-- common module token cannot merge these declarations or override distinct explicit identities.
+#guard rootSelection (memberPair none none) == .nothing
+#guard ambiguousX (memberPair none none)
+#guard rootSelection (memberPair (some (.shared 7)) (some (.shared 8))) == .nothing
+#guard ambiguousX (memberPair (some (.shared 7)) (some (.shared 8)))
+
+-- The provider's own view is erased even when it is a shared descendant of the module.
+#guard rootSelection (memberPair (some (.sharedView 7 1)) (some (.sharedView 7 2))) == rootSelection descendant
+#guard (match runResult (memberPair (some (.sharedView 7 1)) (some (.sharedView 7 2))) with
+  | .ok (.atom 5) => true | _ => false)
+
+private def innerView (view : Nat) : Algorithm :=
+  holding (.module 2) "Inner" (holding (.sharedView 3 view) "Sub" (subWithId (some (.shared 1))))
+
+-- A view at an intermediate declaring level participates in a deeper provider's identity.
+#guard rootSelection (openDescendants (innerView 1) (innerView 2) ["Inner", "Sub"]) == .nothing
+#guard ambiguousX (openDescendants (innerView 1) (innerView 2) ["Inner", "Sub"])
+#guard (match rootSelection (openDescendants (innerView 1) (innerView 1) ["Inner", "Sub"]) with
+  | .member key _ _ => key == ["A", "Inner", "Sub", "X"]
+  | _ => false)
+#guard (match runResult (openDescendants (innerView 1) (innerView 1) ["Inner", "Sub"]) with
+  | .ok (.atom 5) => true | _ => false)
+
+/-- Two written reaches of a module whose root is a transparent reference. -/
+private def writtenReferenceModule : Expr :=
+  let m := referenceModule (.module 3)
+  .algorithmExpr (alg [] [.algorithmExpr m, .algorithmExpr m] [] [.resolve "X"])
+
+#guard (match rootSelection writtenReferenceModule with
+  | .member key _ _ => key == ["#open0", "T", "X"] | _ => false)
+#guard (match runResult writtenReferenceModule with | .ok (.atom 5) => true | _ => false)
+
+/-- A module carrier keeps its own `X` when reached as a written block and through a holder. -/
+private def writtenCarrier : Expr :=
+  let m := Algorithm.alias none [] [publicProp "X" (alg [] [] [] [.num 5]), privateProp "T" (alg [] [] [] [.num 9])]
+    (.resolve "T") (some (.module 3)) false
+  .algorithmExpr (alg [] [.algorithmExpr m, .resolve "A"] [privateProp "A" m] [.resolve "X"])
+
+#guard rootSelection writtenCarrier == .member ["#open0", "X"] [["#open0", "X"]] [none]
+#guard (match runResult writtenCarrier with | .ok (.atom 5) => true | _ => false)
+
+/-- Chasing one view through a second occurrence of the same module token terminates at `Second.T`.
+    Using the provider key as the cycle key would stop at `Second` and lose the member. -/
+private def viewWalk : Expr :=
+  let second := referenceModule (.moduleView 5 2)
+  let first := Algorithm.alias none [] [privateProp "Second" second] (.resolve "Second") (some (.moduleView 5 1)) true
+  .algorithmExpr (alg [] [.resolve "First"] [privateProp "First" first] [.resolve "X"])
+
+#guard (match rootSelection viewWalk with
+  | .member key _ _ => key == ["First", "Second", "T", "X"] | _ => false)
+#guard (match runResult viewWalk with | .ok (.atom 5) => true | _ => false)
+
+/-- Host-built module whose open list reaches `F.Sub` directly and through `L`. Neither target
+    needs an input. The selected `Sub.X` requires `F`'s `y`, which is available at the reader
+    `F.R` but absent from the consulted module level. Only the member's reader-site check can
+    require this metadata on `R`. -/
+private def readerSite (keepRequirement : Bool) : Expr :=
+  let x := { (publicLocalProp "X" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [.param "y"]))
+    with requiredOwnerDepths := some [("y", some 1)] }
+  let sub := (alg [] [] [x] [.num 0]).withDeclarationId (some (.shared 1))
+  let body := alg [] [] [] [.binary .add (.resolve "X") (.num 0)]
+  let reader := if keepRequirement then
+    { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) body) with requiredOwnerDepths := some [("y", some 0)] }
+    else privateProp "R" body
+  let f := (alg ["y"] [] [publicProp "Sub" sub, reader] [.resolve "R"]).withDeclarationId (some (.shared 2))
+  let target := Expr.dotCall (.resolve "F") "Sub" none
+  let m := (alg [] [target, .resolve "L"] [publicProp "F" f, privateProp "L" (.alias none [] [] target)] [])
+    |>.withDeclarationId (some (.module 3))
+  .algorithmExpr (alg [] [] [privateProp "M" m] [.dotCall (.resolve "M") "F" (some [.num 7])])
+
+#guard exposureFull (readerSite true)
+#guard !exposureFull (readerSite false)
+#guard (match runResult (readerSite true) with | .ok (.atom 7) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of
+
+        A = load('https://mods.test/x.kat')
+        B = load('https://mods.test/x.kat')
+        F(y) = {
+          open Lib.Sub, A, B
+          Lib = {
+            public Sub = { y + 0 }
+            0
+          }
+          R = X + 0
+          R
+        }
+        F(7)
+
+    with the module `public X = 5`. `R` reads `X` through `F`'s opens: every target is walked, `Sub`
+    (which needs `y`) included, and the one module provides `X`. `R` is local-only on `y`. -/
+def captureWitness : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none), .resolve "A", .resolve "B"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 7])])
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of the same source with the output `F(7), F.R`. -/
+def captureWitnessEscaped : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none), .resolve "A", .resolve "B"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 7]), (.dotCall (.resolve "F") "R" none)])
+
+/-- Host-built: `captureWitness` with `R`'s requirement removed (`R` exported). -/
+def captureWitnessHostBuilt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none), .resolve "A", .resolve "B"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "R" (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])] [.resolve "R"])] [(.call (.resolve "F") [.num 7])])
+
+/-- Host-built: `captureWitnessHostBuilt` with the output `F(7), F.R`. -/
+def captureWitnessHostBuiltEscaped : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none), .resolve "A", .resolve "B"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "R" (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])] [.resolve "R"])] [(.call (.resolve "F") [.num 7]), (.dotCall (.resolve "F") "R" none)])
+
+/-- Host-built: `captureWitnessHostBuilt` with `B` a second module identity of the same text (token 2).
+    Two providers select nothing: `R` requires nothing. -/
+def captureTwoModulesHostBuilt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (Algorithm.withDeclarationId (some (.module 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "B" (Algorithm.withDeclarationId (some (.module 2)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 0) }] [])), privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none), .resolve "A", .resolve "B"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "R" (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])] [.resolve "R"])] [(.call (.resolve "F") [.num 7])])
+
+theorem captureWitness_sourceDomain : SourceDomain captureWitness := ⟨by cbv, by cbv⟩
+
+/-- **The model refuses the copy without `R`'s requirement** (the baseline model admitted it). -/
+theorem captureWitness_hostBuilt_refused : ¬ SourceDomain captureWitnessHostBuilt :=
+  fun h => by have := h.exposed; rw [show exposureFull captureWitnessHostBuilt = false by cbv] at this; cases this
+
+/-- The control: over two module identities nothing is selected, and the same copy is admitted. -/
+theorem captureTwoModules_hostBuilt_sourceDomain : SourceDomain captureTwoModulesHostBuilt := ⟨by cbv, by cbv⟩
+
+#guard (match runResult captureWitness with | .ok (.atom 5) => true | _ => false)
+
+-- Outside the call the source tree refuses `R` itself …
+#guard (match runResult captureWitnessEscaped with
+  | .error e => (match innermost e with | .localOnlyProperty _ "R" _ => true | _ => false)
+  | .ok _ => false)
+
+-- … while the copy without the requirement reads `R` from the call's cache entry.
+#guard (match runResult captureWitnessHostBuiltEscaped with
+  | .ok (.sequenceValue [.atom 5, .atom 5]) => true
+  | _ => false)
+
+#guard ambiguousX captureTwoModulesHostBuilt
+
+/-! A module level on the reader's stack carries its declaration id too (`levelOf`). No source
+reaches a module inside itself — the loader refuses a load cycle — so the tree below is host-built:
+one member `S` of the module is a provider twice at an open level INSIDE the module, by the reader's
+own stack (`S`) and through a holder `P` of the same token (`P.S`). Production counts one provider. -/
+
+/-- The member `S = { public X = 5 }`, marked as the encoder marks a declaration reached twice. -/
+def nestedS : PropDef :=
+  { (publicProp "S" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "X" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 5]))) with identity := some (.shared 1) }] []))) with identity := some (.shared 0) }
+
+/-- Host-built: the module (token 0), held by `A`, of `S`, a holder `P` of the module token `inner`
+    with the same `S`, `G(y) = { open Lib.Sub, S, P.S ⏎ Lib = { public Sub = { y + 0 } ⏎ 0 } ⏎ R = X + 0 ⏎ R }`
+    and `public V` with the rows `output`; the program reads `A.V`. `R` is local-only on `y`
+    (`localOnly`) or has that requirement removed. -/
+def selfNested (inner : Nat) (localOnly : Bool) (output : List Expr) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (Algorithm.withDeclarationId (some (.module 0)) (alg [] []
+    [nestedS,
+     privateProp "P" (Algorithm.withDeclarationId (some (.module inner)) (alg [] [] [nestedS] [])),
+     privateProp "G" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none), .resolve "S", (.dotCall (.resolve "P") "S" none)]
+       [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]),
+        (if localOnly then
+          { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }
+        else privateProp "R" (alg [] [] [] [(.binary .add (.resolve "X") (.num 0))]))] [.resolve "R"]),
+     publicProp "V" (alg [] [] [] output)] []))] [.dotCall (.resolve "A") "V" none])
+
+/-- The rows `G(7)`. -/
+def nestedCall : List Expr := [(.call (.resolve "G") [.num 7])]
+
+/-- The rows `G(7), G.R`. -/
+def nestedCallThenRead : List Expr := [(.call (.resolve "G") [.num 7]), .dotCall (.resolve "G") "R" none]
+
+theorem selfNested_sourceDomain : SourceDomain (selfNested 0 true nestedCall) := ⟨by cbv, by cbv⟩
+
+/-- One provider inside the module too: the copy without `R`'s requirement is refused. -/
+theorem selfNested_hostBuilt_refused : ¬ SourceDomain (selfNested 0 false nestedCall) :=
+  fun h => by have := h.exposed; rw [show exposureFull (selfNested 0 false nestedCall) = false by cbv] at this; cases this
+
+/-- The control: `P` a second module identity. Two providers select nothing; the copy is admitted. -/
+theorem selfNested_twoModules_sourceDomain : SourceDomain (selfNested 1 false nestedCall) := ⟨by cbv, by cbv⟩
+
+#guard (match runResult (selfNested 0 true nestedCall) with | .ok (.atom 5) => true | _ => false)
+#guard (match runResult (selfNested 0 true nestedCallThenRead) with
+  | .error e => (match innermost e with | .localOnlyProperty _ "R" _ => true | _ => false)
+  | .ok _ => false)
+#guard (match runResult (selfNested 0 false nestedCallThenRead) with
+  | .ok (.sequenceValue [.atom 5, .atom 5]) => true
+  | _ => false)
+#guard ambiguousX (selfNested 1 false nestedCall)
+
+end ModuleProviders
 
 end KatLang.NavigationSourceDomainGuards

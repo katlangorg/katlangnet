@@ -15,7 +15,9 @@ namespace KatLang.Tests;
 /// and the <c>AccessChecks</c> rows are one source program per access-check class the exposure pass
 /// formerly under-charged (a reference's target walk, a chain, an inline-block head, an open through
 /// a reference, an enclosing level's open) plus the controls it must keep exported (ledger E-18, F1);
-/// Lean refuses each one's host-corrupted or pre-fix counterpart.
+/// Lean refuses each one's host-corrupted or pre-fix counterpart. The <c>ModuleProviders</c> rows are
+/// the routes on which one loaded module is one open provider, their two-provider controls, and a
+/// reader charged only through the open level such a module decides.
 /// </summary>
 public class NavigationSourceDomainWitnessTests
 {
@@ -243,6 +245,132 @@ public class NavigationSourceDomainWitnessTests
 
         var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(ModuleHolder, server.Options()));
         Assert.Equal(new Result.Atom(5), success.Value);
+    }
+
+    // ── One loaded module is one open provider (E-18 model correction, 2026-11-18; Lean `ModuleProviders`) ──
+
+    private const string XUrl = "https://mods.test/x.kat";
+    private const string YUrl = "https://mods.test/y.kat";
+    private const string SubUrl = "https://mods.test/sub.kat";
+    private const string Sub2Url = "https://mods.test/sub2.kat";
+    private const string TwoUrl = "https://mods.test/two.kat";
+    private const string XModule = "public X = 5\n";
+    private const string SubModule = "public Sub = {\n  public X = 5\n}\n";
+    private const string TwoModule = "public S1 = {\n  public X = 5\n}\npublic S2 = {\n  public X = 5\n}\n";
+
+    /// <summary><c>R</c> reads <c>X</c> through <c>F</c>'s opens: the walk of <c>Lib.Sub</c> needs <c>y</c>, and two holders of one module provide <c>X</c>.</summary>
+    private const string CaptureBody = "A = load('" + XUrl + "')\nB = load('" + XUrl + "')\n" +
+        "F(y) = {\n  open Lib.Sub, A, B\n  Lib = {\n    public Sub = { y + 0 }\n    0\n  }\n  R = X + 0\n  R\n}\n";
+
+    /// <summary>Two canonical URLs serve each text, so equal bytes under two module identities are available.</summary>
+    private static ModuleRouteAgreement.Modules ProviderModules() => new(
+        (XUrl, XModule), (YUrl, XModule), (SubUrl, SubModule), (Sub2Url, SubModule), (TwoUrl, TwoModule));
+
+    private static string ModuleProvidersLean()
+    {
+        var lean = File.ReadAllText(Path.Combine(RepoRoot.Find(), LeanPath)).ReplaceLineEndings("\n");
+        var start = lean.IndexOf("namespace ModuleProviders\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Missing Lean namespace ModuleProviders");
+        var end = lean.IndexOf("end ModuleProviders\n", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Missing Lean namespace end ModuleProviders");
+        return lean[start..end];
+    }
+
+    /// <summary>The asynchronous front end over the synchronous evaluator, and over the asynchronous twin.</summary>
+    private static async Task<RunResult[]> ModuleEngines(string source)
+    {
+        var twin = HostOperations.Create(HostOperation.CreateAsync("UnusedModuleProviderRoute",
+            static (_, _) => throw new InvalidOperationException("The route marker must never execute.")));
+        Assert.True(twin.ContainsAsynchronousOperations);
+        return [await KatLangEngine.RunAsync(source, ProviderModules().Options()),
+            await KatLangEngine.RunAsync(source, ProviderModules().Options(twin))];
+    }
+
+    public static TheoryData<string, string> OneModuleProviderWitnesses => new()
+    {
+        { "twoHolders", "open A, B\nA = load('" + XUrl + "')\nB = load('" + XUrl + "')\nX\n" },
+        { "holderAndWrittenLoad", "open A, load('" + XUrl + "')\nA = load('" + XUrl + "')\nX\n" },
+        { "memberHolder", "open Box.M, A\nBox = {\n  public M = load('" + XUrl + "')\n}\nA = load('" + XUrl + "')\nX\n" },
+        { "descendant", "open A.Sub, B.Sub\nA = load('" + SubUrl + "')\nB = load('" + SubUrl + "')\nX\n" },
+        { "descendantReference", "open A.Sub, L\nA = load('" + SubUrl + "')\nB = load('" + SubUrl + "')\nL = B.Sub\nX\n" },
+        { "writtenLoadDescendant", "open load('" + SubUrl + "').Sub, A.Sub\nA = load('" + SubUrl + "')\nX\n" },
+        { "captureWitness", CaptureBody + "F(7)\n" },
+    };
+
+    /// <summary>
+    /// Every reach of one loaded module is one open provider (Q-32 I-U): the opened name is read, in
+    /// both engines, and the tree is Lean's <c>ModuleProviders</c> definition of that name, where
+    /// production Lean and the static selection model select the same member.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(OneModuleProviderWitnesses))]
+    public async Task ModuleProviderWitness_OneModuleIsOneProvider(string name, string source)
+    {
+        var root = (await SourceProvenance.ParseValidAsync(source, ProviderModules().Options())).Root;
+        Assert.Contains($"def {name} : Expr :=\n  {LeanAstEncoder.EncodeProgram(root)}\n", ModuleProvidersLean(), StringComparison.Ordinal);
+        foreach (var result in await ModuleEngines(source))
+            Assert.Equal(new Result.Atom(5), Assert.IsType<RunResult.Success>(result).Value);
+    }
+
+    public static TheoryData<string, string> TwoProviderWitnesses => new()
+    {
+        { "twoModules", "open A, B\nA = load('" + XUrl + "')\nB = load('" + YUrl + "')\n" },
+        { "twoModuleDescendants", "open A.Sub, B.Sub\nA = load('" + SubUrl + "')\nB = load('" + Sub2Url + "')\n" },
+        { "distinctDescendants", "open A.S1, B.S2\nA = load('" + TwoUrl + "')\nB = load('" + TwoUrl + "')\n" },
+        { "writtenBlocks", "open { public X = 5 }, { public X = 5 }\n" },
+    };
+
+    /// <summary>
+    /// Two module identities with equal bytes, two declarations of one module and two written blocks
+    /// stay two providers. Reading the name they both provide is the front-end error
+    /// <c>AmbiguousOpen</c>, so the Lean tree is the tree of the same source with the output row
+    /// <c>1</c>, that row replaced by the read.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TwoProviderWitnesses))]
+    public async Task ModuleProviderWitness_TwoProvidersStayTwo(string name, string body)
+    {
+        var read = await Parser.ParseAsync(body + "X\n", ProviderModules().Options());
+        var error = Assert.Single(read.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.AmbiguousOpen, error.Code);
+
+        const string unusedRow = "[.num 1])";
+        var encoded = LeanAstEncoder.EncodeProgram((await SourceProvenance.ParseValidAsync(body + "1\n", ProviderModules().Options())).Root);
+        Assert.EndsWith(unusedRow, encoded, StringComparison.Ordinal);
+        Assert.Contains($"def {name} : Expr :=\n  {encoded[..^unusedRow.Length]}[.resolve \"X\"])\n", ModuleProvidersLean(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The capture witness: the front end charges <c>R</c> the walk of the unused target <c>Lib.Sub</c>
+    /// of the open level that the one module decides, at <c>F</c>'s <c>y</c>, and both engines refuse
+    /// <c>R</c> outside the call. Lean's host-built copy is this tree with exactly that requirement
+    /// removed; the static model refuses it (<c>ModuleProviders.captureWitness_hostBuilt_refused</c>).
+    /// </summary>
+    [Fact]
+    public async Task ModuleProviderCaptureWitness_ChargesTheReaderTheUnusedTargetWalk()
+    {
+        var root = (await SourceProvenance.ParseValidAsync(CaptureBody + "F(7)\n", ProviderModules().Options())).Root;
+        var f = Assert.IsType<Algorithm.User>(root.Properties.Single(property => property.Name == "F").Value);
+        ExposureOpenChainComplexityTests.AssertRequires(f.Properties.Single(property => property.Name == "R"), ("y", 0));
+
+        const string localOnlyReader = "{ (privateLocalProp \"R\" (.localCapturedAncestorParams [\"y\"]) (alg [] [] [] [(.binary .add (.resolve \"X\") (.num 0))])) with requiredOwnerDepths := some [(\"y\", some 0)] }";
+        const string exportedReader = "privateProp \"R\" (alg [] [] [] [(.binary .add (.resolve \"X\") (.num 0))])";
+        var lean = ModuleProvidersLean();
+        var encoded = LeanAstEncoder.EncodeProgram(root);
+        Assert.Contains(localOnlyReader, encoded, StringComparison.Ordinal);
+        Assert.Contains($"def captureWitnessHostBuilt : Expr :=\n  {encoded.Replace(localOnlyReader, exportedReader, StringComparison.Ordinal)}\n", lean, StringComparison.Ordinal);
+
+        var escaped = LeanAstEncoder.EncodeProgram((await SourceProvenance.ParseValidAsync(CaptureBody + "F(7), F.R\n", ProviderModules().Options())).Root);
+        Assert.Contains($"def captureWitnessEscaped : Expr :=\n  {escaped}\n", lean, StringComparison.Ordinal);
+        Assert.Contains($"def captureWitnessHostBuiltEscaped : Expr :=\n  {escaped.Replace(localOnlyReader, exportedReader, StringComparison.Ordinal)}\n", lean, StringComparison.Ordinal);
+
+        foreach (var tail in new[] { "F.R\n", "F(7), F.R\n" })
+            foreach (var result in await ModuleEngines(CaptureBody + tail))
+            {
+                var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
+                Assert.Equal(KatLangErrorCode.LocalOnlyProperty, error.Code);
+                Assert.Contains("Property 'R' on `F` is local-only", error.Message, StringComparison.Ordinal);
+            }
     }
 
     [Fact]
