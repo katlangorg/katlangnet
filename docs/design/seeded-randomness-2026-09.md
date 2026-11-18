@@ -138,7 +138,7 @@ EvaluationBudget.RandomSource   (RandomSourceFactory.Create(seed, entropyProvide
         ↓
 every copied EvalCtx shares the budget reference
         ↓
-EvalNativeCall / EvalNativeCallAsync → ApplyMathNative(name, args, ctx.Budget.RandomSource)
+EvalNativeCall / EvalNativeCallAsync → ApplyMathNativeCall(Async) → ApplyMathNative(name, args, ctx.Budget.RandomSource)
 ```
 
 - One source per evaluator run, shared by every nested call, callback, loop

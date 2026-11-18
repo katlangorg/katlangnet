@@ -387,7 +387,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.EvalWiredRootProgramCountedAsync ~ Evaluator.EvalWiredRootProgramCounted",
         "Evaluator.EvalRootProgramCountedWithTopLevelPropertiesAsync ~ Evaluator.EvalRootProgramCountedWithTopLevelProperties",
         "Evaluator.LookupNativeArgumentAsync ~ Evaluator.LookupNativeArgument",
-        "Evaluator.CollectMathNativeArgumentsAsync ~ Evaluator.CollectMathNativeArguments",
+        "Evaluator.ApplyMathNativeCallAsync ~ Evaluator.ApplyMathNativeCall",
         "Evaluator.CollectHostOperationArgumentsAsync ~ Evaluator.CollectHostOperationArguments",
         "Evaluator.InvokeSynchronousHostOperationAsync ~ Evaluator.InvokeSynchronousHostOperation",
         "Evaluator.EvalNativeCallAsync ~ Evaluator.EvalNativeCall",

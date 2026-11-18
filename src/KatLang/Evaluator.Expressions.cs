@@ -1152,26 +1152,31 @@ public static partial class Evaluator
             return InvokeSynchronousHostOperation(hostOperation, argNames, ctx, valEnv);
         }
 
-        var argsR = CollectMathNativeArguments(argNames, ctx, valEnv);
-        if (argsR.IsError) return argsR.Error;
-
-        return ApplyMathNative(fnName, argsR.Value, ctx.Budget.RandomSource);
+        return ApplyMathNativeCall(fnName, argNames, ctx, valEnv);
     }
 
     /// <summary>
     /// Reads one Math native's declared arguments from the wrapper's bound
-    /// parameter environments, in declaration order, and coerces each to its
-    /// numeric domain. Lookup is the shared native-argument read
+    /// parameter environments, in declaration order, coerces each to its
+    /// numeric domain, then applies the native to them (<see cref="ApplyMathNative"/>).
+    /// Lookup is the shared native-argument read
     /// (<see cref="LookupNativeArgument"/>), which is the ordinary
     /// <see cref="Expr.Param"/> value read; the numeric constraint applies to
-    /// the value that read produced.
+    /// the value that read produced. The arguments live only for this call, which
+    /// is all <see cref="ApplyMathNative"/> reads them for: every registry member
+    /// takes one or two, held in this frame; a longer, host-built list keeps one
+    /// array. The original count bounds storage and supplies the arity. Each loop test reads
+    /// the live name count because a host argument can edit its list during demand.
     /// </summary>
-    private static EvalResult<Decimal128[]> CollectMathNativeArguments(
+    private static EvalResult<Result> ApplyMathNativeCall(
+        string fnName,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var args = new Decimal128[argNames.Count];
+        var count = argNames.Count;
+        var held = new MathNativeArgumentPair();
+        var wide = (uint)count > MathNativeArgumentPair.Capacity ? new Decimal128[count] : null;
         for (var i = 0; i < argNames.Count; i++)
         {
             var valR = LookupNativeArgument(ctx, valEnv, argNames[i]);
@@ -1180,15 +1185,31 @@ public static partial class Evaluator
             // errors, and so is every other non-numeric shape, Q-27), shared with the twin.
             var numR = ExpectInt(valR.Value);
             if (numR.IsError) return numR.Error;
-            args[i] = numR.Value;
+            if (wide is not null) wide[i] = numR.Value;
+            else ((Span<Decimal128>)held)[..count][i] = numR.Value;
         }
 
-        return EvalResult<Decimal128[]>.Ok(args);
+        return ApplyHeldMathNative(fnName, in held, wide, count, ctx.Budget.RandomSource);
     }
+
+    /// <summary>The inline storage of a Math native call's one or two arguments (<see cref="ApplyMathNativeCall"/>).</summary>
+    [System.Runtime.CompilerServices.InlineArray(Capacity)]
+    private struct MathNativeArgumentPair
+    {
+        internal const int Capacity = 2;
+        private Decimal128 _element;
+    }
+
+    // The held arguments as ApplyMathNative's span, built out of line: the reading frame, which stays
+    // live while an argument read recurses, keeps only the pair, not the span temporaries.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Result> ApplyHeldMathNative(
+        string fnName, in MathNativeArgumentPair held, Decimal128[]? wide, int count, RandomSource randomSource)
+        => ApplyMathNative(fnName, wide ?? ((ReadOnlySpan<Decimal128>)held)[..count], randomSource);
 
     /// <summary>
     /// Applies one Math native to its already-read numeric arguments. It evaluates
-    /// nothing and reads no environment; its only non-argument input is the run's
+    /// nothing, reads no environment and keeps no argument; its only non-argument input is the run's
     /// random stream, passed EXPLICITLY (never a static or shared fallback) and
     /// consumed only by the two random members, which draw from it in evaluation
     /// order after validating their bounds. The synchronous dispatch and its async
@@ -1196,7 +1217,7 @@ public static partial class Evaluator
     /// implementation, so neither the member set nor the draw order can drift
     /// between them.
     /// </summary>
-    internal static EvalResult<Result> ApplyMathNative(string fnName, Decimal128[] args, RandomSource randomSource)
+    internal static EvalResult<Result> ApplyMathNative(string fnName, ReadOnlySpan<Decimal128> args, RandomSource randomSource)
     {
         // Host-AST arity gate (bug-hunt B5a). `Expr.NativeCall` is publicly
         // host-constructible, and the arms below read FIXED argument positions

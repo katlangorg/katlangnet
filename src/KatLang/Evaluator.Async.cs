@@ -868,24 +868,28 @@ public static partial class Evaluator
         string name)
         => ProjectCountedValue(await EvalParamCountedAsync(name, span: null, ctx, valEnv).ConfigureAwait(false));
 
-    /// <summary>MIRROR OF <see cref="CollectMathNativeArguments"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<Decimal128[]>> CollectMathNativeArgumentsAsync(
+    /// <summary>MIRROR OF <see cref="ApplyMathNativeCall"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> ApplyMathNativeCallAsync(
+        string fnName,
         IReadOnlyList<string> argNames,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var args = new Decimal128[argNames.Count];
+        var count = argNames.Count;
+        var held = new MathNativeArgumentPair();
+        var wide = (uint)count > MathNativeArgumentPair.Capacity ? new Decimal128[count] : null;
         for (var i = 0; i < argNames.Count; i++)
         {
             var valR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
             if (valR.IsError) return valR.Error;
-            // MIRROR of CollectMathNativeArguments: the ONE numeric coercion.
+            // MIRROR of ApplyMathNativeCall: the ONE numeric coercion.
             var numR = ExpectInt(valR.Value);
             if (numR.IsError) return numR.Error;
-            args[i] = numR.Value;
+            if (wide is not null) wide[i] = numR.Value;
+            else ((Span<Decimal128>)held)[..count][i] = numR.Value;
         }
 
-        return EvalResult<Decimal128[]>.Ok(args);
+        return ApplyHeldMathNative(fnName, in held, wide, count, ctx.Budget.RandomSource);
     }
 
     /// <summary>MIRROR OF <see cref="CollectHostOperationArguments"/> — keep in lock-step.</summary>
@@ -960,10 +964,7 @@ public static partial class Evaluator
             return await InvokeSynchronousHostOperationAsync(hostOperation, argNames, ctx, valEnv).ConfigureAwait(false);
         }
 
-        var argsR = await CollectMathNativeArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
-        if (argsR.IsError) return argsR.Error;
-
-        return ApplyMathNative(fnName, argsR.Value, ctx.Budget.RandomSource);
+        return await ApplyMathNativeCallAsync(fnName, argNames, ctx, valEnv).ConfigureAwait(false);
     }
 
     /// <summary>

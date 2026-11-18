@@ -788,6 +788,8 @@ public class NeedCellTests
         var cell = GatedCell(EvaluationBudget.Create(null), entered, release.Task, () => Value());
         var demands = Enumerable.Range(0, 4).Select(_ => Task.Run(async () => (await cell.DemandAsync()).IsOk)).ToArray();
         await entered.Task.WaitAsync(WaitLimit);
+        // The shared completion exists once a second demander has joined (its first joiner creates it).
+        await Until(() => cell.HasJoinedValueFlight);
         var (source, task) = WeakFlight(cell);
         Assert.True(source.IsAlive);
         release.SetResult();

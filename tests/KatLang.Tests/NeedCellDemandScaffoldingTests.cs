@@ -1,0 +1,483 @@
+using System.Numerics;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using KatLang.Evaluation;
+using KatLang.Evaluation.Caching;
+using KatLang.TestInfrastructure;
+using KatLang.Tests.InvocationRoute;
+
+namespace KatLang.Tests;
+
+/// <summary>
+/// The per-demand scaffolding of a need cell and the per-call Math argument array (2026-11-18, C#
+/// implementation only). A VALUE demand nobody joins allocates no shared completion (the first joiner
+/// creates it). Both families carry the current node in the logical execution context. A Math
+/// native call keeps its one or two arguments in its own frame.
+/// </summary>
+public class NeedCellDemandScaffoldingTests
+{
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
+    private static readonly EvalResult<Evaluator.CountedResult> Seven
+        = EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom(7), 1));
+
+    private static async Task Until(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + WaitLimit;
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The awaited condition did not hold in time.");
+            await Task.Delay(5);
+        }
+    }
+
+    // ── Single flight with a lazily created completion ─────────────────────────────────────────────
+
+    /// <summary>
+    /// A running computation nobody joined has no shared completion; the first joiner creates it and
+    /// waits on it, and both observers receive the one outcome of the one computation. The starter
+    /// observes its own state from inside the computation.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ASecondObserver_CreatesTheSharedCompletion_AndJoinsTheOneComputation(bool asynchronousStarter, bool asynchronousJoiner)
+    {
+        var budget = EvaluationBudget.Create(null);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var starts = 0;
+        var unjoinedInside = false;
+        NeedCell? cell = null;
+        EvalResult<Evaluator.CountedResult> Enter()
+        {
+            Interlocked.Increment(ref starts);
+            unjoinedInside = cell!.HasValueInFlight && !cell.HasJoinedValueFlight;
+            entered.SetResult();
+            return Seven;
+        }
+        cell = new NeedCell(() =>
+        {
+            var outcome = Enter();
+            release.Task.WaitAsync(WaitLimit).GetAwaiter().GetResult();
+            return outcome;
+        }, async () =>
+        {
+            var outcome = Enter();
+            await release.Task.WaitAsync(WaitLimit);
+            return outcome;
+        }, budget: budget);
+
+        var starter = asynchronousStarter
+            ? Task.Run(async () => await cell.DemandAsync())
+            : Task.Factory.StartNew(() => cell.Demand(), TaskCreationOptions.LongRunning);
+        await entered.Task.WaitAsync(WaitLimit);
+        Assert.True(unjoinedInside);
+        Assert.False(cell.HasJoinedValueFlight);
+
+        var joiner = asynchronousJoiner
+            ? Task.Run(async () => await cell.DemandAsync())
+            : Task.Factory.StartNew(() => cell.Demand(), TaskCreationOptions.LongRunning);
+        await Until(() => cell.HasJoinedValueFlight || joiner.IsCompleted);
+        Assert.False(joiner.IsCompleted);
+        Assert.True(cell.HasValueInFlight);
+        release.SetResult();
+
+        var first = await starter.WaitAsync(WaitLimit);
+        var second = await joiner.WaitAsync(WaitLimit);
+        Assert.Same(Seven.Value.Value, first.Value.Value);
+        Assert.Same(Seven.Value.Value, second.Value.Value);
+        Assert.Equal(1, starts);
+        Assert.False(cell.HasValueInFlight);
+        Assert.False(cell.HasJoinedValueFlight);
+        Assert.True(cell.HasCompletedValue);
+    }
+
+    /// <summary>
+    /// A starter nobody joined still rethrows the original host exception and cancellation (the
+    /// object and its token), exactly as awaiting a shared completion delivered them; the stored
+    /// outcome stays sticky for every later demand.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task AnUnjoinedStarter_RethrowsTheOriginalExceptionAndToken(bool asynchronous, bool cancellation)
+    {
+        using var host = new CancellationTokenSource();
+        Exception thrown = cancellation
+            ? new OperationCanceledException("host cancellation", host.Token)
+            : new InvalidOperationException("original host failure");
+        var starts = 0;
+        var cell = new NeedCell(() =>
+        {
+            starts++;
+            throw thrown;
+        }, () =>
+        {
+            starts++;
+            throw thrown;
+        }, budget: EvaluationBudget.Create(null));
+
+        var first = asynchronous
+            ? await Assert.ThrowsAnyAsync<Exception>(() => cell.DemandAsync().AsTask())
+            : Assert.ThrowsAny<Exception>(() => cell.Demand());
+        Assert.Same(thrown, first);
+        if (first is OperationCanceledException cancelled) Assert.Equal(host.Token, cancelled.CancellationToken);
+        Assert.Same(thrown, Assert.ThrowsAny<Exception>(() => cell.Demand()));
+        Assert.Same(thrown, await Assert.ThrowsAnyAsync<Exception>(() => cell.DemandAsync().AsTask()));
+        Assert.Equal(1, starts);
+        Assert.False(cell.HasValueInFlight);
+        Assert.False(NeedNode.HasCurrentNode);
+    }
+
+    // ── The current node across synchronous and asynchronous computations ──────────────────────────
+
+    /// <summary>
+    /// The wait-for graph sees the innermost computation of the flow whichever family runs it: an
+    /// asynchronous computation started inside a synchronous one is the parent of what it demands,
+    /// and a synchronous computation started inside an asynchronous one is the parent of what IT
+    /// demands. Re-entering any cell of the chain is a DemandCycle for the re-entry, and every edge
+    /// is gone afterwards.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TheInnermostComputation_IsTheParent_AcrossBothFamilies(bool outerAsynchronous)
+    {
+        var budget = EvaluationBudget.Create(null);
+        NeedCell? outer = null, middle = null, inner = null;
+        var observed = new List<string>();
+        var reentry = default(EvalResult<Evaluator.CountedResult>);
+        EvalResult<Evaluator.CountedResult> InnerBody()
+        {
+            observed.Add($"outer={outer!.ActiveDependencyCount} middle={middle!.ActiveDependencyCount} current={NeedNode.HasCurrentNode}");
+            reentry = middle.Demand();
+            return Seven;
+        }
+        inner = new NeedCell(InnerBody, () => new(InnerBody()), budget: budget);
+        // The middle computation runs in the OTHER family than the outer one.
+        middle = outerAsynchronous
+            ? new NeedCell(() => inner.Demand(), () => new(inner.Demand()), budget: budget)
+            : new NeedCell(() => inner.Demand(), async () => { await Task.Yield(); return await inner.DemandAsync(); }, budget: budget);
+        outer = outerAsynchronous
+            ? new NeedCell(() => throw new InvalidOperationException(), async () => { await Task.Yield(); return middle.Demand(); }, budget: budget)
+            : new NeedCell(() => middle.DemandAsync().AsTask().WaitAsync(WaitLimit).GetAwaiter().GetResult(), () => throw new InvalidOperationException(), budget: budget);
+
+        var outcome = outerAsynchronous ? await outer.DemandAsync().AsTask().WaitAsync(WaitLimit) : outer.Demand();
+
+        Assert.True(outcome.IsOk, outcome.IsError ? outcome.Error.ToString() : null);
+        Assert.Equal(["outer=1 middle=1 current=True"], observed);
+        Assert.Equal(KatLangErrorCode.DemandCycle, reentry.Error.Code);
+        Assert.Equal(0, outer.ActiveDependencyCount);
+        Assert.Equal(0, middle.ActiveDependencyCount);
+        Assert.Equal(0, inner.ActiveDependencyCount);
+        Assert.False(NeedNode.HasCurrentNode);
+    }
+
+    /// <summary>
+    /// A run started inside a synchronous computation of another run takes no edge from it: the outer
+    /// parent belongs to another run, so the inner run's cells record their own edges.
+    /// </summary>
+    [Fact]
+    public void ANestedRunsCells_RecordTheirOwnEdges_InsideAnotherRunsSynchronousComputation()
+    {
+        var outerBudget = EvaluationBudget.Create(null);
+        var innerBudget = EvaluationBudget.Create(null);
+        NeedCell? outerCell = null, innerParent = null;
+        var during = new List<string>();
+        var innerChild = new NeedCell(() =>
+        {
+            during.Add($"outer={outerCell!.ActiveDependencyCount} innerParent={innerParent!.ActiveDependencyCount}");
+            return Seven;
+        }, () => new(Seven), budget: innerBudget);
+        innerParent = new NeedCell(() => innerChild.Demand(), () => innerChild.DemandAsync(), budget: innerBudget);
+        outerCell = new NeedCell(() => innerParent.Demand(), () => new(Seven), budget: outerBudget);
+
+        Assert.True(outerCell.Demand().IsOk);
+        // The outer cell took no edge to the inner run's cell; the inner parent took one to its child.
+        Assert.Equal(["outer=0 innerParent=1"], during);
+        Assert.Equal(0, outerCell.ActiveDependencyCount);
+        Assert.Equal(0, innerParent.ActiveDependencyCount);
+        Assert.False(NeedNode.HasCurrentNode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SynchronousComputation_FollowsItsCapturedExecutionContext(bool projection)
+    {
+        var outside = ExecutionContext.Capture()!;
+        NeedCell? cell = null;
+        void Observe()
+        {
+            Assert.True(NeedNode.HasCurrentNode);
+            ExecutionContext.Run(outside, _ => Assert.False(NeedNode.HasCurrentNode), null);
+            // A new thread inherits the computation. Re-entry there must detect the cycle
+            // before waiting for the synchronous computation that started the thread.
+            var fork = Task.Factory.StartNew(() =>
+            {
+                Assert.True(NeedNode.HasCurrentNode);
+                return projection ? cell!.ProjectCallable().Error : cell!.Demand().Error;
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            var cycle = Assert.IsType<EvalError.DemandCycle>(fork.WaitAsync(WaitLimit).GetAwaiter().GetResult());
+            Assert.Equal(cell!.Span, cycle.Span);
+        }
+        var span = new SourceSpan(1, 2, 1, 3);
+        cell = NeedCell.WithRuntimeProjection(() => { Observe(); return Seven; }, () => new(Seven),
+            () => { Observe(); return EvalResult<Algorithm?>.Ok(null); },
+            () => throw new InvalidOperationException(), span: span, budget: EvaluationBudget.Create(null));
+
+        Assert.True(projection ? cell.ProjectCallable().IsOk : cell.Demand().IsOk);
+        Assert.False(NeedNode.HasCurrentNode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task SuspendedComputation_RestoresItsParentBeforeWakingAnInlineWaiter(bool projection)
+        => Task.Run(async () =>
+        {
+            // Run on the default scheduler. The gate and the unsafe awaiter deliberately permit
+            // inline completion with no captured context of the waiter's own.
+            var gate = new TaskCompletionSource();
+            var observed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var inner = NeedCell.WithRuntimeProjection(() => Seven,
+                async () => { await gate.Task.ConfigureAwait(false); return Seven; },
+                () => EvalResult<Algorithm?>.Ok(null),
+                async () => { await gate.Task.ConfigureAwait(false); return EvalResult<Algorithm?>.Ok(null); });
+            NeedCell? parent = null;
+            parent = new NeedCell(() => Seven, async () =>
+            {
+                using (ExecutionContext.SuppressFlow())
+                {
+                    Task pending = projection ? inner.ProjectCallableAsync().AsTask() : inner.DemandAsync().AsTask();
+                    pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(
+                        () => observed.SetResult(parent!.IsEvaluatingInCurrentFlow()));
+                }
+                await observed.Task.ConfigureAwait(false);
+                return Seven;
+            });
+            var running = parent.DemandAsync().AsTask();
+            gate.SetResult();
+            Assert.True(await observed.Task.WaitAsync(WaitLimit));
+            Assert.True((await running.WaitAsync(WaitLimit)).IsOk);
+        });
+
+    // ── Strict allocation counts (isolated child processes) ────────────────────────────────────────
+
+    private static long Bytes(Action action)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        action();
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    // An async method's own state machine: a struct in an optimized build, which a synchronous
+    // completion never boxes, but a heap class in a Debug build (one object per call).
+    private static long StateMachineBytes(Type owner, string method)
+    {
+        var type = owner.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!
+            .GetCustomAttribute<AsyncStateMachineAttribute>()!.StateMachineType;
+        if (type.IsValueType) return 0;
+        _ = RuntimeHelpers.GetUninitializedObject(type);
+        return Bytes(() => _ = RuntimeHelpers.GetUninitializedObject(type));
+    }
+
+    private static T CompleteSynchronously<T>(ValueTask<T> operation)
+    {
+        Assert.True(operation.IsCompletedSuccessfully, "The demand must complete without suspension.");
+        return operation.Result;
+    }
+
+    // The parent's wait-for edge table as AddDependency creates it for its first edge.
+    private static long FirstEdgeTableBytes(NeedNode key)
+    {
+        static void Create(NeedNode node)
+        {
+            var edges = new Dictionary<NeedNode, int>(ReferenceEqualityComparer.Instance);
+            edges[node] = edges.GetValueOrDefault(node) + 1;
+        }
+        Create(key);
+        return Bytes(() => Create(key));
+    }
+
+    // Match the logical context on the measuring thread, including any keys the test runner set.
+    private static long ContextBytes(bool nested = false)
+    {
+        var current = new AsyncLocal<object?>();
+        var parent = new object();
+        var child = new object();
+        return Bytes(() =>
+        {
+            current.Value = parent;
+            if (nested)
+            {
+                current.Value = child;
+                current.Value = parent;
+            }
+            current.Value = null;
+        });
+    }
+
+    [Fact]
+    public void AnUnjoinedSynchronousDemand_AllocatesOnlyItsContext_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var budget = EvaluationBudget.Create(null);
+        NeedCell Fresh() => new(static () => Seven, static () => new(Seven), budget: budget);
+        _ = Fresh().Demand(); // warm-up: first-call initialization stays outside the window
+
+        var cell = Fresh();
+        Assert.Equal(ContextBytes(), Bytes(() => _ = cell.Demand()));
+        Assert.True(cell.HasCompletedValue);
+        Assert.False(cell.HasValueInFlight);
+
+        // One edge table and the two levels of logical context.
+        NeedCell Nested()
+        {
+            var child = Fresh();
+            return new NeedCell(() => child.Demand(), () => child.DemandAsync(), budget: budget);
+        }
+        _ = Nested().Demand();
+        var parent = Nested();
+        var edgeTable = FirstEdgeTableBytes(parent);
+        Assert.Equal(edgeTable + ContextBytes(nested: true), Bytes(() => _ = parent.Demand()));
+        Assert.Equal(0, parent.ActiveDependencyCount);
+        Assert.False(NeedNode.HasCurrentNode);
+        GcIsolatedAllocation.Complete();
+    }
+
+    [Fact]
+    public void AnUnjoinedAsynchronousDemand_AllocatesOnlyItsContextAndStateMachines_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var budget = EvaluationBudget.Create(null);
+        NeedCell Fresh() => new(static () => Seven, static () => new(Seven), budget: budget);
+        _ = CompleteSynchronously(Fresh().DemandAsync()); // warm-up
+
+        var expected = StateMachineBytes(typeof(NeedCell), "DemandAsync")
+            + StateMachineBytes(typeof(NeedCell), "EvaluateAsync")
+            + ContextBytes();
+
+        var cell = Fresh();
+        var allocated = Bytes(() => _ = CompleteSynchronously(cell.DemandAsync()));
+        Assert.Equal(expected, allocated);
+        Assert.False(NeedNode.HasCurrentNode);
+        GcIsolatedAllocation.Complete();
+    }
+
+    private delegate EvalResult<Result> NativeCall(string fnName, IReadOnlyList<string> argNames, Evaluator.EvalCtx ctx,
+        IReadOnlyList<(string Name, Result Value)> valEnv);
+
+    private delegate EvalResult<Result> NativeArgument(Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> valEnv, string name);
+
+    private static T Private<T>(string name) where T : Delegate
+        => typeof(Evaluator).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.CreateDelegate<T>();
+
+    [Fact]
+    public void AMathNativeCall_AllocatesExactlyItsReadsAndItsResult_GcIsolatedChild()
+    {
+        // The native call reads its arguments (the ordinary parameter reads) and applies the member to
+        // them; the arguments themselves are no allocation.
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var native = Private<NativeCall>("EvalNativeCall");
+        var read = Private<NativeArgument>("LookupNativeArgument");
+        var ctx = Evaluator.EvalCtx.Empty;
+        IReadOnlyList<(string Name, Result Value)> values = [("value", new Result.Atom(Decimal128.Parse("-2.345", System.Globalization.CultureInfo.InvariantCulture))), ("digits", new Result.Atom(1))];
+        // These small finite Abs and Round inputs each produce a single Atom.
+        Result.Atom? measured = null;
+        var resultBytes = Bytes(() => measured = new Result.Atom(7));
+        GC.KeepAlive(measured);
+        foreach (var (member, names) in new[] { ("Abs", new[] { "value" }), ("Round", new[] { "value", "digits" }) })
+        {
+            var warm = native(member, names, ctx, values);
+            Assert.True(warm.IsOk, warm.IsError ? warm.Error.ToString() : null);
+            var reads = 0L;
+            foreach (var name in names)
+            {
+                _ = read(ctx, values, name);
+                reads += Bytes(() => _ = read(ctx, values, name));
+            }
+            Assert.Equal(reads + resultBytes, Bytes(() => _ = native(member, names, ctx, values)));
+        }
+        GcIsolatedAllocation.Complete();
+    }
+
+    // ── Workload bounds (isolated child process) ───────────────────────────────────────────────────
+
+    // The brief's three workloads: one `if` per element (three lazily demanded argument cells per
+    // call), a recursive user call (2 * fib(13) - 1 = 465 calls of Fib(12)), and one unary plus one
+    // binary Math member per element.
+    private static (string Source, int Units) Workload(string name) => name switch
+    {
+        "IfHeavy" => ("F = if(x mod 2 == 0, x, 0 - x)\nrange(1, 2000).map(F).sum", 2000),
+        "RecursiveCalls" => ("Fib = if(n < 2, n, Fib(n - 1) + Fib(n - 2))\nFib(12)", 465),
+        "MathHeavy" => ("F = Math.Abs(x) + Math.Round(x, 1)\nrange(1, 2000).map(F).sum", 2000),
+        _ => throw new ArgumentOutOfRangeException(nameof(name)),
+    };
+
+    private static double BytesPerUnit(string workload, bool asynchronous)
+    {
+        var (source, units) = Workload(workload);
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        void Run()
+        {
+            var result = asynchronous
+                ? Evaluator.RunCountedAsync(program, new RunScopedAsyncZeroArgPropertyResultCache()).GetAwaiter().GetResult().IsError
+                : Evaluator.Run(program, new RunScopedZeroArgPropertyResultCache(), enableLoopOptimization: true, loopDiagnostics: null).IsError;
+            Assert.False(result, workload);
+        }
+
+        for (var i = 0; i < 3; i++)
+            Run();
+        var minimum = long.MaxValue;
+        for (var i = 0; i < 3; i++)
+            minimum = Math.Min(minimum, Bytes(Run));
+        return minimum / (double)units;
+    }
+
+    /// <summary>
+    /// A whole evaluator run's allocations divided by its element or user-call count. Debug and
+    /// Release have separate bounds because a Debug async state machine allocates even when it
+    /// completes inline. Each bound is below its measured pre-change value.
+    /// </summary>
+    [Fact]
+    public void DemandAndMathWorkloads_StayBelowTheirMeasuredBounds_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var failures = new List<string>();
+        foreach (var (workload, asynchronous, debugBound, releaseBound) in new (string, bool, int, int)[]
+        {
+            ("IfHeavy", false, 3_100, 2_310),
+            ("RecursiveCalls", false, 3_790, 3_030),
+            ("MathHeavy", false, 4_380, 3_480),
+            ("IfHeavy", true, 15_260, 2_310),
+            ("RecursiveCalls", true, 20_480, 3_030),
+            ("MathHeavy", true, 20_940, 3_480),
+        })
+        {
+#if DEBUG
+            var bound = debugBound;
+#else
+            var bound = releaseBound;
+#endif
+            var perUnit = BytesPerUnit(workload, asynchronous);
+            if (perUnit >= bound)
+                failures.Add($"{workload} ({(asynchronous ? "twin" : "sync")}): {perUnit:F1} bytes per unit (bound {bound})");
+        }
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
+        GcIsolatedAllocation.Complete();
+    }
+}

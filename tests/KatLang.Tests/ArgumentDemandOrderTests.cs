@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 /// <item>a collection builtin demands its collection first, then its value controls in parameter
 /// order, and a failure ends the run before any later slot is demanded;</item>
 /// <item>a Math or random wrapper demands its arguments in parameter order and requires each to be
-/// a number before it demands the next (<c>CollectMathNativeArguments</c>);</item>
+/// a number before it demands the next (<c>ApplyMathNativeCall</c>);</item>
 /// <item>a host operation demands every argument in parameter order before the host runs
 /// (<c>CollectHostOperationArguments</c>).</item>
 /// </list>

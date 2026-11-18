@@ -437,6 +437,37 @@ public class EvaluatorDefensiveBranchTests
         Assert.Equal("nope", Assert.IsType<EvalError.UnknownName>(tooMany).Name);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task MathNativeCall_ObservesEditsToItsNamesDuringArgumentDemand(bool asynchronous, bool grow)
+    {
+        List<string> argNames = grow ? ["x"] : ["x", "y"];
+        Result Edit()
+        {
+            if (grow) argNames.Add("missing");
+            else argNames.RemoveAt(1);
+            return new Result.Atom(2);
+        }
+        var operation = asynchronous
+            ? HostOperation.CreateAsync("edit", async (_, _) => { await Task.Yield(); return Edit(); })
+            : HostOperation.Create("edit", (_, _) => Edit());
+        var hosts = HostOperations.Create(operation);
+        var program = NativeWrapperProgram("Pow", ["x", "y"], argNames,
+            [new Expr.NativeCall(operation.NativeName, []), new Expr.Num(3)]);
+        var (result, _) = asynchronous
+            ? await Evaluator.RunCountedObservedAsync(program, hostOperations: hosts)
+            : Evaluator.RunCountedObserved(program, hostOperations: hosts);
+
+        if (grow)
+            Assert.Equal("missing", Assert.IsType<EvalError.UnknownName>(Innermost(result.Error)).Name);
+        else
+            // The storage retains its original arity. Only x was read, so Pow receives (2, 0).
+            Assert.Equal((Decimal128)1, Assert.IsType<Result.Atom>(result.Value.Value).Value);
+    }
+
     /// <summary>
     /// A native name that is no Math function member is not the gate's business:
     /// with any ArgNames count it still reaches the existing unknown-native arm.

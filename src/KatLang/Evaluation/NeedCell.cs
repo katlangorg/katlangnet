@@ -108,7 +108,8 @@ internal abstract class NeedNode
 ///   thread.</item>
 ///   <item><b>Thread-safe anyway.</b> Overlapping demands of one cell join a single flight (NEED-09).
 ///   The flight starts at most once; success, ordinary failure, host exception and cancellation
-///   are sticky; and the completed outcome is never rewritten.</item>
+///   are sticky; and the completed outcome is never rewritten. A VALUE flight's shared completion
+///   is created by its first joiner: a computation nobody joins allocates none.</item>
 ///   <item><b>The per-cell gate</b> (<c>_gate</c>) guards the cell's own state, both channels. It is
 ///   held only for field updates and for an IDENTITY-ONLY CALLABLE projection, which evaluates
 ///   nothing and demands no VALUE.</item>
@@ -147,7 +148,13 @@ internal sealed class NeedCell : NeedNode
     // RUNTIME projection's node (which holds its flight state). A written argument's cell has
     // neither: its identity-only projection is the evaluator's operation over its suspension.
     private readonly object? _projection;
+    // The VALUE flight: null before the computation starts and after it ends; UnjoinedFlight
+    // while it runs with no other observer; a shared completion once a second observer joins.
     private TaskCompletionSource<EvalResult<Evaluator.CountedResult>>? _flight;
+    // The flight of a running VALUE computation no other observer has joined (never completed,
+    // never awaited): its starter returns the outcome it published itself, so the completion a
+    // joiner awaits is allocated by the first joiner, under the gate (NEED-09 single flight).
+    private static readonly TaskCompletionSource<EvalResult<Evaluator.CountedResult>> UnjoinedFlight = new();
     private EvalResult<Evaluator.CountedResult>? _completed;
     private ExceptionDispatchInfo? _exception;
     private EvalResult<Algorithm?>? _callable;
@@ -414,6 +421,13 @@ internal sealed class NeedCell : NeedNode
     internal bool HasValueInFlight
     {
         get { lock (_gate) return _flight is not null; }
+    }
+
+    // Test observation only: whether a second observer has joined the running VALUE computation,
+    // so its shared completion exists.
+    internal bool HasJoinedValueFlight
+    {
+        get { lock (_gate) return _flight is not null && !ReferenceEquals(_flight, UnjoinedFlight); }
     }
 
     // Test observation only: whether this cell's CALLABLE outcome is memoized.
@@ -716,25 +730,22 @@ internal sealed class NeedCell : NeedNode
             return new EvalError.DemandCycle { Span = Span };
         try
         {
-            bool start;
-            Task<EvalResult<Evaluator.CountedResult>> task;
+            Task<EvalResult<Evaluator.CountedResult>>? task;
             lock (_gate)
             {
                 if (_completed is { } completed) return completed;
                 _exception?.Throw();
-                start = _flight is null;
-                _flight ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
-                task = _flight.Task;
+                task = JoinOrStartFlight();
             }
-            if (start)
+            if (task is null)
             {
-                var previous = Current.Value;
                 Current.Value = this;
                 try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
                     ? _suspension is not null ? Evaluator.EvalSuspendedValue(this, _suspension) : _evaluate!()
                     : new EvalError.EvaluationStackExhausted { Span = Span }); }
                 catch (Exception error) { CompleteException(error); }
-                finally { Current.Value = previous; }
+                finally { Current.Value = parent; }
+                return StarterOutcome();
             }
             try { return task.GetAwaiter().GetResult(); }
             catch
@@ -765,17 +776,18 @@ internal sealed class NeedCell : NeedNode
             return new EvalError.DemandCycle { Span = Span };
         try
         {
-            bool start;
-            Task<EvalResult<Evaluator.CountedResult>> task;
+            Task<EvalResult<Evaluator.CountedResult>>? task;
             lock (_gate)
             {
                 if (_completed is { } completed) return completed;
                 _exception?.Throw();
-                start = _flight is null;
-                _flight ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
-                task = _flight.Task;
+                task = JoinOrStartFlight();
             }
-            if (start) await EvaluateAsync().ConfigureAwait(false);
+            if (task is null)
+            {
+                await EvaluateAsync().ConfigureAwait(false);
+                return StarterOutcome();
+            }
             try { return await task.ConfigureAwait(false); }
             catch
             {
@@ -801,6 +813,30 @@ internal sealed class NeedCell : NeedNode
         finally { Current.Value = previous; }
     }
 
+    // Under the gate, with no outcome yet: starts the VALUE flight (null: the caller computes) or
+    // joins it, creating the shared completion when this is its first joiner.
+    private Task<EvalResult<Evaluator.CountedResult>>? JoinOrStartFlight()
+    {
+        if (_flight is null)
+        {
+            _flight = UnjoinedFlight;
+            return null;
+        }
+        if (ReferenceEquals(_flight, UnjoinedFlight))
+            _flight = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _flight.Task;
+    }
+
+    // The starter's outcome once its computation has ended: exactly what awaiting the shared
+    // completion delivers (the memo, or the stored exception rethrown, as a joiner's catch does).
+    // The computation wrote it before this read and nothing rewrites it.
+    private EvalResult<Evaluator.CountedResult> StarterOutcome()
+    {
+        if (_completed is { } completed) return completed;
+        _exception!.Throw();
+        throw new System.Diagnostics.UnreachableException();
+    }
+
     private void Complete(EvalResult<Evaluator.CountedResult> result)
     {
         if (result.IsError && result.Error.IsResourceLimit) _budget?.RetainTerminal(result.Error);
@@ -814,7 +850,7 @@ internal sealed class NeedCell : NeedNode
             _evaluateAsync = null;
             var flight = _flight!;
             _flight = null;
-            flight.TrySetResult(result);
+            if (!ReferenceEquals(flight, UnjoinedFlight)) flight.TrySetResult(result);
         }
     }
 
@@ -828,6 +864,7 @@ internal sealed class NeedCell : NeedNode
             _evaluateAsync = null;
             var flight = _flight!;
             _flight = null;
+            if (ReferenceEquals(flight, UnjoinedFlight)) return;
             if (error is OperationCanceledException cancelled)
                 flight.TrySetCanceled(cancelled.CancellationToken);
             else
