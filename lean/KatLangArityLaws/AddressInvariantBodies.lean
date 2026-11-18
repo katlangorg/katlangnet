@@ -6,9 +6,9 @@ open KatLang.CallPlan (bind_run get_run pure_run modify_run throw_run lift_run e
 /-!
 # FG-H1-FU-01 (M3): the per-body obligation
 
-For EVERY evaluator body `EvalBody.X` (one per `EvalCall` constructor, 84 in all; a DERIVED answer —
-a plain value projection or pure forward such as `rec.eval …` — has no body, only the projected
-contract `SoundI.rec_<name>` below), from an answer
+For EVERY evaluator body `EvalBody.X` (one per `EvalCall` constructor, 82 in all; a DERIVED answer —
+a projection of its twin's answer or a pure forward, such as `rec.eval …` — has no body and no
+contract: the procedure unfolds it to its twin's call), from an answer
 `rec` that keeps the call contract (`RecSound rec`), the body keeps the contract of its own call:
 `SoundI (CallPre c) (EvalBody.X rec …) (CallPost c)` (`EvalBody.X_sound`), hence
 `evalStep_sound : BodySound`. The proofs are the syntax-directed procedure `ht_tac`
@@ -31,143 +31,10 @@ macro_rules | `(tactic| mono_atom $g) => `(tactic| exact callPre_mono _ _ _ $g �
 set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact callPost_mono _ _ _ _ $g ‹_›)
 
-/-! ## The derived answers under their contracts
-
-A derived answer (`rec.eval …`, `rec.applyBuiltin …`, `rec.evalProgramOutput …`: its twin's value or
-its twin) is not an `EvalCall`, so `RecSound rec` does not mention it. Its contract is its twin's,
-projected: one lemma each, with the precondition and postcondition the removed constructor's
-`CallPre` / `CallPost` arms stated. The procedure keeps each atomic (`ht_unfold_rec` does not unfold
-it) and applies these, exactly as it applies `SoundI.rec_call` to a call. -/
-
-section DerivedAnswers
-variable {rec : EvalRec}
-
-theorem SoundI.rec_evalAlgOutputCore (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalAlgOutputCore a ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalAlgOutputCore; ht_tac
-attribute [ht_spec] SoundI.rec_evalAlgOutputCore
-
-theorem SoundI.rec_evalAlgOutput (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalAlgOutput a ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalAlgOutput; ht_tac
-attribute [ht_spec] SoundI.rec_evalAlgOutput
-
-theorem SoundI.rec_evalAlgOutputCounted (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalAlgOutputCounted a ctx env) (fun r h => CRV h r) := by
-  unfold EvalRec.evalAlgOutputCounted; ht_tac
-attribute [ht_spec] SoundI.rec_evalAlgOutputCounted
-
-theorem SoundI.rec_evalCapturePreparedCore (hrec : RecSound rec) {rows : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalCapturePreparedCore rows ctx env) (fun r h => PreparedV h r) := by
-  unfold EvalRec.evalCapturePreparedCore; ht_tac
-attribute [ht_spec] SoundI.rec_evalCapturePreparedCore
-
-theorem SoundI.rec_evalCaptureValue (hrec : RecSound rec) {rows : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalCaptureValue rows ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalCaptureValue; ht_tac
-attribute [ht_spec] SoundI.rec_evalCaptureValue
-
-theorem SoundI.rec_evalZeroArgumentDemandOutput (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalZeroArgumentDemandOutput a ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalZeroArgumentDemandOutput; ht_tac
-attribute [ht_spec] SoundI.rec_evalZeroArgumentDemandOutput
-
-theorem SoundI.rec_evalProgramOutput (hrec : RecSound rec) {a : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalProgramOutput a ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalProgramOutput; ht_tac
-attribute [ht_spec] SoundI.rec_evalProgramOutput
-
-theorem SoundI.rec_evalArgumentValue (hrec : RecSound rec) {arg : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → RAV h arg ∧ ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalArgumentValue arg ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalArgumentValue; ht_tac
-attribute [ht_spec] SoundI.rec_evalArgumentValue
-
-theorem SoundI.rec_evalZeroArgPropertyAccess (hrec : RecSound rec) {accessKind : ZeroArgPropertyAccessKind} {owner : Algorithm} {binding : PropDef} {resolvedAlgorithm : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalZeroArgPropertyAccess; ht_tac
-attribute [ht_spec] SoundI.rec_evalZeroArgPropertyAccess
-
-theorem SoundI.rec_evalResolvedCallbackCall (hrec : RecSound rec) {callee : Algorithm} {args : List CountedResult} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → CRLV h args ∧ ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalResolvedCallbackCall callee args ctx env calleeName) (fun r h => RV h r) := by
-  unfold EvalRec.evalResolvedCallbackCall; ht_tac
-attribute [ht_spec] SoundI.rec_evalResolvedCallbackCall
-
-theorem SoundI.rec_evalSequenceCallbackCall (hrec : RecSound rec) {callee : Algorithm} {item : CountedResult} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → CRV h item ∧ ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalSequenceCallbackCall callee item ctx env calleeName) (fun r h => RV h r) := by
-  unfold EvalRec.evalSequenceCallbackCall; ht_tac
-attribute [ht_spec] SoundI.rec_evalSequenceCallbackCall
-
-theorem SoundI.rec_evalSequenceCallbackCallCounted (hrec : RecSound rec) {callee : Algorithm} {item : CountedResult} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → CRV h item ∧ ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalSequenceCallbackCallCounted callee item ctx env calleeName) (fun r h => CRV h r) := by
-  unfold EvalRec.evalSequenceCallbackCallCounted; ht_tac
-attribute [ht_spec] SoundI.rec_evalSequenceCallbackCallCounted
-
-theorem SoundI.rec_applyBuiltin (hrec : RecSound rec) {b : Builtin} {args : List ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → RALV h args ∧ ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.applyBuiltin b args ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.applyBuiltin; ht_tac
-attribute [ht_spec] SoundI.rec_applyBuiltin
-
-theorem SoundI.rec_applyBuiltinCountedResolved (hrec : RecSound rec) {b : Builtin} {args : List ResolvedArgumentAlgorithm} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → RALV h args ∧ ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.applyBuiltinCountedResolved b args ctx env) (fun r h => CRV h r) := by
-  unfold EvalRec.applyBuiltinCountedResolved; ht_tac
-attribute [ht_spec] SoundI.rec_applyBuiltinCountedResolved
-
-theorem SoundI.rec_evalUserCall (hrec : RecSound rec) {callee : Algorithm} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalUserCall callee args ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalUserCall; ht_tac
-attribute [ht_spec] SoundI.rec_evalUserCall
-
-theorem SoundI.rec_evalConditionalCall (hrec : RecSound rec) {callee : Algorithm} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalConditionalCall callee args ctx env calleeName) (fun r h => RV h r) := by
-  unfold EvalRec.evalConditionalCall; ht_tac
-attribute [ht_spec] SoundI.rec_evalConditionalCall
-
-theorem SoundI.rec_evalResolvedCall (hrec : RecSound rec) {callee : Algorithm} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv} {calleeName : String}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalResolvedCall callee args ctx env calleeName) (fun r h => RV h r) := by
-  unfold EvalRec.evalResolvedCall; ht_tac
-attribute [ht_spec] SoundI.rec_evalResolvedCall
-
-theorem SoundI.rec_evalCallExpr (hrec : RecSound rec) {f : Expr} {args : OutputBundle} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalCallExpr f args ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalCallExpr; ht_tac
-attribute [ht_spec] SoundI.rec_evalCallExpr
-
-theorem SoundI.rec_evalDotCall (hrec : RecSound rec) {target : Expr} {name : Ident} {fallback : Expr} {argsOpt : Option OutputBundle} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.evalDotCall target name fallback argsOpt ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.evalDotCall; ht_tac
-attribute [ht_spec] SoundI.rec_evalDotCall
-
-theorem SoundI.rec_eval (hrec : RecSound rec) {e : Expr} {ctx : EvalCtx} {env : ValEnv}
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
-    SoundI P (rec.eval e ctx env) (fun r h => RV h r) := by
-  unfold EvalRec.eval; ht_tac
-attribute [ht_spec] SoundI.rec_eval
-
-end DerivedAnswers
-
 set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact ExcV.mono (callPost_mono _) _ _ _ $g ‹_›)
 -- An ATTEMPTED derived answer (`evalAttempt (rec.evalSequenceCallbackCall …)`, `evalAttempt (rec.eval …)`):
--- its postcondition is the explicit `RV` of its contract, not a `CallPost`.
+-- its postcondition is the `RV` of its trailing `pure` (the validity of its result type), not a `CallPost`.
 set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact ExcV.mono (Q := fun r h => RV h r) (fun _ _ _ g' v => RV.mono g' v) _ _ _ $g ‹_›)
 
@@ -625,10 +492,6 @@ theorem EvalBody.lookupLexicalValueProperty_sound (rec : EvalRec) (hrec : RecSou
     SoundI (CallPre (.lookupLexicalValueProperty a name ctx)) (EvalBody.lookupLexicalValueProperty rec a name ctx) (CallPost (.lookupLexicalValueProperty a name ctx)) := by
   unfold EvalBody.lookupLexicalValueProperty; ht_tac
 
-theorem EvalBody.lookupLexical_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
-    SoundI (CallPre (.lookupLexical a name ctx)) (EvalBody.lookupLexical rec a name ctx) (CallPost (.lookupLexical a name ctx)) := by
-  unfold EvalBody.lookupLexical; ht_tac
-
 theorem EvalBody.needPlanNormalizeCallee_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (ctx : EvalCtx) :
     SoundI (CallPre (.needPlanNormalizeCallee callee ctx)) (EvalBody.needPlanNormalizeCallee rec callee ctx) (CallPost (.needPlanNormalizeCallee callee ctx)) := by
   unfold EvalBody.needPlanNormalizeCallee; ht_tac
@@ -756,10 +619,6 @@ theorem EvalBody.evalAlgOutputPreparedCore_sound (rec : EvalRec) (hrec : RecSoun
 theorem EvalBody.evalOutputRowsPreparedCore_sound (rec : EvalRec) (hrec : RecSound rec) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalOutputRowsPreparedCore rows rowCtx env)) (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) (CallPost (.evalOutputRowsPreparedCore rows rowCtx env)) := by
   unfold EvalBody.evalOutputRowsPreparedCore; ht_tac
-
-theorem EvalBody.evalCaptureCountedCore_sound (rec : EvalRec) (hrec : RecSound rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalCaptureCountedCore rows ctx env)) (EvalBody.evalCaptureCountedCore rec rows ctx env) (CallPost (.evalCaptureCountedCore rows ctx env)) := by
-  unfold EvalBody.evalCaptureCountedCore; ht_tac
 
 theorem EvalBody.evalAlgOutputCountedCore_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalAlgOutputCountedCore a ctx env)) (EvalBody.evalAlgOutputCountedCore rec a ctx env) (CallPost (.evalAlgOutputCountedCore a ctx env)) := by
@@ -1123,7 +982,6 @@ theorem evalStep_sound : BodySound := by
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_sound rec hrec a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_sound rec hrec a name ctx
   | lookupLexicalValueProperty a name ctx => exact EvalBody.lookupLexicalValueProperty_sound rec hrec a name ctx
-  | lookupLexical a name ctx => exact EvalBody.lookupLexical_sound rec hrec a name ctx
   | needPlanNormalizeCallee callee ctx => exact EvalBody.needPlanNormalizeCallee_sound rec hrec callee ctx
   | resolveAlg e ctx => exact EvalBody.resolveAlg_sound rec hrec e ctx
   | projectNeedCallable address => exact EvalBody.projectNeedCallable_sound rec hrec address
@@ -1156,7 +1014,6 @@ theorem evalStep_sound : BodySound := by
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_sound rec hrec a ctx env
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_sound rec hrec a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_sound rec hrec rows rowCtx env
-  | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_sound rec hrec rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_sound rec hrec a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_sound rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_sound rec hrec arg ctx env

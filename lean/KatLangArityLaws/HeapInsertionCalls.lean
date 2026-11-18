@@ -9,7 +9,7 @@ The non-observation contract of `PlanAlgorithmBridge.lean` relates the plan-side
 computation with its production-side run. For the PER-BODY obligations — every evaluator body
 simulates whenever its recursive answer does — the two sides run DIFFERENT calls: the plan side's
 arguments are the production side's with every need address shifted past the inserted cells. This
-module is that shift, for all 84 calls of the total core (a derived answer — `eval`, `applyBuiltin`, … —
+module is that shift, for all 82 calls of the total core (a derived answer — `eval`, `applyBuiltin`, … —
 is no call: its shift is its twin's, and the shift of a counted result shifts its value):
 
 * the address-bearing auxiliary types of the evaluator — a resolved builtin argument's supplied
@@ -24,10 +24,13 @@ is no call: its shift is its twin's, and the shift of a counted result shifts it
 * `shiftRet σ c` — the plan-side result of a production-side result of `c`, at the result type of
   the shifted call (the two result types are the same type, constructor by constructor).
 
-The two tables are generated from the `EvalCall` / `EvalCall.Ret` definitions of `KatLang.lean`
-(one arm per constructor, an argument shifted by its TYPE; a `Nat` is an address exactly for the
-arguments named `address`, `callee` and `a`) and are kernel-checked here: `shiftRet` typechecks only
-because every arm's result type is the shifted call's (`shiftCall_ret`). On the calls the
+The two tables are HAND-MAINTAINED: one arm per constructor of `EvalCall` / `EvalCall.Ret`
+(`KatLang.lean`), written by one rule — an argument is shifted by its TYPE; a `Nat` is an address
+exactly for the arguments named `address`, `callee` and `a`. No generator is tracked (their first
+text came from a development script that is not part of the repository): a constructor added to or
+removed from `EvalCall` is added to or removed from both tables by hand. They are kernel-checked
+here: a missing arm does not compile, and `shiftRet` typechecks only because every arm's result
+type is the shifted call's (`shiftCall_ret`). On the calls the
 `.Algorithm` bridge shares between its two sides the shift is the identity up to the receiver
 VALUE, because their context and value environment are valid below the insertion
 (`PlanAlgorithmBridge.plan_context_unshifted`, `inserted_receiver_read`, `inserted_tail`).
@@ -81,7 +84,6 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .aliasOriginBinding? a ctx => .aliasOriginBinding? a (shiftCtx σ ctx)
   | .lookupLexicalProperty a name ctx => .lookupLexicalProperty a name (shiftCtx σ ctx)
   | .lookupLexicalValueProperty a name ctx => .lookupLexicalValueProperty a name (shiftCtx σ ctx)
-  | .lookupLexical a name ctx => .lookupLexical a name (shiftCtx σ ctx)
   | .needPlanNormalizeCallee callee ctx => .needPlanNormalizeCallee callee (shiftCtx σ ctx)
   | .resolveAlg e ctx => .resolveAlg e (shiftCtx σ ctx)
   | .projectNeedCallable address => .projectNeedCallable (σ.addr address)
@@ -114,7 +116,6 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .whileVerdictSlots a ctx env => .whileVerdictSlots a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalAlgOutputPreparedCore a ctx env => .evalAlgOutputPreparedCore a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalOutputRowsPreparedCore rows rowCtx env => .evalOutputRowsPreparedCore rows (shiftCtx σ rowCtx) (shiftValEnv σ env)
-  | .evalCaptureCountedCore rows ctx env => .evalCaptureCountedCore rows (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalAlgOutputCountedCore a ctx env => .evalAlgOutputCountedCore a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalZeroArgumentDemandOutputCounted a ctx env => .evalZeroArgumentDemandOutputCounted a (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalArgumentValueCounted arg ctx env => .evalArgumentValueCounted (shiftArgument σ arg) (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -168,7 +169,6 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .aliasOriginBinding? .., r => r
   | .lookupLexicalProperty .., r => r
   | .lookupLexicalValueProperty .., r => r
-  | .lookupLexical .., r => r
   | .needPlanNormalizeCallee .., r => r
   | .resolveAlg .., r => r
   | .projectNeedCallable .., r => r
@@ -201,7 +201,6 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .whileVerdictSlots .., r => r.map (fun xs => xs.map (shiftResult σ))
   | .evalAlgOutputPreparedCore .., r => shiftPrepared σ r
   | .evalOutputRowsPreparedCore .., r => shiftPrepared σ r
-  | .evalCaptureCountedCore .., r => shiftCounted σ r
   | .evalAlgOutputCountedCore .., r => shiftCounted σ r
   | .evalZeroArgumentDemandOutputCounted .., r => shiftCounted σ r
   | .evalArgumentValueCounted .., r => shiftCounted σ r

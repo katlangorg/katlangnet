@@ -7120,11 +7120,11 @@ Lean checks them as total definitions with their own laws. A new recursive opera
 `EvalCall` constructor, `EvalCall.Ret` arm, `EvalRec` helper, body and `evalStep` arm (and its
 production wrapper below the core); `KatLangArityLaws/EvaluatorCore.lean` then needs its
 monotonicity lemma and `KatLangArityLaws/EvaluatorDiscipline.lean` its discipline lemma.
-An operation that only returns another operation's answer, or that answer's value, is NOT a
-call: write it as a DERIVED answer (`EvalRec.<name>` over its twin, § Derived answers) with its
-derived production operation. It needs no constructor, body or per-body lemma — every whole-run
-law reaches it through its twin (November 2026: the twenty plain projections and pure forwards
-that used to be constructors).
+Write a new forward or projection of an existing answer as a derived operation
+(`EvalRec.<name>` over its twin, § Derived answers). Its production operation uses the same
+projection, and each whole-run law reaches it through the twin. The counted projection
+`evalAlgOutputCountedCore` still has a constructor because the navigation pilot's
+`vcOutput` premise is indexed by that call.
 
 PLAIN/COUNTED OWNERSHIP: for every plain/counted evaluator pair the COUNTED
 implementation is canonical and the plain implementation is its value
@@ -8456,9 +8456,9 @@ of `EvalCall`, whose result type is `EvalCall.Ret`. An `EvalRec` answers every c
 operation's body (`EvalBody.*`) is an ordinary, non-recursive definition that reaches every
 other operation ONLY through the `EvalRec` it is given (`rec.evalCounted …`,
 `rec.demandNeedRecursive …`), and `evalStep` dispatches a call to its body. So the evaluator is
-the functional `evalStep`, and the kernel sees every body. An operation that is only another
-operation's answer or that answer's value (`eval`, `applyBuiltin`, `evalProgramOutput`, …) is not
-a constructor: it is a DERIVED answer, an ordinary function of the `EvalRec` (§ Derived answers).
+the functional `evalStep`, and the kernel sees every body. Derived operations such as
+`eval`, `applyBuiltin`, `evalProgramOutput` and `lookupLexical` forward or project an answer
+as ordinary functions of the `EvalRec` (§ Derived answers).
 
 FUEL. `evalFuel n` iterates `evalStep` `n` times from the everywhere-incomplete answer: every
 recursive `EvalCall` edge costs one unit, so `n` bounds the nesting of those calls (one `while`
@@ -8617,7 +8617,6 @@ inductive EvalCall : Type where
   | aliasOriginBinding? (a : Algorithm) (ctx : EvalCtx)
   | lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
   | lookupLexicalValueProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
-  | lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx)
   | needPlanNormalizeCallee (callee : Algorithm) (ctx : EvalCtx)
   | resolveAlg (e : Expr) (ctx : EvalCtx)
   | projectNeedCallable (address : Nat)
@@ -8650,7 +8649,6 @@ inductive EvalCall : Type where
   | whileVerdictSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalAlgOutputPreparedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalOutputRowsPreparedCore (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv)
-  | evalCaptureCountedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | evalAlgOutputCountedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalZeroArgumentDemandOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -8703,7 +8701,6 @@ inductive EvalCall : Type where
   | .aliasOriginBinding? .. => (Option (Algorithm × PropDef))
   | .lookupLexicalProperty .. => ResolvedProperty
   | .lookupLexicalValueProperty .. => AliasTerminal
-  | .lookupLexical .. => Algorithm
   | .needPlanNormalizeCallee .. => Algorithm
   | .resolveAlg .. => Algorithm
   | .projectNeedCallable .. => (Option Algorithm)
@@ -8736,7 +8733,6 @@ inductive EvalCall : Type where
   | .whileVerdictSlots .. => (Option (List Result))
   | .evalAlgOutputPreparedCore .. => PreparedAlgorithmOutput
   | .evalOutputRowsPreparedCore .. => PreparedAlgorithmOutput
-  | .evalCaptureCountedCore .. => CountedResult
   | .evalAlgOutputCountedCore .. => CountedResult
   | .evalZeroArgumentDemandOutputCounted .. => CountedResult
   | .evalArgumentValueCounted .. => CountedResult
@@ -8800,8 +8796,6 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.lookupLexicalProperty a name ctx)
 @[inline] def EvalRec.lookupLexicalValueProperty (rec : EvalRec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM AliasTerminal :=
   rec (.lookupLexicalValueProperty a name ctx)
-@[inline] def EvalRec.lookupLexical (rec : EvalRec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm :=
-  rec (.lookupLexical a name ctx)
 @[inline] def EvalRec.needPlanNormalizeCallee (rec : EvalRec) (callee : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
   rec (.needPlanNormalizeCallee callee ctx)
 @[inline] def EvalRec.resolveAlg (rec : EvalRec) (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
@@ -8866,8 +8860,6 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalAlgOutputPreparedCore a ctx env)
 @[inline] def EvalRec.evalOutputRowsPreparedCore (rec : EvalRec) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   rec (.evalOutputRowsPreparedCore rows rowCtx env)
-@[inline] def EvalRec.evalCaptureCountedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  rec (.evalCaptureCountedCore rows ctx env)
 @[inline] def EvalRec.evalAlgOutputCountedCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalAlgOutputCountedCore a ctx env)
 @[inline] def EvalRec.evalZeroArgumentDemandOutputCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
@@ -8949,13 +8941,23 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
 @[inline] def EvalRec.evalCounted (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalCounted e ctx env)
 
-/-! Derived answers. Each operation below is its twin's value (`.fst`) or its twin itself: an
+/-! Derived answers. Each operation below is its twin's value (`.fst`), another projection of its
+    twin's answer (`.counted`, `.alg`) or its twin itself: an
     ORDINARY FUNCTION of an evaluator answer, not a call of the core. It has no `EvalCall`
     constructor, no `evalStep` arm and no body, so reading one costs no fuel and adds no case
     to a whole-run law; a law about it follows from its twin's by its defining equation.
     The counted twin stays canonical (plain/counted ownership): a derived answer never has a
     body of its own. C#: where the plain operation exists it is an ordinary method over its counted
     twin (`ProjectCountedValue`), never a second implementation. -/
+
+/-- Algorithm-position lexical lookup (call callees, dot-call targets).
+    This is the algorithm PROJECTION of `lookupLexicalProperty`: the canonical
+    property-carrying chain owns ownership-first ordering, open dedup,
+    ambiguity, and precedence, and this projection only discards the
+    owner/binding metadata that algorithm-position consumers never read. -/
+@[inline] def EvalRec.lookupLexical (rec : EvalRec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
+  let resolved <- rec.lookupLexicalProperty a name ctx
+  pure resolved.alg
 
 /-- Evaluate an algorithm's output expressions and collect into a single Result:
     the value projection of `evalAlgOutputPreparedCore`, so the plain and counted
@@ -8999,6 +9001,11 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
     C#: `EvalCapturePreparedCore`. -/
 @[inline] def EvalRec.evalCapturePreparedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   rec.evalOutputRowsPreparedCore rows ctx env
+
+/-- Counted projection of the shared capture evaluation (`evalCapturePreparedCore`). -/
+@[inline] def EvalRec.evalCaptureCountedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+  let out <- rec.evalCapturePreparedCore rows ctx env
+  pure out.counted
 
 /-- Evaluates a capture body to its single canonical captured value. -/
 @[inline] def EvalRec.evalCaptureValue (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
@@ -9329,10 +9336,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
     Lean.Order.monotone (fun ρ => (recOf ρ).lookupLexicalValueProperty a name ctx) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.lookupLexical_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).lookupLexical a name ctx) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.needPlanNormalizeCallee_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (ctx : EvalCtx) :
     Lean.Order.monotone (fun ρ => (recOf ρ).needPlanNormalizeCallee callee ctx) :=
@@ -9460,10 +9463,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
 @[partial_fixpoint_monotone] theorem EvalRec.evalOutputRowsPreparedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalOutputRowsPreparedCore rows rowCtx env) :=
-  fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalCaptureCountedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalCaptureCountedCore rows ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCountedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -9625,6 +9624,10 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalCounted e ctx env) :=
   fun _ _ h => hrec _ _ h _
+@[partial_fixpoint_monotone] theorem EvalRec.lookupLexical_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).lookupLexical a name ctx) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.lookupLexicalProperty_mono recOf hrec a name ctx _ _ h)
 @[partial_fixpoint_monotone] theorem EvalRec.evalAlgOutputCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalAlgOutputCore a ctx env) :=
@@ -9641,6 +9644,10 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalCapturePreparedCore rows ctx env) :=
   EvalRec.evalOutputRowsPreparedCore_mono recOf hrec rows ctx env
+@[partial_fixpoint_monotone] theorem EvalRec.evalCaptureCountedCore_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalCaptureCountedCore rows ctx env) :=
+  fun _ _ h => Lean.Order.MonoBind.bind_mono_left (EvalRec.evalCapturePreparedCore_mono recOf hrec rows ctx env _ _ h)
 @[partial_fixpoint_monotone] theorem EvalRec.evalCaptureValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalCaptureValue rows ctx env) :=
@@ -9868,15 +9875,6 @@ def EvalBody.lookupLexicalValueProperty (rec : EvalRec) (a : Algorithm) (name : 
   match resolved.alg with
   | .alias _ _ _ _ _ _ => rec.resolveAliasValueTarget resolved.alg ctx
   | _ => pure (.binding resolved.owner resolved.binding resolved.alg false)
-
-/-- Algorithm-position lexical lookup (call callees, dot-call targets).
-    This is the algorithm PROJECTION of `lookupLexicalProperty`: the canonical
-    property-carrying chain owns ownership-first ordering, open dedup,
-    ambiguity, and precedence, and this projection only discards the
-    owner/binding metadata that algorithm-position consumers never read. -/
-def EvalBody.lookupLexical (rec : EvalRec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
-  let resolved <- rec.lookupLexicalProperty a name ctx
-  pure resolved.alg
 
 /-- The ordinary call's alias normalization before dispatch (`evalResolvedCallCounted`'s
     alias arm). -/
@@ -10599,10 +10597,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
               let slotCount := if out.snd = 0 then 1 else out.snd
               collect rest (out.fst :: acc) (emitted + slotCount)
     collect rows [] 0
-
-  def EvalBody.evalCaptureCountedCore (rec : EvalRec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let out <- rec.evalCapturePreparedCore rows ctx env
-    pure out.counted
 
   /-- Counted projection of the shared prepared algorithm-output evaluation. -/
   def EvalBody.evalAlgOutputCountedCore (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
@@ -12304,7 +12298,6 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .aliasOriginBinding? a ctx => EvalBody.aliasOriginBinding? rec a ctx
   | .lookupLexicalProperty a name ctx => EvalBody.lookupLexicalProperty rec a name ctx
   | .lookupLexicalValueProperty a name ctx => EvalBody.lookupLexicalValueProperty rec a name ctx
-  | .lookupLexical a name ctx => EvalBody.lookupLexical rec a name ctx
   | .needPlanNormalizeCallee callee ctx => EvalBody.needPlanNormalizeCallee rec callee ctx
   | .resolveAlg e ctx => EvalBody.resolveAlg rec e ctx
   | .projectNeedCallable address => EvalBody.projectNeedCallable rec address
@@ -12337,7 +12330,6 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .whileVerdictSlots a ctx env => EvalBody.whileVerdictSlots rec a ctx env
   | .evalAlgOutputPreparedCore a ctx env => EvalBody.evalAlgOutputPreparedCore rec a ctx env
   | .evalOutputRowsPreparedCore rows rowCtx env => EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env
-  | .evalCaptureCountedCore rows ctx env => EvalBody.evalCaptureCountedCore rec rows ctx env
   | .evalAlgOutputCountedCore a ctx env => EvalBody.evalAlgOutputCountedCore rec a ctx env
   | .evalZeroArgumentDemandOutputCounted a ctx env => EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env
   | .evalArgumentValueCounted arg ctx env => EvalBody.evalArgumentValueCounted rec arg ctx env
@@ -12435,9 +12427,6 @@ def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM
 def lookupLexicalValueProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM AliasTerminal :=
   evalUnbounded (.lookupLexicalValueProperty a name ctx)
 
-def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm :=
-  evalUnbounded (.lookupLexical a name ctx)
-
 def NeedPlan.normalizeCallee (callee : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
   evalUnbounded (.needPlanNormalizeCallee callee ctx)
 
@@ -12533,9 +12522,6 @@ def evalAlgOutputPreparedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : E
 
 def evalOutputRowsPreparedCore (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   evalUnbounded (.evalOutputRowsPreparedCore rows rowCtx env)
-
-def evalCaptureCountedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  evalUnbounded (.evalCaptureCountedCore rows ctx env)
 
 def evalAlgOutputCountedCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalAlgOutputCountedCore a ctx env)
@@ -12659,7 +12645,12 @@ def evalCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult 
 
 /-! The derived production operations: the SAME functions of the production operations that
     `EvalRec.<name>` is of an evaluator answer (`<name> … = EvalRec.<name> evalUnbounded …`, by
-    `rfl`). Each is its twin's value or its twin; none is a call of the core. -/
+    `rfl`). Each is its twin's value, another projection of its twin's answer or its twin; none is a
+    call of the core. -/
+
+def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
+  let resolved <- lookupLexicalProperty a name ctx
+  pure resolved.alg
 
 def evalAlgOutputCore (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
   let out <- evalAlgOutputCountedCore a ctx env
@@ -12673,6 +12664,10 @@ def evalAlgOutputCounted (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM 
 
 def evalCapturePreparedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM PreparedAlgorithmOutput :=
   evalOutputRowsPreparedCore rows ctx env
+
+def evalCaptureCountedCore (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+  let out <- evalCapturePreparedCore rows ctx env
+  pure out.counted
 
 def evalCaptureValue (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
   let out <- evalCaptureCountedCore rows ctx env

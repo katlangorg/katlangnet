@@ -43,8 +43,8 @@ Every theorem below is about the authoritative definitions. Proved here:
 
 Explicit invocation reuses the M1.5 laws unchanged: `invoke_run` (fresh `execute` over the plan),
 `invoke_and_value_share_cells` (VALUE and every invocation bind THE same prepared cells),
-`prepared_survives` (the supply is formed at most once) and `production_invocations_keep_value`
-(an invocation never rewrites a completed VALUE, under `ProductionDiscipline`).
+`prepared_survives` (the supply is formed at most once) and `production_invocations_keep_value'`
+(an invocation never rewrites a completed VALUE; `EvaluatorDiscipline.lean`, no hypothesis).
 
 That the evaluator's `Invoke` arm, the user-call driver and the dot route call these definitions is
 proved in `KatLangArityLaws/EvaluatorInstallation.lean` (`dot_invoke_arm`, `invoke_installs`,

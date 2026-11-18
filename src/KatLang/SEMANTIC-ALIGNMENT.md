@@ -1388,17 +1388,19 @@ instantiated it). What changes is the fuel at which a run completes — a derive
 recursive edge — which is a proof index and no language-level statement. Every per-body family lost
 twenty cases (`EvaluatorCore`, `EvaluatorDiscipline`, `EvaluatorCacheLaws`, `EvaluatorMemoLinks`,
 `EvaluatorPublications`, `PlanActiveCells`, `AddressInvariantBodies`, and the `CallPre`/`CallPost`
-and `shiftCall`/`shiftRet` tables); the address-invariant procedure keeps a derived answer atomic
-under one projected contract each (`SoundI.rec_<name>`). Statements that NAMED a removed constructor
+and `shiftCall`/`shiftRet` tables); the address-invariant procedure initially used one contract per derived
+answer (`SoundI.rec_<name>`). Since 2026-11-18 it unfolds the answer and infers the postcondition of
+a trailing `pure` from its result type. Statements that NAMED a removed constructor
 are re-keyed to the surviving call: `AlgorithmCalls` (the receiver's value read is the call
 `evalCounted`), `pilot_evalNeedUserSupply` / `pilot_evalNeedFamilySupply` (`vcOutput` at
 `evalAlgOutputCountedCore`), `incomplete_core_empty`, `rootRun_shape` (the root call is the counted
 twin, the projection joins the continuation) and the `value` / `x₄` witnesses of the `.Algorithm`
 bridge instances; `if_application_value` / `count_one_if_value` state their condition premise on the
-production operation `evalArgumentValue`. No `#guard` changed. NOT removed, because they do more
-than project `.fst` or forward: the `.counted` / `.alg` projections `evalAlgOutputCountedCore`,
-`evalCaptureCountedCore`, `lookupLexical`, and the case-splitting `resolveAliasTarget`,
-`resolveAliasStructure`, `capturedCallee`, `needPlanNormalizeCallee`, `formOutputRow`.
+production operation `evalArgumentValue`. No `#guard` changed. On 2026-11-18,
+`evalCaptureCountedCore` and `lookupLexical` also became derived projections, leaving 82 calls.
+`evalAlgOutputCountedCore` remains the call named by `vcOutput` in both navigation pilot theorems.
+The case-splitting operations `resolveAliasTarget`, `resolveAliasStructure`, `capturedCallee`,
+`needPlanNormalizeCallee` and `formOutputRow` retain their existing definitions.
 
 P14 — evaluator installation is a theorem, not a source fact (2026-11-16; proofs and prose only: NO
 language change, no definition of `KatLang.lean` changed, no C# change, no `#guard` changed, no
@@ -1454,7 +1456,10 @@ keeps the invariant and returns post-state-valid `.cells`) and `ChannelsSound` (
 channels keep it). Both premises are FALSE for the compiled evaluator over `StateValid` (a
 `StateValid` state may hold a prepared plan supply naming a cell outside the heap; FG-H1-FU-01
 executes both counterexamples) and stay as stated; FG-H1-FU-01, below, replaces their production
-uses by premise-free theorems over the stronger invariant `Inv`. NOT covered HERE (covered by
+uses by premise-free theorems over the stronger invariant `Inv`. The lemmas requiring either
+premise were removed on 2026-11-18. The prefix equation `form_append_failure`, the capability-level
+`binder_sound` and the concrete witnesses in `HeapAddressValidityGuards.lean` remain.
+NOT covered HERE (covered by
 FG-H1-FU-01's `Inv`): addresses inside results (`callRef`, `argView`, completed outcomes), Ready
 payloads, prepared plan supplies, `callee` / `receiver` / `aliasBare`, `aliasCells`, `ValEnv`;
 acyclicity: see `docs/design/formal-correspondence-ledger.md` § Acyclicity (collector edges proved, stored addresses

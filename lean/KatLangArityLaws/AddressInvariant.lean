@@ -731,7 +731,6 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .aliasOriginBinding? _ ctx => fun h => ValidCtx h ctx
   | .lookupLexicalProperty _ _ ctx => fun h => ValidCtx h ctx
   | .lookupLexicalValueProperty _ _ ctx => fun h => ValidCtx h ctx
-  | .lookupLexical _ _ ctx => fun h => ValidCtx h ctx
   | .needPlanNormalizeCallee _ ctx => fun h => ValidCtx h ctx
   | .resolveAlg _ ctx => fun h => ValidCtx h ctx
   | .projectNeedCallable _ => fun _ => True
@@ -765,7 +764,6 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .whileVerdictSlots _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalAlgOutputPreparedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalOutputRowsPreparedCore _ rowCtx env => fun h => ValidCtx h rowCtx ∧ VEV h env
-  | .evalCaptureCountedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalAlgOutputCountedCore _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalZeroArgumentDemandOutputCounted _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalArgumentValueCounted arg ctx env => fun h => RAV h arg ∧ ValidCtx h ctx ∧ VEV h env
@@ -821,7 +819,6 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .aliasOriginBinding? .., _, _ => True
   | .lookupLexicalProperty .., _, _ => True
   | .lookupLexicalValueProperty .., _, _ => True
-  | .lookupLexical .., _, _ => True
   | .needPlanNormalizeCallee .., _, _ => True
   | .resolveAlg .., _, _ => True
   | .projectNeedCallable .., _, _ => True
@@ -854,7 +851,6 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .whileVerdictSlots .., o, h => OptRLV h o
   | .evalAlgOutputPreparedCore .., p, h => PreparedV h p
   | .evalOutputRowsPreparedCore .., p, h => PreparedV h p
-  | .evalCaptureCountedCore .., r, h => CRV h r
   | .evalAlgOutputCountedCore .., r, h => CRV h r
   | .evalZeroArgumentDemandOutputCounted .., r, h => CRV h r
   | .evalArgumentValueCounted .., r, h => CRV h r

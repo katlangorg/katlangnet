@@ -27,8 +27,10 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
   callbacks' discipline; the historical named obligation was `ProductionDiscipline`. R7 (October
   2026): it is now a THEOREM, `KatLang.EvaluatorDiscipline.productionDiscipline_holds`
   (`KatLangArityLaws/EvaluatorDiscipline.lean`, which imports this file), in this exact general
-  form; the `production_*` specializations below keep their hypothesis here and are restated
-  without it there (`production_value_disciplined'`, …).
+  form. The production specializations that have no hypothesis are stated there, once
+  (`production_value_disciplined'`, `production_invocations_keep_value'`,
+  `production_meta_value_orders'`); the two below (`production_invoke_disciplined`,
+  `production_value_then_meta`) keep it.
 * `Oblivious a m` (only for `fresh_plan_is_ordinary_call`): `m` neither reads nor writes the plan
   record of cell `a`, over ALL valid input heaps and plan records. This is a sufficient
   abstract callback contract, NOT a property established for the production dispatch:
@@ -1269,11 +1271,6 @@ def ProductionDiscipline : Prop :=
   (∀ shape, Disciplined (classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute shape)) ∧
   (∀ b, Disciplined (plannedLinkCallable b))
 
-theorem production_value_disciplined (hp : ProductionDiscipline) (a : Nat) :
-    Disciplined (demandNeed a) :=
-  disciplined_step _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
-    hp.2.2.2.2.2.2.1 hp.2.2.2.2.2.2.2 hp.2.2.2.2.1 a
-
 theorem production_invoke_disciplined (hp : ProductionDiscipline) (r : NeedPlan.CallReference) :
     Disciplined (invokeNeedCall r) :=
   disciplined_invoke productionPlanRoute hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
@@ -1283,28 +1280,8 @@ theorem production_invoke_disciplined (hp : ProductionDiscipline) (r : NeedPlan.
 theorem production_value_then_meta (hp : ProductionDiscipline) (a : Nat) (s : EvalState)
     (shape : NeedPlan.CallShape) (hs : NeedPlan.shapeAt? s.needs a = some shape) :
     (reifyNeedCall a).runState ((demandNeed a).runState s).2 = (.ok ⟨a⟩, ((demandNeed a).runState s).2) :=
-  meta_after _ (production_value_disciplined hp a) a s shape hs
-
-/-- Production: any number of explicit invocations never change a completed original VALUE. -/
-theorem production_invocations_keep_value (hp : ProductionDiscipline) (a : Nat) (s : EvalState)
-    (cell : NeedCell) (outcome : Except Error CountedResult) (hc : s.needs[a]? = some cell)
-    (hs : cell.state = .completed outcome) (refs : List NeedPlan.CallReference) :
-    (demandNeed a).runState ((refs.mapM invokeNeedCall).runState s).2 =
-      (outcome, ((refs.mapM invokeNeedCall).runState s).2) :=
-  completed_survives _ (disciplined_mapM _ (production_invoke_disciplined hp) refs) _ _ _ a s cell
-    outcome hc hs
-
-/-- Production: META → VALUE and VALUE → META agree (both outcomes, the same final state). -/
-theorem production_meta_value_orders (hp : ProductionDiscipline) (a : Nat) (s : EvalState)
-    (shape : NeedPlan.CallShape) (hshape : NeedPlan.shapeAt? s.needs a = some shape) :
-    (let metaFirst := (reifyNeedCall a).runState s
-     let value := (demandNeed a).runState metaFirst.2
-     (metaFirst.1, value.1, value.2)) =
-    (let value := (demandNeed a).runState s
-     let metaAfter := (reifyNeedCall a).runState value.2
-     (metaAfter.1, value.1, metaAfter.2)) :=
-  meta_value_orders _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
-    hp.2.2.2.2.2.2.1 hp.2.2.2.2.2.2.2 hp.2.2.2.2.1 a s shape hshape
+  meta_after _ (disciplined_step _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
+    hp.2.2.2.2.2.2.1 hp.2.2.2.2.2.2.2 hp.2.2.2.2.1 a) a s shape hs
 
 /-! ## Transparent forwarding (actual `supplyNeed`) -/
 

@@ -20,25 +20,19 @@ This module proves, over the actual total production helpers of `KatLang.lean`, 
   stores a valid caller environment (`supply_sound`); known-slice reopening
   (`spreadCollectorSlice?`) supplies valid addresses from the collector order alone
   (`collector_slice_sound`);
-* the one supply former `NeedSupply.slot` / `form` / `addresses` preserves all of this for every
-  output bundle, composing left to right across intervening allocations and callback effects,
-  for success AND every failure outcome — the retained heap after an ordinary error included
-  (`slot_sound`, `form_sound`, `addresses_sound`, `form_failure_retains_prefix`) — under ONE
-  explicit callback contract `SpreadSound` for the computed-spread evaluator;
-* the production wrappers `formNeedSupplySourced` / `formNeedSupply` inherit it under exactly
-  the named premise `SpreadSound evalSupplySpread ctx env` (`formNeedSupplySourced_runState_valid`,
-  `formNeedSupply_runState_valid`). That premise is FALSE for the compiled evaluator over
-  `StateValid` (`AddressInvariantGuards`); FG-H1-FU-01 replaces its production uses by the
-  premise-free `formNeedSupplySourced_inv` / `production_formNeedSupplySourced` over `Inv`;
+* the state retained by `NeedSupply.form` when a prefix succeeds and the tail fails
+  (`form_append_failure`). For production supply validity and prefix retention under `Inv`,
+  see `production_formNeedSupplySourced`, `production_formNeedSupply` and
+  `production_form_failure_retains_prefix` in `AddressInvariantProduction` (ledger E-5);
 * the activation facts actual parameter lookup uses (`recordParameterActivation_sound`,
   `parameterContext_sound`, `bindParameters_sound`, `enterAlgorithmBody_sound`) and the binder's
   collector allocation boundary (`needSourceAddress_sound`, `needLevelSources_valid`);
-* the whole Model-C binder returns a valid callee need environment from valid supplied cells
-  (`binder_sound`, production `bindNeedPatterns_sound`), its allocation and META adapter
-  discharged (`reference_sound`), under exactly the named channel premise `ChannelsSound`
-  (VALUE / CALLABLE demand keep the invariant). That premise is FALSE for `bindingChannels`
-  over `StateValid` (`AddressInvariantGuards`); FG-H1-FU-01 replaces its production uses by the
-  premise-free `bindNeedPatterns_inv` / `production_bindNeedPatterns` over `Inv`.
+* for capabilities satisfying `CapsSound`, `binder_sound` shows that `NeedBinder.bindOne` and
+  `bindSources` preserve valid binder state. The allocation and META adapters keep the invariant
+  (`allocate_sound`, `reference_sound`). The production entry is covered by
+  `production_bindNeedPatterns` in `AddressInvariantProduction` under `Inv`. The weaker
+  `StateValid` admits the counterexamples to `SpreadSound evalSupplySpread` and
+  `ChannelsSound bindingChannels` in `AddressInvariantGuards`.
 
 Every address here is a NEED-HEAP address (an index of `EvalState.needs`), never a binding
 context, a lexical-activation index, a declaration identity or a source position.
@@ -479,87 +473,15 @@ theorem collector_slice_sound (operand : Expr) (caller : EvalCtx) :
     valid state with a valid caller tier, every run of the callback on a spread slot keeps the
     invariant and does not shrink the heap — on success AND on every failure — and a successful
     `.cells` result holds addresses valid in the callback's POST-state. This is a premise about
-    the callback's own effects and outputs only, not the formation's conclusion: the ordinary,
-    known-slice and Ready-item arms are discharged below from the production definitions. -/
+    the callback's own effects and outputs only. It is FALSE for the production callback
+    `evalSupplySpread` over `StateValid`; no lemma is conditional on it any more (see the module
+    documentation), and the guards keep model callbacks that satisfy or violate it. -/
 def SpreadSound (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (env : ValEnv) : Prop :=
   ∀ operand, Sound (fun h => ValidCtx h ctx) (spread (.sequenceSpread operand) ctx env)
     (fun x h => SpreadSupplyValid h x)
 
 private theorem ctx_mono (ctx : EvalCtx) : Mono (fun (_ : Unit) h => ValidCtx h ctx) :=
   fun _ _ _ g v => ValidCtx.mono g v
-
-/-- One Ready item of a computed `.items` spread (the `slot` arm, verbatim). -/
-private theorem ready_item_sound (v : Result) :
-    Sound (fun _ => True)
-      (do pure (← readyNeed (v, Result.valueCount v), (none : Option Expr)) : EvalM NeedSupply.Sourced)
-      (fun p h => p.1 < h.size) := by
-  refine Sound.bind (mid := fun a h => a < h.size) (fun _ _ _ _ _ => trivial) (ready_sound _) ?_
-  intro a
-  exact Sound.pure _ (fun _ h => h.2)
-
-/-- **One slot.** Every production branch of `NeedSupply.slot` returns a valid sourced list in
-    its final heap and keeps the invariant: ordinary expression (one cell, `supply_sound`),
-    bound parameter (transport), known collector spread (the original slice, unchanged, in order,
-    no allocation or demand — `known_slot_exact`), computed `.items` (fresh valid Ready cells) and
-    computed `.cells` (the callback's post-state-valid cells, transported unchanged). -/
-theorem slot_sound (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (env : ValEnv)
-    (hspread : SpreadSound spread ctx env) (e : Expr) :
-    Sound (fun h => ValidCtx h ctx) (NeedSupply.slot spread ctx env e)
-      (fun xs h => ValidSourced h xs) := by
-  cases e
-  case sequenceSpread operand =>
-    simp only [NeedSupply.slot]
-    refine Sound.bind (ctx_mono ctx)
-      ((collector_slice_sound operand ctx).weaken (fun _ _ => trivial) (fun _ _ h => h)) ?_
-    intro r
-    cases r with
-    | some slice =>
-      refine Sound.of_readonly (fun s _ ps => ?_)
-      rw [KatLang.NeedControl.Provenance.reopen_run]
-      exact ⟨rfl, fun x hx => by cases hx; exact (ps.2 slice rfl).sourced _⟩
-    | none =>
-      refine Sound.bind (fun _ _ _ g v => ⟨ValidCtx.mono g v.1, fun _ h => by cases h⟩)
-        ((hspread operand).weaken (fun _ h => h.1) (fun _ _ h => h)) ?_
-      intro x
-      cases x with
-      | items values =>
-        refine (Sound.mapM (q := fun p h => p.1 < h.size) (fun _ _ _ _ _ => trivial) (fun _ _ _ g v => Nat.lt_of_lt_of_le v g)
-          values (fun v _ => ready_item_sound v)).weaken (fun _ _ => trivial) (fun _ _ h p m => h p m)
-      | cells cells => exact Sound.pure _ (fun _ h => h.2)
-  all_goals
-    simp only [NeedSupply.slot]
-    refine Sound.bind (mid := fun a h => a < h.size) (ctx_mono ctx) (supply_sound _ ctx env) ?_
-    intro a
-    exact Sound.pure _ (fun _ h p hp => by simp at hp; subst hp; exact h.2)
-
-/-- **Formation.** `NeedSupply.form` composes the slots left to right: each slot runs from the
-    state its predecessors (and their callbacks) left, the caller tier stays valid across those
-    effects, and the already formed prefix stays valid while the tail is formed. For every output
-    bundle and every outcome. -/
-theorem form_sound (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (env : ValEnv)
-    (hspread : SpreadSound spread ctx env) (args : OutputBundle) :
-    Sound (fun h => ValidCtx h ctx) (NeedSupply.form spread ctx env args)
-      (fun xs h => ValidSourced h xs) := by
-  induction args with
-  | nil => exact Sound.pure _ (fun _ _ p hp => by simp at hp)
-  | cons e rest ih =>
-    simp only [NeedSupply.form]
-    refine Sound.bind (ctx_mono ctx) (slot_sound spread ctx env hspread e) ?_
-    intro head
-    refine Sound.bind (fun _ _ _ g v => ⟨ValidCtx.mono g v.1, ValidSourced.mono g v.2⟩)
-      (ih.weaken (fun _ h => h.1) (fun _ _ h => h)) ?_
-    intro tail
-    exact Sound.pure _ (fun _ h => ValidSourced.append h.1.2 h.2)
-
-/-- The address projection (`NeedSupply.addresses`). -/
-theorem addresses_sound (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (env : ValEnv)
-    (hspread : SpreadSound spread ctx env) (args : OutputBundle) :
-    Sound (fun h => ValidCtx h ctx) (NeedSupply.addresses spread ctx env args)
-      (fun xs h => ValidAddresses h xs) := by
-  simp only [NeedSupply.addresses]
-  refine Sound.bind (ctx_mono ctx) (form_sound spread ctx env hspread args) ?_
-  intro xs
-  exact Sound.pure _ (fun _ h => h.2.addresses)
 
 /-- The run of `form (leading ++ tail)` when `leading` succeeds and `tail` then fails. -/
 theorem form_append_failure (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (env : ValEnv)
@@ -589,60 +511,6 @@ theorem form_append_failure (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (en
           | ok tl =>
             cases hl
             rw [ih t1 tl hr]
-
-/-- **Retained heap after an ordinary failure.** When an earlier part of the bundle formed
-    `xs` (possibly allocating cells) and a later slot fails, the whole formation fails with that
-    error and the RETAINED final heap — no rollback — still satisfies the invariant, has not
-    shrunk, and keeps every prefix address valid. -/
-theorem form_failure_retains_prefix (spread : NeedSupply.SpreadEval) (ctx : EvalCtx)
-    (env : ValEnv) (hspread : SpreadSound spread ctx env) (leading tail : OutputBundle)
-    (s t u : EvalState) (xs : List NeedSupply.Sourced) (e : Error)
-    (vs : StateValid s) (vc : ValidCtx s.needs ctx)
-    (hl : (NeedSupply.form spread ctx env leading).runState s = (.ok xs, t))
-    (ht : (NeedSupply.form spread ctx env tail).runState t = (.error e, u)) :
-    (NeedSupply.form spread ctx env (leading ++ tail)).runState s = (.error e, u) ∧
-      StateValid u ∧ s.needs.size ≤ u.needs.size ∧ ValidSourced u.needs xs := by
-  have whole := form_append_failure spread ctx env leading tail s t u xs e hl ht
-  obtain ⟨vt, gt, rt⟩ := form_sound spread ctx env hspread leading s vs vc
-  rw [hl] at vt gt rt
-  obtain ⟨vu, gu, _⟩ := form_sound spread ctx env hspread tail t vt (ValidCtx.mono gt vc)
-  rw [ht] at vu gu
-  exact ⟨whole, vu, Nat.le_trans gt gu, ValidSourced.mono gu (rt xs rfl)⟩
-
-/-! ## Production wrappers -/
-
-/-- **Production sourced supply**, in `runState` form: from a valid state and caller tier, the
-    final state of `formNeedSupplySourced` — after success or any failure — satisfies the
-    invariant, keeps every previously valid address valid, and a successful supply is valid in
-    it. Remaining premise: `SpreadSound evalSupplySpread ctx env` (the evaluator's computed
-    spread keeps the invariant and returns post-state-valid `.cells`), NOT discharged here. -/
-theorem formNeedSupplySourced_runState_valid (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-    (hspread : SpreadSound evalSupplySpread ctx env) (s : EvalState) (vs : StateValid s)
-    (vc : ValidCtx s.needs ctx) {o : Except Error (List NeedSupply.Sourced)} {t : EvalState}
-    (hr : (formNeedSupplySourced args ctx env).runState s = (o, t)) :
-    StateValid t ∧ (∀ a, a < s.needs.size → a < t.needs.size) ∧
-      ∀ xs, o = .ok xs → ValidSourced t.needs xs := by
-  obtain ⟨v, g, r⟩ := form_sound evalSupplySpread ctx env hspread args s vs vc
-  simp only [formNeedSupplySourced] at hr
-  rw [hr] at v g r
-  exact ⟨v, fun a ha => Nat.lt_of_lt_of_le ha g, r⟩
-
-/-- **Production address supply** (`formNeedSupply`), same premise. -/
-theorem formNeedSupply_runState_valid (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
-    (hspread : SpreadSound evalSupplySpread ctx env) (s : EvalState) (vs : StateValid s)
-    (vc : ValidCtx s.needs ctx) {o : Except Error (List Nat)} {t : EvalState}
-    (hr : (formNeedSupply args ctx env).runState s = (o, t)) :
-    StateValid t ∧ (∀ a, a < s.needs.size → a < t.needs.size) ∧
-      ∀ xs, o = .ok xs → ValidAddresses t.needs xs := by
-  have hs : Sound (fun h => ValidCtx h ctx) (formNeedSupply args ctx env)
-      (fun xs h => ValidAddresses h xs) := by
-    simp only [formNeedSupply, formNeedSupplySourced]
-    refine Sound.bind (ctx_mono ctx) (form_sound evalSupplySpread ctx env hspread args) ?_
-    intro xs
-    exact Sound.pure _ (fun _ h => h.2.addresses)
-  obtain ⟨v, g, r⟩ := hs s vs vc
-  rw [hr] at v g r
-  exact ⟨v, fun a ha => Nat.lt_of_lt_of_le ha g, r⟩
 
 /-! ## Activations and parameter contexts -/
 
@@ -765,11 +633,14 @@ theorem headD_valid {h : Array NeedCell} {sources : List (NeedSource Nat)}
 
 The binder's own effects — collector allocation, one Ready cell per opened structural item, the
 META adapter — are discharged concretely below. Its VALUE and CALLABLE channels re-enter the
-evaluator, so they enter as the premise `ChannelsSound` (keep the invariant, never shrink the
-heap, for every outcome, when asked about a valid address); the production binding channels
-satisfying it is NOT proved here. Results of a channel are not inspected for addresses. -/
+evaluator, so they enter as the capability contract `CapsSound` (keep the invariant, never shrink
+the heap, for every outcome, when asked about a valid address). The production binding channels do
+NOT satisfy the channel form of it, `ChannelsSound`, over `StateValid` (`AddressInvariantGuards`);
+the production binder is covered by `KatLang.AddressInvariant.production_bindNeedPatterns` over `Inv`.
+Results of a channel are not inspected for addresses. -/
 
-/-- The production binder's channel premise. -/
+/-- The channel premise FG-H1's production binder needed. FALSE for `bindingChannels` over
+    `StateValid`; no lemma is conditional on it any more (see the module documentation). -/
 structure ChannelsSound (channels : NeedChannels) : Prop where
   value : ∀ a, Sound (fun h => a < h.size) (channels.value a) (fun _ _ => True)
   callable : ∀ a, Sound (fun h => a < h.size) (channels.callable a) (fun _ _ => True)
@@ -930,10 +801,6 @@ theorem reference_sound (a : Nat) :
   refine Sound.bind_t (fun _ _ _ _ _ => trivial)
     (Sound.of_readonly (fun s _ _ => ⟨reify_readonly a s, fun _ _ => trivial⟩))
     (fun _ _ => trivial) (fun r => ready_sound _)
-
-theorem capabilities_sound (channels : NeedChannels) (hc : ChannelsSound channels) :
-    CapsSound (NeedChannels.capabilities channels) :=
-  ⟨hc.value, hc.callable, allocate_sound, reference_sound⟩
 
 private theorem pre_mono (address : Nat) (state : NeedBindState) :
     Mono (fun (_ : Unit) h => address < h.size ∧ ValidBindState h state) :=
@@ -1143,28 +1010,5 @@ theorem binder_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (repe
       exact (ih2 next).weaken
         (fun _ h => ⟨fun source m => h.1.1.1 source (List.mem_of_mem_tail m), h.2 next rfl⟩)
         (fun _ _ h => h)
-
-/-- **Production binder.** `bindNeedPatterns` over valid supplied cells returns, when it binds, a
-    valid callee need environment, and every run keeps the invariant — under the named premise
-    `ChannelsSound channels` only (allocation and META reference are discharged). -/
-theorem bindNeedPatterns_sound (channels : NeedChannels) (hc : ChannelsSound channels)
-    (patterns : List NeedPattern) (cells : List Nat) (family : Bool) :
-    Sound (fun h => ValidAddresses h cells) (bindNeedPatterns channels patterns cells family)
-      OptEnvValid := by
-  unfold bindNeedPatterns NeedBinder.bindPatterns
-  refine Sound.bind (mid := fun r h => OptStateValid r h)
-    (fun _ _ _ g v => ValidAddresses.mono g v) ?_ ?_
-  · unfold NeedBinder.bindLevel NeedBinder.cardinalityGate
-    split
-    · split
-      · exact none_state
-      · exact Sound.throw_ _
-    · exact ((binder_sound _ (capabilities_sound channels hc) _ family).2 _ _ _).weaken
-        (fun _ h => ⟨needLevelSources_valid h patterns, ValidBindState.empty⟩) (fun _ _ h => h)
-  · intro r
-    exact Sound.pure _ (fun _ hp env he => by
-      cases r with
-      | none => cases he
-      | some st => cases he; exact (hp.2 st rfl).1)
 
 end KatLang.HeapAddressValidity

@@ -9,8 +9,8 @@ open Lean.Order
 
 `lean/KatLang.lean` § The fuel-indexed evaluator core defines the recursive evaluator as the
 functional `evalStep : EvalRec → EvalRec` over the call universe `EvalCall` (one constructor per
-recursive evaluator operation plus the `while` round, 84 in all; an operation that is only another
-call's answer or its value is a DERIVED answer `EvalRec.<name>`, not a constructor), iterated by
+recursive evaluator operation plus the `while` round, 82 in all; the 22 derived `EvalRec`
+operations forward or project a call's answer without adding a constructor), iterated by
 `evalFuel n`, and runs production as the fuel search
 `evalUnbounded` over the same core. This module proves, with standard axioms only:
 
@@ -109,6 +109,51 @@ open Lean Elab Tactic in
     out of memory building two such modules at once; unrecorded it stays under 3 GB. Only the
     editor's goal view inside the procedure is lost. -/
 elab "without_info_trees " tac:tacticSeq : tactic => withEnableInfoTree false (evalTactic tac)
+
+/-- THE ONE ACCESSOR LIST of the per-body procedures (`pres_tac`, `disc_tac`, `link_tac`, `pub_tac`,
+    `act_tac`, `ht_tac`). `evalrec_unfold cfg [extra, …]` is `dsimp cfg only [<accessors>, extra, …] at *`:
+    a call accessor `rec.f args` becomes `rec (.f args)`, a DERIVED answer (`rec.eval …`,
+    `rec.lookupLexical …`: a projection of its twin's answer, or its twin) its definition over its
+    twin. Each procedure's `*_unfold_rec` passes its own simplifier configuration and the further
+    definitions it unfolds. An accessor a body starts to use is added HERE, once. -/
+macro "evalrec_unfold" cfg:Lean.Parser.Tactic.optConfig " [" extra:Lean.Parser.Tactic.simpLemma,* "]" : tactic =>
+  `(tactic| dsimp $cfg:optConfig only [
+    EvalRec.whileLoop, EvalRec.aliasStepIsRuntime, EvalRec.aliasValue, EvalRec.resolveAliasChase,
+    EvalRec.resolveAliasTarget, EvalRec.resolveAliasStructure, EvalRec.resolveAliasValueTarget,
+    EvalRec.aliasOriginBinding?, EvalRec.lookupLexicalProperty,
+    EvalRec.lookupLexicalValueProperty, EvalRec.lookupLexical, EvalRec.needPlanNormalizeCallee,
+    EvalRec.resolveAlg, EvalRec.projectNeedCallable, EvalRec.projectNeedWrittenAt, EvalRec.linkCallable,
+    EvalRec.projectParameterCallable, EvalRec.projectNeedWritten, EvalRec.projectNeedStructuralMember,
+    EvalRec.resolveCalleeAlg, EvalRec.expectPreparedSequenceBuiltinAlgorithmSuffixArg,
+    EvalRec.resolveDotReceiver?, EvalRec.resolveDotReceiver, EvalRec.algorithmIntrinsicRoute,
+    EvalRec.demandNeedRecursive, EvalRec.evalSuppliedAt, EvalRec.linkValue, EvalRec.algorithmOfValue,
+    EvalRec.capturedCallee, EvalRec.referenceReceiverValue, EvalRec.algorithmCalleeOf,
+    EvalRec.evalSuppliedCallCounted, EvalRec.evalNeedUserSupply, EvalRec.evalNeedFamilySupply,
+    EvalRec.invokeNeed, EvalRec.argumentNeed, EvalRec.runNeedStepSlots, EvalRec.runNeedWhileRound,
+    EvalRec.evalAlgOutputSlots, EvalRec.formOutputRow, EvalRec.whileVerdictSlots,
+    EvalRec.evalAlgOutputPreparedCore, EvalRec.evalOutputRowsPreparedCore, EvalRec.evalCaptureCountedCore,
+    EvalRec.evalAlgOutputCountedCore, EvalRec.evalZeroArgumentDemandOutputCounted,
+    EvalRec.evalArgumentValueCounted, EvalRec.evalZeroArgPropertyAccessCounted,
+    EvalRec.evalConditionalCallbackCallCounted, EvalRec.evalUserCallbackCallCounted,
+    EvalRec.evalResolvedCallbackCallCounted, EvalRec.evalSequenceReduceStepCounted,
+    EvalRec.demandSequenceBuiltinCallItemValue, EvalRec.bindSequenceBuiltinArguments,
+    EvalRec.evalReduceCounted, EvalRec.evalFilterCounted, EvalRec.evalMapCounted,
+    EvalRec.applyBuiltinCountedSequence, EvalRec.applyBuiltinCounted, EvalRec.evalExplicitSequenceValueItems,
+    EvalRec.evalExplicitSequenceValueRowSlots, EvalRec.evalExplicitSequenceValueExprSlots,
+    EvalRec.evalUserCallCounted, EvalRec.evalConditionalCallCounted, EvalRec.evalResolvedCallCounted,
+    EvalRec.evalCallCountedExpr, EvalRec.callLexicalWithReceiverCounted,
+    EvalRec.rejectDotStringIntrinsicArguments, EvalRec.evalDotStringReceiverValue, EvalRec.evalDotCallCounted,
+    EvalRec.rejectInvokeIntrinsicArguments, EvalRec.invokeCallReferenceValue, EvalRec.argumentViewCells,
+    EvalRec.evalArgumentViewBuiltin, EvalRec.evalSequenceSpreadOperandValue, EvalRec.evalSequenceSpreadCounted,
+    EvalRec.evalSupplySpread, EvalRec.evalListLiteralCounted, EvalRec.evalSequenceConstructCounted,
+    EvalRec.evalUnaryCounted, EvalRec.evalBinaryCounted, EvalRec.evalComparisonCounted,
+    EvalRec.evalComparisonLinksCounted, EvalRec.evalCounted, EvalRec.evalAlgOutputCore, EvalRec.evalAlgOutput,
+    EvalRec.evalAlgOutputCounted, EvalRec.evalCapturePreparedCore, EvalRec.evalCaptureValue,
+    EvalRec.evalZeroArgumentDemandOutput, EvalRec.evalProgramOutput, EvalRec.evalArgumentValue,
+    EvalRec.evalZeroArgPropertyAccess, EvalRec.evalResolvedCallbackCall, EvalRec.evalSequenceCallbackCall,
+    EvalRec.evalSequenceCallbackCallCounted, EvalRec.applyBuiltin, EvalRec.applyBuiltinCountedResolved,
+    EvalRec.evalUserCall, EvalRec.evalConditionalCall, EvalRec.evalResolvedCall, EvalRec.evalCallExpr,
+    EvalRec.evalDotCall, EvalRec.eval, $extra,*] at *)
 
 /-! ## Monotonicity of the total helpers the bodies call with evaluator callbacks
 
@@ -721,10 +766,6 @@ theorem EvalBody.lookupLexicalValueProperty_mono (a : Algorithm) (name : Ident) 
     monotone (fun rec : EvalRec => EvalBody.lookupLexicalValueProperty rec a name ctx) := by
   unfold EvalBody.lookupLexicalValueProperty; mono_tac
 
-theorem EvalBody.lookupLexical_mono (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
-    monotone (fun rec : EvalRec => EvalBody.lookupLexical rec a name ctx) := by
-  unfold EvalBody.lookupLexical; mono_tac
-
 theorem EvalBody.needPlanNormalizeCallee_mono (callee : Algorithm) (ctx : EvalCtx) :
     monotone (fun rec : EvalRec => EvalBody.needPlanNormalizeCallee rec callee ctx) := by
   unfold EvalBody.needPlanNormalizeCallee; mono_tac
@@ -887,10 +928,6 @@ theorem EvalBody.evalAlgOutputPreparedCore_mono (a : Algorithm) (ctx : EvalCtx) 
 theorem EvalBody.evalOutputRowsPreparedCore_mono (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; mono_tac
-
-theorem EvalBody.evalCaptureCountedCore_mono (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalCaptureCountedCore rec rows ctx env) := by
-  unfold EvalBody.evalCaptureCountedCore; mono_tac
 
 theorem EvalBody.evalAlgOutputCountedCore_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
@@ -1122,7 +1159,6 @@ theorem evalStep_monotone : monotone evalStep := by
   | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_mono a ctx _ _ h
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_mono a name ctx _ _ h
   | lookupLexicalValueProperty a name ctx => exact EvalBody.lookupLexicalValueProperty_mono a name ctx _ _ h
-  | lookupLexical a name ctx => exact EvalBody.lookupLexical_mono a name ctx _ _ h
   | needPlanNormalizeCallee callee ctx => exact EvalBody.needPlanNormalizeCallee_mono callee ctx _ _ h
   | resolveAlg e ctx => exact EvalBody.resolveAlg_mono e ctx _ _ h
   | projectNeedCallable address => exact EvalBody.projectNeedCallable_mono address _ _ h
@@ -1155,7 +1191,6 @@ theorem evalStep_monotone : monotone evalStep := by
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_mono a ctx env _ _ h
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_mono a ctx env _ _ h
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_mono rows rowCtx env _ _ h
-  | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_mono rows ctx env _ _ h
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_mono a ctx env _ _ h
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_mono a ctx env _ _ h
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_mono arg ctx env _ _ h

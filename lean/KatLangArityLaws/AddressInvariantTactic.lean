@@ -12,7 +12,11 @@ hypothesis `RecSound rec`), or a helper with a registered contract (`ht_bind_spe
 `macro_rules` next to each contract) — adds the operation's postcondition to the precondition of
 the continuation (`SoundI.bind`); `pure`, binds of binds, `<$>`, local definitions, `match` and
 `if` are normalized or split; an unregistered non-recursive helper is proved separately with the
-trivial postcondition, or unfolded in tail position. The side goals are the operations' input
+trivial postcondition, or unfolded in tail position. A trailing `pure` whose postcondition is
+still unknown (the computation is the argument of a wrapper or an attempt, whose contract takes
+its postcondition from it) takes the validity of its result TYPE (`ht_step`, the `pure` case), so
+a DERIVED answer — `rec.eval …` is `rec (.evalCounted …) >>= fun out => pure out.fst` — is
+unfolded like any call and needs no contract of its own. The side goals are the operations' input
 requirements and the final postcondition, `∀ h, P h → R h` over the accumulated facts, closed by
 `ht_leaf` (`split_ands` + `solve_by_elim` over the validity lemmas, extended by `ht_lemma`).
 Macro hygiene is off so the tactic reaches lemmas declared after it.
@@ -532,11 +536,11 @@ macro_rules | `(tactic| ht_pmono) => `(tactic| first
      repeat' (first | mono_atom g | (apply And.intro) | (intro _ _; mono_atom g) | exact ‹_›)))
 
 
-/-- The evaluator helpers `rec.f args` are `rec (.f args)`. The DERIVED answers (`rec.eval …`,
-    `rec.applyBuiltin …`, the plain projections and pure forwards) are deliberately absent: the
-    procedure keeps each atomic, under its registered contract `SoundI.rec_<name>`
-    (`AddressInvariantBodies` § The derived answers under their contracts). -/
-macro "ht_unfold_rec" : tactic => `(tactic| dsimp (config := { proj := false, zeta := false }) only [EvalRec.whileLoop, EvalRec.aliasStepIsRuntime, EvalRec.aliasValue, EvalRec.resolveAliasChase, EvalRec.resolveAliasTarget, EvalRec.resolveAliasValueTarget, EvalRec.lookupLexicalProperty, EvalRec.lookupLexicalValueProperty, EvalRec.lookupLexical, EvalRec.needPlanNormalizeCallee, EvalRec.resolveAlg, EvalRec.projectNeedCallable, EvalRec.projectNeedWrittenAt, EvalRec.linkCallable, EvalRec.projectParameterCallable, EvalRec.projectNeedWritten, EvalRec.projectNeedStructuralMember, EvalRec.resolveCalleeAlg, EvalRec.expectPreparedSequenceBuiltinAlgorithmSuffixArg, EvalRec.resolveDotReceiver?, EvalRec.resolveDotReceiver, EvalRec.algorithmIntrinsicRoute, EvalRec.demandNeedRecursive, EvalRec.evalSuppliedAt, EvalRec.linkValue, EvalRec.algorithmOfValue, EvalRec.capturedCallee, EvalRec.referenceReceiverValue, EvalRec.algorithmCalleeOf, EvalRec.evalSuppliedCallCounted, EvalRec.evalNeedUserSupply, EvalRec.evalNeedFamilySupply, EvalRec.invokeNeed, EvalRec.argumentNeed, EvalRec.runNeedStepSlots, EvalRec.runNeedWhileRound, EvalRec.evalAlgOutputSlots, EvalRec.formOutputRow, EvalRec.whileVerdictSlots, EvalRec.evalAlgOutputPreparedCore, EvalRec.evalOutputRowsPreparedCore, EvalRec.evalCaptureCountedCore, EvalRec.evalAlgOutputCountedCore, EvalRec.evalZeroArgumentDemandOutputCounted, EvalRec.evalArgumentValueCounted, EvalRec.evalZeroArgPropertyAccessCounted, EvalRec.evalConditionalCallbackCallCounted, EvalRec.evalUserCallbackCallCounted, EvalRec.evalResolvedCallbackCallCounted, EvalRec.evalSequenceReduceStepCounted, EvalRec.demandSequenceBuiltinCallItemValue, EvalRec.bindSequenceBuiltinArguments, EvalRec.evalReduceCounted, EvalRec.evalFilterCounted, EvalRec.evalMapCounted, EvalRec.applyBuiltinCountedSequence, EvalRec.applyBuiltinCounted, EvalRec.evalExplicitSequenceValueItems, EvalRec.evalExplicitSequenceValueRowSlots, EvalRec.evalExplicitSequenceValueExprSlots, EvalRec.evalUserCallCounted, EvalRec.evalConditionalCallCounted, EvalRec.evalResolvedCallCounted, EvalRec.evalCallCountedExpr, EvalRec.callLexicalWithReceiverCounted, EvalRec.rejectDotStringIntrinsicArguments, EvalRec.evalDotStringReceiverValue, EvalRec.evalDotCallCounted, EvalRec.rejectInvokeIntrinsicArguments, EvalRec.invokeCallReferenceValue, EvalRec.argumentViewCells, EvalRec.evalArgumentViewBuiltin, EvalRec.evalSequenceSpreadOperandValue, EvalRec.evalSequenceSpreadCounted, EvalRec.evalSupplySpread, EvalRec.evalListLiteralCounted, EvalRec.evalSequenceConstructCounted, EvalRec.evalUnaryCounted, EvalRec.evalBinaryCounted, EvalRec.evalComparisonCounted, EvalRec.evalComparisonLinksCounted, EvalRec.evalCounted] at *)
+/-- The evaluator helpers `rec.f args` are `rec (.f args)`; a DERIVED answer (`rec.eval …`,
+    `rec.applyBuiltin …`, `rec.lookupLexical …`: a projection of its twin's answer, or its twin) is
+    its definition over its twin (the shared list `evalrec_unfold`, `EvaluatorCore`). Local
+    definitions are kept (`zeta := false`): `ht_step` reduces one when it reaches it. -/
+macro "ht_unfold_rec" : tactic => `(tactic| evalrec_unfold (config := { proj := false, zeta := false }) [])
 
 open Lean Meta Elab Tactic
 
@@ -756,7 +760,23 @@ elab "ht_step" : tactic => do
     let m ← instantiateMVars m
     match ← htClassify m with
     | .letE => replaceMainGoal [← htReplaceComputation goal ty (htZeta m)]
-    | .pure => evalTactic (← `(tactic| refine SoundI.pure _ ?_))
+    | .pure =>
+      -- A trailing `pure` whose postcondition is still UNKNOWN (a metavariable: this computation is
+      -- the argument of a wrapper or an attempt, or a bind head, whose contract takes its
+      -- postcondition from it) has no postcondition to prove, so it is given the validity of its
+      -- result TYPE: none for an address-free type; `RV`, `CRV`, `PreparedV` for a value, a counted
+      -- value, a prepared output. The leaf is then the ordinary one: the accumulated facts imply it.
+      if (ty.getArg! 3).getAppFn.isMVar then
+        let α ← whnfR (← instantiateMVars (ty.getArg! 0))
+        if htAddressFree α then
+          evalTactic (← `(tactic| refine SoundI.pure (Q := fun _ _ => True) _ ?_))
+        else
+          evalTactic (← `(tactic| first
+            | refine SoundI.pure (Q := fun r h => RV h r) _ ?_
+            | refine SoundI.pure (Q := fun r h => CRV h r) _ ?_
+            | refine SoundI.pure (Q := fun r h => PreparedV h r) _ ?_
+            | fail "ht: a trailing `pure` under an unknown postcondition, at a result type with no registered validity"))
+      else evalTactic (← `(tactic| refine SoundI.pure _ ?_))
     | .throw => evalTactic (← `(tactic| first | exact SoundI.throw _ | exact SoundI.error _))
     | .branch =>
       match ← htReduceMatch m with

@@ -841,9 +841,11 @@ elab "pub_whnf_core" : tactic => do
     if m' == m then throwError "pub_whnf_core: no progress"
     replaceMainGoal [← goal.replaceTargetDefEq (ty.updateApp! ty.appFn! m')]
 
-/-- The evaluator helpers `rec.f args` are `rec (.f args)`. -/
-macro "pub_unfold_rec" : tactic => `(tactic| dsimp (config := { proj := false }) only [EvalRec.whileLoop, EvalRec.aliasStepIsRuntime, EvalRec.aliasValue, EvalRec.resolveAliasChase, EvalRec.resolveAliasTarget, EvalRec.resolveAliasValueTarget, EvalRec.lookupLexicalProperty, EvalRec.lookupLexicalValueProperty, EvalRec.lookupLexical, EvalRec.needPlanNormalizeCallee, EvalRec.resolveAlg, EvalRec.projectNeedCallable, EvalRec.projectNeedWrittenAt, EvalRec.linkCallable, EvalRec.projectParameterCallable, EvalRec.projectNeedWritten, EvalRec.projectNeedStructuralMember, EvalRec.resolveCalleeAlg, EvalRec.expectPreparedSequenceBuiltinAlgorithmSuffixArg, EvalRec.resolveDotReceiver?, EvalRec.resolveDotReceiver, EvalRec.algorithmIntrinsicRoute, EvalRec.demandNeedRecursive, EvalRec.evalSuppliedAt, EvalRec.linkValue, EvalRec.algorithmOfValue, EvalRec.capturedCallee, EvalRec.referenceReceiverValue, EvalRec.algorithmCalleeOf, EvalRec.evalSuppliedCallCounted, EvalRec.evalNeedUserSupply, EvalRec.evalNeedFamilySupply, EvalRec.invokeNeed, EvalRec.argumentNeed, EvalRec.runNeedStepSlots, EvalRec.runNeedWhileRound, EvalRec.evalAlgOutputCore, EvalRec.evalAlgOutput, EvalRec.evalProgramOutput, EvalRec.evalAlgOutputSlots, EvalRec.formOutputRow, EvalRec.whileVerdictSlots, EvalRec.evalSequenceCallbackCall, EvalRec.evalSequenceCallbackCallCounted, EvalRec.evalAlgOutputPreparedCore, EvalRec.evalOutputRowsPreparedCore, EvalRec.evalCapturePreparedCore, EvalRec.evalCaptureCountedCore, EvalRec.evalCaptureValue, EvalRec.evalAlgOutputCountedCore, EvalRec.evalAlgOutputCounted, EvalRec.evalZeroArgumentDemandOutputCounted, EvalRec.evalZeroArgumentDemandOutput, EvalRec.evalArgumentValueCounted, EvalRec.evalArgumentValue, EvalRec.evalZeroArgPropertyAccessCounted, EvalRec.evalZeroArgPropertyAccess, EvalRec.evalConditionalCallbackCallCounted, EvalRec.evalUserCallbackCallCounted, EvalRec.evalResolvedCallbackCallCounted, EvalRec.evalResolvedCallbackCall, EvalRec.evalSequenceReduceStepCounted, EvalRec.demandSequenceBuiltinCallItemValue, EvalRec.bindSequenceBuiltinArguments, EvalRec.evalReduceCounted, EvalRec.evalFilterCounted, EvalRec.evalMapCounted, EvalRec.applyBuiltinCountedSequence, EvalRec.applyBuiltinCounted, EvalRec.applyBuiltin, EvalRec.applyBuiltinCountedResolved, EvalRec.evalExplicitSequenceValueItems, EvalRec.evalExplicitSequenceValueRowSlots, EvalRec.evalExplicitSequenceValueExprSlots, EvalRec.evalUserCallCounted, EvalRec.evalConditionalCallCounted, EvalRec.evalResolvedCall, EvalRec.evalResolvedCallCounted, EvalRec.evalCallCountedExpr, EvalRec.callLexicalWithReceiverCounted, EvalRec.rejectDotStringIntrinsicArguments, EvalRec.evalDotStringReceiverValue, EvalRec.evalDotCallCounted, EvalRec.rejectInvokeIntrinsicArguments, EvalRec.invokeCallReferenceValue, EvalRec.argumentViewCells, EvalRec.evalArgumentViewBuiltin, EvalRec.evalSequenceSpreadOperandValue, EvalRec.evalSequenceSpreadCounted, EvalRec.evalSupplySpread, EvalRec.evalListLiteralCounted, EvalRec.evalSequenceConstructCounted, EvalRec.evalUnaryCounted, EvalRec.evalBinaryCounted, EvalRec.evalComparisonCounted, EvalRec.evalComparisonLinksCounted, EvalRec.evalCounted, EvalRec.evalUserCall, EvalRec.evalConditionalCall, EvalRec.evalCallExpr, EvalRec.evalDotCall, EvalRec.eval, EvalRec.planRoute,
-  EvalRec.bindingChannels, NeedChannels.shell, NeedChannels.capabilities] at *)
+/-- The evaluator helpers `rec.f args` are `rec (.f args)`, a derived answer its definition (the
+    shared list `evalrec_unfold`, `EvaluatorCore`); the plan route and the binding channels are
+    their records. -/
+macro "pub_unfold_rec" : tactic => `(tactic| evalrec_unfold (config := { proj := false })
+  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell, NeedChannels.capabilities])
 
 set_option hygiene false in
 /-- Syntax-directed link discipline (base: no recursive helper lemmas), given that `hrec`
@@ -1270,10 +1272,6 @@ theorem EvalBody.lookupLexicalValueProperty_pubDisc (rec : EvalRec) (hrec : ∀ 
     PubDisc (EvalBody.lookupLexicalValueProperty rec a name ctx) := by
   unfold EvalBody.lookupLexicalValueProperty; pub_tac
 
-theorem EvalBody.lookupLexical_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
-    PubDisc (EvalBody.lookupLexical rec a name ctx) := by
-  unfold EvalBody.lookupLexical; pub_tac
-
 theorem EvalBody.needPlanNormalizeCallee_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (ctx : EvalCtx) :
     PubDisc (EvalBody.needPlanNormalizeCallee rec callee ctx) := by
   unfold EvalBody.needPlanNormalizeCallee; pub_tac
@@ -1407,10 +1405,6 @@ theorem EvalBody.evalAlgOutputPreparedCore_pubDisc (rec : EvalRec) (hrec : ∀ c
 theorem EvalBody.evalOutputRowsPreparedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (rows : OutputBundle) (rowCtx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalOutputRowsPreparedCore rec rows rowCtx env) := by
   unfold EvalBody.evalOutputRowsPreparedCore; pub_tac
-
-theorem EvalBody.evalCaptureCountedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (rows : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalCaptureCountedCore rec rows ctx env) := by
-  unfold EvalBody.evalCaptureCountedCore; pub_tac
 
 theorem EvalBody.evalAlgOutputCountedCore_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalAlgOutputCountedCore rec a ctx env) := by
@@ -1636,7 +1630,6 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_pubDisc rec hrec hres a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_pubDisc rec hrec hres a name ctx
   | lookupLexicalValueProperty a name ctx => exact EvalBody.lookupLexicalValueProperty_pubDisc rec hrec hres a name ctx
-  | lookupLexical a name ctx => exact EvalBody.lookupLexical_pubDisc rec hrec hres a name ctx
   | needPlanNormalizeCallee callee ctx => exact EvalBody.needPlanNormalizeCallee_pubDisc rec hrec hres callee ctx
   | resolveAlg e ctx => exact EvalBody.resolveAlg_pubDisc rec hrec hres e ctx
   | projectNeedCallable address => exact EvalBody.projectNeedCallable_pubDisc rec hrec hres address
@@ -1669,7 +1662,6 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | whileVerdictSlots a ctx env => exact EvalBody.whileVerdictSlots_pubDisc rec hrec hres a ctx env
   | evalAlgOutputPreparedCore a ctx env => exact EvalBody.evalAlgOutputPreparedCore_pubDisc rec hrec hres a ctx env
   | evalOutputRowsPreparedCore rows rowCtx env => exact EvalBody.evalOutputRowsPreparedCore_pubDisc rec hrec hres rows rowCtx env
-  | evalCaptureCountedCore rows ctx env => exact EvalBody.evalCaptureCountedCore_pubDisc rec hrec hres rows ctx env
   | evalAlgOutputCountedCore a ctx env => exact EvalBody.evalAlgOutputCountedCore_pubDisc rec hrec hres a ctx env
   | evalZeroArgumentDemandOutputCounted a ctx env => exact EvalBody.evalZeroArgumentDemandOutputCounted_pubDisc rec hrec hres a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_pubDisc rec hrec hres arg ctx env

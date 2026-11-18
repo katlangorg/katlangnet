@@ -39,7 +39,7 @@ RESULTS.
 WHAT REMAINS CONDITIONAL.
 * `ModelFollows` / `HeapFollows` are PREMISES at the production corollaries: no whole-run theorem
   says that every CALLABLE outcome of a real run follows one table. Results 3 and 4 establish the
-  invariant at each producer, not across the 84 evaluator bodies.
+  invariant at each producer, not across the 82 evaluator bodies.
 * `follows_childOfInContext` keeps one printer-dependent premise, `SitePresence`: the production
   `activeDeclaration?` compares a wired algorithm with every site level through
   `sameDeclaringScope`, and at a mixed pair that is the printed fallback. `ReprSeparatesPresence`

@@ -182,9 +182,11 @@ theorem mixed_supply :
 
 theorem mixed_supply_valid :
     ValidSourced ((form mixedSpread (ctxWith [("x", 0)]) [] mixedArgs).runState oneReady).2.needs
-      [(1, some (.num 9)), (2, none), (3, none), (0, none), (0, some (.param "x"))] :=
-  (form_sound mixedSpread _ [] (mixedSpread_sound _ []) mixedArgs oneReady oneReady_valid
-    (fun p m => by simp [ctxWith] at m; subst m; decide)).2.2 _ mixed_supply.1
+      [(1, some (.num 9)), (2, none), (3, none), (0, none), (0, some (.param "x"))] := by
+  intro p hp
+  rw [mixed_supply.2]
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl | rfl | rfl | rfl <;> decide
 
 /-- The heap-growing callback's NEW cell is valid in the callback's post-state. -/
 theorem grow_supply :
@@ -202,15 +204,11 @@ theorem failure_after_prefix_valid :
     StateValid { needs := #[{ suspension := .expression (.num 1) (ctxWith []) [] }] } ∧
     ValidSourced (#[{ suspension := .expression (.num 1) (ctxWith []) [] }] : Array NeedCell)
       [(0, some (.num 1))] := by
-  have refuse_sound : SpreadSound refuse (ctxWith []) [] := fun _ => Sound.throw_ _
-  have hl : (form refuse (ctxWith []) [] [.num 1]).runState EvalState.empty =
-      (.ok [(0, some (.num 1))], { needs := #[{ suspension := .expression (.num 1) (ctxWith []) [] }] }) := rfl
-  have ht : (form refuse (ctxWith []) [] [.sequenceSpread (.num 0)]).runState
-      { needs := #[{ suspension := .expression (.num 1) (ctxWith []) [] }] } =
-      (.error .divByZero, { needs := #[{ suspension := .expression (.num 1) (ctxWith []) [] }] }) := rfl
-  have r := form_failure_retains_prefix refuse (ctxWith []) [] refuse_sound [.num 1]
-    [.sequenceSpread (.num 0)] _ _ _ _ _ empty_valid (fun _ m => by cases m) hl ht
-  exact ⟨r.2.1, r.2.2.2⟩
+  refine ⟨(supply_sound (.num 1) (ctxWith []) [] EvalState.empty empty_valid
+    (fun _ m => by cases m)).1, ?_⟩
+  intro p hp
+  obtain rfl := List.mem_singleton.mp hp
+  decide
 
 -- Production wrapper: ordinary slot, known repeated slice, then a bound parameter.
 #guard match (formNeedSupplySourced [.num 4, .sequenceSpread (.param "xs"), .param "x"]
