@@ -43,9 +43,10 @@ internal sealed class CensusCaseResult
 
 /// <summary>
 /// Evaluates census cases: parses each probe program, evaluates it on every route, and applies the
-/// under-charge check U and the over-charge check O (brief section 2), and for a deconstruction cell the twin
-/// check T (a refusal inside the owner's own call is neither U nor O). Engine disagreements are
-/// findings of their own class. The model check (M) consumes <see cref="CensusCaseResult.Lean"/>.
+/// under-charge check U and the over-charge check O (brief section 2), for a deconstruction cell the twin
+/// check T (a refusal inside the owner's own call is neither U nor O), and for a callable <c>rt-alg</c> cell the
+/// static-route check R. Engine disagreements are findings of their own class. The model check (M) consumes
+/// <see cref="CensusCaseResult.Lean"/>.
 /// </summary>
 internal static class CensusRunner
 {
@@ -403,7 +404,44 @@ internal static class CensusRunner
             var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.DeconstructionTwin(@case), probes.Select(p => p.Label).ToArray());
             outcome.Gaps.AddRange(TwinDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
         }
+
+        // R: every callable rt-alg cell against its static-route twin (CensusGrid.StaticRouteTwin), also built from SOURCE.
+        // Include open positions: although OD-C opens the runtime reference's own namespace, this fixture's valid cells
+        // must still agree with the static route on their outcomes and reader metadata.
+        if (HasStaticRouteTwin(@case))
+        {
+            var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.StaticRouteTwin(@case), probes.Select(p => p.Label).ToArray());
+            outcome.Gaps.AddRange(RouteDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
+        }
         return outcome;
+    }
+
+    /// <summary>Whether check R compares the case with its static-route twin: every <c>rt-alg-call</c> grid cell.</summary>
+    internal static bool HasStaticRouteTwin(CensusCase @case)
+        => @case.Kind == "grid" && @case.Dims.Count > 0 && @case.Dim("head") == "rt-alg-call";
+
+    /// <summary>
+    /// Check R's verdict: every probe outcome and every reader's metadata of a callable <c>rt-alg</c> cell equal its
+    /// static-route twin's, one gap per differing probe or reader (class <c>static-route-differs</c>); no difference is
+    /// exempt.
+    /// </summary>
+    internal static List<CensusGap> RouteDifferences(string id, IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
+        IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
+    {
+        var gaps = new List<CensusGap>();
+        foreach (var (label, cell) in outcomes.OrderBy(o => o.Key, StringComparer.Ordinal))
+        {
+            var twin = twinOutcomes.TryGetValue(label, out var value) ? value : "absent";
+            if (twin != cell)
+                gaps.Add(new CensusGap("R", "static-route-differs", id, "-", $"{label}: runtime={cell}; static={twin}"));
+        }
+        foreach (var (reader, cell) in metadata.OrderBy(m => m.Key, StringComparer.Ordinal))
+        {
+            var twin = twinMetadata.TryGetValue(reader, out var value) ? value : "absent";
+            if (twin != cell)
+                gaps.Add(new CensusGap("R", "static-route-differs", id, reader, $"metadata: runtime={cell}; static={twin}"));
+        }
+        return gaps;
     }
 
     /// <summary>

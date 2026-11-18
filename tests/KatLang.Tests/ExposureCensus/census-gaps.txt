@@ -1,6 +1,6 @@
 # E-18 route census ratchet (ExposureCensusTests): every current gap, exactly.
 # Columns (tab-separated): check, class, case or family id, reader, detail.
-# Checks: U under-charge, O over-charge, E engine disagreement, T deconstruction twin, W work, M1-M4 model (check-lean mode).
+# Checks: U under-charge, O over-charge, E engine disagreement, T deconstruction twin, R static-route twin, W work, M1-M4 model (check-lean mode).
 # O over-charge tags (inherited/new) are decided against HEAD a4b545e8 by check-head mode.
 M3	model-stricter	selfcheck=runtime-dot-unread-receiver	A	r=y@0
 O	over-charge-inherited	selfcheck=I25-eager-own-open	A	r=y@0

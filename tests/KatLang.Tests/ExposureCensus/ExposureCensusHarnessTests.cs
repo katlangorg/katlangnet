@@ -154,6 +154,246 @@ public sealed class ExposureCensusHarnessTests
         Assert.Single(CensusRunner.TwinDifferences("cell", outcomes, metadata, new Dictionary<string, string>(outcomes) { ["in5"] = "invalid" }, metadata));
     }
 
+    // ── The extension (2026-11-17) ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The runtime head whose value reads nothing of F (<c>rt-capture</c>, <c>L = Cap(Seed()).Algorithm</c>): a fallback
+    /// that reads y is the reader's only charge, through an intermediate edge (<c>mid-fallback</c>, <c>result-member</c>)
+    /// and in the fallback position alike, so the reader keeps one value per activation and is refused outside the call.
+    /// Without a fallback that reads y the reader stays exported. (rt-param's <c>L = y</c> is charged by its head whatever
+    /// the fallback reads, so it cannot show a lost fallback charge.)
+    /// </summary>
+    [Fact]
+    public async Task RuntimeCaptureHead_IsChargedOnlyThroughItsFallback()
+    {
+        foreach (var pos in new[] { "value", "fallback" })
+        foreach (var end in new[] { "mid-fallback", "result-member" })
+        {
+            string[] values = ["rt-capture", pos, "none", "plain", "outside", end, "fallback"];
+            Assert.Null(CensusGrid.Exclusion(values[0], values[1], values[2], values[3], values[4], values[5], values[6]));
+            var @case = CensusGrid.Build(values);
+            Assert.Contains("L = Cap(Seed()).Algorithm", @case.Body, StringComparison.Ordinal);
+            Assert.DoesNotContain("L = y", @case.Body, StringComparison.Ordinal);
+            var result = await CensusRunner.Run(@case, collectLean: false);
+            Assert.Null(result.Skipped);
+            var observed = $"{result.Metadata["A"]}; {string.Join("; ", result.Outcomes.Select(o => $"{o.Key}: {o.Value}"))}";
+            Assert.True(result.Metadata["A"] == "LocalOnlyCapturedAncestorParameters[y@0]"
+                && (result.Outcomes["in5"], result.Outcomes["in7"], result.Outcomes["same"]) == ("ok 5", "ok 7", "ok S[5, 7]")
+                && result.Outcomes["esc:A"] == "err localOnlyProperty:A", $"{@case.Id}: {observed}\n{@case.Body}");
+            Assert.Empty(result.Gaps);
+        }
+        var plain = await CensusRunner.Run(CensusGrid.Build(["rt-capture", "value", "none", "plain", "outside", "found", "none"]), collectLean: false);
+        Assert.Equal("exported", plain.Metadata["A"]);
+        Assert.All(plain.Outcomes, o => Assert.Equal("ok " + (o.Key == "same" ? "S[1, 1]" : "1"), o.Value));
+        Assert.Empty(plain.Gaps);
+    }
+
+    /// <summary>
+    /// The callable <c>rt-alg</c> fixture (<c>rt-alg-call</c>): Sub returns a captured call of its member <c>Run</c>, so
+    /// <c>L = &lt;path&gt;.Algorithm</c> is Run's algorithm and every non-open position and selection ending produces values,
+    /// where rt-alg fails with a type error. Each such cell gives what its static-route twin gives (check R), and no check
+    /// finds a gap.
+    /// </summary>
+    [Fact]
+    public async Task CallableAlgorithmHead_ProducesValues_AndAgreesWithItsStaticRoute()
+    {
+        foreach (var pos in new[] { "value", "callee", "spread", "fallback", "deconstruction" })
+        foreach (var end in new[] { "found", "missing", "mid-fallback", "result-member" })
+        {
+            string[] values = ["rt-alg-call", pos, "none", "plain", "outside", end, "container"];
+            if (CensusGrid.Exclusion(values[0], values[1], values[2], values[3], values[4], values[5], values[6]) is not null)
+            {
+                Assert.True(end == "missing" && pos is "callee" or "spread" or "fallback", string.Join("|", values));
+                continue;
+            }
+            var @case = CensusGrid.Build(values);
+            Assert.True(CensusRunner.HasStaticRouteTwin(@case));
+            var twin = CensusGrid.StaticRouteTwin(@case);
+            Assert.Equal((@case.Id, "static-route-twin"), (twin.Id, twin.Kind));
+            Assert.Equal(@case.Body.Replace("L = Lib.Sub.Algorithm\n", "L = Lib.Sub.Run\n", StringComparison.Ordinal), twin.Body);
+            Assert.Contains("      public Run = y\n      Cap(Run())\n", @case.Body, StringComparison.Ordinal);
+            var result = await CensusRunner.Run(@case, collectLean: false);
+            Assert.Null(result.Skipped);
+            Assert.True(result.InsideWorks && result.Outcomes["esc:A"] == "err localOnlyProperty:A",
+                $"{@case.Id}: {string.Join("; ", result.Outcomes.Select(o => $"{o.Key}: {o.Value}"))}\n{@case.Body}");
+            Assert.Empty(result.Gaps);
+        }
+        // The same selection over rt-alg's fixture fails before any value: Sub returns a number, not a call reference.
+        var failing = await CensusRunner.Run(CensusGrid.Build(["rt-alg", "value", "none", "param", "outside", "found", "container"]), collectLean: false);
+        Assert.Equal("err type", failing.Outcomes["in5"]);
+        Assert.Throws<ArgumentException>(() => CensusGrid.StaticRouteTwin(CensusGrid.Build(["rt-alg", "value", "none", "param", "outside", "found", "container"])));
+        // Open positions also compare with the static route. OD-C opens L's own namespace, but in this fixture every
+        // valid cell still agrees with its twin. Keep a charged and an uncharged open in the default harness coverage.
+        foreach (var requirement in new[] { "none", "container" })
+        {
+            var opened = CensusGrid.Build(["rt-alg-call", "open", "own-unused", "plain", "outside", "found", requirement]);
+            Assert.True(CensusRunner.HasStaticRouteTwin(opened));
+            var result = await CensusRunner.Run(opened, collectLean: false);
+            Assert.Null(result.Skipped);
+            Assert.True(result.InsideWorks);
+            Assert.Empty(result.Gaps);
+        }
+    }
+
+    /// <summary>
+    /// The member-of-the-fallback's-result ending exists for every head: the fallback returns a captured call of its local
+    /// <c>Mk</c>, the selection reads the result's member <c>.Invoke()</c>, and with <c>req=fallback</c> the run of <c>Mk</c>
+    /// reads y, so the reader is charged y, keeps one value per activation and is refused outside the call. rt-alg is
+    /// excluded from <c>req=fallback</c> as for the other endings; the open positions call no fallback.
+    /// </summary>
+    [Fact]
+    public async Task ResultMemberEnding_ChargesTheFallbackForEveryHead()
+    {
+        foreach (var head in CensusGrid.AllHeads)
+        {
+            var open = head == "opened" ? "own-used" : "none";
+            var reader = ValidReader(head);
+            foreach (var pos in new[] { "value", "fallback" })
+            {
+                string[] values = [head, pos, open, reader, "outside", "result-member", "fallback"];
+                var excluded = CensusGrid.Exclusion(values[0], values[1], values[2], values[3], values[4], values[5], values[6]);
+                if (head == "rt-alg")
+                {
+                    Assert.NotNull(excluded);
+                    continue;
+                }
+                Assert.Null(excluded);
+                var @case = CensusGrid.Build(values);
+                Assert.Contains(pos == "value" ? ".Missing.Invoke() + 0" : ".Q.Missing.Invoke() + 0", @case.Body, StringComparison.Ordinal);
+                Assert.Contains("Missing(r) = {\n    Mk(k) = r * 0 + k + y\n    Cap(Mk(0))\n  }", @case.Body, StringComparison.Ordinal);
+                var result = await CensusRunner.Run(@case, collectLean: false);
+                Assert.Null(result.Skipped);
+                var observed = $"{result.Metadata["A"]}; {string.Join("; ", result.Outcomes.Select(o => $"{o.Key}: {o.Value}"))}";
+                Assert.True(result.Metadata["A"].StartsWith("LocalOnlyCapturedAncestorParameters[y@", StringComparison.Ordinal)
+                    && (result.Outcomes["in5"], result.Outcomes["in7"], result.Outcomes["same"]) == ("ok 5", "ok 7", "ok S[5, 7]")
+                    && result.Outcomes["esc:A"] == "err localOnlyProperty:A",
+                    $"{@case.Id}: {observed}\n{@case.Body}");
+                Assert.Empty(result.Gaps);
+            }
+        }
+        foreach (var pos in new[] { "open", "open-dotted" })
+            Assert.NotNull(CensusGrid.Exclusion("name", pos, "own-used", "plain", "outside", "result-member", "none"));
+        // The callee position calls the result's captured algorithm afresh: Mk(1) reads y too.
+        var callee = await CensusRunner.Run(CensusGrid.Build(["name", "callee", "none", "plain", "outside", "result-member", "fallback"]), collectLean: false);
+        Assert.Equal(("ok 6", "ok 8", "ok S[6, 8]"), (callee.Outcomes["in5"], callee.Outcomes["in7"], callee.Outcomes["same"]));
+        Assert.Empty(callee.Gaps);
+    }
+
+    /// <summary>
+    /// Check R flags every probe whose outcome differs from the static-route twin's, a probe the twin lacks, and every reader
+    /// whose metadata differs (the runtime route of rt-alg's own fixture, which fails with a type error, is such a difference).
+    /// </summary>
+    [Fact]
+    public async Task StaticRouteCheck_FlagsEveryDifference()
+    {
+        var outcomes = new Dictionary<string, string> { ["in5"] = "ok 1", ["in7"] = "ok 1", ["esc:A"] = "ok 1" };
+        var metadata = new Dictionary<string, string> { ["A"] = "exported" };
+        Assert.Empty(CensusRunner.RouteDifferences("cell", outcomes, metadata, outcomes, metadata));
+        var differing = new Dictionary<string, string>(outcomes) { ["in7"] = "err type" };
+        var gap = Assert.Single(CensusRunner.RouteDifferences("cell", differing, metadata, outcomes, metadata));
+        Assert.Equal(("R", "static-route-differs", "cell", "-", "in7: runtime=err type; static=ok 1"), (gap.Check, gap.Class, gap.Id, gap.Reader, gap.Detail));
+        Assert.Single(CensusRunner.RouteDifferences("cell", outcomes, metadata, new Dictionary<string, string>(outcomes) { ["esc:A"] = "invalid" }, metadata));
+        Assert.Single(CensusRunner.RouteDifferences("cell", outcomes, metadata, outcomes.Where(o => o.Key != "in5").ToDictionary(), metadata));
+        var charged = new Dictionary<string, string> { ["A"] = "LocalOnlyCapturedAncestorParameters[y@0]" };
+        var metadataGap = Assert.Single(CensusRunner.RouteDifferences("cell", outcomes, charged, outcomes, metadata));
+        Assert.Equal(("A", "metadata: runtime=LocalOnlyCapturedAncestorParameters[y@0]; static=exported"), (metadataGap.Reader, metadataGap.Detail));
+
+        // A real pair that differs: rt-alg's runtime route over its numeric Sub against the callable cell's static route.
+        var callable = CensusGrid.Build(["rt-alg-call", "value", "none", "param", "outside", "found", "container"]);
+        var failing = await CensusRunner.Run(CensusGrid.Build(["rt-alg", "value", "none", "param", "outside", "found", "container"]), collectLean: false);
+        var labels = failing.Outcomes.Keys.ToArray();
+        var (twinOutcomes, twinMetadata) = CensusRunner.TwinFacts(CensusGrid.StaticRouteTwin(callable), labels);
+        Assert.Contains(CensusRunner.RouteDifferences(callable.Id, failing.Outcomes, failing.Metadata, twinOutcomes, twinMetadata),
+            difference => difference.Detail == "in5: runtime=err type; static=ok 1");
+    }
+
+    /// <summary>
+    /// The settlement families of 0a1718d2 as census cases: the nested-read programs publish the footprint tests'
+    /// metadata (<c>Mid</c> exported, every member read back through <c>F.Mid</c> charged <c>Mid</c>'s own <c>y@0</c>) and
+    /// work inside; the re-entry programs' exported readers fail only at the impossible check their case names. No check
+    /// finds a gap.
+    /// </summary>
+    [Fact]
+    public async Task SettlementFamilies_KeepTheFootprintWitnesses_WithoutGaps()
+    {
+        var families = CensusGrid.SettlementFamilies().ToDictionary(f => f.Id, StringComparer.Ordinal);
+        Assert.Equal(11, families.Count);
+        foreach (var family in families.Values)
+        {
+            var result = await CensusRunner.Run(family, collectLean: false);
+            Assert.Null(result.Skipped);
+            Assert.True(result.Gaps.Count == 0, $"{family.Id}: {string.Join("\n", result.Gaps.Select(g => g.Line))}");
+            if (family.Id.StartsWith("settlement=nested-read-", StringComparison.Ordinal))
+            {
+                Assert.True(result.InsideWorks, family.Id);
+                foreach (var (reader, metadata) in result.Metadata)
+                    Assert.Equal(reader is "Mid" or "O" or "P" ? "exported" : "LocalOnlyCapturedAncestorParameters[y@0]", metadata);
+            }
+            else
+            {
+                Assert.All(result.Impossible, gap => Assert.Equal($"err localOnlyProperty:{family.ImpossibleSubject}", gap.Detail));
+            }
+        }
+        var reEntry = await CensusRunner.Run(families["settlement=re-entry-1"], collectLean: false);
+        Assert.Equal("exported", reEntry.Metadata["H"]);
+        Assert.Equal(("U", "impossible-check", "H"), Assert.Single(reEntry.Impossible) is var h ? (h.Check, h.Class, h.Reader) : default);
+        var hop = await CensusRunner.Run(families["settlement=re-entry-hop"], collectLean: false);
+        Assert.Contains(hop.Impossible, gap => gap.Reader == "V");
+    }
+
+    /// <summary>
+    /// The HEAD probe (<see cref="CensusHeadProbe"/>, the tracked source the <c>check-head</c> scratch project compiles) writes
+    /// exactly the protocol <see cref="ExposureCensusTests.HeadOutput"/> reads: run here against today's KatLang, its metadata
+    /// and its outcomes on all three routes are the census's own, a program that does not parse is reported on all three, and
+    /// the scratch project it writes compiles this very file.
+    /// </summary>
+    [Fact]
+    public async Task HeadProbe_WritesTheProtocolHeadOutputReads()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "katlang-census-head-probe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var @case = CensusGrid.Build(["name", "value", "none", "plain", "outside", "found", "member"]);
+            var lines = CensusRunner.Probes(@case)!.Select(p => $"{@case.Id}\t{p.Label}\t{p.Source.Replace("\n", "\\n")}")
+                .Append("broken\tin5\tF(y) = {\\n  A = \\n").ToArray();
+            var (programs, output) = (Path.Combine(directory, "head-programs.tsv"), Path.Combine(directory, "head.out"));
+            File.WriteAllLines(programs, lines);
+            Assert.Equal((lines.Length, 0), await CensusHeadProbe.RunAsync(programs, output));
+
+            var head = ExposureCensusTests.HeadOutput.Read(output);
+            head.RequireComplete(lines.Select(line => line.Split('\t')).Select(parts => (parts[0], parts[1])).ToArray());
+            var census = await CensusRunner.Run(@case, collectLean: false);
+            Assert.Equal(census.Metadata["A"], head.Metadata(@case.Id, "in5")["root.F.A"]);
+            Assert.Equal(["in5"], head.Metadata(@case.Id, "in5").Keys.Select(_ => "in5").Distinct());
+            foreach (var (label, outcome) in census.Outcomes)
+            {
+                var spelled = outcome.StartsWith("ok ", StringComparison.Ordinal) ? "OK " + outcome[3..]
+                    : outcome.StartsWith("err localOnlyProperty:", StringComparison.Ordinal) ? "FAIL LocalOnlyProperty:" + outcome["err localOnlyProperty:".Length..]
+                    : throw new InvalidOperationException($"Unexpected outcome {outcome}");
+                foreach (var suffix in new[] { "", ":async", ":forced" })
+                    Assert.Equal(spelled, head.Outcomes(@case.Id)[label + suffix]);
+            }
+            Assert.All(head.Outcomes("broken").Values, outcome => Assert.StartsWith("PARSE ", outcome, StringComparison.Ordinal));
+            Assert.Empty(head.Metadata("broken", "in5"));
+
+            var project = Path.Combine(directory, "head-probe");
+            CensusHeadProbe.WriteProject(project, ExposureCensusTests.HeadProbeSourcePath);
+            var text = File.ReadAllText(Path.Combine(project, CensusHeadProbe.ProjectFileName));
+            _ = System.Xml.Linq.XDocument.Parse(text);
+            Assert.Contains($"<Compile Include=\"{ExposureCensusTests.HeadProbeSourcePath}\"", text, StringComparison.Ordinal);
+            Assert.Contains("<AssemblyName>KatLang.Benchmarks</AssemblyName>", text, StringComparison.Ordinal);
+            Assert.Contains("<ProjectReference Include=\"$(KatLangHeadProject)\" />", text, StringComparison.Ordinal);
+            Assert.Contains("CensusHeadProbe.RunAsync(args[0], args[1])", File.ReadAllText(Path.Combine(project, CensusHeadProbe.EntryFileName)), StringComparison.Ordinal);
+            Assert.Throws<FileNotFoundException>(() => CensusHeadProbe.WriteProject(project, Path.Combine(directory, "missing.cs")));
+            Assert.Contains(CensusHeadProbe.Steps(directory), step => step.Contains($"git archive {CensusHeadProbe.Revision} ", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void SourceRunErrors_KeepCategoryAndSubject()
     {

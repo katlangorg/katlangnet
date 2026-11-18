@@ -12,7 +12,8 @@ internal sealed record CensusCase(
     IReadOnlyList<KeyValuePair<string, string>> Dims,
     string Body,
     IReadOnlyList<CensusReader> Readers,
-    string Kind = "grid")
+    string Kind = "grid",
+    string? ImpossibleSubject = null)
 {
     public string Dim(string name) => Dims.First(d => d.Key == name).Value;
 }
@@ -71,6 +72,32 @@ internal static class CensusGrid
     public static IReadOnlyList<string[]> DimensionValues =>
         [Heads, Positions, OpenLevels, ReaderKinds, Places, Ends, Requirements];
 
+    // THE EXTENSION (2026-11-17): dimension values that only GenerateExtension builds, so that the grid above keeps
+    // its cells, its stored cover and every count. Its cells are the combinations of the widened dimensions that use a
+    // new value; their own cover is census-extension-subset.txt.
+    //
+    // Heads. `rt-capture` is a runtime head whose value reads nothing of F: `L = Cap(Seed()).Algorithm`, the
+    // algorithm of a captured call of `Seed = 3` (`Cap(meta op) = op`). A dot on it is a runtime dot, as on
+    // `rt-param`'s `L = y`, but no y reaches the reader through L, so an intermediate fallback edge that reads y is
+    // the reader's only charge (the witness rt-param and rt-member cannot give: their head already charges y).
+    // `rt-alg-call` is rt-alg made callable: the same `L = <path>.Algorithm`, over a fixture whose Sub returns a
+    // captured call, `Cap(Run())`, of its member `public Run = <Sub's former row>`, so the `.Algorithm` step yields
+    // Run's algorithm and the cells produce values (rt-alg applies it to Sub's number and fails with a type error).
+    // Its static-route twin selects `<path>.Run` instead (check R of CensusRunner.Run).
+    public static readonly string[] ExtensionHeads = ["rt-capture", "rt-alg-call"];
+
+    // Endings. `result-member` misses at an intermediate edge and then reads a MEMBER OF THE FALLBACK'S RESULT. A
+    // fallback continues by value and a KatLang value has no declared members (a block a fallback returns is evaluated
+    // to its rows, and `.V` after it is itself an extension fallback), so the members a result can have are the
+    // intrinsics of a call reference: the fallback returns `Cap(Mk(0))` for its local `Mk(k)`, and the selection reads
+    // `.Invoke()` (`.Algorithm(1)` in the callee position), which runs `Mk` and so reads the fallback's receiver.
+    public static readonly string[] ExtensionEnds = ["result-member"];
+
+    public static readonly string[] AllHeads = [.. Heads, .. ExtensionHeads];
+    public static readonly string[] AllEnds = [.. Ends, .. ExtensionEnds];
+
+    public static bool IsExtension(string head, string end) => ExtensionHeads.Contains(head) || ExtensionEnds.Contains(end);
+
     public static bool IsOpenPosition(string pos) => pos is "open" or "open-dotted";
 
     public static string IdOf(IReadOnlyList<string> values)
@@ -101,30 +128,47 @@ internal static class CensusGrid
                 return "a missing member ends only a value read or an open target";
             case "mid-fallback" when IsOpenPosition(pos):
                 return "an open target never calls a lexical fallback, so it has no intermediate fallback edge";
+            case "result-member" when IsOpenPosition(pos):
+                return "an open target never calls a lexical fallback, so it has no fallback result to read a member of";
         }
         if (req == "fallback")
         {
             if (IsOpenPosition(pos)) return "an open target never calls a lexical fallback that could read y";
-            if (pos != "fallback" && end is not ("missing" or "mid-fallback"))
-                return "the selection calls no Missing fallback (only a missing or mid-fallback ending or the fallback position does)";
+            if (pos != "fallback" && end is not ("missing" or "mid-fallback" or "result-member"))
+                return IsExtension(head, end)
+                    ? "the selection calls no Missing fallback (only a missing, mid-fallback or result-member ending or the fallback position does)"
+                    : "the selection calls no Missing fallback (only a missing or mid-fallback ending or the fallback position does)";
             if (head == "rt-alg")
                 return "rt-alg's L = <path>.Algorithm fails (type) on Sub's numeric value before any fallback reads y";
         }
         return null;
     }
 
+    /// <summary>The grid of <see cref="Heads"/> × … × <see cref="Ends"/> (the cells, cover and counts every mode pins).</summary>
     public static (IReadOnlyList<CensusCase> Cases, IReadOnlyList<CensusExclusion> Excluded) Generate()
+        => Generate(Heads, Ends, extension: false);
+
+    /// <summary>
+    /// THE EXTENSION GRID: every combination of <see cref="AllHeads"/> × … × <see cref="AllEnds"/> that uses an
+    /// <see cref="ExtensionHeads"/> head or an <see cref="ExtensionEnds"/> ending, in generation order. It is disjoint
+    /// from <see cref="Generate()"/>, whose cells it never alters, and the two together are the widened grid.
+    /// </summary>
+    public static (IReadOnlyList<CensusCase> Cases, IReadOnlyList<CensusExclusion> Excluded) GenerateExtension()
+        => Generate(AllHeads, AllEnds, extension: true);
+
+    private static (IReadOnlyList<CensusCase> Cases, IReadOnlyList<CensusExclusion> Excluded) Generate(string[] heads, string[] ends, bool extension)
     {
         var cases = new List<CensusCase>();
         var excluded = new List<CensusExclusion>();
-        foreach (var head in Heads)
+        foreach (var head in heads)
         foreach (var pos in Positions)
         foreach (var open in OpenLevels)
         foreach (var reader in ReaderKinds)
         foreach (var place in Places)
-        foreach (var end in Ends)
+        foreach (var end in ends)
         foreach (var req in Requirements)
         {
+            if (extension != IsExtension(head, end)) continue;
             string[] values = [head, pos, open, reader, place, end, req];
             var id = IdOf(values);
             if (Exclusion(head, pos, open, reader, place, end, req) is { } reason)
@@ -137,13 +181,13 @@ internal static class CensusGrid
         return (cases, excluded);
     }
 
-    public static CensusCase Build(IReadOnlyList<string> v) => Build(v, rowsTwin: false);
+    public static CensusCase Build(IReadOnlyList<string> v) => Build(v, "grid");
 
-    private static CensusCase Build(IReadOnlyList<string> v, bool rowsTwin)
+    private static CensusCase Build(IReadOnlyList<string> v, string kind)
     {
-        var builder = new ProgramShape(v[0], v[1], v[2], v[3], v[4], v[5], v[6], rowsTwin);
+        var builder = new ProgramShape(v[0], v[1], v[2], v[3], v[4], v[5], v[6], kind == "deconstruction-twin", kind == "static-route-twin");
         var dims = DimensionNames.Select((name, i) => new KeyValuePair<string, string>(name, v[i])).ToArray();
-        return new CensusCase(IdOf(v), dims, builder.Body(), builder.Readers(), rowsTwin ? "deconstruction-twin" : "grid");
+        return new CensusCase(IdOf(v), dims, builder.Body(), builder.Readers(), kind);
     }
 
     /// <summary>
@@ -162,7 +206,25 @@ internal static class CensusGrid
     {
         if (@case.Kind != "grid" || @case.Dims.Count == 0 || @case.Dim("pos") != "deconstruction")
             throw new ArgumentException($"Only a pos=deconstruction grid cell has a rows twin: {@case.Id}", nameof(@case));
-        return Build(@case.Dims.Select(d => d.Value).ToArray(), rowsTwin: true);
+        return Build(@case.Dims.Select(d => d.Value).ToArray(), "deconstruction-twin");
+    }
+
+    /// <summary>
+    /// THE STATIC-ROUTE TWIN of a <c>head=rt-alg-call</c> cell: the same program with <c>L = &lt;path&gt;.Algorithm</c>
+    /// replaced by <c>L = &lt;path&gt;.Run</c>, the static selection of the algorithm whose call Sub's row captures; the
+    /// dimensions, the readers and every other line are the cell's own. The runtime route evaluates Sub, takes its call
+    /// reference's algorithm and reads it as a value (it needs no argument, so reading runs it); the static route selects
+    /// that same algorithm by name. Every dot the reader writes on <c>L</c> then dispatches on the same value, and both
+    /// references read Run (and through it Sub's former row) in L's own scope, so the two programs must give the same
+    /// outcome on every probe and the same reader metadata (check R of <see cref="CensusRunner.Run"/>). Open positions are
+    /// compared too: OD-C opens the runtime reference's own namespace, but every valid cell of this fixture must still
+    /// agree with its static route on the observed outcomes and metadata.
+    /// </summary>
+    public static CensusCase StaticRouteTwin(CensusCase @case)
+    {
+        if (@case.Kind != "grid" || @case.Dims.Count == 0 || @case.Dim("head") != "rt-alg-call")
+            throw new ArgumentException($"Only a head=rt-alg-call grid cell has a static-route twin: {@case.Id}", nameof(@case));
+        return Build(@case.Dims.Select(d => d.Value).ToArray(), "static-route-twin");
     }
 
     public static CensusCase? TryParseId(string id)
@@ -234,13 +296,16 @@ internal static class CensusGrid
     /// reading site too, and an intermediate or final fallback reads its receiver only after the path has selected
     /// it there.</item>
     /// </list>
-    /// A runtime head (<c>rt-param</c>, <c>rt-member</c>) selects nothing statically.
+    /// A runtime head (<c>rt-param</c>, <c>rt-member</c>, <c>rt-capture</c>) selects nothing statically; the callable
+    /// <c>rt-alg-call</c> navigates its route in the reference's own scope, as <c>rt-alg</c> does. A settlement case
+    /// carries its impossible member, derived from its own program (<see cref="CensusCase.ImpossibleSubject"/>).
     /// </summary>
     public static string? ImpossibleMember(CensusCase @case)
     {
+        if (@case.Kind == "settlement") return @case.ImpossibleSubject;
         if (@case.Dims.Count == 0 || @case.Dim("req") != "deep") return null;
         var (head, pos, place) = (@case.Dim("head"), @case.Dim("pos"), @case.Dim("place"));
-        if (head is "rt-param" or "rt-member") return null;
+        if (head is "rt-param" or "rt-member" or "rt-capture") return null;
         if (head is "block" or "group-block" or "blockref") return "Sub";
         if (IsOpenPosition(pos)) return ConsultedLevelIsInsideMid(@case.Dim("open"), @case.Dim("reader"), place) ? null : "Sub";
         return head is "name" or "group-name" && place == "in-mid" ? null : "Sub";
@@ -287,10 +352,69 @@ internal static class CensusGrid
     }
 
     /// <summary>
+    /// THE SETTLEMENT FAMILIES (2026-11-17): the nested-read and re-entry witnesses of
+    /// <see cref="ExposureSettlementFootprintTests"/> (0a1718d2), written as census cases inside <c>F(y)</c> so that
+    /// every check of <see cref="CensusRunner.Run"/> examines them. The nested-read programs read a member of
+    /// <c>Mid(y)</c> back through <c>F.Mid</c> from inside <c>Mid</c>, one to three frames deep (the footprint must
+    /// keep the settlement under <c>Mid</c> apart from the one without it); <c>Mid</c> is called with <c>y + 2</c>
+    /// (the footprint tests' <c>Mid(7)</c>) so that the inside probes depend on the activation. The re-entry programs
+    /// reach <c>F.G</c> from the off-chain <c>K.M</c> and from <c>F</c> itself, and the hop program reads
+    /// <c>F.Mid.X</c> from <c>Mid</c>'s sibling <c>Hop</c>. A check made at <c>K.M</c>'s or <c>Hop</c>'s site can
+    /// never pass there, so it charges nothing (owner decision Q1, 2026-11-14): each re-entry case names that member
+    /// as its <see cref="CensusCase.ImpossibleSubject"/>, derived from the program and not from its metadata.
+    /// </summary>
+    public static IReadOnlyList<CensusCase> SettlementFamilies()
+    {
+        static CensusReader R(string label, string path, string escaped) => new(label, path.Split('.'), escaped);
+        static CensusCase Family(string name, string body, string? impossible, params CensusReader[] readers)
+            => new($"settlement={name}", [], body, readers, "settlement", impossible);
+        CensusReader[] mid = [R("Mid", "F.Mid", "F.Mid(1)"), R("X", "F.Mid.X", "F.Mid.X")];
+        const string offChain = "K = {\n  public M(z) = F.G + z\n}\n";
+        return
+        [
+            Family("nested-read-1", "F(y) = {\n  Mid(y) = {\n    public X = y\n    Read = F.Mid.X\n    Read\n  }\n  Mid(y + 2)\n}\n", null,
+                [.. mid, R("Read", "F.Mid.Read", "F.Mid.Read")]),
+            Family("nested-read-2", "F(y) = {\n  Mid(y) = {\n    public X = y\n    public Y = F.Mid.X\n    Read = F.Mid.Y\n    Read\n  }\n  Mid(y + 2)\n}\n", null,
+                [.. mid, R("Y", "F.Mid.Y", "F.Mid.Y"), R("Read", "F.Mid.Read", "F.Mid.Read")]),
+            Family("nested-read-3",
+                "F(y) = {\n  Mid(y) = {\n    public X = y\n    public Y = F.Mid.X + 1\n    public Z = F.Mid.Y + 1\n    Read = F.Mid.Z\n    Read\n  }\n  Mid(y + 2)\n}\n", null,
+                [.. mid, R("Y", "F.Mid.Y", "F.Mid.Y"), R("Z", "F.Mid.Z", "F.Mid.Z"), R("Read", "F.Mid.Read", "F.Mid.Read")]),
+            Family("nested-read-4", "F(y) = {\n  Mid(y) = {\n    public X = y\n    public Y(k) = F.Mid.X + k\n    Read = F.Mid.Y(1)\n    Read\n  }\n  Mid(y + 2)\n}\n", null,
+                [.. mid, R("Y", "F.Mid.Y", "F.Mid.Y(1)"), R("Read", "F.Mid.Read", "F.Mid.Read")]),
+            // Two owners with the same parameter spelling around the same nested-read shape (SameNamedParametersOfDistinctOwners).
+            Family("nested-read-owners",
+                "F(y) = {\n  O(y) = {\n    Mid(y) = {\n      public X = y\n      public Y = O.Mid.X\n      Read = O.Mid.Y\n      Read\n    }\n    Mid(y + 2)\n  }\n"
+                + "  P(y) = {\n    Mid(y) = {\n      public X = y\n      public Y = P.Mid.X\n      Read = P.Mid.Y\n      Read\n    }\n    Mid(y + 3)\n  }\n  O(y) + P(y)\n}\n", null,
+                R("O", "F.O", "F.O(1)"), R("P", "F.P", "F.P(1)"), R("OX", "F.O.Mid.X", "F.O.Mid.X"),
+                R("ORead", "F.O.Mid.Read", "F.O.Mid.Read"), R("PRead", "F.P.Mid.Read", "F.P.Mid.Read")),
+            Family("re-entry-1", offChain + "F(y) = {\n  public G = y + 1\n  public H = K.M(1)\n  H\n}\n", "G",
+                R("G", "F.G", "F.G"), R("H", "F.H", "F.H")),
+            Family("re-entry-2", "F(y) = {\n  public G = y + 1\n  public H(k) = K.M(1) + k\n  H(1)\n}\n" + offChain, "G",
+                R("G", "F.G", "F.G"), R("H", "F.H", "F.H(1)")),
+            Family("re-entry-3", "F(y) = {\n  public G = y + 1\n  public H(k) = F.G + k\n  public H3(k) = F.G + k\n  H3(1)\n}\n" + offChain, "G",
+                R("G", "F.G", "F.G"), R("H", "F.H", "F.H(1)"), R("H3", "F.H3", "F.H3(1)")),
+            Family("re-entry-4", "F(y) = {\n  public G = y + 1\n  public H(k) = F.G + k\n  public H3(k) = K.M(1) + k\n  H3(1)\n}\n" + offChain, "G",
+                R("G", "F.G", "F.G"), R("H", "F.H", "F.H(1)"), R("H3", "F.H3", "F.H3(1)")),
+            Family("re-entry-5", "F(y) = {\n  public G = y + 1\n  public H(k) = F.G + k\n  H(1)\n}\n" + offChain, "G",
+                R("G", "F.G", "F.G"), R("H", "F.H", "F.H(1)")),
+            Family("re-entry-hop",
+                "F(y) = {\n  Mid(y) = {\n    public X = y\n    public Y = Hop.V\n    Read = F.Mid.Y\n    Read\n  }\n  Hop = {\n    public V = F.Mid.X\n  }\n  Mid(y + 2)\n}\n", "X",
+                [.. mid, R("Y", "F.Mid.Y", "F.Mid.Y"), R("Read", "F.Mid.Read", "F.Mid.Read"), R("V", "F.Hop.V", "F.Hop.V")]),
+        ];
+    }
+
+    /// <summary>
     /// A deterministic subset covering every combination of three dimension values that occurs in some
     /// case of <paramref name="cases"/> (greedy covering array; ties broken by generation order).
     /// </summary>
-    public static IReadOnlyList<CensusCase> ThreeWayCover(IReadOnlyList<CensusCase> cases)
+    public static IReadOnlyList<CensusCase> ThreeWayCover(IReadOnlyList<CensusCase> cases) => ThreeWayCover(cases, covered: null);
+
+    /// <summary>
+    /// The greedy cover of every triple of <paramref name="cases"/> that <paramref name="covered"/> lacks (the extension's
+    /// cover: the extension cells' triples that no valid cell of the grid has, so that the two stored covers together hold
+    /// every valid triple of the widened grid). With no <paramref name="covered"/> it is <see cref="ThreeWayCover(IReadOnlyList{CensusCase})"/>.
+    /// </summary>
+    public static IReadOnlyList<CensusCase> ThreeWayCover(IReadOnlyList<CensusCase> cases, IReadOnlySet<string>? covered)
     {
         var dims = DimensionNames.Length;
         var triples = new List<(int, int, int)>();
@@ -306,6 +430,7 @@ internal static class CensusGrid
             keysOf[i] = triples.Select(t => $"{t.Item1}={v[t.Item1].Value};{t.Item2}={v[t.Item2].Value};{t.Item3}={v[t.Item3].Value}").ToArray();
             uncovered.UnionWith(keysOf[i]);
         }
+        if (covered is not null) uncovered.ExceptWith(covered);
         var chosen = new List<CensusCase>();
         var taken = new bool[cases.Count];
         while (uncovered.Count > 0)
@@ -332,7 +457,10 @@ internal static class CensusGrid
         return chosen;
     }
 
-    public static int TripleCount(IReadOnlyList<CensusCase> cases)
+    public static int TripleCount(IReadOnlyList<CensusCase> cases) => Triples(cases).Count;
+
+    /// <summary>Every combination of three dimension values that occurs in some case (the keys the cover counts).</summary>
+    public static HashSet<string> Triples(IReadOnlyList<CensusCase> cases)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
         var dims = DimensionNames.Length;
@@ -341,11 +469,15 @@ internal static class CensusGrid
                 for (var b = a + 1; b < dims; b++)
                     for (var c = b + 1; c < dims; c++)
                         keys.Add($"{a}={@case.Dims[a].Value};{b}={@case.Dims[b].Value};{c}={@case.Dims[c].Value}");
-        return keys.Count;
+        return keys;
     }
 
-    /// <summary>The program text of one grid cell (with <paramref name="rowsTwin"/>, its <see cref="DeconstructionTwin"/>).</summary>
-    private sealed class ProgramShape(string head, string pos, string open, string reader, string place, string end, string req, bool rowsTwin)
+    /// <summary>
+    /// The program text of one grid cell (with <paramref name="rowsTwin"/>, its <see cref="DeconstructionTwin"/>; with
+    /// <paramref name="staticRoute"/>, its <see cref="StaticRouteTwin"/>).
+    /// </summary>
+    private sealed class ProgramShape(string head, string pos, string open, string reader, string place, string end, string req, bool rowsTwin,
+        bool staticRoute = false)
     {
         private readonly string[] _path = place switch
         {
@@ -361,8 +493,10 @@ internal static class CensusGrid
         private string G => req == "member" ? "x + y" : "x";
         private string SubRow => req switch { "container" => "y", "deep" => "p", _ => "0" };
 
-        private string Sub()
-            => $"public Sub = {{\n  public Q = {Q}\n  public G(x) = {G}\n  public T = {{\n    public Q = {Q}\n  }}\n  {SubRow}\n}}";
+        // The callable variant of rt-alg-call: Sub's row moves into its member Run, and Sub returns a captured call of Run.
+        private string Sub() => head == "rt-alg-call"
+            ? $"public Sub = {{\n  public Q = {Q}\n  public G(x) = {G}\n  public T = {{\n    public Q = {Q}\n  }}\n  public Run = {SubRow}\n  Cap(Run())\n}}"
+            : $"public Sub = {{\n  public Q = {Q}\n  public G(x) = {G}\n  public T = {{\n    public Q = {Q}\n  }}\n  {SubRow}\n}}";
 
         // Requirement ownership is independent of reader placement. A reader outside Mid can still
         // select Mid.Sub; its eventual access failure is census evidence, not a generation exclusion.
@@ -382,7 +516,8 @@ internal static class CensusGrid
             return $"{{\n{Indent(inner, 2)}\n}}.{tail}";
         }
 
-        private bool Runtime => head is "rt-param" or "rt-member" or "rt-alg";
+        // A head whose dots are runtime dots on L's value, answered by F's fallbacks Q and G.
+        private bool RuntimeValueHead => head is "rt-param" or "rt-member" or "rt-capture" or "rt-alg-call";
 
         // The written container, as the reader's expression spells it, and the references it needs.
         private (string Container, string[] Declarations) Head() => head switch
@@ -398,6 +533,8 @@ internal static class CensusGrid
             "rt-param" => ("L", ["L = y"]),
             "rt-member" => ("L", ["L = y.C"]),
             "rt-alg" => ("L", [$"L = {Path}.Algorithm"]),
+            "rt-capture" => ("L", ["Seed = 3", "L = Cap(Seed()).Algorithm"]),
+            "rt-alg-call" => ("L", [staticRoute ? $"L = {Path}.Run" : $"L = {Path}.Algorithm"]),
             "opened" => (string.Join(".", _path.Skip(1)), []),
             _ => throw new ArgumentOutOfRangeException(nameof(head), head, null),
         };
@@ -417,14 +554,19 @@ internal static class CensusGrid
             {
                 ("value", "missing") => $"{container}.Missing + 0",
                 ("value", "mid-fallback") => $"{container}.Missing.Next + 0",
+                ("value", "result-member") => $"{container}.Missing.Invoke() + 0",
                 ("value", _) => $"{container}{Step}.Q + 0",
-                // The intermediate miss's continuation is the final edge, here a call (`Next(v, k)`).
+                // The intermediate miss's continuation is the final edge, here a call (`Next(v, k)`; for a member of the
+                // fallback's result, the captured algorithm called afresh, `Mk(1)`).
                 ("callee", "mid-fallback") => $"{container}.Missing.Next(1) + 0",
+                ("callee", "result-member") => $"{container}.Missing.Algorithm(1) + 0",
                 ("callee", _) => $"{container}{Step}.G(1) + 0",
                 ("spread", "mid-fallback") => $"sum({container}.Missing.Next*) + 0",
+                ("spread", "result-member") => $"sum({container}.Missing.Invoke()*) + 0",
                 ("spread", _) => $"sum({container}{Step}.Q*) + 0",
                 // The found member is the receiver: the miss after it is intermediate (the audit's `Box.S.T.U`).
                 ("fallback", "mid-fallback") => $"{container}.Q.Missing.Next + 0",
+                ("fallback", "result-member") => $"{container}.Q.Missing.Invoke() + 0",
                 ("fallback", _) => $"{container}.Q.Missing + 0",
                 // A deconstruction, then the row returning its targets; the rows twin returns the right-hand side itself.
                 ("deconstruction", _) => rowsTwin
@@ -440,6 +582,7 @@ internal static class CensusGrid
         {
             "missing" => $"{container}.Missing",
             "mid-fallback" => $"{container}.Missing.Next",
+            "result-member" => $"{container}.Missing.Invoke()",
             _ => $"{container}{Step}.Q",
         };
 
@@ -519,15 +662,22 @@ internal static class CensusGrid
             };
 
             var members = new List<string> { lib, "Other = {\n  public X = 1\n  public Z = 2\n}" };
+            // The extension's call references: the rt-capture and rt-alg-call heads and a result-member fallback capture.
+            if (head is "rt-capture" or "rt-alg-call" || (!CensusGrid.IsOpenPosition(pos) && end == "result-member"))
+                members.Add("Cap(meta op) = op");
             members.AddRange(declarations);
             // Every fallback READS its receiver (`r * 0`), so the receiver's value is a read the evaluator
             // performs; the unread form is the fixed case `fallback-unread-receiver`. Under `req=fallback` the
-            // callee `Missing` also reads `y`; the continuation `Next` of an intermediate miss never does.
-            if (!CensusGrid.IsOpenPosition(pos) && (pos == "fallback" || end is "missing" or "mid-fallback"))
+            // callee `Missing` also reads `y`; the continuation `Next` of an intermediate miss never does. A
+            // result-member ending's `Missing` returns a captured call of its local `Mk`, which reads the receiver
+            // (and y) when the selection's `.Invoke()` or `.Algorithm(1)` runs it.
+            if (!CensusGrid.IsOpenPosition(pos) && end == "result-member")
+                members.Add($"Missing(r) = {{\n  Mk(k) = r * 0 + k + {(req == "fallback" ? "y" : "2")}\n  Cap(Mk(0))\n}}");
+            else if (!CensusGrid.IsOpenPosition(pos) && (pos == "fallback" || end is "missing" or "mid-fallback"))
                 members.Add(req == "fallback" ? "Missing(r) = r * 0 + y" : "Missing(r) = r * 0 + 2");
             if (!CensusGrid.IsOpenPosition(pos) && end == "mid-fallback")
                 members.Add(pos == "callee" ? "Next(v, k) = v + k" : "Next(v) = v");
-            if (head is "rt-param" or "rt-member" && !CensusGrid.IsOpenPosition(pos))
+            if (RuntimeValueHead && !CensusGrid.IsOpenPosition(pos))
             {
                 members.Add("Q(r) = r * 0 + 1");
                 members.Add("G(r, k) = r * 0 + k");
