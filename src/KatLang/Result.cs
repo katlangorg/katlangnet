@@ -1169,19 +1169,21 @@ public closed record Result
     /// a <c>null</c> as the value-kind error naming its role.
     /// Lean: <c>Result.asBool?</c>.
     /// </summary>
-    public bool? AsBool()
+    public bool? AsBool() => BooleanOf(ScalarViewTerminal(observations: null));
+
+    /// <summary>
+    /// <see cref="AsBool"/> with a passive observer recording the sequence boundaries the view
+    /// reads (<see cref="ValueTraversalObservations.ScalarViewSequenceInspectionCount"/>). The
+    /// observer changes neither the answer nor the walk. Used only by the scalar-view regressions.
+    /// </summary>
+    internal bool? AsBoolObserved(ValueTraversalObservations observations)
+        => BooleanOf(ScalarViewTerminal(observations));
+
+    private static bool? BooleanOf(Result terminal) => terminal switch
     {
-        return this switch
-        {
-            Bool(var b) => b,
-            SequenceValue => Normalize() switch
-            {
-                Bool(var b) => b,
-                _ => null,
-            },
-            _ => null,
-        };
-    }
+        Bool(var b) => b,
+        _ => null,
+    };
 
     /// <summary>
     /// Strict numeric extraction for numeric collection builtins such as
@@ -1204,21 +1206,57 @@ public closed record Result
     /// List values never coerce to numbers, not even <c>[5]</c>.
     /// Lean: Result.asInt?
     /// </summary>
-    public Decimal128? AsNum()
+    public Decimal128? AsNum() => NumberOf(ScalarViewTerminal(observations: null));
+
+    /// <summary>
+    /// <see cref="AsNum"/> with a passive observer recording the sequence boundaries the view
+    /// reads (<see cref="ValueTraversalObservations.ScalarViewSequenceInspectionCount"/>). The
+    /// observer changes neither the answer nor the walk. Used only by the scalar-view regressions.
+    /// </summary>
+    internal Decimal128? AsNumObserved(ValueTraversalObservations observations)
+        => NumberOf(ScalarViewTerminal(observations));
+
+    private static Decimal128? NumberOf(Result terminal) => terminal switch
     {
-        return this switch
+        Atom(var n) => n, // the stored Decimal128, quantum and zero sign included
+        Str _ => null,
+        Bool _ => null, // Booleans are not numbers: no implicit conversion
+        SequenceValue _ => null, // a deciding boundary: empty or multi-item, never one number
+        ListValue _ => null,
+        CallReference _ => null, // a call reference is no number
+    };
+
+    /// <summary>
+    /// The value a SCALAR view (<see cref="AsNum"/>, <see cref="AsBool"/>) decides on: this value
+    /// with every redundant singleton sequence wrapper peeled, iteratively, so a deep unary spine
+    /// costs no host stack. Peeling stops at the first value that is not a one-item sequence.
+    ///
+    /// <para>This is the scalar answer of <see cref="Normalize"/> without the rebuild. A sequence's
+    /// normal form keeps its item count (Lean <c>Result.normalize</c> maps its items) and collapses
+    /// to its one normalized child exactly when that count is one; a list keeps its boundary; a leaf
+    /// is its own normal form. So a value normalizes to a scalar if and only if peeling reaches that
+    /// scalar, and it is the same object — the exact <see cref="Decimal128"/> payload survives. An
+    /// empty or multi-item sequence, or a list, at the stopping point can never become a scalar,
+    /// however normalizable its children are, so they are never read: the work is the unary depth
+    /// plus at most one deciding sequence, independent of the width of the value that decides the
+    /// answer, and nothing is allocated.</para>
+    ///
+    /// <para>One helper serves both views so the rule is stated once. It is inlined, so peeling
+    /// adds no call and the public views' <c>null</c> observer folds away.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private Result ScalarViewTerminal(ValueTraversalObservations? observations)
+    {
+        var value = this;
+        while (value is SequenceValue(var items))
         {
-            Atom(var n) => n,
-            Str _ => null,
-            Bool _ => null, // Booleans are not numbers: no implicit conversion
-            SequenceValue(var items) => Normalize() switch
-            {
-                Atom(var n) => n,
-                _ => null,
-            },
-            ListValue _ => null,
-            CallReference _ => null, // a call reference is no number
-        };
+            observations?.RecordScalarViewSequenceInspection();
+            if (items.Count != 1)
+                break;
+            value = items[0];
+        }
+
+        return value;
     }
 
     /// <summary>

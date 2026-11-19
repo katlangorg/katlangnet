@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using KatLang.Rendering;
 
 namespace KatLang.Tests;
@@ -383,5 +384,32 @@ public sealed class NumericRepresentativeSelectionTests
         Assert.Equal(
             "ok S[1.50, -0, 1.50, L[-0, 1.50], 1.50, L[-0.0, 1.50]]",
             await AgreedAsync("A = 1.50\nB = -0\nId(v) = v\nColl(*xs) = xs\nA, Id(B), (A, B)[0], Coll(B, A), [A, 2][0], order((1.50, -0.0))"));
+    }
+
+    [Theory]
+    [InlineData("1.50")]
+    [InlineData("-0")]
+    [InlineData("-0.0")]
+    [InlineData("1e3")]
+    [InlineData("sqrt(-1)")]
+    [InlineData("sign(sqrt(-1))")]
+    [InlineData("(-1e6144 * 10)")]
+    public void NumericView_KeepsTheRepresentation_ThroughRedundantSingletonBoundaries(string number)
+    {
+        // Result.AsNum (Lean asInt?) reads a number through any depth of redundant singleton
+        // sequence boundaries — a shape hosts may build — and returns the stored datum itself:
+        // quantum, zero sign and NaN sign included, never a canonical representative.
+        var evaluated = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(number).Root));
+        var atom = Assert.IsType<Result.Atom>(evaluated.Value);
+        Result value = atom;
+        for (var depth = 0; depth <= 5; depth++)
+        {
+            var viewed = value.AsNum();
+            Assert.NotNull(viewed);
+            Assert.Equal(Number(atom.Value), Number(viewed.Value));
+            Assert.Equal(Unsafe.BitCast<Decimal128, UInt128>(atom.Value), Unsafe.BitCast<Decimal128, UInt128>(viewed.Value));
+            Assert.Null(value.AsBool());
+            value = Result.SequenceValue.TakeOwnership([value]);
+        }
     }
 }

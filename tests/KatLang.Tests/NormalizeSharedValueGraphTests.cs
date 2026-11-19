@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace KatLang.Tests;
@@ -745,6 +747,360 @@ public class NormalizeSharedValueGraphTests
         _ => value,
     };
 
+    // ── Scalar views decide from sequence shape ──────────────────────────────────────────────
+    //
+    // Result.AsNum and Result.AsBool (Lean asInt? / asBool?) are DEFINED by normalization: a value
+    // has a number or a truth value exactly when its normal form is that scalar. A sequence's
+    // normal form keeps its item count and collapses only at one item, and a list never
+    // collapses, so the views peel singleton sequence wrappers and decide at the first value that
+    // is not one. They never read past that boundary and never normalize. Full normalization stays
+    // the oracle here, and the views' work — ScalarViewSequenceInspectionCount, one per sequence
+    // whose count they read — is the unary depth plus at most one deciding boundary.
+
+    private const int DeepUnaryDepth = 100_000;
+
+    private static Decimal128 D(string text) => Decimal128.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
+
+    /// <summary>The 128 bits of a number: its representation (quantum, zero sign), not merely its value.</summary>
+    private static UInt128 Bits(Decimal128 value) => Unsafe.BitCast<Decimal128, UInt128>(value);
+
+    /// <summary><paramref name="depth"/> redundant singleton sequence wrappers around <paramref name="terminal"/>.</summary>
+    private static Result Spine(int depth, Result terminal)
+    {
+        var node = terminal;
+        for (var i = 0; i < depth; i++)
+            node = Seq(node);
+        return node;
+    }
+
+    /// <summary>What the scalar views must answer, read off a full normal form.</summary>
+    private static (Decimal128? Number, bool? Truth) ViewsOfNormalForm(Result normal) => normal switch
+    {
+        Result.Atom(var number) => (number, null),
+        Result.Bool(var truth) => (null, truth),
+        _ => (null, null),
+    };
+
+    /// <summary>
+    /// Both views of <paramref name="value"/> against <paramref name="normal"/>, its full normal
+    /// form: the same answer (a number bit for bit), exactly <paramref name="inspections"/>
+    /// sequence reads per view, no normalization, and the public observer-free views agreeing.
+    /// </summary>
+    private static void AssertScalarViews(Result value, Result normal, long inspections)
+    {
+        var (number, truth) = ViewsOfNormalForm(normal);
+        var observations = Observations();
+
+        var observedNumber = value.AsNumObserved(observations);
+        Assert.Equal(inspections, observations.ScalarViewSequenceInspectionCount);
+        var observedTruth = value.AsBoolObserved(observations);
+        Assert.Equal(2 * inspections, observations.ScalarViewSequenceInspectionCount);
+        Assert.Equal(0, observations.NormalizeStructureExpansionCount);
+
+        var publicNumber = value.AsNum();
+        Assert.Equal(number.HasValue, observedNumber.HasValue);
+        Assert.Equal(number.HasValue, publicNumber.HasValue);
+        if (number is { } expected)
+        {
+            Assert.Equal(Bits(expected), Bits(observedNumber!.Value));
+            Assert.Equal(Bits(expected), Bits(publicNumber!.Value));
+        }
+
+        Assert.Equal(truth, observedTruth);
+        Assert.Equal(truth, value.AsBool());
+    }
+
+    private static void AssertScalarViews(Result value, long inspections)
+        => AssertScalarViews(value, value.Normalize(), inspections);
+
+    /// <summary>
+    /// One generated value, with facts derived COMPOSITIONALLY from its construction rather than by
+    /// peeling: <see cref="Inspections"/> is the work the scalar views are allowed (a singleton
+    /// sequence costs one plus its child's, any other sequence one, a list or a leaf nothing), and
+    /// <see cref="TreeSize"/> the path-expanded node count (saturating), which gates the recursive
+    /// oracle.
+    /// </summary>
+    private readonly record struct GeneratedValue(Result Value, long Inspections, long TreeSize);
+
+    /// <summary>
+    /// Small acyclic values from a seeded pool: every new node takes its children either from the
+    /// pool — SHARED descendants, reachable from several parents and sometimes twice from one — or
+    /// as fresh leaves, DISTINCT descendants that may be value-equal to shared ones. Leaves mix
+    /// numbers (a negative zero, a quantum-bearing and an exponent-bearing one), Booleans and a
+    /// string; half the nodes are redundant singleton wrappers, so unary spines form over every
+    /// kind of terminal, including lists holding one scalar and boundaries whose children are
+    /// themselves normalizable.
+    /// </summary>
+    private static List<GeneratedValue> GenerateAcyclicValues(int seed, int count)
+    {
+        var random = new Random(seed);
+        Func<Result>[] leaves =
+        [
+            () => new Result.Atom(D("5")),
+            () => new Result.Atom(D("1.50")),
+            () => new Result.Atom(D("-0")),
+            () => new Result.Atom(D("1E+3")),
+            () => new Result.Bool(true),
+            () => new Result.Bool(false),
+            () => new Result.Str("x"),
+        ];
+
+        var pool = new List<GeneratedValue>();
+        foreach (var leaf in leaves)
+            pool.Add(new GeneratedValue(leaf(), 0, 1));
+
+        GeneratedValue Child()
+            => random.Next(4) == 0
+                ? new GeneratedValue(leaves[random.Next(leaves.Length)](), 0, 1)
+                : pool[random.Next(pool.Count)];
+
+        GeneratedValue[] Children(int width)
+        {
+            var children = new GeneratedValue[width];
+            for (var i = 0; i < width; i++)
+                children[i] = i > 0 && random.Next(4) == 0 ? children[i - 1] : Child();
+            return children;
+        }
+
+        static long TreeSize(GeneratedValue[] children)
+            => Math.Min(1 + children.Sum(child => child.TreeSize), 1L << 40);
+
+        while (pool.Count < count)
+        {
+            var kind = random.Next(10);
+            if (kind < 5)
+            {
+                var child = Child();
+                pool.Add(new GeneratedValue(Seq(child.Value), child.Inspections + 1, TreeSize([child])));
+            }
+            else if (kind < 7)
+            {
+                var children = Children(random.Next(3) == 0 ? 0 : 2 + random.Next(3));
+                pool.Add(new GeneratedValue(Seq([.. children.Select(c => c.Value)]), 1, TreeSize(children)));
+            }
+            else
+            {
+                var children = Children(random.Next(4));
+                pool.Add(new GeneratedValue(List([.. children.Select(c => c.Value)]), 0, TreeSize(children)));
+            }
+        }
+
+        return pool;
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void ScalarViews_AgreeWithFullNormalization_OnGeneratedAcyclicValues(int seed)
+    {
+        int numbers = 0, negativeZeros = 0, truths = 0, sequenceRejections = 0, listRejections = 0, recursiveChecks = 0;
+        long deepestSpine = 0;
+
+        foreach (var generated in GenerateAcyclicValues(seed, 800))
+        {
+            var normal = generated.Value.Normalize();
+            if (generated.TreeSize <= 2_000)
+            {
+                // The production normalizer against its path-expanding replica.
+                AssertSemanticallyEqual(NaiveNormalize(generated.Value), normal);
+                recursiveChecks++;
+            }
+
+            AssertScalarViews(generated.Value, normal, generated.Inspections);
+
+            deepestSpine = Math.Max(deepestSpine, generated.Inspections);
+            switch (normal)
+            {
+                case Result.Atom(var number):
+                    numbers++;
+                    if (number == Decimal128.Zero && Decimal128.IsNegative(number))
+                        negativeZeros++;
+                    break;
+                case Result.Bool:
+                    truths++;
+                    break;
+                case Result.SequenceValue:
+                    sequenceRejections++;
+                    break;
+                case Result.ListValue:
+                    listRejections++;
+                    break;
+            }
+        }
+
+        // The generator reaches every deciding shape, so agreement is not vacuous.
+        Assert.True(numbers > 20 && negativeZeros > 0 && truths > 20, $"numbers {numbers}, -0 {negativeZeros}, truths {truths}");
+        Assert.True(sequenceRejections > 20 && listRejections > 20, $"sequences {sequenceRejections}, lists {listRejections}");
+        Assert.True(deepestSpine >= 4, $"deepest unary spine {deepestSpine}");
+        Assert.True(recursiveChecks > 200, $"recursive oracle checks {recursiveChecks}");
+    }
+
+    [Fact]
+    public void ScalarViews_DecideAtTheFirstValueThatIsNotASingletonSequence()
+    {
+        var one = Atom(1);
+        var redundantOne = Seq(Seq(one));
+
+        // A direct scalar or list reads no sequence at all.
+        AssertScalarViews(Atom(5), 0);
+        AssertScalarViews(new Result.Bool(true), 0);
+        AssertScalarViews(Str("5"), 0);
+        // A list wrapping one scalar never collapses: no number, no truth value.
+        AssertScalarViews(List(Atom(5)), 0);
+        AssertScalarViews(List(new Result.Bool(true)), 0);
+        Assert.Null(List(Atom(5)).AsNum());
+        Assert.Null(List(new Result.Bool(true)).AsBool());
+
+        // A unary spine reads one sequence per wrapper; a spine ending in a list stops there.
+        AssertScalarViews(Seq(one), 1);
+        AssertScalarViews(Spine(64, new Result.Bool(false)), 64);
+        AssertScalarViews(Spine(64, List(Atom(5))), 64);
+        AssertScalarViews(Seq(List(Seq(Atom(5)))), 1);
+
+        // Empty and multi-item sequences decide by their count alone: one read, then null.
+        AssertScalarViews(Seq(), 1);
+        AssertScalarViews(Spine(64, Seq()), 65);
+        AssertScalarViews(Seq(Atom(1), Atom(2)), 1);
+        // ...even when every child is itself normalizable to a scalar, shared or distinct.
+        AssertScalarViews(Seq(redundantOne, redundantOne), 1);
+        AssertScalarViews(Seq(redundantOne, Seq(Seq(Atom(1)))), 1);
+        AssertScalarViews(Seq(Seq(Seq(new Result.Bool(true)), Seq(new Result.Bool(true)))), 2);
+        Assert.Null(Seq(redundantOne, redundantOne).AsNum());
+
+        // Numbers and Booleans stay distinct through any spine.
+        Assert.Null(Spine(8, new Result.Bool(true)).AsNum());
+        Assert.True(Spine(8, new Result.Bool(true)).AsBool());
+        Assert.Null(Spine(8, Atom(1)).AsBool());
+        Assert.Null(Spine(8, Atom(0)).AsBool());
+        Assert.Equal((Decimal128)1, Spine(8, Atom(1)).AsNum());
+    }
+
+    [Fact]
+    public void ScalarViews_KeepTheExactDecimal128Payload()
+    {
+        // The view returns the stored number itself: zero sign, quantum and exponent included.
+        foreach (var text in new[] { "-0", "0.00", "-0.0", "1.50", "1.500", "1E+3", "-12.3400" })
+        {
+            var number = D(text);
+            foreach (var depth in new[] { 0, 1, 7 })
+            {
+                var value = Spine(depth, new Result.Atom(number));
+                AssertScalarViews(value, depth);
+                Assert.Equal(Bits(number), Bits(value.AsNum()!.Value));
+            }
+        }
+
+        Assert.True(Decimal128.IsNegative(Spine(3, new Result.Atom(D("-0"))).AsNum()!.Value));
+        Assert.NotEqual(Bits(D("1.5")), Bits(Spine(3, new Result.Atom(D("1.50"))).AsNum()!.Value));
+    }
+
+    [Fact]
+    public void ScalarViews_PeelADeepUnarySpineIteratively_InUnaryDepthWork()
+    {
+        // Far deeper than any native recursion survives; the work is exactly the unary depth
+        // (plus the deciding boundary when it is a sequence), whatever ends the spine.
+        var quantum = new Result.Atom(D("1.50"));
+        var observations = Observations();
+
+        Assert.Equal(Bits(quantum.Value), Bits(Spine(DeepUnaryDepth, quantum).AsNumObserved(observations)!.Value));
+        Assert.Equal(DeepUnaryDepth, observations.ScalarViewSequenceInspectionCount);
+
+        observations = Observations();
+        Assert.False(Spine(DeepUnaryDepth, new Result.Bool(false)).AsBoolObserved(observations));
+        Assert.Equal(DeepUnaryDepth, observations.ScalarViewSequenceInspectionCount);
+
+        observations = Observations();
+        var endsInList = Spine(DeepUnaryDepth, List(Atom(1)));
+        Assert.Null(endsInList.AsNumObserved(observations));
+        Assert.Null(endsInList.AsBoolObserved(observations));
+        Assert.Equal(2L * DeepUnaryDepth, observations.ScalarViewSequenceInspectionCount);
+
+        observations = Observations();
+        var endsInPair = Spine(DeepUnaryDepth, Seq(Atom(1), Atom(2)));
+        Assert.Null(endsInPair.AsNumObserved(observations));
+        Assert.Null(endsInPair.AsBoolObserved(observations));
+        Assert.Equal(2L * (DeepUnaryDepth + 1), observations.ScalarViewSequenceInspectionCount);
+        Assert.Equal(0, observations.NormalizeStructureExpansionCount);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(16)]
+    [InlineData(1024)]
+    [InlineData(100_000)]
+    public void ScalarViews_RejectAtTheDecidingBoundary_IndependentOfItsWidth(int width)
+    {
+        // Every item normalizes to a scalar — even items share ONE redundant wrapper, odd items are
+        // distinct ones — so only the boundary's own count decides. A view that read or normalized
+        // the children would scale with the width; this one reads the same sequences at every width.
+        var shared = Seq(Seq(Atom(1)));
+        var items = new Result[width];
+        for (var i = 0; i < width; i++)
+            items[i] = i % 2 == 0 ? shared : Seq(Seq(new Result.Bool(i % 4 == 1)));
+        var boundary = Result.SequenceValue.TakeOwnership(items);
+
+        foreach (var unaryDepth in new[] { 0, 1, 64 })
+        {
+            var value = Spine(unaryDepth, boundary);
+            var observations = Observations();
+            Assert.Null(value.AsNumObserved(observations));
+            Assert.Null(value.AsBoolObserved(observations));
+            Assert.Equal(2L * (unaryDepth + 1), observations.ScalarViewSequenceInspectionCount);
+            Assert.Equal(0, observations.NormalizeStructureExpansionCount);
+        }
+
+        // The oracle: full normalization keeps the width-item boundary, so it is never a scalar.
+        if (width <= 1024)
+        {
+            var normal = Assert.IsType<Result.SequenceValue>(Spine(64, boundary).Normalize());
+            Assert.Equal(width, normal.Items.Count);
+        }
+    }
+
+    [Fact]
+    public void ScalarViews_AllocateNothingThatGrowsWithWidthOrDepth()
+    {
+        // The reported shape — one single-number list per item — at the maximum collection width
+        // behind a unary prefix, and a deep unary spine ending in a number.
+        var wide = Spine(64, Result.SequenceValue.TakeOwnership(
+            [.. Enumerable.Range(0, 100_000).Select(i => List(Atom(i)))]));
+        var deep = Spine(DeepUnaryDepth, Atom(7));
+
+        for (var i = 0; i < 4; i++)
+        {
+            _ = wide.AsNum();
+            _ = wide.AsBool();
+            _ = deep.AsNum();
+            _ = deep.AsBool();
+        }
+
+        var answered = 0;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 32; i++)
+        {
+            if (wide.AsNum() is not null)
+                answered++;
+            if (wide.AsBool() is not null)
+                answered++;
+            if (deep.AsNum() is not null)
+                answered++;
+            if (deep.AsBool() is not null)
+                answered++;
+        }
+
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(32, answered);
+        // The views allocate nothing: a Release harness measured 0 bytes for both shapes. The
+        // in-process counter can still report up to one ~8 KiB allocation quantum during a
+        // background GC (dotnet/runtime#134724), and no ArrayPool buffer is rented, so 16 KiB
+        // allows two quanta. The normalizing views allocated about 26.5 MB per AsNum + AsBool pair
+        // at width 100,000 and about 37 MB per pair at unary depth 100,000.
+        Assert.True(allocated <= 16 * 1024, $"128 scalar-view reads allocated {allocated:N0} bytes");
+    }
+
     // ── Language-level regression ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -841,9 +1197,11 @@ public class NormalizeSharedValueGraphTests
     [Fact]
     public void SequenceValuedIndexSelector_DoesNotNormalizeSharedDagByPath()
     {
-        // ExpectInt -> Result.AsNum normalizes sequence-valued operands before rejecting a
+        // ExpectInt -> Result.AsNum once normalized sequence-valued operands before rejecting a
         // non-scalar. The selector repeats the same depth-40 DAG twice; before the memo, merely
-        // deciding that it was not one number expanded both occurrences into enormous trees.
+        // deciding that it was not one number expanded both occurrences into enormous trees. The
+        // view now decides from the selector's two-item count alone (the scalar-view section
+        // above); this pins the source route and its diagnostic.
         var expr = new Expr.AlgorithmExpr(
             SourceProvenance.ParseValid(DagProgram("[1][(A, A)]")).Root);
 

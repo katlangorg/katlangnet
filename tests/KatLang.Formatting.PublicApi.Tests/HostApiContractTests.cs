@@ -149,6 +149,28 @@ public class HostApiContractTests
             Result.ValueComparer);
     }
 
+    [Fact]
+    public void HostBuiltRedundantSingletonSequences_AreValidViewInputs()
+    {
+        // A host may wrap a scalar in any number of one-item sequences through the public
+        // constructors; both views see through them, and only through them.
+        Result number = new Result.Atom(5);
+        Result truth = new Result.Bool(true);
+        for (var i = 0; i < 10_000; i++)
+        {
+            number = new Result.SequenceValue([number]);
+            truth = new Result.SequenceValue([truth]);
+        }
+
+        Assert.Equal((Decimal128?)5, number.AsNum());
+        Assert.Null(number.AsBool());
+        Assert.True(truth.AsBool());
+        Assert.Null(truth.AsNum());
+        Assert.Null(new Result.SequenceValue([number, number]).AsNum());
+        Assert.Null(new Result.SequenceValue([new Result.ListValue([new Result.Atom(5)])]).AsNum());
+        Assert.Null(new Result.SequenceValue([new Result.ListValue([new Result.Bool(true)])]).AsBool());
+    }
+
     // ── Overload sets are unambiguous ─────────────────────────────────────────
 
     [Theory]

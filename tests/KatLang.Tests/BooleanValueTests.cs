@@ -597,6 +597,34 @@ public class BooleanValueTests
         Assert.Null(new Result.Bool(true).AsNum());
     }
 
+    [Fact]
+    public void AsBool_PeelsOnlyRedundantSingletonSequences()
+    {
+        static Result Seq(params Result[] items) => Result.SequenceValue.TakeOwnership(items);
+        static Result Spine(int depth, Result terminal)
+        {
+            for (var i = 0; i < depth; i++)
+                terminal = Seq(terminal);
+            return terminal;
+        }
+
+        // Any depth of redundant singleton boundaries normalizes away, iteratively.
+        Assert.False(Spine(100_000, new Result.Bool(false)).AsBool());
+        Assert.True(Spine(3, new Result.Bool(true)).AsBool());
+        // The first non-singleton boundary decides, even when every item is itself a redundant
+        // boundary around a Boolean: an empty or multi-item sequence is never a Boolean.
+        Assert.Null(Spine(3, Seq()).AsBool());
+        Assert.Null(Spine(3, Seq(Seq(new Result.Bool(true)), Seq(new Result.Bool(true)))).AsBool());
+        // A list boundary never collapses, under a spine or around a spine.
+        Assert.Null(Spine(3, Result.ListValue.TakeOwnership([new Result.Bool(true)])).AsBool());
+        Assert.Null(Result.ListValue.TakeOwnership([Spine(3, new Result.Bool(true))]).AsBool());
+        // Booleans and numbers stay apart through any spine: neither view reads the other kind.
+        Assert.Null(Spine(3, new Result.Bool(true)).AsNum());
+        Assert.Null(Spine(3, new Result.Atom(1)).AsBool());
+        Assert.Null(Spine(3, new Result.Atom(0)).AsBool());
+        Assert.Null(Spine(3, new Result.Str("true")).AsBool());
+    }
+
     // ── Regression: numeric truthiness is gone ──────────────────────────────
 
     [Theory]

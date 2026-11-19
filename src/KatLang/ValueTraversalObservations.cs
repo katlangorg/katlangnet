@@ -186,6 +186,21 @@ internal sealed class ValueTraversalObservations
         => NormalizeStructureExpansionCount = checked(NormalizeStructureExpansionCount + 1);
 
     /// <summary>
+    /// Number of sequence values whose immediate item count the scalar views read through their
+    /// observed entries (<c>Result.AsNumObserved</c>, <c>Result.AsBoolObserved</c>): one per
+    /// redundant singleton sequence wrapper peeled, plus one for a deciding empty or multi-item
+    /// sequence. A view stops at the first value that is not a one-item sequence, so for ONE read
+    /// this is the value's unary sequence depth plus at most one — zero for a direct scalar or a
+    /// list, and independent of the width and content of the value that decides the answer. The
+    /// views never call <see cref="Result.Normalize"/>, so they record no
+    /// <see cref="NormalizeStructureExpansionCount"/>.
+    /// </summary>
+    public long ScalarViewSequenceInspectionCount { get; private set; }
+
+    internal void RecordScalarViewSequenceInspection()
+        => ScalarViewSequenceInspectionCount = checked(ScalarViewSequenceInspectionCount + 1);
+
+    /// <summary>
     /// Number of structure NODES descended into across the <c>Result.TryLanguageAtoms</c>
     /// collections this observer measured: the top-level structure of each collection, plus every
     /// nested NON-EMPTY sequence or list value descended into. Leaves and empty structures record
