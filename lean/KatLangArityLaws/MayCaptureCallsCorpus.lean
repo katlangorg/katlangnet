@@ -21,14 +21,14 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 3964
-- guarded: 3831 (463 may capture calls, 3368 cannot)
+- corpus programs: 3966
+- guarded: 3833 (463 may capture calls, 3370 cannot)
 - excluded: 133
   language-spec: 588 programs, 477 guarded (48 may capture calls), 87 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2564 programs, 2551 guarded (53 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 687 programs, 678 guarded (354 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
-  host-parent: 106 programs, 106 guarded (8 may capture calls)
+  host-parent: 108 programs, 108 guarded (8 may capture calls)
 
 Exclusion rules that currently exclude nothing: a tree the structural preflight refuses (no
 run admits it); a tree that holds a deferred module region (C#'s first clause; Lean has no
@@ -7561,6 +7561,8 @@ def generatedPrograms : List Expr := [
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_05g == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_05h == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_05i == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_05j == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_05k == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_06a == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_06b == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_06c == false
@@ -7671,6 +7673,8 @@ def hostParentPrograms : List Expr := [
   HostParentDifferential.hp_05g,
   HostParentDifferential.hp_05h,
   HostParentDifferential.hp_05i,
+  HostParentDifferential.hp_05j,
+  HostParentDifferential.hp_05k,
   HostParentDifferential.hp_06a,
   HostParentDifferential.hp_06b,
   HostParentDifferential.hp_06c,
@@ -7751,8 +7755,8 @@ def hostParentPrograms : List Expr := [
   HostParentDifferential.hp_15d,
   HostParentDifferential.hp_15e
 ]
-#guard hostParentPrograms.length == 106
+#guard hostParentPrograms.length == 108
 #guard (hostParentPrograms.filter Expr.mayCaptureCalls).length == 8
 
--- 3831 gate guards over 3964 corpus programs.
+-- 3833 gate guards over 3966 corpus programs.
 end KatLang.MayCaptureCallsCorpus

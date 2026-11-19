@@ -807,6 +807,73 @@ public class LeanAstEncoderTests
             LeanAstEncoder.EncodeAlgorithm(wired));
     }
 
+    /// <summary>
+    /// KL-04: an EXPLICITLY EMPTY exact-owner list and an ABSENT one are different members exactly
+    /// when the member is captured local-only AND names required inputs. Lean's
+    /// <c>memberAccessible?</c> and C#'s <c>Evaluator.IsAccessibleFrom</c> accept an empty list at
+    /// every site with a lexical head, while absence falls back to each name's nearest owner. An
+    /// exported or conditional member never consults the list, and with no names both branches
+    /// accept, so an empty list there is elided. Each row also evaluates <c>Box.L</c> in C# and
+    /// requires the two metadata forms to have different outcomes exactly when their encodings differ.
+    /// </summary>
+    [Theory]
+    [InlineData(PropertyExposure.LocalOnlyCapturedAncestorParameters, "absent",
+        "publicLocalProp \"L\" (.localCapturedAncestorParams [\"absent\"]) (alg [] [] [] [.num 7])",
+        "{ (publicLocalProp \"L\" (.localCapturedAncestorParams [\"absent\"]) (alg [] [] [] [.num 7])) with requiredOwnerDepths := some [] }",
+        "LocalOnlyProperty", "7")]
+    [InlineData(PropertyExposure.LocalOnlyCapturedAncestorParameters, null,
+        "publicLocalProp \"L\" (.localCapturedAncestorParams []) (alg [] [] [] [.num 7])",
+        "publicLocalProp \"L\" (.localCapturedAncestorParams []) (alg [] [] [] [.num 7])",
+        "7", "7")]
+    [InlineData(PropertyExposure.Exported, "absent",
+        "publicProp \"L\" (alg [] [] [] [.num 7])",
+        "publicProp \"L\" (alg [] [] [] [.num 7])",
+        "7", "7")]
+    [InlineData(PropertyExposure.LocalOnlyConditionalAlgorithm, "absent",
+        "publicLocalProp \"L\" .localConditional (alg [] [] [] [.num 7])",
+        "publicLocalProp \"L\" .localConditional (alg [] [] [] [.num 7])",
+        "LocalOnlyProperty", "LocalOnlyProperty")]
+    public void ExactOwnerDepths_EmptyListIsEncodedExactlyWhereItChangesAccess(
+        PropertyExposure exposure, string? required, string expectedAbsent, string expectedEmpty, string absentOutcome, string emptyOutcome)
+    {
+        Property Member(IReadOnlyList<CapturedParameterRequirement>? owners)
+            => new("L", Body(new Expr.Num(7)), IsPublic: true, exposure)
+                { RequiredAncestorParameters = required is null ? [] : [required], CaptureRequirements = owners };
+        var absent = Member(null);
+        var empty = Member([]);
+
+        static string Outcome(Property member)
+        {
+            var box = new Property("Box", new Algorithm.User(null, [], [], [member], []));
+            var program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [box], [new Expr.DotCall(new Expr.Resolve("Box"), "L", null)]));
+            var result = Evaluator.Run(program);
+            return result.IsError
+                ? EvaluatorTestSupport.Innermost(result.Error).GetType().Name
+                : SemanticExplorerHarness.Neutral(result.Value);
+        }
+        Assert.Equal(absentOutcome, Outcome(absent));
+        Assert.Equal(emptyOutcome, Outcome(empty));
+        Assert.Equal(absentOutcome != emptyOutcome, expectedAbsent != expectedEmpty);
+
+        Assert.Equal(expectedAbsent, LeanAstEncoder.EncodeProperty(absent));
+        Assert.Equal(expectedEmpty, LeanAstEncoder.EncodeProperty(empty));
+    }
+
+    /// <summary>KL-04: nonempty exact-owner lists keep their text, an unreachable owner (C# depth -1) as Lean <c>none</c>.</summary>
+    [Fact]
+    public void ExactOwnerDepths_NonemptyListsKeepEveryOwnerPosition()
+    {
+        var member = new Property("L", Body(new Expr.Num(7)), IsPublic: false, PropertyExposure.LocalOnlyCapturedAncestorParameters)
+        {
+            RequiredAncestorParameters = ["absent", "x"],
+            CaptureRequirements = [new CapturedParameterRequirement("absent", -1), new CapturedParameterRequirement("x", 2)],
+        };
+        Assert.Equal(
+            "{ (privateLocalProp \"L\" (.localCapturedAncestorParams [\"absent\", \"x\"]) (alg [] [] [] [.num 7])) "
+            + "with requiredOwnerDepths := some [(\"absent\", none), (\"x\", some 2)] }",
+            LeanAstEncoder.EncodeProperty(member));
+    }
+
     [Fact]
     public void PreWiredParent_ConditionalAndAliasVariants_EncodeTheirOwnContent()
     {

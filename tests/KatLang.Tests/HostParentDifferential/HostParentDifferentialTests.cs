@@ -226,6 +226,40 @@ public class HostParentDifferentialTests
         Assert.Equal(expected, HostParentDifferentialHarness.Observe(hostCase).Neutral);
     }
 
+    /// <summary>
+    /// KL-04: HP-05j and HP-05k differ ONLY in absent versus explicitly empty exact-owner metadata on
+    /// a member naming an input no level binds. C# refuses the first (structured LocalOnlyProperty
+    /// payload) and returns 7 for the second, so their encodings must differ exactly there: the
+    /// generated guards then pin Lean's outcome on each to these reviewed C# observations.
+    /// </summary>
+    [Fact]
+    public void ExactOwnerListPresence_CasesKeepDistinctEncodingsAndReviewedObservations()
+    {
+        var absent = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == "HP-05j");
+        var empty = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == "HP-05k");
+        Assert.Null(absent.Divergence);
+        Assert.Null(empty.Divergence);
+
+        var refused = HostParentDifferentialHarness.Observe(absent);
+        Assert.Equal("err localOnlyProperty", refused.Neutral);
+        Assert.Equal(new SharedErrorPayload("localOnlyProperty", ["L", "captured"], []), refused.ErrorPayload);
+        var accepted = HostParentDifferentialHarness.Observe(empty);
+        Assert.Equal("ok raw=7 n=1", accepted.Neutral);
+        Assert.Null(accepted.ErrorPayload);
+
+        Assert.NotEqual(LeanAstEncoder.EncodeExpr(absent.Program), LeanAstEncoder.EncodeExpr(empty.Program));
+        Assert.Equal(
+            "(.algorithmExpr (alg [] [] [privateProp \"Box\" (alg [] [] "
+            + "[publicLocalProp \"L\" (.localCapturedAncestorParams [\"absent\"]) (alg [] [] [] [.num 7])] [])] "
+            + "[(.dotCall (.resolve \"Box\") \"L\" none)]))",
+            LeanAstEncoder.EncodeExpr(absent.Program));
+        Assert.Equal(
+            "(.algorithmExpr (alg [] [] [privateProp \"Box\" (alg [] [] "
+            + "[{ (publicLocalProp \"L\" (.localCapturedAncestorParams [\"absent\"]) (alg [] [] [] [.num 7])) with requiredOwnerDepths := some [] }] [])] "
+            + "[(.dotCall (.resolve \"Box\") \"L\" none)]))",
+            LeanAstEncoder.EncodeExpr(empty.Program));
+    }
+
     private static List<string> WatchedNames(HostParentCase hostCase, HostParentObservation observation)
         => hostCase.WatchedProperties.Concat(observation.PublishedByName.Keys).Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal).ToList();

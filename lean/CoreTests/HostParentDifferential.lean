@@ -11,8 +11,8 @@ evaluator ran on every route (plain, counted, generic, optimized, suspending asy
 (per property name, and in total). A failing guard is a Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- corpus cases: 106
-- comparable cases: 106
+- corpus cases: 108
+- comparable cases: 108
 - known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 0
 
 Regenerate from the repo root with:
@@ -368,6 +368,19 @@ def hp_05i : Expr :=
   (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "M" (alg [] [] [publicLocalProp "L" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"])] [])] [] [] none (some (.host 0)))) (alg [] [.resolve "M"] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "L"])] [])))] [] [.resolve "Run"]))
 #guard obs hp_05i == "err localOnlyProperty"
 #guard errorObs hp_05i == .matched (some { kind := "localOnlyProperty", names := ["L", "captured"], counts := [] })
+
+-- HP-05j: structural access Box.L to a local-only member naming an unbound input, exact owners ABSENT
+def hp_05j : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicLocalProp "L" (.localCapturedAncestorParams ["absent"]) (alg [] [] [] [.num 7])] [])] [(.dotCall (.resolve "Box") "L" none)]))
+#guard obs hp_05j == "err localOnlyProperty"
+#guard errorObs hp_05j == .matched (some { kind := "localOnlyProperty", names := ["L", "captured"], counts := [] })
+
+-- HP-05k: structural access Box.L to a local-only member naming an unbound input, exact owners EMPTY
+def hp_05k : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [{ (publicLocalProp "L" (.localCapturedAncestorParams ["absent"]) (alg [] [] [] [.num 7])) with requiredOwnerDepths := some [] }] [])] [(.dotCall (.resolve "Box") "L" none)]))
+#guard obs hp_05k == "ok raw=7 n=1"
+#guard cacheEntries hp_05k "L" == 1
+#guard cacheTotal hp_05k == 1
 
 -- HP-06a: CACHE-PUB-1: H(x) = P() establishes the empty entry; the later read reuses it
 def hp_06a : Expr :=
@@ -1009,6 +1022,8 @@ def comparableCaseIds : List String := [
   "HP-05g",
   "HP-05h",
   "HP-05i",
+  "HP-05j",
+  "HP-05k",
   "HP-06a",
   "HP-06b",
   "HP-06c",
@@ -1089,7 +1104,7 @@ def comparableCaseIds : List String := [
   "HP-15d",
   "HP-15e"
 ]
-#guard comparableCaseIds.length == 106
+#guard comparableCaseIds.length == 108
 
 /--
 Machine-checked known-divergence partition count (HOST-LEAN-O6 shapes pinned on both sides).
@@ -1099,5 +1114,5 @@ def divergentCaseIds : List String := [
 ]
 #guard divergentCaseIds.length == 0
 
--- 106 comparable cases, 0 known divergences.
+-- 108 comparable cases, 0 known divergences.
 end HostParentDifferential

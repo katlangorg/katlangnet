@@ -103,8 +103,10 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   that replace nonempty opens/property lists also carry `sharedView`/`moduleView`
   provenance over their declaration, with component tokens global across declarations; scope comparison retains this view and
   callable identity erases it. The encoder keeps context-qualified property
-  provenance for cache and alias shapes. All 104 cases are comparable (96 with
-  pre-wired parents, 181 named cache guards); a future reviewed model divergence would be excluded from the
+  provenance for cache and alias shapes. It emits exact owner positions when
+  nonempty, and an explicitly empty list only where that changes access (KL-04,
+  HP-05j/k). All 108 cases are comparable (99 with
+  pre-wired parents, 184 named cache guards); a future reviewed model divergence would be excluded from the
   comparable partition by exact id and pinned on BOTH sides (the Lean value by
   a generated guard, the C# value by `HostParentDifferentialTests`). Regenerate with
   `$env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"; dotnet test .\KatLang.slnx --filter HostParentDifferential`

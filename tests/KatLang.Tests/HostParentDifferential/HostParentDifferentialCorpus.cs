@@ -217,6 +217,17 @@ public static class HostParentDifferentialCorpus
                 Program([OpenBlock(Requiring(true, LocalL()), [R("M")], Public("Run", Body(Call("G", N(1)))), Public("G", Fn(["x"], R("L"))))], [], R("Run")));
             Case("HP-05i", "open access to a local-only member whose input x is named by no level",
                 Program([OpenBlock(Requiring(false, LocalL()), [R("M")], Public("Run", Body(Call("G", N(1)))), Public("G", Fn(["x"], R("L"))))], [], R("Run")));
+
+            // KL-04: ABSENT exact-owner metadata versus an explicitly EMPTY list on one member that names
+            // an input no level binds. Absent, access falls back to the names' nearest owners and is
+            // refused; an empty list requires no owner and accepts. The encoding must keep them apart.
+            static Property Unowned(IReadOnlyList<CapturedParameterRequirement>? owners)
+                => new("L", Body(N(7)), IsPublic: true, PropertyExposure.LocalOnlyCapturedAncestorParameters)
+                    { RequiredAncestorParameters = L("absent"), CaptureRequirements = owners };
+            Case("HP-05j", "structural access Box.L to a local-only member naming an unbound input, exact owners ABSENT",
+                Program([], [Prop("Box", Namespace(Unowned(null)))], Dot(R("Box"), "L")));
+            Case("HP-05k", "structural access Box.L to a local-only member naming an unbound input, exact owners EMPTY",
+                Program([], [Prop("Box", Namespace(Unowned(L<CapturedParameterRequirement>())))], Dot(R("Box"), "L")));
         }
 
         // HP-06: repeated reads, P() then P — Q-37 / CACHE-PUB-1 key agreement.

@@ -741,7 +741,7 @@ internal sealed class LeanAstEncoding
             (false, var exposure) => $"privateLocalProp {Quote(property.Name)} {EncodeExposure(exposure, property.RequiredAncestorParameters)} {value}",
             (true, var exposure) => $"publicLocalProp {Quote(property.Name)} {EncodeExposure(exposure, property.RequiredAncestorParameters)} {value}",
         };
-        if (property.CaptureRequirements is { Count: > 0 } requirements)
+        if (property.CaptureRequirements is { } requirements && EncodesOwnerDepths(property, requirements))
         {
             var owners = string.Join(", ", requirements.Select(r =>
                 $"({Quote(r.Name)}, {(r.OwnerDepth < 0 ? "none" : $"some {r.OwnerDepth}")})"));
@@ -751,6 +751,21 @@ internal sealed class LeanAstEncoding
             ? $"{{ ({encoded}) with identity := some (.shared {identity}) }}"
             : encoded;
     }
+
+    /// <summary>
+    /// Whether exact owner metadata is emitted as Lean <c>requiredOwnerDepths := some [...]</c>.
+    /// A nonempty list always is. An EMPTY list is emitted only where its presence can change
+    /// accessibility: a captured local-only member that names required inputs. Lean's
+    /// <c>memberAccessible?</c> and C#'s <c>Evaluator.IsAccessibleFrom</c> then accept every site
+    /// with a lexical head, while absence falls back to each name's nearest owner (KL-04). Anywhere
+    /// else it is elided as absence, which the access rule cannot tell apart: exported and
+    /// conditional members never consult it, and with no names both branches accept. Every
+    /// elaborated member without captures carries such an empty list.
+    /// </summary>
+    private static bool EncodesOwnerDepths(Property property, IReadOnlyList<CapturedParameterRequirement> requirements)
+        => requirements.Count > 0
+            || (property.Exposure == PropertyExposure.LocalOnlyCapturedAncestorParameters
+                && property.RequiredAncestorParameters.Count > 0);
 
     /// <summary>
     /// Conditional clause head. Pattern SHAPE and KIND are load-bearing: a nested
