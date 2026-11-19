@@ -501,6 +501,430 @@ public class ParserNestingDepthTests
             LeanAstEncoder.EncodeProgram(elaborated.Root));
     }
 
+    // ── Clause-head lookahead over nested calls is linear (KL-03) ─────────────
+    //
+    // Every call level of `I(I(…I(1)…))` begins a row of an argument list, so the body
+    // loop asks THE declaration-start relation whether `I(…) =` begins there, and the
+    // clause-head confinement scan (TryFindClauseHeadClose) walked the region inside
+    // that level to its `)`: one walk per level, quadratic in the depth of ONE row. The
+    // pre-change parser (810049ee, the same counts as the research baseline 7db03e0a)
+    // took 94, 212, 592, 1,164 and 1,928 token steps for depths 4, 8, 16, 24 and 32.
+    // The region an opening delimiter opens is now decided once per parse
+    // (TryCloseDelimiterRegion, a token-indexed memo whose allocation, reads and writes
+    // are charged to the same counter), so a parse costs a bounded number of token
+    // steps per token at every admitted depth and width, malformed regions included.
+    //
+    // THE BOUND: at most MaxStepsPerToken token steps per lexed token (end of input
+    // included), at sampled depths from 1 to the deepest the nesting budget admits. This
+    // build measures, at the deepest admitted depth: Call 5.63 (depth 127), Group and
+    // Block 5.17 (54), CommentedLines 5.72 (127), Mismatch 4.97 (127), Unclosed 6.42
+    // (127), and 5.66 for 16 sibling rows of depth 32. The pre-change parser measured
+    // 66.0, 29.7, 97.0, 44.3, 67.0 and 19.6 there, and exceeded the bound from depth 16
+    // (Mismatch from depth 32). Doubling the depth may also at most 2.5x the steps (the
+    // convention of the marker-run pins above; the pre-change parser grew up to 3.6x).
+
+    private const int MaxStepsPerToken = 8;
+
+    private const string NestedCandidatePrefix = "I(x) = x\n";
+
+    public enum NestedCandidateShape
+    {
+        /// <summary>`I(I(…I(1)…))`: one clause-head candidate per call level.</summary>
+        Call,
+
+        /// <summary>`I((I((…1…))))`: every argument a redundant group whose row is the next candidate.</summary>
+        Group,
+
+        /// <summary>`I({I({…1…})})`: every argument a brace block whose body row is the next candidate.</summary>
+        Block,
+
+        /// <summary>`I(# c` newline … `1)…)`: one level per physical line, a comment after every `(`.</summary>
+        CommentedLines,
+
+        /// <summary>`I(I(…I(1])…))` then `Good = 41`: the innermost level ends at `]`, so no candidate's region closes within itself.</summary>
+        Mismatch,
+
+        /// <summary>`I(I(…I(1` then `Good = 41`: every candidate's region reaches the end of input.</summary>
+        Unclosed,
+    }
+
+    public static TheoryData<NestedCandidateShape> NestedCandidateShapes()
+        => new(Enum.GetValues<NestedCandidateShape>());
+
+    private static string NestedCandidateSource(NestedCandidateShape shape, int depth) => shape switch
+    {
+        NestedCandidateShape.Call => NestedCandidatePrefix + Rep("I(", depth) + "1" + Rep(")", depth),
+        NestedCandidateShape.Group => NestedCandidatePrefix + Rep("I((", depth) + "1" + Rep("))", depth),
+        NestedCandidateShape.Block => NestedCandidatePrefix + Rep("I({", depth) + "1" + Rep("})", depth),
+        NestedCandidateShape.CommentedLines => NestedCandidatePrefix + Rep("I(# c\n", depth) + "1" + Rep(")", depth),
+        NestedCandidateShape.Mismatch => NestedCandidatePrefix + Rep("I(", depth) + "1]" + Rep(")", depth) + "\nGood = 41\nGood",
+        NestedCandidateShape.Unclosed => NestedCandidatePrefix + Rep("I(", depth) + "1\nGood = 41\nGood",
+        _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
+    };
+
+    /// <summary>The deepest nesting the parser's budget admits for the shape (one more level is refused).</summary>
+    private static int MaxAdmittedDepth(NestedCandidateShape shape)
+        => shape is NestedCandidateShape.Group or NestedCandidateShape.Block ? 54 : 127;
+
+    private static int[] AdmittedDepths(NestedCandidateShape shape)
+        => new[] { 1, 2, 4, 8, 16, 24, 32, 64, MaxAdmittedDepth(shape) / 2, MaxAdmittedDepth(shape) }
+            .Where(depth => depth <= MaxAdmittedDepth(shape))
+            .Distinct()
+            .Order()
+            .ToArray();
+
+    private static int TokenCount(string source) => Lexer.Tokenize(source).Tokens.Count;
+
+    private static void AssertNestedCandidateShape(NestedCandidateShape shape, int depth, SyntaxParseResult result)
+    {
+        var root = Assert.IsType<Algorithm.User>(result.Root);
+        switch (shape)
+        {
+            case NestedCandidateShape.Mismatch:
+                // The innermost call takes the `]` nothing owes as its closer, the outer calls take
+                // `)` each, and the one `)` left over is a root stray; `Good` stays a root declaration.
+                Assert.Equal(
+                    new (DiagnosticCode, SourceSpan?, string)[]
+                    {
+                        (DiagnosticCode.UnexpectedToken, new SourceSpan(2, 2 * depth + 2, 2, 2 * depth + 3), "Expected ')' but found ']'."),
+                        (DiagnosticCode.UnexpectedToken, new SourceSpan(2, 3 * depth + 2, 2, 3 * depth + 3), "Unexpected ')' at the top level. There is no open '(' for it to close."),
+                    },
+                    result.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+                Assert.Equal(new[] { "Good", "I" }, root.Properties.Select(p => p.Name));
+                Assert.Equal(41m, Assert.IsType<Expr.Num>(Assert.Single(Assert.IsType<Algorithm.User>(root.Properties[0].Value).Output)).Value);
+                Assert.Equal(2, root.Output.Count);
+                Assert.Equal("Good", Assert.IsType<Expr.Resolve>(root.Output[1]).Name);
+                return;
+
+            case NestedCandidateShape.Unclosed:
+                // `Good = 41` lies inside the open argument lists: the declaration is reported there,
+                // then every call reports its missing `)` at the end of input.
+                Assert.Equal(depth + 1, result.Diagnostics.ReportedCount);
+                Assert.Equal(
+                    new (DiagnosticCode, SourceSpan?)[] { (DiagnosticCode.DeclarationInParentheses, new SourceSpan(3, 1, 3, 5)) }
+                        .Concat(Enumerable.Repeat<(DiagnosticCode, SourceSpan?)>((DiagnosticCode.UnexpectedToken, new SourceSpan(4, 5, 4, 5)), depth)),
+                    result.Diagnostics.Select(d => (d.Code, d.Span)));
+                Assert.All(result.Diagnostics.Skip(1), d => Assert.Equal("Expected ')' but found end of input.", d.Message));
+                Assert.Equal(new[] { "I" }, root.Properties.Select(p => p.Name));
+                Assert.Single(root.Output);
+                return;
+        }
+
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(new[] { "I" }, root.Properties.Select(p => p.Name));
+        var expr = Assert.Single(root.Output);
+        for (var level = 0; level < depth; level++)
+        {
+            var call = Assert.IsType<Expr.Call>(expr);
+            Assert.Equal("I", Assert.IsType<Expr.Resolve>(call.Function).Name);
+            if (shape == NestedCandidateShape.Call)
+                Assert.Equal(new SourceSpan(2, 2 * level + 1, 2, 3 * depth - level + 2), call.Span);
+            expr = Assert.Single(call.Args);
+            if (shape == NestedCandidateShape.Block)
+                expr = Assert.Single(Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(expr).Algorithm).Output);
+        }
+
+        Assert.Equal(1m, Assert.IsType<Expr.Num>(expr).Value);
+    }
+
+    private static void AssertWithinLinearBound(string label, long steps, int tokens)
+    {
+        Assert.True(steps >= tokens, $"{label}: {steps} steps for {tokens} tokens; every token is consumed or probed at least once.");
+        Assert.True(
+            steps <= (long)MaxStepsPerToken * tokens,
+            $"{label}: {steps} steps for {tokens} tokens ({(double)steps / tokens:F2} per token, bound {MaxStepsPerToken}).");
+    }
+
+    [Theory]
+    [MemberData(nameof(NestedCandidateShapes))]
+    public void NestedClauseHeadCandidates_TokenStepsStayLinearThroughTheAdmittedDepth(NestedCandidateShape shape)
+    {
+        var stepsByDepth = new Dictionary<int, long>();
+        foreach (var depth in AdmittedDepths(shape))
+        {
+            var source = NestedCandidateSource(shape, depth);
+            var observations = new ParserTraversalObservations();
+            var result = Parser.ParseSyntaxObserved(source, observations);
+            AssertNestedCandidateShape(shape, depth, result);
+            AssertWithinLinearBound($"{shape} at depth {depth}", observations.TokenSteps, TokenCount(source));
+            if (stepsByDepth.TryGetValue(depth / 2, out var half) && depth % 2 == 0)
+                Assert.True(observations.TokenSteps <= 2.5 * half, $"{shape}: {half} -> {observations.TokenSteps} steps (depth {depth / 2} -> {depth})");
+            stepsByDepth[depth] = observations.TokenSteps;
+
+            // The observed parse is the ordinary one, and the elaborated front end agrees on the diagnostics.
+            var unobserved = Parser.ParseSyntax(source);
+            Assert.Equal(
+                unobserved.Diagnostics.Select(d => (d.Code, d.Span, d.Message)),
+                result.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+            Assert.Equal(LeanAstEncoder.EncodeProgram(unobserved.Root), LeanAstEncoder.EncodeProgram(result.Root));
+            var elaborated = Parser.Parse(source);
+            Assert.Equal(
+                result.Diagnostics.Select(d => (d.Code, d.Span, d.Message)),
+                elaborated.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+        }
+
+        // The depths reach the budget: one level more is the structured nesting refusal.
+        Assert.Contains(
+            Parser.ParseSyntax(NestedCandidateSource(shape, MaxAdmittedDepth(shape) + 1)).Diagnostics,
+            d => d.Code == DiagnosticCode.NestingTooDeep);
+    }
+
+    [Theory]
+    [InlineData("]")]
+    [InlineData("")]
+    public void ClauseHeadRegionMemo_ChargesNestedReadsAndWritesOnFailure(string terminator)
+    {
+        const int nestedOpeners = 32;
+        long ClassifyFailedHead(string body)
+        {
+            var observations = new ParserTraversalObservations();
+            var verdicts = Parser.ClassifyDeclarationStartsInOrder(
+                "F(" + body + "1" + terminator, [0], includeCommaSpanningBindingPatterns: false, observations);
+            Assert.Equal(Parser.DeclarationStart.None, Assert.Single(verdicts));
+            return observations.TokenSteps;
+        }
+
+        // A single classification traverses the same number of significant tokens and allocates
+        // the same size memo in both inputs. Replacing names with openers adds one lookup and
+        // one failure write per extra opener, for both a mismatched closer and end of input.
+        var flat = ClassifyFailedHead(Rep("x ", nestedOpeners));
+        var nested = ClassifyFailedHead(new string('(', nestedOpeners));
+        Assert.True(nested - flat >= 2L * nestedOpeners,
+            $"Expected at least two additional steps per nested opener, observed {nested - flat} steps for {nestedOpeners} openers.");
+    }
+
+    [Theory]
+    [InlineData(32)]
+    [InlineData(127)]
+    public void NestedClauseHeadCandidates_AcrossSiblingRows_TokenStepsStayLinear(int depth)
+    {
+        // Width control: the same nested row repeated as independent sibling rows. Each row's
+        // regions are its own, so the per-token cost must not move with the width either.
+        var row = Rep("I(", depth) + "1" + Rep(")", depth);
+        long previousSteps = 0;
+        foreach (var width in new[] { 1, 2, 4, 8, 16 })
+        {
+            var source = NestedCandidatePrefix + string.Join("\n", Enumerable.Repeat(row, width));
+            var observations = new ParserTraversalObservations();
+            var result = Parser.ParseSyntaxObserved(source, observations);
+            Assert.Empty(result.Diagnostics);
+            var root = Assert.IsType<Algorithm.User>(result.Root);
+            Assert.Equal(width, root.Output.Count);
+            var firstRow = LeanAstEncoder.EncodeExpr(root.Output[0]);
+            Assert.All(root.Output, output => Assert.Equal(firstRow, LeanAstEncoder.EncodeExpr(output)));
+            AssertWithinLinearBound($"{width} rows of depth {depth}", observations.TokenSteps, TokenCount(source));
+            if (previousSteps > 0)
+                Assert.True(observations.TokenSteps <= 2.5 * previousSteps, $"depth {depth}: {previousSteps} -> {observations.TokenSteps} steps at width {width}");
+            previousSteps = observations.TokenSteps;
+        }
+
+        Assert.False(SourceProvenance.ParseValid(NestedCandidatePrefix + string.Join("\n", Enumerable.Repeat(row, 16))).HasFrontEndErrors);
+    }
+
+    [Theory]
+    [MemberData(nameof(NestedCandidateShapes))]
+    public void NestedClauseHeadCandidates_ReverseQueryOrder_KeepsVerdictsAndTheLinearBound(NestedCandidateShape shape)
+    {
+        // A parse asks in source order, so the walk of the OUTERMOST candidate decides every
+        // region inside it. Asking every token from the last to the first instead makes each
+        // walk meet regions an earlier walk already decided — closed ones to skip, broken ones to
+        // propagate — which is exactly the reuse the memo must charge and must not get wrong.
+        foreach (var depth in AdmittedDepths(shape))
+        {
+            var source = NestedCandidateSource(shape, depth);
+            var tokens = TokenCount(source);
+            var indexes = Enumerable.Range(0, tokens).Reverse().ToArray();
+            var observations = new ParserTraversalObservations();
+            var verdicts = Parser.ClassifyDeclarationStartsInOrder(source, indexes, includeCommaSpanningBindingPatterns: true, observations);
+            AssertWithinLinearBound($"{shape} at depth {depth}, reverse order", observations.TokenSteps, tokens);
+
+            for (var i = 0; i < indexes.Length; i++)
+            {
+                var fresh = Parser.ClassifyDeclarationStartsInOrder(source, [indexes[i]], includeCommaSpanningBindingPatterns: true)[0];
+                Assert.Equal(fresh, verdicts[i]);
+            }
+
+            // Only `I(x) =` (token 0) and `Good =` begin declarations: no nested candidate is a head.
+            var declarations = indexes.Zip(verdicts).Where(pair => pair.Second != Parser.DeclarationStart.None).OrderBy(pair => pair.First).ToArray();
+            var expected = shape is NestedCandidateShape.Mismatch or NestedCandidateShape.Unclosed
+                ? new[] { Parser.DeclarationStart.ClauseDefinition, Parser.DeclarationStart.PropertyDefinition }
+                : [Parser.DeclarationStart.ClauseDefinition];
+            Assert.Equal(expected, declarations.Select(pair => pair.Second));
+            Assert.Equal(0, declarations[0].First);
+        }
+    }
+
+    /// <summary>
+    /// THE declaration-start relation is a function of the token array: the clause-head region
+    /// memo, like the binding-pattern and Grace memos, only shares verdicts. Every token of
+    /// curated nested/malformed heads, of single-edit nested chains, and of seeded random
+    /// delimiter strings is classified in source order, in reverse, and in a seeded shuffle on
+    /// one parser, against a fresh parser per token, in both consumer positions.
+    /// </summary>
+    [Fact]
+    public void ClauseHeadRegionMemo_VerdictsAgreeWithFreshClassification_InEveryQueryOrder()
+    {
+        var random = new Random(20261119);
+        var programs = new List<string>(NestedClauseHeadPins().Select(row => (string)row[0]));
+        foreach (var shape in Enum.GetValues<NestedCandidateShape>())
+        {
+            for (var depth = 1; depth <= 4; depth++)
+                programs.Add(NestedCandidateSource(shape, depth));
+        }
+
+        // Nested chains with one token inserted, replaced, or deleted at every position, then a
+        // follower offering a later `=` or `) =` or a declaration. A region broken inside must
+        // break every region around it even when an outer walk meets it already decided
+        // (`I(I(1]) = 1` asked inner-first is no head), and a closed one must resume exactly
+        // after its own closer.
+        string[] heads = ["I(", "I([", "F(x, "];
+        string[] edits = ["]", "}", ")", "(", "\n", " = 1", ") = 1", "* = 1"];
+        string[] followers = ["", " = 1", "\n) = 1", "\nGood = 41"];
+        foreach (var head in heads)
+        {
+            var close = head == "I([" ? "])" : ")";
+            for (var depth = 1; depth <= 3; depth++)
+            {
+                var parts = Enumerable.Repeat(head, depth).Append("1").Concat(Enumerable.Repeat(close, depth)).ToArray();
+                var variants = new List<string>();
+                for (var at = 0; at <= parts.Length; at++)
+                {
+                    foreach (var edit in edits)
+                    {
+                        variants.Add(string.Concat(parts.Take(at).Append(edit).Concat(parts.Skip(at))));
+                        if (at < parts.Length)
+                            variants.Add(string.Concat(parts.Take(at).Append(edit).Concat(parts.Skip(at + 1))));
+                    }
+
+                    if (at < parts.Length)
+                        variants.Add(string.Concat(parts.Take(at).Concat(parts.Skip(at + 1))));
+                }
+
+                foreach (var variant in variants)
+                {
+                    foreach (var follower in followers)
+                        programs.Add(variant + follower);
+                }
+            }
+        }
+
+        string[] alphabet = ["I", "F", "x", "(", "(", "(", ")", ")", ")", "[", "]", "{", "}", "=", "=", "*", ",", "1", "\n", " # c\n", "@", "public ", "true", "~", " ", "open "];
+        for (var i = 0; i < 3_000; i++)
+            programs.Add(string.Concat(Enumerable.Range(0, 3 + random.Next(14)).Select(_ => alphabet[random.Next(alphabet.Length)])));
+
+        var reached = new HashSet<Parser.DeclarationStart>();
+        foreach (var program in programs)
+        {
+            var tokens = TokenCount(program);
+            var inOrder = Enumerable.Range(0, tokens).ToArray();
+            var shuffled = inOrder.OrderBy(_ => random.Next()).ToArray();
+            foreach (var includeComma in new[] { true, false })
+            {
+                var fresh = inOrder.Select(i => Parser.ClassifyDeclarationStartsInOrder(program, [i], includeComma)[0]).ToArray();
+                reached.UnionWith(fresh);
+                Assert.Equal(fresh, Parser.ClassifyDeclarationStartsInOrder(program, inOrder, includeComma));
+                var reversed = Enumerable.Range(0, tokens).Reverse().ToArray();
+                Assert.Equal(reversed.Select(i => fresh[i]), Parser.ClassifyDeclarationStartsInOrder(program, reversed, includeComma));
+                var shuffledVerdicts = Parser.ClassifyDeclarationStartsInOrder(program, shuffled, includeComma);
+                Assert.Equal(shuffled.Select(i => fresh[i]), shuffledVerdicts);
+            }
+        }
+
+        // Non-vacuous: the corpus reaches every clause-head-dependent verdict.
+        Assert.Contains(Parser.DeclarationStart.ClauseDefinition, reached);
+        Assert.Contains(Parser.DeclarationStart.PublicClauseDefinition, reached);
+        Assert.Contains(Parser.DeclarationStart.ReservedLiteralHead, reached);
+    }
+
+    /// <summary>
+    /// Behavioral anchors of the clause-head confinement law (`syntax.md` § Line rules and
+    /// declaration heads, CLAUSE-HEAD CONFINEMENT) around nested candidates — mismatched and
+    /// unclosed regions with a following declaration, genuine clause definitions, the
+    /// name/`(` and `)`/`=` line rules, comments and reported characters, and the
+    /// output-spreading marker. Every expectation is the pre-change parser's (810049ee): raw
+    /// diagnostic codes and spans in order, the root's properties, and its output count;
+    /// the elaborated front end reports the same diagnostics.
+    /// </summary>
+    public static TheoryData<string, string, string, int> NestedClauseHeadPins() => new()
+    {
+        // Malformed regions: a candidate followed by a valid declaration keeps the declaration.
+        { "I(x) = x\nI(I(I(1])))\nGood = 41\nGood", "UnexpectedToken [2:8, 2:9) | UnexpectedToken [2:11, 2:12)", "Good,I", 2 },
+        { "I(x) = x\nI(I(I(1)}))\nGood = 41\nGood", "UnexpectedToken [2:9, 2:10) | UnexpectedToken [2:11, 2:12)", "Good,I", 2 },
+        { "I(x) = x\nI(I(I([1)])))\nGood = 41\nGood", "UnexpectedToken [2:9, 2:10) | UnexpectedToken [2:10, 2:11) | UnexpectedToken [2:12, 2:13) | UnexpectedToken [2:13, 2:14)", "Good,I", 2 },
+        { "I(x) = x\nI(I(I(1))))\nGood = 41\nGood", "UnexpectedToken [2:11, 2:12)", "Good,I", 2 },
+        { "I(x) = x\nI(I(I(1))\nGood = 41\nGood", "DeclarationInParentheses [3:1, 3:5) | UnexpectedToken [4:5]", "I", 1 },
+        // A scan never crosses a mismatch to a later `) =`: no `F` head steals `Good`.
+        { "F(I(I(]\nGood = 41\n))) = 1\nGood", "UnexpectedToken [1:7, 1:8) | DeclarationInParentheses [2:1, 2:5) | UnexpectedToken [3:3, 3:4) | UnexpectedToken [3:5, 3:6)", "", 4 },
+        { "F(I(]\nGood = 41\n) = 1\nGood", "UnexpectedToken [1:5, 1:6) | DeclarationInParentheses [2:1, 2:5) | UnexpectedToken [3:3, 3:4)", "", 4 },
+        { "F(I([1)]\nGood = 41\n) = 1\nGood", "UnexpectedToken [1:7, 1:8) | UnexpectedToken [1:8, 1:9) | UnexpectedToken [3:1, 3:2) | UnexpectedToken [3:3, 3:4)", "Good", 4 },
+        { "I(x) = x\nF(I({]\nGood = 41\n}) = 1\nGood", "UnexpectedToken [2:6, 2:7) | DeclarationInParentheses [3:1, 3:5) | UnexpectedToken [4:1, 4:2) | UnexpectedToken [4:4, 4:5)", "I", 4 },
+        { "I(x) = x\nI(F(I(]\nGood = 41\n) = 1)\nGood", "UnexpectedToken [2:7, 2:8) | DeclarationInParentheses [3:1, 3:5) | UnexpectedToken [4:3, 4:4)", "I", 2 },
+        // Genuine heads: inside an argument list (decided by the enclosing walk), with a call
+        // pattern (recovered head), after a reserved literal, and clean nested list patterns.
+        { "I(x) = x\nI(F(x) = x)\nGood = 41\nGood", "DeclarationInParentheses [2:3, 2:4)", "Good,I", 2 },
+        { "I(x) = x\nI(I(I(1))) = 2\nGood = 41\nGood", "UnseparatedSameLineItem [2:4, 2:5) | UnseparatedSameLineItem [2:6, 2:7) | SingletonSequencePattern [2:6, 2:9)", "Good,I", 1 },
+        { "I(x) = x\nF(a) = a\nF(I(I(1))) = 2\nGood = 41\nGood", "UnseparatedSameLineItem [3:4, 3:5) | UnseparatedSameLineItem [3:6, 3:7) | SingletonSequencePattern [3:6, 3:9)", "Good,I,F", 1 },
+        { "I(x) = x\ntrue(I(I(1))) = 2\nGood = 41\nGood", "UnexpectedToken [2:1, 2:5)", "Good,I", 2 },
+        { "I(x) = x\nF(a) = I(I(I(a)))\nF(I(I(1)))", "", "I,F", 1 },
+        { "F([a,\n[b, c]]) = a + b + c\nF([1, [2, 3]])", "", "F", 1 },
+        { "public F([a, [b]]) = a\nF([1, [2]])", "", "F", 1 },
+        // Line rules: `)` and `=` share a line; the name and `(` share a line; the list inside may span lines.
+        { "I(x) = x\nI(I(I(1)))\n= 2\nGood = 41\nGood", "UnexpectedToken [3:1, 3:2)", "Good,I", 4 },
+        { "I(x) = x\nI\n(I(I(1)))\nGood = 41\nGood", "", "Good,I", 3 },
+        { "I(x) = x\nI # c\n(I(I(1)))\nGood = 41\nGood", "", "Good,I", 3 },
+        { "I(x) = x\nF(I(I(1))\n) = 1\nGood = 41\nGood", "UnseparatedSameLineItem [2:4, 2:5) | UnseparatedSameLineItem [2:6, 2:7) | SingletonSequencePattern [2:6, 2:9)", "Good,I,F", 1 },
+        { "F([a, [b]]) # note\n= a\nGood = 41\nGood", "UnexpectedToken [2:1, 2:2)", "Good", 4 },
+        // The output-spreading marker between the head's `)` and `=`, and the postfix star of an output row.
+        { "G([a, [b]])* = a, b\nG([1, [2]])", "", "G", 1 },
+        { "I(x) = x\nI(I(I(1)))* = 2\nGood = 41\nGood", "UnseparatedSameLineItem [2:4, 2:5) | UnseparatedSameLineItem [2:6, 2:7) | SingletonSequencePattern [2:6, 2:9) | MixedOutputSpreadMarkers [2:1, 2:16)", "Good,I", 1 },
+        { "I(x) = x\nI(I(I(1)))*", "", "I", 1 },
+        { "I(x) = x\nI(I(I(1))) * 2", "", "I", 1 },
+        // Comments and reported characters are invisible to the scan.
+        { "I(x) = x\nI(# c\nI(@I(1)))", "UnexpectedCharacter [3:3, 3:4)", "I", 1 },
+        { "I(x) = x\nI(I(I(1)))\nI(I(I(1)))\nGood = 41\nGood", "", "Good,I", 3 },
+    };
+
+    [Theory]
+    [MemberData(nameof(NestedClauseHeadPins))]
+    public void NestedClauseHeadCandidates_KeepTheirDiagnosticsAndDeclarations(
+        string source, string expectedDiagnostics, string expectedProperties, int expectedOutputCount)
+    {
+        var raw = Parser.ParseSyntax(source);
+        Assert.Equal(expectedDiagnostics, string.Join(" | ", raw.Diagnostics.Select(d => $"{d.Code} {d.Span}")));
+        var root = Assert.IsType<Algorithm.User>(raw.Root);
+        Assert.Equal(expectedProperties, string.Join(",", root.Properties.Select(p => p.Name)));
+        Assert.Equal(expectedOutputCount, root.Output.Count);
+
+        var observations = new ParserTraversalObservations();
+        var observed = Parser.ParseSyntaxObserved(source, observations);
+        Assert.Equal(raw.Diagnostics.Select(d => (d.Code, d.Span, d.Message)), observed.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+        Assert.Equal(LeanAstEncoder.EncodeProgram(raw.Root), LeanAstEncoder.EncodeProgram(observed.Root));
+        AssertWithinLinearBound(source, observations.TokenSteps, TokenCount(source));
+
+        var elaborated = Parser.Parse(source);
+        Assert.Equal(raw.Diagnostics.Select(d => (d.Code, d.Span, d.Message)), elaborated.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+        if (expectedDiagnostics.Length == 0)
+            Assert.False(SourceProvenance.ParseValid(source).HasFrontEndErrors);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    [InlineData(32)]
+    [InlineData(54)]
+    public void NestedClauseHeadCandidates_ValidSpellingsElaborateToOneTree(int depth)
+    {
+        // Redundant groups, comments and line breaks inside open parentheses, and a reported
+        // character change nothing: every spelling elaborates to the plain call chain.
+        var expected = LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(NestedCandidateSource(NestedCandidateShape.Call, depth)).Root);
+        Assert.Equal(expected, LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(NestedCandidateSource(NestedCandidateShape.Group, depth)).Root));
+        Assert.Equal(expected, LeanAstEncoder.EncodeProgram(SourceProvenance.ParseValid(NestedCandidateSource(NestedCandidateShape.CommentedLines, depth)).Root));
+
+        var reported = SourceProvenance.ParseAllowingDiagnostics(NestedCandidatePrefix + Rep("I(@", depth) + "1" + Rep(")", depth));
+        Assert.Equal(Enumerable.Repeat(DiagnosticCode.UnexpectedCharacter, depth), reported.Diagnostics.Select(d => d.Code));
+        Assert.Equal(expected, LeanAstEncoder.EncodeProgram(reported.Root));
+    }
+
     // ── Surface parser never emits the internal SequenceConstruct node ────────
     [Theory]
     [InlineData("((((1))))")]

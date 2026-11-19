@@ -40,10 +40,12 @@ public sealed class Parser
     private readonly CancellationToken _activeCancellationToken;
     private int _pos;
 
-    // Passive per-parse count of token-index steps: one per consumed token (Advance)
-    // and one per significant-index probe (NextSignificantIndex). It is the
-    // deterministic cost model the marker-run linearity regressions read through
-    // ParserTraversalObservations; it never influences parsing.
+    // Passive per-parse count of token-index steps: one per consumed token (Advance),
+    // one per significant-index probe (NextSignificantIndex), and the clause-head
+    // region memo's charges (TryCloseDelimiterRegion: one per token slot when it is
+    // allocated, one per entry read or written). It is the deterministic cost model
+    // the lookahead linearity regressions read through ParserTraversalObservations;
+    // it never influences parsing.
     private long _tokenSteps;
 
     // One-entry memo of the most recent LookaheadThroughTildesToPropertyDefFrom scan,
@@ -3145,10 +3147,6 @@ public sealed class Parser
     private bool LookaheadIsParenEqualsAfterName(int nameIndex)
         => TryFindClauseHeadClose(nameIndex, out _);
 
-    // Reusable expected-closer stack of the clause-head scan (cleared per scan; the
-    // scan never re-enters itself), so the lookahead allocates nothing per call.
-    private readonly List<TokenKind> _clauseHeadClosers = [];
-
     /// <summary>
     /// The clause-head scan behind <see cref="LookaheadIsParenEqualsAfterName"/>: true
     /// when <c>( … ) =</c> follows the name at <paramref name="nameIndex"/> under the
@@ -3159,7 +3157,13 @@ public sealed class Parser
     /// construct even at the root, so no closer inside it is a top-level stray.
     /// Ordinary delimited parsing then applies ExpectCloser's ownership law. Every
     /// recognized head is therefore a properly nested region (see ParseClauseDefinition).
+    /// The region is decided by <see cref="TryCloseDelimiterRegion"/>, whose memo keeps
+    /// nested candidates (<c>I(I(I(1)))</c>, one candidate per call level) linear in
+    /// total; the line rules around it are decided here for every call. Kept out of line,
+    /// as its former scan loop kept it, so the recursive clause-definition frame that
+    /// calls it does not absorb its locals.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private bool TryFindClauseHeadClose(int nameIndex, out int closeIndex)
     {
         closeIndex = -1;
@@ -3167,45 +3171,11 @@ public sealed class Parser
         if (_tokens[next].Kind != TokenKind.LParen || !IsHeadToken(next, _tokens[nameIndex].Line))
             return false;
 
-        var closers = _clauseHeadClosers;
-        closers.Clear();
-        closers.Add(TokenKind.RParen);
-        while (true)
-        {
-            next = NextSignificantIndex(next + 1);
-            var kind = _tokens[next].Kind;
-            switch (kind)
-            {
-                case TokenKind.EndOfFile:
-                    return false;
-                case TokenKind.LParen:
-                    closers.Add(TokenKind.RParen);
-                    continue;
-                case TokenKind.LBracket:
-                    closers.Add(TokenKind.RBracket);
-                    continue;
-                case TokenKind.LBrace:
-                    closers.Add(TokenKind.RBrace);
-                    continue;
-                case TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace:
-                    if (closers[^1] != kind)
-                    {
-                        // The prospective HEAD is itself an open construct, including
-                        // at the root. Let ordinary delimited parsing resolve the mismatch;
-                        // scanning past it could steal a later declaration into this head.
-                        return false;
-                    }
-
-                    closers.RemoveAt(closers.Count - 1);
-                    if (closers.Count != 0)
-                        continue;
-                    break;
-                default:
-                    continue;
-            }
-
-            break;
-        }
+        // A mismatched closer or the end of input inside: the prospective HEAD is itself
+        // an open construct, including at the root. Ordinary delimited parsing resolves
+        // the mismatch; scanning past it could steal a later declaration into this head.
+        if (!TryCloseDelimiterRegion(next, out next))
+            return false;
 
         // The head's `)`, its optional output-spreading marker run (`F(x)* =`), and its `=` share a line.
         var closeLine = _tokens[next].Line;
@@ -3216,6 +3186,139 @@ public sealed class Parser
         closeIndex = next;
         return true;
     }
+
+    // Per-parse delimiter-region memo of the clause-head scan, indexed by token position.
+    // For the opening delimiter at significant index i: 0 while undecided; close + 1 when
+    // the region it opens closes within itself at the closer index close; ~breakIndex
+    // (negative) when it does not, breakIndex being the first mismatched closer or the end
+    // of input. Allocated by the first region walk (see TryCloseDelimiterRegion).
+    private int[]? _delimiterRegionEnds;
+
+    // Reused across walks. Capacity grows only when a walk reaches a new maximum depth.
+    private readonly List<int> _delimiterRegionOpeners = [];
+
+    /// <summary>
+    /// Whether the delimited region opened by the <c>(</c>, <c>[</c>, or <c>{</c> at
+    /// <paramref name="openIndex"/> CLOSES WITHIN ITSELF — every delimiter opened inside it
+    /// closes inside it with its own kind — with <paramref name="endIndex"/> the region's own
+    /// closer. Otherwise <paramref name="endIndex"/> is the precise break: the first closer
+    /// that does not match the innermost open delimiter, or the end of input.
+    ///
+    /// <para>The answer is a pure function of the immutable token array, so it is decided
+    /// once per opening delimiter and memoized for every nested opener the walk passes. A
+    /// nested region that closed resumes the walk after its closer, with the enclosing
+    /// regions as they were; a nested region that broke breaks every region open around it
+    /// at the same token, because their walks reach that token with the same innermost
+    /// delimiter. Each opener is resolved once. An enclosing walk that later reaches it
+    /// reads its cached endpoint, so the cost is linear in token count plus the number
+    /// of queries (formerly quadratic in the depth of <c>I(I(…I(1)…))</c>, KL-03).
+    /// A parse asks in source order, so the walk of the outermost candidate decides every
+    /// region inside it; the nested-entry reads keep the bound for any query order
+    /// (<see cref="ClassifyDeclarationStartsInOrder"/>).
+    /// The walk inspects tokens through <see cref="NextSignificantIndex"/>, so comments and
+    /// reported characters stay invisible, and it charges every memo read, every memo
+    /// write, and the memo's one allocation (one step per token slot) to the traversal
+    /// count: reused or failed work is never free in the scaling regressions.</para>
+    /// </summary>
+    private bool TryCloseDelimiterRegion(int openIndex, out int endIndex)
+    {
+        var ends = _delimiterRegionEnds ?? AllocateDelimiterRegionEnds();
+        _tokenSteps++;
+        var known = ends[openIndex];
+        if (known != 0)
+            return DecodeDelimiterRegionEnd(known, out endIndex);
+
+        var openers = _delimiterRegionOpeners;
+        openers.Clear();
+        openers.Add(openIndex);
+        var index = openIndex;
+        while (true)
+        {
+            index = NextSignificantIndex(index + 1);
+            var kind = _tokens[index].Kind;
+            switch (kind)
+            {
+                case TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace:
+                    _tokenSteps++;
+                    known = ends[index];
+                    if (known > 0)
+                    {
+                        // Closed within itself: resume after its closer, every region around it unchanged.
+                        index = known - 1;
+                        continue;
+                    }
+
+                    if (known < 0)
+                        return BreakOpenDelimiterRegions(~known, out endIndex);
+                    openers.Add(index);
+                    continue;
+                case TokenKind.RParen or TokenKind.RBracket or TokenKind.RBrace:
+                    var innermost = openers[^1];
+                    if (ClosingDelimiterOf(_tokens[innermost].Kind) != kind)
+                        return BreakOpenDelimiterRegions(index, out endIndex);
+                    _tokenSteps++;
+                    ends[innermost] = index + 1;
+                    openers.RemoveAt(openers.Count - 1);
+                    if (openers.Count != 0)
+                        continue;
+                    endIndex = index;
+                    return true;
+                case TokenKind.EndOfFile:
+                    return BreakOpenDelimiterRegions(index, out endIndex);
+                default:
+                    continue;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records <paramref name="breakIndex"/> as the break of every region the walk still has
+    /// open (one charged write each); always false.
+    /// </summary>
+    private bool BreakOpenDelimiterRegions(int breakIndex, out int endIndex)
+    {
+        var ends = _delimiterRegionEnds!;
+        var openers = _delimiterRegionOpeners;
+        for (var i = 0; i < openers.Count; i++)
+        {
+            _tokenSteps++;
+            ends[openers[i]] = ~breakIndex;
+        }
+
+        openers.Clear();
+        endIndex = breakIndex;
+        return false;
+    }
+
+    private static bool DecodeDelimiterRegionEnd(int known, out int endIndex)
+    {
+        if (known > 0)
+        {
+            endIndex = known - 1;
+            return true;
+        }
+
+        endIndex = ~known;
+        return false;
+    }
+
+    /// <summary>
+    /// Allocates the region memo on the first walk, charging its zeroed preparation one step
+    /// per token slot, so the memo's linear setup is part of the observed traversal work.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private int[] AllocateDelimiterRegionEnds()
+    {
+        _tokenSteps += _tokens.Count;
+        return _delimiterRegionEnds = new int[_tokens.Count];
+    }
+
+    private static TokenKind ClosingDelimiterOf(TokenKind opener) => opener switch
+    {
+        TokenKind.LParen => TokenKind.RParen,
+        TokenKind.LBracket => TokenKind.RBracket,
+        _ => TokenKind.RBrace,
+    };
 
     // ── Pattern parsing (for clause definitions) ────────────────────────────
 
@@ -4381,6 +4484,42 @@ public sealed class Parser
             CancellationToken.None,
             CancellationToken.None);
         return parser.ClassifyDeclarationStartAt(parser.NextSignificantIndex(0), includeCommaSpanningBindingPatterns);
+    }
+
+    /// <summary>
+    /// Test-only entry: <see cref="ClassifyDeclarationStartAt"/> at the first significant token at
+    /// or after each of <paramref name="tokenIndexes"/>, IN THE GIVEN ORDER, on ONE parser — so the
+    /// per-parse lookahead memos (the clause-head delimiter regions, the failed binding-pattern
+    /// region, the Grace run) carry over from one query to the next — with the traversal work
+    /// recorded into <paramref name="traversalObservations"/>. A parse asks in source order and
+    /// never rewinds; this entry also asks in orders the body loop never takes (an outer candidate
+    /// after the candidates nested in it), for the order-agreement and work pins.
+    /// </summary>
+    internal static DeclarationStart[] ClassifyDeclarationStartsInOrder(
+        string source,
+        IReadOnlyList<int> tokenIndexes,
+        bool includeCommaSpanningBindingPatterns,
+        ParserTraversalObservations? traversalObservations = null)
+    {
+        var diagnostics = new DiagnosticBag();
+        var lexicalErrorStarts = new List<SourcePosition>();
+        var parser = new Parser(
+            Lexer.Tokenize(source, diagnostics, lexicalErrorStarts),
+            diagnostics,
+            lexicalErrorStarts,
+            comparisonObservations: null,
+            CancellationToken.None,
+            CancellationToken.None);
+        var verdicts = new DeclarationStart[tokenIndexes.Count];
+        for (var i = 0; i < verdicts.Length; i++)
+        {
+            verdicts[i] = parser.ClassifyDeclarationStartAt(
+                parser.NextSignificantIndex(tokenIndexes[i]),
+                includeCommaSpanningBindingPatterns);
+        }
+
+        traversalObservations?.RecordTokenSteps(parser._tokenSteps);
+        return verdicts;
     }
 
     private static bool CanStartExpression(TokenKind kind) => kind switch
