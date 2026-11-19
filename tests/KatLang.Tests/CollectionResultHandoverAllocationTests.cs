@@ -24,6 +24,8 @@ namespace KatLang.Tests;
 /// its exact array instead of a list it then copied, and the fused filter→count reads a dotted receiver's
 /// items through the generic view instead of copying them. Each assertion below fails on the code before
 /// that change.</para>
+/// <para>A collector cell's whole-value materialization (November 2026, implementation-only) fills its exact array the
+/// same way instead of a <c>List&lt;Result&gt;</c> that <c>MakeCollectionListResult</c> copied.</para>
 /// </summary>
 public class CollectionResultHandoverAllocationTests
 {
@@ -304,6 +306,49 @@ public class CollectionResultHandoverAllocationTests
         Assert.Equal(
             ResultArrayDelta(Small, Large),
             CallBytes(BuiltinId.take, Prefix(Large + 5)) - CallBytes(BuiltinId.take, Prefix(Small)));
+        GcIsolatedAllocation.Complete();
+    }
+
+    private static readonly Func<IReadOnlyList<NeedCell>, Evaluator.EvalCtx, NeedCell> CollectorCell =
+        typeof(Evaluator).GetMethod("CollectorCell", BindingFlags.NonPublic | BindingFlags.Static)!
+            .CreateDelegate<Func<IReadOnlyList<NeedCell>, Evaluator.EvalCtx, NeedCell>>();
+
+    /// <summary>
+    /// The bytes of the first demand of a fresh collector over <paramref name="count"/> ready cells: its whole
+    /// value, the exact list of the cells' values with emitted count 1. The cells and the collector are made
+    /// before the window; a collector keeps its outcome, so each measurement needs a fresh one.
+    /// </summary>
+    private static long CollectorBytes(int count)
+    {
+        var slice = new NeedCell[count];
+        for (var i = 0; i < slice.Length; i++)
+            slice[i] = NeedCell.Ready(new(new Result.Atom(i + 1), 1));
+        var collector = CollectorCell(slice, Evaluator.EvalCtx.Empty);
+        EvalResult<Evaluator.CountedResult> result = default;
+        var bytes = Bytes(() => result = collector.Demand());
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
+        Assert.Equal(1, result.Value.EmittedCount);
+        var items = Assert.IsType<Result.ListValue>(result.Value.Value).Items;
+        Assert.Equal(count, items.Count);
+        Assert.Equal((Decimal128)count, Assert.IsType<Result.Atom>(items[^1]).Value);
+        GC.KeepAlive(result);
+        return bytes;
+    }
+
+    /// <summary>
+    /// A collector's whole-value materialization (<c>Evaluator.CollectorCell</c>) places the values of its
+    /// cells in the ONE exact array that becomes the list: a longer slice costs exactly the longer array, where
+    /// the former <c>List&lt;Result&gt;</c> and its copy by <c>MakeCollectionListResult</c> cost two.
+    /// </summary>
+    [Fact]
+    public void CollectorMaterialization_AllocatesOneExactArray_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        _ = CollectorBytes(Small);
+        Assert.Equal(ResultArrayDelta(Small, Large), CollectorBytes(Large) - CollectorBytes(Small));
+        Assert.Equal(ResultArrayDelta(Small, 2 * Small), CollectorBytes(2 * Small) - CollectorBytes(Small));
         GcIsolatedAllocation.Complete();
     }
 

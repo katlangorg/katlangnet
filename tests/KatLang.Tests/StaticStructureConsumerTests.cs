@@ -236,8 +236,9 @@ public sealed class StaticStructureConsumerTests
     /// The WORK bound's refusal has its own last sentence. The bound scales with the admitted structure and does not
     /// move with <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so the envelope sentence ("a host may
     /// only lower it") would misstate the remedy: lowering the envelope never lowers the work bound. The ledger marks its
-    /// work refusal, and only that one; every other bound keeps the envelope sentence. The routes are pinned in
-    /// <c>ExposureSettlementFrameChargeTests</c>.
+    /// work refusal, and only that one; its storage bound keeps the envelope sentence. The routes are pinned in
+    /// <c>ExposureSettlementFrameChargeTests</c>; the read bound's and signature selection's own sentences are pinned in
+    /// <c>StaticQueryEngineTests</c> and <c>SignatureSelectionTests</c>, and every kind's sentence below.
     /// </summary>
     [Fact]
     public void WorkBoundRefusal_SaysTheBoundScalesWithTheProgram_NotThatTheHostMayLowerIt()
@@ -247,7 +248,7 @@ public sealed class StaticStructureConsumerTests
 
         var work = Assert.Throws<StaticQueryLimitExceededException>(
             () => new StaticQueryResourceBudget(new StaticQueryLimits(MaxEvaluations: 3, MaxRefinements: 4)).Work(4));
-        Assert.True(work.IsWorkBound);
+        Assert.Equal(StaticQueryBoundKind.Work, work.Bound);
         var refusal = StaticStructureAdmission.Rejection(work);
         Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, refusal.Code);
         Assert.Null(refusal.Span);
@@ -257,10 +258,30 @@ public sealed class StaticStructureConsumerTests
 
         var storage = Assert.Throws<StaticQueryLimitExceededException>(
             () => new StaticQueryResourceBudget(new StaticQueryLimits(MaxEvaluations: 100, MaxRefinements: 4, MaxStorageUnits: 3)).Reserve(4));
-        Assert.False(storage.IsWorkBound);
+        Assert.Equal(StaticQueryBoundKind.Envelope, storage.Bound);
         Assert.Equal(
             "Static structure analysis exceeded its resource bound. The static operation exceeded its metadata storage bound (3 slots). " + envelope,
             StaticStructureAdmission.Rejection(storage).Message);
+
+        // Each kind's sentence, in full: none of the three non-envelope bounds says that a host may lower it.
+        Assert.Equal(envelope, StaticStructureAdmission.EnvelopeSentence);
+        Assert.Equal(workBound, StaticStructureAdmission.WorkBoundSentence);
+        Assert.Equal(
+            "This bound scales with the size of the analyzed program (65,536 + 4,096 per node and edge) rather than with the host's static-structure envelope, so no envelope setting raises or lowers it.",
+            StaticStructureAdmission.ReadBoundSentence);
+        Assert.Equal(
+            "This limit is fixed: the count doubles with each .Algorithm link classified together, and 2^62 or more is refused whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.",
+            StaticStructureAdmission.SignatureEnumerationSentence);
+        foreach (var (kind, sentence) in new[]
+        {
+            (StaticQueryBoundKind.Reads, StaticStructureAdmission.ReadBoundSentence),
+            (StaticQueryBoundKind.SignatureEnumeration, StaticStructureAdmission.SignatureEnumerationSentence),
+        })
+        {
+            Assert.Equal("Static structure analysis exceeded its resource bound. The counter. " + sentence,
+                StaticStructureAdmission.Rejection(new StaticQueryLimitExceededException("The counter.", kind)).Message);
+            Assert.DoesNotContain("may only lower it", sentence, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

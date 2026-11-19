@@ -2272,12 +2272,17 @@ whose standalone-tool job stays build-only, needs no secret and runs on a GitHub
 checks run) and runs `semantic-campaign --exhaustive` over every finite recipe (`seed-nested`,
 `seed-nested-wide`, `seed-nested-wider`; batches of 128, failures persisted and reduced, each sweep
 bounded by `--max-seconds 2400`), writing every log, summary and reproducer to a fresh git-ignored
-`artifacts/validation/semantic-sweeps-*` directory and a table to the job summary. It fails when a
+`artifacts/validation/semantic-sweeps-*` directory and a table to the job summary (per recipe: exit
+code, completeness, planned and failed cases, batch-only, batch-dependent, unclassified, elapsed seconds). It fails when a
 sweep finds a failure or does not complete; the job then uploads that directory as
 `semantic-sweep-reproducers` (also when it times out or is cancelled). The three sweeps took 913 s
-(83 + 620 + 210 s) on a developer machine on 2026-11-17, plus about a minute of build; a hosted
-runner is assumed to need about twice that, well inside the job's 150 minutes and each sweep's
-40-minute budget. `ContinuousIntegrationPolicyTests`
+(83 + 620 + 210 s) on a developer machine on 2026-11-17, plus about a minute of build. The first
+two completed hosted runs took 1,106 s and 1,190 s for the whole job (runs 44284579331 on 2026-11-18
+and 44506161617 on 2026-11-19; the sweep step took 1,078 s and 1,173 s), so the job allows 70
+minutes: a run 50% slower than the slower one plus one sweep that spends its whole budget
+(1.5 × 1,190 + 2,400 = 4,185 s), about 3.5 times that job. Each sweep keeps its 40-minute budget:
+the hosted per-recipe times are in those runs' step summaries and logs, which an unauthenticated
+reader cannot open, so it has not been re-sized. `ContinuousIntegrationPolicyTests`
 pins the triggers, the runner, the recipe list and the upload, and holds the workflow to the shared
 action-pinning, secret, checkout and cache policies.
 

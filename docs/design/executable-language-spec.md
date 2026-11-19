@@ -147,6 +147,18 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   scope, counts and FD-F1's differing answers for forwarding a single collector by shape.
   `FrontEndDecisionLeanArtifactTests` pins the artifact, partition, coverage floors and reported occurrence. Regenerate with
   `$env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"; dotnet test .\KatLang.slnx --filter FrontEndDecisionLeanArtifact`
+- `lean/KatLangArityLaws/MayCaptureCallsCorpus.lean` (built by the canonical
+  `KatLangArityLaws` target; ledger E-21) — the PLAN-RETENTION GATE
+  differential. For every Lean-comparable program of the four corpora above
+  (LanguageSpec, the semantic explorer with its internal-node cases, the SEM-2C
+  generated cases and the host-built HOST-DIFF-1 corpus) one guard pins C#'s
+  verdict of `AstStructuralPreflight.MayCaptureCalls` (J7) against Lean's
+  `Expr.mayCaptureCalls`. The file imports those corpus modules and re-emits no
+  program: `MayCaptureCallsLeanArtifactTests` re-encodes each tree and requires it
+  to equal the definition the corpus module holds, and every program without a
+  guard is excluded by a counted rule. Regenerate AFTER any of the four corpus
+  artifacts with
+  `$env:KATLANG_REGENERATE_MAY_CAPTURE_CALLS = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact`
 
 The four evaluation artifacts above embed the same observation machinery (`neutral`,
 `errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
@@ -157,8 +169,8 @@ adding an error kind, extend `errCategory` and `sharedError` there AND
 reviewed policy (a constructor-projection golden in `DifferentialErrorContracts`,
 or the host-only inventory of `DifferentialObservationTests` for a C#-only
 kind), then regenerate all four evaluation artifacts with their registered flags.
-The front-end decision artifact calls the model's specification functions directly
-and does not embed those evaluation helpers.
+The front-end decision artifact calls the model's specification functions directly.
+The gate differential imports the Lean gate and checks it on the existing corpus definitions.
 
 Q-67 adds a separate structured-error projection (`DifferentialErrors` /
 `sharedError`, guarded by `errorObs`), while preserving the FORMAL-06 neutral

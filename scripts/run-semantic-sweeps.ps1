@@ -75,7 +75,7 @@ try {
 
     $assembly = Join-Path $repoRoot "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.dll"
     $failed = @()
-    $summary = @("| Recipe | Exit | Complete | Planned | Failed | Batch-only | Elapsed (s) |", "| --- | --- | --- | --- | --- | --- | --- |")
+    $summary = @("| Recipe | Exit | Complete | Planned | Failed | Batch-only | Batch-dependent | Unclassified | Elapsed (s) |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     foreach ($recipe in $Recipes) {
         $out = Join-Path $diagnostics $recipe
         $log = Join-Path $diagnostics "$recipe.log"
@@ -88,17 +88,22 @@ try {
         $planned = "-"
         $failures = "-"
         $batchOnly = "-"
+        $batchDependent = "-"
+        $unclassified = "-"
         $campaign = Join-Path $out "campaign.json"
         if (Test-Path -LiteralPath $campaign) {
             $json = Get-Content -LiteralPath $campaign -Raw | ConvertFrom-Json
             $complete = [bool]$json.complete
             $planned = $json.planned
             $failures = $json.failed
-            $batchOnly = $json.classifications.'batch-only' + $json.classifications.'batch-dependent'
+            $batchOnly = $json.classifications.'batch-only'
+            $batchDependent = $json.classifications.'batch-dependent'
+            # Batch failures recorded without a standalone rerun once --max-reruns was spent (fuzz/README.md).
+            $unclassified = $json.classifications.unclassified
         }
 
-        "${recipe}: exit=$exit complete=$complete planned=$planned failed=$failures batch-only=$batchOnly elapsed=${elapsed}s" | Add-Content -LiteralPath $record
-        $summary += "| $recipe | $exit | $complete | $planned | $failures | $batchOnly | $elapsed |"
+        "${recipe}: exit=$exit complete=$complete planned=$planned failed=$failures batch-only=$batchOnly batch-dependent=$batchDependent unclassified=$unclassified elapsed=${elapsed}s" | Add-Content -LiteralPath $record
+        $summary += "| $recipe | $exit | $complete | $planned | $failures | $batchOnly | $batchDependent | $unclassified | $elapsed |"
         Write-LogTail -Path $log
         if ($exit -ne 0 -or -not $complete) {
             $failed += $recipe

@@ -18,6 +18,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.CollectionBuiltinDispatchTests.ControlReadingDispatch_AllocatesNoClosureOrDelegate_GcIsolatedChild",
                 "KatLang.Tests.CollectionBuiltinDispatchTests.ZeroControlDispatch_AllocatesOnlyItsCallItems_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.Atoms_OfAFlatList_AllocatesTheNumbersAndOneExactArray_GcIsolatedChild",
+                "KatLang.Tests.CollectionResultHandoverAllocationTests.CollectorMaterialization_AllocatesOneExactArray_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.Distinct_AllocatesItsSetOneBitSetAndOneExactArray_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.Distinct_LargeInput_AllocatesWithTheNumberOfFirstOccurrences_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.FusedDotReceiverItems_AllocateNothingPerItem_GcIsolatedChild",

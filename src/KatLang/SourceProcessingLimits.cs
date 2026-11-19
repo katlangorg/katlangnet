@@ -89,8 +89,9 @@ public sealed record SourceProcessingLimits
     /// source of constant rows reaches neither. The entries of one open level grow with its providers
     /// times the DISTINCT opened names it reads, not with the square of the providers. Near a bound a
     /// run peaks at about 0.6-1.5 GiB of process memory with the default GC. The refusal says that the
-    /// envelope is at most 1 GiB and that a host may only lower it; a refusal by the operation's work bound, which
-    /// scales with the admitted structure and not with this envelope, says that instead.</para>
+    /// envelope is at most 1 GiB and that a host may only lower it; a refusal by the operation's work or read bound,
+    /// which scales with the admitted structure and not with this envelope, says that instead, and a refusal by
+    /// signature selection's fixed enumeration limit says that no setting moves it.</para>
     /// </summary>
     public const long MaxSupportedStaticStructureBytes = 1024L * 1024 * 1024;
 

@@ -712,7 +712,8 @@ public static partial class Evaluator
     /// resolves one target — so a consumer may skip re-resolving a repeated key; whether two
     /// targets with DIFFERENT keys are one provider is decided after resolution by the semantic
     /// provider identity (<see cref="ResolveAllOpens"/>: <see cref="SameRepeatedCallableIdentity"/>;
-    /// the front end: <c>ElaboratedScopeLookup.ResolveOpenProviderIdentity</c>). An INLINE target
+    /// the front end: the <see cref="OpenProviderIdentity"/> that <see cref="ElaboratedScopeLookup.ResolveOpenProvider"/>
+    /// resolves with each target). An INLINE target
     /// (<see cref="Expr.AlgorithmExpr"/> or <see cref="Expr.Capture"/>) is keyed by its written
     /// position, including when it heads a dotted path, so the skip never merges two written
     /// blocks. A name-headed path uses its COMPLETE spelling (ordinal comparison): diagnostic

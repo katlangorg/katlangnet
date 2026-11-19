@@ -86,15 +86,32 @@ internal readonly record struct StaticQueryStatistics(
     long StorageUnits = 0, long PeakStorageUnits = 0, long MetadataUnits = 0);
 
 /// <summary>
-/// A static-analysis resource refusal; its message names the exhausted counter. <see cref="IsWorkBound"/> marks the
-/// operation's WORK bound (<see cref="StaticQueryLimits.MaxEvaluations"/>), which scales with the admitted structure
-/// and not with the host's static-structure envelope, so its refusal explains a different remedy
-/// (<see cref="StaticStructureAdmission.Rejection"/>).
+/// Which kind of bound refused, which selects the last sentence of the refusal (<see cref="StaticStructureAdmission.Rejection"/>).
 /// </summary>
-internal sealed class StaticQueryLimitExceededException(string message, bool isWorkBound = false) : Exception(message)
+internal enum StaticQueryBoundKind
 {
-    /// <summary>Whether the operation's work bound refused (<see cref="StaticQueryResourceBudget"/>).</summary>
-    internal bool IsWorkBound { get; } = isWorkBound;
+    /// <summary>The default refusal ending, which describes the host's static-structure envelope.</summary>
+    Envelope,
+
+    /// <summary>The operation's WORK bound (<see cref="StaticQueryLimits.MaxEvaluations"/>), which scales with the admitted structure.</summary>
+    Work,
+
+    /// <summary>The queries' READ bound (<see cref="StaticQueryLimits.MaxReads"/>), which scales with the admitted structure.</summary>
+    Reads,
+
+    /// <summary>Signature selection's fixed limit of fewer than 2^62 classifications of <c>.Algorithm</c> links.</summary>
+    SignatureEnumeration,
+}
+
+/// <summary>
+/// The message names the exhausted counter. <see cref="StaticStructureAdmission.Rejection"/> uses
+/// <see cref="Bound"/> to select the explanation that follows it.
+/// </summary>
+internal sealed class StaticQueryLimitExceededException(string message, StaticQueryBoundKind bound = StaticQueryBoundKind.Envelope)
+    : Exception(message)
+{
+    /// <summary>Which kind of bound refused.</summary>
+    internal StaticQueryBoundKind Bound { get; } = bound;
 }
 
 /// <summary>
@@ -345,7 +362,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     private void CountRead()
     {
         if (_reads >= _limits.MaxReads)
-            throw new StaticQueryLimitExceededException($"The static queries exceeded their read bound ({_limits.MaxReads}).");
+            throw new StaticQueryLimitExceededException($"The static queries exceeded their read bound ({_limits.MaxReads}).", StaticQueryBoundKind.Reads);
         _reads++;
     }
 

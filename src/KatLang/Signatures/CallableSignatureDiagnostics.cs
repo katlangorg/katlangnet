@@ -86,21 +86,6 @@ internal static class CallableSignatureDiagnostics
         return $"between {facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} and {FormatCount(facts.MaxTopLevelArgumentCount.Value, "argument")}";
     }
 
-    internal static string FormatExpectedArgumentCountWithoutNoun(CallableArityFacts facts)
-    {
-        if (facts.MaxTopLevelArgumentCount is null)
-        {
-            return facts.MinTopLevelArgumentCount == 0
-                ? "any number of"
-                : $"at least {facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-        }
-
-        if (facts.MinTopLevelArgumentCount == facts.MaxTopLevelArgumentCount.Value)
-            return facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
-        return $"between {facts.MinTopLevelArgumentCount.ToString(System.Globalization.CultureInfo.InvariantCulture)} and {facts.MaxTopLevelArgumentCount.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-    }
-
     private static string FormatCount(int count, string singularNoun)
         => count == 1 ? $"1 {singularNoun}" : $"{count.ToString(System.Globalization.CultureInfo.InvariantCulture)} {singularNoun}s";
 

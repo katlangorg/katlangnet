@@ -717,7 +717,4 @@ internal static class BuiltinRegistry
     // follow it (`collection.take(count)`-style hovers show only `count`).
     private static IReadOnlyList<CallableParameter> CreateSequenceDotParameters(SequenceBuiltinMetadata metadata)
         => metadata.Parameters.Skip(1).ToArray();
-
-    internal static string DescribeSequenceBuiltinTotalArgs(CallableSignature signature)
-        => CallableSignatureDiagnostics.FormatExpectedArgumentCountWithoutNoun(signature.ArityFacts);
 }

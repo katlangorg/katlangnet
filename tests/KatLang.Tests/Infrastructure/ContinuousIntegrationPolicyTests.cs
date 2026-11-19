@@ -991,6 +991,11 @@ public class ContinuousIntegrationPolicyTests
         Assert.Equal(KatLang.ParserFuzz.SemanticCorpus.FiniteRecipes.ToArray(), recipes);
         Assert.Contains("semantic-campaign --exhaustive --recipe $recipe", script, StringComparison.Ordinal);
         Assert.Contains("if ($exit -ne 0 -or -not $complete)", script, StringComparison.Ordinal);
+        // The record line and the step-summary table report the unclassified failures (reruns spent) beside the batch ones.
+        Assert.Contains("$unclassified = $json.classifications.unclassified", script, StringComparison.Ordinal);
+        Assert.Contains("batch-only=$batchOnly batch-dependent=$batchDependent unclassified=$unclassified", script, StringComparison.Ordinal);
+        Assert.Contains("| Batch-only | Batch-dependent | Unclassified |", script, StringComparison.Ordinal);
+        Assert.Contains("| $batchOnly | $batchDependent | $unclassified |", script, StringComparison.Ordinal);
         Assert.Contains("& git check-ignore -q -- \"$relative/semantic-sweeps.log\"", script, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"(?m)^[^#\n]*\bdotnet\s+(?:test|publish)\b", script);
     }

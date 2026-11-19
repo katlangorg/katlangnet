@@ -9,9 +9,11 @@ namespace KatLang.Tests;
 /// <summary>
 /// Fused filter→count over a DOTTED RECEIVER whose elements include the empty sequence value <c>()</c>
 /// (investigation of 2026-11-17). The fused source adapter
-/// (<c>EvaluateDotReceiverIterationItemsForSequenceOptimizer</c>) gives each receiver element the
-/// emitted count <c>item.ValueCount()</c>, so a <c>()</c> element carries 0, while generic binding reads
-/// every element with count 1 (<c>CollectionIterationItems</c>). The difference is NOT observable, by
+/// (<c>EvaluateDotReceiverIterationItemsForSequenceOptimizer</c>) returns the generic binding's own view
+/// (<c>CollectionIterationItems</c>) since 2026-11-18, so every receiver element, a <c>()</c> element
+/// included, carries emitted count 1 on both strategies. Until then the adapter copied the elements with
+/// the emitted count <c>item.ValueCount()</c>, so a <c>()</c> element carried 0 there and 1 in generic
+/// binding. That difference was NOT observable, by
 /// construction: the fused executor reads only the number of source items and passes each item to the
 /// ONE predicate funnel the generic <c>filter</c> uses (<c>EvalFilterPredicateTruth</c>). That funnel
 /// renders the item's value for its diagnostic context and hands the item to the callback through
@@ -239,8 +241,9 @@ public class FilterCountReceiverEmptyElementParityTests
     }
 
     /// <summary>
-    /// The mechanism that makes the two counts unobservable: the fused adapter's <c>()</c> item (count 0)
-    /// and the generic view's (count 1) become the SAME callback item at the one predicate funnel.
+    /// The mechanism that made the two counts unobservable: a <c>()</c> item counted 0 (the fused adapter's
+    /// until 2026-11-18) and the generic view's (count 1) become the SAME callback item at the one predicate
+    /// funnel.
     /// </summary>
     [Fact]
     public void TheCallbackItem_IsRecountedFromItsValue_SoTheIncomingCountIsDiscarded()

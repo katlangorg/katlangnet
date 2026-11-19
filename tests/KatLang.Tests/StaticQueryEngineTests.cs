@@ -551,7 +551,13 @@ public sealed class StaticQueryEngineTests
         AssertFanInStatistics(atReads.Statistics);
 
         var belowReads = new StaticQueryEngine<int, Tri>(new Circuit(FanInCircuit()), limits: new(long.MaxValue, 64, MaxReads: 5));
-        Assert.Throws<StaticQueryLimitExceededException>(() => belowReads.Get(0));
+        var readRefusal = Assert.Throws<StaticQueryLimitExceededException>(() => belowReads.Get(0));
+        // The read bound scales with the admitted structure, not with the envelope: its refusal says so.
+        Assert.Equal(StaticQueryBoundKind.Reads, readRefusal.Bound);
+        Assert.Equal(
+            "Static structure analysis exceeded its resource bound. The static queries exceeded their read bound (5). "
+            + StaticStructureAdmission.ReadBoundSentence,
+            StaticStructureAdmission.Rejection(readRefusal).Message);
         Assert.Equal(5, belowReads.Statistics.Reads);
         Assert.Throws<InvalidOperationException>(() => belowReads.Get(0));
     }

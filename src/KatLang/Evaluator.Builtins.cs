@@ -272,7 +272,7 @@ public static partial class Evaluator
     // to body/root output accumulation (EvalAlgOutputCountedCore) or to a loop step's
     // own row supply (EvalAlgOutputSlots), both of which must keep their multi-item counts.
     // (Collecting bindings need no re-count: a collector cell's VALUE is one exact list,
-    // materialized by MakeCollectionListResult with emitted count 1 — CollectorCell.) Lexical zero-arg property access (EvalCounted
+    // materialized by HandOverListResult with emitted count 1 — CollectorCell.) Lexical zero-arg property access (EvalCounted
     // Expr.Resolve) and the `if` builtin already perform this same re-count
     // inline; this helper generalizes it.
     // Lean: reCountValueBoundary.
@@ -1568,7 +1568,7 @@ public static partial class Evaluator
         return null;
     }
 
-    /// <summary>The list value of an array filled after <see cref="ReserveExactListItems"/> (ownership transfer).</summary>
+    /// <summary>Takes ownership of the filled array and emits one list. The caller reserves the item count before handover.</summary>
     private static EvalResult<CountedResult> HandOverListResult(Result[] items)
         => EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(items), 1));
 

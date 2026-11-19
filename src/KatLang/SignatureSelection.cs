@@ -736,7 +736,7 @@ internal sealed class SignatureSelector
         {
             _resources.Fail();
             throw new StaticQueryLimitExceededException(
-                $"Signature selection would enumerate 2^{dimensions} classifications of .Algorithm links.");
+                $"Signature selection would enumerate 2^{dimensions} classifications of .Algorithm links.", StaticQueryBoundKind.SignatureEnumeration);
         }
 
         _resources.Work(1L << dimensions, _cancellationToken);

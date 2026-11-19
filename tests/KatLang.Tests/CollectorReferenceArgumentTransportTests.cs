@@ -435,10 +435,16 @@ public sealed class CollectorReferenceArgumentTransportTests
         const string opened = "Coll(B*)";
         _ = Measure(30, opened);
         _ = Measure(30, "B");
+        _ = Measure(30, "0");
         var small = Measure(2, opened);
         var large = Measure(30, opened);
         Assert.True(large < small + (30 * 4_096), $"small={small}, large={large}");
+
+        // The window does see a list when one is built: reading the whole value of B builds the ONE list of the
+        // 4,096 references (at least 32 KiB) beyond the same row without the read. The control used to compare that
+        // read with the opened walk, which held only while the collector's materialization copied its list twice.
         var whole = Measure(30, "B");
-        Assert.True(whole > large, $"opened={large}, whole={whole}");
+        var none = Measure(30, "0");
+        Assert.True(whole - none >= 4_096L * 8, $"whole={whole}, none={none}");
     }
 }

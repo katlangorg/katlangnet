@@ -74,23 +74,40 @@ internal static class StaticStructureAdmission
     }
 
     /// <summary>
-    /// The refusal names the exhausted counter (the exception's own sentence) and then says what a host can do. For an
-    /// envelope bound (<see cref="EnvelopeSentence"/>): the envelope never exceeds
-    /// <see cref="SourceProcessingLimits.MaxSupportedStaticStructureBytes"/>, and configuration may only lower it, so the
-    /// remedy is a smaller program. For the operation's WORK bound (<see cref="WorkBoundSentence"/>): the bound is
-    /// 16,384 + 1,024 per admitted node and edge (<see cref="Measurement.Limits"/>)
-    /// and does not move with <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so lowering the envelope
-    /// never lowers it and the envelope sentence would misstate the remedy. Text only; the kind stays
-    /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.
+    /// The refusal names the exhausted counter (the exception's own sentence) and then says what a host can do
+    /// (<see cref="StaticQueryLimitExceededException.Bound"/>). For an envelope bound (<see cref="EnvelopeSentence"/>):
+    /// the envelope never exceeds <see cref="SourceProcessingLimits.MaxSupportedStaticStructureBytes"/>, and configuration
+    /// may only lower it, so the remedy is a smaller program. The operation's WORK bound (<see cref="WorkBoundSentence"/>:
+    /// 16,384 + 1,024 per admitted node and edge) and READ bound (<see cref="ReadBoundSentence"/>: 65,536 + 4,096 per
+    /// admitted node and edge), both <see cref="Measurement.Limits"/>, do not move with
+    /// <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so lowering the envelope never lowers them and the
+    /// envelope sentence would misstate the remedy. Signature selection's enumeration limit
+    /// (<see cref="SignatureEnumerationSentence"/>) is a constant, 2^62 classifications, that neither the program's size
+    /// nor any host setting moves. Text only; the kind stays <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.
     /// </summary>
     internal static Diagnostic Rejection(StaticQueryLimitExceededException error)
-        => new($"Static structure analysis exceeded its resource bound. {error.Message} {(error.IsWorkBound ? WorkBoundSentence : EnvelopeSentence)}",
+        => new($"Static structure analysis exceeded its resource bound. {error.Message} {RemedySentence(error.Bound)}",
             DiagnosticSeverity.Error, null)
         { Code = DiagnosticCode.StaticStructureLimitExceeded };
+
+    private static string RemedySentence(StaticQueryBoundKind bound) => bound switch
+    {
+        StaticQueryBoundKind.Envelope => EnvelopeSentence,
+        StaticQueryBoundKind.Work => WorkBoundSentence,
+        StaticQueryBoundKind.Reads => ReadBoundSentence,
+        StaticQueryBoundKind.SignatureEnumeration => SignatureEnumerationSentence,
+        _ => throw new System.Diagnostics.UnreachableException($"Unknown static query bound kind {bound}."),
+    };
 
     internal const string EnvelopeSentence =
         "The program exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it).";
 
     internal const string WorkBoundSentence =
         "This bound scales with the size of the analyzed program (16,384 + 1,024 per node and edge) rather than with the host's static-structure envelope, so no envelope setting raises or lowers it.";
+
+    internal const string ReadBoundSentence =
+        "This bound scales with the size of the analyzed program (65,536 + 4,096 per node and edge) rather than with the host's static-structure envelope, so no envelope setting raises or lowers it.";
+
+    internal const string SignatureEnumerationSentence =
+        "This limit is fixed: the count doubles with each .Algorithm link classified together, and 2^62 or more is refused whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.";
 }

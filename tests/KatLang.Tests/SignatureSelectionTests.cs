@@ -297,6 +297,11 @@ public sealed class SignatureSelectionTests
         var large = Parser.Parse(LinkRing(64));
         var refusal = Assert.Single(large.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, refusal.Code);
+        // The limit is a constant, so the refusal says that no host setting moves it (never the envelope sentence).
+        Assert.Equal(
+            "Static structure analysis exceeded its resource bound. Signature selection would enumerate 2^64 classifications of .Algorithm links. "
+            + StaticStructureAdmission.SignatureEnumerationSentence,
+            refusal.Message);
         Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(LinkRing(64)));
     }
 

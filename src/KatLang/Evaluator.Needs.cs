@@ -680,23 +680,28 @@ public static partial class Evaluator
     // A collector's materialization needs only the RUN: its slice's cells and the run budget that
     // reserves the list. The closure therefore captures the budget, never the binding site's EvalCtx,
     // so a collector a deconstruction memo shares across consumers (OD-1) retains no consumer's context.
+    // The list has exactly one item per cell of the slice, so its values are placed in ONE exactly sized
+    // array that becomes the list (HandOverListResult, as for the collection builtins): no intermediate
+    // List<Result> and no second copy. Implementation-only (November 2026). The cells are still demanded in
+    // order, a failure still returns before the reservation, and the reservation still follows every
+    // demand, with the same count.
     private static NeedCell CollectorCell(IReadOnlyList<NeedCell> slice, EvalCtx ctx)
     {
         var budget = ctx.Budget;
         async ValueTask<EvalResult<CountedResult>> Materialize(bool asynchronous)
         {
-            var items = new List<Result>(slice.Count);
-            foreach (var cell in slice)
+            Result[] items = slice.Count == 0 ? [] : new Result[slice.Count];
+            for (var i = 0; i < items.Length; i++)
             {
-                var value = await DemandCell(cell, asynchronous).ConfigureAwait(false);
+                var value = await DemandCell(slice[i], asynchronous).ConfigureAwait(false);
                 // This cell constructs a list from subordinate computations. Keep their failures
                 // nested in its completed outcome, leaving the element cells' outcomes unchanged.
                 if (value.IsError) return NestMissingOutput(value.Error);
-                items.Add(value.Value.Value);
+                items[i] = value.Value.Value;
             }
-            return budget.TryReserveCollection(items.Count) is { } error
+            return budget.TryReserveCollection(items.Length) is { } error
                 ? error
-                : EvalResult<CountedResult>.Ok(MakeCollectionListResult(items));
+                : HandOverListResult(items);
         }
         return new NeedCell(() => Materialize(false).GetAwaiter().GetResult(), () => Materialize(true),
             token: budget.CancellationToken, slice: slice, budget: budget);

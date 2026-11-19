@@ -474,18 +474,32 @@ public class SemanticBatchOnlyCampaignTests(ITestOutputHelper output)
     private static string Variable(string name)
         => System.Environment.GetEnvironmentVariable(name) ?? throw new InvalidOperationException($"{name} is not set: run only as a planted child");
 
-    /// <summary>The planted batch child (a <see cref="SubprocessProbe"/> method, never a test): <c>semantic-batch-worker</c> with the defect installed.</summary>
+    /// <summary>
+    /// The planted batch child (a <see cref="SubprocessProbe"/> method): <c>semantic-batch-worker</c> with the defect
+    /// installed. A no-op in the ordinary run, like the repository's other child methods.
+    /// </summary>
+    [Fact]
     public static void PlantedBatchWorker()
     {
+        if (System.Environment.GetEnvironmentVariable(ManifestVariable) is null)
+            return;
+
         var planted = Planted.FromEnvironment();
         var defect = new SemanticPlantedFault.Defect(planted.Victims, planted.Trigger);
         var exit = SemanticReplay.WorkBatch(Variable(ManifestVariable), SemanticReplay.Mode.Recipe, defect.For);
         if (exit != 0) throw new InvalidOperationException($"the planted batch worker left {exit} member(s) without a result");
     }
 
-    /// <summary>The planted single-case child: <c>semantic-worker</c> with the defect installed (a fresh process: never armed by a trigger).</summary>
+    /// <summary>
+    /// The planted single-case child: <c>semantic-worker</c> with the defect installed (a fresh process: never armed by a
+    /// trigger). A no-op in the ordinary run.
+    /// </summary>
+    [Fact]
     public static void PlantedSingleWorker()
     {
+        if (System.Environment.GetEnvironmentVariable(DescriptorVariable) is null)
+            return;
+
         var planted = Planted.FromEnvironment();
         var defect = new SemanticPlantedFault.Defect(planted.Victims, planted.Trigger);
         var descriptor = Variable(DescriptorVariable);

@@ -1623,8 +1623,10 @@ public static partial class Evaluator
 
         // The bounded shallow probe (SEC-01-FU3): only the uncharged single-scan mode (the run export) uses it. The
         // charged host-argument scan bills each memoized structure once, and the snapshot memo records
-        // verdicts per structure, so both keep the plain memoized walk.
-        var probeShallow = budgetUse != ScanBudgetUse.ChargeStructuralWork && completed is null;
+        // verdicts per structure, so both keep the plain memoized walk. Every caller pairs the modes with the memo
+        // the same way (the snapshot predicate always passes one, the two boundaries never do), so the run export is
+        // exactly the mode without a charge or a memo.
+        var probeShallow = exporting;
 
         // Indexed continuations keep pending storage proportional to depth, never to the
         // number of sibling structures. Flat values need neither a memo nor a stack, and

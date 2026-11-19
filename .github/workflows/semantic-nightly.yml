@@ -3,8 +3,12 @@ name: semantic nightly
 # Exhaustive sweeps of the finite semantic-campaign recipes (seed-nested, seed-nested-wide,
 # seed-nested-wider; fuzz/README.md § Campaigns). Scheduled and manual only: never on pull requests
 # or pushes, and separate from validate.yml, whose standalone-tool job stays build-only. The sweeps
-# took 913 s on a developer machine (83 + 620 + 210 s, 2026-11-17) plus the build; a hosted runner
-# is assumed to need about twice that, so the job allows 150 minutes and each sweep 40.
+# took 913 s on a developer machine (83 + 620 + 210 s, 2026-11-17) plus the build. The completed
+# hosted runs took 1,106 s (run 44284579331, 2026-11-18) and 1,190 s (run 44506161617, 2026-11-19)
+# for the whole job, so the job allows 70 minutes: a run 50% slower than the slower one plus one sweep
+# that spends its whole budget (1.5 x 1,190 + 2,400 = 4,185 s < 4,200 s), about 3.5 times that job.
+# Each sweep keeps 40 minutes (--max-seconds 2400): the hosted per-recipe times are in the runs' step
+# summaries and logs, which need a signed-in reader, so that budget has not been re-sized.
 # Failures are persisted and reduced, and their reproducers are uploaded when the job fails.
 on:
   schedule:
@@ -22,7 +26,7 @@ jobs:
   semantic-sweeps:
     name: Exhaustive semantic sweeps
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 70
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
