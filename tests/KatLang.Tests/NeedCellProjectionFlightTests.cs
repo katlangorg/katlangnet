@@ -821,6 +821,11 @@ public sealed class NeedCellProjectionFlightTests
             && field.FieldType.GetGenericTypeDefinition() == typeof(TaskCompletionSource<>));
         Assert.Single(fields, field => field.FieldType == typeof(ExceptionDispatchInfo));
         Assert.DoesNotContain(fields, field => field.FieldType.Name == "ProjectionNode");
-        Assert.Equal(16, fields.Count);
+        // 2026-11-19: the per-cell gate object left (the cell locks itself) and the inline first
+        // wait-for edge (target and multiplicity) arrived.
+        // The one object-typed field is the CALLABLE computation (`_projection`); no gate object, no Lock.
+        Assert.Single(fields, field => field.FieldType == typeof(object));
+        Assert.DoesNotContain(fields, field => field.FieldType == typeof(Lock));
+        Assert.Equal(17, fields.Count);
     }
 }

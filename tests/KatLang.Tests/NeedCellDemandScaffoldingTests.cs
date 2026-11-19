@@ -293,18 +293,6 @@ public class NeedCellDemandScaffoldingTests
         return operation.Result;
     }
 
-    // The parent's wait-for edge table as AddDependency creates it for its first edge.
-    private static long FirstEdgeTableBytes(NeedNode key)
-    {
-        static void Create(NeedNode node)
-        {
-            var edges = new Dictionary<NeedNode, int>(ReferenceEqualityComparer.Instance);
-            edges[node] = edges.GetValueOrDefault(node) + 1;
-        }
-        Create(key);
-        return Bytes(() => Create(key));
-    }
-
     // Match the logical context on the measuring thread, including any keys the test runner set.
     private static long ContextBytes(bool nested = false)
     {
@@ -338,7 +326,8 @@ public class NeedCellDemandScaffoldingTests
         Assert.True(cell.HasCompletedValue);
         Assert.False(cell.HasValueInFlight);
 
-        // One edge table and the two levels of logical context.
+        // The two levels of logical context only: the parent's one wait-for edge is held inline
+        // (216 bytes for the former edge table on .NET 11 x64).
         NeedCell Nested()
         {
             var child = Fresh();
@@ -346,9 +335,9 @@ public class NeedCellDemandScaffoldingTests
         }
         _ = Nested().Demand();
         var parent = Nested();
-        var edgeTable = FirstEdgeTableBytes(parent);
-        Assert.Equal(edgeTable + ContextBytes(nested: true), Bytes(() => _ = parent.Demand()));
+        Assert.Equal(ContextBytes(nested: true), Bytes(() => _ = parent.Demand()));
         Assert.Equal(0, parent.ActiveDependencyCount);
+        Assert.False(parent.HasPromotedDependencies);
         Assert.False(NeedNode.HasCurrentNode);
         GcIsolatedAllocation.Complete();
     }
@@ -417,12 +406,14 @@ public class NeedCellDemandScaffoldingTests
 
     // The brief's three workloads: one `if` per element (three lazily demanded argument cells per
     // call), a recursive user call (2 * fib(13) - 1 = 465 calls of Fib(12)), and one unary plus one
-    // binary Math member per element.
+    // binary Math member per element. Since 2026-11-19 also a runtime CALLABLE projection per element:
+    // a supplied `.Algorithm` link, invoked through a parameter.
     private static (string Source, int Units) Workload(string name) => name switch
     {
         "IfHeavy" => ("F = if(x mod 2 == 0, x, 0 - x)\nrange(1, 2000).map(F).sum", 2000),
         "RecursiveCalls" => ("Fib = if(n < 2, n, Fib(n - 1) + Fib(n - 2))\nFib(12)", 465),
         "MathHeavy" => ("F = Math.Abs(x) + Math.Round(x, 1)\nrange(1, 2000).map(F).sum", 2000),
+        "RuntimeProjection" => ("Capture(meta op) = op\nSq(y) = y * y\nUse(g, v) = g(v)\nF = Use(Capture(Sq(x)).Algorithm, x)\nrange(1, 2000).map(F).sum", 2000),
         _ => throw new ArgumentOutOfRangeException(nameof(name)),
     };
 
@@ -449,7 +440,12 @@ public class NeedCellDemandScaffoldingTests
     /// <summary>
     /// A whole evaluator run's allocations divided by its element or user-call count. Debug and
     /// Release have separate bounds because a Debug async state machine allocates even when it
-    /// completes inline. Each bound is below its measured pre-change value.
+    /// completes inline. Each bound is below its measured pre-change value. Since 2026-11-19 the
+    /// IfHeavy and RecursiveCalls bounds lie midway between the values measured before and after the
+    /// inline first wait-for edge and the cell's own monitor as its gate, and the RuntimeProjection
+    /// bounds midway between the final value and the same code with an eagerly created projection
+    /// completion (104 bytes per element), so each of the three changes fails a bound on its own;
+    /// MathHeavy keeps its 2026-11-18 bound.
     /// </summary>
     [Fact]
     public void DemandAndMathWorkloads_StayBelowTheirMeasuredBounds_GcIsolatedChild()
@@ -460,12 +456,14 @@ public class NeedCellDemandScaffoldingTests
         var failures = new List<string>();
         foreach (var (workload, asynchronous, debugBound, releaseBound) in new (string, bool, int, int)[]
         {
-            ("IfHeavy", false, 3_100, 2_310),
-            ("RecursiveCalls", false, 3_790, 3_030),
+            ("IfHeavy", false, 3_010, 2_200),
+            ("RecursiveCalls", false, 3_490, 2_730),
             ("MathHeavy", false, 4_380, 3_480),
-            ("IfHeavy", true, 15_260, 2_310),
-            ("RecursiveCalls", true, 20_480, 3_030),
+            ("RuntimeProjection", false, 7_730, 5_530),
+            ("IfHeavy", true, 15_140, 2_200),
+            ("RecursiveCalls", true, 20_130, 2_730),
             ("MathHeavy", true, 20_940, 3_480),
+            ("RuntimeProjection", true, 27_820, 6_460),
         })
         {
 #if DEBUG

@@ -480,7 +480,8 @@ public class NeedCellTests
         // contend for it: each late observer is started before publication can be visible, and it
         // then enters before, between or after the producer's section (whichever the gate admits
         // in that iteration); in every case it reads the flight or the memo, never a restart.
-        var gateField = typeof(NeedCell).GetField("_gate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        // The gate is the cell's own monitor (NeedCellEdgesAndGateTests.TheCellsOwnMonitor_IsTheGate
+        // pins that), so the test locks the cell itself.
         for (var iteration = 0; iteration < 64; iteration++)
         {
             var budget = EvaluationBudget.Create(null);
@@ -493,7 +494,7 @@ public class NeedCellTests
                 () => Interlocked.Increment(ref starts));
             var producer = target.DemandAsync().AsTask();
             await entered.Task.WaitAsync(WaitLimit);
-            var gate = gateField.GetValue(target)!;
+            object gate = target;
             using var arrivals = new CountdownEvent(2);
             Task<EvalResult<Evaluator.CountedResult>>[] late;
             Monitor.Enter(gate);

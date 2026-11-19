@@ -20,9 +20,37 @@ internal abstract class NeedNode
     private protected static readonly AsyncLocal<NeedNode?> Current = new();
     // The run this node belongs to (budget identity is graph identity).
     private protected readonly EvaluationBudget? _budget;
+    // This node's active wait-for edges, each with its multiplicity (one per active observation
+    // frame), in ONE of two forms (C# implementation only, 2026-11-19). Inline: at most one distinct
+    // target, `_edge` with `_edgeCount` registrations, and no table. A synchronous run never has
+    // more, because a computation demands its children one at a time. Promoted: a second distinct
+    // target, which only overlapping asynchronous flows produce, moves every edge into
+    // `_dependencies`, and the node keeps that table from then on (`_edge` stays null).
+    private NeedNode? _edge;
+    private int _edgeCount;
     private Dictionary<NeedNode, int>? _dependencies;
 
     private protected NeedNode(EvaluationBudget? budget) => _budget = budget;
+
+    /// <summary>
+    /// The comparer of every table keyed by nodes (C# implementation only, 2026-11-19): reference
+    /// equality, hashed by <see cref="IdentityHash"/>. A cell's monitor is its gate
+    /// (<see cref="NeedCell"/>), and on .NET locking an object whose header already holds its
+    /// identity hash allocates an inflated monitor, so these tables never write a cell's header.
+    /// </summary>
+    internal sealed class IdentityComparer : IEqualityComparer<NeedNode>
+    {
+        internal static readonly IdentityComparer Instance = new();
+
+        public bool Equals(NeedNode? x, NeedNode? y) => ReferenceEquals(x, y);
+
+        public int GetHashCode(NeedNode node) => node.IdentityHash();
+    }
+
+    // A hash that is stable for the node's lifetime. Equal nodes are the same node, so any stable
+    // value is correct; distinct nodes should rarely share one. A projection node's own header is
+    // never locked.
+    private protected virtual int IdentityHash() => RuntimeHelpers.GetHashCode(this);
 
     // The gate of this node's wait-for graph: its run's.
     private Lock DependencyGate => _budget?.NeedDependencyGate ?? UnownedDependencyGate;
@@ -31,7 +59,13 @@ internal abstract class NeedNode
     // (its active wait-for edges). Every edge is gone once its observation frame exits.
     internal int ActiveDependencyCount
     {
-        get { lock (DependencyGate) return _dependencies?.Count ?? 0; }
+        get { lock (DependencyGate) return _dependencies?.Count ?? (_edge is null ? 0 : 1); }
+    }
+
+    // Test observation only: whether this node's edges have been promoted to a table.
+    internal bool HasPromotedDependencies
+    {
+        get { lock (DependencyGate) return _dependencies is not null; }
     }
 
     // Test observation only: whether the current logical flow is running some node's computation.
@@ -49,8 +83,26 @@ internal abstract class NeedNode
         lock (DependencyGate)
         {
             if (ReferenceEquals(this, parent) || ReachesLocked(parent)) return false;
-            var edges = parent._dependencies ??= new(ReferenceEqualityComparer.Instance);
-            edges[this] = edges.GetValueOrDefault(this) + 1;
+            if (parent._dependencies is { } edges)
+                edges[this] = edges.GetValueOrDefault(this) + 1;
+            else if (parent._edge is null)
+            {
+                parent._edge = this;
+                parent._edgeCount = 1;
+            }
+            else if (ReferenceEquals(parent._edge, this))
+                parent._edgeCount++;
+            else
+            {
+                // A second distinct target: promote both edges, multiplicities included.
+                parent._dependencies = new(IdentityComparer.Instance)
+                {
+                    [parent._edge] = parent._edgeCount,
+                    [this] = 1,
+                };
+                parent._edge = null;
+                parent._edgeCount = 0;
+            }
             return true;
         }
     }
@@ -60,9 +112,19 @@ internal abstract class NeedNode
         if (parent is null || parent._budget != _budget) return;
         lock (DependencyGate)
         {
-            var count = parent._dependencies![this];
-            if (count == 1) parent._dependencies!.Remove(this);
-            else parent._dependencies![this] = count - 1;
+            if (parent._dependencies is { } edges)
+            {
+                var count = edges[this];
+                if (count == 1) edges.Remove(this);
+                else edges[this] = count - 1;
+            }
+            else
+            {
+                // Every removal pairs with its frame's successful AddDependency.
+                if (!ReferenceEquals(parent._edge, this))
+                    throw new System.Diagnostics.UnreachableException("NEED-09: a wait-for edge was removed that is not active.");
+                if (--parent._edgeCount == 0) parent._edge = null;
+            }
         }
     }
 
@@ -80,15 +142,27 @@ internal abstract class NeedNode
     // Whether `target` is reachable from this node through active edges. The caller holds the gate.
     private bool ReachesLocked(NeedNode target)
     {
-        if (_dependencies is not { Count: > 0 }) return false;
-        var pending = new Stack<NeedNode>();
-        var visited = new HashSet<NeedNode>(ReferenceEqualityComparer.Instance);
-        pending.Push(this);
-        while (pending.TryPop(out var node))
+        if (_edge is null && _dependencies is not { Count: > 0 }) return false;
+        // Inline edges form a chain, walked without allocation. It ends: the graph is acyclic,
+        // because AddDependency never adds an edge that closes a cycle.
+        NeedNode node = this;
+        while (node._dependencies is null)
         {
             if (ReferenceEquals(node, target)) return true;
-            if (!visited.Add(node) || node._dependencies is null) continue;
-            foreach (var dependency in node._dependencies.Keys) pending.Push(dependency);
+            if (node._edge is not { } successor) return false;
+            node = successor;
+        }
+        // From the first promoted node on, the general search.
+        var pending = new Stack<NeedNode>();
+        var visited = new HashSet<NeedNode>(IdentityComparer.Instance);
+        pending.Push(node);
+        while (pending.TryPop(out var next))
+        {
+            if (ReferenceEquals(next, target)) return true;
+            if (!visited.Add(next)) continue;
+            if (next._edge is { } edge) pending.Push(edge);
+            if (next._dependencies is { } edges)
+                foreach (var dependency in edges.Keys) pending.Push(dependency);
         }
         return false;
     }
@@ -110,9 +184,11 @@ internal abstract class NeedNode
 ///   The flight starts at most once; success, ordinary failure, host exception and cancellation
 ///   are sticky; and the completed outcome is never rewritten. A VALUE flight's shared completion
 ///   is created by its first joiner: a computation nobody joins allocates none.</item>
-///   <item><b>The per-cell gate</b> (<c>_gate</c>) guards the cell's own state, both channels. It is
-///   held only for field updates and for an IDENTITY-ONLY CALLABLE projection, which evaluates
-///   nothing and demands no VALUE.</item>
+///   <item><b>The per-cell gate</b> is the cell's own monitor (<c>lock (this)</c>; C# implementation
+///   only since 2026-11-19, formerly a separate gate object per cell). It guards the cell's own state,
+///   both channels. It is held only for field updates and for an IDENTITY-ONLY CALLABLE projection,
+///   which evaluates nothing and demands no VALUE. No other code locks a cell: the type is internal,
+///   and nothing else in KatLang takes a cell's monitor.</item>
 ///   <item><b>The wait-for graph</b> (<see cref="NeedNode"/>, NEED-09) belongs to the run: its
 ///   gate is the run budget's <see cref="EvaluationBudget.NeedDependencyGate"/>. A cycle is detected
 ///   before its closing edge is awaited, across overlapping async chains too. Independent runs
@@ -139,7 +215,6 @@ internal abstract class NeedNode
 /// </summary>
 internal sealed class NeedCell : NeedNode
 {
-    private readonly object _gate = new();
     private readonly CancellationToken _token;
     private readonly bool _ready;
     private Func<EvalResult<Evaluator.CountedResult>>? _evaluate;
@@ -165,9 +240,10 @@ internal sealed class NeedCell : NeedNode
 
     /// <summary>
     /// The wait-for node of a cell's RUNTIME CALLABLE projection: the CALLABLE twin of the cell's
-    /// own VALUE node. It carries the projection's computation and its flight (the shared
-    /// completion, created when the computation starts) and the stored host exception or
-    /// cancellation; the outcome itself is the cell's CALLABLE memo. Every field is guarded by
+    /// own VALUE node. It carries the projection's computation and its flight and the stored host
+    /// exception or cancellation; the outcome itself is the cell's CALLABLE memo. As for VALUE, the
+    /// flight's shared completion is created by its first joiner (C# implementation only,
+    /// 2026-11-19): a computation nobody joins allocates none. Every field is guarded by
     /// the owning cell's gate. The computation and the completion are released once it ends. A
     /// written argument's node carries no delegates: its computation is the evaluator's projection
     /// of the cell's own suspension (<see cref="Evaluator.ProjectSuspendedCallable"/>).
@@ -177,8 +253,14 @@ internal sealed class NeedCell : NeedNode
         Func<EvalResult<Algorithm?>>? project,
         Func<ValueTask<EvalResult<Algorithm?>>>? projectAsync) : NeedNode(budget)
     {
+        // The flight of a running projection no other observer has joined (never completed, never
+        // awaited): its starter returns the outcome it published itself.
+        internal static readonly TaskCompletionSource<EvalResult<Algorithm?>> UnjoinedFlight = new();
+
         internal Func<EvalResult<Algorithm?>>? Project = project;
         internal Func<ValueTask<EvalResult<Algorithm?>>>? ProjectAsync = projectAsync;
+        // Null before the computation starts and after it ends; UnjoinedFlight while it runs with
+        // no other observer; a shared completion once a second observer joins.
         internal TaskCompletionSource<EvalResult<Algorithm?>>? Flight;
         internal ExceptionDispatchInfo? Exception;
         // Test observation only: how many computations started (at most one).
@@ -241,10 +323,10 @@ internal sealed class NeedCell : NeedNode
             => channel == Channel.Value ? _values?.ContainsKey(cell) == true : _callables?.ContainsKey(cell) == true;
 
         internal void RecordValue(NeedCell cell, EvalResult<Evaluator.CountedResult> outcome)
-            => (_values ??= new(ReferenceEqualityComparer.Instance)).Add(cell, outcome);
+            => (_values ??= new(IdentityComparer.Instance)).Add(cell, outcome);
 
         internal void RecordCallable(NeedCell cell, EvalResult<Algorithm?> outcome)
-            => (_callables ??= new(ReferenceEqualityComparer.Instance)).Add(cell, outcome);
+            => (_callables ??= new(IdentityComparer.Instance)).Add(cell, outcome);
 
         internal bool TryGetValue(NeedCell cell, out EvalResult<Evaluator.CountedResult> outcome)
         {
@@ -410,30 +492,38 @@ internal sealed class NeedCell : NeedNode
     /// </summary>
     internal Evaluator.ExpressionSuspension? Suspension => _suspension;
 
+    // The identity hash of a readonly object that belongs to this cell and that nobody locks: the
+    // written argument's suspension, the host-built cell's projection, or the collector's slice.
+    // It leaves this cell's header to its monitor. A Ready cell has none of them, but it is complete,
+    // so no edge or resolution record ever keys on it. Only a test-built cell without a projection
+    // falls back to its own header, which costs time, never correctness.
+    private protected override int IdentityHash()
+        => RuntimeHelpers.GetHashCode(_suspension ?? _projection ?? (object?)Slice ?? this);
+
     // Test observation only: whether this cell's VALUE has completed (successfully or not).
     internal bool HasCompletedValue
     {
-        get { lock (_gate) return _completed is not null || _exception is not null; }
+        get { lock (this) return _completed is not null || _exception is not null; }
     }
 
     // Test observation only: whether this cell's VALUE computation is in flight (its completion
     // is released once the outcome is published).
     internal bool HasValueInFlight
     {
-        get { lock (_gate) return _flight is not null; }
+        get { lock (this) return _flight is not null; }
     }
 
     // Test observation only: whether a second observer has joined the running VALUE computation,
     // so its shared completion exists.
     internal bool HasJoinedValueFlight
     {
-        get { lock (_gate) return _flight is not null && !ReferenceEquals(_flight, UnjoinedFlight); }
+        get { lock (this) return _flight is not null && !ReferenceEquals(_flight, UnjoinedFlight); }
     }
 
     // Test observation only: whether this cell's CALLABLE outcome is memoized.
     internal bool HasCallableMemo
     {
-        get { lock (_gate) return _callable is not null; }
+        get { lock (this) return _callable is not null; }
     }
 
     /// <summary>
@@ -445,7 +535,7 @@ internal sealed class NeedCell : NeedNode
     /// </summary>
     internal bool IsPublishedCallable(EvalResult<Algorithm?> outcome)
     {
-        lock (_gate)
+        lock (this)
         {
             return _callable is { } published
                 && (published.IsError
@@ -455,17 +545,27 @@ internal sealed class NeedCell : NeedNode
     }
 
     // Test observation only: whether this cell's CALLABLE is a runtime projection, how many of
-    // its computations started, whether one is in flight, and its node's active wait-for edges.
+    // its computations started, whether one is in flight, whether a second observer has joined it
+    // (so its shared completion exists), and its node's active wait-for edges.
     internal bool HasRuntimeProjection => _projection is ProjectionNode;
 
     internal int ProjectionComputations
     {
-        get { lock (_gate) return (_projection as ProjectionNode)?.Computations ?? 0; }
+        get { lock (this) return (_projection as ProjectionNode)?.Computations ?? 0; }
     }
 
     internal bool HasProjectionInFlight
     {
-        get { lock (_gate) return (_projection as ProjectionNode)?.Flight is not null; }
+        get { lock (this) return (_projection as ProjectionNode)?.Flight is not null; }
+    }
+
+    internal bool HasJoinedProjectionFlight
+    {
+        get
+        {
+            lock (this)
+                return (_projection as ProjectionNode)?.Flight is { } flight && !ReferenceEquals(flight, ProjectionNode.UnjoinedFlight);
+        }
     }
 
     internal int ProjectionActiveDependencyCount => (_projection as ProjectionNode)?.ActiveDependencyCount ?? 0;
@@ -504,7 +604,7 @@ internal sealed class NeedCell : NeedNode
         var terminal = _budget?.CheckContinuation();
         if (_projection is ProjectionNode node) return ProjectRuntime(node, terminal);
         if (terminal is not null) return terminal;
-        lock (_gate)
+        lock (this)
         {
             if (_exception?.SourceException is OperationCanceledException) _exception.Throw();
             if (_callable is { } known) return known;
@@ -557,7 +657,7 @@ internal sealed class NeedCell : NeedNode
     // cancellation or host exception, then the memo. `null` = no outcome yet.
     private EvalResult<Algorithm?>? ObserveProjected(ProjectionNode node, EvalError? terminal)
     {
-        lock (_gate)
+        lock (this)
         {
             if (terminal is not null)
                 return _callable is { IsError: true } failed && failed.Error.IsResourceLimit ? failed : terminal;
@@ -584,18 +684,14 @@ internal sealed class NeedCell : NeedNode
             return new EvalError.DemandCycle { Span = Span };
         try
         {
-            bool start;
-            Task<EvalResult<Algorithm?>> task;
-            lock (_gate)
+            Task<EvalResult<Algorithm?>>? task;
+            lock (this)
             {
                 if (_callable is { } completed) return completed;
                 node.Exception?.Throw();
-                start = node.Flight is null;
-                if (start) node.Computations++;
-                node.Flight ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
-                task = node.Flight.Task;
+                task = JoinOrStartProjectionFlight(node);
             }
-            if (start)
+            if (task is null)
             {
                 Current.Value = node;
                 try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
@@ -603,12 +699,13 @@ internal sealed class NeedCell : NeedNode
                     : new EvalError.EvaluationStackExhausted { Span = Span }); }
                 catch (Exception error) { CompleteProjectionException(node, error); }
                 finally { Current.Value = parent; }
+                return ProjectionStarterOutcome(node);
             }
             try { return task.GetAwaiter().GetResult(); }
             catch
             {
                 // As in Demand: preserve the original host exception and token.
-                lock (_gate) node.Exception?.Throw();
+                lock (this) node.Exception?.Throw();
                 throw;
             }
         }
@@ -625,22 +722,22 @@ internal sealed class NeedCell : NeedNode
             return new EvalError.DemandCycle { Span = Span };
         try
         {
-            bool start;
-            Task<EvalResult<Algorithm?>> task;
-            lock (_gate)
+            Task<EvalResult<Algorithm?>>? task;
+            lock (this)
             {
                 if (_callable is { } completed) return completed;
                 node.Exception?.Throw();
-                start = node.Flight is null;
-                if (start) node.Computations++;
-                node.Flight ??= new(TaskCreationOptions.RunContinuationsAsynchronously);
-                task = node.Flight.Task;
+                task = JoinOrStartProjectionFlight(node);
             }
-            if (start) await ProjectRuntimeComputationAsync(node).ConfigureAwait(false);
+            if (task is null)
+            {
+                await ProjectRuntimeComputationAsync(node).ConfigureAwait(false);
+                return ProjectionStarterOutcome(node);
+            }
             try { return await task.ConfigureAwait(false); }
             catch
             {
-                lock (_gate) node.Exception?.Throw();
+                lock (this) node.Exception?.Throw();
                 throw;
             }
         }
@@ -662,6 +759,31 @@ internal sealed class NeedCell : NeedNode
         finally { Current.Value = previous; }
     }
 
+    // Under the gate, with no outcome yet: starts the runtime projection's flight (null: the caller
+    // computes) or joins it, creating the shared completion when this is its first joiner.
+    private static Task<EvalResult<Algorithm?>>? JoinOrStartProjectionFlight(ProjectionNode node)
+    {
+        if (node.Flight is null)
+        {
+            node.Flight = ProjectionNode.UnjoinedFlight;
+            node.Computations++;
+            return null;
+        }
+        if (ReferenceEquals(node.Flight, ProjectionNode.UnjoinedFlight))
+            node.Flight = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        return node.Flight.Task;
+    }
+
+    // The projection starter's outcome once its computation has ended: exactly what awaiting the
+    // shared completion delivers (the memo, or the stored exception rethrown, as a joiner's catch
+    // does). The computation wrote it before this read and nothing rewrites it.
+    private EvalResult<Algorithm?> ProjectionStarterOutcome(ProjectionNode node)
+    {
+        if (_callable is { } completed) return completed;
+        node.Exception!.Throw();
+        throw new System.Diagnostics.UnreachableException();
+    }
+
     // A non-initiating observation is synchronous: an asynchronous start inside one means a
     // synchronous resolver blocked on asynchronous work, which would initiate it.
     private static void ThrowIfInitiatingWhileObserving()
@@ -681,7 +803,7 @@ internal sealed class NeedCell : NeedNode
         // classifiers. A resource limit stays the run's retained object (terminal anyway).
         else if (result.IsError && !result.Error.IsProjectionFailure)
             result = result.Error with { IsProjectionFailure = true };
-        lock (_gate)
+        lock (this)
         {
             // Published with the completion: every later observer reads the memo first, so the
             // released completion and computation are never needed again.
@@ -690,13 +812,13 @@ internal sealed class NeedCell : NeedNode
             node.Flight = null;
             node.Project = null;
             node.ProjectAsync = null;
-            flight.TrySetResult(result);
+            if (!ReferenceEquals(flight, ProjectionNode.UnjoinedFlight)) flight.TrySetResult(result);
         }
     }
 
     private void CompleteProjectionException(ProjectionNode node, Exception error)
     {
-        lock (_gate)
+        lock (this)
         {
             // Stored, never published: every later observer rethrows it before it could start.
             node.Exception = ExceptionDispatchInfo.Capture(error);
@@ -704,6 +826,7 @@ internal sealed class NeedCell : NeedNode
             node.Flight = null;
             node.Project = null;
             node.ProjectAsync = null;
+            if (ReferenceEquals(flight, ProjectionNode.UnjoinedFlight)) return;
             if (error is OperationCanceledException cancelled)
                 flight.TrySetCanceled(cancelled.CancellationToken);
             else
@@ -715,7 +838,7 @@ internal sealed class NeedCell : NeedNode
     {
         _token.ThrowIfCancellationRequested();
         var terminal = _budget?.CheckContinuation();
-        lock (_gate)
+        lock (this)
         {
             if (terminal is not null)
                 return _completed is { IsError: true } failed && failed.Error.IsResourceLimit ? failed : terminal;
@@ -731,7 +854,7 @@ internal sealed class NeedCell : NeedNode
         try
         {
             Task<EvalResult<Evaluator.CountedResult>>? task;
-            lock (_gate)
+            lock (this)
             {
                 if (_completed is { } completed) return completed;
                 _exception?.Throw();
@@ -752,7 +875,7 @@ internal sealed class NeedCell : NeedNode
             {
                 // A cancelled completion task synthesizes TaskCanceledException.
                 // Preserve the original host exception and token at the language boundary.
-                lock (_gate) _exception?.Throw();
+                lock (this) _exception?.Throw();
                 throw;
             }
         }
@@ -763,7 +886,7 @@ internal sealed class NeedCell : NeedNode
     {
         _token.ThrowIfCancellationRequested();
         var terminal = _budget?.CheckContinuation();
-        lock (_gate)
+        lock (this)
         {
             if (terminal is not null)
                 return _completed is { IsError: true } failed && failed.Error.IsResourceLimit ? failed : terminal;
@@ -777,7 +900,7 @@ internal sealed class NeedCell : NeedNode
         try
         {
             Task<EvalResult<Evaluator.CountedResult>>? task;
-            lock (_gate)
+            lock (this)
             {
                 if (_completed is { } completed) return completed;
                 _exception?.Throw();
@@ -791,7 +914,7 @@ internal sealed class NeedCell : NeedNode
             try { return await task.ConfigureAwait(false); }
             catch
             {
-                lock (_gate) _exception?.Throw();
+                lock (this) _exception?.Throw();
                 throw;
             }
         }
@@ -840,7 +963,7 @@ internal sealed class NeedCell : NeedNode
     private void Complete(EvalResult<Evaluator.CountedResult> result)
     {
         if (result.IsError && result.Error.IsResourceLimit) _budget?.RetainTerminal(result.Error);
-        lock (_gate)
+        lock (this)
         {
             // Published with the completion, as CompleteProjection does: every later observer
             // reads the memo first, so the released completion and computation are never needed
@@ -856,7 +979,7 @@ internal sealed class NeedCell : NeedNode
 
     private void CompleteException(Exception error)
     {
-        lock (_gate)
+        lock (this)
         {
             // Stored, never published: every later observer rethrows it before it could start.
             _exception = ExceptionDispatchInfo.Capture(error);
