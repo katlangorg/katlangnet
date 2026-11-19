@@ -38,7 +38,19 @@ internal sealed record SemanticBatchWorkerCommand(
     string FileName,
     IReadOnlyList<string> Arguments,
     IReadOnlyDictionary<string, string> Environment,
-    string ManifestPath);
+    string ManifestPath)
+{
+    /// <summary>
+    /// Optional readiness file the batch worker writes just before it replays its first member, as for
+    /// a single worker (<see cref="SemanticWorkerCommand.ReadyPath"/>). When set, the progress deadline
+    /// starts at readiness, so a slow host start (a test host discovering a large assembly under load)
+    /// cannot consume the first member's deadline; <see cref="StartupDeadline"/> bounds the time before
+    /// readiness separately, and its expiry is also a <see cref="SemanticVerdict.Timeout"/>.
+    /// </summary>
+    public string? ReadyPath { get; init; }
+
+    public TimeSpan StartupDeadline { get; init; } = TimeSpan.FromMinutes(5);
+}
 
 /// <summary>
 /// One member of a supervised batch: the persisted case, where its descriptor and result live, and —
@@ -314,7 +326,10 @@ internal static class SemanticSupervisor
     /// Runs one batch child under the same bounds as a single worker: bounded output, the whole
     /// tree killed and awaited on expiry. The deadline is a PROGRESS deadline: it restarts whenever
     /// another member's result appears, so it bounds each member's execution as <see cref="Run"/>
-    /// bounds one case. Every member with a result is judged by <see cref="JudgeResult"/>; a member
+    /// bounds one case. When the command names a readiness file
+    /// (<see cref="SemanticBatchWorkerCommand.ReadyPath"/>), the progress deadline starts at readiness
+    /// and <see cref="SemanticBatchWorkerCommand.StartupDeadline"/> bounds the time before it, exactly
+    /// as <see cref="Run"/> does. Every member with a result is judged by <see cref="JudgeResult"/>; a member
     /// without one (in flight when the child crashed or timed out, or never reached) is returned
     /// unjudged, for the caller to rerun on its own. The child's supervision record is written next
     /// to the manifest.
@@ -325,6 +340,7 @@ internal static class SemanticSupervisor
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(members);
         foreach (var member in members) File.Delete(member.ResultPath); // a stale result must never masquerade as the worker's output
+        if (command.ReadyPath is { } staleReady) TryDelete(staleReady);
 
         var startInfo = new ProcessStartInfo(command.FileName)
         {
@@ -344,6 +360,7 @@ internal static class SemanticSupervisor
         var stdout = new BoundedText(MaxCapturedChars);
         var stderr = new BoundedText(MaxCapturedChars);
         SemanticVerdict? childFailure = null;
+        var notReady = false;
         int? exitCode = null;
         string detail;
         try
@@ -351,9 +368,23 @@ internal static class SemanticSupervisor
             process.Start();
             process.StandardInput.Close();
             var output = Task.WhenAll(ReadOutput(process.StandardOutput, stdout), ReadOutput(process.StandardError, stderr));
+            if (command.ReadyPath is { } ready)
+            {
+                // The startup bound, as for a single worker: wait for readiness, the child's exit, or the
+                // bound, whichever comes first. The progress deadline below starts only at readiness.
+                var startup = Stopwatch.StartNew();
+                while (childFailure is null && !File.Exists(ready) && !process.WaitForExit(TimeSpan.FromMilliseconds(50)))
+                {
+                    if (cancellationToken.IsCancellationRequested) childFailure = SemanticVerdict.SupervisorCancellation;
+                    else if (startup.Elapsed > command.StartupDeadline) (childFailure, notReady) = (SemanticVerdict.Timeout, true);
+                }
+
+                if (childFailure is not null) Terminate(process);
+            }
+
             var progress = Stopwatch.StartNew();
             var completed = 0;
-            while (!process.WaitForExit(TimeSpan.FromMilliseconds(100)))
+            while (childFailure is null && !process.WaitForExit(TimeSpan.FromMilliseconds(100)))
             {
                 var now = members.Count(static m => File.Exists(m.ResultPath));
                 if (now != completed)
@@ -385,6 +416,8 @@ internal static class SemanticSupervisor
             detail = childFailure switch
             {
                 null => "batch worker exited with 0",
+                SemanticVerdict.Timeout when notReady =>
+                    $"batch worker not ready within {command.StartupDeadline.TotalSeconds.ToString(CultureInfo.InvariantCulture)}s; worker tree terminated",
                 SemanticVerdict.Timeout => $"no member completed within {deadline.TotalSeconds.ToString(CultureInfo.InvariantCulture)}s; worker tree terminated",
                 SemanticVerdict.SupervisorCancellation => "supervisor cancelled; worker tree terminated",
                 _ => $"batch worker exited with {exitCode?.ToString(CultureInfo.InvariantCulture)}",

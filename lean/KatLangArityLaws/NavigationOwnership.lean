@@ -41,7 +41,8 @@ own chain is inside every owner of what it captures). For it the proposed invari
 stack `S`, has every requirement collected by the candidate static selection model
 (`reqAlg ⟨false, true⟩`, the requirements `exposureFull` checks; the independent E-18 F1 review found
 omitted intermediate selections and fired the front-end stop rule) on an ACTIVATED level of `C`. It gives the cell
-clause directly (`paramRowOwned_of_reqActivated`), with no gate.
+clause directly (`paramRowOwned_of_reqActivated`), with no gate, for an alias that is no loaded
+module's root (`NotModule`; the static model collects nothing of a module root's row).
 
 ## 3. NOT proved here
 
@@ -68,6 +69,16 @@ theorem withParent_alias (sc parent : Option ScopeCtx) (opens : List Expr) (prop
     (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (h : NotModule id) :
     Algorithm.withParent sc (.alias parent opens props target id reference) =
       .alias sc opens props target id reference := by
+  cases id with
+  | none => rfl
+  | some pid => cases pid <;> first | rfl | (simp [NotModule] at h)
+
+/-- An alias whose identity slot is no module root is no loaded module's root: the static model does
+    not cut its chain (`NavigationSourceDomain.reqAlg_paramRow`), as `Algorithm.withParent` keeps
+    its parent (`withParent_alias`). -/
+theorem isModuleRoot_alias_of_notModule (parent : Option ScopeCtx) (opens : List Expr) (props : List PropDef)
+    (target : Expr) (reference : Bool) {id : Option PropertyIdentity} (h : NotModule id) :
+    (Algorithm.alias parent opens props target id reference).isModuleRoot = false := by
   cases id with
   | none => rfl
   | some pid => cases pid <;> first | rfl | (simp [NotModule] at h)
@@ -205,7 +216,7 @@ theorem paramRowOwned_of_exposed {mode : Mode} {S : Stack} {ctx : EvalCtx} {cont
     (halg : p.alg = .alias parent opens props (.param y) id reference) (hid : NotModule id)
     {k : Nat} (hk : ownerIndex? S y = some k) (hacc : memberAccessible? ctx container p = true) :
     ParamRowOwned (childOfInContext container p.alg ctx) := by
-  have hdecl := declared_paramRow hexposed halg hk
+  have hdecl := declared_paramRow hexposed halg (isModuleRoot_alias_of_notModule _ _ _ _ _ hid) hk
   unfold declared at hdecl
   split at hdecl
   · cases hdecl
@@ -242,13 +253,17 @@ structure ReqActivated (C : Option ScopeCtx) (S : Stack) (name : Option Ident) (
   activated : ∀ r ∈ reqAlg ⟨false, true⟩ S [] name a, LevelActivated C r.2
 
 /-- **THE INVARIANT GIVES THE CELL CLAUSE, with no gate**: a parameter-row alias whose parameter
-    is bound in its static stack is owned when it keeps `ReqActivated`. -/
+    is bound in its static stack is owned when it keeps `ReqActivated`. The alias is no loaded
+    module's root (`hid`, as in every gated theorem above): a module root's chain is cut at its own
+    level, the static model collects no requirement of its row there (E-18 reference-root cut,
+    2026-11-19), and `ReqActivated` would say nothing of it. -/
 theorem paramRowOwned_of_reqActivated (sc : ScopeCtx) (S : Stack) (name : Option Ident)
     (opens : List Expr) (props : List PropDef) (y : Ident) (id : Option PropertyIdentity) (reference : Bool)
-    {k : Nat} (hk : ownerIndex? S y = some k)
+    (hid : NotModule id) {k : Nat} (hk : ownerIndex? S y = some k)
     (h : ReqActivated (some sc) S name (.alias (some sc) opens props (.param y) id reference)) :
     ParamRowOwned (.alias (some sc) opens props (.param y) id reference) := by
-  obtain ⟨owner, hanc, hact⟩ := h.activated (y, k) (reqAlg_paramRow _ S name _ opens props y id reference k hk)
+  obtain ⟨owner, hanc, hact⟩ := h.activated (y, k)
+    (reqAlg_paramRow _ S name _ opens props y id reference (isModuleRoot_alias_of_notModule _ _ _ _ _ hid) k hk)
   obtain ⟨i, hi⟩ := Option.isSome_iff_exists.mp hact
   exact ⟨sc, owner, i, rfl, (nearest_of_shape S sc y k h.shape hk).trans hanc, hi⟩
 

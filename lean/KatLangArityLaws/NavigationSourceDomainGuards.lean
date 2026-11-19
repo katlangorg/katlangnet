@@ -30,6 +30,13 @@ program expression. This module checks them on trees, and bounds what they can b
   reached: the model's selection beside production's on every route, and a reader whose requirement
   comes only from the walk of an open level that two holders of one module decide, refused when
   that requirement is removed (E-18 model correction, 2026-11-18).
+* `ReferenceRootCut` (end of the module) — a loaded module whose ROOT is an alias is rooted at the
+  prelude like any module: a name its holder also declares is the module's own, as in production,
+  beside the ordinary alias twin that reads the holder's (E-18 model correction, 2026-11-19). Two
+  SOURCE trees the model formerly refused (a module whose one row is an alias target), and host-built
+  transparent-reference roots.
+* `SharedProviders` (end of the module) — a declaration with a supplied `shared` identity is one open
+  provider under one declaring scope outside a module too (same correction, optional part).
 
 ## 2. Source trees inside the domain (`OutsideContainer`, `EscapedContainer`, `FrontEnd`, `SelectionGaps`, `SelectionRoutes`, `AccessChecks`, `ModuleProviders`)
 
@@ -41,7 +48,9 @@ Maintained C# fidelity tests check those thirty-two encodings (`NavigationSource
 and `OpenedFragment` examples and every `Exported` / host-built counterfactual are intentionally
 host-corrupted. The same tests check the twelve `ModuleProviders` encodings through the asynchronous
 front end: eight verbatim, and four whose source reads an ambiguous name (a front-end error), encoded
-from the same source with the output row `1` and that row replaced.
+from the same source with the output row `1` and that row replaced. They check the two
+`ReferenceRootCut` source encodings (`carrierMember`, `carrierRow`) the same way, and that each
+host-built twin of those is the encoding with the documented single replacement.
 
 ## 3. The two former counterexamples, under the anchoring of a container's chain
 
@@ -1494,11 +1503,13 @@ def referenceTargets (a b : PropertyIdentity) : Expr :=
   .algorithmExpr (alg [] [.resolve "A", .resolve "B"]
     [privateProp "A" (referenceModule a), privateProp "B" (referenceModule b)] [.resolve "X"])
 
--- The member's key and trail only: the model does not cut a REFERENCE root's chain at the module
--- (`structureOf` walks its target on the holder's stack), so its location is not asserted here.
+-- The member's key and trail; its location is the next guard's (since the reference-root cut of
+-- 2026-11-19 the target is walked on the module's own level, and its chain ends at the module `A`).
 #guard (match rootSelection (referenceTargets (.moduleView 1 1) (.moduleView 1 1)) with
   | .member key trail _ => key == ["A", "T", "X"] && trail == [["A", "T", "X"]]
   | _ => false)
+#guard rootSelection (referenceTargets (.moduleView 1 1) (.moduleView 1 1)) ==
+  .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A"]
 #guard (match runResult (referenceTargets (.moduleView 1 1) (.moduleView 1 1)) with | .ok (.atom 5) => true | _ => false)
 #guard rootSelection (referenceTargets (.moduleView 1 1) (.moduleView 1 2)) == .nothing
 #guard ambiguousX (referenceTargets (.moduleView 1 1) (.moduleView 1 2))
@@ -1701,5 +1712,551 @@ theorem selfNested_twoModules_sourceDomain : SourceDomain (selfNested 1 false ne
 #guard ambiguousX (selfNested 1 false nestedCall)
 
 end ModuleProviders
+
+/-! ## A loaded module is rooted at the prelude whatever its root is (E-18 model correction, 2026-11-19)
+
+`Algorithm.withParent` re-parents a module-identified ALIAS onto the chain's root exactly as it
+re-parents a module-identified block: a loaded module never sees a name of its holder. The model cut
+the chain for a block root only (`chkAlg`, `collectAlg`, `memberOf`). A module whose root is a
+transparent reference had its target walked on its HOLDER's stack (`structureOf`), so the model
+selected a holder-level target where production answers `unknownName`; an alias root's row and
+members were checked at the holder's levels. The chain is now cut at the module in all of them
+(`Located.ownScope`).
+
+SOURCE REACHES AN ALIAS ROOT. The front end elaborates a loaded module whose ONE ROW is a callable
+alias target to an alias that keeps the module mark (C# `Algorithm.Alias.IsModuleElaborated`) — a
+CARRIER, never a transparent reference (`Algorithm.Alias.IsReference` excludes a module body). So the
+walkers' part of the cut concerns source trees: `carrierMember` and `carrierRow` are the front end's
+own trees of two such programs. Both evaluators answer 5, the front end raises no diagnostic, and
+the model formerly REFUSED both: it found the holder's declaration on the direct chain where the
+module reads its own opened member. A module whose root is a TRANSPARENT REFERENCE is host-built
+only; those fixtures, and the walker fixtures beside them, take the root's identity as a
+parameter, so that the ORDINARY alias (no identity) and its MODULE twin are one tree that differs
+in that slot only. The ordinary alias finds a target of its enclosing scope and the module twin
+does not; this pair is what refuses a cut applied to every alias. Production's outcome is asserted
+first, then the model's.
+
+* Source (`carrierMember`, `carrierRow`): each in `SourceDomain`; its ordinary twin — the same tree
+  without the module identity, where production reads the holder's declaration and answers 7 — is
+  refused, and so is `carrierMemberExported`, the module's own reader host-corrupted to exported: the
+  inside of an alias-rooted module is still checked.
+
+* Open route (`open A` / `X`; the provider is read through `openStructure`): `openHolderTarget`,
+  the target a declaration of the holder — the reported case — and `openOwnTarget`, the control with
+  the target declared by the module itself beside a different holder `T`.
+* Value route (the written path `A.X`; the receiver is read through the structure chase, whose head
+  lookup is the FULL one): `valueHolderTarget` and `valueOwnTarget` as above; `valueHolderOpen`, the
+  target a member only the HOLDER's `open` provides, and `valueOwnOpen`, the control whose module
+  opens its own provider. Before the cut the holder's open level was consulted and its provider's
+  walk was on the trail.
+* The walkers: `rowReadsHolder` (the root's row names the holder's `Q`), `inlineRowReadsWriter` (the
+  root written INLINE as a row, naming a member of the body it is written in) and
+  `memberReadsHolder` (a member of the root names the holder's `Q`) require nothing of the holder
+  when the root is a module, exactly as the block-rooted module `memberReadsHolderBlock` already
+  did; `paramRow` (the root's row is the holder's parameter) is unbound there, as its block twin
+  `paramRowBlock` already was.
+-/
+
+namespace ReferenceRootCut
+
+open ModuleProviders (Selection rootSelection)
+
+/-- Production answers the atom `n`. -/
+def answers (n : Int) (program : Expr) : Bool :=
+  match runResult program with
+  | .ok (.atom value) => value == n
+  | _ => false
+
+/-- Production's `unknownName name`. -/
+def unknownName (name : Ident) (program : Expr) : Bool :=
+  match runResult program with
+  | .error e => (match innermost e with | .unknownName found => found == name | _ => false)
+  | .ok _ => false
+
+/-- The model's decision for the written path `A.X` at the program root. -/
+def pathSelection (program : Expr) : Selection :=
+  let path := Expr.dotCall (.resolve "A") "X" none
+  match program, Expr.staticAliasPath? path with
+  | .algorithmExpr a, some (head, steps) =>
+      let root := levelOf [] none a
+      match walkPath [root] .value (selFuel [root] path) [] [root] (readerMap [root] 0) head steps
+          (stackKey [root] ++ ["#block"]) with
+      | .found h => .member h.loc.key (h.trail.map (·.key)) (h.loc.stack.map (·.self))
+      | .miss _ => .nothing
+      | _ => .undecided
+  | _, _ => .undecided
+
+/-- The three identities of a root: an ordinary alias, a module, a view of a module. -/
+def ordinary : Option PropertyIdentity := none
+def moduleRoot : Option PropertyIdentity := some (.module 1)
+def moduleViewRoot : Option PropertyIdentity := some (.moduleView 1 1)
+
+/-- `{ public X = n }`. -/
+def xBlock (n : Int) : Algorithm := alg [] [] [publicProp "X" (alg [] [] [] [.num n])] []
+
+/-- A transparent reference to `T` with the identity `id`, the members `props` and the opens `opens`. -/
+def referenceToT (id : Option PropertyIdentity) (props : List PropDef := []) (opens : List Expr := []) : Algorithm :=
+  .alias none opens props (.resolve "T") id true
+
+/-! ### Source: a module whose one row is an alias target -/
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree (asynchronous, with the loaded module) of
+
+        F(y) = {
+          Q = y
+          M = load('https://mods.test/carrier.kat')
+          M.V + 0
+        }
+        F(7)
+
+    where the module is `SelectionRoutes.moduleCut`'s with the one row `V` added:
+    `G(k) = { Lib = { public Q = k ⏎ 1 } ⏎ A = { open Lib ⏎ Q + 0 } ⏎ A }` `⏎ public V = G(5)` `⏎ V`.
+    The module's root is an ALIAS (a carrier). Inside it `Q` is `Lib.Q`, through `A`'s open, and
+    requires the module's `k`; it is not the holder's `Q`. (Before the cut the model walked the
+    root's members at the holder's levels, selected the holder's `Q` on the direct chain and
+    REFUSED this source tree.) -/
+def carrierMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "M" (Algorithm.withDeclarationId (some (.module 0)) (.alias none [] [publicProp "V" (alg [] [] [] [(.call (.resolve "G") [.num 5])]), privateProp "G" (alg ["k"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["k"]) (.alias none [] [] (.param "k"))) with requiredOwnerDepths := some [("k", some 1)] }] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["k"]) (alg [] [.resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("k", some 0)] }] [.resolve "A"])] (.resolve "V") none false))] [(.binary .add (.dotCall (.resolve "M") "V" none) (.num 0))])] [(.call (.resolve "F") [.num 7])])
+
+/-- Host-built: `carrierMember` without the module identity, an ordinary carrier at the same place.
+    Its members are declared under `F`, so `Q` is the holder's. -/
+def carrierMemberOrdinary : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "M" ((.alias none [] [publicProp "V" (alg [] [] [] [(.call (.resolve "G") [.num 5])]), privateProp "G" (alg ["k"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["k"]) (.alias none [] [] (.param "k"))) with requiredOwnerDepths := some [("k", some 1)] }] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["k"]) (alg [] [.resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("k", some 0)] }] [.resolve "A"])] (.resolve "V") none false))] [(.binary .add (.dotCall (.resolve "M") "V" none) (.num 0))])] [(.call (.resolve "F") [.num 7])])
+
+/-- Host-built: `carrierMember` with the module's `A` host-corrupted to exported. -/
+def carrierMemberExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "M" (Algorithm.withDeclarationId (some (.module 0)) (.alias none [] [publicProp "V" (alg [] [] [] [(.call (.resolve "G") [.num 5])]), privateProp "G" (alg ["k"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["k"]) (.alias none [] [] (.param "k"))) with requiredOwnerDepths := some [("k", some 1)] }] [.num 1]), privateProp "A" (alg [] [.resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])] [.resolve "A"])] (.resolve "V") none false))] [(.binary .add (.dotCall (.resolve "M") "V" none) (.num 0))])] [(.call (.resolve "F") [.num 7])])
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree (asynchronous, with the loaded module) of
+
+        F(y) = {
+          W = y
+          M = load('https://mods.test/opened.kat')
+          M + 0
+        }
+        F(7)
+
+    where the module is `open Lib` `⏎ Lib = { public W = 5 }` `⏎ W`: its root is an alias whose .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "M" (Algorithm.withDeclarationId (some (.module 0)) (.alias none [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "W" (alg [] [] [] [.num 5])] [])] (.resolve "W") none false))] [(.binary .add (.resolve "M") (.num 0))])] [(.call (.resolve "F") [.num 7])])
+    names a member only the module's OWN open provides. The row is not the holder's `W`, and `M`
+    requires nothing of `F`. (Before the cut the model collected the root's row at the holder's
+    levels, charged `M` the holder's `y` and REFUSED this source tree.) -/
+def carrierRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "M" (Algorithm.withDeclarationId (some (.module 0)) (.alias none [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "W" (alg [] [] [] [.num 5])] [])] (.resolve "W") none false))] [(.binary .add (.resolve "M") (.num 0))])] [(.call (.resolve "F") [.num 7])])
+
+/-- Host-built: `carrierRow` without the module identity. Its row is the holder's `W`. -/
+def carrierRowOrdinary : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "M" ((.alias none [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "W" (alg [] [] [] [.num 5])] [])] (.resolve "W") none false))] [(.binary .add (.resolve "M") (.num 0))])] [(.call (.resolve "F") [.num 7])])
+
+theorem carrierMember_sourceDomain : SourceDomain carrierMember := ⟨by cbv, by cbv⟩
+
+theorem carrierRow_sourceDomain : SourceDomain carrierRow := ⟨by cbv, by cbv⟩
+
+/-- The ordinary carrier's reader `A` reads the holder's `Q` and declares only `k`: refused. -/
+theorem carrierMember_ordinary_refused : ¬ SourceDomain carrierMemberOrdinary :=
+  fun h => by have := h.exposed; rw [show exposureFull carrierMemberOrdinary = false by cbv] at this; cases this
+
+/-- The ordinary carrier's row is the holder's `W`, which requires `y`; `M` is exported: refused. -/
+theorem carrierRow_ordinary_refused : ¬ SourceDomain carrierRowOrdinary :=
+  fun h => by have := h.exposed; rw [show exposureFull carrierRowOrdinary = false by cbv] at this; cases this
+
+/-- The inside of an alias-rooted module is still checked: its reader without its requirement is refused. -/
+theorem carrierMember_exported_refused : ¬ SourceDomain carrierMemberExported :=
+  fun h => by have := h.exposed; rw [show exposureFull carrierMemberExported = false by cbv] at this; cases this
+
+-- Production: the module reads its own opened member; the ordinary carrier reads its holder's.
+#guard answers 5 carrierMember
+#guard answers 5 carrierRow
+#guard answers 7 carrierMemberOrdinary
+#guard answers 7 carrierRowOrdinary
+
+/-! ### Open route -/
+
+/-- Host-built: `open A` / `T = { public X = 5 }` / `A` a reference to `T`, which only its HOLDER
+    declares / `X`. -/
+def openHolderTarget (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [.resolve "A"]
+    [privateProp "T" (xBlock 5), privateProp "A" (referenceToT id)] [.resolve "X"])
+
+/-- Host-built: the same with `T = { public X = 5 }` declared by `A` ITSELF, beside a holder
+    `T = { public X = 9 }`. -/
+def openOwnTarget (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [.resolve "A"]
+    [privateProp "T" (xBlock 9), privateProp "A" (referenceToT id [publicProp "T" (xBlock 5)])] [.resolve "X"])
+
+-- Production: the ordinary alias finds its enclosing scope's `T`; the module twin does not.
+#guard answers 5 (openHolderTarget ordinary)
+#guard unknownName "T" (openHolderTarget moduleRoot)
+#guard unknownName "T" (openHolderTarget moduleViewRoot)
+
+-- The model: the same. (Before the cut it selected `T.X` for all three.)
+#guard rootSelection (openHolderTarget ordinary) == .member ["T", "X"] [["T", "X"]] [some "T", none]
+#guard rootSelection (openHolderTarget moduleRoot) == .nothing
+#guard rootSelection (openHolderTarget moduleViewRoot) == .nothing
+
+-- The control: a target the root declares itself is found by all three, and never the holder's `T`.
+#guard answers 5 (openOwnTarget ordinary)
+#guard answers 5 (openOwnTarget moduleRoot)
+#guard answers 5 (openOwnTarget moduleViewRoot)
+#guard rootSelection (openOwnTarget ordinary) == .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A", none]
+-- The module's member is declared in a chain that ends at the module.
+#guard rootSelection (openOwnTarget moduleRoot) == .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A"]
+#guard rootSelection (openOwnTarget moduleViewRoot) == .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A"]
+
+/-- The positions on the reader's stack of the levels the selected member is declared in
+    (`Located.map`): one per level of its declaring chain. -/
+def rootPositions (program : Expr) : Option (List (Option Nat)) :=
+  match program with
+  | .algorithmExpr a =>
+      let root := levelOf [] none a
+      match openedAt [root] (selFuel [root] (.resolve "X")) "X" [root] (readerMap [root] 0) with
+      | .found h => some h.loc.map
+      | _ => none
+  | _ => none
+
+-- The positions are cut with the chain: the ordinary alias's member sits under the root level (the
+-- reader's own, position 0); the module's has no level of its holder to count a requirement at.
+#guard rootPositions (openOwnTarget ordinary) == some [none, none, some 0]
+#guard rootPositions (openOwnTarget moduleRoot) == some [none, none]
+#guard rootPositions (openOwnTarget moduleViewRoot) == some [none, none]
+
+/-! ### Value route -/
+
+/-- Host-built: `T = { public X = 5 }` / `A` a reference to the holder's `T` / `A.X`. -/
+def valueHolderTarget (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "T" (xBlock 5), privateProp "A" (referenceToT id)]
+    [.dotCall (.resolve "A") "X" none])
+
+/-- Host-built: the same with `T` declared by `A` itself, beside a holder `T = { public X = 9 }`. -/
+def valueOwnTarget (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "T" (xBlock 9), privateProp "A" (referenceToT id [publicProp "T" (xBlock 5)])]
+    [.dotCall (.resolve "A") "X" none])
+
+/-- Host-built: `open Lib` / `Lib = { public T = { public X = 5 } }` / `A` a reference to `T`, which
+    only the HOLDER's `open` provides / `A.X`. -/
+def valueHolderOpen (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [.resolve "Lib"]
+    [privateProp "Lib" (alg [] [] [publicProp "T" (xBlock 5)] []), privateProp "A" (referenceToT id)]
+    [.dotCall (.resolve "A") "X" none])
+
+/-- Host-built: the same with `A` opening its OWN `Lib` (`T.X = 5`), beside the holder's (`T.X = 9`). -/
+def valueOwnOpen (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [.resolve "Lib"]
+    [privateProp "Lib" (alg [] [] [publicProp "T" (xBlock 9)] []),
+     privateProp "A" (referenceToT id [privateProp "Lib" (alg [] [] [publicProp "T" (xBlock 5)] [])] [.resolve "Lib"])]
+    [.dotCall (.resolve "A") "X" none])
+
+-- Production: a holder's declaration …
+#guard answers 5 (valueHolderTarget ordinary)
+#guard unknownName "T" (valueHolderTarget moduleRoot)
+#guard unknownName "T" (valueHolderTarget moduleViewRoot)
+-- … and a member the holder's `open` provides.
+#guard answers 5 (valueHolderOpen ordinary)
+#guard unknownName "T" (valueHolderOpen moduleRoot)
+#guard unknownName "T" (valueHolderOpen moduleViewRoot)
+
+-- The model: the same.
+#guard pathSelection (valueHolderTarget ordinary) == .member ["T", "X"] [["T", "X"]] [some "T", none]
+#guard pathSelection (valueHolderTarget moduleRoot) == .nothing
+#guard pathSelection (valueHolderTarget moduleViewRoot) == .nothing
+-- The ordinary alias consults its holder's open level (the provider's walk `Lib.T` is on the trail);
+-- the module twin consults no level of its holder.
+#guard pathSelection (valueHolderOpen ordinary) ==
+  .member ["Lib", "T", "X"] [["Lib", "T"], ["Lib", "T", "X"]] [some "T", some "Lib", none]
+#guard pathSelection (valueHolderOpen moduleRoot) == .nothing
+#guard pathSelection (valueHolderOpen moduleViewRoot) == .nothing
+
+-- The controls: the root's own declaration, and a member its own `open` provides.
+#guard answers 5 (valueOwnTarget ordinary)
+#guard answers 5 (valueOwnTarget moduleRoot)
+#guard answers 5 (valueOwnTarget moduleViewRoot)
+#guard pathSelection (valueOwnTarget ordinary) == .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A", none]
+#guard pathSelection (valueOwnTarget moduleRoot) == .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A"]
+#guard pathSelection (valueOwnTarget moduleViewRoot) == .member ["A", "T", "X"] [["A", "T", "X"]] [some "T", some "A"]
+#guard answers 5 (valueOwnOpen ordinary)
+#guard answers 5 (valueOwnOpen moduleRoot)
+#guard answers 5 (valueOwnOpen moduleViewRoot)
+#guard pathSelection (valueOwnOpen ordinary) ==
+  .member ["A", "Lib", "T", "X"] [["A", "Lib", "T"], ["A", "Lib", "T", "X"]] [some "T", some "Lib", some "A", none]
+#guard pathSelection (valueOwnOpen moduleRoot) ==
+  .member ["A", "Lib", "T", "X"] [["A", "Lib", "T"], ["A", "Lib", "T", "X"]] [some "T", some "Lib", some "A"]
+#guard pathSelection (valueOwnOpen moduleViewRoot) ==
+  .member ["A", "Lib", "T", "X"] [["A", "Lib", "T"], ["A", "Lib", "T", "X"]] [some "T", some "Lib", some "A"]
+
+/-! ### The walkers: an alias root's row and members -/
+
+/-- `Q = y`, local-only on its declaring level's `y`. -/
+def holderQ : PropDef :=
+  { (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y")))
+    with requiredOwnerDepths := some [("y", some 0)] }
+
+/-- Host-built: `F(y) = { Q = y ⏎ A = Q ⏎ A }` / `F(7)`, `A` a reference with the identity `id`,
+    marked exported. -/
+def rowReadsHolder (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [holderQ, privateProp "A" (.alias none [] [] (.resolve "Q") id true)] [.resolve "A"])] [.call (.resolve "F") [.num 7]])
+
+/-- Host-built: `F(y) = { G = { Q = y ⏎ <alias> } ⏎ G }` / `F(7)`: a reference to `Q` with the identity
+    `id` written INLINE as `G`'s row; `G` is marked exported. The writer's level `G` is between the
+    root and the holder `F`. -/
+def inlineRowReadsWriter (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [privateProp "G" (alg [] []
+      [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y")))
+         with requiredOwnerDepths := some [("y", some 1)] }]
+      [.algorithmExpr (.alias none [] [] (.resolve "Q") id true)])] [.resolve "G"])] [.call (.resolve "F") [.num 7]])
+
+/-- Host-built: `F(y) = { Q = y ⏎ A = <carrier> ⏎ A.P }` / `F(7)`, the carrier `A` (identity `id`)
+    declaring `public P = Q + 0`, marked exported. -/
+def memberReadsHolder (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [holderQ,
+     privateProp "A" (.alias none []
+       [publicProp "P" (alg [] [] [] [.binary .add (.resolve "Q") (.num 0)]), privateProp "Z" (alg [] [] [] [.num 0])]
+       (.resolve "Z") id false)]
+    [.dotCall (.resolve "A") "P" none])] [.call (.resolve "F") [.num 7]])
+
+/-- Host-built: the BLOCK-rooted twin of `memberReadsHolder`. -/
+def memberReadsHolderBlock (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [holderQ,
+     privateProp "A" ((alg [] [] [publicProp "P" (alg [] [] [] [.binary .add (.resolve "Q") (.num 0)])] [.num 0]).withDeclarationId id)]
+    [.dotCall (.resolve "A") "P" none])] [.call (.resolve "F") [.num 7]])
+
+/-- Host-built: `F(y) = { A = y ⏎ A }` / `F(7)`, `A` a parameter-row alias with the identity `id`. -/
+def paramRow (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y") id true))
+       with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [.call (.resolve "F") [.num 7]])
+
+/-- Host-built: the BLOCK-rooted twin of `paramRow`, `A`'s body the row `y`. -/
+def paramRowBlock (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) ((alg [] [] [] [.param "y"]).withDeclarationId id))
+       with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [.call (.resolve "F") [.num 7]])
+
+-- Production: the ordinary alias reads its holder's `Q`; a module, whatever its root, does not.
+#guard answers 7 (rowReadsHolder ordinary)
+#guard unknownName "Q" (rowReadsHolder moduleRoot)
+#guard answers 7 (inlineRowReadsWriter ordinary)
+#guard unknownName "Q" (inlineRowReadsWriter moduleRoot)
+#guard answers 7 (memberReadsHolder ordinary)
+#guard unknownName "Q" (memberReadsHolder moduleRoot)
+#guard unknownName "Q" (memberReadsHolderBlock moduleRoot)
+
+/-- The ordinary alias's row requires its holder's `y`: the exported copy is refused. -/
+theorem rowReadsHolder_ordinary_refused : ¬ SourceDomain (rowReadsHolder ordinary) :=
+  fun h => by have := h.exposed; rw [show exposureFull (rowReadsHolder ordinary) = false by cbv] at this; cases this
+
+/-- **The module root's row sees no level of its holder**: it requires nothing of `F`. (Before the
+    cut the model refused this tree, charging the holder's `Q`.) -/
+theorem rowReadsHolder_module_sourceDomain : SourceDomain (rowReadsHolder moduleRoot) := ⟨by cbv, by cbv⟩
+
+/-- The same of a root written inline: neither the body it is written in nor a level above it is
+    seen. The ordinary alias written there requires `y` of `G`, whose exported copy is refused. -/
+theorem inlineRowReadsWriter_module_sourceDomain : SourceDomain (inlineRowReadsWriter moduleRoot) := ⟨by cbv, by cbv⟩
+
+theorem inlineRowReadsWriter_ordinary_refused : ¬ SourceDomain (inlineRowReadsWriter ordinary) :=
+  fun h => by have := h.exposed; rw [show exposureFull (inlineRowReadsWriter ordinary) = false by cbv] at this; cases this
+
+/-- The same of a member of an alias root, as of a member of a block root. -/
+theorem memberReadsHolder_module_sourceDomain :
+    SourceDomain (memberReadsHolder moduleRoot) ∧ SourceDomain (memberReadsHolderBlock moduleRoot) :=
+  ⟨⟨by cbv, by cbv⟩, ⟨by cbv, by cbv⟩⟩
+
+#guard !exposureFull (memberReadsHolder ordinary)
+#guard !exposureFull (memberReadsHolderBlock ordinary)
+#guard exposureFull (rowReadsHolder moduleViewRoot)
+#guard exposureFull (inlineRowReadsWriter moduleViewRoot)
+#guard exposureFull (memberReadsHolder moduleViewRoot)
+
+-- A parameter only the holder binds is UNBOUND in a module, whatever its root. Production reads it
+-- from the reading context's own tier (the read has no owner), which is what `paramsBound` excludes.
+#guard paramsBound (paramRow ordinary)
+#guard !paramsBound (paramRow moduleRoot)
+#guard !paramsBound (paramRow moduleViewRoot)
+#guard paramsBound (paramRowBlock ordinary)
+#guard !paramsBound (paramRowBlock moduleRoot)
+#guard answers 7 (paramRow ordinary)
+#guard answers 7 (paramRow moduleRoot)
+
+/-- Why `reqAlg_paramRow` and `declared_paramRow` exclude a module's root (`hroot`): under a level
+    that binds `y`, the module-rooted parameter-row alias requires nothing — its chain is cut — while
+    the ordinary one requires `y` there. -/
+theorem moduleRoot_paramRow_requires_nothing :
+    let holder : Level := { params := ["y"], props := [] }
+    ownerIndex? [holder] "y" = some 0 ∧
+      reqAlg ⟨false, true⟩ [holder] [] (some "A") (.alias none [] [] (.param "y") (some (.module 1)) true) = [] ∧
+      reqAlg ⟨false, true⟩ [holder] [] (some "A") (.alias none [] [] (.param "y") none true) = [("y", 0)] := by
+  refine ⟨by cbv, by cbv, by cbv⟩
+
+end ReferenceRootCut
+
+/-! ## A shared declaration is one open provider under one declaring scope (E-18 model correction, 2026-11-19)
+
+`resolveAllOpens` counts a provider once by its callable identity: its declaration and its declaring
+scope (`sameRepeatedCallableIdentity`, `sameDeclaringScope`). The model compared a declaration with a
+supplied `shared` identity that way only inside a module; outside one it kept the written position,
+so two holders of one such declaration were two providers where production counts one.
+`declaringScope` now ends the comparison at a module or at the first level production identifies
+afresh — an unmarked occurrence, a fresh syntax id per written occurrence, hence its position.
+
+Every tree here is HOST-BUILT. The encoder marks a declaration shared when the C# tree reaches it
+twice; no source program is known to hold one twice under one declaring scope outside a module (the
+three source-derived Lean corpora carry no shared identity at all). Production's outcome is asserted
+beside the model's.
+
+* One provider: `twoNames` over one declaration, over two VIEWS of it (the provider's own view is
+  erased), `twoPaths` under two holders of ONE shared declaration, and one declaration written as
+  two `open` blocks (both wired at the prelude).
+* Two providers, as before: two declarations; one declaration under two UNMARKED holders, under two
+  shared holder declarations, under two views of one, under one with different binder names; one
+  declaration at the root and under a container, inside a module, or written as an `open` block.
+* Exposure — `capture`, the reader of `ModuleProviders.captureWitness` over two holders of one shared
+  declaration: the copy without `R`'s requirement was admitted (two providers selected nothing) and
+  is now refused; production reads `R` outside the call from the call's cache entry on that copy.
+-/
+
+namespace SharedProviders
+
+open ModuleProviders (Selection rootSelection ambiguousX)
+open ReferenceRootCut (answers)
+
+/-- `{ public X = n }` with the declaration identity `id`. -/
+def xBlock (id : Option PropertyIdentity) (n : Int := 5) : Algorithm :=
+  (alg [] [] [publicProp "X" (alg [] [] [] [.num n])] []).withDeclarationId id
+
+/-- `{ public S = member }` with the declaration identity `id` and the parameters `params`. -/
+def holding (id : Option PropertyIdentity) (member : Algorithm) (params : List Ident := []) : Algorithm :=
+  (alg params [] [publicProp "S" member] (if params.isEmpty then [] else [.num 0])).withDeclarationId id
+
+/-- Host-built: `open A, B` / `A = a` / `B = b` / `X`. -/
+def twoNames (a b : Algorithm) : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"] [privateProp "A" a, privateProp "B" b] [.resolve "X"])
+
+/-- Host-built: `open A.S, B.S` / `A = a` / `B = b` / `X`. -/
+def twoPaths (a b : Algorithm) : Expr :=
+  .algorithmExpr (alg [] [.dotCall (.resolve "A") "S" none, .dotCall (.resolve "B") "S" none]
+    [privateProp "A" a, privateProp "B" b] [.resolve "X"])
+
+/-- The shared declaration `{ public X = 5 }`. -/
+def one : Algorithm := xBlock (some (.shared 7))
+
+-- One declaration held twice at one level: one provider, the first reach's (its copy answers).
+#guard answers 5 (twoNames one one)
+#guard rootSelection (twoNames one one) == .member ["A", "X"] [["A", "X"]] [some "A", none]
+#guard answers 5 (twoNames one (xBlock (some (.shared 7)) 6))
+#guard rootSelection (twoNames one (xBlock (some (.shared 7)) 6)) == .member ["A", "X"] [["A", "X"]] [some "A", none]
+
+-- The provider's own view is erased.
+#guard answers 5 (twoNames (xBlock (some (.sharedView 7 1))) (xBlock (some (.sharedView 7 2))))
+#guard rootSelection (twoNames (xBlock (some (.sharedView 7 1))) (xBlock (some (.sharedView 7 2)))) ==
+  .member ["A", "X"] [["A", "X"]] [some "A", none]
+
+-- Two declarations, and unmarked ones, are two providers.
+#guard ambiguousX (twoNames one (xBlock (some (.shared 8))))
+#guard rootSelection (twoNames one (xBlock (some (.shared 8)))) == .nothing
+#guard ambiguousX (twoNames (xBlock none) (xBlock none))
+#guard rootSelection (twoNames (xBlock none) (xBlock none)) == .nothing
+
+-- One declaration under two holders of ONE shared declaration: one declaring scope. Both targets
+-- are walked; the member is the first reach's.
+#guard answers 5 (twoPaths (holding (some (.shared 3)) one) (holding (some (.shared 3)) one))
+#guard rootSelection (twoPaths (holding (some (.shared 3)) one) (holding (some (.shared 3)) one)) ==
+  .member ["A", "S", "X"] [["A", "S"], ["B", "S"], ["A", "S", "X"]] [some "S", some "A", none]
+
+-- Its declaring scope decides: unmarked holders (a fresh identity each), two holder declarations,
+-- two views of one, one with different binder names.
+#guard ambiguousX (twoPaths (holding none one) (holding none one))
+#guard rootSelection (twoPaths (holding none one) (holding none one)) == .nothing
+#guard ambiguousX (twoPaths (holding (some (.shared 3)) one) (holding (some (.shared 4)) one))
+#guard rootSelection (twoPaths (holding (some (.shared 3)) one) (holding (some (.shared 4)) one)) == .nothing
+#guard ambiguousX (twoPaths (holding (some (.sharedView 3 1)) one) (holding (some (.sharedView 3 2)) one))
+#guard rootSelection (twoPaths (holding (some (.sharedView 3 1)) one) (holding (some (.sharedView 3 2)) one)) == .nothing
+#guard ambiguousX (twoPaths (holding (some (.shared 3)) one ["p"]) (holding (some (.shared 3)) one ["q"]))
+#guard rootSelection (twoPaths (holding (some (.shared 3)) one ["p"]) (holding (some (.shared 3)) one ["q"])) == .nothing
+
+/-- Host-built: one shared declaration written as two `open` blocks. Both are wired at the prelude. -/
+def writtenTwice : Expr :=
+  .algorithmExpr (alg [] [.algorithmExpr one, .algorithmExpr one] [] [.resolve "X"])
+
+#guard answers 5 writtenTwice
+#guard rootSelection writtenTwice == .member ["#open0", "X"] [["#open0", "X"]] [none]
+
+/-- Host-built: the declaration under two written blocks of the holder declaration `id`. -/
+def underWrittenBlocks (id : Option PropertyIdentity) : Expr :=
+  .algorithmExpr (alg [] [.dotCall (.algorithmExpr (holding id one)) "S" none,
+    .dotCall (.algorithmExpr (holding id one)) "S" none] [] [.resolve "X"])
+
+#guard answers 5 (underWrittenBlocks (some (.shared 3)))
+#guard rootSelection (underWrittenBlocks (some (.shared 3))) ==
+  .member ["#open0", "S", "X"] [["#open0", "S"], ["#open1", "S"], ["#open0", "S", "X"]] [some "S", none]
+#guard ambiguousX (underWrittenBlocks none)
+#guard rootSelection (underWrittenBlocks none) == .nothing
+
+/-- Two unmarked owners hold the same shared declaration under different names. One owner is
+    the first inline open block, the other a host-built property literally named `#open0`. -/
+def openBlockAndNamedHolder : Expr :=
+  let holder (memberName : Ident) := alg [] [] [publicProp memberName one] []
+  .algorithmExpr (alg []
+    [.dotCall (.algorithmExpr (holder "P")) "P" none, .dotCall (.resolve "#open0") "Q" none]
+    [privateProp "#open0" (holder "Q")] [.resolve "X"])
+
+#guard ambiguousX openBlockAndNamedHolder
+#guard rootSelection openBlockAndNamedHolder == .nothing
+
+/-- Host-built: the declaration held at the root and reached a second way: under an unmarked
+    container (`C.S`), inside a module (`M.S`), or written as an `open` block. Three declaring
+    scopes that are not the root's. -/
+def rootAnd (second : Expr) (holder : List PropDef) : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", second] (privateProp "A" one :: holder) [.resolve "X"])
+
+#guard ambiguousX (rootAnd (.dotCall (.resolve "C") "S" none) [privateProp "C" (holding none one)])
+#guard rootSelection (rootAnd (.dotCall (.resolve "C") "S" none) [privateProp "C" (holding none one)]) == .nothing
+#guard ambiguousX (rootAnd (.dotCall (.resolve "M") "S" none) [privateProp "M" (holding (some (.module 1)) one)])
+#guard rootSelection (rootAnd (.dotCall (.resolve "M") "S" none) [privateProp "M" (holding (some (.module 1)) one)]) == .nothing
+#guard ambiguousX (rootAnd (.algorithmExpr one) [])
+#guard rootSelection (rootAnd (.algorithmExpr one) []) == .nothing
+
+/-- Host-built: `A = a` / `B = b` / `F(y) = { open Lib.Sub, A, B ⏎ Lib = { public Sub = { y + 0 } ⏎ 0 }`
+    `⏎ R = X + 0 ⏎ R }` with the rows `output`: the reader of `ModuleProviders.captureWitness`. `R` is
+    local-only on `y` (`localOnly`) or has that requirement removed. -/
+def capture (a b : Algorithm) (localOnly : Bool) (output : List Expr) : Expr :=
+  let body := alg [] [] [] [.binary .add (.resolve "X") (.num 0)]
+  let reader := if localOnly then
+    { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) body) with requiredOwnerDepths := some [("y", some 0)] }
+    else privateProp "R" body
+  let sub := { (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [.binary .add (.param "y") (.num 0)]))
+    with requiredOwnerDepths := some [("y", some 1)] }
+  .algorithmExpr (alg [] [] [privateProp "A" a, privateProp "B" b,
+    privateProp "F" (alg ["y"] [.dotCall (.resolve "Lib") "Sub" none, .resolve "A", .resolve "B"]
+      [privateProp "Lib" (alg [] [] [sub] [.num 0]), reader] [.resolve "R"])] output)
+
+/-- The rows `F(7)`. -/
+def call : List Expr := [.call (.resolve "F") [.num 7]]
+
+/-- The rows `F(7), F.R`. -/
+def callThenRead : List Expr := [.call (.resolve "F") [.num 7], .dotCall (.resolve "F") "R" none]
+
+theorem capture_sourceDomain : SourceDomain (capture one one true call) := ⟨by cbv, by cbv⟩
+
+/-- **One provider outside a module too: the copy without `R`'s requirement is refused** (the model
+    admitted it while two holders of one shared declaration were two providers). -/
+theorem capture_hostBuilt_refused : ¬ SourceDomain (capture one one false call) :=
+  fun h => by have := h.exposed; rw [show exposureFull (capture one one false call) = false by cbv] at this; cases this
+
+/-- The control: over two declarations nothing is selected, and the same copy is admitted. -/
+theorem capture_twoDeclarations_sourceDomain :
+    SourceDomain (capture one (xBlock (some (.shared 8))) false call) := ⟨by cbv, by cbv⟩
+
+#guard answers 5 (capture one one true call)
+#guard (match runResult (capture one one true callThenRead) with
+  | .error e => (match innermost e with | .localOnlyProperty _ "R" _ => true | _ => false)
+  | .ok _ => false)
+#guard (match runResult (capture one one false callThenRead) with
+  | .ok (.sequenceValue [.atom 5, .atom 5]) => true
+  | _ => false)
+#guard ambiguousX (capture one (xBlock (some (.shared 8))) false call)
+
+end SharedProviders
 
 end KatLang.NavigationSourceDomainGuards

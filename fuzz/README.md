@@ -1925,10 +1925,12 @@ when its last member fails); 2 — usage or an unreadable manifest.
 `SemanticSupervisor` runs one worker at a time (no fan-out): a repository-built executable with an
 argument LIST (`semantic-worker DESCRIPTOR RESULT`), redirected output capped at 16 Ki characters per
 stream, and an external wall-clock deadline (default 60 s) on top of the engine's own limits. A
-command may name a readiness file the worker writes just before its workload; the deadline then
-counts from readiness and a separate startup bound (default 5 min) limits the time before it, so a
-slow host start under load cannot consume the workload deadline. On either expiry it kills the whole
-process tree and awaits its exit. The supervisor also accepts an external cancellation token and
+command, single-case or batch, may name a readiness file the worker writes just before its workload;
+the deadline then counts from readiness and a separate startup bound (default 5 min) limits the time
+before it, so a slow host start under load cannot consume the workload deadline. The fuzz consumer's
+own workers start quickly and name none; the test suite's workers, which re-enter the test assembly
+through `dotnet vstest`, do. On either expiry it kills the whole process tree and awaits its exit.
+The supervisor also accepts an external cancellation token and
 terminates a running worker on cancellation, reporting `SupervisorCancellation` separately from
 language cancellation. Output is drained in fixed-size chunks, including unbroken lines.
 Classifications: `Timeout`, `Crash` (abnormal exit), `MalformedOutput` (including another case's
@@ -2103,7 +2105,8 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested
   descriptor is written under `work/` before a `semantic-batch-worker` child replays the batch's
   manifest in recipe mode, writing each member's result atomically before the next starts; each
   result is judged exactly as a single worker's (`SemanticSupervisor.JudgeResult`), and
-  `--deadline-seconds` is a progress deadline that restarts with every result. Every failing member,
+  `--deadline-seconds` is a progress deadline that restarts with every result (for a batch command
+  that names a readiness file, it starts at readiness, under the startup bound of § Supervision). Every failing member,
   and a member without a result — in flight when the child crashed or timed out, or one it could not
   replay — also runs alone under the single-case supervisor; the members after one without a result
   go to the next batch. The original batch failure remains a failure whatever that standalone rerun

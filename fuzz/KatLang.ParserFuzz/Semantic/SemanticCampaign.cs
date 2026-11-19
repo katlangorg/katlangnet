@@ -557,6 +557,7 @@ internal static class SemanticCampaign
             if (!Directory.EnumerateFileSystemEntries(batchDir).Any()) Directory.Delete(batchDir);
             TryDelete(manifest);
             TryDelete(manifest + ".supervision.txt");
+            if (command.ReadyPath is { } ready) TryDelete(ready);
         }
 
         return recorded;

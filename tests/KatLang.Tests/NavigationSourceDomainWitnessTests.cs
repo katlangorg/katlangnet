@@ -17,7 +17,9 @@ namespace KatLang.Tests;
 /// a reference, an enclosing level's open) plus the controls it must keep exported (ledger E-18, F1);
 /// Lean refuses each one's host-corrupted or pre-fix counterpart. The <c>ModuleProviders</c> rows are
 /// the routes on which one loaded module is one open provider, their two-provider controls, and a
-/// reader charged only through the open level such a module decides.
+/// reader charged only through the open level such a module decides. The <c>ReferenceRootCut</c> rows
+/// are two programs whose loaded module has an alias for its root (its one row is an alias target),
+/// which reads its own declarations and never its holder's.
 /// </summary>
 public class NavigationSourceDomainWitnessTests
 {
@@ -244,6 +246,75 @@ public class NavigationSourceDomainWitnessTests
         Assert.Equal(["k"], a.RequiredAncestorParameters);
 
         var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(ModuleHolder, server.Options()));
+        Assert.Equal(new Result.Atom(5), success.Value);
+    }
+
+    // ── A module whose root is an alias is rooted at the prelude too (E-18 model correction, 2026-11-19; Lean `ReferenceRootCut`) ──
+
+    private const string CarrierMemberUrl = "https://mods.test/carrier.kat";
+    private const string CarrierRowUrl = "https://mods.test/opened.kat";
+
+    /// <summary><see cref="ModuleSource"/> with the one row <c>V</c>: a module whose root elaborates to an alias.</summary>
+    private const string CarrierMemberModule = ModuleSource + "V\n";
+
+    /// <summary>A module whose one row names a member only its own <c>open</c> provides.</summary>
+    private const string CarrierRowModule = "open Lib\nLib = {\n  public W = 5\n}\nW\n";
+
+    private const string CarrierMemberHolder = "F(y) = {\n  Q = y\n  M = load('" + CarrierMemberUrl + "')\n  M.V + 0\n}\nF(7)\n";
+    private const string CarrierRowHolder = "F(y) = {\n  W = y\n  M = load('" + CarrierRowUrl + "')\n  M + 0\n}\nF(7)\n";
+
+    /// <summary>
+    /// A loaded module whose ONE ROW is a callable alias target elaborates to an alias that keeps the
+    /// module mark: a carrier, never a transparent reference. It is rooted at the prelude like a
+    /// block-rooted module, so a name its holder also declares (<c>Q</c>, <c>W</c>) is the module's own
+    /// opened member: the holder <c>M</c> stays exported and the run answers 5, not the holder's 7.
+    /// The trees are Lean's <c>ReferenceRootCut.carrierMember</c> and <c>carrierRow</c>, which the static
+    /// model refused before it cut an alias root's chain at the module. Lean's host-built twins are
+    /// pinned as single replacements: the tree without the module identity (an ordinary carrier,
+    /// which reads the holder's declaration), and the module's reader <c>A</c> marked exported.
+    /// </summary>
+    [Theory]
+    [InlineData("carrierMember", CarrierMemberHolder)]
+    [InlineData("carrierRow", CarrierRowHolder)]
+    public async Task AliasRootedModuleWitness_IsTheActualElaboratedSource(string name, string source)
+    {
+        var server = new ModuleRouteAgreement.Modules((CarrierMemberUrl, CarrierMemberModule), (CarrierRowUrl, CarrierRowModule));
+        var root = (await SourceProvenance.ParseValidAsync(source, server.Options())).Root;
+        var f = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties).Value);
+        var holder = f.Properties.Single(property => property.Name == "M");
+        var module = Assert.IsType<Algorithm.Alias>(holder.Value);
+        Assert.True(module.IsModuleRoot);
+        Assert.False(module.IsReference);
+        Assert.Equal(PropertyExposure.Exported, holder.Exposure);
+        Assert.Empty(holder.RequiredAncestorParameters);
+
+        var lean = File.ReadAllText(Path.Combine(RepoRoot.Find(), LeanPath)).ReplaceLineEndings("\n");
+        var start = lean.IndexOf("namespace ReferenceRootCut\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Missing Lean namespace ReferenceRootCut");
+        var end = lean.IndexOf("end ReferenceRootCut\n", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Missing Lean namespace end ReferenceRootCut");
+        lean = lean[start..end];
+
+        const string moduleIdentity = "Algorithm.withDeclarationId (some (.module 0)) ";
+        var encoded = LeanAstEncoder.EncodeProgram(root);
+        Assert.Contains($"def {name} : Expr :=\n  {encoded}\n", lean, StringComparison.Ordinal);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(encoded, System.Text.RegularExpressions.Regex.Escape(moduleIdentity)));
+        Assert.Contains($"def {name}Ordinary : Expr :=\n  {encoded.Replace(moduleIdentity, "", StringComparison.Ordinal)}\n", lean, StringComparison.Ordinal);
+
+        if (name == "carrierMember")
+        {
+            var g = Assert.IsType<Algorithm.User>(module.Properties.Single(property => property.Name == "G").Value);
+            var a = g.Properties.Single(property => property.Name == "A");
+            Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, a.Exposure);
+            Assert.Equal(["k"], a.RequiredAncestorParameters);
+
+            const string localOnlyReader = "{ (privateLocalProp \"A\" (.localCapturedAncestorParams [\"k\"]) (alg [] [.resolve \"Lib\"] [] [(.binary .add (.resolve \"Q\") (.num 0))])) with requiredOwnerDepths := some [(\"k\", some 0)] }";
+            const string exportedReader = "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [(.binary .add (.resolve \"Q\") (.num 0))])";
+            Assert.Contains(localOnlyReader, encoded, StringComparison.Ordinal);
+            Assert.Contains($"def carrierMemberExported : Expr :=\n  {encoded.Replace(localOnlyReader, exportedReader, StringComparison.Ordinal)}\n", lean, StringComparison.Ordinal);
+        }
+
+        var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, server.Options()));
         Assert.Equal(new Result.Atom(5), success.Value);
     }
 

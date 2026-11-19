@@ -422,6 +422,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     private const string ManifestVariable = "KATLANG_SEM2C_EXHAUSTIVE_WORKER_MANIFEST";
     private const string DescriptorVariable = "KATLANG_SEM2C_EXHAUSTIVE_WORKER_DESCRIPTOR";
     private const string ResultVariable = "KATLANG_SEM2C_EXHAUSTIVE_WORKER_RESULT";
+    private const string ReadyVariable = "KATLANG_SEM2C_EXHAUSTIVE_WORKER_READY";
     private const string BatchMode = "batch";
     private const string BatchOnlyCrashMode = "batch-only-crash";
     private const string AfterResultsCrashMode = "after-results-crash";
@@ -456,11 +457,19 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     private static SemanticBatchWorkerCommand BatchChild(string manifest)
         => BatchChild(manifest, BatchMode);
 
+    // Both children are this test assembly re-entered through `dotnet vstest`, whose start (discovering
+    // the whole assembly) can take most of a minute when the full suite loads the machine. Each names a
+    // readiness file, so the supervisor's deadline counts from the child's first case, not its launch.
     private static SemanticBatchWorkerCommand BatchChild(string manifest, string mode)
     {
         var environment = ChildEnvironment(mode);
         environment[ManifestVariable] = manifest;
-        return new SemanticBatchWorkerCommand("dotnet", ChildArguments(nameof(BatchWorker_Child)), environment, manifest);
+        var ready = manifest + ".ready";
+        environment[ReadyVariable] = ready;
+        return new SemanticBatchWorkerCommand("dotnet", ChildArguments(nameof(BatchWorker_Child)), environment, manifest)
+        {
+            ReadyPath = ready,
+        };
     }
 
     private static SemanticWorkerCommand SingleChild(string descriptor, string result, SemanticReplay.Mode mode)
@@ -471,7 +480,20 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
         var environment = ChildEnvironment(workerMode);
         environment[DescriptorVariable] = descriptor;
         environment[ResultVariable] = result;
-        return new SemanticWorkerCommand("dotnet", ChildArguments(nameof(SingleWorker_Child)), environment, descriptor, result);
+        var ready = result + ".ready"; // the name a campaign removes with a passing case's evidence
+        environment[ReadyVariable] = ready;
+        return new SemanticWorkerCommand("dotnet", ChildArguments(nameof(SingleWorker_Child)), environment, descriptor, result)
+        {
+            ReadyPath = ready,
+        };
+    }
+
+    /// <summary>A child's readiness signal, published only once its writer has closed.</summary>
+    private static void SignalReady()
+    {
+        var ready = Environment.GetEnvironmentVariable(ReadyVariable)!;
+        File.WriteAllText(ready + ".pending", Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+        File.Move(ready + ".pending", ready);
     }
 
     /// <summary>
@@ -593,6 +615,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     {
         var mode = Environment.GetEnvironmentVariable(ModeVariable);
         if (mode is not (BatchMode or BatchOnlyCrashMode or AfterResultsCrashMode)) return;
+        SignalReady();
         var manifest = Environment.GetEnvironmentVariable(ManifestVariable)!;
         Func<SemanticProfileRun, SemanticProfileRun>? Filter(SemanticCase c)
         {
@@ -611,6 +634,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     {
         var mode = Environment.GetEnvironmentVariable(ModeVariable);
         if (mode is not (SingleMode or PassingSingleMode)) return;
+        SignalReady();
         var descriptor = Environment.GetEnvironmentVariable(DescriptorVariable)!;
         var result = Environment.GetEnvironmentVariable(ResultVariable)!;
         Assert.True(SemanticDescriptor.TryParse(File.ReadAllText(descriptor), out var parsed, out var problem), problem);

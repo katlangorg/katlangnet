@@ -23,7 +23,8 @@ position, innermost first (`Level`: the names the level binds, the members it de
   MODULE (`Algorithm.isModuleRoot`) is rooted at the prelude (`Algorithm.withParent`): its level
   starts a fresh stack;
 * `Algorithm.alias` pushes its own level (no parameters, its own properties) — the alias is the head
-  when its row is resolved (`resolveAliasStepWith`, `aliasBindingCell`);
+  when its row is resolved (`resolveAliasStepWith`, `aliasBindingCell`); a loaded module whose ROOT
+  is an alias is rooted at the prelude like any module, so its level starts a fresh stack too;
 * a clause family pushes, for each branch, the BINDER level of the branch's pattern (the family
   scope `wireSelectedBranchBody` publishes: the family's identity and opens, the binders as
   parameters) under the branch body's own level;
@@ -47,8 +48,8 @@ lookup reaches after every level's own declarations and BEFORE any `open` (`prel
     by level (`lookupOpenPropertiesInChain`): at each level the targets' PROVIDERS, each counted once
     by static identity (`dedupKeys`, the static `resolveAllOpens` deduplication: the resolved
     declaration in its declaring scope, normalized through transparent references). Independent
-    written blocks keep their positions. Module tokens and shared member declarations distinguish
-    providers in module scopes. The first level some provider provides the name publicly
+    written blocks keep their positions. Module tokens and shared declarations in their declaring
+    scopes distinguish providers. The first level some provider provides the name publicly
     decides — exactly one provider selects its member, two or more select NOTHING
     (`ambiguousOpen`) and the search stops, a target that fails fails the level;
   - what the declaration a STATIC DOTTED PATH selects declares (`resolveDotReceiver?`,
@@ -174,6 +175,45 @@ lookup reaches after every level's own declarations and BEFORE any `open` (`prel
   copy missing the reader's requirement; the former predicate admitted both. F1 is closed against
   its route census, B2 is deferred, and E-18 remains open (formal correspondence ledger).
 
+  REFERENCE-ROOT CUT (2026-11-19). A loaded module is rooted at the prelude whatever its root is:
+  `Algorithm.withParent` re-parents a module-identified ALIAS exactly as it re-parents a
+  module-identified block. The model cut the chain for a block root only. A module whose root is a
+  transparent reference had its target walked on its HOLDER's stack (`structureOf`), and an alias
+  root's row, opens and members were walked at the holder's levels (`collectAlg`, `chkAlg`). So the
+  model selected a holder-level target — a declaration of the holder, or a member the holder's
+  `open` provides — where production answers `unknownName`. Now the chain is cut at the module in
+  all three (`Located.ownScope`, which `memberOf` already applied to a module's members).
+  The walkers' half is reachable from SOURCE: the front end elaborates a loaded module whose one
+  row is an alias target to a module-identified alias (a carrier), and the model REFUSED the front
+  end's own tree of such a program when a name the module reads through its own `open` is also
+  declared by its holder, where both evaluators run it (`ReferenceRootCut.carrierMember`,
+  `carrierRow`). A module-identified TRANSPARENT reference is host-built only: the front end never
+  forms a reference from a module body. What the cut changes, for a module-rooted alias only:
+  - both target walks search the module's own declarations and end at the prelude. A value
+    lookup can then consult the module's own opens. An open target uses direct lexical lookup
+    (`openStructure`). Neither route adds a holder level's provider walks to the trail;
+  - a value crossing is checked `within` the root's own position alone;
+  - the root's row, opens and members are checked on a stack that starts at the root, so a
+    parameter only a holder binds is unbound there (`paramsBound`, as for a block root), and a
+    member's requirements are counted from the root.
+  Positional keys are NOT cut (`c.key`, the `#target` block key, `childKey` of the uncut stack):
+  navigation, the trail's locations and the cycle check read the same keys as before, and a chase
+  that formerly returned to a holder's alias now ends in a miss before it. The access checks, the
+  check sites and the anchoring by position (`Located.map`) are unchanged. Every other tree is
+  walked exactly as before. Guards: `NavigationSourceDomainGuards.ReferenceRootCut` (production
+  beside the model, with the ordinary-alias twin of each case, which still finds its target). The
+  cut makes `reqAlg_paramRow` and `declared_paramRow` false of a module-rooted parameter-row alias,
+  so both now exclude it (`hroot`).
+
+  SHARED DECLARATIONS OUTSIDE A MODULE (2026-11-19). A declaration with a supplied `shared`
+  identity was compared by its declaring scope only inside a module; outside one it kept its
+  written position, so two holders of one such declaration were two providers where production
+  counts one. `declaringScope` now ends the comparison at a module or at the first level
+  production identifies afresh, whose position stands for it and everything above it
+  (`ProviderKey.declared`). No source program is known to hold such a declaration twice under one
+  scope outside a module (the source-derived corpora carry no shared identity); the guarded trees
+  are host-built (`NavigationSourceDomainGuards.SharedProviders`).
+
   Runtime-only routes — parameter and computed heads, `.Algorithm` links, runtime reference rows —
   contribute nothing statically (`Sel.runtime`). A chase meeting a key it already passed is the
   alias cycle production refuses (nothing is read), or, deciding an `.Algorithm` row's route, the
@@ -214,7 +254,8 @@ ASSUMED, not proved:
 `NavigationSourceDomainGuards` checks it on source-derived trees (C# fidelity tests,
 `NavigationSourceDomainWitnessTests`) and rejects host-built trees with a requirement removed on
 the guarded routes (`HostBuilt`, `ExposureFragment`, `OpenedFragment`, `SelectionGaps`,
-`SelectionRoutes`, `AccessChecks`, `CheckSites`, `ModuleProviders`). The F1 closeout above records
+`SelectionRoutes`, `AccessChecks`, `CheckSites`, `ModuleProviders`, `ReferenceRootCut`,
+`SharedProviders`). The F1 closeout above records
 the corpus evidence. Lean has no model of `ParameterDetector` or `PropertyExposureResolver`,
 and the selection rules above are this module's
 model of the evaluator's static selections, not the evaluator's own lookup functions (those are
@@ -222,7 +263,8 @@ monadic over runtime contexts; agreement is the assumption, exercised by the gua
 
 The parameter-row consequence used by the gate lemma (`NavigationOwnership`): under any exposure
 mode, a member whose algorithm is a parameter-row alias `.param y` declares `(y, k)`, `k` the
-NEAREST level of its declaring stack that binds `y` (`declared_paramRow`).
+NEAREST level of its declaring stack that binds `y` (`declared_paramRow`) — unless the alias is a
+loaded module's root, whose chain is cut at its own level and whose row no holder level binds.
 
 Whether `SourceDomain` gives the proposed navigation invariant is NOT proved here. The B2
 preparation (2026-11-12) found `SourceLike` source programs on which production reached a
@@ -280,9 +322,18 @@ def propIndex? : Stack → Ident → Option (Nat × PropDef)
     a name it declares is a builtin, never an opened member. -/
 def preludeDeclares (name : Ident) : Bool := (Algorithm.lookupPropDefAny? preludeAlg name).isSome
 
+/-- A property name occupies one path segment. Double an initial `#` so host-built names
+    are disjoint from the walk's anonymous, block, open-target and alias-target segments. -/
+def propertySegment (name : Ident) : String :=
+  if name.startsWith "#" then "#" ++ name else name
+
+/-- The position of the head of a stack, or the empty path at its root. -/
+def stackKey (stack : Stack) : List String :=
+  match stack with | level :: _ => level.key | [] => []
+
 /-- The key of a level pushed on `stack` for the body of `self` (`"#"`: an anonymous level). -/
 def childKey (stack : Stack) (self : Option Ident) : List String :=
-  (match stack with | level :: _ => level.key | [] => []) ++ [self.getD "#"]
+  stackKey stack ++ [(self.map propertySegment).getD "#"]
 
 /-- A clause family's level pushed on `stack` (`params` its binders, none for the family's own
     open-target level): the family's identity and opens. -/
@@ -352,16 +403,25 @@ def insideIndex (R : Stack) (declaredAt : Option Nat) (name : Ident) : Option Na
 def foundAt (R S : Stack) (M : List (Option Nat)) (i : Nat) (p : PropDef) : Located :=
   { name := some p.name, alg := p.alg, stack := S.drop i, map := M.drop i,
     self := insideIndex R (M[i]?.join) p.name,
-    key := (match S[i]? with | some level => level.key | none => []) ++ [p.name], prop := some p }
+    key := (match S[i]? with | some level => level.key | none => []) ++ [propertySegment p.name], prop := some p }
 
-/-- The member `p` of a located container `c`. A LOADED MODULE is rooted at the prelude
-    (`Algorithm.withParent`): its members' chain is cut at its own level. -/
-def memberOf (R : Stack) (c : Located) (p : PropDef) : Located :=
+/-- The scope a located algorithm's OWN level heads, with the positions of its levels on `R`: its own
+    level over its declaring stack. It is the scope its members are declared in (`memberOf`) and, for
+    a transparent reference, the scope its target is resolved from (`structureOf`:
+    `resolveAliasStepWith` pushes the reference, `openStructure` looks the head up from it). A LOADED
+    MODULE is rooted at the prelude wherever it is held (`Algorithm.withParent`, a root that is an
+    alias included): its chain is CUT at its own level, so neither a member nor the root's own
+    target sees a level of its holder. The positional key is not cut: it stays the path from the
+    program root. -/
+def Located.ownScope (c : Located) : Stack × List (Option Nat) :=
   let own := levelOf c.key c.name c.alg
-  { name := some p.name, alg := p.alg,
-    stack := if c.alg.isModuleRoot then [own] else own :: c.stack,
-    map := if c.alg.isModuleRoot then [c.self] else c.self :: c.map,
-    self := insideIndex R c.self p.name, key := c.key ++ [p.name], prop := some p }
+  if c.alg.isModuleRoot then ([own], [c.self]) else (own :: c.stack, c.self :: c.map)
+
+/-- The member `p` of a located container `c`, declared in the container's own scope
+    (`Located.ownScope`: cut at a loaded module). -/
+def memberOf (R : Stack) (c : Located) (p : PropDef) : Located :=
+  { name := some p.name, alg := p.alg, stack := c.ownScope.1, map := c.ownScope.2,
+    self := insideIndex R c.self p.name, key := c.key ++ [propertySegment p.name], prop := some p }
 
 /-- The OUTCOME of a static selection. -/
 inductive Sel (α : Type) where
@@ -432,36 +492,52 @@ def Sel.all {α : Type} (xs : List (Sel α)) : Sel (List α) :=
     let found := xs.filterMap fun x => match x with | .found a => some a | _ => none
     if found.length = xs.length then .found found else .miss []
 
-/-- The declaring levels of a shared module member, starting with its immediate owner. The full
-    identities and binder names are the fields `sameDeclaringScope` compares. A module starts a
-    fresh chain at the prelude. An unmarked ancestor receives a fresh syntax id in production. -/
-def moduleScope? : Stack → Option (List (PropertyIdentity × List Ident))
-  | [] => none
-  | level :: rest => do
-      let id ← level.declarationId
-      let here := (id, level.params)
-      match id with
-      | .module _ | .moduleView .. => return [here]
-      | .shared _ | .sharedView .. => return here :: (← moduleScope? rest)
-      | _ => none
-
-/-- Identity for counting open providers. The positional alternative keeps written occurrences
-    distinct, including a descendant whose declaration or owner is identified afresh by production. -/
-inductive ProviderKey where
-  | position (path : List String)
-  | inModule (declaration : PropertyIdentity) (owners : List (PropertyIdentity × List Ident))
+/-- The DECLARING SCOPE of a shared declaration, as `sameDeclaringScope` compares it: `owners`, from
+    its immediate owner outward, the levels production identifies by a SUPPLIED identity — a shared
+    declaration, by its full identity (its view included) and binder names — and where they end:
+    * `anchor = none`: at the prelude. A loaded module is rooted there (it is the last owner), and so
+      is a declaration with no enclosing level at all, a block an `open` writes;
+    * `anchor = some key`: at the first level production identifies AFRESH. An unmarked occurrence
+      receives a fresh syntax id, so it is one scope exactly when it is one written occurrence: its
+      POSITION, which fixes every level above it too. -/
+structure DeclaringScope where
+  owners : List (PropertyIdentity × List Ident)
+  anchor : Option (List String)
   deriving BEq
 
-/-- A module is wired at the prelude regardless of its holder. A shared descendant also needs the
-    identity of its declaring scope. In both cases the provider's own view is erased as it is in
-    `sameRepeatedCallableIdentity`. Navigation and alias-cycle detection continue to use `c.key`. -/
+/-- The declaring scope of a declaration whose declaring stack is `stack`. -/
+def declaringScope : Stack → DeclaringScope
+  | [] => ⟨[], none⟩
+  | level :: rest =>
+      match level.declarationId with
+      | some (.module token) => ⟨[(.module token, level.params)], none⟩
+      | some (.moduleView token view) => ⟨[(.moduleView token view, level.params)], none⟩
+      | some (.shared token) =>
+          let outer := declaringScope rest
+          ⟨(.shared token, level.params) :: outer.owners, outer.anchor⟩
+      | some (.sharedView token view) =>
+          let outer := declaringScope rest
+          ⟨(.sharedView token view, level.params) :: outer.owners, outer.anchor⟩
+      | _ => ⟨[], some level.key⟩
+
+/-- Identity for counting open providers: a declaration production identifies afresh by its written
+    POSITION; a declaration with a supplied identity — a loaded module, a shared declaration — by
+    that identity under its declaring scope, wherever it is written. Both alternatives are needed
+    side by side: a shared declaration under two unmarked owners is two providers, and one under one
+    declaring scope is one provider at any two positions. -/
+inductive ProviderKey where
+  | position (path : List String)
+  | declared (declaration : PropertyIdentity) (scope : DeclaringScope)
+  deriving BEq
+
+/-- A module is wired at the prelude regardless of its holder. A shared declaration also needs the
+    identity of its declaring scope (`declaringScope`), inside a module and outside one. In both
+    cases the provider's own view is erased as it is in `sameRepeatedCallableIdentity`. Navigation
+    and alias-cycle detection continue to use `c.key`. -/
 def Located.providerKey (c : Located) : ProviderKey :=
   match PropertyIdentity.callableDeclaration c.alg.declarationId with
-  | some (.module token) => .inModule (.module token) []
-  | some (.shared token) =>
-      match moduleScope? c.stack with
-      | some owners => .inModule (.shared token) owners
-      | none => .position c.key
+  | some (.module token) => .declared (.module token) ⟨[], none⟩
+  | some (.shared token) => .declared (.shared token) (declaringScope c.stack)
   | _ => .position c.key
 
 /-- Keep the first reach of each provider after collecting all target walks, before member lookup.
@@ -501,7 +577,9 @@ mutual
       nothing is restricted here. A runtime end in the open mode is the reference's own namespace,
       reached AFTER the checks of its static prefix, which stay on the trail. A key met twice on one
       chase is the alias cycle production refuses (`miss`), or — deciding an `.Algorithm` row's route —
-      the runtime route. -/
+      the runtime route. The reference's own scope is `Located.ownScope`: a reference that is a LOADED
+      MODULE's root resolves its target on a chain ending at the prelude (`Algorithm.withParent`).
+      Only the value route can consult the reference's own opens (`walkPath`). -/
   def structureOf (R : Stack) (opn : Bool) : Nat → List (List String) → Located → Sel Hit
     | 0, _, c =>
         match c.alg with
@@ -520,10 +598,11 @@ mutual
               match Expr.staticAliasPath? target with
               | none => if opn then .found ⟨c, []⟩ else failed []
               | some (head, steps) =>
-                  let own := c.self :: c.map
+                  let scope := c.ownScope.1
+                  let own := c.ownScope.2
                   let chased : Sel Hit :=
                     match walkPath R (if opn then .reference else .value) fuel (c.key :: visited)
-                        (levelOf c.key c.name c.alg :: c.stack) own head steps (c.key ++ ["#target"]) with
+                        scope own head steps (c.key ++ ["#target"]) with
                     | .found v => Sel.after v.trail (structureOf R opn fuel (c.key :: visited) v.loc)
                     | .runtime checked => if opn then .found ⟨c, checked⟩ else .runtime checked
                     | .miss checked => failed checked
@@ -722,7 +801,7 @@ def dottedRequirements (outer inner : Stack) (e : Expr) : Sel (List Requirement)
   match Expr.staticAliasPath? e with
   | none => .miss []
   | some (head, steps) =>
-      (walkPath R .value (selFuel R e) [] R (readerMap R 0) head steps (childKey R (some "#block"))).bind
+      (walkPath R .value (selFuel R e) [] R (readerMap R 0) head steps (stackKey R ++ ["#block"])).bind
         fun h => .found (trailRequirements inner h)
 
 /-- What a name an `open` provides requires of the reader: the provided member and the walks of
@@ -796,7 +875,8 @@ mutual
     | ⟨_, operand⟩ :: rest => Reqs.cat (collectExpr mode outer inner operand) (collectLinks mode outer inner rest)
 
   /-- The requirements of an algorithm written at the stack `inner ++ outer`; `self` names the
-      property whose body it is. A loaded module's chain is cut at its own level. -/
+      property whose body it is. A loaded module's chain is cut at its own level, whether its root is
+      a block or an alias (`Algorithm.withParent`). -/
   def collectAlg (mode : Mode) (outer inner : Stack) (self : Option Ident) : Algorithm → Reqs
     | .builtin _ => ([], true)
     | a@(.mk _ _ opens props output _) =>
@@ -814,9 +894,11 @@ mutual
           (collectBranches mode outer inner self opens branches)
     | a@(.alias _ opens props target _ _) =>
         let level := levelOf (childKey (inner ++ outer) self) self a
-        Reqs.cat (collectExpr mode outer (level :: inner) target)
+        let outer' := if a.isModuleRoot then [] else outer
+        let inner' := if a.isModuleRoot then [] else inner
+        Reqs.cat (collectExpr mode outer' (level :: inner') target)
           (if mode.deep then
-            Reqs.cat (collectExprs mode outer (level :: inner) opens) (collectProps mode outer (level :: inner) props)
+            Reqs.cat (collectExprs mode outer' (level :: inner') opens) (collectProps mode outer' (level :: inner') props)
           else ([], true))
 
   def collectProps (mode : Mode) (outer inner : Stack) : List PropDef → Reqs
@@ -902,8 +984,9 @@ mutual
           chkBranches check stack self opens branches
     | a@(.alias _ opens props target _ _) =>
         let level := levelOf (childKey stack self) self a
-        chkExprs check (level :: stack) opens && chkProps check (level :: stack) props &&
-          chkExpr check (level :: stack) target
+        let stack' := if a.isModuleRoot then [] else stack
+        chkExprs check (level :: stack') opens && chkProps check (level :: stack') props &&
+          chkExpr check (level :: stack') target
 
   /-- The members a level declares, each in that level's stack. -/
   def chkProps (check : Check) (stack : Stack) : List PropDef → Bool
@@ -979,29 +1062,33 @@ instance (program : Expr) : Decidable (DeepSourceLike program) :=
 /-! ## The parameter-row consequence -/
 
 /-- What a parameter-row alias requires, in every mode: its row's parameter, at the NEAREST level
-    of its declaring stack that binds it. -/
+    of its declaring stack that binds it — unless the alias is a LOADED MODULE's root (excluded by
+    `hroot`), whose chain is cut at its own level: no level of its holder binds its row. -/
 theorem reqAlg_paramRow (mode : Mode) (stack : Stack) (self : Option Ident) (parent : Option ScopeCtx)
     (opens : List Expr) (props : List PropDef) (y : Ident) (id : Option PropertyIdentity) (reference : Bool)
+    (hroot : (Algorithm.alias parent opens props (.param y) id reference).isModuleRoot = false)
     (k : Nat) (hk : ownerIndex? stack y = some k) :
     (y, k) ∈ reqAlg mode stack [] self (.alias parent opens props (.param y) id reference) := by
   have hown : ownerIndex? (levelOf (childKey stack self) self (.alias parent opens props (.param y) id reference) :: stack) y =
       some (k + 1) := by
     simp only [ownerIndex?, hk, Option.map_some]
     rfl
-  simp only [reqAlg, collectAlg, collectExpr, Reqs.cat, escaping, List.nil_append, List.singleton_append, hown]
+  simp only [reqAlg, collectAlg, hroot, Bool.false_eq_true, ite_false, collectExpr, Reqs.cat, escaping,
+    List.nil_append, List.singleton_append, hown]
   simp
 
 /-- **THE PARAMETER-ROW CONSEQUENCE OF EXPOSURE.** A member whose algorithm is a parameter-row alias
-    and whose metadata passes `memberExposed` (any mode) declares its row's parameter at the nearest
-    level of its declaring stack that binds it. -/
+    that is no loaded module's root (`hroot`), and whose metadata passes `memberExposed` (any mode),
+    declares its row's parameter at the nearest level of its declaring stack that binds it. -/
 theorem declared_paramRow {mode : Mode} {stack : Stack} {p : PropDef} (h : memberExposed mode stack p = true)
     {parent : Option ScopeCtx} {opens : List Expr} {props : List PropDef} {y : Ident}
     {id : Option PropertyIdentity} {reference : Bool}
-    (halg : p.alg = .alias parent opens props (.param y) id reference) {k : Nat}
+    (halg : p.alg = .alias parent opens props (.param y) id reference)
+    (hroot : (Algorithm.alias parent opens props (.param y) id reference).isModuleRoot = false) {k : Nat}
     (hk : ownerIndex? stack y = some k) : (y, k) ∈ declared stack p := by
   unfold memberExposed at h
   rw [Bool.and_eq_true, Bool.and_eq_true] at h
-  have hall := List.all_eq_true.mp h.2.1 (y, k) (by rw [halg]; exact reqAlg_paramRow mode stack _ _ _ _ y _ _ k hk)
+  have hall := List.all_eq_true.mp h.2.1 (y, k) (by rw [halg]; exact reqAlg_paramRow mode stack _ _ _ _ y _ _ hroot k hk)
   exact List.elem_iff.mp (by simpa using hall)
 
 end KatLang.NavigationSourceDomain

@@ -27,8 +27,11 @@ public class SemanticSupervisionTests
             DescriptorPath = Path.Combine(Directory.FullName, "case.json");
             ResultPath = Path.Combine(Directory.FullName, "case.result.json");
             PidPath = Path.Combine(Directory.FullName, "worker.pid");
+            WrittenCase = semanticCase;
             File.WriteAllText(DescriptorPath, SemanticDescriptor.Write(semanticCase)); // persisted BEFORE dispatch
         }
+
+        public SemanticCase WrittenCase { get; }
 
         public DirectoryInfo Directory { get; }
         public string DescriptorPath { get; }
@@ -55,6 +58,17 @@ public class SemanticSupervisionTests
             return new SemanticWorkerCommand("dotnet", arguments, environment, DescriptorPath, ResultPath);
         }
 
+        /// <summary>The same fixture child as a batch worker over the one workspace case.</summary>
+        public SemanticBatchWorkerCommand BatchCommand(string mode)
+        {
+            var single = Command(mode);
+            return new SemanticBatchWorkerCommand(single.FileName, single.Arguments, single.Environment, ManifestPath);
+        }
+
+        public string ManifestPath => Path.Combine(Directory.FullName, "batch.txt");
+
+        public SemanticBatchMember Member => new(WrittenCase, DescriptorPath, ResultPath);
+
         public void Dispose()
         {
             try { Directory.Delete(recursive: true); }
@@ -66,6 +80,9 @@ public class SemanticSupervisionTests
         && c.Tier == "seeded" && c.Paths != SemanticPath.None && c.Members.Length > 1);
 
     private static readonly TimeSpan Generous = TimeSpan.FromSeconds(120);
+
+    /// <summary>How long the <c>slow-ready</c> fixture waits before it signals readiness: longer than the deadline its test uses.</summary>
+    private static readonly TimeSpan SlowReadyDelay = TimeSpan.FromSeconds(4);
 
     [Fact]
     public void NormalCompletion_ReturnsTheWorkersSemanticVerdict()
@@ -193,6 +210,57 @@ public class SemanticSupervisionTests
         Assert.True(File.Exists(run.DescriptorPath));
     }
 
+    /// <summary>
+    /// A batch worker has the same startup bound: one that never becomes ready is terminated, the
+    /// expiry is a timeout with its own wording, and its member is left unjudged for the caller to
+    /// rerun on its own.
+    /// </summary>
+    [Fact]
+    public void BatchStartupBound_TerminatesABatchWorkerThatNeverBecomesReady()
+    {
+        using var workspace = new Workspace(Case);
+        var never = Path.Combine(workspace.Directory.FullName, "never-written");
+        var command = workspace.BatchCommand("hang") with { ReadyPath = never, StartupDeadline = TimeSpan.FromSeconds(1) };
+        var run = SemanticSupervisor.RunBatch(command, [workspace.Member], Generous);
+        Assert.True(run.ChildFailure == SemanticVerdict.Timeout, run.Detail);
+        Assert.Contains("batch worker not ready within 1s", run.Detail, StringComparison.Ordinal);
+        Assert.Null(run.ExitCode);
+        Assert.Null(Assert.Single(run.Members).Verdict);
+        Assert.True(File.Exists(workspace.ManifestPath + ".supervision.txt"));
+
+        // The child may or may not have reached its fixture within the bound; if it did, it must be gone.
+        if (File.Exists(workspace.PidPath))
+        {
+            var pid = int.Parse(File.ReadAllText(workspace.PidPath).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+            Assert.True(Exited(pid), $"batch worker process {pid} survived its supervisor");
+        }
+    }
+
+    /// <summary>
+    /// A batch worker's progress deadline counts from READINESS, not from its launch: a child whose
+    /// start takes longer than the deadline is not terminated before it is ready, and the deadline then
+    /// bounds its first member as usual. Before the batch startup bound existed, this child was killed
+    /// at its launch deadline, before its readiness file existed (the 2026-11-19 failure of
+    /// <c>SemanticExhaustiveCampaignTests.SupervisedBatches_IsolateACrash_AndKeepEveryFailingReproducer</c>,
+    /// whose vstest batch child completed no member within 60 s of its launch).
+    /// </summary>
+    [Fact]
+    public void BatchProgressDeadline_CountsFromReadiness_NotFromLaunch()
+    {
+        using var workspace = new Workspace(Case);
+        var deadline = TimeSpan.FromSeconds(2);
+        var command = workspace.BatchCommand("slow-ready") with { ReadyPath = workspace.PidPath };
+        var run = SemanticSupervisor.RunBatch(command, [workspace.Member], deadline);
+        Assert.True(run.ChildFailure == SemanticVerdict.Timeout, run.Detail);
+        Assert.Contains("no member completed within 2s", run.Detail, StringComparison.Ordinal);
+        Assert.True(File.Exists(workspace.PidPath), "the worker was terminated before it became ready: its start consumed the progress deadline");
+        Assert.True(run.Elapsed > SlowReadyDelay + deadline, $"elapsed {run.Elapsed}: the progress deadline did not start at readiness");
+        Assert.Null(Assert.Single(run.Members).Verdict);
+
+        var pid = int.Parse(File.ReadAllText(workspace.PidPath).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(Exited(pid), $"batch worker process {pid} survived its supervisor");
+    }
+
     private static bool Exited(int pid)
     {
         // Kill(entireProcessTree) is awaited for the root; give the OS a bounded moment for the leaf.
@@ -225,6 +293,7 @@ public class SemanticSupervisionTests
         var result = Environment.GetEnvironmentVariable(ResultVariable)!;
         var pidPath = Environment.GetEnvironmentVariable(PidVariable)!;
         var pendingPidPath = pidPath + ".pending";
+        if (mode == "slow-ready") Thread.Sleep(SlowReadyDelay); // a start slower than the supervisor's deadline
         // Publish readiness only after the writer closes, so a parent observing the signal
         // can read the complete PID without racing an open write handle.
         File.WriteAllText(pendingPidPath, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -267,6 +336,7 @@ public class SemanticSupervisionTests
                     new SemanticCaseResult(Case.CaseId, SemanticVerdict.Passed, [], [], SemanticPath.None, [], [])));
                 return;
             case "hang":
+            case "slow-ready":
                 Thread.Sleep(Timeout.Infinite);
                 return;
             default:
