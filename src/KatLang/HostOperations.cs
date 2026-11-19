@@ -207,7 +207,7 @@ public sealed class HostOperation
             }
         }
 
-        return Array.AsReadOnly(parameterNames.ToArray());
+        return SafeReadOnlyCollection.Over(parameterNames.ToArray());
     }
 }
 
@@ -254,7 +254,7 @@ public sealed class HostOperations
 
     private HostOperations(IReadOnlyList<HostOperation> operations)
     {
-        Operations = Array.AsReadOnly(operations.ToArray());
+        Operations = SafeReadOnlyCollection.Over(operations.ToArray());
         _operationsByNativeName = Operations.ToDictionary(
             static operation => operation.NativeName,
             StringComparer.Ordinal);

@@ -68,7 +68,9 @@ public class ScopeVisibilityPublicContractTests
         var model = Model();
         foreach (var scope in model.ScopeVisibilities)
         {
-            Assert.IsType<ReadOnlyCollection<VisibleSymbol>>(scope.Symbols);
+            // Still a ReadOnlyCollection; its concrete type is KatLang's internal subclass, whose SyncRoot is not storage.
+            Assert.IsAssignableFrom<ReadOnlyCollection<VisibleSymbol>>(scope.Symbols);
+            PublishedCollection.AssertHandsOutNoStorage(scope.Symbols, "ScopeVisibility.Symbols");
             Assert.Equal(scope, scope with { });
             Assert.Equal(scope.GetHashCode(), (scope with { }).GetHashCode());
             Assert.NotEqual(scope, new ScopeVisibility(scope.Span, scope.Symbols, scope.NestingDepth));

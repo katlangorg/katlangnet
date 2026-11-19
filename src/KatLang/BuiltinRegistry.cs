@@ -385,7 +385,7 @@ internal static class BuiltinRegistry
             .Append(MathModuleName)
             .Append("load");
         ValidateMathMemberMetadataCore(members, reservedNames);
-        return Array.AsReadOnly(members);
+        return SafeReadOnlyCollection.Over(members);
     }
 
     /// <summary>Validation core behind <see cref="ValidateMathMemberMetadata"/>, parameterized for tests.</summary>
@@ -471,14 +471,14 @@ internal static class BuiltinRegistry
     /// prelude construction, host-operation reservation, detector exclusion,
     /// and tooling — never a second hand-maintained list.
     /// </summary>
-    public static IReadOnlyList<string> MathAliasNames { get; } = Array.AsReadOnly(MathMemberDescriptors
+    public static IReadOnlyList<string> MathAliasNames { get; } = SafeReadOnlyCollection.Over(MathMemberDescriptors
         .Select(static member => member.PreludeAlias)
         .ToArray());
 
-    public static IReadOnlyList<string> RuntimePreludeExtraNames { get; } = Array.AsReadOnly(
+    public static IReadOnlyList<string> RuntimePreludeExtraNames { get; } = SafeReadOnlyCollection.Over(
         new[] { MathModuleName }.Concat(MathAliasNames).ToArray());
 
-    public static IReadOnlyList<string> SemanticPreludeExtraNames { get; } = Array.AsReadOnly(
+    public static IReadOnlyList<string> SemanticPreludeExtraNames { get; } = SafeReadOnlyCollection.Over(
         new[] { MathModuleName, "load" }.Concat(MathAliasNames).ToArray());
 
     /// <summary>
@@ -491,7 +491,7 @@ internal static class BuiltinRegistry
         => SemanticPreludeExtraNames.Contains(name) && !RuntimePreludeExtraNames.Contains(name);
 
     public static IReadOnlyList<string> ParameterDetectorPreludeNames { get; } =
-        Array.AsReadOnly(BuiltinNames.Concat(SemanticPreludeExtraNames).ToArray());
+        SafeReadOnlyCollection.Over(BuiltinNames.Concat(SemanticPreludeExtraNames).ToArray());
 
     /// <summary>
     /// Whether a semantic-prelude name also exists in the runtime prelude and
@@ -546,7 +546,7 @@ internal static class BuiltinRegistry
     internal static bool TryGetMathFunctionArity(string memberName, out int arity)
         => MathFunctionArityByName.TryGetValue(memberName, out arity);
 
-    public static IReadOnlyList<string> MathMemberNames { get; } = Array.AsReadOnly(MathMemberDescriptors
+    public static IReadOnlyList<string> MathMemberNames { get; } = SafeReadOnlyCollection.Over(MathMemberDescriptors
         .Select(static member => member.Name)
         .ToArray());
 

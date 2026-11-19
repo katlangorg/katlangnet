@@ -42,6 +42,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.OrdinaryCallBindingAllocationTests.BuiltinCallback_AllocatesOnlyItsSupplyArrays_GcIsolatedChild",
                 "KatLang.Tests.OrdinaryCallBindingAllocationTests.FlatUniqueLevel_BindingAllocatesExactlyTheResultArray_GcIsolatedChild",
                 "KatLang.Tests.OrdinaryCallLookupTests.Lookups_AllocateNothing_AtAnyTier_GcIsolatedChild",
+                "KatLang.Tests.ReadOnlyViewAllocationTests.TakeOwnership_AllocatesTheValueAndOneViewOverTheGivenArray_GcIsolatedChild",
                 "KatLang.Tests.ScopeVisibilityRepresentationTests.Queries_AllocateIndependentlyOfTheScopeWidth_GcIsolatedChild",
                 "KatLang.Tests.SemanticModelPositionLookupTests.PositionQueries_AllocateNothing_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.HostComparer_OneComparison_OfTheDifferentlySharedPair_AllocatesUnderEightMegabytes_GcIsolatedChild",

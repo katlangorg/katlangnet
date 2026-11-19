@@ -1259,7 +1259,7 @@ public static partial class Evaluator
 
     // A deconstruction's OWN cardinality failure, named by its assignment pattern.
     private static EvalError DeconstructionArityMismatch(Algorithm.User helper, EvalError.ArityMismatch shape)
-        => new EvalError.WithContext(new DeconstructionBindingContext(helper.Parameters.Select(parameter => parameter.DisplayName).ToList(),
+        => new EvalError.WithContext(new DeconstructionBindingContext(SafeReadOnlyCollection.Over(helper.Parameters.Select(parameter => parameter.DisplayName).ToArray()),
             helper.Parameters.Any(parameter => parameter.Kind == ParameterKind.Collecting)), shape);
 
     internal static EvalCtx LoopNeedBindingContext(EvalCtx ctx, IReadOnlyList<string> names, IReadOnlyList<NeedCell> cells)

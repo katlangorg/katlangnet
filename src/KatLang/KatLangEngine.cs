@@ -291,7 +291,7 @@ public closed record RunResult
     private static IReadOnlyList<Result> RowsOf(Result value, int emittedCount) => emittedCount switch
     {
         0 => Array.Empty<Result>(),
-        1 => Array.AsReadOnly([value]),
+        1 => SafeReadOnlyCollection.Over([value]),
         _ => value.ToItems(),
     };
 
@@ -862,7 +862,7 @@ public static class KatLangEngine
             .ToArray();
 
         // Published results are read-only views, so a consumer cannot change one through a cast.
-        return new RunResult.ParseFailure(Array.AsReadOnly(parseErrors))
+        return new RunResult.ParseFailure(SafeReadOnlyCollection.Over(parseErrors))
         {
             DisplayOptions = diagnosticDisplayOptions,
         };
@@ -923,7 +923,7 @@ public static class KatLangEngine
                     DisplayOptions = diagnosticDisplayOptions,
                 };
 
-            var evalErrors = Array.AsReadOnly(new[] { evalError });
+            var evalErrors = SafeReadOnlyCollection.Over(new[] { evalError });
             return new RunResult.EvalFailure(frontEndResult.ElaboratedRoot, evalErrors)
             {
                 DisplayOptions = diagnosticDisplayOptions,
@@ -943,7 +943,7 @@ public static class KatLangEngine
         {
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                [KatLangError.FromEvalError(displayOptionsResult.Error)])
+                SafeReadOnlyCollection.Over([KatLangError.FromEvalError(displayOptionsResult.Error)]))
             {
                 DisplayOptions = diagnosticDisplayOptions,
             };
@@ -968,9 +968,9 @@ public static class KatLangEngine
             // span (none). RunFlat keeps its bare error, which hosts may type-match.
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                [KatLangError.FromEvalError(new EvalError.WithContext(
+                SafeReadOnlyCollection.Over([KatLangError.FromEvalError(new EvalError.WithContext(
                     HostAtomProjectionContext,
-                    new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L)))])
+                    new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L)))]))
             {
                 DisplayOptions = diagnosticDisplayOptions,
             };
@@ -1229,7 +1229,7 @@ public static class KatLangEngine
 
         if (DecimalPlacesConflict(success.Root, displayOptions) is { } conflict)
         {
-            return new RunResult.EvalFailure(success.Root, [KatLangError.FromEvalError(conflict)])
+            return new RunResult.EvalFailure(success.Root, SafeReadOnlyCollection.Over([KatLangError.FromEvalError(conflict)]))
             {
                 DisplayOptions = DisplayOptions.Canonical(displayOptions.MaxDisplayLength),
                 PropertyObservations = success.PropertyObservations,

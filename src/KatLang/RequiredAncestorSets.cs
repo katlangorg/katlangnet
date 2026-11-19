@@ -270,7 +270,7 @@ internal sealed class RequiredAncestorOutputs(RequirementSetInterner sets, Front
         _namesByContent ??= new(new ExactSequenceComparer<string>(StringComparer.Ordinal));
         if (!_namesByContent.TryGetValue(sorted, out var shared))
         {
-            shared = new ReadOnlyCollection<string>(sorted);
+            shared = SafeReadOnlyCollection.Over(sorted);
             _namesByContent.Add(sorted, shared);
             observations?.RecordRequiredAncestorListMaterialized(sorted.Length);
         }
@@ -314,7 +314,7 @@ internal sealed class RequiredAncestorOutputs(RequirementSetInterner sets, Front
         _capturesByContent ??= new(new ExactSequenceComparer<CapturedParameterRequirement>(EqualityComparer<CapturedParameterRequirement>.Default));
         if (!_capturesByContent.TryGetValue(captures, out var shared))
         {
-            shared = new ReadOnlyCollection<CapturedParameterRequirement>(captures);
+            shared = SafeReadOnlyCollection.Over(captures);
             _capturesByContent.Add(captures, shared);
             observations?.RecordRequiredAncestorListMaterialized(captures.Length);
         }

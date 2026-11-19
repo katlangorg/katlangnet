@@ -718,5 +718,5 @@ internal sealed record FrontEndResult(
     /// escapes, so no consumer can change a published result through a cast.
     /// </summary>
     public ParseResult ToParseResult(HostOperations? hostOperations = null)
-        => new(ElaboratedRoot, Array.AsReadOnly(Diagnostics.ToArray())) { HostOperations = hostOperations };
+        => new(ElaboratedRoot, SafeReadOnlyCollection.Over(Diagnostics.ToArray())) { HostOperations = hostOperations };
 }

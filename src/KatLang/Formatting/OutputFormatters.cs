@@ -28,7 +28,7 @@ public static class OutputFormatters
     // implemented in its own class and added here; lookup and enumeration are
     // derived from the same immutable data.
     private static readonly IReadOnlyList<OutputFormatter> BuiltIns =
-        Array.AsReadOnly<OutputFormatter>(
+        SafeReadOnlyCollection.Over<OutputFormatter>(
         [
             new ExactOutputFormatter(),
             new ReadableOutputFormatter(),

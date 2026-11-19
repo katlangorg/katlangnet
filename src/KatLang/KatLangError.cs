@@ -1367,13 +1367,13 @@ public sealed class KatLangException : Exception
     private KatLangException(KatLangError[] errors)
         : base(string.Join(Environment.NewLine, errors.Select(e => e.ToString())))
     {
-        Errors = Array.AsReadOnly(errors);
+        Errors = SafeReadOnlyCollection.Over(errors);
     }
 
     private static KatLangError[] Snapshot(IReadOnlyList<KatLangError> errors)
     {
         ArgumentNullException.ThrowIfNull(errors);
-        var snapshot = errors.ToArray();
+        var snapshot = SafeReadOnlyCollection.CopyHostInput(errors);
         foreach (var error in snapshot)
         {
             if (error is null)

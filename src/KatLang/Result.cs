@@ -252,7 +252,7 @@ public closed record Result
         }
 
         private SequenceValue(Result[] exclusivelyOwnedItems)
-            => items = Array.AsReadOnly(exclusivelyOwnedItems);
+            => items = SafeReadOnlyCollection.Over(exclusivelyOwnedItems);
 
         /// <summary>
         /// Trusted ownership-transfer construction: wraps
@@ -268,7 +268,11 @@ public closed record Result
         /// <summary>
         /// Ordered items as a read-only view. The view never exposes the
         /// backing storage: casting it to a mutable collection interface
-        /// yields an object that rejects every mutation operation.
+        /// yields an object that rejects every mutation operation, and its
+        /// non-generic <see cref="System.Collections.ICollection.SyncRoot"/>
+        /// is the view itself, never the storage. One view per value: record
+        /// equality compares it by reference and a <c>with</c> copy shares it.
+        /// Reflection and unsafe code are outside this guarantee.
         /// </summary>
         public IReadOnlyList<Result> Items => items;
 
@@ -310,7 +314,7 @@ public closed record Result
         }
 
         private ListValue(Result[] exclusivelyOwnedItems)
-            => items = Array.AsReadOnly(exclusivelyOwnedItems);
+            => items = SafeReadOnlyCollection.Over(exclusivelyOwnedItems);
 
         /// <summary>
         /// Trusted ownership-transfer construction: wraps
@@ -326,7 +330,11 @@ public closed record Result
         /// <summary>
         /// Ordered elements as a read-only view. The view never exposes the
         /// backing storage: casting it to a mutable collection interface
-        /// yields an object that rejects every mutation operation.
+        /// yields an object that rejects every mutation operation, and its
+        /// non-generic <see cref="System.Collections.ICollection.SyncRoot"/>
+        /// is the view itself, never the storage. One view per value: record
+        /// equality compares it by reference and a <c>with</c> copy shares it.
+        /// Reflection and unsafe code are outside this guarantee.
         /// </summary>
         public IReadOnlyList<Result> Items => items;
 
@@ -428,7 +436,7 @@ public closed record Result
     private static Result[] SnapshotHostItems(IEnumerable<Result> items)
     {
         ArgumentNullException.ThrowIfNull(items);
-        var snapshot = items.ToArray();
+        var snapshot = SafeReadOnlyCollection.CopyHostInput(items);
         foreach (var item in snapshot)
         {
             if (item is null)
@@ -1003,7 +1011,7 @@ public closed record Result
         // The host projection is PUBLISHED (RunResult.Success.Atoms, Evaluator.RunFlat): hand out
         // a read-only view of the list being filled, so no consumer can change it through a cast.
         var collected = new List<Decimal128>();
-        atoms = collected.AsReadOnly();
+        atoms = SafeReadOnlyCollection.OverList(collected);
 
         IReadOnlyList<Result> items;
         switch (this)

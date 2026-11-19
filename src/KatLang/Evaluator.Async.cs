@@ -911,7 +911,7 @@ public static partial class Evaluator
             arguments[i] = valueR.Value;
         }
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(Array.AsReadOnly(arguments));
+        return EvalResult<IReadOnlyList<Result>>.Ok(SafeReadOnlyCollection.Over(arguments));
     }
 
     /// <summary>MIRROR OF <see cref="InvokeSynchronousHostOperation"/> — keep in lock-step.</summary>

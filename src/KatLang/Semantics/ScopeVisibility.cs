@@ -49,8 +49,8 @@ public sealed record VisibleSymbol
         Members = members is null or { Count: 0 }
             ? Array.Empty<VisibleSymbol>()
             : shareMembers
-                ? new System.Collections.ObjectModel.ReadOnlyCollection<VisibleSymbol>((IList<VisibleSymbol>)members)
-                : Array.AsReadOnly(members.ToArray());
+                ? SafeReadOnlyCollection.OverList((IList<VisibleSymbol>)members)
+                : SafeReadOnlyCollection.Snapshot(members);
     }
 
     public string Name { get; }
@@ -103,7 +103,7 @@ public sealed record ScopeVisibility
         this.Span = Span;
         this.Symbols = Symbols.Count == 0
             ? Array.Empty<VisibleSymbol>()
-            : Array.AsReadOnly(Symbols.ToArray());
+            : SafeReadOnlyCollection.Snapshot(Symbols);
         this.NestingDepth = NestingDepth;
     }
 
@@ -123,7 +123,7 @@ public sealed record ScopeVisibility
         }
         else
         {
-            Symbols = new System.Collections.ObjectModel.ReadOnlyCollection<VisibleSymbol>(view);
+            Symbols = SafeReadOnlyCollection.OverList(view);
             View = view;
         }
 

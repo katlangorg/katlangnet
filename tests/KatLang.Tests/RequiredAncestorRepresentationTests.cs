@@ -609,7 +609,11 @@ public class RequiredAncestorRepresentationTests
                 continue;
             }
 
-            Assert.False(type.Assembly == typeof(Property).Assembly && type != typeof(CapturedParameterRequirement) && !(type.IsGenericType && type.GetGenericTypeDefinition() == typeof(RequiredAncestorList<>)),
+            // The wrapper and its flat backing are the only KatLang types a list may reach: the backing is a
+            // SafeReadOnlyCollection since November 2026 (a ReadOnlyCollection whose SyncRoot is not its array).
+            var listType = type.IsGenericType ? type.GetGenericTypeDefinition() : null;
+            Assert.False(type.Assembly == typeof(Property).Assembly && type != typeof(CapturedParameterRequirement)
+                    && listType != typeof(RequiredAncestorList<>) && listType != typeof(SafeReadOnlyCollection<>),
                 $"A retained requirement list reaches {type.FullName}.");
 
             for (var current = type; current is not null; current = current.BaseType)

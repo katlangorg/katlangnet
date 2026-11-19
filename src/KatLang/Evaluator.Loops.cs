@@ -225,13 +225,18 @@ public static partial class Evaluator
         // flattened capture count: a patterned step `Step((x, y))` has ONE
         // state slot but two flattened captures. The context's parameter names
         // are the matching top-level display labels ("(x, y)" is one entry).
+        // Each failure publishes its OWN name list, as the list built here always was: a context
+        // record compares its list by reference, so two independently produced failures stay
+        // unequal and a `with` copy stays equal. `OverList` is that distinct read-only view even
+        // for no names (a zero-parameter step); `Over` would hand every such failure the one
+        // shared empty view and make their records equal.
         => new EvalError.WithContext(
             parameterPatterns.Any(static pattern => pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting })
                 ? new VariadicLoopStateBindingContext(loopName,
-                    parameterPatterns.Where(static pattern => pattern is not CaptureParameterPattern { Kind: ParameterKind.Collecting }).Select(static pattern => pattern.DisplayName).ToList(),
+                    SafeReadOnlyCollection.OverList(parameterPatterns.Where(static pattern => pattern is not CaptureParameterPattern { Kind: ParameterKind.Collecting }).Select(static pattern => pattern.DisplayName).ToArray()),
                     expectedStateValueCount, actualStateValueCount)
                 : new LoopStateBindingContext(loopName,
-                    parameterPatterns.Select(static pattern => pattern.DisplayName).ToList(), actualStateValueCount),
+                    SafeReadOnlyCollection.OverList(parameterPatterns.Select(static pattern => pattern.DisplayName).ToArray()), actualStateValueCount),
             new EvalError.ArityMismatch(expectedStateValueCount, actualStateValueCount)
             {
                 InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(parameters),

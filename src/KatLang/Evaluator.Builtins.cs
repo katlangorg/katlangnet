@@ -1414,7 +1414,7 @@ public static partial class Evaluator
 
     private static EvalError ReduceInitialAccumulatorRequiresValueError(Algorithm initialAlg)
         => new EvalError.WithContext(
-            new ReduceInitialAccumulatorContext(ParameterPattern.CaptureNamesSkippingBarrenNodes(initialAlg.ParameterPatterns).ToList()),
+            new ReduceInitialAccumulatorContext(SafeReadOnlyCollection.Over(ParameterPattern.CaptureNamesSkippingBarrenNodes(initialAlg.ParameterPatterns))),
             new EvalError.BadArity());
 
     /// <summary>

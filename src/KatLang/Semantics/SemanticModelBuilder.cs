@@ -2122,7 +2122,7 @@ public static class SemanticModelBuilder
             if (signatureParameters.Count > 0)
                 signatures.Add(CreateReceiverInjectedSignature(signature.Name, signatureParameters));
 
-            return Array.AsReadOnly(signatures.ToArray());
+            return SafeReadOnlyCollection.Over(signatures.ToArray());
         }
 
         /// <summary>
@@ -2336,7 +2336,7 @@ public static class SemanticModelBuilder
                 Parameters: [],
                 CreateConditionalBranches(name, algorithm, declarationSpans))
             {
-                Signatures = Array.AsReadOnly(signatures.ToArray()),
+                Signatures = SafeReadOnlyCollection.Over(signatures.ToArray()),
                 SupportsLexicalDotCall = arity > 0,
             };
         }
@@ -2380,7 +2380,7 @@ public static class SemanticModelBuilder
                 };
             }
 
-            return Array.AsReadOnly(parameters);
+            return SafeReadOnlyCollection.Over(parameters);
         }
 
         private static IReadOnlyList<PropertySignatureInfo> CreateBuiltinSignatures(
@@ -2411,7 +2411,7 @@ public static class SemanticModelBuilder
                     dotParameters));
             }
 
-            return Array.AsReadOnly(signatures.ToArray());
+            return SafeReadOnlyCollection.Over(signatures.ToArray());
         }
 
         private static CallableSignature CreateBuiltinCallableSignature(
@@ -2459,7 +2459,7 @@ public static class SemanticModelBuilder
             string name,
             IReadOnlyList<PropertyParameterInfo> plainParameters)
         {
-            var dotParameters = Array.AsReadOnly(plainParameters.Skip(1).ToArray());
+            var dotParameters = SafeReadOnlyCollection.Over(plainParameters.Skip(1).ToArray());
             return new PropertySignatureInfo(
                 PropertyCallStyle.Dot,
                 FormatReceiverInjectedSignature(name, plainParameters[0].Name, dotParameters),
@@ -3546,7 +3546,7 @@ public static class SemanticModelBuilder
             }
 
             members.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
-            var result = Array.AsReadOnly(members.ToArray());
+            var result = SafeReadOnlyCollection.Over(members.ToArray());
             _memberSymbolCache[user] = result;
             return result;
         }
@@ -3576,7 +3576,7 @@ public static class SemanticModelBuilder
             }
 
             symbols.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
-            return Array.AsReadOnly(symbols.ToArray());
+            return SafeReadOnlyCollection.Over(symbols.ToArray());
         }
 
         private static IReadOnlyList<VisibleSymbol> CreateMathMemberCatalog(Algorithm? algorithmValue, Algorithm? mathAlgorithm)
@@ -3596,17 +3596,17 @@ public static class SemanticModelBuilder
             }
 
             members.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
-            return Array.AsReadOnly(members.ToArray());
+            return SafeReadOnlyCollection.Over(members.ToArray());
         }
 
         public static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalog()
             // The table's rows in its (name) order, each entry sharing its row's PropertyInfo with
             // resolution.
-            => [.. ImmutableArray.CreateRange(DotIntrinsics, static intrinsic => new VisibleSymbol(
+            => SafeReadOnlyCollection.Over<VisibleSymbol>([.. ImmutableArray.CreateRange(DotIntrinsics, static intrinsic => new VisibleSymbol(
                 intrinsic.Name,
                 IdentifierClassification.Builtin,
                 Declaration: null,
-                intrinsic))];
+                intrinsic))]);
 
         /// <summary>
         /// The miss-route classifier: the <see cref="DotIntrinsics"/> row an edge's MISS ROUTE selects,

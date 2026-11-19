@@ -411,7 +411,7 @@ internal sealed class ImplicitSignatureTemplateInterner(
             return pattern;
         if (!_groups.TryGetValue(pattern, out var frozen))
         {
-            frozen = ParameterPattern.WithStructuralItems(pattern, Array.AsReadOnly(items.Select(Freeze).ToArray()));
+            frozen = ParameterPattern.WithStructuralItems(pattern, SafeReadOnlyCollection.Over(items.Select(Freeze).ToArray()));
             _groups.Add(pattern, frozen);
             _groups.Add(frozen, frozen);
         }

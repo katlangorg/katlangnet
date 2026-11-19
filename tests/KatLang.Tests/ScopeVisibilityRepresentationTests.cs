@@ -887,7 +887,8 @@ public class ScopeVisibilityRepresentationTests
 
     /// <summary>
     /// The public surface is unchanged: a non-empty scope's <see cref="ScopeVisibility.Symbols"/> is
-    /// still a <see cref="ReadOnlyCollection{T}"/> (a distinct one per scope), an empty one is still
+    /// still a <see cref="ReadOnlyCollection{T}"/> (a distinct one per scope; since November 2026 the
+    /// <see cref="SafeReadOnlyCollection{T}"/> subclass, whose <c>SyncRoot</c> is the list itself), an empty one is still
     /// the shared empty array, <c>ToString</c> prints the same text, and record equality stays per
     /// scope — two scopes over one shared view are never equal, a <c>with</c> copy is, and an empty
     /// builder scope equals a host-constructed empty scope exactly as before.
@@ -901,7 +902,8 @@ public class ScopeVisibilityRepresentationTests
 
         foreach (var scope in inner)
         {
-            Assert.Equal(typeof(ReadOnlyCollection<VisibleSymbol>), scope.Symbols.GetType());
+            Assert.Equal(typeof(SafeReadOnlyCollection<VisibleSymbol>), scope.Symbols.GetType());
+            Assert.IsAssignableFrom<ReadOnlyCollection<VisibleSymbol>>(scope.Symbols);
             Assert.Contains("Symbols = System.Collections.ObjectModel.ReadOnlyCollection`1[KatLang.Semantics.VisibleSymbol]", scope.ToString());
             Assert.Equal(scope, scope with { });
             Assert.Equal(scope.GetHashCode(), (scope with { }).GetHashCode());
@@ -979,7 +981,8 @@ public class ScopeVisibilityRepresentationTests
             Assert.Throws<NotSupportedException>(() => nonGeneric[0] = before[1]);
             Assert.Throws<NotSupportedException>(() => nonGeneric.Add(before[0]));
             Assert.Equal(before, list);
-            Assert.Equal(typeof(ReadOnlyCollection<VisibleSymbol>), list.GetType());
+            Assert.Equal(typeof(SafeReadOnlyCollection<VisibleSymbol>), list.GetType());
+            Assert.IsAssignableFrom<ReadOnlyCollection<VisibleSymbol>>(list);
         }
 
         var sibling = model.ScopeVisibilities.Last();
@@ -1078,7 +1081,8 @@ public class ScopeVisibilityRepresentationTests
                 continue;
 
             var immutableSet = type.Namespace == "System.Collections.Immutable";
-            var collection = type.Namespace == "System.Collections.ObjectModel" && type.IsGenericType;
+            // The published read-only views: the plain collection's namespace, or KatLang's subclass of it.
+            var collection = (type.Namespace == "System.Collections.ObjectModel" && type.IsGenericType) || IsSafeReadOnlyView(type);
             var comparer = typeof(IEqualityComparer<string>).IsAssignableFrom(type) || type.Name.Contains("Comparer", StringComparison.Ordinal);
             Assert.True(allowed.Contains(type) || immutableSet || collection || comparer, $"A retained scope reaches {type.FullName}.");
             for (var current = type; current is not null; current = current.BaseType)
@@ -1090,6 +1094,18 @@ public class ScopeVisibilityRepresentationTests
                 }
             }
         }
+    }
+
+    /// <summary><see cref="SafeReadOnlyCollection{T}"/> or its one subclass, the shared parameter list.</summary>
+    private static bool IsSafeReadOnlyView(Type type)
+    {
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            if (current.IsGenericType && current.GetGenericTypeDefinition() == typeof(SafeReadOnlyCollection<>))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -252,6 +252,79 @@ public class LoopStepUnboundStateMessageTests
         }
     }
 
+    /// <summary>
+    /// Each failure holds its OWN step-name list, also when the list is empty. A context record
+    /// compares that list by reference (the record's generated equality), so two independently
+    /// produced failures are unequal, while a <c>with</c> copy, which shares the list, is equal.
+    /// When the per-failure list became a read-only view (November 2026) a zero-parameter step
+    /// briefly published the ONE shared empty view, and every such record compared equal. The list
+    /// is a distinct read-only view per failure, and still hands out no storage.
+    /// </summary>
+    [Fact]
+    public async Task ZeroParameterStep_EachFailureHoldsItsOwnEmptyNameList()
+    {
+        const string source = "Z = 5\nrepeat(Z(1), 1)";
+
+        static LoopStateBindingContext StateContext(KatLangError error)
+        {
+            ErrorContext? innermost = null;
+            var current = Assert.IsAssignableFrom<EvalError>(error.Source);
+            while (current is EvalError.WithContext withContext)
+                (innermost, current) = (withContext.ErrorContext, withContext.Inner);
+            return Assert.IsType<LoopStateBindingContext>(innermost);
+        }
+
+        // The same program, run twice on every route.
+        var first = await ErrorsOnEveryRouteAsync(source);
+        var second = await ErrorsOnEveryRouteAsync(source);
+        Assert.Equal(first.Select(static entry => entry.Route), second.Select(static entry => entry.Route));
+
+        var contexts = new List<(string Label, LoopStateBindingContext Context)>();
+        for (var index = 0; index < first.Count; index++)
+        {
+            var route = first[index].Route;
+            var (firstContext, secondContext) = (StateContext(first[index].Error), StateContext(second[index].Error));
+            contexts.Add(($"{route}, first run", firstContext));
+            contexts.Add(($"{route}, second run", secondContext));
+
+            // The two runs agree on everything the record carries except the list's identity.
+            Assert.Equal((firstContext.LoopName, firstContext.ActualStateValueCount), (secondContext.LoopName, secondContext.ActualStateValueCount));
+            Assert.Empty(firstContext.StepParameterNames);
+            Assert.Empty(secondContext.StepParameterNames);
+            Assert.False(ReferenceEquals(firstContext.StepParameterNames, secondContext.StepParameterNames), route);
+            Assert.False(firstContext.Equals(secondContext), route);
+            Assert.True(firstContext != secondContext, route);
+        }
+
+        Assert.Equal(12, contexts.Count);
+        for (var index = 0; index < contexts.Count; index++)
+        {
+            var (label, context) = contexts[index];
+            var names = context.StepParameterNames;
+
+            // No two failures share a list, whatever route or run produced them.
+            for (var other = index + 1; other < contexts.Count; other++)
+            {
+                Assert.False(ReferenceEquals(names, contexts[other].Context.StepParameterNames), $"{label} / {contexts[other].Label}");
+                Assert.False(context.Equals(contexts[other].Context), $"{label} / {contexts[other].Label}");
+            }
+
+            // A `with` copy shares the list, so it is equal and hashes alike.
+            var copy = context with { };
+            Assert.False(ReferenceEquals(context, copy), label);
+            Assert.True(ReferenceEquals(names, copy.StepParameterNames), label);
+            Assert.True(context.Equals(copy), label);
+            Assert.True(context == copy, label);
+            Assert.Equal(context.GetHashCode(), copy.GetHashCode());
+
+            // Still a read-only view of its own: never the shared empty view, never storage.
+            Assert.False(ReferenceEquals(SafeReadOnlyCollection<string>.Empty, names), label);
+            var untyped = Assert.IsAssignableFrom<System.Collections.ICollection>(names);
+            Assert.True(ReferenceEquals(names, untyped.SyncRoot), label);
+            Assert.True(Assert.IsAssignableFrom<System.Collections.IList>(names).IsReadOnly, label);
+        }
+    }
+
     [Fact]
     public void Message_ForAZeroParameterStep_IsPinnedVerbatim()
     {

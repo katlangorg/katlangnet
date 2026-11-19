@@ -247,7 +247,7 @@ public sealed class RunOptions
     public IEnumerable<string>? AllowedHosts
     {
         get => _allowedHosts;
-        init => _allowedHosts = value is null ? null : Array.AsReadOnly(value.ToArray());
+        init => _allowedHosts = value is null ? null : SafeReadOnlyCollection.Snapshot(value);
     }
 
     /// <summary>

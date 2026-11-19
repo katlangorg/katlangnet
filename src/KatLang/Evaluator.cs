@@ -1063,7 +1063,8 @@ public static partial class Evaluator
     {
         // The per-occurrence names and notes, read output-sensitively: a shared capture-free group of a
         // host-built signature is expanded once, not once per path (exactly Params / Parameters otherwise).
-        IReadOnlyList<string> paramNames = ParameterPattern.CaptureNamesSkippingBarrenNodes(wired.ParameterPatterns);
+        // The error and its context publish this list, so it is a read-only view of the fresh array (never the array).
+        IReadOnlyList<string> paramNames = SafeReadOnlyCollection.Over(ParameterPattern.CaptureNamesSkippingBarrenNodes(wired.ParameterPatterns));
         var notes = ImplicitParameterProvenance.CollectFromPatterns(wired.ParameterPatterns);
         // The ordinary missing-arguments span is the demanded block (the root's
         // first output row). When the ONE unresolved parameter is the misspelled
@@ -1998,7 +1999,8 @@ public static partial class Evaluator
         var providers = new List<string> { level[first].DisplayName, level[second].DisplayName };
         for (var next = offers.Next(out _); next >= 0; next = offers.Next(out _))
             providers.Add(level[next].DisplayName);
-        return new EvalError.AmbiguousOpen(name, providers);
+        // Published by the error: a read-only view, so no holder can change the provider list through a cast.
+        return new EvalError.AmbiguousOpen(name, SafeReadOnlyCollection.OverList(providers));
     }
 
     /// <summary>The ONE constructor of the captured-member refusal, carrying the required names for the report.</summary>

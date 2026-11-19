@@ -139,7 +139,7 @@ public sealed record PropertySignatureInfo
         IReadOnlyList<PropertyParameterInfo> parameters)
         => parameters.Count == 0
             ? Array.Empty<PropertyParameterInfo>()
-            : parameters as SharedPropertyParameterList ?? Array.AsReadOnly(parameters.ToArray());
+            : parameters as SharedPropertyParameterList ?? SafeReadOnlyCollection.Snapshot(parameters);
 }
 
 /// <summary>
@@ -150,7 +150,7 @@ public sealed record PropertySignatureInfo
 /// It is a <see cref="System.Collections.ObjectModel.ReadOnlyCollection{T}"/> exactly like the
 /// snapshots the records store for every other list.
 /// </summary>
-internal sealed class SharedPropertyParameterList : System.Collections.ObjectModel.ReadOnlyCollection<PropertyParameterInfo>
+internal sealed class SharedPropertyParameterList : SafeReadOnlyCollection<PropertyParameterInfo>
 {
     public SharedPropertyParameterList(PropertyParameterInfo[] parameters)
         : base(parameters)
@@ -251,7 +251,7 @@ public sealed record ConditionalBranchInfo
         this.HeadSpan = HeadSpan;
         this.BinderNames = BinderNames.Count == 0
             ? Array.Empty<string>()
-            : Array.AsReadOnly(BinderNames.ToArray());
+            : SafeReadOnlyCollection.Snapshot(BinderNames);
     }
 
     public string HeadText { get; }
@@ -291,7 +291,7 @@ public sealed record PropertyInfo
         _parameters = Snapshot(Parameters);
         this.ConditionalBranches = ConditionalBranches.Count == 0
             ? Array.Empty<ConditionalBranchInfo>()
-            : Array.AsReadOnly(ConditionalBranches.ToArray());
+            : SafeReadOnlyCollection.Snapshot(ConditionalBranches);
     }
 
     public string Name { get; }
@@ -374,7 +374,7 @@ public sealed record PropertyInfo
         get => _signatures;
         init => _signatures = value.Count == 0
             ? Array.Empty<PropertySignatureInfo>()
-            : Array.AsReadOnly(value.ToArray());
+            : SafeReadOnlyCollection.Snapshot(value);
     }
 
     public string DisplaySignature => GetDisplaySignature(PreferredCallStyle);
@@ -426,7 +426,7 @@ public sealed record PropertyInfo
         IReadOnlyList<PropertyParameterInfo> parameters)
         => parameters.Count == 0
             ? Array.Empty<PropertyParameterInfo>()
-            : parameters as SharedPropertyParameterList ?? Array.AsReadOnly(parameters.ToArray());
+            : parameters as SharedPropertyParameterList ?? SafeReadOnlyCollection.Snapshot(parameters);
 }
 
 internal static class ConditionalBranchHeadFormatter

@@ -720,7 +720,7 @@ internal sealed class DeferredModuleRegion
                     }
 
                     // The evaluation's error keeps a read-only snapshot of the bounded list.
-                    return EvalError.ModuleRegionMaterializationFailed.From(Array.AsReadOnly(diagnostics.ToArray()));
+                    return EvalError.ModuleRegionMaterializationFailed.From(SafeReadOnlyCollection.Over(diagnostics.ToArray()));
                 }
                 finally
                 {

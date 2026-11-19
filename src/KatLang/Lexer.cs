@@ -111,7 +111,7 @@ public static class Lexer
     /// keyword-definition table above.
     /// </summary>
     public static IReadOnlyList<string> KeywordNames { get; } =
-        Array.AsReadOnly(KeywordDefinitions.Select(static keyword => keyword.Name).ToArray());
+        SafeReadOnlyCollection.Over(KeywordDefinitions.Select(static keyword => keyword.Name).ToArray());
 
     private static TokenKind ClassifyIdentifierOrKeyword(string text)
         => Keywords.TryGetValue(text, out var keywordKind)
@@ -188,7 +188,7 @@ public static class Lexer
 
         var diagnostics = new DiagnosticBag();
         var tokens = Tokenize(source, diagnostics, lexicalErrorStarts: null);
-        return (tokens, Array.AsReadOnly(diagnostics.ToArray()));
+        return (tokens, SafeReadOnlyCollection.Over(diagnostics.ToArray()));
     }
 
     /// <summary>
@@ -239,7 +239,7 @@ public static class Lexer
         }
 
         tokens.Add(Token.EndOfFile(i, line, col));
-        return tokens.AsReadOnly();
+        return SafeReadOnlyCollection.OverList(tokens);
     }
 
     /// <summary>

@@ -122,13 +122,13 @@ public sealed class SemanticModel
         IReadOnlyList<ScopeVisibility>? scopeVisibilities = null)
     {
         Root = root;
-        IdentifierOccurrences = Array.AsReadOnly(identifierOccurrences.ToArray());
-        Declarations = Array.AsReadOnly(declarations.ToArray());
+        IdentifierOccurrences = SafeReadOnlyCollection.Over(identifierOccurrences.ToArray());
+        Declarations = SafeReadOnlyCollection.Over(declarations.ToArray());
         _identifierResolutions = identifierResolutions.ToArray();
-        IdentifierResolutions = Array.AsReadOnly(_identifierResolutions);
+        IdentifierResolutions = SafeReadOnlyCollection.Over(_identifierResolutions);
         ResolutionSitesAreMonotone = SitesAreMonotone(_identifierResolutions);
-        PropertyInfos = Array.AsReadOnly(propertyInfos.ToArray());
-        ScopeVisibilities = Array.AsReadOnly(
+        PropertyInfos = SafeReadOnlyCollection.Over(propertyInfos.ToArray());
+        ScopeVisibilities = SafeReadOnlyCollection.Over(
             (scopeVisibilities ?? [new ScopeVisibility(Span: null, Symbols: [])]).ToArray());
         // Declarations are looked up by canonical occurrence identity, never by
         // name/span value: a value-equal DTO (constructed by a consumer, or shared
@@ -140,7 +140,7 @@ public sealed class SemanticModel
             .GroupBy(static property => property.Name, StringComparer.Ordinal)
             .ToDictionary(
                 static group => group.Key,
-                static group => (IReadOnlyList<PropertyInfo>)Array.AsReadOnly(group.ToArray()),
+                static group => (IReadOnlyList<PropertyInfo>)SafeReadOnlyCollection.Over(group.ToArray()),
                 StringComparer.Ordinal);
     }
 
@@ -264,7 +264,7 @@ public sealed class SemanticModel
                     unshadowed.Add(symbol);
             }
 
-            return new System.Collections.ObjectModel.ReadOnlyCollection<VisibleSymbol>(
+            return SafeReadOnlyCollection.OverList(
                 new MergedVisibleSymbolList(view, unshadowed.ToArray()));
         }
 
@@ -281,7 +281,7 @@ public sealed class SemanticModel
                 result.Add(symbol);
         }
 
-        return Array.AsReadOnly(result.ToArray());
+        return SafeReadOnlyCollection.Over(result.ToArray());
     }
 
     /// <summary>
@@ -370,7 +370,7 @@ public sealed class SemanticModel
     public IReadOnlyList<IdentifierResolution> FindResolutions(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        return Array.AsReadOnly(IdentifierResolutions.Where(resolution => resolution.Occurrence.Name == name).ToArray());
+        return SafeReadOnlyCollection.Over(IdentifierResolutions.Where(resolution => resolution.Occurrence.Name == name).ToArray());
     }
 
     /// <summary>
@@ -379,7 +379,7 @@ public sealed class SemanticModel
     public IReadOnlyList<DeclarationOccurrence> FindDeclarations(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        return Array.AsReadOnly(Declarations.Where(declaration => declaration.Name == name).ToArray());
+        return SafeReadOnlyCollection.Over(Declarations.Where(declaration => declaration.Name == name).ToArray());
     }
 
     /// <summary>
