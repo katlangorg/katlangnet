@@ -128,8 +128,9 @@ public sealed class SemanticModel
         IdentifierResolutions = SafeReadOnlyCollection.Over(_identifierResolutions);
         ResolutionSitesAreMonotone = SitesAreMonotone(_identifierResolutions);
         PropertyInfos = SafeReadOnlyCollection.Over(propertyInfos.ToArray());
-        ScopeVisibilities = SafeReadOnlyCollection.Over(
-            (scopeVisibilities ?? [new ScopeVisibility(Span: null, Symbols: [])]).ToArray());
+        var scopes = (scopeVisibilities ?? [new ScopeVisibility(Span: null, Symbols: [])]).ToArray();
+        ScopeVisibilities = SafeReadOnlyCollection.Over(scopes);
+        _scopeIndex = ScopePositionIndex.Build(scopes);
         // Declarations are looked up by canonical occurrence identity, never by
         // name/span value: a value-equal DTO (constructed by a consumer, or shared
         // declaration nodes in a host-built tree) is not a key.
@@ -149,6 +150,15 @@ public sealed class SemanticModel
 
     // The array behind IdentifierResolutions, read in place by position queries.
     private readonly IdentifierResolution[] _identifierResolutions;
+
+    // FindScopeAt's position index over ScopeVisibilities; null only for a listing with a null entry.
+    private readonly ScopePositionIndex? _scopeIndex;
+
+    /// <summary>
+    /// The number of intervals in <see cref="FindScopeAt"/>'s position index: at most twice the
+    /// number of non-empty scope hulls. -1 when the listing has a null entry and the query scans.
+    /// </summary>
+    internal int ScopeIndexIntervals => _scopeIndex?.Intervals ?? -1;
 
     /// <summary>
     /// Whether the resolution sites' starts AND ends both never decrease in listing order. The
@@ -214,7 +224,24 @@ public sealed class SemanticModel
     /// half-open source hull, so a position at the hull's exclusive end is outside it),
     /// falling back to the root scope for positions outside every nested region.
     /// </summary>
+    /// <remarks>
+    /// Of the regions containing the position, the deepest (<see cref="ScopeVisibility.NestingDepth"/>)
+    /// wins; at equal depth the inner hull — the later start, then the earlier end — and of
+    /// identical hulls the one listed first in <see cref="ScopeVisibilities"/>. The root is the
+    /// first listed scope without a span (a new empty scope when none is listed). The query
+    /// binary-searches a position index the model builds once (O(log S) for S scope regions)
+    /// instead of inspecting every region.
+    /// </remarks>
     public ScopeVisibility FindScopeAt(SourcePosition position)
+        => _scopeIndex is { } index
+            ? index.Find(position) ?? new ScopeVisibility(Span: null, Symbols: [])
+            : ScanScopes(position);
+
+    /// <summary>
+    /// The former query, kept for a listing the index refuses: one with a null entry (only the
+    /// internal constructor can receive one), on which every scan throws as it always did.
+    /// </summary>
+    private ScopeVisibility ScanScopes(SourcePosition position)
     {
         ScopeVisibility? root = null;
         ScopeVisibility? best = null;
@@ -300,6 +327,146 @@ public sealed class SemanticModel
     {
         var byStart = candidate.Start.CompareTo(current.Start);
         return byStart != 0 ? byStart > 0 : candidate.End < current.End;
+    }
+
+    /// <summary>
+    /// <see cref="FindScopeAt"/>'s position index (KL-05). The starts and ends of the non-empty
+    /// hulls cut the document into intervals over which the set of containing hulls is constant,
+    /// so one winner — the scope the former scan over every region selected for any position of
+    /// the interval — serves the whole interval. A sweep over those boundaries records each
+    /// interval's winner, merging neighbors with the same one, and a query binary-searches them.
+    /// Building costs O(S log S) time and O(S) storage for S scopes, whatever their nesting,
+    /// overlap or ties; the index holds the listing's own instances and copies no symbol.
+    /// </summary>
+    private sealed class ScopePositionIndex
+    {
+        // Interval i holds the positions from _starts[i] up to, not including, _starts[i + 1]; the
+        // last one, past every hull, has no end. _winners[i] is the interval's scope, or null where
+        // no non-empty hull contains it. Positions before _starts[0] are in no hull either.
+        private readonly SourcePosition[] _starts;
+        private readonly ScopeVisibility?[] _winners;
+        private readonly ScopeVisibility? _root;
+
+        private ScopePositionIndex(SourcePosition[] starts, ScopeVisibility?[] winners, ScopeVisibility? root)
+        {
+            _starts = starts;
+            _winners = winners;
+            _root = root;
+        }
+
+        public int Intervals => _starts.Length;
+
+        /// <summary>The containing scope the scan selects, else the root; null when the listing has neither.</summary>
+        public ScopeVisibility? Find(SourcePosition position)
+        {
+            // The number of intervals starting at or before the position; the last of them holds it.
+            var starts = _starts;
+            var low = 0;
+            var high = starts.Length;
+            while (low < high)
+            {
+                var middle = low + ((high - low) >> 1);
+                if (starts[middle] <= position)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+
+            return (low > 0 ? _winners[low - 1] : null) ?? _root;
+        }
+
+        /// <summary>The index of the listing, or null when an entry is null (the scan's domain).</summary>
+        public static ScopePositionIndex? Build(ScopeVisibility[] scopes)
+        {
+            ScopeVisibility? root = null;
+            var hulls = 0;
+            foreach (var scope in scopes)
+            {
+                if (scope is null)
+                    return null;
+                if (scope.Span is not { } hull)
+                    root ??= scope;
+                else if (hull.Start < hull.End)
+                    hulls++;
+            }
+
+            // An empty hull contains no position, so only non-empty hulls enter the sweep: their
+            // listing indices by start, and every start and end, where containment can change.
+            var byStart = new int[hulls];
+            var hullStarts = new SourcePosition[hulls];
+            var boundaries = new SourcePosition[2 * hulls];
+            var count = 0;
+            for (var i = 0; i < scopes.Length; i++)
+            {
+                if (scopes[i].Span is { } hull && hull.Start < hull.End)
+                {
+                    byStart[count] = i;
+                    hullStarts[count] = hull.Start;
+                    boundaries[2 * count] = hull.Start;
+                    boundaries[(2 * count) + 1] = hull.End;
+                    count++;
+                }
+            }
+
+            Array.Sort(hullStarts, byStart);
+            Array.Sort(boundaries);
+
+            // At each distinct boundary the queue holds every hull starting at or before it, the
+            // scan's choice first; a hull ending at or before the boundary no longer contains it
+            // and leaves when it surfaces. The first remaining hull then contains the whole
+            // interval up to the next boundary and is preferred over every other that does.
+            var candidates = new PriorityQueue<int, int>(
+                hulls,
+                Comparer<int>.Create((left, right) => Prefer(scopes, left, right)));
+            var starts = new SourcePosition[boundaries.Length];
+            var winners = new ScopeVisibility?[boundaries.Length];
+            var intervals = 0;
+            var entered = 0;
+            for (var b = 0; b < boundaries.Length; b++)
+            {
+                var boundary = boundaries[b];
+                if (b > 0 && boundaries[b - 1] == boundary)
+                    continue;
+
+                for (; entered < hulls && hullStarts[entered] <= boundary; entered++)
+                    candidates.Enqueue(byStart[entered], byStart[entered]);
+                while (candidates.TryPeek(out var first, out _) && scopes[first].Span!.Value.End <= boundary)
+                    candidates.Dequeue();
+
+                var winner = candidates.TryPeek(out var selected, out _) ? scopes[selected] : null;
+                if (intervals > 0 && ReferenceEquals(winners[intervals - 1], winner))
+                    continue;
+                starts[intervals] = boundary;
+                winners[intervals] = winner;
+                intervals++;
+            }
+
+            Array.Resize(ref starts, intervals);
+            Array.Resize(ref winners, intervals);
+            return new ScopePositionIndex(starts, winners, root);
+        }
+
+        /// <summary>
+        /// Orders two containing hulls by listing index as the scan prefers them (negative when
+        /// <paramref name="left"/> wins): the deeper scope, at equal depth the inner hull
+        /// (<see cref="IsInnerSpan"/>), and of identical hulls at one depth the earlier listed —
+        /// the scan replaces its choice only by a strictly preferred scope, so it keeps the first.
+        /// </summary>
+        private static int Prefer(ScopeVisibility[] scopes, int left, int right)
+        {
+            var leftScope = scopes[left];
+            var rightScope = scopes[right];
+            if (leftScope.NestingDepth != rightScope.NestingDepth)
+                return leftScope.NestingDepth > rightScope.NestingDepth ? -1 : 1;
+
+            var leftHull = leftScope.Span!.Value;
+            var rightHull = rightScope.Span!.Value;
+            if (IsInnerSpan(leftHull, rightHull))
+                return -1;
+            if (IsInnerSpan(rightHull, leftHull))
+                return 1;
+            return left.CompareTo(right);
+        }
     }
 
     /// <summary>
