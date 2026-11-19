@@ -99,8 +99,8 @@ public sealed class ExposureCensusHarnessTests
                 string[] values = [head, "deconstruction", open, reader, "outside", end, "member"];
                 Assert.Null(CensusGrid.Exclusion(values[0], values[1], values[2], values[3], values[4], values[5], values[6]));
                 var @case = CensusGrid.Build(values);
-                var valueCellParses = CensusRunner.Probes(CensusGrid.Build([head, "value", open, reader, "outside", end, "member"])) is not null;
-                Assert.True(valueCellParses == CensusRunner.Probes(@case) is not null, @case.Id);
+                var valueCellParses = await CensusRunner.Probes(CensusGrid.Build([head, "value", open, reader, "outside", end, "member"])) is not null;
+                Assert.Equal(valueCellParses, await CensusRunner.Probes(@case) is not null);
                 Assert.True(valueCellParses || (end == "runtime" && !head.StartsWith("rt-", StringComparison.Ordinal)), $"{@case.Id} does not parse cleanly");
                 if (!valueCellParses) continue;
                 var twin = CensusGrid.DeconstructionTwin(@case);
@@ -342,6 +342,175 @@ public sealed class ExposureCensusHarnessTests
     }
 
     /// <summary>
+    /// The extension heads' W families (<see cref="CensusWork.ExtensionFamilies"/>): one family per head, reader, placement,
+    /// level and use, disjoint from the grid's, whose list and ids stay those of earlier runs; a used family is excluded (a
+    /// runtime reference opens its own namespace). One unused family per head parses and settles within the doubling bound.
+    /// </summary>
+    [Fact]
+    public void ExtensionWorkFamilies_ExistForTheNewHeads_AndSettleWithinTheBound()
+    {
+        var grid = CensusWork.Families().ToArray();
+        var extension = CensusWork.ExtensionFamilies().ToArray();
+        Assert.Equal(CensusGrid.Heads.Length * CensusGrid.ReaderKinds.Length * CensusGrid.Places.Length * CensusWork.Levels.Length * 2, grid.Length);
+        Assert.Equal(CensusGrid.ExtensionHeads.Length * CensusGrid.ReaderKinds.Length * CensusGrid.Places.Length * CensusWork.Levels.Length * 2, extension.Length);
+        Assert.Empty(grid.Select(f => f.Family.Id).Intersect(extension.Select(f => f.Family.Id)));
+        Assert.All(extension.Where(f => f.Family.Id.EndsWith("|use=used", StringComparison.Ordinal)), f => Assert.NotNull(f.Excluded));
+        foreach (var head in CensusGrid.ExtensionHeads)
+        {
+            Assert.Contains(extension, f => f.Excluded is null && f.Family.Id.StartsWith($"W|head={head}|", StringComparison.Ordinal));
+            var (family, excluded) = extension.Single(f => f.Family.Id == $"W|head={head}|reader=plain|place=outside|level=enc1|use=unused");
+            Assert.Null(excluded);
+            var program = family.Program(CensusWork.Widths[0]);
+            Assert.Null(CensusWork.Diagnostics(program));
+            Assert.Contains(head == "rt-capture" ? "L24 = Cap(Seed()).Algorithm" : "L24 = X24.Sub.Algorithm", program, StringComparison.Ordinal);
+            Assert.Contains("Cap(meta op) = op", program, StringComparison.Ordinal);
+            var measured = CensusWork.Measure(family);
+            Assert.True(measured.WithinBound, $"{family.Id}: {measured.Problem}");
+            Assert.All(measured.Frames, frames => Assert.True(frames > 0, family.Id));
+        }
+    }
+
+    // ── The module dimension (2026-11-19) ─────────────────────────────────────────────────────────
+
+    // Provider twins whose open level is charged: `open Lib.Sub, Other` walks Sub, whose row reads y, at the reader's own
+    // value block and at F, the plain reader's enclosing level.
+    private static string[] ChargedModuleTwin(string open) => ["name", "open", open, "plain", "outside", "found", "container"];
+
+    /// <summary>
+    /// One loaded module is one open provider (Q-32 I-U) on both module spellings, through the real asynchronous front end
+    /// over the census's in-memory server: two root holders of one canonical URL and a holder plus a written load of it give
+    /// the reader <c>X</c> exactly as <c>Other</c> does, so the reader is charged the walk of <c>Lib.Sub</c> at the level the
+    /// module decides and every probe and the metadata equal the provider twin's. The control's two canonical URLs serve the
+    /// same text and stay two providers: the unqualified read is the front end's AmbiguousOpen, and its clean qualified
+    /// fixture <c>ModA.X</c> is a lexical read. Where the reader writes the open itself the census also records I25.
+    /// </summary>
+    [Fact]
+    public async Task ModuleHead_OneModuleIsOneProvider_AndTwoUrlsAreTwo()
+    {
+        foreach (var open in new[] { "own-unused", "enc1-unused" })
+        {
+            var twin = CensusGrid.Build(ChargedModuleTwin(open));
+            Assert.Contains("open Lib.Sub, Other\n", twin.Body, StringComparison.Ordinal);
+            var twinResult = await CensusRunner.Run(twin, collectLean: false);
+            Assert.Equal("LocalOnlyCapturedAncestorParameters[y@0]", twinResult.Metadata["A"]);
+            Assert.Empty(twinResult.Gaps);
+            foreach (var module in CensusGrid.ModuleValues)
+            {
+                string[] values = [.. ChargedModuleTwin(open), module];
+                var @case = CensusGrid.BuildModule(values);
+                Assert.Equal((twin.Id + "|module=" + module, "module"), (@case.Id, @case.Kind));
+                Assert.Equal(@case.Id, CensusGrid.TryParseId(@case.Id)?.Id);
+                Assert.Equal(twin.Id, CensusGrid.ModuleTwin(@case).Id);
+                var (providers, holders, read) = module switch
+                {
+                    "holders" => ("ModA, ModB", $"ModA = load('{CensusGrid.ModuleUrl}')\nModB = load('{CensusGrid.ModuleUrl}')\n", "X + 0"),
+                    "holder-load" => ($"ModA, load('{CensusGrid.ModuleUrl}')", $"ModA = load('{CensusGrid.ModuleUrl}')\n", "X + 0"),
+                    _ => ("ModA, ModB", $"ModA = load('{CensusGrid.ModuleUrl}')\nModB = load('{CensusGrid.ModuleCopyUrl}')\n", "ModA.X + 0"),
+                };
+                // The twin's program with the module's holders before F, the module as the level's second provider, and
+                // the control's qualified read (` X + 0` is the reader's one read of X: own block or `A = X + 0`).
+                Assert.Equal(holders + twin.Body.Replace("open Lib.Sub, Other\n", $"open Lib.Sub, {providers}\n", StringComparison.Ordinal)
+                    .Replace(" X + 0\n", " " + read + "\n", StringComparison.Ordinal), @case.Body);
+                await SourceProvenance.ParseValidAsync(@case.Body + CensusRunner.SameRun + "\n", CensusRunner.ModuleServer(@case).Options());
+
+                var result = await CensusRunner.Run(@case, collectLean: false);
+                Assert.Null(result.Skipped);
+                Assert.Equal(CensusGrid.ExpectedProviderVerdict(@case), result.ProviderVerdict);
+                var ownOpenCharge = module == "two-urls" && open == "own-unused";
+                if (ownOpenCharge)
+                    Assert.Equal(new CensusGap("O", "over-charge", @case.Id, "A", "r=y@0"), Assert.Single(result.Gaps));
+                else
+                    Assert.Empty(result.Gaps);
+                Assert.Equal(module == "two-urls" ? 2 : 1, CensusRunner.ModuleIdentities(
+                    (await SourceProvenance.ParseValidAsync(@case.Body + CensusRunner.Inside5 + "\n", CensusRunner.ModuleServer(@case).Options())).Root));
+                var unqualified = CensusGrid.ModuleUnqualifiedRead(@case);
+                if (module != "two-urls")
+                {
+                    Assert.True(CensusRunner.HasModuleTwin(@case));
+                    Assert.Equal(twinResult.Metadata, result.Metadata);
+                    Assert.Equal(twinResult.Outcomes, result.Outcomes);
+                    Assert.Equal(("ok 1", "ok 1", "ok S[1, 1]", "err localOnlyProperty:A"),
+                        (result.Outcomes["in5"], result.Outcomes["in7"], result.Outcomes["same"], result.Outcomes["esc:A"]));
+                    // The unqualified read is the cell itself.
+                    Assert.Same(@case, unqualified);
+                    continue;
+                }
+                // The qualified fixture and the separate unqualified front-end control.
+                Assert.False(CensusRunner.HasModuleTwin(@case));
+                Assert.Equal(ownOpenCharge ? "LocalOnlyCapturedAncestorParameters[y@0]" : "exported", result.Metadata["A"]);
+                Assert.All(result.Outcomes, o => Assert.Equal(o.Key == "same" ? "ok S[1, 1]"
+                    : ownOpenCharge && o.Key == "esc:A" ? "err localOnlyProperty:A" : "ok 1", o.Value));
+                Assert.Equal(@case.Body.Replace("ModA.X + 0", "X + 0", StringComparison.Ordinal), unqualified.Body);
+                var parsed = await Parser.ParseAsync(unqualified.Body + CensusRunner.Inside5 + "\n", CensusRunner.ModuleServer(unqualified).Options());
+                var error = Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+                Assert.Equal(DiagnosticCode.AmbiguousOpen, error.Code);
+            }
+        }
+        // An uncharged level: the module decides the same name, and the reader stays exported.
+        var uncharged = await CensusRunner.Run(CensusGrid.BuildModule(["name", "open", "own-unused", "plain", "outside", "found", "none", "holders"]), collectLean: false);
+        Assert.Equal(("exported", 0), (uncharged.Metadata["A"], uncharged.Gaps.Count));
+
+        Assert.NotNull(CensusGrid.ModuleExclusion("clause", "own-unused", "holder-load"));
+        Assert.Null(CensusGrid.ModuleExclusion("clause", "enc1-unused", "holder-load"));
+    }
+
+    /// <summary>
+    /// The inherited eager own-open charge (I25) in its container form: a container whose own
+    /// open no lookup consults is charged the open's walk, so an exported reader inside it cannot be read from outside, while a
+    /// host-built copy of the container without that requirement reads it on every route. The program needs no module.
+    /// </summary>
+    [Fact]
+    public async Task ContainerOwnOpen_ChargesTheContainer_OnTheQualifiedControl()
+    {
+        var control = CensusGrid.BuildModule(["name", "open", "enc1-unused", "plain", "in-lib", "found", "container", "two-urls"]);
+        var observed = await CensusRunner.Run(control, collectLean: false);
+        Assert.Equal(new CensusGap("U", "under-charge-masked-access", control.Id, "A", "err localOnlyProperty:Lib"), Assert.Single(observed.Gaps));
+        var body = control.Body[control.Body.IndexOf("F(y) = {", StringComparison.Ordinal)..]
+            .Replace("open Lib.Sub, ModA, ModB", "open Lib.Sub, Other", StringComparison.Ordinal)
+            .Replace("A = ModA.X + 0", "A = Other.X + 0", StringComparison.Ordinal);
+        Assert.Contains("  Lib = {\n    open Lib.Sub, Other\n", body, StringComparison.Ordinal);
+        foreach (var (row, expected) in new[] { ("F(5)", "ok 1"), ("F.Lib.A", "err localOnlyProperty:Lib") })
+        {
+            var root = SourceProvenance.ParseValid(body + row + "\n").Root;
+            var lib = CensusRunner.Find(root, ["F", "Lib"])!;
+            Assert.Equal("LocalOnlyCapturedAncestorParameters[y@0]", CensusRunner.Describe(lib));
+            Assert.Equal("exported", CensusRunner.Describe(CensusRunner.Find(root, ["F", "Lib", "A"])));
+            Assert.Equal((expected, null), await CensusRunner.EvaluateTree(root));
+            var copy = CensusRunner.Replace(root, ["F", "Lib"], p => CensusRunner.Requirements(lib).Aggregate(p, CensusRunner.Without));
+            Assert.Equal(("ok 1", null), await CensusRunner.EvaluateTree(copy));
+        }
+    }
+
+    /// <summary>
+    /// The provider verdict cannot pass by accident: a module cell whose download is missing is a P gap (its twin parses,
+    /// so the skip is a validity difference, never a silent drop), and a control that loads one canonical URL twice shows
+    /// one identity and a clean unqualified read, which is not the control's verdict.
+    /// </summary>
+    [Fact]
+    public async Task ModuleHead_AMissingDownloadOrAMergedControlCannotPass()
+    {
+        var holders = CensusGrid.BuildModule([.. ChargedModuleTwin("own-unused"), "holders"]);
+        var missing = await CensusRunner.Run(holders with { Modules = [new(CensusGrid.ModuleCopyUrl, CensusGrid.ModuleText)] }, collectLean: false);
+        Assert.NotNull(missing.Skipped);
+        var gap = Assert.Single(missing.Gaps);
+        Assert.Equal(("P", "module-validity-differs"), (gap.Check, gap.Class));
+
+        var control = CensusGrid.BuildModule([.. ChargedModuleTwin("enc1-unused"), "two-urls"]);
+        var merged = control with { Body = control.Body.Replace($"ModB = load('{CensusGrid.ModuleCopyUrl}')", $"ModB = load('{CensusGrid.ModuleUrl}')", StringComparison.Ordinal) };
+        Assert.NotEqual(control.Body, merged.Body);
+        var result = await CensusRunner.Run(merged, collectLean: false);
+        Assert.Null(result.Skipped);
+        Assert.Equal($"providers 1; identities 1; fetched {CensusGrid.ModuleUrl}; unqualified clean", result.ProviderVerdict);
+        Assert.Contains(result.Gaps, g => g is { Check: "P", Class: "provider-verdict-differs" });
+
+        var unopened = holders with { Body = holders.Body.Replace("ModA, ModB", "Other", StringComparison.Ordinal) };
+        var unused = await CensusRunner.Run(unopened, collectLean: false);
+        Assert.Null(unused.Skipped);
+        Assert.Equal($"providers 1 (0 loaded); identities 1; fetched {CensusGrid.ModuleUrl}; unqualified clean", unused.ProviderVerdict);
+        Assert.Contains(unused.Gaps, g => g is { Check: "P", Class: "provider-verdict-differs" });
+    }
+
+    /// <summary>
     /// The HEAD probe (<see cref="CensusHeadProbe"/>, the tracked source the <c>check-head</c> scratch project compiles) writes
     /// exactly the protocol <see cref="ExposureCensusTests.HeadOutput"/> reads: run here against today's KatLang, its metadata
     /// and its outcomes on all three routes are the census's own, a program that does not parse is reported on all three, and
@@ -355,7 +524,9 @@ public sealed class ExposureCensusHarnessTests
         try
         {
             var @case = CensusGrid.Build(["name", "value", "none", "plain", "outside", "found", "member"]);
-            var lines = CensusRunner.Probes(@case)!.Select(p => $"{@case.Id}\t{p.Label}\t{p.Source.Replace("\n", "\\n")}")
+            var module = CensusGrid.BuildModule([.. ChargedModuleTwin("enc1-unused"), "two-urls"]);
+            var lines = (await CensusRunner.Probes(@case))!.Select(p => CensusHeadProbe.InputLine(@case.Id, p.Label, p.Source, null))
+                .Concat((await CensusRunner.Probes(module))!.Select(p => CensusHeadProbe.InputLine(module.Id, p.Label, p.Source, module.Modules)))
                 .Append("broken\tin5\tF(y) = {\\n  A = \\n").ToArray();
             var (programs, output) = (Path.Combine(directory, "head-programs.tsv"), Path.Combine(directory, "head.out"));
             File.WriteAllLines(programs, lines);
@@ -376,6 +547,7 @@ public sealed class ExposureCensusHarnessTests
             }
             Assert.All(head.Outcomes("broken").Values, outcome => Assert.StartsWith("PARSE ", outcome, StringComparison.Ordinal));
             Assert.Empty(head.Metadata("broken", "in5"));
+            Assert.Equal("OK S[1, 1]", head.Outcomes(module.Id)["same:forced"]);
 
             var project = Path.Combine(directory, "head-probe");
             CensusHeadProbe.WriteProject(project, ExposureCensusTests.HeadProbeSourcePath);
@@ -491,6 +663,19 @@ public sealed class ExposureCensusHarnessTests
                 [items[0] with { Tree = SourceProvenance.ParseValid("2").Root }]));
             File.WriteAllText(Path.Combine(directory, "manifest.tsv"), "");
             Assert.Throws<InvalidDataException>(() => CensusLean.Check(directory, items));
+
+            // The extension's sample has batches and a manifest of its own: neither sample reads the other's output.
+            CensusLean.Emit(items, directory);
+            File.WriteAllText(path, observation);
+            CensusLeanItem[] extension = [new("two#real#in5", "two", "real", "real", SourceProvenance.ParseValid("2").Root, "ok 2")];
+            Assert.Equal(1, CensusLean.Emit(extension, directory, "census-extension"));
+            Assert.True(File.Exists(Path.Combine(directory, "census-extension-0000.lean")));
+            Assert.Equal("manifest-extension.tsv", CensusLean.ManifestName("census-extension"));
+            Assert.Throws<InvalidDataException>(() => CensusLean.Check(directory, extension, "census-extension"));
+            File.WriteAllText(Path.Combine(directory, "census-extension-0000.out"), "CENSUS\ttwo#real#in5\ttrue\ttrue\tok 2\n");
+            Assert.Empty(CensusLean.Check(directory, extension, "census-extension"));
+            Assert.Empty(CensusLean.Check(directory, items));
+            Assert.Throws<ArgumentException>(() => CensusLean.ManifestName("extension"));
 
             var headPath = Path.Combine(directory, "head.out");
             const string head = "one\tin5\tOUT\tOK 1\n";

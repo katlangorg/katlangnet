@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 
 namespace KatLang.Tests.ExposureCensus;
 
@@ -20,9 +21,16 @@ internal static class CensusHeadProbe
     public const string ProjectFileName = "HeadProbe.csproj";
     public const string EntryFileName = "Program.cs";
 
+    internal static string InputLine(string id, string probe, string source, IReadOnlyList<KeyValuePair<string, string>>? modules)
+    {
+        var line = $"{id}\t{probe}\t{source.Replace("\n", "\\n")}";
+        return modules is null ? line : line + "\t" + JsonSerializer.Serialize(modules.ToDictionary());
+    }
+
     /// <summary>
     /// The protocol (<see cref="ExposureCensusTests.HeadOutput"/> reads it). Input: one program per line,
-    /// <c>id \t probe \t source</c>, a newline of the source written as the two characters <c>\n</c>. Output: tab-separated
+    /// <c>id \t probe \t source</c>, with an optional fourth field containing the fixture's URL-to-source map as JSON.
+    /// A newline of the main source is written as the two characters <c>\n</c>. Output: tab-separated
     /// lines in input order,
     /// <list type="bullet">
     /// <item><c>id \t in5 \t META \t root.&lt;path&gt;: &lt;Exposure&gt;[name@depth,...]</c> for every non-exported declaration
@@ -47,10 +55,10 @@ internal static class CensusHeadProbe
             new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 2) },
             async (i, _) =>
             {
-                var parts = lines[i].Split('\t', 3);
+                var parts = lines[i].Split('\t', 4);
                 var (id, probe, source) = (parts[0], parts[1], parts[2].Replace("\\n", "\n"));
                 var text = new StringBuilder();
-                var parsed = Parser.Parse(source);
+                var parsed = parts.Length == 4 ? await ParseModules(source, parts[3]) : Parser.Parse(source);
                 if (parsed.HasErrors)
                 {
                     var codes = string.Join(",", parsed.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
@@ -89,6 +97,17 @@ internal static class CensusHeadProbe
 
         await File.WriteAllTextAsync(outputPath, string.Concat(outputs));
         return (lines.Length, duplicates);
+    }
+
+    private static Task<ParseResult> ParseModules(string source, string json)
+    {
+        var modules = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+            ?? throw new InvalidDataException("Missing HEAD module fixture.");
+        return Parser.ParseAsync(source, new RunOptions
+        {
+            AllowedHosts = ["mods.test"],
+            DownloadCode = (url, _) => ValueTask.FromResult(modules[url]),
+        });
     }
 
     private static async Task<string> Observe(Func<Task<EvalResult<Result>>> run)

@@ -80,8 +80,24 @@ internal static class CensusLean
 
         """;
 
+    /// <summary>
+    /// The grid's sample: batches <c>census-NNNN.lean</c> and <c>manifest.tsv</c> (the names of every earlier run). Another
+    /// sample has a prefix of its own (the extension's, <c>census-extension</c>), with its manifest <c>manifest-&lt;suffix&gt;.tsv</c>.
+    /// </summary>
+    public const string GridPrefix = "census";
+
+    public static string ManifestName(string prefix)
+        => prefix == GridPrefix ? "manifest.tsv"
+            : prefix.StartsWith(GridPrefix + "-", StringComparison.Ordinal) ? $"manifest-{prefix[(GridPrefix.Length + 1)..]}.tsv"
+            : throw new ArgumentException($"A census Lean sample prefix starts with {GridPrefix}-: {prefix}", nameof(prefix));
+
+    // One sample's batch outputs, exactly: `<prefix>-NNNN.out` (the grid's pattern never matches another sample's files).
+    private static IEnumerable<string> OutputFiles(string directory, string prefix)
+        => Directory.GetFiles(directory, prefix + "-*.out").Where(path => System.Text.RegularExpressions.Regex.IsMatch(
+            Path.GetFileName(path), "^" + System.Text.RegularExpressions.Regex.Escape(prefix) + @"-\d{4}\.out$")).Order(StringComparer.Ordinal);
+
     /// <summary>Writes the batch files and a manifest of the C# side (id, role, copy key, C# outcome).</summary>
-    public static int Emit(IReadOnlyList<CensusLeanItem> items, string directory)
+    public static int Emit(IReadOnlyList<CensusLeanItem> items, string directory, string prefix = GridPrefix)
     {
         Directory.CreateDirectory(directory);
         var manifest = new StringBuilder();
@@ -95,9 +111,9 @@ internal static class CensusLean
                 file.Append($"#eval report {LeanAstEncoder.QuoteString(item.Id)} ({encoding})\n");
                 manifest.Append(ManifestLine(item, encoding)).Append('\n');
             }
-            File.WriteAllText(Path.Combine(directory, $"census-{batch:D4}.lean"), file.ToString());
+            File.WriteAllText(Path.Combine(directory, $"{prefix}-{batch:D4}.lean"), file.ToString());
         }
-        File.WriteAllText(Path.Combine(directory, "manifest.tsv"), manifest.ToString());
+        File.WriteAllText(Path.Combine(directory, ManifestName(prefix)), manifest.ToString());
         return batch;
     }
 
@@ -107,10 +123,10 @@ internal static class CensusLean
         => $"{item.Id}\t{item.CaseId}\t{item.CopyKey}\t{item.Role}\t{item.CSharpOutcome}\t"
             + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(encoding)));
 
-    public static Dictionary<string, LeanLine> ReadOutputs(string directory)
+    public static Dictionary<string, LeanLine> ReadOutputs(string directory, string prefix = GridPrefix)
     {
         var lines = new Dictionary<string, LeanLine>(StringComparer.Ordinal);
-        foreach (var path in Directory.GetFiles(directory, "census-*.out").Order(StringComparer.Ordinal))
+        foreach (var path in OutputFiles(directory, prefix))
             foreach (var line in File.ReadLines(path))
             {
                 if (!line.StartsWith("CENSUS\t", StringComparison.Ordinal)) continue;
@@ -123,12 +139,12 @@ internal static class CensusLean
     }
 
     /// <summary>M1–M4, requiring complete output and a manifest matching the current trees and C# verdicts.</summary>
-    public static List<CensusGap> Check(string directory, IReadOnlyList<CensusLeanItem> expected)
+    public static List<CensusGap> Check(string directory, IReadOnlyList<CensusLeanItem> expected, string prefix = GridPrefix)
     {
-        var manifest = File.ReadAllLines(Path.Combine(directory, "manifest.tsv"));
+        var manifest = File.ReadAllLines(Path.Combine(directory, ManifestName(prefix)));
         if (expected.Count == 0 || !manifest.SequenceEqual(expected.Select(item => ManifestLine(item, LeanAstEncoder.EncodeProgram(item.Tree)))))
             throw new InvalidDataException("The Lean manifest does not match the current census encodings and C# verdicts. Emit and run fresh batches.");
-        var lean = ReadOutputs(directory);
+        var lean = ReadOutputs(directory, prefix);
         if (expected.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != expected.Count
             || !lean.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(expected.Select(item => item.Id)))
             throw new InvalidDataException("Lean output is incomplete or contains unexpected encodings; every manifest item must be evaluated exactly once.");

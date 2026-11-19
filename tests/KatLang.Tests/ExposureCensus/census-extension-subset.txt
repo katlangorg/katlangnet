@@ -1,4 +1,4 @@
-# E-18 route census extension subset: the greedy cover of the valid extension cells' triples that no valid grid cell has (full mode recomputes it).
+# E-18 route census extension subset: the greedy cover of the valid extension cells' triples that no valid grid cell has (full-extension mode recomputes it).
 head=rt-capture|pos=value|open=none|reader=plain|place=outside|end=result-member|req=none
 head=rt-capture|pos=callee|open=own-unused|reader=param|place=in-lib|end=result-member|req=container
 head=rt-capture|pos=spread|open=enc1-unused|reader=clause|place=in-box|end=result-member|req=member

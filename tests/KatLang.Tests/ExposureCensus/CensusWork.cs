@@ -19,7 +19,7 @@ internal static class CensusWork
     public const double Bound = 2.5;
     public static readonly string[] Levels = ["own", "enc1", "enc2", "F", "two"];
 
-    private static bool RuntimeHead(string head) => head is "rt-param" or "rt-member" or "rt-alg";
+    private static bool RuntimeHead(string head) => head is "rt-param" or "rt-member" or "rt-alg" or "rt-capture" or "rt-alg-call";
 
     private static string Placement(string place) => place switch { "in-lib" => "Lib", "in-box" => "Box", "in-mid" => "Mid", _ => "F" };
 
@@ -35,9 +35,23 @@ internal static class CensusWork
         _ => throw new ArgumentOutOfRangeException(nameof(level)),
     };
 
-    public static IEnumerable<(CensusFamily Family, string? Excluded)> Families()
+    /// <summary>The doubling families of the grid's heads (<see cref="CensusGrid.Heads"/>), every one with its exclusion or null.</summary>
+    public static IEnumerable<(CensusFamily Family, string? Excluded)> Families() => Families(CensusGrid.Heads);
+
+    /// <summary>
+    /// THE EXTENSION'S WORK FAMILIES (2026-11-19): the same doubling families for the extension heads
+    /// (<see cref="CensusGrid.ExtensionHeads"/>), apart from <see cref="Families()"/> so that the grid's family list, ids and
+    /// rows stay those of every earlier run. Each open target is the head's runtime reference <c>L{i}</c>: for
+    /// <c>rt-capture</c> <c>L{i} = Cap(Seed()).Algorithm</c>, the captured call of F's one <c>Seed = 3</c>; for
+    /// <c>rt-alg-call</c> <c>L{i} = X{i}.Sub.Algorithm</c> over an <c>X{i}.Sub</c> that returns <c>Cap(Run())</c> of its
+    /// member <c>public Run = y</c>. Both are runtime references, so a used family is excluded as for the grid's runtime
+    /// heads, and the depth families stay the static heads' alone.
+    /// </summary>
+    public static IEnumerable<(CensusFamily Family, string? Excluded)> ExtensionFamilies() => Families(CensusGrid.ExtensionHeads);
+
+    private static IEnumerable<(CensusFamily Family, string? Excluded)> Families(IReadOnlyList<string> heads)
     {
-        foreach (var head in CensusGrid.Heads)
+        foreach (var head in heads)
         foreach (var reader in CensusGrid.ReaderKinds)
         foreach (var place in CensusGrid.Places)
         foreach (var level in Levels)
@@ -63,7 +77,7 @@ internal static class CensusWork
         "block" => $"{{ public Sub = {{ public Q{i} = 1 }} }}.Sub",
         "group-name" => $"(X{i}.Sub)",
         "group-block" => $"({{ public Sub = {{ public Q{i} = 1 }} }}.Sub)",
-        "ref1" or "blockref" or "rt-param" or "rt-member" or "rt-alg" => $"L{i}",
+        "ref1" or "blockref" or "rt-param" or "rt-member" or "rt-alg" or "rt-capture" or "rt-alg-call" => $"L{i}",
         "chain2" => $"J{i}",
         "refmem" => $"M{i}",
         _ => throw new ArgumentOutOfRangeException(nameof(head)),
@@ -77,9 +91,25 @@ internal static class CensusWork
         "blockref" => [$"L{i} = {{ public Sub = {{ public Q{i} = 1\n y }} }}.Sub"],
         "rt-param" => [$"L{i} = y"],
         "rt-member" => [$"L{i} = y.C"],
-        "rt-alg" => [$"L{i} = X{i}.Sub.Algorithm"],
+        "rt-alg" or "rt-alg-call" => [$"L{i} = X{i}.Sub.Algorithm"],
+        "rt-capture" => [$"L{i} = Cap(Seed()).Algorithm"],
         _ => [],
     };
+
+    // The declarations an extension head's references read, written once in F.
+    private static IEnumerable<string> HeadDeclarations(string head) => head switch
+    {
+        "rt-member" => ["C(r) = r"],
+        "rt-capture" => ["Seed = 3", "Cap(meta op) = op"],
+        "rt-alg-call" => ["Cap(meta op) = op"],
+        _ => [],
+    };
+
+    // The open target container X{i}: its Sub reads y; for rt-alg-call its row moves into the member Run, and Sub returns a
+    // captured call of Run.
+    private static string Container(string head, int i) => head == "rt-alg-call"
+        ? $"X{i} = {{\n  public Sub = {{\n    public Q{i} = 1\n    public Run = y\n    Cap(Run())\n  }}\n  0\n}}"
+        : $"X{i} = {{\n  public Sub = {{\n    public Q{i} = 1\n    y\n  }}\n  0\n}}";
 
     private static string Program(string head, string reader, string place, string concrete, string use, int m)
     {
@@ -124,10 +154,10 @@ internal static class CensusWork
         if (concrete == "reader-two") members.Add("Near = { public Irrelevant = 1 }");
         for (var i = 0; i < m; i++)
         {
-            members.Add($"X{i} = {{\n  public Sub = {{\n    public Q{i} = 1\n    y\n  }}\n  0\n}}");
+            members.Add(Container(head, i));
             members.AddRange(References(head, i));
         }
-        if (head == "rt-member") members.Add("C(r) = r");
+        members.AddRange(HeadDeclarations(head));
         if (place == "outside") members.Add(readerText);
         return $"F(y) = {{\n{Level("F", string.Join("\n", members), "0")}\n}}\nF(5)\n";
     }

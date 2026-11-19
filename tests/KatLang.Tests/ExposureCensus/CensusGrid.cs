@@ -5,7 +5,9 @@ namespace KatLang.Tests.ExposureCensus;
 /// <summary>
 /// One generated census program: a source body declaring <c>F(y)</c> (no root row), the readers the
 /// checks examine and the dimension values that produced it. <see cref="Dims"/> is empty for a fixed
-/// control or self-check case.
+/// control or self-check case. A case whose body loads modules carries the sources its in-memory module
+/// server answers (<see cref="Modules"/>, URL to text): the runner then parses every probe through the
+/// asynchronous front end over a fresh server of exactly those sources.
 /// </summary>
 internal sealed record CensusCase(
     string Id,
@@ -13,7 +15,8 @@ internal sealed record CensusCase(
     string Body,
     IReadOnlyList<CensusReader> Readers,
     string Kind = "grid",
-    string? ImpossibleSubject = null)
+    string? ImpossibleSubject = null,
+    IReadOnlyList<KeyValuePair<string, string>>? Modules = null)
 {
     public string Dim(string name) => Dims.First(d => d.Key == name).Value;
 }
@@ -97,6 +100,53 @@ internal static class CensusGrid
     public static readonly string[] AllEnds = [.. Ends, .. ExtensionEnds];
 
     public static bool IsExtension(string head, string end) => ExtensionHeads.Contains(head) || ExtensionEnds.Contains(end);
+
+    // THE MODULE DIMENSION (2026-11-19): how the open level's SECOND provider, the one that gives the reader its name, is
+    // reached when it is a loaded module. A module cell is a cell of the widened grid (its PROVIDER TWIN, the grid or
+    // extension cell of the same seven values) whose open level writes the module instead of `Other`: `open <target>,
+    // ModA, ModB` for `holders` (two root holders, `ModA = load(<url>)` and `ModB = load(<url>)`, of ONE canonical URL) and
+    // `open <target>, ModA, load(<url>)` for `holder-load` (one holder and a written load of it). The module text is
+    // `Other`'s members, so one module is one provider of `X` exactly as `Other` is (Q-32 I-U), and the cell must give what
+    // its twin gives (check P). The control `two-urls` holds two DISTINCT canonical URLs serving that same text, so the two
+    // holders are two providers: the unqualified read `X` is the front end's AmbiguousOpen (the control's provider verdict),
+    // and the evaluated fixture reads `ModA.X` instead, a clean qualified access in the same program. That read is lexical
+    // (the owner walk finds `ModA` before any open), so it is no twin of the cell reading `X`. Only an open position's unused level reads a name the
+    // second provider gives, so module cells exist there alone; every cell's dimensions are its twin's seven plus `module`,
+    // and its id is the twin's id followed by `|module=<value>`.
+    public static readonly string[] ModuleValues = ["holders", "holder-load", "two-urls"];
+
+    public static readonly string[] ModuleDimensionNames = [.. DimensionNames, "module"];
+
+    public const string ModuleUrl = "https://mods.test/other.kat";
+    public const string ModuleCopyUrl = "https://mods.test/other-copy.kat";
+
+    /// <summary>The loaded module's text: <c>Other</c>'s members (<c>Other = { public X = 1; public Z = 2 }</c>).</summary>
+    public const string ModuleText = "public X = 1\npublic Z = 2\n";
+
+    /// <summary>The sources a module cell's server answers: one URL for one module, two serving the same text for the control.</summary>
+    public static IReadOnlyList<KeyValuePair<string, string>> ModuleSources(string module) => module == "two-urls"
+        ? [new(ModuleUrl, ModuleText), new(ModuleCopyUrl, ModuleText)]
+        : [new(ModuleUrl, ModuleText)];
+
+    /// <summary>Whether the widened grid's cell of these values is the provider twin of module cells.</summary>
+    public static bool HasModuleCells(string pos, string open) => IsOpenPosition(pos) && open.EndsWith("-unused", StringComparison.Ordinal);
+
+    /// <summary>Why a module cell of a provider twin is not built, or <c>null</c> when it is generated.</summary>
+    public static string? ModuleExclusion(string reader, string open, string module)
+    {
+        if (module == "holder-load" && reader == "clause" && open == "own-unused")
+            return "a written load in a clause branch is a deferred module region, which the synchronous routes and the Lean encoding refuse";
+        return null;
+    }
+
+    /// <summary>
+    /// The provider verdict a module cell must show: the module providers of X at the reader, the distinct module
+    /// identities in its tree, the URLs its probe downloaded, and the front end's verdict on the UNQUALIFIED read
+    /// <c>X</c> (the cell itself, except for the control, whose evaluated fixture reads <c>ModA.X</c>).
+    /// </summary>
+    public static string ExpectedProviderVerdict(CensusCase @case) => @case.Dim("module") == "two-urls"
+        ? $"providers 2; identities 2; fetched {ModuleCopyUrl},{ModuleUrl}; unqualified AmbiguousOpen"
+        : $"providers 1; identities 1; fetched {ModuleUrl}; unqualified clean";
 
     public static bool IsOpenPosition(string pos) => pos is "open" or "open-dotted";
 
@@ -191,6 +241,76 @@ internal static class CensusGrid
     }
 
     /// <summary>
+    /// THE MODULE CELLS (2026-11-19): for every generated cell of the widened grid (<see cref="Generate()"/>, then
+    /// <see cref="GenerateExtension"/>) that has module cells (<see cref="HasModuleCells"/>), one cell per
+    /// <see cref="ModuleValues"/> value, in that order. The cells of both grids are untouched: a module cell is a program of
+    /// its own, its twin's body with the second provider loaded (<see cref="ModuleValues"/>).
+    /// </summary>
+    public static (IReadOnlyList<CensusCase> Cases, IReadOnlyList<CensusExclusion> Excluded) GenerateModules()
+    {
+        var cases = new List<CensusCase>();
+        var excluded = new List<CensusExclusion>();
+        foreach (var head in AllHeads)
+        foreach (var pos in Positions)
+        foreach (var open in OpenLevels)
+        foreach (var reader in ReaderKinds)
+        foreach (var place in Places)
+        foreach (var end in AllEnds)
+        foreach (var req in Requirements)
+        {
+            if (!HasModuleCells(pos, open) || Exclusion(head, pos, open, reader, place, end, req) is not null) continue;
+            foreach (var module in ModuleValues)
+            {
+                string[] values = [head, pos, open, reader, place, end, req, module];
+                if (ModuleExclusion(reader, open, module) is { } reason)
+                {
+                    excluded.Add(new CensusExclusion(ModuleIdOf(values), reason));
+                    continue;
+                }
+                cases.Add(BuildModule(values));
+            }
+        }
+        return (cases, excluded);
+    }
+
+    public static string ModuleIdOf(IReadOnlyList<string> values) => $"{IdOf(values)}|module={values[7]}";
+
+    /// <summary>A module cell from its eight values (the twin's seven and <c>module</c>).</summary>
+    public static CensusCase BuildModule(IReadOnlyList<string> v)
+    {
+        if (v.Count != ModuleDimensionNames.Length || !ModuleValues.Contains(v[7]) || !HasModuleCells(v[1], v[2]))
+            throw new ArgumentException($"Not a module cell: {string.Join("|", v)}", nameof(v));
+        var builder = new ProgramShape(v[0], v[1], v[2], v[3], v[4], v[5], v[6], rowsTwin: false, module: v[7]);
+        var dims = ModuleDimensionNames.Select((name, i) => new KeyValuePair<string, string>(name, v[i])).ToArray();
+        return new CensusCase(ModuleIdOf(v), dims, builder.Body(), builder.Readers(), "module", Modules: ModuleSources(v[7]));
+    }
+
+    // The control's qualified fixture, the only place a module cell reads a module member through its holder.
+    private const string QualifiedRead = "ModA.X + 0";
+
+    /// <summary>The PROVIDER TWIN of a module cell: the grid or extension cell of its first seven values (check P).</summary>
+    public static CensusCase ModuleTwin(CensusCase @case)
+    {
+        if (@case.Kind != "module") throw new ArgumentException($"Only a module cell has a provider twin: {@case.Id}", nameof(@case));
+        return Build(@case.Dims.Take(DimensionNames.Length).Select(d => d.Value).ToArray());
+    }
+
+    /// <summary>
+    /// The UNQUALIFIED READ of a module cell, the front-end control of its provider verdict: the cell's own program reading
+    /// <c>X</c>. It is the cell itself when the body reads <c>X</c> already (one module); the control <c>two-urls</c>'s
+    /// fixture reads <c>ModA.X</c> once, and the read replaces it, so two providers of <c>X</c> make it AmbiguousOpen.
+    /// </summary>
+    public static CensusCase ModuleUnqualifiedRead(CensusCase @case)
+    {
+        if (@case.Kind != "module") throw new ArgumentException($"Only a module cell has an unqualified read: {@case.Id}", nameof(@case));
+        var at = @case.Body.IndexOf(QualifiedRead, StringComparison.Ordinal);
+        if (at < 0) return @case;
+        if (@case.Body.IndexOf(QualifiedRead, at + 1, StringComparison.Ordinal) >= 0)
+            throw new InvalidDataException($"The module cell reads {QualifiedRead} more than once: {@case.Id}");
+        return @case with { Body = @case.Body[..at] + "X + 0" + @case.Body[(at + QualifiedRead.Length)..], Kind = "module-unqualified" };
+    }
+
+    /// <summary>
     /// THE ROWS TWIN of a <c>pos=deconstruction</c> cell: the same program with the reader's deconstruction
     /// <c>a, b = &lt;selection&gt; + 0, 0</c> and the row <c>a, b</c> returning its targets replaced by the right-hand side
     /// itself as the reader's row, <c>&lt;selection&gt; + 0, 0</c>; the dimensions, the readers and every other line are the
@@ -227,18 +347,20 @@ internal static class CensusGrid
         return Build(@case.Dims.Select(d => d.Value).ToArray(), "static-route-twin");
     }
 
+    /// <summary>The grid or extension cell of a seven-value id, or the module cell of an eight-value one (null otherwise).</summary>
     public static CensusCase? TryParseId(string id)
     {
         var parts = id.Split('|');
-        if (parts.Length != DimensionNames.Length) return null;
+        if (parts.Length != DimensionNames.Length && parts.Length != ModuleDimensionNames.Length) return null;
         var values = new string[parts.Length];
         for (var i = 0; i < parts.Length; i++)
         {
-            var prefix = DimensionNames[i] + "=";
+            var prefix = ModuleDimensionNames[i] + "=";
             if (!parts[i].StartsWith(prefix, StringComparison.Ordinal)) return null;
             values[i] = parts[i][prefix.Length..];
         }
-        return Build(values);
+        if (values.Length == DimensionNames.Length) return Build(values);
+        return ModuleValues.Contains(values[7]) && HasModuleCells(values[1], values[2]) ? BuildModule(values) : null;
     }
 
     /// <summary>
@@ -298,7 +420,8 @@ internal static class CensusGrid
     /// </list>
     /// A runtime head (<c>rt-param</c>, <c>rt-member</c>, <c>rt-capture</c>) selects nothing statically; the callable
     /// <c>rt-alg-call</c> navigates its route in the reference's own scope, as <c>rt-alg</c> does. A settlement case
-    /// carries its impossible member, derived from its own program (<see cref="CensusCase.ImpossibleSubject"/>).
+    /// carries its impossible member, derived from its own program (<see cref="CensusCase.ImpossibleSubject"/>). A module
+    /// cell has its provider twin's: a loaded second provider moves no check site.
     /// </summary>
     public static string? ImpossibleMember(CensusCase @case)
     {
@@ -416,7 +539,7 @@ internal static class CensusGrid
     /// </summary>
     public static IReadOnlyList<CensusCase> ThreeWayCover(IReadOnlyList<CensusCase> cases, IReadOnlySet<string>? covered)
     {
-        var dims = DimensionNames.Length;
+        var dims = DimensionCount(cases);
         var triples = new List<(int, int, int)>();
         for (var a = 0; a < dims; a++)
             for (var b = a + 1; b < dims; b++)
@@ -457,13 +580,23 @@ internal static class CensusGrid
         return chosen;
     }
 
+    // The dimension count every case of one cover shares: the grid's seven, or a module cell's eight.
+    private static int DimensionCount(IReadOnlyList<CensusCase> cases)
+    {
+        if (cases.Count == 0) return DimensionNames.Length;
+        var count = cases[0].Dims.Count;
+        if (cases.Any(c => c.Dims.Count != count))
+            throw new ArgumentException("A cover's cases must share one dimension list.", nameof(cases));
+        return count;
+    }
+
     public static int TripleCount(IReadOnlyList<CensusCase> cases) => Triples(cases).Count;
 
     /// <summary>Every combination of three dimension values that occurs in some case (the keys the cover counts).</summary>
     public static HashSet<string> Triples(IReadOnlyList<CensusCase> cases)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
-        var dims = DimensionNames.Length;
+        var dims = DimensionCount(cases);
         foreach (var @case in cases)
             for (var a = 0; a < dims; a++)
                 for (var b = a + 1; b < dims; b++)
@@ -474,11 +607,33 @@ internal static class CensusGrid
 
     /// <summary>
     /// The program text of one grid cell (with <paramref name="rowsTwin"/>, its <see cref="DeconstructionTwin"/>; with
-    /// <paramref name="staticRoute"/>, its <see cref="StaticRouteTwin"/>).
+    /// <paramref name="staticRoute"/>, its <see cref="StaticRouteTwin"/>; with a <paramref name="module"/> value, the module
+    /// cell of that value).
     /// </summary>
     private sealed class ProgramShape(string head, string pos, string open, string reader, string place, string end, string req, bool rowsTwin,
-        bool staticRoute = false)
+        bool staticRoute = false, string? module = null)
     {
+        // The unused level's second provider: `Other`, or the loaded module reached as the module value spells it.
+        private string SecondProvider => module switch
+        {
+            null => "Other",
+            "holder-load" => $"ModA, load('{ModuleUrl}')",
+            _ => "ModA, ModB",
+        };
+
+        // The name an open position's unused level gives the reader (the control's fixture qualifies it).
+        private string UnusedRead => module == "two-urls" ? "ModA.X" : "X";
+
+        // The module cell's root holders, written before F.
+        private string ModuleHolders => module switch
+        {
+            null => "",
+            "holders" => $"ModA = load('{ModuleUrl}')\nModB = load('{ModuleUrl}')\n",
+            "holder-load" => $"ModA = load('{ModuleUrl}')\n",
+            "two-urls" => $"ModA = load('{ModuleUrl}')\nModB = load('{ModuleCopyUrl}')\n",
+            _ => throw new ArgumentOutOfRangeException(nameof(module), module, null),
+        };
+
         private readonly string[] _path = place switch
         {
             "in-box" when req == "deep" => ["Lib", "Box", "Mid", "Sub"],
@@ -548,7 +703,7 @@ internal static class CensusGrid
             {
                 var target = container + Step + (pos == "open-dotted" ? ".T" : "") + (end == "missing" ? ".Missing" : "");
                 var used = open.EndsWith("-used", StringComparison.Ordinal) || open == "two";
-                return (used ? "Q + 0" : "X + 0", target);
+                return (used ? "Q + 0" : $"{UnusedRead} + 0", target);
             }
             var expression = (pos, end) switch
             {
@@ -612,7 +767,7 @@ internal static class CensusGrid
             var relative = open[..open.IndexOf('-')];
             var used = open.EndsWith("-used", StringComparison.Ordinal);
             opens[Level(relative)] = used ? $"open {target}"
-                : head == "opened" ? $"open {Path}, Lib" : $"open {target}, Other";
+                : head == "opened" ? $"open {Path}, Lib" : $"open {target}, {SecondProvider}";
             return opens;
         }
 
@@ -691,7 +846,7 @@ internal static class CensusGrid
                 "in-mid" => "Lib.Mid(y)",
                 _ => ReaderCall,
             };
-            var root = OpenLine(opens, "root");
+            var root = ModuleHolders + OpenLine(opens, "root");
             return $"{root}F(y) = {{\n{LevelBody("F", string.Join("\n", members), output)}\n}}\n";
         }
 

@@ -39,14 +39,19 @@ internal sealed class CensusCaseResult
     public Dictionary<string, string> Outcomes { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> Metadata { get; } = new(StringComparer.Ordinal);
     public bool InsideWorks { get; set; }
+
+    /// <summary>A module cell's observed provider verdict (check P; <see cref="CensusGrid.ExpectedProviderVerdict"/>), else null.</summary>
+    public string? ProviderVerdict { get; set; }
 }
 
 /// <summary>
 /// Evaluates census cases: parses each probe program, evaluates it on every route, and applies the
 /// under-charge check U and the over-charge check O (brief section 2), for a deconstruction cell the twin
-/// check T (a refusal inside the owner's own call is neither U nor O), and for a callable <c>rt-alg</c> cell the
-/// static-route check R. Engine disagreements are findings of their own class. The model check (M) consumes
-/// <see cref="CensusCaseResult.Lean"/>.
+/// check T (a refusal inside the owner's own call is neither U nor O), for a callable <c>rt-alg</c> cell the
+/// static-route check R, and for a module cell the provider check P (its provider verdict and its provider twin). A case
+/// that loads modules is parsed through the asynchronous front end over a deterministic in-memory server of its own
+/// sources, and its engine routes are the asynchronous ones. Engine disagreements are findings of their own class. The
+/// model check (M) consumes <see cref="CensusCaseResult.Lean"/>, whose trees hold the loaded module graph as parsed.
 /// </summary>
 internal static class CensusRunner
 {
@@ -90,14 +95,77 @@ internal static class CensusRunner
         return (sync, sync == ordinary && sync == forced ? null : $"sync={sync}; async={ordinary}; forced-async={forced}");
     }
 
-    private static async Task<string?> EngineDisagreement(string source, string treeOutcome)
+    private static async Task<string?> EngineDisagreement(CensusCase @case, string source, string treeOutcome)
     {
+        if (@case.Modules is not null)
+        {
+            // Source loading is asynchronous only: the engine routes of a module case are RunAsync over a fresh server,
+            // with synchronous and with asynchronous host operations.
+            var loaded = RenderEngine(await KatLangEngine.RunAsync(source, ModuleServer(@case).Options()));
+            var loadedForced = RenderEngine(await KatLangEngine.RunAsync(source, ModuleServer(@case).Options(AsyncRoute)));
+            return loaded == treeOutcome && loadedForced == treeOutcome
+                ? null
+                : $"tree={treeOutcome}; RunAsync={loaded}; RunAsync(async)={loadedForced}";
+        }
         var run = RenderEngine(KatLangEngine.Run(source));
         var ordinary = RenderEngine(await KatLangEngine.RunAsync(source));
         var forced = RenderEngine(await KatLangEngine.RunAsync(source, new RunOptions { HostOperations = AsyncRoute }));
         return run == treeOutcome && ordinary == treeOutcome && forced == treeOutcome
             ? null
             : $"tree={treeOutcome}; Run={run}; RunAsync={ordinary}; RunAsync(async)={forced}";
+    }
+
+    /// <summary>A fresh deterministic in-memory module server over exactly the case's sources (unknown URLs fail).</summary>
+    internal static ModuleRouteAgreement.Modules ModuleServer(CensusCase @case)
+        => new([.. (@case.Modules ?? throw new ArgumentException($"The case loads no modules: {@case.Id}", nameof(@case)))
+            .Select(m => (m.Key, m.Value))]);
+
+    /// <summary>
+    /// The front end of one probe source: the synchronous parser, or for a case that loads modules the asynchronous front
+    /// end over a fresh server of its sources. Returns the error codes, or null for a clean parse.
+    /// </summary>
+    private static async Task<string?> Prescreen(CensusCase @case, string source)
+    {
+        var result = @case.Modules is null ? Parser.Parse(source) : await Parser.ParseAsync(source, ModuleServer(@case).Options());
+        return result.HasErrors ? ErrorCodes(result) : null;
+    }
+
+    internal static string ErrorCodes(ParseResult result)
+        => string.Join(",", result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
+            .Select(d => d.Code.ToString()).Distinct().Order(StringComparer.Ordinal));
+
+    /// <summary>
+    /// The clean tree of one probe source through the repository's explicit clean-source assertion boundary
+    /// (<see cref="SourceProvenance.ParseValid"/>, or <see cref="SourceProvenance.ParseValidAsync"/> over a fresh module
+    /// server), with the URLs that server was asked for (empty for a case that loads nothing).
+    /// </summary>
+    internal static async Task<(Algorithm.User Root, IReadOnlyList<string> Fetched)> ParseValid(CensusCase @case, string source)
+    {
+        if (@case.Modules is null) return (SourceProvenance.ParseValid(source).Root, []);
+        var server = ModuleServer(@case);
+        var root = (await SourceProvenance.ParseValidAsync(source, server.Options())).Root;
+        lock (server.Fetches)
+            return (root, server.Fetches.Keys.Order(StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// The distinct loaded-module identities of a tree: every module root (<c>IsModuleRoot</c>) reachable through
+    /// properties, opens, rows and expressions, counted by its declaration (Q-32 I-U: one canonical URL is one module).
+    /// </summary>
+    internal static int ModuleIdentities(Algorithm root)
+    {
+        var modules = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<object>();
+        pending.Push(root);
+        while (pending.TryPop(out var node))
+        {
+            if (!seen.Add(node)) continue;
+            if (node is Algorithm { IsModuleRoot: true } module)
+                modules.Add(module.Declaration ?? throw new InvalidDataException("A loaded module has no declaration identity."));
+            for (var i = 0; AstStructuralPreflight.TryGetChild(node, i, out var child); i++) pending.Push(child);
+        }
+        return modules.Count;
     }
 
     internal static Property? Find(Algorithm root, IReadOnlyList<string> path)
@@ -250,27 +318,34 @@ internal static class CensusRunner
     /// The outcomes of the three inside probes of a case on the synchronous route (the comparison with HEAD
     /// a4b545e8 reads them; <see cref="Run"/> checks the other routes), or null when a probe does not parse cleanly.
     /// </summary>
-    public static IReadOnlyList<(string Label, string Outcome)>? InsideOutcomes(CensusCase @case)
+    public static async Task<IReadOnlyList<(string Label, string Outcome)>?> InsideOutcomes(CensusCase @case)
     {
         var outcomes = new List<(string, string)>(3);
         foreach (var (label, row) in new[] { ("in5", Inside5), ("in7", Inside7), ("same", SameRun) })
         {
             var source = @case.Body + row + "\n";
-            if (Parser.Parse(source).HasErrors) return null;
-            outcomes.Add((label, Render(Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)))));
+            if (await Prescreen(@case, source) is not null) return null;
+            var (root, _) = await ParseValid(@case, source);
+            outcomes.Add((label, Render(Evaluator.Run(new Expr.AlgorithmExpr(root)))));
         }
         return outcomes;
     }
 
-    /// <summary>Every probe program of a case (label, source), or null when one does not parse cleanly.</summary>
-    public static IReadOnlyList<(string Label, string Source)>? Probes(CensusCase @case)
+    private static (string Label, string Source)[] ProbeSources(CensusCase @case)
     {
         var rows = new List<(string Label, string Row)> { ("in5", Inside5), ("in7", Inside7), ("same", SameRun) };
         rows.AddRange(@case.Readers.Select(r => ($"esc:{r.Label}", r.Escaped)));
-        var sources = rows.Select(r => (r.Label, Source: @case.Body + r.Row + "\n")).ToArray();
-        return sources.Any(s => Parser.Parse(s.Source).HasErrors) ? null : sources;
+        return rows.Select(r => (r.Label, Source: @case.Body + r.Row + "\n")).ToArray();
     }
 
+    /// <summary>Every probe program of a case, or null when one fails elaboration.</summary>
+    public static async Task<IReadOnlyList<(string Label, string Source)>?> Probes(CensusCase @case)
+    {
+        var sources = ProbeSources(@case);
+        foreach (var (_, source) in sources)
+            if (await Prescreen(@case, source) is not null) return null;
+        return sources;
+    }
     /// <summary>
     /// Runs every check of one case. <paramref name="hostBuilt"/> is the harness's own seam: it rewrites each probe's
     /// front-end tree before the checks read it (a host-built tree, as the O check's copies are), so a negative control
@@ -279,25 +354,27 @@ internal static class CensusRunner
     /// </summary>
     public static async Task<CensusCaseResult> Run(CensusCase @case, bool collectLean, Func<Algorithm.User, Algorithm.User>? hostBuilt = null)
     {
-        var probes = new List<(string Label, string Row)> { ("in5", Inside5), ("in7", Inside7), ("same", SameRun) };
-        probes.AddRange(@case.Readers.Select(r => ($"esc:{r.Label}", r.Escaped)));
+        var probes = ProbeSources(@case);
         var parsed = new Dictionary<string, Algorithm.User>(StringComparer.Ordinal);
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (label, row) in probes)
+        var fetched = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var (label, source) in probes)
         {
-            var source = @case.Body + row + "\n";
-            var result = Parser.Parse(source);
-            if (result.HasErrors)
+            if (await Prescreen(@case, source) is { } codes)
             {
-                var codes = string.Join(",", result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)
-                    .Select(d => d.Code.ToString()).Distinct().Order(StringComparer.Ordinal));
-                return new CensusCaseResult { Case = @case, Skipped = label == "in5" ? codes : $"{codes} (probe {label})" };
+                var skipped = new CensusCaseResult { Case = @case, Skipped = label == "in5" ? codes : $"{codes} (probe {label})" };
+                // P: a module cell parses exactly when its provider twin does, so a missing download or a module cell
+                // dropped from the census is a gap, never a silent skip.
+                if (@case.Kind == "module" && await Probes(CensusGrid.ModuleTwin(@case)) is not null)
+                    skipped.Gaps.Add(new CensusGap("P", "module-validity-differs", @case.Id, "-", $"{label}: module cell {codes}; provider twin parses cleanly"));
+                return skipped;
             }
             // The pre-screen above keeps diagnostics for skipped cells; every evaluated source then
             // crosses the repository's explicit clean-source assertion boundary.
-            var root = SourceProvenance.ParseValid(source).Root;
+            var (root, urls) = await ParseValid(@case, source);
             parsed[label] = hostBuilt is null ? root : hostBuilt(root);
             sources[label] = source;
+            fetched[label] = urls;
         }
 
         var outcome = new CensusCaseResult { Case = @case };
@@ -317,7 +394,7 @@ internal static class CensusRunner
             outcome.Outcomes[label] = result;
             if (disagreement is not null)
                 outcome.Gaps.Add(new CensusGap("E", "engine-disagreement", @case.Id, "-", $"{label}: {disagreement}"));
-            else if (hostBuilt is null && await EngineDisagreement(sources[label], result) is { } engine)
+            else if (hostBuilt is null && await EngineDisagreement(@case, sources[label], result) is { } engine)
                 outcome.Gaps.Add(new CensusGap("E", "engine-disagreement", @case.Id, "-", $"{label}: {engine}"));
             if (collectLean)
                 outcome.Lean.Add(new CensusLeanItem($"{@case.Id}#real#{label}", @case.Id, "real", "real", parsed[label], result));
@@ -413,8 +490,67 @@ internal static class CensusRunner
             var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.StaticRouteTwin(@case), probes.Select(p => p.Label).ToArray());
             outcome.Gaps.AddRange(RouteDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
         }
+
+        // P: a module cell's provider verdict (CensusGrid.ExpectedProviderVerdict), the same on every probe, and for one module
+        // its provider twin, the same cell with `Other` as the second provider, built from SOURCE: one module is one provider
+        // of the text Other holds, so every probe and every reader's metadata must equal the twin's. The control's qualified
+        // fixture reads `ModA` lexically, a different lookup, so it has its verdict and the other checks but no twin.
+        if (@case.Kind == "module")
+        {
+            var unqualified = CensusGrid.ModuleUnqualifiedRead(@case);
+            var errors = unqualified == @case ? null : await Prescreen(unqualified, unqualified.Body + Inside5 + "\n");
+            var verdicts = parsed.ToDictionary(pair => pair.Key,
+                pair => ProviderVerdict(@case, pair.Value, fetched[pair.Key], errors), StringComparer.Ordinal);
+            outcome.ProviderVerdict = verdicts["in5"];
+            var expected = CensusGrid.ExpectedProviderVerdict(@case);
+            if (outcome.ProviderVerdict != expected)
+                outcome.Gaps.Add(new CensusGap("P", "provider-verdict-differs", @case.Id, "-", $"expected {expected}; observed {outcome.ProviderVerdict}"));
+            if (verdicts.Values.Any(verdict => verdict != outcome.ProviderVerdict))
+                outcome.Gaps.Add(new CensusGap("P", "provider-verdict-differs", @case.Id, "-",
+                    "probes differ: " + string.Join("; ", verdicts.Select(v => $"{v.Key}: {v.Value}"))));
+            if (HasModuleTwin(@case))
+            {
+                var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.ModuleTwin(@case), probes.Select(p => p.Label).ToArray());
+                outcome.Gaps.AddRange(ModuleTwinDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
+            }
+        }
         return outcome;
     }
+
+    /// <summary>
+    /// Read the production lookup for X at the innermost reader, including the selected branch of a clause family.
+    /// A holder can occur in the loaded graph even if its module supplies no name at this open level.
+    /// </summary>
+    private static string ProviderVerdict(CensusCase @case, Algorithm.User root, IReadOnlyList<string> fetched, string? errors)
+    {
+        var scope = ElaboratedScopeLookup.CreateScope(root);
+        Algorithm reader = root;
+        foreach (var name in @case.Readers.MaxBy(r => r.Path.Count)!.Path)
+        {
+            reader = reader.Properties.Single(p => p.Name == name).Value;
+            scope = ElaboratedScopeLookup.CreateScope(reader, scope);
+        }
+        if (reader is Algorithm.Conditional family)
+        {
+            var branch = family.Branches[0];
+            scope = ElaboratedScopeLookup.CreateScope(branch.Body, scope, branchPattern: branch.Pattern);
+        }
+        var providers = ElaboratedScopeLookup.SelectFirstOpenLevel(scope, "X").Providers();
+        var modules = providers.Count(p => p.Target.IsModuleRoot);
+        var count = modules == providers.Count ? $"{modules}" : $"{providers.Count} ({modules} loaded)";
+        return $"providers {count}; identities {ModuleIdentities(root)}; fetched {string.Join(",", fetched)}; unqualified {errors ?? "clean"}";
+    }
+
+    /// <summary>
+    /// Check P's twin verdict: every probe outcome and every reader's metadata of a module cell equal its provider twin's,
+    /// one gap per differing probe or reader (class <c>module-twin-differs</c>); no difference is exempt.
+    /// </summary>
+    internal static List<CensusGap> ModuleTwinDifferences(string id, IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
+        IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
+        => PairDifferences("P", "module-twin-differs", "module", "twin", id, outcomes, metadata, twinOutcomes, twinMetadata);
+
+    /// <summary>Whether check P compares the case with its provider twin: every module cell of one module (not the control).</summary>
+    internal static bool HasModuleTwin(CensusCase @case) => @case.Kind == "module" && @case.Dim("module") != "two-urls";
 
     /// <summary>Whether check R compares the case with its static-route twin: every <c>rt-alg-call</c> grid cell.</summary>
     internal static bool HasStaticRouteTwin(CensusCase @case)
@@ -427,19 +563,26 @@ internal static class CensusRunner
     /// </summary>
     internal static List<CensusGap> RouteDifferences(string id, IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
         IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
+        => PairDifferences("R", "static-route-differs", "runtime", "static", id, outcomes, metadata, twinOutcomes, twinMetadata);
+
+    // The shared verdict of checks R, T and P: one gap per probe whose outcome differs from the twin's (a probe the twin lacks
+    // is "absent", never a match) and per reader whose metadata differs, each spelled with the pair's two names.
+    private static List<CensusGap> PairDifferences(string check, string @class, string cellName, string twinName, string id,
+        IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
+        IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
     {
         var gaps = new List<CensusGap>();
         foreach (var (label, cell) in outcomes.OrderBy(o => o.Key, StringComparer.Ordinal))
         {
             var twin = twinOutcomes.TryGetValue(label, out var value) ? value : "absent";
             if (twin != cell)
-                gaps.Add(new CensusGap("R", "static-route-differs", id, "-", $"{label}: runtime={cell}; static={twin}"));
+                gaps.Add(new CensusGap(check, @class, id, "-", $"{label}: {cellName}={cell}; {twinName}={twin}"));
         }
         foreach (var (reader, cell) in metadata.OrderBy(m => m.Key, StringComparer.Ordinal))
         {
             var twin = twinMetadata.TryGetValue(reader, out var value) ? value : "absent";
             if (twin != cell)
-                gaps.Add(new CensusGap("R", "static-route-differs", id, reader, $"metadata: runtime={cell}; static={twin}"));
+                gaps.Add(new CensusGap(check, @class, id, reader, $"metadata: {cellName}={cell}; {twinName}={twin}"));
         }
         return gaps;
     }
@@ -478,20 +621,5 @@ internal static class CensusRunner
     /// </summary>
     internal static List<CensusGap> TwinDifferences(string id, IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
         IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
-    {
-        var gaps = new List<CensusGap>();
-        foreach (var (label, cell) in outcomes.OrderBy(o => o.Key, StringComparer.Ordinal))
-        {
-            var twin = twinOutcomes.TryGetValue(label, out var value) ? value : "absent";
-            if (twin != cell)
-                gaps.Add(new CensusGap("T", "deconstruction-twin-differs", id, "-", $"{label}: deconstruction={cell}; rows={twin}"));
-        }
-        foreach (var (reader, cell) in metadata.OrderBy(m => m.Key, StringComparer.Ordinal))
-        {
-            var twin = twinMetadata.TryGetValue(reader, out var value) ? value : "absent";
-            if (twin != cell)
-                gaps.Add(new CensusGap("T", "deconstruction-twin-differs", id, reader, $"metadata: deconstruction={cell}; rows={twin}"));
-        }
-        return gaps;
-    }
+        => PairDifferences("T", "deconstruction-twin-differs", "deconstruction", "rows", id, outcomes, metadata, twinOutcomes, twinMetadata);
 }

@@ -1,7 +1,530 @@
 # E-18 route census ratchet (ExposureCensusTests): every current gap, exactly.
 # Columns (tab-separated): check, class, case or family id, reader, detail.
-# Checks: U under-charge, O over-charge, E engine disagreement, T deconstruction twin, R static-route twin, W work, M1-M4 model (check-lean mode).
+# Checks: U under-charge, O over-charge, E engine disagreement, T deconstruction twin, R static-route twin, P module provider (verdict, provider twin, validity), W work, M1-M4 model (check-lean mode).
 # O over-charge tags (inherited/new) are decided against HEAD a4b545e8 by check-head mode.
 M3	model-stricter	selfcheck=runtime-dot-unread-receiver	A	r=y@0
 O	over-charge-inherited	selfcheck=I25-eager-own-open	A	r=y@0
 O	over-charge-inherited	selfcheck=runtime-dot-unread-receiver	A	r=y@0
+W	work-bound	W|head=rt-alg-call|reader=param|place=outside|level=enc1|use=unused	-	frames 4026 -> 15551; summary checkpoints 3170 -> 11320; frames 15551 -> 61101; summary checkpoints 11320 -> 42620
+W	work-bound	W|head=rt-alg-call|reader=param|place=outside|level=two|use=unused	-	frames 4026 -> 15551; summary checkpoints 3199 -> 11374; frames 15551 -> 61101; summary checkpoints 11374 -> 42724
+W	work-bound	W|head=rt-alg-call|reader=block|place=outside|level=enc2|use=unused	-	frames 4152 -> 15802; summary checkpoints 3321 -> 11621; frames 15802 -> 61602; summary checkpoints 11621 -> 43221
+# The extension's model sample (2026-11-19): the static model admits the copies of the off-chain re-entry readers without the y@0 the front end charges them, the open owner question of 0a1718d2 (left as it is).
+M2	model-false-admission	settlement=re-entry-2	H	r=y@0
+M2	model-false-admission	settlement=re-entry-4	H3	r=y@0
+# Qualified two-URL controls. Reader and container opens can carry requirements even when ModA.X resolves lexically.
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-inherited	head=name|pos=open|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-inherited	head=name|pos=open-dotted|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-inherited	head=group-name|pos=open|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-inherited	head=group-name|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=group-name|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-new	head=ref1|pos=open-dotted|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=ref1|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=ref1|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-new	head=chain2|pos=open-dotted|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=chain2|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=chain2|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=plain|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=param|place=in-mid|end=found|req=deep|module=two-urls	A	r=p@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=clause|place=in-mid|end=found|req=deep|module=two-urls	K	r=p@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+O	over-charge-new	head=refmem|pos=open-dotted|open=own-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=refmem|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=deep|module=two-urls	N	r=p@0
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=refmem|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=plain|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=param|place=outside|end=found|req=container|module=two-urls	A	r=y@0
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	r=y@1
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	r=y@2
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=clause|place=outside|end=found|req=container|module=two-urls	K	r=y@0
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	r=y@1
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	r=y@2
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+O	over-charge-new	head=blockref|pos=open-dotted|open=own-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=plain|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=param|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=clause|place=in-lib|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=outside|end=found|req=container|module=two-urls	B	r=y@0
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	r=y@1
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:B
+O	over-charge-new	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=outside|end=found|req=container|module=two-urls	N	r=y@0
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	r=y@1
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:N
+O	over-charge-new	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	r=y@2
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc1-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=plain|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=plain|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=param|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=param|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=clause|place=in-box|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=clause|place=in-mid|end=found|req=container|module=two-urls	K	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	B	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=block|place=in-lib|end=found|req=container|module=two-urls	D	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	B	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=block|place=in-mid|end=found|req=container|module=two-urls	D	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	A	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=deep|place=in-lib|end=found|req=container|module=two-urls	N	err localOnlyProperty:Lib
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	A	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=deep|place=in-box|end=found|req=container|module=two-urls	N	err localOnlyProperty:Box
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	A	err localOnlyProperty:Mid
+U	under-charge-masked-access	head=blockref|pos=open-dotted|open=enc2-unused|reader=deep|place=in-mid|end=found|req=container|module=two-urls	N	err localOnlyProperty:Mid
+# Model comparison on the module cover. Each reader is tested with one requirement removed.
+M2	model-false-admission	head=name|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	D	r=p@1
+M2	model-false-admission	head=ref1|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	D	r=y@3
+M3	model-stricter	head=name|pos=open-dotted|open=own-unused|reader=block|place=in-mid|end=found|req=deep|module=two-urls	B	r=p@0
+M3	model-stricter	head=ref1|pos=open-dotted|open=own-unused|reader=block|place=in-box|end=found|req=container|module=two-urls	B	r=y@2
