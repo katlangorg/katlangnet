@@ -5,7 +5,9 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// The C# observation of one host-parent case, on the neutral channel shared with the generated
-/// Lean artifact plus the zero-argument property cache's PUBLISHED entries per binding name.
+/// Lean artifact plus the zero-argument property cache's PUBLISHED entries per binding name. The
+/// entries are kept beside a failure too (KL-06): a failed run still shows every entry a successful
+/// owner published before it, and the generated guards compare them on failing cases as well.
 /// </summary>
 public sealed record HostParentObservation(
     string Neutral,

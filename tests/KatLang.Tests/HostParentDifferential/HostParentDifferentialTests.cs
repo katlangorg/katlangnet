@@ -10,7 +10,8 @@ namespace KatLang.Tests;
 /// (<see cref="HostParentDifferentialCorpus"/>). For every case the ONE constructed program graph is
 /// evaluated by C# on every route (<see cref="HostParentDifferentialHarness"/>) and encoded for Lean
 /// by <see cref="LeanAstEncoder"/>; the artifact guards Lean's neutral observation and published
-/// zero-argument cache entries against the recorded C# ones, and <c>lake build CoreTests</c>
+/// zero-argument cache entries against the recorded C# ones, on success and on failure alike
+/// (KL-06), and <c>lake build CoreTests</c>
 /// compiles it (it is imported by <c>lean/CoreTests.lean</c>). Every case is comparable: HOST-LEAN-O6 gave
 /// every host level its object's Lean host-scope token, which retired the last known model divergence
 /// (HP-14b). A future reviewed divergence would be excluded from the comparable partition and pinned on
@@ -58,7 +59,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15 and KL-06's HP-16.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -67,7 +68,7 @@ public class HostParentDifferentialTests
         Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(cases.Count, cases.Select(c => c.LeanName).Distinct(StringComparer.Ordinal).Count());
         var families = cases.Select(c => c.Id[..5]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(Enumerable.Range(1, 15).Select(n => $"HP-{n:00}"), families);
+        Assert.Equal(Enumerable.Range(1, 16).Select(n => $"HP-{n:00}"), families);
         Assert.All(cases, c => Assert.False(string.IsNullOrWhiteSpace(c.Description), c.Id));
     }
 
@@ -94,28 +95,120 @@ public class HostParentDifferentialTests
     /// Coverage ratchet: the pinned minimums may only be RAISED (or lowered in a reviewed diff that
     /// deliberately removes cases). An encoder regression cannot pass silently — a case that stops
     /// encoding fails generation loudly — and a case moved to the divergent partition breaks the
-    /// exact id list above.
+    /// exact id list above. Cache guards are read back from the GENERATED artifact: the SUCCESS
+    /// floor is pinned here, and failing cases by exact enumeration
+    /// (<see cref="FidelityRatchet_ComparableFailuresKeepTheirPublicationGuards"/>, KL-06).
     /// </summary>
     [Fact]
     public void FidelityRatchet_ComparableHostParentCoverageCannotSilentlyShrink()
     {
         const int MinimumComparableCases = 102;
         const int MinimumComparableCasesWithPreWiredParents = 96;
-        const int MinimumCacheGuards = 181;
+        const int MinimumSuccessCacheGuards = 181;
 
         var cases = HostParentDifferentialCorpus.AllCases();
         var comparable = cases.Where(c => c.Divergence is null).ToList();
         var wired = comparable.Count(c => LeanAstEncoder.EncodeExpr(c.Program).Contains("Algorithm.withParent (some ", StringComparison.Ordinal));
-        var cacheGuards = comparable.Select(c => (Case: c, Observation: HostParentDifferentialHarness.Observe(c)))
-            .Where(pair => pair.Observation.IsSuccess)
-            .Sum(pair => WatchedNames(pair.Case, pair.Observation).Count);
+        var successes = comparable.Where(c => HostParentDifferentialHarness.Observe(c).IsSuccess).ToList();
+        var guards = EmittedCacheGuards.Parse(GenerateArtifact(cases));
+        Assert.All(successes, c => Assert.Single(guards.Totals(c.LeanName)));
+        var cacheGuards = successes.Sum(c => guards.Names(c.LeanName).Select(g => g.Name).Distinct(StringComparer.Ordinal).Count());
 
         Assert.True(comparable.Count >= MinimumComparableCases,
             $"Comparable host-parent differential coverage shrank below {MinimumComparableCases} (actual {comparable.Count}).");
         Assert.True(wired >= MinimumComparableCasesWithPreWiredParents,
             $"Comparable cases with an encoded pre-wired parent shrank below {MinimumComparableCasesWithPreWiredParents} (actual {wired}).");
-        Assert.True(cacheGuards >= MinimumCacheGuards,
-            $"Per-property cache guards shrank below {MinimumCacheGuards} (actual {cacheGuards}).");
+        Assert.True(cacheGuards >= MinimumSuccessCacheGuards,
+            $"Per-property cache guards on successful cases shrank below {MinimumSuccessCacheGuards} (actual {cacheGuards}).");
+    }
+
+    /// <summary>
+    /// KL-06: every comparable case C# observes FAILING, enumerated by hand (not by the generator or
+    /// the harness), with the names its cache guards compare: its watched properties plus every name
+    /// C# published before the failure. HP-14i publishes <c>R</c> twice before failing; the HP-16
+    /// witnesses are a failure after a publication, a failing owner chain and a failed owner with a
+    /// published dependency (owner <c>Run</c> and dependency <c>P</c> both named).
+    /// </summary>
+    private static readonly (string Id, string[] Names)[] ExpectedFailureCacheGuardNames =
+    [
+        ("HP-02f", []), ("HP-03b", []), ("HP-03d", []),
+        ("HP-05c", []), ("HP-05d", []), ("HP-05e", []), ("HP-05f", []), ("HP-05g", []), ("HP-05h", []), ("HP-05i", []), ("HP-05j", []),
+        ("HP-08g", []), ("HP-08h", []), ("HP-08i", []), ("HP-08j", []),
+        ("HP-13c", []), ("HP-13d", []), ("HP-13e", []), ("HP-13m", ["M"]),
+        ("HP-14b", ["F"]), ("HP-14g", []), ("HP-14i", ["R"]), ("HP-14k", []), ("HP-14l", []), ("HP-14o", []),
+        ("HP-14s", []), ("HP-14t", []), ("HP-14u", []),
+        ("HP-16a", ["X"]), ("HP-16b", ["P", "Run"]), ("HP-16c", ["P", "Run"]),
+    ];
+
+    /// <summary>
+    /// KL-06 coverage ratchet for FAILING cases, pinned separately from the success floor: the
+    /// comparable failing cases are exactly <see cref="ExpectedFailureCacheGuardNames"/>, and for each
+    /// the generated artifact keeps its error guards (the neutral <c>err</c> observation and, for a
+    /// supported failure, the structured payload) plus ONE total guard and exactly one guard per
+    /// expected name — zero counts and cases with no name included. A failing case cannot appear,
+    /// vanish or lose a publication guard unreviewed.
+    /// </summary>
+    [Fact]
+    public void FidelityRatchet_ComparableFailuresKeepTheirPublicationGuards()
+    {
+        var cases = HostParentDifferentialCorpus.AllCases();
+        var failing = cases.Where(c => c.Divergence is null)
+            .Select(c => (Case: c, Observation: HostParentDifferentialHarness.Observe(c)))
+            .Where(pair => !pair.Observation.IsSuccess)
+            .ToDictionary(pair => pair.Case.Id, StringComparer.Ordinal);
+        Assert.Equal(ExpectedFailureCacheGuardNames.Select(e => e.Id).Order(StringComparer.Ordinal),
+            failing.Keys.Order(StringComparer.Ordinal));
+
+        var artifact = GenerateArtifact(cases);
+        var lines = artifact.Split('\n');
+        var guards = EmittedCacheGuards.Parse(artifact);
+        foreach (var (id, names) in ExpectedFailureCacheGuardNames)
+        {
+            var (hostCase, observation) = failing[id];
+            var lean = hostCase.LeanName;
+            Assert.Single(lines, line => line.StartsWith($"#guard obs {lean} == \"err ", StringComparison.Ordinal));
+            if (observation.ErrorPayload is not null)
+                Assert.Single(lines, line => line.StartsWith($"#guard errorObs {lean} == .matched ", StringComparison.Ordinal));
+            Assert.Equal(observation.PublishedTotal, Assert.Single(guards.Totals(lean)));
+            var expected = names.Order(StringComparer.Ordinal).Select(name => (name, observation.Published(name)));
+            Assert.Equal(expected, guards.Names(lean).OrderBy(g => g.Name, StringComparer.Ordinal));
+        }
+    }
+
+    /// <summary>
+    /// KL-06 witnesses with their reviewed C# observations: each fails with <c>div0</c>, keeps its
+    /// structured payload, and has pinned published entries — a failure after a publication keeps
+    /// <c>X</c>, a failing owner chain publishes nothing, a failed owner <c>Run</c> keeps its successful
+    /// dependency <c>P</c>. The generator emits exactly these guard lines. Mutating only HP-16c's
+    /// <c>P</c> count to zero fails that named Lean guard alone, its error guards still matching.
+    /// </summary>
+    [Theory]
+    [InlineData("HP-16a", "X=1", 1)]
+    [InlineData("HP-16b", "P=0 Run=0", 0)]
+    [InlineData("HP-16c", "P=1 Run=0", 1)]
+    public void FailedRunPublications_CSharpObservesTheReviewedEntries_AndTheArtifactGuardsThem(string id, string entries, int total)
+    {
+        var hostCase = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == id);
+        Assert.Null(hostCase.Divergence);
+        var expected = entries.Split(' ').Select(entry => entry.Split('='))
+            .Select(pair => (Name: pair[0], Count: int.Parse(pair[1], CultureInfo.InvariantCulture))).ToList();
+
+        var observation = HostParentDifferentialHarness.Observe(hostCase);
+        Assert.Equal("err div0", observation.Neutral);
+        Assert.Equal(new SharedErrorPayload("div0", [], []), observation.ErrorPayload);
+        Assert.All(expected, e => Assert.Equal(e.Count, observation.Published(e.Name)));
+        Assert.Equal(total, observation.PublishedTotal);
+
+        var lean = hostCase.LeanName;
+        string[] expectedGuards =
+        [
+            $"#guard obs {lean} == \"err div0\"",
+            $"#guard errorObs {lean} == .matched (some {{ kind := \"div0\", names := [], counts := [] }})",
+            .. expected.Select(e => $"#guard cacheEntries {lean} \"{e.Name}\" == some {e.Count}"),
+            $"#guard cacheTotal {lean} == some {total}",
+        ];
+        Assert.Equal(expectedGuards, GenerateArtifact([hostCase]).Split('\n').Where(line => line.StartsWith("#guard ", StringComparison.Ordinal)
+            && line.Contains($" {lean} ", StringComparison.Ordinal)));
     }
 
     /// <summary>
@@ -265,6 +358,50 @@ public class HostParentDifferentialTests
             .Order(StringComparer.Ordinal).ToList();
 
     /// <summary>
+    /// The cache guards a generated artifact emits per Lean case name, read back from its TEXT so the
+    /// ratchets pin what was generated. A <c>#guard cache…</c> line of any other shape fails loudly.
+    /// </summary>
+    private sealed class EmittedCacheGuards
+    {
+        private static readonly Regex EntriesLine = new(
+            @"^#guard cacheEntries (?<case>hp_[0-9]{2}[a-z]) ""(?<name>[^""]+)"" == some (?<count>[0-9]+)$", RegexOptions.CultureInvariant);
+        private static readonly Regex TotalLine = new(
+            @"^#guard cacheTotal (?<case>hp_[0-9]{2}[a-z]) == some (?<count>[0-9]+)$", RegexOptions.CultureInvariant);
+
+        private readonly Dictionary<string, List<(string Name, int Count)>> _names = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<int>> _totals = new(StringComparer.Ordinal);
+
+        public static EmittedCacheGuards Parse(string artifact)
+        {
+            var guards = new EmittedCacheGuards();
+            foreach (var line in artifact.Split('\n').Where(line => line.StartsWith("#guard cache", StringComparison.Ordinal)))
+            {
+                if (EntriesLine.Match(line) is { Success: true } entries)
+                {
+                    Add(guards._names, entries.Groups["case"].Value,
+                        (entries.Groups["name"].Value, int.Parse(entries.Groups["count"].Value, CultureInfo.InvariantCulture)));
+                }
+                else if (TotalLine.Match(line) is { Success: true } total)
+                    Add(guards._totals, total.Groups["case"].Value, int.Parse(total.Groups["count"].Value, CultureInfo.InvariantCulture));
+                else
+                    throw new InvalidOperationException($"Unrecognized cache guard line in the generated artifact: {line}");
+            }
+
+            return guards;
+        }
+
+        public IReadOnlyList<(string Name, int Count)> Names(string leanName) => _names.GetValueOrDefault(leanName) ?? [];
+        public IReadOnlyList<int> Totals(string leanName) => _totals.GetValueOrDefault(leanName) ?? [];
+
+        private static void Add<T>(Dictionary<string, List<T>> map, string key, T value)
+        {
+            if (!map.TryGetValue(key, out var list))
+                map[key] = list = [];
+            list.Add(value);
+        }
+    }
+
+    /// <summary>
     /// An encoder refusal while generating names the case and keeps the encoder's precise reason:
     /// a case can never silently drop out, encode an empty parent, or be skipped as "not
     /// Lean-representable" (there is no catch-and-skip anywhere in generation).
@@ -311,7 +448,8 @@ public class HostParentDifferentialTests
             Each program below is `LeanAstEncoder`'s encoding of the SAME constructed C# AST the C#
             evaluator ran on every route (plain, counted, generic, optimized, suspending async); each
             `#guard` pins the C# neutral observation and the C# published zero-argument cache entries
-            (per property name, and in total). A failing guard is a Lean/C# divergence on that case.
+            (per property name, and in total), on success and on failure alike (KL-06). A failing
+            guard is a Lean/C# divergence on that case.
 
             Partition (machine-checked by the `*CaseIds.length` guards below):
             - corpus cases: {cases.Count}
@@ -335,18 +473,28 @@ public class HostParentDifferentialTests
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
         builder.Append("""
+            /-- KL-06: the zero-argument property cache entries ONE plain run published, on success AND on
+                failure, derived from the run's outcome and its final state. `EvalM` keeps the completed
+                state on failure (`runResultWithState` drops it there), so a failed run still shows every
+                entry a successful owner published before the failure, while a failed owner published
+                none. An incomplete outcome (R7; no public run returns it) or an owner still active when
+                the run ended has no comparable publication set (C#: the harness requires every owner
+                released), so it observes `none`, which no guard expects. Every `#guard` is its own
+                evaluation, so each cache guard below runs its program once. -/
+            def publications (e : Expr) : Option ZeroArgPropertyCache :=
+              match (runResultM e).runState EvalState.empty with
+              | (outcome, state) =>
+                  if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
+                  else some state.zeroArgPropertyCache
+
             /-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
-                run-scoped publication law PUBLISHED for bindings of that name). -/
-            def cacheEntries (e : Expr) (name : String) : Nat :=
-              match runResultWithState e with
-              | .ok (_, state) => (state.zeroArgPropertyCache.filter (·.1.propertyName == name)).length
-              | .error _ => 0
+                run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
+            def cacheEntries (e : Expr) (name : String) : Option Nat :=
+              (publications e).map fun cache => (cache.filter (·.1.propertyName == name)).length
 
             /-- Every published zero-argument property cache entry of one run. -/
-            def cacheTotal (e : Expr) : Nat :=
-              match runResultWithState e with
-              | .ok (_, state) => state.zeroArgPropertyCache.length
-              | .error _ => 0
+            def cacheTotal (e : Expr) : Option Nat :=
+              (publications e).map List.length
 
 
             """.ReplaceLineEndings("\n"));
@@ -379,17 +527,15 @@ public class HostParentDifferentialTests
             builder.Append($"def {hostCase.LeanName} : Expr :=\n  {program}\n");
             builder.Append($"#guard obs {hostCase.LeanName} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n");
             LeanObsTemplate.AppendErrorGuard(builder, hostCase.LeanName, observation.ErrorPayload);
-            if (observation.IsSuccess)
+            // KL-06: publications are compared on success AND failure; a failed run keeps what its
+            // successful owners published, and a watched name with no entry is guarded at zero.
+            foreach (var name in WatchedNames(hostCase, observation))
             {
-                foreach (var name in WatchedNames(hostCase, observation))
-                {
-                    builder.Append($"#guard cacheEntries {hostCase.LeanName} {LeanAstEncoder.QuoteString(name)} == " +
-                        $"{observation.Published(name).ToString(CultureInfo.InvariantCulture)}\n");
-                }
-
-                builder.Append($"#guard cacheTotal {hostCase.LeanName} == {observation.PublishedTotal.ToString(CultureInfo.InvariantCulture)}\n");
+                builder.Append($"#guard cacheEntries {hostCase.LeanName} {LeanAstEncoder.QuoteString(name)} == " +
+                    $"some {observation.Published(name).ToString(CultureInfo.InvariantCulture)}\n");
             }
 
+            builder.Append($"#guard cacheTotal {hostCase.LeanName} == some {observation.PublishedTotal.ToString(CultureInfo.InvariantCulture)}\n");
             builder.Append('\n');
             comparableIds.Add(hostCase.Id);
         }

@@ -14,7 +14,8 @@ namespace KatLang.Tests;
 /// <param name="Description">What the case pins.</param>
 /// <param name="Program">The ONE immutable program graph both sides consume.</param>
 /// <param name="WatchedProperties">Property names whose published zero-argument cache entries are
-/// compared (C# published entries per binding name vs Lean <c>zeroArgPropertyCache</c> entries).</param>
+/// compared (C# published entries per binding name vs Lean <c>zeroArgPropertyCache</c> entries), on
+/// success and failure alike (KL-06).</param>
 /// <param name="Divergence">Non-null exactly for a KNOWN Lean/C# model divergence (HOST-LEAN-O6):
 /// the case is excluded from the comparable partition, and both sides' differing observations are
 /// pinned instead (C# by <c>HostParentDifferentialTests</c>, Lean by a generated guard).</param>
@@ -37,7 +38,8 @@ public sealed record HostParentCase(
 public sealed record HostParentDivergence(string Reason, string CSharpNeutral, string LeanNeutral);
 
 /// <summary>
-/// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15) plus the discovered
+/// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15,
+/// KL-06's failed-run publications HP-16) plus the discovered
 /// shapes (record-equal / shared / reused host objects, parent-replacing wiring routes, alias and
 /// family variants). Pure, Lean-representable ASTs only: no host operations, integer numbers.
 /// A raw host chain has no implicit prelude level; the module controls pin this boundary too.
@@ -53,6 +55,7 @@ public static class HostParentDifferentialCorpus
     private static Expr Add(Expr a, Expr b) => new Expr.Binary(BinaryOp.Add, a, b);
     private static Expr Sub(Expr a, Expr b) => new Expr.Binary(BinaryOp.Sub, a, b);
     private static Expr Mul(Expr a, Expr b) => new Expr.Binary(BinaryOp.Mul, a, b);
+    private static Expr Div(Expr a, Expr b) => new Expr.Binary(BinaryOp.Div, a, b);
     private static Expr Call(string name, params Expr[] args) => new Expr.Call(R(name), new OutputBundle(args));
     private static Expr Call(Expr callee, params Expr[] args) => new Expr.Call(callee, new OutputBundle(args));
     private static Expr Dot(Expr target, string name) => new Expr.DotCall(target, name, null);
@@ -610,6 +613,18 @@ public static class HostParentDifferentialCorpus
             DeconstructionMemoEligibilityTests.HostWitness("V06"), "a", "c");
         Case("HP-15e", "a deconstruction target body copied with a local shadowing source (V07)",
             DeconstructionMemoEligibilityTests.HostWitness("V07"), "a", "c");
+
+        // HP-16: KL-06 — what a FAILED run leaves published. A failure keeps every entry a successful owner
+        // published before it, and a failed owner publishes nothing; the generated guards compare both
+        // sides' published entries on failing cases too. The root failure after a published X (the KL-06
+        // witness), a failing owner chain under a host level, and a failed owner whose host dependency
+        // stays published.
+        Case("HP-16a", "a run that fails after X = 7 was published keeps the entry (rows X, 1 / 0)",
+            Program([], [Prop("X", Body(N(7)))], R("X"), Div(N(1), N(0))), "X");
+        Case("HP-16b", "a failing host property and the failing owner reading it publish nothing",
+            OpenedThrough(Scope(null, Prop("P", Body(Div(N(1), N(0))))), [R("P")]), "P", "Run");
+        Case("HP-16c", "a failed owner publishes nothing while its host dependency P stays published",
+            OpenedThrough(Scope(null, Prop("P", Body(N(7)))), [R("P"), Div(N(1), N(0))]), "P", "Run");
 
         return cases.AsReadOnly();
     }
