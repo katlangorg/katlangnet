@@ -225,6 +225,17 @@ public sealed class StandaloneStructureIntegrationTests(ITestOutputHelper output
             Assert.DoesNotContain(obsolete, exposure);
         }
         Assert.DoesNotContain("CompletedStructureContext? completedContext = null", graph);
+        // The always-empty provider part of reference keys and the level expansion's per-call seed cache, which never
+        // answered a lookup (both deleted November 2026, with the key counts recalibrated).
+        foreach (var obsolete in new[] { "NoProviderKeys", "ExpandedSeeds" })
+        {
+            Assert.DoesNotContain(obsolete, graph);
+            Assert.DoesNotContain(obsolete, exposure);
+        }
+        // Settlement neither anchors a reference nor refuses one without an origin: every reference it receives is
+        // anchored (a hoisted deconstruction source's raw rows by BuildSummaries, at their level).
+        Assert.DoesNotContain("pending.Origin is null", exposure);
+        Assert.DoesNotContain("Requirement settlement requires an explicit structural context", exposure);
         // Raw visible names belong to the level's summary graph. Settlement receives expanded seeds.
         Assert.DoesNotContain(".VisiblePropertyDependencyNames", exposure);
         var lookup = File.ReadAllText(Path.Combine(root, "src/KatLang/ElaboratedScopeLookup.cs"));

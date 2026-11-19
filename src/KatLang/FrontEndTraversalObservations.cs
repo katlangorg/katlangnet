@@ -576,8 +576,7 @@ internal sealed class FrontEndTraversalObservations
     // seed keys, and settling pending references in the exposure pass.
 
     /// <summary>
-    /// Characters built by summary-seed key serialization: the keys of the operation-local expansion
-    /// lookups (<c>PropertyDependencyGraphBuilder.ExpandAtLevel</c>) and of the member solver's base seeds.
+    /// Characters serialized for the base-seed keys the member solver uses to share expansions within a level.
     /// Each PROCESS-WIDE id inside a key (a bound or qualifying owner's <c>OwnerQualifiedParameter.OwnerKey</c>,
     /// a completed origin's requirement identity) counts as ONE character, with the length prefixes around it
     /// measured on that id-free text: the count depends only on the operation, never on how many ids the

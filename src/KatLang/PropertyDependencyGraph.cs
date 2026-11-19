@@ -25,98 +25,86 @@ internal sealed record PropertyDependencySummaryNode(
     IReadOnlyList<int> SummarySiblingDependencyIndices,
     IReadOnlyList<string> SummaryVisiblePropertyDependencyNames,
     IReadOnlyList<string> RequiredAncestorOwnedParameterNames,
-    IReadOnlyList<PendingReference> PendingReferences,
-    IReadOnlyList<OwnerQualifiedParameter> OwnerQualifiedParameters);
+    IReadOnlyList<(string Key, PendingReference Reference)> ReferenceInputs,
+    IReadOnlyList<OwnerQualifiedParameter> OwnerQualifiedParameters)
+{
+    public IEnumerable<PendingReference> PendingReferences => ReferenceInputs.Select(static input => input.Reference);
+}
 
 /// <summary>
-/// A reference the scope-free summary walk could not reduce to a bare visible name: a
-/// static member PATH (<c>Inner.X</c> — <see cref="Head"/> <c>Inner</c>, <see cref="Members"/>
-/// <c>[X]</c>), a name or path anchored at the completed context it was written in
-/// (<see cref="Origin"/>), or the open-target walks of a level (<see cref="Selection"/>). It names
-/// WHAT is read and from where, never which declaration provides it: the owning level's resolver
-/// settles it from the completed structure of the origin's chain with the ownership-first rule —
-/// the head as a PROPERTY of the chain first, then the <c>open</c> providers of the levels the
-/// lookup consults, one level at a time (Lean/evaluator: <c>lookupLexicalProperty</c> then
-/// <c>lookupOpenPropertiesInChain</c>). Navigated members charge THEIR requirement summaries —
-/// that is what makes a container that reads a captured member through <c>Inner.X</c> or
-/// <c>open Inner</c> itself local-only. Immutable; equality is by content so a summary fixed
-/// point can compare seeds.
+/// A member path in a summary seed. A raw path contains only its spelling and can be shared by argument
+/// bundles across owner contexts. A <see cref="PendingReference"/> has already been anchored by its writer.
+/// Equality compares the length-prefixed resolution key and the exact bound owners for the member fixed point.
 /// </summary>
-internal sealed class PendingReference : IEquatable<PendingReference>
+internal class SummaryReference : IEquatable<SummaryReference>
 {
-    public PendingReference(string head, IReadOnlyList<string> members,
-        IReadOnlyList<Algorithm>? boundOwners = null, CompletedStructureContext? origin = null, bool openPath = false,
-        PendingSelection selection = PendingSelection.Lexical)
+    internal SummaryReference(string head, IReadOnlyList<string> members, IReadOnlyList<Algorithm>? boundOwners = null)
+        : this(head, members, boundOwners, string.Empty) { }
+
+    private protected SummaryReference(string head, IReadOnlyList<string> members, IReadOnlyList<Algorithm>? boundOwners,
+        string originKey)
     {
-        Origin = origin;
-        OpenPath = openPath;
-        Selection = selection;
         Head = head;
         Members = members;
         BoundOwners = boundOwners ?? [];
-        var originKey = origin is null ? "" : selection == PendingSelection.Lexical
-            ? $"completed:{origin.Identity}:{openPath}" : $"completed:{origin.Identity}:{openPath}:{selection}";
-        ResolutionKey = KeyParts([originKey, head, KeyParts(members), NoProviderKeys]);
+        ResolutionKey = KeyParts([originKey, head, KeyParts(members)]);
         var boundKey = string.Join(",", BoundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order());
         ContentKey = KeyParts([ResolutionKey, boundKey]);
     }
 
-    /// <summary>
-    /// The fourth part of every reference key, always empty. Reference keys once serialized the open providers a
-    /// reference carried there; no reference carries one (the settlement selects providers), and the part stays so
-    /// that every key keeps its exact text: key lengths are observed work
-    /// (<see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/>) and weigh the settlement share's entries.
-    /// </summary>
-    private const string NoProviderKeys = "";
-
-    internal CompletedStructureContext? Origin { get; }
-    internal bool OpenPath { get; }
-
-    /// <summary>
-    /// What the head denotes (see <see cref="PendingSelection"/>): a name looked up lexically from <see cref="Origin"/>
-    /// (the default), the first member SELECTED from <see cref="Origin"/>'s own body (an inline-block head), or the
-    /// open-target walks of the level <see cref="Origin"/> is.
-    /// </summary>
-    internal PendingSelection Selection { get; }
-
-    internal PendingReference At(CompletedStructureContext origin) => Origin is not null ? this
-        : new(Head, Members, BoundOwners, origin, OpenPath, Selection);
-
     public string Head { get; }
-
-    /// <summary>Member steps navigated structurally after the head (any visibility).</summary>
     public IReadOnlyList<string> Members { get; }
-
     public IReadOnlyList<Algorithm> BoundOwners { get; }
-
     internal string ContentKey { get; }
-
-    /// <summary>The reference without its bound owners: origin, selection, head and member steps (see <see cref="PendingReferenceSet"/>).</summary>
     internal string ResolutionKey { get; }
 
-    /// <summary>
-    /// <see cref="ContentKey"/> with each PROCESS-WIDE id — the completed origin's requirement identity and every
-    /// bound owner's <see cref="OwnerQualifiedParameter.OwnerKey"/> — written as the one character <c>#</c>, so its
-    /// length is the same in every process and run. Observation only
-    /// (<see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/>), never cached and never an identity.
-    /// </summary>
-    internal string IdFreeContentKey
-        => KeyParts([
-            KeyParts([Origin is null ? "" : Selection == PendingSelection.Lexical ? $"completed:#:{OpenPath}" : $"completed:#:{OpenPath}:{Selection}", Head, KeyParts(Members), NoProviderKeys]),
-            string.Join(",", BoundOwners.Select(static _ => "#"))]);
+    // The level visited inputs in ordinal order of the decimal length prefix, including its colon.
+    // That length included two characters for the former field. Preserve the traversal at digit
+    // boundaries (e.g. 98 used to sort as "100:") without putting that field in any key.
+    internal string LevelOrderPrefix => $"{ResolutionKey.Length + 2}:";
+
+    internal PendingReference At(CompletedStructureContext origin)
+        => this as PendingReference ?? new PendingReference(Head, Members, origin, BoundOwners);
+
+    // The observation counts key characters with each process-wide id replaced by one character.
+    private protected virtual string IdFreeOriginKey => string.Empty;
+    internal string IdFreeContentKey => KeyParts([
+        KeyParts([IdFreeOriginKey, Head, KeyParts(Members)]),
+        string.Join(",", BoundOwners.Select(static _ => "#"))]);
 
     internal static string KeyParts(IEnumerable<string> parts)
         => string.Concat(parts.Select(static part => $"{part.Length}:{part}"));
 
-    public PendingReference BoundBy(Algorithm owner, bool ownerHasParameters)
-        => !ownerHasParameters || BoundOwners.Any(a => ReferenceEquals(a, owner))
-            ? this : new(Head, Members, [.. BoundOwners, owner], Origin, OpenPath, Selection);
+    internal virtual SummaryReference WithBoundOwners(IReadOnlyList<Algorithm> owners) => new(Head, Members, owners);
 
-    public bool Equals(PendingReference? other) => other is not null && ContentKey == other.ContentKey;
+    public SummaryReference BoundBy(Algorithm owner)
+        => BoundOwners.Any(a => ReferenceEquals(a, owner)) ? this : WithBoundOwners([.. BoundOwners, owner]);
 
-    public override bool Equals(object? obj) => Equals(obj as PendingReference);
-
+    public bool Equals(SummaryReference? other) => other is not null && ContentKey == other.ContentKey;
+    public override bool Equals(object? obj) => Equals(obj as SummaryReference);
     public override int GetHashCode() => ContentKey.GetHashCode(StringComparison.Ordinal);
+}
+
+/// <summary>
+/// A requirement of the completed context that wrote it. Settlement resolves its head by the owning level's
+/// lexical lookup and open-provider rules and charges the selected members. Every graph input and every
+/// reference in an expanded seed has this form.
+/// </summary>
+internal sealed class PendingReference(string head, IReadOnlyList<string> members, CompletedStructureContext origin,
+    IReadOnlyList<Algorithm>? boundOwners = null, bool openPath = false, PendingSelection selection = PendingSelection.Lexical)
+    : SummaryReference(head, members, boundOwners, OriginKey(origin.Identity.ToString(), openPath, selection))
+{
+    internal CompletedStructureContext Origin { get; } = origin;
+    internal bool OpenPath { get; } = openPath;
+    internal PendingSelection Selection { get; } = selection;
+
+    private static string OriginKey(string identity, bool openPath, PendingSelection selection)
+        => selection == PendingSelection.Lexical ? $"completed:{identity}:{openPath}" : $"completed:{identity}:{openPath}:{selection}";
+
+    private protected override string IdFreeOriginKey => OriginKey("#", OpenPath, Selection);
+
+    internal override SummaryReference WithBoundOwners(IReadOnlyList<Algorithm> owners)
+        => new PendingReference(Head, Members, Origin, owners, OpenPath, Selection);
 }
 
 /// <summary>
@@ -151,22 +139,22 @@ internal enum PendingSelection
 /// shared algorithm DAG.
 ///
 /// <para>EXPOSURE-OPEN-1: the set holds ONE entry per reference
-/// (<see cref="PendingReference.ResolutionKey"/>), and a reference's own content never changes: it
+/// (<see cref="SummaryReference.ResolutionKey"/>), and a reference's own content never changes: it
 /// carries no provider and nothing a provider charges, so nothing in it is derived from summaries
 /// that grow during a fixed point. An entry changes only by losing bound owners, a summary
 /// therefore only grows with the summaries it reads, and the member fixed point terminates around
 /// a cycle of mutually opening libraries.</para>
 /// </summary>
-internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference>
+internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference>
 {
-    private readonly Dictionary<string, PendingReference> _references = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SummaryReference> _references = new(StringComparer.Ordinal);
 
     public PendingReferenceSet() { }
-    public PendingReferenceSet(IEnumerable<PendingReference> references) => UnionWith(references);
+    public PendingReferenceSet(IEnumerable<SummaryReference> references) => UnionWith(references);
     public int Count => _references.Count;
     public void Clear() => _references.Clear();
 
-    public void Add(PendingReference reference)
+    public void Add(SummaryReference reference)
     {
         if (!_references.TryGetValue(reference.ResolutionKey, out var existing))
         {
@@ -178,17 +166,16 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference
         if (common.Length == existing.BoundOwners.Count)
             return;
         // The narrowed entry takes the place of the one it replaces: the set's order is the order of first writes.
-        _references[existing.ResolutionKey] = new(existing.Head, existing.Members, common, existing.Origin, existing.OpenPath,
-            existing.Selection);
+        _references[existing.ResolutionKey] = existing.WithBoundOwners(common);
     }
 
-    public void UnionWith(IEnumerable<PendingReference> references)
+    public void UnionWith(IEnumerable<SummaryReference> references)
     {
         foreach (var reference in references) Add(reference);
     }
     public bool SetEquals(PendingReferenceSet other)
         => Count == other.Count && _references.All(pair => other._references.TryGetValue(pair.Key, out var value) && pair.Value.Equals(value));
-    public IEnumerator<PendingReference> GetEnumerator() => _references.Values.GetEnumerator();
+    public IEnumerator<SummaryReference> GetEnumerator() => _references.Values.GetEnumerator();
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
@@ -388,7 +375,7 @@ internal static class PropertyDependencyGraphBuilder
         public SummarySeed(
             IEnumerable<string>? requiredAncestorOwnedParameterNames = null,
             IEnumerable<string>? visiblePropertyDependencyNames = null,
-            IEnumerable<PendingReference>? pendingReferences = null,
+            IEnumerable<SummaryReference>? pendingReferences = null,
             IEnumerable<OwnerQualifiedParameter>? ownerQualifiedParameters = null)
         {
             _requiredAncestorOwnedParameterNames = IsKnownEmpty(requiredAncestorOwnedParameterNames) ? null : NonEmptyOrNull(CreateNameSet(requiredAncestorOwnedParameterNames));
@@ -698,9 +685,9 @@ internal static class PropertyDependencyGraphBuilder
             if (!ownerHasParameters || _pendingReferences is not { Count: > 0 } pendingReferences)
                 return;
 
-            var bound = new List<PendingReference>(pendingReferences.Count);
+            var bound = new List<SummaryReference>(pendingReferences.Count);
             foreach (var pending in pendingReferences)
-                bound.Add(pending.BoundBy(owner, ownerHasParameters: true));
+                bound.Add(pending.BoundBy(owner));
             pendingReferences.Clear();
             pendingReferences.UnionWith(bound);
         }
@@ -831,7 +818,7 @@ internal static class PropertyDependencyGraphBuilder
         internal string ContentKeyFor(FrontEndTraversalObservations? observations)
         {
             // Reads the folded sets directly: most seeds are empty, and a key must not materialize what it describes.
-            var key = IsEmpty ? EmptyContentKey : PendingReference.KeyParts([
+            var key = IsEmpty ? EmptyContentKey : SummaryReference.KeyParts([
                 _requiredAncestorOwnedParameterNames is { } required ? FrontEndRegionKeys.NameSet(required) : string.Empty,
                 _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
                 _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.ContentKey)) : string.Empty,
@@ -842,17 +829,17 @@ internal static class PropertyDependencyGraphBuilder
 
         /// <summary>
         /// <see cref="ContentKeyFor"/>'s key with every process-wide id written as <c>#</c>
-        /// (<see cref="PendingReference.IdFreeContentKey"/>, <see cref="OwnerQualifiedParameter.IdFreeContentKey"/>):
+        /// (<see cref="SummaryReference.IdFreeContentKey"/>, <see cref="OwnerQualifiedParameter.IdFreeContentKey"/>):
         /// the text <see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/> counts. Built only for an observer.
         /// </summary>
         private string IdFreeContentKey()
-            => PendingReference.KeyParts([
+            => SummaryReference.KeyParts([
                 _requiredAncestorOwnedParameterNames is { } required ? FrontEndRegionKeys.NameSet(required) : string.Empty,
                 _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
                 _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.IdFreeContentKey)) : string.Empty,
                 _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.IdFreeContentKey)) : string.Empty]);
 
-        private static readonly string EmptyContentKey = PendingReference.KeyParts([string.Empty, string.Empty, string.Empty, string.Empty]);
+        private static readonly string EmptyContentKey = SummaryReference.KeyParts([string.Empty, string.Empty, string.Empty, string.Empty]);
     }
 
     /// <summary>
@@ -1118,10 +1105,12 @@ internal static class PropertyDependencyGraphBuilder
         /// evaluator resolves all of a consulted level's opens before it looks for the name, so their selections are
         /// checked whether or not they provide it; rebinding to the provider alone would drop them.
         /// </summary>
-        internal IEnumerable<PendingReference> SelectedReferences(PendingReference reference)
+        internal IEnumerable<SummaryReference> SelectedReferences(SummaryReference reference)
         {
-            if (reference.Origin is not null) UseContext();
-            if (reference is not { Origin: { } origin, OpenPath: false, Selection: PendingSelection.Lexical }
+            if (reference is not PendingReference pending) return [reference];
+            UseContext();
+            var origin = pending.Origin;
+            if (pending.OpenPath || pending.Selection != PendingSelection.Lexical
                 || origin.Facts.Facts(origin.Key)?.Body is null) return [reference];
             var scope = LookupScope(origin);
             var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, reference.Head, ElaboratedScopeLookup.OwnParameterBindings.Instance);
@@ -1142,7 +1131,7 @@ internal static class PropertyDependencyGraphBuilder
                 if (selected is not null) deciding = ElaboratedScopeLookup.SelectFirstOpenLevel(scope, reference.Head).Level;
             }
             if (selected is null || ReferenceEquals(selected.Key, origin.Key)) return [reference];
-            PendingReference rebound = new(reference.Head, reference.Members, reference.BoundOwners, selected);
+            PendingReference rebound = new(reference.Head, reference.Members, selected, reference.BoundOwners);
             if (deciding is null) return [rebound];
             var references = new List<PendingReference> { rebound };
             for (var at = scope; at is not null; at = at.Parent)
@@ -1156,14 +1145,16 @@ internal static class PropertyDependencyGraphBuilder
 
         /// <summary>The open-target walks of the level <paramref name="opening"/> is (<see cref="PendingSelection.OpenWalks"/>).</summary>
         internal static PendingReference OpenWalksOf(CompletedStructureContext opening, IReadOnlyList<Algorithm>? boundOwners = null)
-            => new(string.Empty, [], boundOwners, opening, openPath: true, PendingSelection.OpenWalks);
+            => new(string.Empty, [], opening, boundOwners, openPath: true, PendingSelection.OpenWalks);
 
         // Project a completed Q1 owner selection onto THIS live Q8 equation map. Context-bearing
         // paths, open choices and bound-owner exclusions keep their full symbolic representation.
-        internal bool SelectsLocalMember(PendingReference reference, CompletedStructureContext level)
+        internal bool SelectsLocalMember(SummaryReference reference, CompletedStructureContext level)
         {
-            if (reference.Origin is not null) UseContext();
-            if (reference is not { Origin: { } origin, OpenPath: false, Selection: PendingSelection.Lexical, Members.Count: 0, BoundOwners.Count: 0 }
+            if (reference is not PendingReference pending) return false;
+            UseContext();
+            var origin = pending.Origin;
+            if (pending.OpenPath || pending.Selection != PendingSelection.Lexical || pending.Members.Count != 0 || pending.BoundOwners.Count != 0
                 || !ReferenceEquals(origin.Facts, level.Facts) || origin.Facts.Facts(origin.Key)?.Body is null)
                 return false;
             var scope = LookupScope(origin);
@@ -1433,10 +1424,6 @@ internal static class PropertyDependencyGraphBuilder
 
         public SummaryWalkMemos Memos { get; } = memos;
 
-        // Only the dynamic extent of ONE ExpandAtLevel call at this exact level. The member map
-        // cannot grow during an equation's evaluation; the next evaluation starts with no cache.
-        internal Dictionary<string, SummarySeed>? ExpandedSeeds;
-
         public bool HasOpens => Algorithm.Opens.Count > 0;
 
         /// <summary>The level algorithm's parameter names, shared through the resolution's memo.</summary>
@@ -1502,8 +1489,13 @@ internal static class PropertyDependencyGraphBuilder
                 summarySiblingDependencyIndices.OrderBy(static idx => idx).ToArray(),
                 summaryVisiblePropertyDependencyNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
                 summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
+                // A raw hoisted path and a nested reference rebound to this level can resolve identically.
+                // The equation still visits each distinct input, in input-key order, before the settlement
+                // share sees their common anchored key. This preserves the level's cancellation checkpoints.
                 summarySeed.PendingReferences.SelectMany(buildMemos.SharedMemo.SelectedReferences)
-                    .Distinct().OrderBy(static pending => pending.ContentKey, StringComparer.Ordinal).ToArray(),
+                    .Distinct().OrderBy(static input => input.LevelOrderPrefix, StringComparer.Ordinal)
+                    .ThenBy(static input => input.ContentKey, StringComparer.Ordinal)
+                    .Select(input => (input.ContentKey, input.At(completedContext))).ToArray(),
                 summarySeed.OwnerQualifiedParameters.ToArray());
         }
 
@@ -1538,8 +1530,10 @@ internal static class PropertyDependencyGraphBuilder
     /// completed COMPUTATIONS (memo misses) only, so an observed analysis is pinned to at most
     /// one computation per distinct algorithm node and context per memo lifetime. A hoisted
     /// deconstruction source's rows are the declaring level's own written rows: they are walked
-    /// RAW with that level's memos, so the bare names and paths they write reach the level's
-    /// summary graph unanchored and are anchored where the level expands or settles them.
+    /// RAW with that level's memos, so the paths they write are anchored where the level expands
+    /// them (a nested level's member fixed point) or where its summary graph is built
+    /// (<see cref="BuildSummaries"/>), and the bare names they write stay names: the level solver
+    /// settles one on the chain first and otherwise as a reference anchored at the level.
     /// </summary>
     private static SummarySeed CollectSharedAlgorithmSummarySeed(
         Algorithm algorithm,
@@ -1698,7 +1692,7 @@ internal static class PropertyDependencyGraphBuilder
         // name `Q` upward: an enclosing level with no `Q` dropped it (a local-only `G` leaked
         // through `open`), and an enclosing sibling `Q` was wrongly consulted (a self-contained
         // `G` was hidden). The same expansion turns each name this level's own `open`
-        // declarations may provide into a pending reference carrying those providers.
+        // declarations may provide into a reference anchored here for provider selection during settlement.
         var finalLevel = new LevelContext(algorithm, currentPropertySummaries, memos);
         // Absorbed completed parts that only require names this level owns are exactly what the
         // expansion below would qualify and the strip after it remove: they are dropped by
@@ -1741,9 +1735,12 @@ internal static class PropertyDependencyGraphBuilder
     /// selected here: the owning level's settlement does both, from the completed structure
     /// (<see cref="PropertyExposureResolver"/>). The requirements this level's own parameters
     /// bind are owner-qualified on the way out.
-    /// <para>The member map is stable during this call. Anchoring an escaping name requires no further expansion,
-    /// so each result is complete. A nonempty expansion observes <see cref="SummaryMemo.CancellationToken"/> on entry
-    /// and before anchoring each escaping bare name, the checkpoints of the former frame driver.</para>
+    /// <para>Each call reads the member map as it stands and keeps nothing: anchoring an escaping name requires no
+    /// further expansion, so the expansion never nests, and every result is complete. (Until November 2026 every
+    /// expansion first looked its seed up, by the seed's serialized key, in a cache that lived for one call; once the
+    /// expansion stopped nesting, that cache answered none of 3.3 million lookups, and it was deleted.) A nonempty
+    /// expansion observes <see cref="SummaryMemo.CancellationToken"/> on entry and before anchoring each escaping bare
+    /// name, the checkpoints of the former frame driver.</para>
     /// </summary>
     internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
     {
@@ -1754,66 +1751,50 @@ internal static class PropertyDependencyGraphBuilder
 
         var memo = level.Memos.SharedMemo;
         memo.ObserveCancellation();
-        var outermost = level.ExpandedSeeds is null;
-        var completed = level.ExpandedSeeds ??= new(StringComparer.Ordinal);
-        try
+        var expanded = new SummarySeed(
+            requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
+            ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
+
+        foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
         {
-            var cacheKey = baseSeed.ContentKeyFor(level.Memos.Observations);
-            if (completed.TryGetValue(cacheKey, out var cached))
-                return cached.Clone();
-
-            var expanded = new SummarySeed(
-                requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
-                ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
-
-            foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
+            if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
             {
-                if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
-                {
-                    expanded.UnionWith(localSummary);
-                    continue;
-                }
-
-                var escaping = new PendingReference(dependencyName, []);
-                memo.ObserveCancellation();
-                AddEscaping(expanded, escaping, level);
+                expanded.UnionWith(localSummary);
+                continue;
             }
 
-            var context = level.Memos.CompletedContext;
-            foreach (var pending in baseSeed.PendingReferences)
-            {
-                memo.UseContext();
-                // The same Q1-proved local equation bridge used by SolveMemberSeeds applies
-                // when anchoring an external seed through this owner. Read the live map so
-                // expansion-cache dependency tracking and invalidation remain unchanged.
-                if (memo.SelectsLocalMember(pending, context)
-                    && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
-                {
-                    expanded.AbsorbCompleted(local);
-                    continue;
-                }
-                expanded.PendingReferences.Add(pending.At(context));
-            }
+            memo.ObserveCancellation();
+            AddEscaping(expanded, dependencyName, level);
+        }
 
-            expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
-            completed.TryAdd(cacheKey, expanded.Clone());
-            return expanded;
-        }
-        finally
+        var context = level.Memos.CompletedContext;
+        foreach (var pending in baseSeed.PendingReferences)
         {
-            if (outermost)
-                level.ExpandedSeeds = null;
+            memo.UseContext();
+            // The same Q1-proved local equation bridge used by SolveMemberSeeds applies
+            // when anchoring an external seed through this owner. Read the live map so the
+            // member solver's read recording and invalidation see this read.
+            if (memo.SelectsLocalMember(pending, context)
+                && level.LocalPropertySummaries.TryGetValue(pending.Head, out var local))
+            {
+                expanded.AbsorbCompleted(local);
+                continue;
+            }
+            expanded.PendingReferences.Add(pending.At(context));
         }
+
+        expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
+        return expanded;
     }
 
     /// <summary>
     /// Carries a requirement's context without settling a raw path or provider: the escaping reference is anchored
     /// at the level's completed context, so no expansion leaves a bare name or an origin-less path behind.
     /// </summary>
-    private static void AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
+    private static void AddEscaping(SummarySeed expanded, string name, LevelContext level)
     {
         level.Memos.SharedMemo.UseContext();
-        expanded.PendingReferences.Add(pending.At(level.Memos.CompletedContext));
+        expanded.PendingReferences.Add(new PendingReference(name, [], level.Memos.CompletedContext));
     }
 
     /// <summary>Stops lexical requirement escape at the prelude without evaluating a provider.</summary>
@@ -2266,7 +2247,7 @@ internal static class PropertyDependencyGraphBuilder
         SummarySeed seed;
         IReadOnlyList<Expr.DotCall> intermediates;
         if (TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers, out intermediates))
-            seed = new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers)]);
+            seed = new SummarySeed(pendingReferences: [new SummaryReference(pathHead, pathMembers)]);
         else if (TryGetBlockMemberPath(dotCall, memos, out var block, out var blockMembers, out intermediates))
             seed = new SummarySeed(pendingReferences: [new PendingReference(blockMembers[0], blockMembers[1..],
                 origin: block, selection: PendingSelection.BlockHead)]);
@@ -2352,7 +2333,7 @@ internal static class PropertyDependencyGraphBuilder
                 }
             }
             SummarySeed? bridged = null;
-            HashSet<PendingReference>? selected = null;
+            HashSet<SummaryReference>? selected = null;
             foreach (var reference in seed.PendingReferences)
             {
                 if (!equationOf.ContainsKey(reference.Head) || !memos.SharedMemo.SelectsLocalMember(reference, completed)) continue;

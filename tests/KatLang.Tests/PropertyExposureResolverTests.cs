@@ -185,12 +185,13 @@ public class PropertyExposureResolverTests
 
     /// <summary>
     /// The summary channel has ONE mode: a name or path written inside a nested body leaves that body anchored at
-    /// its completed context. The only entries a summary graph holds unanchored are the rows of a hoisted
-    /// deconstruction source: they are the level's own written rows, walked raw, and the level's settlement anchors
-    /// them at the level. (A settlement that met a reference it could not anchor would refuse it.)
+    /// its completed context. The rows of a hoisted deconstruction source are the level's own written rows, walked
+    /// raw: their bare names stay names (a sibling edge here), and their paths are anchored at the level when its
+    /// summary graph is built, exactly where the level's settlement formerly anchored them on arrival. So every
+    /// reference of the graph carries its origin, and settlement neither anchors nor refuses one.
     /// </summary>
     [Fact]
-    public void Build_AnchorsWhatLeavesANestedBody_AndOnlyHoistedSourceRowsStayRaw()
+    public void Build_AnchorsEveryReference_HoistedSourceRowsAtTheirLevel()
     {
         const string Source =
             """
@@ -207,7 +208,8 @@ public class PropertyExposureResolverTests
             }
             """;
         var algorithm = BuildUserAlgorithmBeforeExposure("Outer", Source);
-        var graph = StandaloneSummaries.Build(algorithm);
+        var context = AnalyzedStaticStructures.ForBoundAst(algorithm);
+        var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm, context, StandaloneSummaries.MemoFor(algorithm));
         int Index(string name) => PropertyIndex(graph, name);
 
         // R's body: both reads leave it as references anchored at a completed context.
@@ -218,18 +220,36 @@ public class PropertyExposureResolverTests
         Assert.All(nested.PendingReferences, reference => Assert.NotNull(reference.Origin));
         Assert.Equal(new[] { Index("Lib"), Index("T") }.Order(), StandaloneSummaries.SiblingReads(graph, Index("R")));
 
-        // The hoisted source: the same two reads, raw. The bare name is a sibling edge and the path has no origin yet.
+        // The hoisted source: the same two reads, written in Outer's own rows. The bare name is a sibling edge, and the
+        // path is anchored at Outer's level, the context the graph was built in, as a plain lexical reference.
         var source = Assert.Single(algorithm.Properties, property => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true });
         var raw = graph[Index(source.Name)];
         Assert.Equal([Index("T")], raw.SummarySiblingDependencyIndices);
         var path = Assert.Single(raw.PendingReferences);
         Assert.Equal("Lib", path.Head);
         Assert.Equal(["V"], path.Members);
-        Assert.Null(path.Origin);
+        Assert.Equal(PendingSelection.Lexical, path.Selection);
+        Assert.False(path.OpenPath);
+        var origin = path.Origin;
+        Assert.NotNull(origin);
+        Assert.Same(context.Facts, origin.Facts);
+        Assert.Same(context.Key, origin.Key);
+        for (var index = 0; index < graph.Count; index++)
+            Assert.All(graph[index].PendingReferences, reference => Assert.NotNull(reference.Origin));
+        // R's rebound path and the source's path share their anchored resolution. The level solver still
+        // visits the two distinct inputs to its equation before the shared resolution answers the second.
+        var nestedPath = Assert.Single(nested.ReferenceInputs, input => input.Reference.ContentKey == path.ContentKey);
+        Assert.NotEqual(nestedPath.Key, Assert.Single(raw.ReferenceInputs).Key);
+        var observations = new FrontEndTraversalObservations();
+        var parsed = Parser.ParseObserved(Source, null, observations);
+        Assert.Empty(parsed.Diagnostics);
+        Assert.Equal(5, observations.RequiredAncestorResolutionComputations);
+        Assert.Equal(7, observations.RequiredAncestorSettlementFrames);
+        Assert.Equal(11, observations.CancellationCheckpointsOf(FrontEndCancellationCheckpoint.ExposureSettlementFrame));
 
-        // Settlement anchors the raw path at Outer's level and charges the member it selects, exactly as it charges
-        // the anchored one: the source, both targets and R all capture Outer's parameter.
-        var exposed = ParseSinglePropertyBody(Source);
+        // Settlement charges the anchored path at Outer's level, selecting the member exactly as it does for the path
+        // R's body let escape: the source, both targets and R all capture Outer's parameter.
+        var exposed = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties).Value);
         foreach (var name in new[] { source.Name, "a", "b", "R" })
         {
             var property = Assert.Single(exposed.Properties, candidate => candidate.Name == name);
@@ -238,6 +258,64 @@ public class PropertyExposureResolverTests
         }
 
         Assert.Equal(PropertyExposure.Exported, Assert.Single(exposed.Properties, candidate => candidate.Name == "T").Exposure);
+    }
+
+    [Fact]
+    public void HoistedPaths_KeepTheirVisitOrderAcrossADecimalLengthBoundary()
+    {
+        var longName = new string('L', 88);
+        var algorithm = BuildUserAlgorithmBeforeExposure("F", $$"""
+            F(p) = {
+                Short = { public V = p }
+                {{longName}} = { public V = 1 }
+                a, b = Short.V, {{longName}}.V
+                a + b
+            }
+            F(2)
+            """);
+        var graph = StandaloneSummaries.Build(algorithm);
+        var source = Assert.Single(algorithm.Properties, property => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true });
+        // The longer path's resolution-key length fell from 100 to 98. Its level input still precedes Short.V.
+        Assert.Equal([longName, "Short"], graph[PropertyIndex(graph, source.Name)].PendingReferences.Select(reference => reference.Head));
+    }
+
+    /// <summary>
+    /// A bare name the raw rows of a hoisted deconstruction source write, which the level's chain does not declare (an
+    /// <c>open</c> of the level provides it), stays a name in the summary graph. The level solver settles it as a
+    /// reference anchored at the level, so the source and both targets are charged what the provided member requires.
+    /// </summary>
+    [Fact]
+    public void HoistedSourceRows_ReadingAnOpenProvidedName_AreChargedAtTheirLevel()
+    {
+        const string Source =
+            """
+            Outer(p) = {
+                open Lib
+                Lib = {
+                    public V = p
+                }
+                a, b = V, 1
+                a + b
+            }
+            Outer(4)
+            """;
+        var algorithm = BuildUserAlgorithmBeforeExposure("Outer", Source);
+        var graph = StandaloneSummaries.Build(algorithm);
+        var source = Assert.Single(algorithm.Properties, property => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true });
+        var raw = graph[PropertyIndex(graph, source.Name)];
+        Assert.Equal(["V"], raw.SummaryVisiblePropertyDependencyNames);
+        Assert.Empty(raw.SummarySiblingDependencyIndices);
+        Assert.Empty(raw.PendingReferences);
+
+        var exposed = ParseSinglePropertyBody(Source);
+        foreach (var name in new[] { source.Name, "a", "b" })
+        {
+            var property = Assert.Single(exposed.Properties, candidate => candidate.Name == name);
+            Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, property.Exposure);
+            Assert.Equal([new CapturedParameterRequirement("p", 0)], property.CaptureRequirements);
+        }
+
+        Assert.Equal("5", Assert.IsType<RunResult.Success>(KatLangEngine.Run(Source)).ToDisplayString());
     }
 
     [Fact]

@@ -4,7 +4,7 @@ namespace KatLang;
 
 /// <summary>
 /// The BOUND OWNERS of an exposure settlement: the algorithms whose own parameters the walk has already
-/// supplied, so a requirement one of them owns is not charged outward (<see cref="PendingReference.BoundOwners"/>,
+/// supplied, so a requirement one of them owns is not charged outward (<see cref="SummaryReference.BoundOwners"/>,
 /// accumulated along a settlement by <c>PropertyExposureResolver.PendingResolution</c>). Null stands for no bound
 /// owner; a set is never empty.
 ///

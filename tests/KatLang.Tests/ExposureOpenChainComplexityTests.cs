@@ -134,7 +134,10 @@ public sealed class ExposureOpenChainComplexityTests
     /// <summary>
     /// The work of the opened chain at three doubling sizes. Each link's algorithm is summarized once
     /// (2N + 2 summaries, N + 2 member expansions in all) and its key costs its own entries (O(N)
-    /// characters in all). The exposure settlement of each link's level reuses the walk of the links below
+    /// characters in all: 831, 1,663 and 3,327 at 16, 32 and 64 links, about 52 a link; 3,562, 7,210 and
+    /// 14,506 until November 2026, when the level expansion stopped serializing every seed it expanded and
+    /// reference keys lost their always-empty part, which is why the bound fell from 512N to 128N).
+    /// The exposure settlement of each link's level reuses the walk of the links below
     /// it from the run's settlement share (<see cref="ExposureSettlementShareTests"/>): at most 8 frames a
     /// link, where every level formerly walked the whole chain below it (N(N + 3) frames, the order the
     /// root-level and dotted chains paid too). Before EXPOSURE-OPEN-1 every link rebuilt and re-serialized
@@ -152,7 +155,7 @@ public sealed class ExposureOpenChainComplexityTests
             AssertRequires(Member(owner, "P1", "A1"));
 
             Assert.Equal(2L * length + 2, observations.DependencyAlgorithmSummaryComputations);
-            Assert.InRange(observations.SummaryKeyCharacters, 1, 512L * length);
+            Assert.InRange(observations.SummaryKeyCharacters, 1, 128L * length);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, SharedSettlementFrameBound(length));
             Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
             Assert.InRange(observations.CompletedStaticStructureReads, 1, observations.RequiredAncestorSettlementFrames);
@@ -390,8 +393,9 @@ public sealed class ExposureOpenChainComplexityTests
             long n = size;
             Assert.InRange(observations.SummaryMemberEvaluations, 1, 2 * n * n);
             Assert.InRange(observations.SummaryMemberExpansions, 1, 2 * n * n);
-            // Full serialized seed keys include the growing reference sets, before their ids exist.
-            Assert.InRange(observations.SummaryKeyCharacters, 1, 512 * n * n * n);
+            // At n=8/16/32 the shorter keys cost 2,232/4,482/8,994 characters. Scaling the former
+            // 512n³ guard by the measured cost ratio retains its polynomial headroom.
+            Assert.InRange(observations.SummaryKeyCharacters, 1, 160 * n * n * n);
             Assert.InRange(observations.CompletedStaticStructureReads, 1, 64 * n * n * n);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 64 * n);
             if (previous is not null)
@@ -516,28 +520,28 @@ public sealed class ExposureOpenChainComplexityTests
         Assert.Equal(Length + 2L, observations.SummaryMemberExpansions);
     }
 
-    /// <summary>A failed Q8 member-summary read releases its expansion frame and never caches a partial result.</summary>
+    /// <summary>
+    /// A failed Q8 member-summary read publishes nothing: the level expansion keeps no state between calls, so a retry
+    /// over the same shared memo matches a fresh analysis.
+    /// </summary>
     [Fact]
-    public void InterruptedChainExpansion_ReleasesItsActiveState_AndTheRetryMatchesAFreshAnalysis()
+    public void InterruptedChainExpansion_LeavesNoPartialResult_AndTheRetryMatchesAFreshAnalysis()
     {
         const int Length = 40;
         var owner = Member(SourceProvenance.ParseValid(NestedOwnerChain(Length, last: "p")).Root, "O").Value;
         var seed = new PropertyDependencyGraphBuilder.SummarySeed(visiblePropertyDependencyNames: ["P20"]);
-        PropertyDependencyGraphBuilder.LevelContext? lastLevel = null;
         PropertyDependencyGraphBuilder.SummarySeed Settle(PropertyDependencyGraphBuilder.SummaryMemo memo, string? failAt)
         {
             var context = AnalyzedStaticStructures.ForBoundAst(owner);
             var memos = PropertyDependencyGraphBuilder.CreateWalkMemos(memo, observations: null, context);
             var members = new FailingMemberMap(PropertyDependencyGraphBuilder.GetAlgorithmSummary(owner, memos, context).MemberSeeds, failAt);
-            var level = lastLevel = new PropertyDependencyGraphBuilder.LevelContext(owner, members, memos);
+            var level = new PropertyDependencyGraphBuilder.LevelContext(owner, members, memos);
             return PropertyDependencyGraphBuilder.ExpandAtLevel(seed, level);
         }
         var shared = new PropertyDependencyGraphBuilder.SummaryMemo();
         var failure = Assert.Throws<InvalidOperationException>(() => Settle(shared, failAt: "P20"));
         Assert.Equal(FailingMemberMap.Message, failure.Message);
-        Assert.Null(lastLevel!.ExpandedSeeds);
         var retried = Settle(shared, failAt: null);
-        Assert.Null(lastLevel!.ExpandedSeeds);
         var fresh = Settle(new PropertyDependencyGraphBuilder.SummaryMemo(), failAt: null);
         Assert.Equal(fresh.ContentKey, retried.ContentKey);
     }
@@ -564,7 +568,7 @@ public sealed class ExposureOpenChainComplexityTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    // ── Shared members, the expansion cache and the reference set ────────────
+    // ── Shared members, the live member map and the reference set ────────────
 
     [Fact]
     public void OpenedMemberDiamonds_ShareChangedExpansionsAndCompleteSettlements()
@@ -584,7 +588,8 @@ public sealed class ExposureOpenChainComplexityTests
             AssertRequires(Member(owner, "R"), ("p", 0));
             Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 7L * length * length);
-            Assert.InRange(observations.SummaryKeyCharacters, 1, 1000L * length * length);
+            // The key work fell to about one quarter at every measured size (1,241/2,565/5,221).
+            Assert.InRange(observations.SummaryKeyCharacters, 1, 250L * length * length);
             if (previous is not null)
             {
                 Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 5 * previous.RequiredAncestorSettlementFrames);
@@ -612,8 +617,12 @@ public sealed class ExposureOpenChainComplexityTests
         return source.Append("R = { open P1\nA1 + B1 }\nR\n}\n").Append(call).ToString();
     }
 
+    /// <summary>
+    /// Each level expansion reads the member map as it stands: an expansion after the map changes sees the change, and
+    /// an earlier result is a seed of its own that the change does not reach.
+    /// </summary>
     [Fact]
-    public void ExpansionCache_EndsBeforeTheNextMemberMapUpdate()
+    public void Expansion_ReadsTheMemberMapAsItStands_AtEveryCall()
     {
         var algorithm = SourceProvenance.ParseValid("D = 0\n0").Root;
         var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
@@ -644,7 +653,8 @@ public sealed class ExposureOpenChainComplexityTests
         var root = SourceProvenance.ParseValid("F(a) = a\nG(b) = b\n0").Root;
         var owner = root.Properties[0].Value;
         var other = root.Properties[1].Value;
-        static PendingReference Reference(string head, params Algorithm[] bound) => new(head, [], bound);
+        var context = AnalyzedStaticStructures.ForBoundAst(root);
+        PendingReference Reference(string head, params Algorithm[] bound) => new(head, [], context, bound);
 
         // Equal references are one entry.
         Assert.Single(new PendingReferenceSet([Reference("V"), Reference("V")]));
@@ -659,7 +669,7 @@ public sealed class ExposureOpenChainComplexityTests
         Assert.Empty(Assert.Single(new PendingReferenceSet([Reference("V", owner), Reference("V", other)])).BoundOwners);
 
         // A different head or member path is a different reference; narrowing one leaves the others alone.
-        var apart = new PendingReferenceSet([Reference("V", owner), Reference("W", owner), new PendingReference("V", ["X"], [owner]), Reference("W")]);
+        var apart = new PendingReferenceSet([Reference("V", owner), Reference("W", owner), new PendingReference("V", ["X"], context, [owner]), Reference("W")]);
         Assert.Equal(3, apart.Count);
         Assert.Equal(["V", "W", "V"], apart.Select(reference => reference.Head));
         Assert.Same(owner, Assert.Single(apart.First().BoundOwners));

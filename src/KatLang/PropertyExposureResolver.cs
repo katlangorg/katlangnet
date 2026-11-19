@@ -1002,7 +1002,7 @@ internal static class PropertyExposureResolver
                 foreach (var name in node.SummaryVisiblePropertyDependencyNames)
                     if (equationOf.TryGetValue(name, out var read))
                         yield return read;
-                foreach (var pending in node.PendingReferences)
+                foreach (var (_, pending) in node.ReferenceInputs)
                     if (pending.Selection == PendingSelection.Lexical && equationOf.TryGetValue(pending.Head, out var read))
                         yield return read;
             }
@@ -1078,8 +1078,8 @@ internal static class PropertyExposureResolver
                 }
             }
 
-            foreach (var pending in node.PendingReferences)
-                requirements = sets.Union(requirements, Settle(pending.ContentKey, pending, reads));
+            foreach (var (key, pending) in node.ReferenceInputs)
+                requirements = sets.Union(requirements, Settle(key, pending, reads));
 
             return requirements;
         }
@@ -1606,7 +1606,7 @@ internal static class PropertyExposureResolver
             private List<(StaticLookupFacts Facts, int Version)>? _views;
 
             /// <summary>
-            /// The owners this frame's reference binds itself (<see cref="PendingReference.BoundOwners"/>): its bound
+            /// The owners this frame's reference binds itself (<see cref="SummaryReference.BoundOwners"/>): its bound
             /// owners are its enclosing frame's extended by them, so each of them is present whatever the enclosing
             /// frame's are. Null for a seed, an inner route frame and a reference that binds none.
             /// </summary>
@@ -1837,11 +1837,9 @@ internal static class PropertyExposureResolver
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, BoundOwnerSet? boundOwners)
         {
-            // A raw reference has no origin yet: a row of a hoisted deconstruction source, or a bare name the chain
-            // does not declare. It is anchored at the level that settles it; one no level anchors is refused below
-            // (ResolveReference). Every reference a summary walk let escape a body already carries that body's context.
-            if (pending.Origin is null && level.PropertyScope.CompletedContext is { } completed)
-                pending = pending.At(completed);
+            // Every reference a settlement receives carries its origin (PendingReference.Origin): what a summary walk let
+            // escape a body carries that body's context, BuildSummaries anchors a hoisted deconstruction source's raw rows
+            // at their level, and a bare name the chain does not declare is anchored at the level (ResolveVisibleName).
             ChargeFrame();
             memos.Observations?.RecordRequiredAncestorSettlementFrame(pending);
             var frame = new Frame(memos.Observations);
@@ -1908,9 +1906,9 @@ internal static class PropertyExposureResolver
             // A consulted level on the site's chain is the frame itself: the walk is settled at that level, from that
             // level, whoever reads through it. A level off that chain (a member's own body, the reader's own block) is
             // checked from the deepest level the two chains share.
-            if (pending.OpenPath && pending.Origin is { } consulted)
+            if (pending.OpenPath)
             {
-                var checkedFrom = CheckSite(site, consulted.Key, out var isConsultedLevel);
+                var checkedFrom = CheckSite(site, pending.Origin.Key, out var isConsultedLevel);
                 if (isConsultedLevel || checkedFrom.Depth < level.Depth)
                     level = checkedFrom;
                 site = checkedFrom;
@@ -1946,8 +1944,6 @@ internal static class PropertyExposureResolver
 
             try
             {
-                if (pending.Origin is null)
-                    throw new InvalidOperationException("Requirement settlement requires an explicit structural context.");
                 if (pending.Selection == PendingSelection.OpenWalks && SharedOpenWalksLevel(self, pending, level, boundOwners) is { } opening)
                 {
                     // C1: the level's walks settled ONCE, at the level itself with no bound owners, answer every reader
@@ -2008,12 +2004,12 @@ internal static class PropertyExposureResolver
         private IEnumerator<Frame> ResolvePublishedReference(Frame self, PendingReference pending, SummaryScope level,
             SummaryScope site, BoundOwnerSet? boundOwners)
         {
-            var origin = memos.SharedMemo.RequirementContext(pending.Origin)!;
+            var origin = memos.SharedMemo.RequirementContext(pending.Origin);
             var facts = origin.Facts;
             NoteView(facts);
             // The requirement view is chosen from the written origin's facts, which are a view of their own.
-            if (pending.Origin is { } written && !ReferenceEquals(written.Facts, facts))
-                NoteView(written.Facts);
+            if (!ReferenceEquals(pending.Origin.Facts, facts))
+                NoteView(pending.Origin.Facts);
             if (facts.Facts(origin.Key) is not { } originFacts || originFacts.Body is null && !originFacts.IsProvisional) yield break;
             var parts = new List<AnchoredSeed>();
             if (pending.Selection == PendingSelection.BlockHead)
@@ -2260,13 +2256,12 @@ internal static class PropertyExposureResolver
                     var row = PropertyDependencyGraphBuilder.GetAlgorithmSummary(reference, memos, view.Context(terminal.Key)).OutputSeed;
                     // A head an open provides is no direct-lexical head: openStructure resolves nothing through it.
                     var directHead = true;
-                    foreach (var written in row.PendingReferences)
+                    foreach (PendingReference written in row.PendingReferences)
                         directHead &= written.Selection != PendingSelection.OpenWalks;
-                    foreach (var written in row.PendingReferences)
+                    foreach (PendingReference written in row.PendingReferences)
                     {
-                        if (!directHead || written.OpenPath
-                            || memos.SharedMemo.RequirementContext(written.Origin ?? view.Context(terminal.Key)) is not { } origin)
-                            continue;
+                        if (!directHead || written.OpenPath) continue;
+                        var origin = memos.SharedMemo.RequirementContext(written.Origin);
                         var seen = false;
                         foreach (var (known, _) in views) seen |= ReferenceEquals(known, origin.Facts);
                         if (!seen) views.Add((origin.Facts, origin.Facts.ViewVersion));
@@ -2370,7 +2365,7 @@ internal static class PropertyExposureResolver
         private SummaryScope? SharedOpenWalksLevel(Frame self, PendingReference pending, SummaryScope level, BoundOwnerSet? boundOwners)
         {
             if (OpenWalksPerReaderForTesting.Value) return null;
-            var origin = memos.SharedMemo.RequirementContext(pending.Origin)!;
+            var origin = memos.SharedMemo.RequirementContext(pending.Origin);
             SummaryScope? opening = level;
             while (opening is not null && !ReferenceEquals(opening.PropertyScope.CompletedContext?.Key, origin.Key))
                 opening = opening.Parent;
@@ -2592,7 +2587,7 @@ internal static class PropertyExposureResolver
             var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
                 .Concat(site.ResolveRequirementsFromSite(seed.OwnerQualifiedParameters, boundOwners, self, ref landing)));
             self.NoteSiteLanding(landing);
-            foreach (var pending in seed.PendingReferences)
+            foreach (PendingReference pending in seed.PendingReferences)
             {
                 var settled = ReferenceFrame(pending, level, site, boundOwners);
                 yield return settled;
@@ -2608,14 +2603,16 @@ internal static class PropertyExposureResolver
         /// name as a property of the level's chain first (its stored summary), and only then
         /// the level's and its ancestors' <c>open</c> providers, whose provided member charges
         /// its own requirements. A name provided by nothing (an unresolvable name, or one the
-        /// prelude declares) contributes no requirement.
+        /// prelude declares) contributes no requirement. The name is one a hoisted deconstruction
+        /// source's raw rows write at this resolution's level, so its reference is anchored at that
+        /// level's completed context.
         /// </summary>
         public RequirementSet ResolveVisibleName(string name, SummaryScope level)
         {
             if (TryLookupSummary(level, name, out _, out _, out var summary))
                 return sets.Adopt(summary);
 
-            return Run(ReferenceFrame(new PendingReference(name, []), level, site: null, boundOwners: null));
+            return Run(ReferenceFrame(new PendingReference(name, [], origin: memos.CompletedContext), level, site: null, boundOwners: null));
         }
     }
 
