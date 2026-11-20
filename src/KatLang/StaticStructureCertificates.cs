@@ -3,6 +3,25 @@ namespace KatLang;
 internal sealed partial class StaticStructureQueries
 {
     /// <summary>
+    /// A namespace certificate's record count (<paramref name="live"/> + <paramref name="temporary"/> +
+    /// <paramref name="extra"/>), held in a 32-bit integer: above <see cref="int.MaxValue"/> it is refused by a FIXED
+    /// ceiling (<see cref="StaticQueryBoundKind.CertificateStorage"/>) that neither the program's size nor the envelope
+    /// moves. The ceiling is a guard that is never reached: a certificate charges every count to the callback graph's
+    /// entry bound (<see cref="StaticQueryReader{TKey, TValue}.ChargeAuxiliary"/>) before it adds a record, and that
+    /// bound, <see cref="StaticQueryLimits.MaxEntries"/> less the engine's own entries (at least the running one), is
+    /// below it: under 1,048,576 on an admitted operation (one entry per KiB of the 1-GiB envelope at most), and at most
+    /// <see cref="int.MaxValue"/> − 1 for any limits, so a certificate never holds more records than that and its next
+    /// count is at most <see cref="int.MaxValue"/>.
+    /// </summary>
+    internal static int NamespaceCertificateTotal(int live, int temporary, int extra)
+    {
+        var total = (long)live + temporary + extra;
+        if (total > int.MaxValue)
+            throw new StaticQueryLimitExceededException("The namespace certificate exceeded its storage bound.", StaticQueryBoundKind.CertificateStorage);
+        return (int)total;
+    }
+
+    /// <summary>
     /// A closed conservative graph certificate for an observer, never a selected identity or OD-D verdict.
     /// Each local equation is positive set union. Its complete least closure conservatively retains every
     /// member-bearing endpoint and blocking failure. Empty endpoints are omitted; runtime and static miss
@@ -35,12 +54,7 @@ internal sealed partial class StaticStructureQueries
         private int _liveEntries;
         private int _temporaryEntries;
 
-        private int Total(int extra = 0)
-        {
-            var total = (long)_liveEntries + _temporaryEntries + extra;
-            if (total > int.MaxValue) throw new StaticQueryLimitExceededException("The namespace certificate exceeded its storage bound.");
-            return (int)total;
-        }
+        private int Total(int extra = 0) => NamespaceCertificateTotal(_liveEntries, _temporaryEntries, extra);
         private void Work() => reader.ChargeAuxiliary(Total());
         private void Admit()
         {

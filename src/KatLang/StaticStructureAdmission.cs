@@ -68,8 +68,14 @@ internal static class StaticStructureAdmission
             }
         }
         var facts = seen.Count + edges;
-        var entries = (int)Math.Min(int.MaxValue, Math.Min(graphBytes / 1024, 4096 + 128 * Math.Min(facts, (long.MaxValue - 4096) / 128)));
-        var limits = new StaticQueryLimits(16_384 + 1024 * Math.Min(facts, (long.MaxValue - 16_384) / 1024), 4, entries, 65_536 + 4096 * Math.Min(facts, (long.MaxValue - 65_536) / 4096), graphBytes / 64);
+        // The entry bound has two parts, one entry per KiB of the envelope and 4,096 + 128 per admitted node and edge, and
+        // is the smaller. Which part that is (the program's only when strictly smaller) selects the refusal's explanation
+        // (ProgramScaledEntries); the bound itself is the same either way.
+        var envelopeEntries = graphBytes / 1024;
+        var programEntries = 4096 + 128 * Math.Min(facts, (long.MaxValue - 4096) / 128);
+        var entries = (int)Math.Min(int.MaxValue, Math.Min(envelopeEntries, programEntries));
+        var limits = new StaticQueryLimits(16_384 + 1024 * Math.Min(facts, (long.MaxValue - 16_384) / 1024), 4, entries,
+            65_536 + 4096 * Math.Min(facts, (long.MaxValue - 65_536) / 4096), graphBytes / 64, ProgramScaledEntries: programEntries < envelopeEntries);
         return new(seen.Count, edges, graphBytes, limits, hasOpens, hasOutputSpreadMarkers);
     }
 
@@ -77,13 +83,26 @@ internal static class StaticStructureAdmission
     /// The refusal names the exhausted counter (the exception's own sentence) and then says what a host can do
     /// (<see cref="StaticQueryLimitExceededException.Bound"/>). For an envelope bound (<see cref="EnvelopeSentence"/>):
     /// the envelope never exceeds <see cref="SourceProcessingLimits.MaxSupportedStaticStructureBytes"/>, and configuration
-    /// may only lower it, so the remedy is a smaller program. The operation's WORK bound (<see cref="WorkBoundSentence"/>:
-    /// 16,384 + 1,024 per admitted node and edge) and READ bound (<see cref="ReadBoundSentence"/>: 65,536 + 4,096 per
-    /// admitted node and edge), both <see cref="Measurement.Limits"/>, do not move with
-    /// <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so lowering the envelope never lowers them and the
-    /// envelope sentence would misstate the remedy. Signature selection's enumeration limit
-    /// (<see cref="SignatureEnumerationSentence"/>) is a constant, 2^62 classifications, that neither the program's size
-    /// nor any host setting moves. Text only; the kind stays <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.
+    /// may only lower it, so the remedy is a smaller program. Source admission's node and edge caps and the ledger's
+    /// storage bound are such bounds. The ENTRY bound (<see cref="StaticQueryLimits.MaxEntries"/>) is mixed: the smaller
+    /// of an envelope part, one entry per KiB, and a program-scaled part, 4,096 + 128 per admitted node and edge, and its
+    /// refusal explains the part that set it. While the envelope part is the smaller, or the two are equal, that is the
+    /// envelope sentence. Otherwise (<see cref="StaticQueryLimits.ProgramScaledEntries"/>; under the default envelope,
+    /// every program of fewer than 8,160 admitted nodes and edges) the program did not reach the envelope, and
+    /// <see cref="ProgramScaledEntryBoundSentence"/> says that no envelope setting raises the bound. It does not say that
+    /// none lowers it: a host that lowers the envelope far enough makes the envelope part the smaller. The operation's
+    /// WORK bound (<see cref="WorkBoundSentence"/>: 16,384 + 1,024 per admitted node and edge) and READ bound
+    /// (<see cref="ReadBoundSentence"/>: 65,536 + 4,096 per admitted node and edge), both <see cref="Measurement.Limits"/>,
+    /// do not move with <see cref="SourceProcessingLimits.MaxStaticStructureBytes"/>, so lowering the envelope never
+    /// lowers them and the envelope sentence would misstate the remedy. Three limits are constants that neither the
+    /// program's size nor any host setting moves: signature selection's enumeration limit
+    /// (<see cref="SignatureEnumerationSentence"/>, 2^62 classifications), the per-query REFINEMENT limit
+    /// (<see cref="RefinementLimitSentence"/>, four strict changes of one answer; the production fact order,
+    /// <see cref="StaticStructureQueries.IsRefinement"/>, changes a fact at most twice, so only a definition of greater
+    /// height reaches it), and a namespace certificate's 32-bit record count (<see cref="CertificateStorageSentence"/>,
+    /// never reached: <see cref="StaticStructureQueries.NamespaceCertificateTotal"/>). Text only; the kind stays
+    /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>, the refusal stays unpositioned, and no threshold depends
+    /// on which sentence explains it.
     /// </summary>
     internal static Diagnostic Rejection(StaticQueryLimitExceededException error)
         => new($"Static structure analysis exceeded its resource bound. {error.Message} {RemedySentence(error.Bound)}",
@@ -96,6 +115,9 @@ internal static class StaticStructureAdmission
         StaticQueryBoundKind.Work => WorkBoundSentence,
         StaticQueryBoundKind.Reads => ReadBoundSentence,
         StaticQueryBoundKind.SignatureEnumeration => SignatureEnumerationSentence,
+        StaticQueryBoundKind.ProgramScaledEntries => ProgramScaledEntryBoundSentence,
+        StaticQueryBoundKind.Refinements => RefinementLimitSentence,
+        StaticQueryBoundKind.CertificateStorage => CertificateStorageSentence,
         _ => throw new System.Diagnostics.UnreachableException($"Unknown static query bound kind {bound}."),
     };
 
@@ -110,4 +132,13 @@ internal static class StaticStructureAdmission
 
     internal const string SignatureEnumerationSentence =
         "This limit is fixed: the count doubles with each .Algorithm link classified together, and 2^62 or more is refused whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.";
+
+    internal const string ProgramScaledEntryBoundSentence =
+        "This bound scales with the size of the analyzed program (4,096 + 128 per node and edge) and is below what the host's static-structure envelope allows (one entry per KiB), so no envelope setting raises it.";
+
+    internal const string RefinementLimitSentence =
+        "This limit is fixed: no static query may refine its answer more often, whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.";
+
+    internal const string CertificateStorageSentence =
+        "This limit is fixed: a namespace certificate counts at most 2,147,483,647 records, whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.";
 }

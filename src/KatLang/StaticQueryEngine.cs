@@ -68,15 +68,26 @@ internal sealed class StaticQueryReader<TKey, TValue>(StaticQueryEngine<TKey, TV
 /// <summary>
 /// Cumulative operation bounds. Production consumers must supply finite, operation-scaled work/read/entry limits.
 /// MaxRefinements bounds strict changes of any one value, including a domain of unbounded height.
+/// <see cref="ProgramScaledEntries"/> records which part of admission's two-part entry bound
+/// <see cref="MaxEntries"/> is; it selects the explanation of an entry-bound refusal (<see cref="EntryBound"/>) and
+/// never a threshold.
 /// </summary>
 internal sealed record StaticQueryLimits(
     long MaxEvaluations,
     int MaxRefinements,
     int MaxEntries = int.MaxValue,
     long MaxReads = long.MaxValue,
-    long MaxStorageUnits = long.MaxValue)
+    long MaxStorageUnits = long.MaxValue,
+    bool ProgramScaledEntries = false)
 {
     public static StaticQueryLimits Default { get; } = new(long.MaxValue, 64);
+
+    /// <summary>
+    /// The kind an entry-bound refusal reports, by the engine and by the callback graph alike:
+    /// <see cref="StaticQueryBoundKind.ProgramScaledEntries"/> when <see cref="MaxEntries"/> is admission's
+    /// program-scaled part, otherwise <see cref="StaticQueryBoundKind.Envelope"/>.
+    /// </summary>
+    internal StaticQueryBoundKind EntryBound => ProgramScaledEntries ? StaticQueryBoundKind.ProgramScaledEntries : StaticQueryBoundKind.Envelope;
 }
 
 internal readonly record struct StaticQueryStatistics(
@@ -101,6 +112,25 @@ internal enum StaticQueryBoundKind
 
     /// <summary>Signature selection's fixed limit of fewer than 2^62 classifications of <c>.Algorithm</c> links.</summary>
     SignatureEnumeration,
+
+    /// <summary>
+    /// The ENTRY bound (<see cref="StaticQueryLimits.MaxEntries"/>) while its program-scaled part, 4,096 + 128 per admitted
+    /// node and edge, is below its envelope part, one entry per KiB (<see cref="StaticQueryLimits.ProgramScaledEntries"/>).
+    /// While the envelope part is the smaller, or the two are equal, an entry-bound refusal is <see cref="Envelope"/>.
+    /// </summary>
+    ProgramScaledEntries,
+
+    /// <summary>
+    /// The fixed per-query REFINEMENT limit (<see cref="StaticQueryLimits.MaxRefinements"/>, four on every admitted
+    /// operation), which neither the program's size nor the envelope moves.
+    /// </summary>
+    Refinements,
+
+    /// <summary>
+    /// A namespace certificate's fixed 32-bit record count (<see cref="StaticStructureQueries.NamespaceCertificateTotal"/>).
+    /// Every record is first charged to the callback graph's entry bound, which is lower, so that bound refuses first.
+    /// </summary>
+    CertificateStorage,
 }
 
 /// <summary>
@@ -372,7 +402,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         {
             ReaderSource();
             if (liveEntries < 0 || liveEntries > _limits.MaxEntries - _entries.Count)
-                throw new StaticQueryLimitExceededException($"The static query callback graph exceeded its entry bound ({_limits.MaxEntries}).");
+                throw new StaticQueryLimitExceededException($"The static query callback graph exceeded its entry bound ({_limits.MaxEntries}).", _limits.EntryBound);
             Resources.Work(cancellationToken: _cancellationToken);
             Resources.ObserveCallback(16L * liveEntries, _cancellationToken);
             _auxiliaryWork++;
@@ -399,7 +429,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         if (_entryByKey.TryGetValue(key, out var known))
             return known;
         if (_entries.Count >= _limits.MaxEntries)
-            throw new StaticQueryLimitExceededException($"The static queries exceeded their entry bound ({_limits.MaxEntries}).");
+            throw new StaticQueryLimitExceededException($"The static queries exceeded their entry bound ({_limits.MaxEntries}).", _limits.EntryBound);
         Resources.Reserve(4, _cancellationToken);
         TValue initial;
         _initializing = true;
@@ -474,7 +504,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
             throw error;
         }
         if (entry.Refinements >= _limits.MaxRefinements)
-            throw new StaticQueryLimitExceededException($"A static query exceeded its refinement bound ({_limits.MaxRefinements}).");
+            throw new StaticQueryLimitExceededException($"A static query exceeded its refinement bound ({_limits.MaxRefinements}).", StaticQueryBoundKind.Refinements);
         _cancellationToken.ThrowIfCancellationRequested();
         entry.Value = value;
         entry.Refinements++;

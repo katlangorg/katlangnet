@@ -200,7 +200,24 @@ the size of the analyzed program (65,536 + 4,096 per node and edge) rather than 
 static-structure envelope, so no envelope setting raises or lowers it."). Signature selection's
 enumeration limit is a constant, so its refusal says that ("This limit is fixed: the count doubles
 with each .Algorithm link classified together, and 2^62 or more is refused whatever the size of the
-program or the host's static-structure envelope, so no host setting raises or lowers it."). Method:
+program or the host's static-structure envelope, so no host setting raises or lowers it."). The
+entry cap is the envelope's part of a mixed bound, min(envelope/1,024, 4,096 + 128F), and an
+entry-bound refusal explains the part that set it (`StaticQueryLimits.ProgramScaledEntries`, decided
+at admission; the threshold is the same either way). While the envelope's part is the smaller, or
+the two are equal, that is the envelope sentence. While the program's part is strictly the smaller
+(under the default envelope, for every F below 8,160) it is "This bound scales with the size of the
+analyzed program (4,096 + 128 per node and edge) and is below what the host's static-structure
+envelope allows (one entry per KiB), so no envelope setting raises it." It does not say "or lowers":
+a host that lowers the envelope far enough makes the envelope's part the smaller. The four
+refinements per query are a constant, and their refusal says so ("This limit is fixed: no static
+query may refine its answer more often, whatever the size of the program or the host's
+static-structure envelope, so no host setting raises or lowers it."); the production fact order
+changes a fact at most twice, so only a definition of greater height reaches that limit. A
+namespace certificate holds its record count in a 32-bit integer, a fixed ceiling with a sentence of
+its own that is never reached: each count is first charged to the callback graph's entry bound,
+which is lower (`StaticStructureQueries.NamespaceCertificateTotal`). `StaticStructureConsumerTests`
+pins every sentence, both sides of the mixed bound and the fixed limits, from counts and small
+graphs only. Method:
 a scratch harness outside the repository ran one `KatLangEngine.Run` per fresh process (Release,
 Windows x64, .NET 11.0.0 workstation concurrent GC, no heap limit) and reported peak working set /
 peak commit in MiB (bytes divided by 1,048,576); entry counts came from the same source with a scratch counter on `StaticQueryEngine`

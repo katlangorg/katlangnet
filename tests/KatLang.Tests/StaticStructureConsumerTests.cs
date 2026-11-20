@@ -208,7 +208,9 @@ public sealed class StaticStructureConsumerTests
     [Fact]
     public async Task Refusal_NamesTheExhaustedCounter_AndThatTheEnvelopeCannotBeRaised()
     {
-        // Three alias rows need 194 entries (36 per row plus 86); a 64-KiB envelope allows 64.
+        // Three alias rows need 194 entries (36 per row plus 86); a 64-KiB envelope allows 64. That is the envelope's part
+        // of the mixed entry bound, far below the program's part, so the envelope sentence explains it (both sides:
+        // EntryBoundRefusal_ExplainsThePartThatSetIt_OnBothSidesOfTheMixedLimit).
         const string source = "A0 = A1\nA1 = A2\nA2 = A3\nA3 = 42\nA0";
         const string envelope = "The program exceeds the host's static-structure envelope (at most 1 GiB; a host may only lower it).";
         const string expected = "Static structure analysis exceeded its resource bound. The static queries exceeded their entry bound (64). " + envelope;
@@ -238,7 +240,8 @@ public sealed class StaticStructureConsumerTests
     /// only lower it") would misstate the remedy: lowering the envelope never lowers the work bound. The ledger marks its
     /// work refusal, and only that one; its storage bound keeps the envelope sentence. The routes are pinned in
     /// <c>ExposureSettlementFrameChargeTests</c>; the read bound's and signature selection's own sentences are pinned in
-    /// <c>StaticQueryEngineTests</c> and <c>SignatureSelectionTests</c>, and every kind's sentence below.
+    /// <c>StaticQueryEngineTests</c> and <c>SignatureSelectionTests</c>, the entry bound's, the refinement limit's and
+    /// the certificate ceiling's in the three tests that follow, and every kind's sentence below.
     /// </summary>
     [Fact]
     public void WorkBoundRefusal_SaysTheBoundScalesWithTheProgram_NotThatTheHostMayLowerIt()
@@ -263,7 +266,7 @@ public sealed class StaticStructureConsumerTests
             "Static structure analysis exceeded its resource bound. The static operation exceeded its metadata storage bound (3 slots). " + envelope,
             StaticStructureAdmission.Rejection(storage).Message);
 
-        // Each kind's sentence, in full: none of the three non-envelope bounds says that a host may lower it.
+        // Each kind's sentence, in full: none of the non-envelope bounds says that a host may lower it.
         Assert.Equal(envelope, StaticStructureAdmission.EnvelopeSentence);
         Assert.Equal(workBound, StaticStructureAdmission.WorkBoundSentence);
         Assert.Equal(
@@ -272,16 +275,209 @@ public sealed class StaticStructureConsumerTests
         Assert.Equal(
             "This limit is fixed: the count doubles with each .Algorithm link classified together, and 2^62 or more is refused whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.",
             StaticStructureAdmission.SignatureEnumerationSentence);
+        // The entry bound's program part: a host that lowers the envelope far enough makes the envelope part the smaller,
+        // so this sentence says only that no envelope setting raises it.
+        Assert.Equal(
+            "This bound scales with the size of the analyzed program (4,096 + 128 per node and edge) and is below what the host's static-structure envelope allows (one entry per KiB), so no envelope setting raises it.",
+            StaticStructureAdmission.ProgramScaledEntryBoundSentence);
+        Assert.Equal(
+            "This limit is fixed: no static query may refine its answer more often, whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.",
+            StaticStructureAdmission.RefinementLimitSentence);
+        Assert.Equal(
+            "This limit is fixed: a namespace certificate counts at most 2,147,483,647 records, whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.",
+            StaticStructureAdmission.CertificateStorageSentence);
         foreach (var (kind, sentence) in new[]
         {
             (StaticQueryBoundKind.Reads, StaticStructureAdmission.ReadBoundSentence),
             (StaticQueryBoundKind.SignatureEnumeration, StaticStructureAdmission.SignatureEnumerationSentence),
+            (StaticQueryBoundKind.ProgramScaledEntries, StaticStructureAdmission.ProgramScaledEntryBoundSentence),
+            (StaticQueryBoundKind.Refinements, StaticStructureAdmission.RefinementLimitSentence),
+            (StaticQueryBoundKind.CertificateStorage, StaticStructureAdmission.CertificateStorageSentence),
         })
         {
             Assert.Equal("Static structure analysis exceeded its resource bound. The counter. " + sentence,
                 StaticStructureAdmission.Rejection(new StaticQueryLimitExceededException("The counter.", kind)).Message);
             Assert.DoesNotContain("may only lower it", sentence, StringComparison.Ordinal);
         }
+
+        // Every kind has a sentence of its own: none falls through to the unreachable arm, and no two kinds share one.
+        var explained = Enum.GetValues<StaticQueryBoundKind>()
+            .Select(kind => StaticStructureAdmission.Rejection(new StaticQueryLimitExceededException("The counter.", kind)).Message)
+            .ToArray();
+        Assert.Equal(7, explained.Length);
+        Assert.Equal(explained.Length, explained.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>
+    /// The ENTRY bound is mixed: the smaller of one entry per KiB of the envelope and 4,096 + 128 per admitted node and
+    /// edge. Its refusal explains the part that set it, on both sides of the point where the two parts meet, while the
+    /// threshold stays the same number on both sides. Under the default envelope the program's part is the smaller for
+    /// every small program; at a tie the envelope bounds the entries as much as the program does, so the envelope
+    /// sentence stays true there (the envelope part rounds down to whole KiB). Both refusal sites are covered at the
+    /// admitted limits: the engine's, by a chain of fresh keys that stops at the first key over the bound (at most
+    /// 4,096 + 128F + 1 keys, about 26,000 for this small program, never a ceiling-size graph), and the callback graph's,
+    /// by a count alone. The source route of the envelope side is
+    /// <see cref="Refusal_NamesTheExhaustedCounter_AndThatTheEnvelopeCannotBeRaised"/>.
+    /// </summary>
+    [Fact]
+    public void EntryBoundRefusal_ExplainsThePartThatSetIt_OnBothSidesOfTheMixedLimit()
+    {
+        var raw = SourceProvenance.ParseSyntaxValidRoot("A=1\nA");
+        var measured = StaticStructureAdmission.Create(raw).Measurement;
+        var facts = measured.Nodes + measured.Edges;
+        var program = 4096 + 128 * facts;
+        // The default envelope allows 1,048,576 entries, so its part is the larger for fewer than 8,160 nodes and edges.
+        Assert.InRange(facts, 1, 8_159);
+        var cases = new (long? Envelope, long Entries, bool ProgramScaled)[]
+        {
+            (null, program, true),
+            (1024 * (program + 1), program, true),       // one KiB above the meeting point
+            (1024 * (program + 1) - 1, program, false),  // one byte less: the envelope's part rounds down to a tie
+            (1024 * program, program, false),            // the meeting point
+            (1024 * (program - 1), program - 1, false),  // one KiB below it
+            (64 * 1024, 64, false),                      // the envelope of the source-route test
+        };
+        foreach (var (envelope, entries, programScaled) in cases)
+        {
+            var limits = StaticStructureAdmission.Create(raw,
+                sourceProcessingLimits: envelope is { } bytes ? new() { MaxStaticStructureBytes = bytes } : null).Measurement.Limits;
+            var kind = programScaled ? StaticQueryBoundKind.ProgramScaledEntries : StaticQueryBoundKind.Envelope;
+            var sentence = programScaled ? StaticStructureAdmission.ProgramScaledEntryBoundSentence : StaticStructureAdmission.EnvelopeSentence;
+            Assert.Equal(entries, limits.MaxEntries);
+            Assert.Equal(programScaled, limits.ProgramScaledEntries);
+            Assert.Equal(kind, limits.EntryBound);
+
+            var engine = new StaticQueryEngine<int, int>(new EntryChain(), limits: limits);
+            var refusal = Assert.Throws<StaticQueryLimitExceededException>(() => engine.Get(0));
+            Assert.Equal(kind, refusal.Bound);
+            Assert.Equal(entries, engine.Statistics.Entries);
+            var diagnostic = StaticStructureAdmission.Rejection(refusal);
+            Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, diagnostic.Code);
+            Assert.Null(diagnostic.Span);
+            Assert.Equal(
+                $"Static structure analysis exceeded its resource bound. The static queries exceeded their entry bound ({entries}). " + sentence,
+                diagnostic.Message);
+
+            // The callback graph shares the bound with the engine's entries: one running entry leaves room for one
+            // record fewer than the bound, and a count of the bound itself is refused with the same explanation.
+            Assert.Equal(0, new StaticQueryEngine<int, int>(new CallbackCount((int)entries - 1), limits: limits).Get(0));
+            var callback = Assert.Throws<StaticQueryLimitExceededException>(
+                () => new StaticQueryEngine<int, int>(new CallbackCount((int)entries), limits: limits).Get(0));
+            Assert.Equal(kind, callback.Bound);
+            Assert.Equal(
+                $"Static structure analysis exceeded its resource bound. The static query callback graph exceeded its entry bound ({entries}). " + sentence,
+                StaticStructureAdmission.Rejection(callback).Message);
+        }
+    }
+
+    /// <summary>
+    /// The REFINEMENT limit is fixed: every admitted operation allows four strict changes of one query's answer, whatever
+    /// the program's size or the envelope, and its refusal says that no host setting moves it. The production fact order
+    /// changes a fact at most twice. In the test definition one key settles after four changes. A second key in the
+    /// same engine gets its own four changes before the fifth is refused.
+    /// </summary>
+    [Fact]
+    public void RefinementLimitRefusal_IsFixed_AndSaysNoHostSettingMovesIt()
+    {
+        const string expected = "Static structure analysis exceeded its resource bound. A static query exceeded its refinement bound (4). "
+            + "This limit is fixed: no static query may refine its answer more often, whatever the size of the program or the host's static-structure envelope, so no host setting raises or lowers it.";
+        var small = SourceProvenance.ParseSyntaxValidRoot("A=1\nA");
+        var wide = SourceProvenance.ParseSyntaxValidRoot(string.Join('\n', Enumerable.Range(0, 100).Select(i => $"P{i} = {i}")) + "\nP0");
+        foreach (var raw in new[] { small, wide })
+        {
+            foreach (var envelope in new long?[] { null, 256L * 1024 * 1024, 64 * 1024 })
+            {
+                var limits = StaticStructureAdmission.Create(raw,
+                    sourceProcessingLimits: envelope is { } bytes ? new() { MaxStaticStructureBytes = bytes } : null).Measurement.Limits;
+                Assert.Equal(4, limits.MaxRefinements);
+
+                var engine = new StaticQueryEngine<int, int>(new Climb(), limits: limits);
+                Assert.Equal(4, engine.Get(4));
+                Assert.Equal(4L, engine.Statistics.ValueChanges);
+                var refusal = Assert.Throws<StaticQueryLimitExceededException>(() => engine.Get(5));
+                Assert.Equal(StaticQueryBoundKind.Refinements, refusal.Bound);
+                var statistics = engine.Statistics;
+                Assert.Equal((2, 8L), (statistics.Entries, statistics.ValueChanges));
+                var diagnostic = StaticStructureAdmission.Rejection(refusal);
+                Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, diagnostic.Code);
+                Assert.Null(diagnostic.Span);
+                Assert.Equal(expected, diagnostic.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A namespace certificate holds its record count in a 32-bit integer: a FIXED ceiling with its own explanation, at
+    /// the same threshold as before (a count of 2,147,483,647 is accepted, any larger one refused, with no overflow on the
+    /// way). It is pinned from counts, never from that many records, because no operation reaches it: a certificate
+    /// charges each count to the callback graph's entry bound before it adds a record, and that bound refuses the
+    /// largest count a certificate could present even under the unbounded limits (one running entry leaves
+    /// 2,147,483,646 records), while admission never allows more entries than one per KiB of the 1-GiB envelope.
+    /// </summary>
+    [Fact]
+    public void CertificateStorageCeiling_IsFixed_AndTheCallbackEntryBoundRefusesFirst()
+    {
+        Assert.Equal(int.MaxValue, StaticStructureQueries.NamespaceCertificateTotal(int.MaxValue - 1, 0, 1));
+        Assert.Equal(int.MaxValue, StaticStructureQueries.NamespaceCertificateTotal(int.MaxValue / 2, int.MaxValue / 2 + 1, 0));
+        foreach (var (live, temporary, extra) in new[] { (int.MaxValue, 0, 1), (int.MaxValue / 2 + 1, int.MaxValue / 2 + 1, 0), (int.MaxValue, int.MaxValue, 1) })
+        {
+            var refusal = Assert.Throws<StaticQueryLimitExceededException>(() => StaticStructureQueries.NamespaceCertificateTotal(live, temporary, extra));
+            Assert.Equal(StaticQueryBoundKind.CertificateStorage, refusal.Bound);
+            var diagnostic = StaticStructureAdmission.Rejection(refusal);
+            Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, diagnostic.Code);
+            Assert.Null(diagnostic.Span);
+            Assert.Equal(
+                "Static structure analysis exceeded its resource bound. The namespace certificate exceeded its storage bound. "
+                + StaticStructureAdmission.CertificateStorageSentence,
+                diagnostic.Message);
+        }
+
+        // Under the unbounded limits the callback graph accepts at most 2,147,483,646 records and refuses the next count,
+        // so a certificate's own ceiling is never crossed. These are counts: nothing of that size is allocated.
+        Assert.Equal(0, new StaticQueryEngine<int, int>(new CallbackCount(int.MaxValue - 1), limits: StaticQueryLimits.Default).Get(0));
+        var first = Assert.Throws<StaticQueryLimitExceededException>(
+            () => new StaticQueryEngine<int, int>(new CallbackCount(int.MaxValue), limits: StaticQueryLimits.Default).Get(0));
+        Assert.Equal($"The static query callback graph exceeded its entry bound ({int.MaxValue}).", first.Message);
+        Assert.Equal(StaticQueryBoundKind.Envelope, first.Bound);
+        // The largest request is clamped to the 1-GiB envelope, whose part of the entry bound is 1,048,576 entries.
+        var largest = StaticStructureAdmission.Create(SourceProvenance.ParseSyntaxValidRoot("A=1\nA"),
+            sourceProcessingLimits: new() { MaxStaticStructureBytes = long.MaxValue }).Measurement;
+        Assert.Equal(SourceProcessingLimits.MaxSupportedStaticStructureBytes, largest.GraphBytes);
+        Assert.InRange(largest.Limits.MaxEntries, 1, largest.GraphBytes / 1024);
+    }
+
+    /// <summary>Key k reads key k + 1, so a solve from key 0 discovers fresh keys until the entry bound refuses one.</summary>
+    private sealed class EntryChain : IStaticQueryDefinition<int, int>
+    {
+        public StaticQueryStep<int> Compute(int key, StaticQueryReader<int, int> reader) => StaticQueryStep.Complete(reader.Read(key + 1));
+        public int Initial(int key) => 0;
+        public int PathCycleValue => -1;
+        public bool ValueEquals(int left, int right) => left == right;
+        public bool IsRefinement(int before, int after) => before == after;
+    }
+
+    /// <summary>Each key's answer increases by one on every computation until it reaches the key.</summary>
+    private sealed class Climb : IStaticQueryDefinition<int, int>
+    {
+        public StaticQueryStep<int> Compute(int key, StaticQueryReader<int, int> reader) => StaticQueryStep.Complete(Math.Min(key, reader.Read(key) + 1));
+        public int Initial(int key) => 0;
+        public int PathCycleValue => -1;
+        public bool ValueEquals(int left, int right) => left == right;
+        public bool IsRefinement(int before, int after) => after >= before;
+    }
+
+    /// <summary>One key whose computation charges a callback graph of <paramref name="liveEntries"/> records, as a certificate does.</summary>
+    private sealed class CallbackCount(int liveEntries) : IStaticQueryDefinition<int, int>
+    {
+        public StaticQueryStep<int> Compute(int key, StaticQueryReader<int, int> reader)
+        {
+            reader.ChargeAuxiliary(liveEntries);
+            return StaticQueryStep.Complete(0);
+        }
+        public int Initial(int key) => 0;
+        public int PathCycleValue => -1;
+        public bool ValueEquals(int left, int right) => left == right;
+        public bool IsRefinement(int before, int after) => before == after;
     }
 
     [Fact]
