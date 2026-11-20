@@ -75,12 +75,107 @@ internal enum FrontEndForwardingKind
     /// <summary>A parameter forwarding added to the referencing level (Lean <c>forwardedParameter</c>).</summary>
     Forwarded,
 
-    /// <summary>A closed body's value operand stayed bare and its callee requires exactly this binding.</summary>
+    /// <summary>
+    /// A REFUSED forward that names this binding (Lean <c>unavailable</c>): a closed body's value operand stayed bare and
+    /// this is the one name its callee requests that no parameter binds there, or bare forwarding reported this
+    /// parameter as unforwardable.
+    /// </summary>
     Unavailable,
 }
 
 /// <summary>One forwarded binding of a level, by name, with C#'s source and, when captured, the chain level it reads.</summary>
-internal sealed record FrontEndForwarding(string Name, FrontEndForwardingKind Kind, int Level, string? Requested = null);
+internal sealed record FrontEndForwarding(string Name, FrontEndForwardingKind Kind, int Level, string? Requested = null)
+{
+    /// <summary>
+    /// For a by-shape supply (<see cref="Requested"/> is the callee's own name for the binding): the source forwarding BY
+    /// NAME has for that name at the level, as a Lean <c>ForwardingSource</c> term, read from the detection's
+    /// owned-binding fact. It is what <c>forwardingSource</c> must answer for the requested name, since that function
+    /// decides by name only.
+    /// </summary>
+    public string? ByName { get; init; }
+}
+
+/// <summary>
+/// What the pipeline's OUTPUT shows about the role formula lifting gave one supplied slot of a written call. Lifting
+/// can change the tree at a bare name or an argumentless member path whose
+/// invocation endpoint has a nameable lifting signature that requires supplied arguments. In a VALUE role such a
+/// reference becomes a synthesized call; in a CALLABLE role it stays as written. An unnameable family at a value
+/// slot of an inferring body carries a diagnostic at that reference.
+/// </summary>
+internal enum FrontEndSlotOutcome
+{
+    /// <summary>The reference was lifted there: the slot's role was VALUE.</summary>
+    ShownValue,
+
+    /// <summary>The resolver reported an unnameable family at this reference when it tried to lift it as a value.</summary>
+    ReportedValue,
+
+    /// <summary>
+    /// The reference stayed bare where nothing could have refused its lift (an inferring level, or a closed level in
+    /// which every requested name has a parameter binding or the by-shape supply applies): the slot's role was CALLABLE.
+    /// </summary>
+    ShownCallable,
+
+    /// <summary>
+    /// The reference stayed bare in a closed level that leaves a requested name unbound: a callable role and a refused
+    /// lift (PAR-04) leave the same tree, so the output shows neither.
+    /// </summary>
+    RefusedOrCallable,
+
+    /// <summary>
+    /// This position supplies no evidence of its role from a lift or diagnostic: a literal, a parameter, a compound expression (its own
+    /// children take THEIR consumers' roles), a name with no static endpoint, a callable that accepts zero supplied
+    /// arguments, or a clause family with no lifting signature or diagnostic at this position.
+    /// </summary>
+    NoRoleSensitiveReference,
+
+    /// <summary>
+    /// A slot of a call whose callee kind the collector cannot read, such as an unstamped dot edge.
+    /// </summary>
+    CalleeNotRead,
+
+    /// <summary>A dot receiver is an argument position only when the edge selects the extension fallback.</summary>
+    ReceiverOutsideSupply,
+
+    /// <summary>
+    /// A slot after a spread DECLARATION-LEVEL OUTPUT SPREADING inserted (a marked call, or a marked reference formula
+    /// lifting called). Whether such a slot's position still counts as known is that rule's own decision — a lift only
+    /// signature selection decides leaves it known and is reported instead (<c>OutputSpreadReferenceNeedsCall</c>) — and
+    /// the tree does not say which, so the position, and with it the role's table entry, is not read.
+    /// </summary>
+    PositionNotRead,
+
+    /// <summary>
+    /// A slot of a call the PARSER synthesized (the plumbing of an assignment deconstruction): it carries no source span
+    /// to find its counterpart in the complete pipeline's tree by, and no written reference fills it.
+    /// </summary>
+    SynthesizedCall,
+
+    /// <summary>A slot of a written call the complete pipeline's tree no longer holds at its span with the same slots.</summary>
+    NoFinalCounterpart,
+}
+
+/// <summary>
+/// One supplied slot whose role the output shows (<see cref="FrontEndSlotOutcome.ShownValue"/>,
+/// <see cref="FrontEndSlotOutcome.ReportedValue"/> or
+/// <see cref="FrontEndSlotOutcome.ShownCallable"/>): the written callee, its kind as read from its invocation endpoint
+/// (never from the resolver's private classification), the supplied position with whether a spread slot precedes it in
+/// the complete pipeline's call, and the role shown.
+/// </summary>
+internal sealed record FrontEndSlotRole(
+    FrontEndLevel Level,
+    string Callee,
+    LiftingCallee Kind,
+    int Position,
+    bool PositionKnown,
+    LiftingRole Role,
+    string Reference);
+
+/// <summary>
+/// One closed lone row bare forwarding refused (<see cref="DiagnosticCode.UnforwardableParameter"/>): the
+/// report count and the names of the unbound fixed captures identified in those reports.
+/// </summary>
+internal sealed record FrontEndBareRefusal(FrontEndLevel Level, string Callee, int Reports, IReadOnlyList<string> Attributed);
 
 /// <summary>One lexical step to a property body, or to a numbered branch of a property family.</summary>
 internal sealed record FrontEndPathStep(string Property, int? Branch = null);
@@ -139,7 +234,7 @@ internal sealed class FrontEndLevel(
     /// <summary>The properties of this level C#'s collision validator reported, in <see cref="Properties"/> order.</summary>
     public IReadOnlyList<string> Conflicts { get; set; } = [];
 
-    /// <summary>The source of each forwarded capture occurrence and each attributable refusal.</summary>
+    /// <summary>The source of each forwarded capture occurrence and of each refused forward that names one binding.</summary>
     public List<FrontEndForwarding> Forwardings { get; } = [];
 }
 
@@ -178,7 +273,17 @@ internal sealed record FrontEndDrift(string Class, string Witness);
 /// The lifted references of one program the complete pipeline's tree holds: attributed to the level that wrote the
 /// reference, and those whose written occurrence could not be found among the classified names.
 /// </summary>
-internal readonly record struct FrontEndLifts(int Attributed, int Unattributed);
+internal readonly record struct FrontEndLifts(int Attributed, int Unattributed)
+{
+    /// <summary>
+    /// Closed value operands left bare whose callee requests two or more names no parameter binds: the one observation
+    /// (no lift) cannot be divided among them, so no source is recorded for any.
+    /// </summary>
+    public int MultiNameRefusals { get; init; }
+
+    /// <summary>The unbound names of <see cref="MultiNameRefusals"/>.</summary>
+    public int MultiNameRefusalNames { get; init; }
+}
 
 internal sealed record FrontEndProgram(
     string Corpus,
@@ -191,7 +296,23 @@ internal sealed record FrontEndProgram(
     FinalTreeConfirmation FinalTree,
     FrontEndLifts Lifts = default,
     string? Tree = null,
-    string? TreeSkipReason = null);
+    string? TreeSkipReason = null)
+{
+    /// <summary>The supplied slots whose role the output shows, in written order.</summary>
+    public IReadOnlyList<FrontEndSlotRole> SlotRoles { get; init; } = [];
+
+    /// <summary>Every supplied slot of every written call, by what the output shows about it.</summary>
+    public IReadOnlyDictionary<FrontEndSlotOutcome, int> SlotOutcomes { get; init; } = new Dictionary<FrontEndSlotOutcome, int>();
+
+    /// <summary>The written calls and argument-carrying dot edges.</summary>
+    public int WrittenCalls { get; init; }
+
+    /// <summary>Argument slots and dot receivers, counted on the detected calls before classifying any position.</summary>
+    public int WrittenPositions { get; init; }
+
+    /// <summary>The closed lone rows bare forwarding refused.</summary>
+    public IReadOnlyList<FrontEndBareRefusal> BareRefusals { get; init; } = [];
+}
 
 /// <summary>
 /// How the classified names of one program compare with the complete pipeline's tree: confirmed there as the same
@@ -204,7 +325,7 @@ internal readonly record struct FinalTreeConfirmation(int Confirmed, int NoSpan,
 /// Collects, for every corpus program, the C# front end's per-occurrence decisions and the inputs the Lean
 /// front-end specification functions read (<c>lean/KatLang.lean</c>: <c>selectOwnedDeclaration</c>,
 /// <c>elaboratesToParameter</c>, <c>elaborateOpenHead</c>, <c>familyLiftingSignature?</c>,
-/// <c>shouldTreatAsImplicitParam</c>, <c>forwardingSource</c>, <c>conflictingOwnedNames</c>).
+/// <c>shouldTreatAsImplicitParam</c>, <c>forwardingSource</c>, <c>conflictingOwnedNames</c>, <c>liftingSlotRole</c>).
 ///
 /// <para><b>What is C#'s decision.</b> The program is run through the real front-end stages, one at a time:
 /// the raw parse, then <see cref="ParameterDetector.DetectPrevalidated"/> (name resolution), then
@@ -227,8 +348,14 @@ internal readonly record struct FinalTreeConfirmation(int Confirmed, int NoSpan,
 /// reference's own span whose arguments are the synthesized, spanless parameter reads of one shared bundle. Each
 /// argument binding is C#'s forwarding source: a parameter forwarding added to the level (the resolved signature
 /// minus the detected one), the level's own parameter, or else the nearest enclosing level whose completed signature
-/// binds the name. Each argument is checked against the callee's selected signature. At a closed value operand a
-/// bare reference to a callee with one required binding identifies an unavailable source.</item>
+/// binds the name. Each argument is checked against the callee's selected signature. A REFUSED forward is an
+/// unavailable source where the refusal names one binding (<see cref="AttributeForwarding"/>,
+/// <see cref="AttributeBareRefusals"/>), and the by-shape supply is recorded with both names
+/// (<see cref="FrontEndForwarding.Requested"/>).</item>
+/// <item>SLOT ROLES — the complete pipeline's tree again: a written slot that holds a role-sensitive reference shows
+/// the role lifting gave it, by the lift it holds or by the lift it does not hold where nothing could have refused
+/// one, or by an unliftable-family diagnostic at the reference (<see cref="AttributeSlotRoles"/>). Callee classification is private to the
+/// pass, and nothing is added to it.</item>
 /// <item>COLLISIONS — the complete pipeline's <see cref="DiagnosticCode.ParameterPropertyCollision"/> diagnostics,
 /// each matched to the detected property declared at its span.</item>
 /// </list>
@@ -249,6 +376,7 @@ internal static class FrontEndDecisionCorpus
     public const string LanguageSpecCorpus = "spec";
     public const string SemanticGeneratedCorpus = "sem2b";
     public const string TutorialCorpusName = "tutorial";
+    public const string WitnessCorpus = "witness";
     internal const string InvalidOpenTarget = "the program has an invalid open target";
     internal const string UnspellableLiteral = "the program holds a literal the Lean core cannot spell";
 
@@ -264,8 +392,9 @@ internal static class FrontEndDecisionCorpus
     private static readonly Lazy<IReadOnlyList<FrontEndProgram>> LazyPrograms = new(CollectAll);
 
     /// <summary>
-    /// Every program of the four differential corpora, in corpus order: the explorer's, the specification's, the
-    /// SEM-2B generated corpus's identity-prelude members, and the tutorial's source fences.
+    /// Every program of the four differential corpora, in corpus order — the explorer's, the specification's, the
+    /// SEM-2B generated corpus's identity-prelude members, and the tutorial's source fences — and then the members of
+    /// the front-end witnesses (<see cref="FrontEndWitnesses"/>).
     /// </summary>
     public static IReadOnlyList<FrontEndProgram> Programs => LazyPrograms.Value;
 
@@ -309,6 +438,12 @@ internal static class FrontEndDecisionCorpus
         }
         foreach (var example in TutorialCorpus.Examples)
             programs.Add(Collect(TutorialCorpusName, TutorialId(example), example.Source));
+        foreach (var witness in FrontEndWitnesses.All)
+        {
+            foreach (var member in witness.Members)
+                programs.Add(Collect(WitnessCorpus, member.Id, member.Source));
+        }
+
         return programs.AsReadOnly();
     }
 
@@ -360,12 +495,23 @@ internal static class FrontEndDecisionCorpus
             var complete = SourceProvenance.ParseAllowingDiagnostics(source);
             var finalTree = ConfirmAgainstFinalTree(complete.Root, walk.WrittenNodes);
             AttributeCollisions(complete.Diagnostics, walk.Levels);
-            var lifts = AttributeForwarding(complete.Root, walk, operation);
+            var lifted = new LiftedCalls();
+            lifted.VisitAlgorithm(complete.Root);
+            var lifts = AttributeForwarding(lifted.Found, walk, operation);
             if (lifts.Attributed + lifts.Unattributed != observations.ImplicitCallsSynthesized)
                 throw new InvalidOperationException($"Found {lifts.Attributed + lifts.Unattributed} lifted calls, but the resolver synthesized {observations.ImplicitCallsSynthesized}.");
+            var (slotRoles, slotOutcomes) = AttributeSlotRoles(complete, walk, operation);
+            var bareRefusals = AttributeBareRefusals(complete.Diagnostics, walk, operation);
             var (tree, treeSkip) = EncodeForPromotion(beforeExposure, complete, walk.Levels);
 
-            return new(corpus, id, source, null, walk.Levels, walk.Occurrences, walk.Families, finalTree, lifts, tree, treeSkip);
+            return new(corpus, id, source, null, walk.Levels, walk.Occurrences, walk.Families, finalTree, lifts, tree, treeSkip)
+            {
+                SlotRoles = slotRoles,
+                SlotOutcomes = slotOutcomes,
+                WrittenCalls = walk.Calls.Count,
+                WrittenPositions = walk.Calls.Sum(static call => call.Slots.Count),
+                BareRefusals = bareRefusals,
+            };
         }
         catch (Exception error) when (error is InvalidOperationException or NotSupportedException)
         {
@@ -485,7 +631,8 @@ internal static class FrontEndDecisionCorpus
     /// The forwarding sources C# chose, read from the lifted calls of the complete pipeline's tree (see the class
     /// documentation). Every added parameter must occur in a synthesized argument at that level.
     /// </summary>
-    private static FrontEndLifts AttributeForwarding(Algorithm finalRoot, Walk walk, StaticStructureOperation operation)
+    private static FrontEndLifts AttributeForwarding(
+        IReadOnlyList<(SourceSpan Span, string Name, IReadOnlyList<Expr> Arguments)> liftedCalls, Walk walk, StaticStructureOperation operation)
     {
         var written = new Dictionary<(SourceSpan Span, string Name), WrittenName?>();
         foreach (var occurrence in walk.WrittenNodes)
@@ -499,12 +646,9 @@ internal static class FrontEndDecisionCorpus
                 : occurrence;
         }
 
-        var collector = new LiftedCalls();
-        collector.VisitAlgorithm(finalRoot);
-
         var (attributed, unattributed) = (0, 0);
         var seen = new HashSet<(SourceSpan, string)>();
-        foreach (var (span, name, arguments) in collector.Found)
+        foreach (var (span, name, arguments) in liftedCalls)
         {
             if (!seen.Add((span, name)))
                 continue;
@@ -533,14 +677,14 @@ internal static class FrontEndDecisionCorpus
                 foreach (var bound in actual)
                     RecordForwarding(level, bound);
             }
-            else if (!bareForwarding && source.ParameterPatterns is [CaptureParameterPattern { Kind: ParameterKind.Collecting } caller]
-                && signature.ParameterPatterns is [var group]
-                && ParameterPattern.StructuralItems(group) is [CaptureParameterPattern { Kind: ParameterKind.Collecting } requested]
-                && actual is [var supplied] && supplied == caller.Name)
+            else if (!bareForwarding && ByShapeSupply(source, signature) is (var caller, var requested)
+                && actual is [var supplied] && supplied == caller)
             {
-                // Forwarding by shape may supply a different name. Ask Lean about the CALLEE's name and
-                // retain the actual argument for the disagreement report.
-                level.Forwardings.Add(new(supplied, FrontEndForwardingKind.Own, 0, requested.Name));
+                // THE BY-SHAPE RULE (KatLang.lean, "Implicit argument resolution"; ownership-and-lookup.md): a caller whose
+                // whole written list is one collector re-supplies a callee whose whole list is one group holding a lone
+                // collector, whatever the two are named. The read is the caller's own collector; the callee's name is
+                // kept beside it, because `forwardingSource` decides by NAME and has no arm for this rule.
+                level.Forwardings.Add(new(supplied, FrontEndForwardingKind.Own, 0, requested) { ByName = ByNameSource(level, requested, operation) });
             }
             else
             {
@@ -548,16 +692,38 @@ internal static class FrontEndDecisionCorpus
             }
         }
 
-        // With just one required binding at a definite value operand the absence of a lift distinguishes
-        // its unavailable source. A multi-name refusal alone cannot identify which input was missing.
+        // A REFUSED forward leaves ONE observation: a reference that stayed bare at a definite value operand of a closed
+        // body, although its callee requires supplied arguments. It names one binding exactly when one requested name
+        // has no parameter binding at that level (the detector's own owned-binding fact, FD-1): every other requested
+        // name was available, so the refusal is that name's. Two or more unbound names share the one observation, and it
+        // cannot be divided among them: no source is recorded for any, and the occurrence is counted.
+        var (multiNameRefusals, multiNameRefusalNames) = (0, 0);
         foreach (var (key, found) in written)
         {
-            if (seen.Contains(key) || found is not { ValueOperand: true, IsParameter: false } occurrence || occurrence.Level.Infers)
+            if (seen.Contains(key) || found is not { ValueOperand: true } occurrence || occurrence.Level.Infers
+                || occurrence.IsParameter && occurrence.Reference is not Expr.DotCall)
                 continue;
             var signature = CalleeSignature(occurrence, operation);
-            if (signature is { AcceptsZeroSuppliedArguments: false }
-                && signature.Parameters.Select(parameter => parameter.Name).Distinct(StringComparer.Ordinal).ToArray() is [var missing])
-                occurrence.Level.Forwardings.Add(new(missing, FrontEndForwardingKind.Unavailable, 0));
+            if (signature is not { AcceptsZeroSuppliedArguments: false })
+                continue;
+            var level = occurrence.Level;
+            if (ByShapeSupply((Algorithm.User)operation.SourceOf(level.Key), signature) is not null)
+                throw new InvalidOperationException($"'{occurrence.Name}' at {key.Span} stayed bare at a value operand although the by-shape supply applies.");
+            switch (UnboundRequestedNames(level, signature, operation))
+            {
+                case []:
+                    throw new InvalidOperationException(
+                        $"'{occurrence.Name}' at {key.Span} stayed bare at a value operand of a closed body although a parameter binds every name it requests.");
+
+                case [var missing]:
+                    level.Forwardings.Add(new(missing, FrontEndForwardingKind.Unavailable, 0));
+                    break;
+
+                case var several:
+                    multiNameRefusals++;
+                    multiNameRefusalNames += several.Count;
+                    break;
+            }
         }
 
         foreach (var level in walk.Levels)
@@ -567,7 +733,381 @@ internal static class FrontEndDecisionCorpus
                     throw new InvalidOperationException($"level {level.Index} acquired '{name}' without a matching synthesized read.");
         }
 
-        return new(attributed, unattributed);
+        return new(attributed, unattributed) { MultiNameRefusals = multiNameRefusals, MultiNameRefusalNames = multiNameRefusalNames };
+    }
+
+    /// <summary>
+    /// The premise of the by-shape rule, read from the two written signatures alone (C#
+    /// <c>ImplicitArgumentResolver.TryGetSingleCollectingForwarding</c>, the reference kernel's <c>canForwardStream</c>):
+    /// the caller's whole written list is one top-level collector and the callee's whole list is one structural group
+    /// holding a lone collector. The caller's and the callee's collector names, or null.
+    /// </summary>
+    private static (string Caller, string Requested)? ByShapeSupply(Algorithm.User caller, CallableSignature callee)
+        => caller.ParameterPatterns is [CaptureParameterPattern { Kind: ParameterKind.Collecting } own]
+            && callee.ParameterPatterns is [var group]
+            && ParameterPattern.StructuralItems(group) is [CaptureParameterPattern { Kind: ParameterKind.Collecting } requested]
+                ? (own.Name, requested.Name)
+                : null;
+
+    /// <summary>
+    /// The source forwarding BY NAME has for <paramref name="name"/> at <paramref name="level"/>, as a Lean
+    /// <c>ForwardingSource</c> term: the parameter binding the detection's owned-binding fact selects there, else a new
+    /// forwarded parameter of an inferring body, else nothing.
+    /// </summary>
+    private static string ByNameSource(FrontEndLevel level, string name, StaticStructureOperation operation)
+    {
+        var binding = operation.Binding(level.Key, name, StaticQueryProjection.OwnedBinding);
+        if (binding.Kind != StaticFactKind.Parameter)
+            return level.Infers ? ".forwardedParameter" : ".unavailable";
+        var depth = Walk.Depth(level, binding.Scope, name);
+        return depth == 0 ? ".ownParameter" : $".capturedParameter {depth}";
+    }
+
+    /// <summary>
+    /// The names a callee requests that no parameter binding supplies at <paramref name="level"/>, in the callee's
+    /// declaration order: the detection's own owned-binding fact for each name there is not a parameter.
+    /// </summary>
+    private static IReadOnlyList<string> UnboundRequestedNames(FrontEndLevel level, CallableSignature signature, StaticStructureOperation operation)
+        => signature.Parameters.Select(static parameter => parameter.Name).Distinct(StringComparer.Ordinal)
+            .Where(name => operation.Binding(level.Key, name, StaticQueryProjection.OwnedBinding).Kind != StaticFactKind.Parameter)
+            .ToArray();
+
+    /// <summary>
+    /// SLOT ROLES, as far as the pipeline's output shows them (see <see cref="FrontEndSlotOutcome"/>). Every supplied slot
+    /// of every written call and argument-carrying dot edge is classified; a slot whose role is shown is recorded with
+    /// the callee's kind, and that kind's row of C#'s own role table must give the role shown, or collection throws.
+    ///
+    /// <para>The callee's KIND is read from its Q3 invocation endpoint through the detection's static-structure
+    /// operation — the same endpoint the forwarding check reads a callee's signature from — never from
+    /// <c>ImplicitArgumentResolver.StaticCalleeKindOf</c>, which is private to the pass: a written block is a user
+    /// callee; a parameter, an unresolved or ambiguous name and a name whose endpoint is no structure are dynamic; a
+    /// declaration is its endpoint's kind. A dot edge is read by the verdict the COMPLETE pipeline's edge carries
+    /// (<see cref="Expr.DotCall.ElaboratedMissSelection"/>): a selected fallback is the call of its fallback name with
+    /// the receiver at position 0, and an edge the runtime decides gives its arguments a dynamic callee.</para>
+    ///
+    /// <para>A position is KNOWN unless a WRITTEN spread slot precedes it. After a spread the front end inserted for a
+    /// marked declaration the position is not read (<see cref="FrontEndSlotOutcome.PositionNotRead"/>).</para>
+    /// </summary>
+    private static (IReadOnlyList<FrontEndSlotRole> Roles, IReadOnlyDictionary<FrontEndSlotOutcome, int> Outcomes) AttributeSlotRoles(
+        SourceProvenance complete,
+        Walk walk,
+        StaticStructureOperation operation)
+    {
+        var outcomes = new Dictionary<FrontEndSlotOutcome, int>();
+        if (walk.Calls.Count == 0)
+            return ([], outcomes);
+
+        void Count(FrontEndSlotOutcome outcome, int slots = 1)
+            => outcomes[outcome] = outcomes.GetValueOrDefault(outcome) + slots;
+
+        var refusedFamilies = complete.Diagnostics.Where(static diagnostic => diagnostic.Code == DiagnosticCode.UnliftableClauseFamily)
+            .Select(static diagnostic => diagnostic.Span ?? throw new InvalidOperationException("an unliftable family was reported without a span."))
+            .ToHashSet();
+        // A node written in two levels (a shared node) has no one level: it is marked, never guessed.
+        var byNode = new Dictionary<Expr, WrittenName?>(ReferenceEqualityComparer.Instance);
+        foreach (var occurrence in walk.WrittenNodes)
+            byNode[occurrence.Reference] = byNode.TryGetValue(occurrence.Reference, out var known) && !ReferenceEquals(known?.Level, occurrence.Level) ? null : occurrence;
+
+        var final = new FinalCalls();
+        final.VisitAlgorithm(complete.Root);
+
+        var roles = new List<FrontEndSlotRole>();
+        foreach (var call in walk.Calls)
+        {
+            if (ReadCall(call, final, operation) is not (var callee, var kind, var positions))
+            {
+                Count(final.Counterpart(call) is not null ? FrontEndSlotOutcome.CalleeNotRead
+                    : call.Node is Expr.Call { Span: null } or Expr.DotCall { MemberSpan: null } ? FrontEndSlotOutcome.SynthesizedCall
+                    : FrontEndSlotOutcome.NoFinalCounterpart, call.Slots.Count);
+                continue;
+            }
+
+            // The receiver of an edge the runtime decides is no slot of a call: its role is the edge's, not a callee's.
+            Count(FrontEndSlotOutcome.ReceiverOutsideSupply, call.Slots.Count - positions.Count);
+            foreach (var (slot, rewritten, position, known) in positions)
+            {
+                if (known is not { } positionKnown)
+                {
+                    Count(FrontEndSlotOutcome.PositionNotRead);
+                    continue;
+                }
+
+                var outcome = SlotOutcome(slot, rewritten, call.Level, byNode, refusedFamilies, operation);
+                Count(outcome);
+                if (outcome is not (FrontEndSlotOutcome.ShownValue or FrontEndSlotOutcome.ReportedValue or FrontEndSlotOutcome.ShownCallable))
+                    continue;
+
+                var shown = outcome == FrontEndSlotOutcome.ShownCallable ? LiftingRole.Callable : LiftingRole.Value;
+                var table = FormulaLiftingRoles.SlotRole(kind, position, positionKnown);
+                if (table != shown)
+                {
+                    throw new InvalidOperationException(
+                        $"the call of '{callee}' gives position {position} ({(positionKnown ? "known" : "after a spread")}) the role {shown} in the pipeline's output, "
+                        + $"but its endpoint's kind {kind.Kind} has the role {table} there: the callee kind read here is not the resolver's.");
+                }
+
+                roles.Add(new(call.Level, callee, kind, position, positionKnown, shown, byNode[slot]!.Value.Name));
+            }
+        }
+
+        return (roles, outcomes);
+    }
+
+    /// <summary>What the output shows about the role of <paramref name="slot"/> (<see cref="FrontEndSlotOutcome"/>).</summary>
+    private static FrontEndSlotOutcome SlotOutcome(
+        Expr slot, Expr rewritten, FrontEndLevel level, Dictionary<Expr, WrittenName?> byNode,
+        HashSet<SourceSpan> refusedFamilies, StaticStructureOperation operation)
+    {
+        if (!byNode.TryGetValue(slot, out var found) || found is not { Span: { } span } reference
+            || reference.IsParameter && slot is not Expr.DotCall)
+            return FrontEndSlotOutcome.NoRoleSensitiveReference;
+        var result = rewritten is Expr.SequenceSpread { InsertedFor: not null } inserted ? inserted.Operand : rewritten;
+        if (LiftedCalls.Read(result) is { } lift && lift.Name == reference.Name && lift.Span == span)
+            return FrontEndSlotOutcome.ShownValue;
+        if (slot is not (Expr.Resolve or Expr.DotCall { Args: null }))
+            return FrontEndSlotOutcome.NoRoleSensitiveReference;
+        var sameReference = result switch
+        {
+            Expr.Resolve(var name) => slot is Expr.Resolve && name == reference.Name && result.Span == span,
+            Expr.DotCall { Args: null } edge => slot is Expr.DotCall && edge.Name == reference.Name && edge.MemberSpan == span,
+            _ => false,
+        };
+        if (!sameReference)
+            return FrontEndSlotOutcome.NoFinalCounterpart;
+        if (reference.Reference.Span is { } extent && refusedFamilies.Contains(extent))
+            return FrontEndSlotOutcome.ReportedValue;
+        if (CalleeSignature(reference, operation) is not { AcceptsZeroSuppliedArguments: false } signature)
+            return FrontEndSlotOutcome.NoRoleSensitiveReference;
+        // Nothing could have refused the lift: the body infers its inputs, the by-shape supply applies, or a parameter
+        // binds every requested name. So the reference stayed bare because its slot kept its callable identity.
+        return level.Infers
+            || ByShapeSupply((Algorithm.User)operation.SourceOf(level.Key), signature) is not null
+            || UnboundRequestedNames(level, signature, operation).Count == 0
+                ? FrontEndSlotOutcome.ShownCallable
+                : FrontEndSlotOutcome.RefusedOrCallable;
+    }
+
+    /// <summary>
+    /// One written call as this collector reads it: its callee's written name, its kind, and each supplied slot with its
+    /// position and whether that position is known (null: not read, <see cref="FrontEndSlotOutcome.PositionNotRead"/>).
+    /// Null when the callee kind is not read or the complete pipeline's tree holds no counterpart of the call.
+    /// </summary>
+    private static (string Callee, LiftingCallee Kind, IReadOnlyList<(Expr Slot, Expr Rewritten, int Position, bool? PositionKnown)> Positions)? ReadCall(
+        WrittenCall call, FinalCalls final, StaticStructureOperation operation)
+    {
+        if (final.Counterpart(call) is not { } counterpart)
+            return null;
+
+        // The slots of the counterpart, in the written call's order (a dot edge's receiver first).
+        IReadOnlyList<Expr> finalSlots = counterpart is Expr.DotCall { Args: { } finalArguments } finalEdge
+            ? [finalEdge.Target, .. finalArguments]
+            : [.. ((Expr.Call)counterpart).Args];
+        var positions = new List<(Expr, Expr, int, bool?)>(call.Slots.Count);
+
+        // A written spread ends the known positions; a spread only the complete pipeline holds was inserted for a marked
+        // declaration, and what follows it is not read.
+        void Add(int first, int leadingSlots)
+        {
+            bool? known = true;
+            for (var index = first; index < call.Slots.Count; index++)
+            {
+                positions.Add((call.Slots[index], finalSlots[index], index - first + leadingSlots, known));
+                if (call.Slots[index] is Expr.SequenceSpread)
+                    known = known is null ? null : false;
+                else if (finalSlots[index] is Expr.SequenceSpread)
+                    known = null;
+            }
+        }
+
+        if (call.Node is Expr.Call(var function, _))
+        {
+            if (CalleeKind(function, call.Level, operation) is not (var name, var kind))
+                return null;
+            Add(first: 0, leadingSlots: 0);
+            return (name, kind, positions);
+        }
+
+        var edge = (Expr.DotCall)counterpart;
+        if (edge.ElaboratedMissSelection is not { } selection)
+            return null;
+        switch (FormulaLiftingRoles.EdgeKind(edge, selection))
+        {
+            case DotEdgeKind.StructuralMember:
+            {
+                if (CalleeKind(call.Node, call.Level, operation) is not (var name, var kind))
+                    return null;
+                Add(first: 1, leadingSlots: 0);
+                return (name, kind, positions);
+            }
+
+            case DotEdgeKind.Fallback:
+            {
+                // `R.F(args)` is the call `F(R, args)`: the receiver is slot 0.
+                if (CalleeKind(((Expr.DotCall)call.Node).EffectiveLexicalFallback, call.Level, operation) is not (var name, var kind))
+                    return null;
+                Add(first: 0, leadingSlots: 0);
+                return (name, kind, positions);
+            }
+
+            default:
+                // The runtime decides the route, or the edge is an intrinsic: nothing is statically called, and the
+                // arguments are classified as a dynamic callee's own slots (the receiver is not one of them).
+                Add(first: 1, leadingSlots: 0);
+                return ($".{edge.Name}", LiftingCallee.Dynamic, positions);
+        }
+    }
+
+    /// <summary>
+    /// The kind of a written callee, from its Q3 invocation endpoint (see <see cref="AttributeSlotRoles"/>); null for a
+    /// callee outside the supported forms. A function of C#'s prelude that is no builtin (a Math member) is a
+    /// strict-value callee: Lean models that kind, though not the member.
+    /// </summary>
+    private static (string Name, LiftingCallee Kind)? CalleeKind(Expr callee, FrontEndLevel level, StaticStructureOperation operation)
+    {
+        string name;
+        StaticScopeKey target;
+        switch (callee)
+        {
+            case Expr.AlgorithmExpr:
+                return ("<block>", LiftingCallee.User);
+
+            case Expr.Param(var parameter):
+                return (parameter, LiftingCallee.Dynamic);
+
+            case Expr.Resolve(var resolved):
+            {
+                name = resolved;
+                var binding = operation.Binding(level.Key, name);
+                if (binding.Kind != StaticFactKind.Declaration)
+                    return (name, LiftingCallee.Dynamic);
+                target = operation.ContextOf(binding.Scope!, binding.Property!.Value);
+                break;
+            }
+            case Expr.DotCall member:
+            {
+                name = "." + member.Name;
+                // Q3 selects the declaration from the written receiver and member, independently of the arguments.
+                var selection = operation.Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, level.Key,
+                    StaticQueryProjection.MemberSelection, stratum: StaticCycleCheck.Formation, node: operation.WrittenExpression(level.Key, member)));
+                if (selection.Kind != StaticFactKind.Structure || selection.Scope is not { } selected)
+                    return member.Args is null ? (name, LiftingCallee.Dynamic) : null;
+                target = selected;
+                break;
+            }
+
+            default:
+                return null;
+        }
+
+        var endpoint = operation.Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, target, StaticQueryProjection.InvocationTarget));
+        if (endpoint.Kind != StaticFactKind.Structure || endpoint.Scope is not { } scope)
+            return (name, LiftingCallee.Dynamic);
+        var algorithm = operation.SourceOf(scope);
+        return algorithm switch
+        {
+            Algorithm.Builtin(var builtin) => (name, LiftingCallee.OfBuiltin(builtin)),
+            Algorithm.Conditional => (name, LiftingCallee.Family),
+            Algorithm.User => (name, ImplicitArgumentResolver.PreludeContext.For(hostOperations: null).IsStrictValue(algorithm)
+                ? LiftingCallee.StrictValue : LiftingCallee.User),
+            var other => throw new NotSupportedException($"the invocation endpoint of '{name}' is a {other.GetType().Name}."),
+        };
+    }
+
+    /// <summary>
+    /// The complete pipeline's written calls, by span: a call that is no lifted reference (a lifted reference's call
+    /// stands at its callee name's own span), and an argument-carrying dot edge by its member token.
+    /// </summary>
+    private sealed class FinalCalls : AstWalker
+    {
+        private readonly Dictionary<SourceSpan, Expr?> _calls = [];
+        private readonly Dictionary<SourceSpan, Expr?> _edges = [];
+
+        public override void VisitExpr(Expr expression)
+        {
+            switch (expression)
+            {
+                case Expr.Call { Span: { } span } call when call.Function.Span != span:
+                    Record(_calls, span, call);
+                    break;
+
+                case Expr.DotCall { Args: not null, MemberSpan: { } member } edge:
+                    Record(_edges, member, edge);
+                    break;
+            }
+
+            base.VisitExpr(expression);
+        }
+
+        // Two different nodes at one span have no one counterpart: marked, never guessed.
+        private static void Record(Dictionary<SourceSpan, Expr?> nodes, SourceSpan span, Expr node)
+            => nodes[span] = nodes.TryGetValue(span, out var known) && !ReferenceEquals(known, node) ? null : node;
+
+        /// <summary>The node the complete pipeline holds for a written call: the same kind, at the same span, with the same slots.</summary>
+        public Expr? Counterpart(WrittenCall call)
+            => call.Node switch
+            {
+                Expr.Call written when written.Span is { } span && _calls.GetValueOrDefault(span) is Expr.Call found
+                    && found.Args.Count == written.Args.Count => found,
+                Expr.DotCall { MemberSpan: { } member, Args: { } arguments } when _edges.GetValueOrDefault(member) is Expr.DotCall { Args: { } found } edge
+                    && found.Count == arguments.Count => edge,
+                _ => null,
+            };
+    }
+
+    /// <summary>
+    /// BARE-FORWARDING REFUSALS. A closed body whose one row is a bare callee forwards by name (FWD-02), and a callee
+    /// parameter no existing binding supplies is <see cref="DiagnosticCode.UnforwardableParameter"/>, reported ONCE PER
+    /// PARAMETER at the row. Match the reported parameter against the callee's signature, since several reports can
+    /// share a span. A missing fixed binding has an unavailable by-name source. A structural mismatch, including a
+    /// name bound inside a different pattern, concerns the pattern form. Both can occur on the same row.
+    /// </summary>
+    private static IReadOnlyList<FrontEndBareRefusal> AttributeBareRefusals(IReadOnlyList<Diagnostic> diagnostics, Walk walk, StaticStructureOperation operation)
+    {
+        var reports = diagnostics.Where(static diagnostic => diagnostic.Code == DiagnosticCode.UnforwardableParameter)
+            .ToLookup(static diagnostic => diagnostic.Span ?? throw new InvalidOperationException("an unforwardable parameter was reported without a span."));
+        if (reports.Count == 0)
+            return [];
+
+        var refusals = new List<FrontEndBareRefusal>();
+        var located = new HashSet<SourceSpan>();
+        foreach (var occurrence in walk.WrittenNodes)
+        {
+            var level = occurrence.Level;
+            if (level.Infers || occurrence.IsParameter && occurrence.Reference is not Expr.DotCall)
+                continue;
+            var body = (Algorithm.User)operation.SourceOf(level.Key);
+            if (body.Output is not [var row] || row.Span is not { } span || !reports.Contains(span)
+                || !ReferenceEquals(row, operation.WrittenExpression(level.Key, occurrence.Reference)))
+                continue;
+            if (!located.Add(span))
+                throw new InvalidOperationException($"the unforwardable parameters at {span} belong to two written rows.");
+            var signature = CalleeSignature(occurrence, operation)
+                ?? throw new InvalidOperationException($"'{occurrence.Name}' at {span} has unforwardable parameters but no forwarding contract.");
+
+            var parameters = signature.ParameterPatterns.Distinct(ParameterPattern.ContractComparer).ToArray();
+            var reported = new HashSet<ParameterPattern>(ParameterPattern.ContractComparer);
+            var names = new List<string>();
+            foreach (var diagnostic in reports[span])
+            {
+                // The diagnostic exposes the parameter only in its message. Read its subject, never the proposed repair.
+                var parameter = parameters.SingleOrDefault(pattern => diagnostic.Message.Contains(
+                    $"its parameter '{ExprNameRenderer.BoundName(pattern.DisplayName)}'", StringComparison.Ordinal));
+                if (parameter is null || !reported.Add(parameter))
+                    throw new InvalidOperationException($"missing, ambiguous or duplicate parameter in the refusal at {span}: {diagnostic.Message}");
+                if (parameter is CaptureParameterPattern { Kind: not ParameterKind.Collecting } capture
+                    && operation.Binding(level.Key, capture.Name, StaticQueryProjection.OwnedBinding).Kind != StaticFactKind.Parameter)
+                {
+                    names.Add(capture.Name);
+                    level.Forwardings.Add(new(capture.Name, FrontEndForwardingKind.Unavailable, 0));
+                }
+            }
+
+            refusals.Add(new(level, occurrence.Name, reported.Count, names));
+        }
+
+        if (located.Count != reports.Count)
+            throw new InvalidOperationException("an unforwardable parameter was reported at a span that is no closed body's lone bare row.");
+        return refusals;
     }
 
     /// <summary>The selected callee's requested bindings, independent of the arguments found in its call.</summary>
@@ -663,21 +1203,21 @@ internal static class FrontEndDecisionCorpus
 
         public override void VisitExpr(Expr expression)
         {
-            switch (expression)
-            {
-                case Expr.Call(Expr.Resolve callee, var arguments)
-                    when callee.Span is { } span && expression.Span == span && arguments.Count > 0 && arguments.All(Synthesized):
-                    Found.Add((span, callee.Name, arguments));
-                    break;
-
-                case Expr.DotCall { Args: { Count: > 0 } arguments } edge
-                    when arguments.All(Synthesized) && (edge.EffectiveLexicalFallback.Span ?? edge.MemberSpan) is { } member:
-                    Found.Add((member, NameOf(edge.EffectiveLexicalFallback), arguments));
-                    break;
-            }
-
+            if (Read(expression) is { } lifted)
+                Found.Add(lifted);
             base.VisitExpr(expression);
         }
+
+        internal static (SourceSpan Span, string Name, IReadOnlyList<Expr> Arguments)? Read(Expr expression) => expression switch
+        {
+            Expr.Call(Expr.Resolve callee, var arguments)
+                when callee.Span is { } span && expression.Span == span && arguments.Count > 0 && arguments.All(Synthesized)
+                => (span, callee.Name, arguments),
+            Expr.DotCall { Args: { Count: > 0 } arguments } edge
+                when arguments.All(Synthesized) && (edge.EffectiveLexicalFallback.Span ?? edge.MemberSpan) is { } member
+                => (member, NameOf(edge.EffectiveLexicalFallback), arguments),
+            _ => null,
+        };
 
         private static bool Synthesized(Expr expression)
             => expression.Span is null && Children(expression).All(Synthesized);
@@ -739,6 +1279,12 @@ internal static class FrontEndDecisionCorpus
             or Expr.NativeCall or Expr.AlgorithmExpr => [],
     };
 
+    /// <summary>
+    /// A written call or argument-carrying dot edge of the detected tree, with its supplied slots in order (a dot edge's
+    /// receiver first: <c>R.F(args)</c> supplies <c>R</c> before <c>args</c> when its fallback is selected).
+    /// </summary>
+    internal sealed record WrittenCall(FrontEndLevel Level, Expr Node, IReadOnlyList<Expr> Slots);
+
     /// <summary>A classified name with the span it was written at (a dot edge's fallback name: its member token's) and its level.</summary>
     internal readonly record struct WrittenName(string Name, bool IsParameter, SourceSpan? Span, FrontEndLevel Level,
         Expr Reference, bool ValueOperand);
@@ -753,6 +1299,9 @@ internal static class FrontEndDecisionCorpus
         public List<FrontEndFamily> Families { get; } = [];
         /// <summary>Every classified name with the span it was written at (a dot edge's fallback name: its member token's).</summary>
         public List<WrittenName> WrittenNodes { get; } = [];
+
+        /// <summary>Every written call and argument-carrying dot edge, in reading order.</summary>
+        public List<WrittenCall> Calls { get; } = [];
 
         public void Program(Algorithm root)
         {
@@ -1023,12 +1572,16 @@ internal static class FrontEndDecisionCorpus
                     Name(edge.EffectiveLexicalFallback, level, FrontEndSite.DotFallback, edge.MemberSpan, edge, valueOperand);
                     if (edge.Args is { } arguments)
                     {
+                        Calls.Add(new(level, edge, [edge.Target, .. arguments]));
                         foreach (var argument in arguments)
                             Row(argument, level);
                     }
 
                     return;
             }
+
+            if (expression is Expr.Call call)
+                Calls.Add(new(level, call, [.. call.Args]));
 
             foreach (var child in Children(expression))
                 Row(child, level, valueOperand: expression is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index
@@ -1072,7 +1625,7 @@ internal static class FrontEndDecisionCorpus
         }
 
         /// <summary>The position of the deciding level in the occurrence's chain (0 = its own body), by scope key.</summary>
-        private static int Depth(FrontEndLevel level, StaticScopeKey? owner, string name)
+        internal static int Depth(FrontEndLevel level, StaticScopeKey? owner, string name)
         {
             var depth = 0;
             for (var current = level; current is not null; current = current.Parent, depth++)

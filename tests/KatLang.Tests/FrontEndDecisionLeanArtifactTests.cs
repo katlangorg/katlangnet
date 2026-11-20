@@ -1,4 +1,5 @@
 using System.Text;
+using KatLang.ParserFuzz;
 
 namespace KatLang.Tests;
 
@@ -6,15 +7,17 @@ namespace KatLang.Tests;
 /// Generates and pins <c>lean/CoreTests/FrontEndDecisionCases.lean</c>: the Lean front-end specification functions
 /// checked against the C# front end's own decisions on every program of the four differential corpora
 /// (<see cref="SemanticExplorerCorpus"/>, <c>LanguageSpecCorpus</c>, the SEM-2B generated corpus's identity-prelude
-/// members and the tutorial's source fences).
+/// members and the tutorial's source fences) and on the members of the front-end witnesses
+/// (<see cref="FrontEndWitnesses"/>).
 ///
 /// <para>The other generated corpora hand Lean a tree the C# front end already elaborated, so they compare
 /// EVALUATION of that tree. This one compares the elaboration decisions themselves: for each classified name the
 /// owner chain C# resolved it in and C#'s verdict, guarded as <c>selectOwnedDeclaration chain name == …</c> and
 /// <c>elaboratesToParameter chain name == …</c>; for each open head <c>elaborateOpenHead</c>; for each clause family
 /// <c>familyLiftingSignature?</c>; for each candidate name of an inferring level <c>shouldTreatAsImplicitParam</c>;
-/// for each forwarded binding <c>forwardingSource</c>; for each declaring level <c>conflictingOwnedNames</c> and, at
-/// each innermost level, <c>validOwnedDeclarations</c>; and the whole <c>liftingSlotRole</c> table. See
+/// for each forwarded binding and each refused forward that names one binding <c>forwardingSource</c>; for each
+/// declaring level <c>conflictingOwnedNames</c> and, at each innermost level, <c>validOwnedDeclarations</c>; and
+/// <c>liftingSlotRole</c>, as the whole table and at every written slot whose role the pipeline's output shows. See
 /// <see cref="FrontEndDecisionCorpus"/> for what counts as C#'s decision and as its input.</para>
 ///
 /// <para>If a C# decision changes, this test fails (regenerate and review the diff); if Lean's specification
@@ -104,19 +107,291 @@ public class FrontEndDecisionLeanArtifactTests
     private const int ExpectedTutorialSyntaxErrors = 3;
     private const int ExpectedTutorialUnresolvedLoads = 2;
 
-    private const string CollectorShapeWitness = "forwarding-single-collector-by-shape";
+    /// <summary>
+    /// THE BY-SHAPE SUPPLY, pinned occurrence by occurrence: the program, the level of the reference, the caller's own
+    /// collector C# read, the callee's name for it, and what forwarding BY NAME has for that name there — nothing
+    /// (FD-F1) or an enclosing parameter binding (FD-F2). A new occurrence, or one of another class, is a reviewed
+    /// diff here, never a regenerated guard.
+    /// </summary>
+    [Fact]
+    public void ByShapeSupplies_AreExactlyTheReviewedOccurrences()
+    {
+        var hits = (from program in FrontEndDecisionCorpus.Programs
+                    from level in program.Levels
+                    from source in level.Forwardings
+                    where source.Requested is not null
+                    select $"{program.Corpus}/{program.Id} level {level.Index}: {source.Kind} {source.Name} for {source.Requested}, by name {source.ByName}").ToArray();
+
+        Assert.Equal(
+            [
+                "spec/forwarding-single-collector-by-shape level 2: Own items for xs, by name .unavailable",
+                "witness/by-shape-supply-under-two-names level 2: Own items for xs, by name .unavailable",
+                "witness/by-shape-supply-under-two-names/alpha-rename level 2: Own w4 for w2, by name .unavailable",
+                "witness/by-shape-supply-under-two-names/declaration-reorder level 1: Own items for xs, by name .unavailable",
+                "witness/by-shape-supply-of-a-sequence-group level 2: Own items for xs, by name .unavailable",
+                "witness/by-shape-supply-of-a-sequence-group/alpha-rename level 2: Own w4 for w2, by name .unavailable",
+                "witness/by-shape-supply-of-a-sequence-group/declaration-reorder level 1: Own items for xs, by name .unavailable",
+                "witness/by-shape-supply-beside-an-enclosing-binding level 3: Own items for xs, by name .capturedParameter 1",
+                "witness/by-shape-supply-beside-an-enclosing-binding/alpha-rename level 3: Own w5 for w2, by name .capturedParameter 1",
+                "witness/by-shape-supply-beside-an-enclosing-binding/declaration-reorder level 2: Own items for xs, by name .capturedParameter 1",
+            ],
+            hits);
+    }
+
+    /// <summary>
+    /// The decisions each witness was written to show, as a reader checks them against the language rules: every slot
+    /// role the output shows, every forwarding read, every refused forward and what it is attributed to. Hand-written,
+    /// never regenerated.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string[]> WitnessDecisions = new Dictionary<string, string[]>
+    {
+        // `Use = Pick(1, Inc)` is `Use(x) = Pick(1, Inc(x))`.
+        ["family-argument-is-a-value"] =
+        [
+            "Value: Pick [Family] position 1 <- Inc",
+            "read in (): x Forwarded",
+        ],
+        // `Use = Apply(Inc, 4)` keeps `Inc` and gains no parameter.
+        ["user-argument-keeps-the-callable"] =
+        [
+            "Callable: Apply [User] position 0 <- Inc",
+            "Callable: Keep [User] position 0 <- Inc",
+        ],
+        // `f(Inc)` keeps `Inc` although `Twice` binds its `x`; the root row's `Twice(Run, 3)` keeps `Run`.
+        ["dynamic-callee-keeps-the-callable"] =
+        [
+            "Callable: f [Dynamic] position 0 <- Inc",
+            "Callable: Twice [User] position 0 <- Run",
+        ],
+        // `Use = abs(Inc)` is `Use(x) = abs(Inc(x))`.
+        ["strict-value-argument-is-a-value"] =
+        [
+            "Value: abs [StrictValue] position 0 <- Inc",
+            "Value: abs [StrictValue] position 0 <- Lit",
+            "read in (): x Forwarded",
+        ],
+        // `Lifted = Abs(Inc)` is `Lifted(x) = Abs(Inc(x))`; `Kept = Held(Inc)` keeps `Inc`.
+        ["alias-takes-its-targets-kind"] =
+        [
+            "Value: Abs [StrictValue] position 0 <- Inc",
+            "Callable: Held [User] position 0 <- Inc",
+            "read in (): x Forwarded",
+        ],
+        // `Late` keeps both references after the spread; `Wide` and `Early` each lift `Inc` and gain `x`.
+        ["spread-ends-known-positions"] =
+        [
+            "Callable: reduce [builtin reduce] position 1 after a spread <- Add",
+            "Callable: reduce [builtin reduce] position 2 after a spread <- Inc",
+            "Value: take [builtin take] position 1 after a spread <- Inc",
+            "Callable: reduce [builtin reduce] position 1 <- Add",
+            "Value: reduce [builtin reduce] position 2 <- Inc",
+            "read in (): x Forwarded",
+            "read in (): x Forwarded",
+        ],
+        // `Inc.Apply(4)` is `Apply(Inc, 4)`; `Inc.Pick(2)` is `Pick(Inc(x), 2)` in `Lifted(x)`.
+        ["fallback-receiver-is-slot-zero"] =
+        [
+            "Callable: Apply [User] position 0 <- Inc",
+            "Value: Pick [Family] position 0 <- Inc",
+            "read in (): x Forwarded",
+        ],
+        ["runtime-receiver-decides-nothing"] = ["Callable: .Go [Dynamic] position 0 <- Inc"],
+        ["one-unbound-name-among-several"] = ["unavailable in (x): k"],
+        ["two-unbound-names-share-one-refusal"] = ["unattributed: 1 bare reference, 2 unbound names"],
+        ["bare-forwarding-reports-each-parameter"] =
+        [
+            "unavailable in (p): q",
+            "unavailable in (p): r",
+            "bare forwarding of Mix: 2 reports, attributed [q, r]",
+        ],
+        ["by-shape-supply-under-two-names"] = ["read in (items): items by shape for xs, by name .unavailable"],
+        ["member-calls-and-bare-forwarding"] =
+        [
+            "Callable: .Mix [User] position 0 <- Inc",
+            "Callable: .Mix [User] position 0 <- Inc",
+            "Value: .Abs [StrictValue] position 0 <- Inc",
+            "read in (): x Forwarded",
+            "unavailable in (p): q",
+            "bare forwarding of Mix: 2 reports, attributed [q]",
+        ],
+        ["by-shape-supply-of-a-sequence-group"] = ["read in (items): items by shape for xs, by name .unavailable"],
+        ["by-shape-supply-under-one-name"] = ["read in (xs): xs Own"],
+        ["by-shape-supply-beside-an-enclosing-binding"] = ["read in (items): items by shape for xs, by name .capturedParameter 1"],
+    };
 
     [Fact]
-    public void CollectorShapeFinding_PinsBothNamesAndTheWrittenOccurrence()
+    public void Witnesses_ShowTheReviewedDecisions()
     {
-        var hits = from program in FrontEndDecisionCorpus.Programs
-                   from level in program.Levels
-                   from source in level.Forwardings
-                   where source.Requested is not null
-                   select (program.Corpus, program.Id, level.Index, source);
-        Assert.Equal((FrontEndDecisionCorpus.LanguageSpecCorpus, CollectorShapeWitness, 2,
-            new FrontEndForwarding("items", FrontEndForwardingKind.Own, 0, "xs")), Assert.Single(hits));
+        Assert.Equal(FrontEndWitnesses.All.Select(static witness => witness.Id).Order(StringComparer.Ordinal),
+            WitnessDecisions.Keys.Order(StringComparer.Ordinal));
+        Assert.All(FrontEndWitnesses.All, witness =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(witness.Shows), witness.Id);
+            var program = Witness(witness.Id);
+            Assert.True(program.Skip is null, witness.Id);
+            Assert.Equal(WitnessDecisions[witness.Id], Decisions(program));
+        });
     }
+
+    /// <summary>
+    /// THE MEMBER RELATION of a witness, as the SEM-2B corpus states it for its own members: the alpha-rename shows the
+    /// base member's decisions name for name under the rename map, and the declaration-reorder shows them unchanged —
+    /// a front-end decision is a decision about bindings, and neither transformation changes one. The alpha-rename
+    /// must also rename EVERY name the base program binds.
+    /// </summary>
+    [Fact]
+    public void Witnesses_KeepTheirDecisionsUnderRenamingAndReordering()
+    {
+        Assert.All(FrontEndWitnesses.All, witness =>
+        {
+            var map = witness.RenameMap;
+            Assert.NotEmpty(map);
+            Assert.Equal(map.Count, map.Values.Distinct(StringComparer.Ordinal).Count());
+            var members = witness.Members;
+            Assert.Equal([SemanticMember.BaseRole, SemanticMember.AlphaRenameRole, SemanticMember.DeclarationReorderRole],
+                members.Select(static member => member.Role));
+            Assert.All(members, member => Assert.True(Witness(member.Id).Skip is null, member.Id));
+            Assert.True(witness.Declarations.Count >= 2, $"{witness.Id}: a declaration-reorder needs two root declarations.");
+            Assert.NotEqual(members[0].Source, members[2].Source);
+
+            var renamedTokens = Lexer.Tokenize(members[1].Source).Tokens
+                .Where(static token => token.Kind == TokenKind.Identifier)
+                .Select(token => members[1].Source.Substring(token.Position, token.Length))
+                .ToHashSet(StringComparer.Ordinal);
+            Assert.DoesNotContain(map.Keys, renamedTokens.Contains);
+            Assert.All(map.Values, fresh => Assert.Contains(fresh, renamedTokens));
+
+            string Renamed(string name) => map.GetValueOrDefault(name, name);
+            var baseMember = Witness(members[0].Id);
+            Assert.Equal(Decisions(baseMember, Renamed).Order(StringComparer.Ordinal),
+                Decisions(Witness(members[1].Id)).Order(StringComparer.Ordinal));
+            Assert.Equal(Decisions(baseMember).Order(StringComparer.Ordinal),
+                Decisions(Witness(members[2].Id)).Order(StringComparer.Ordinal));
+        });
+    }
+
+    private static FrontEndProgram Witness(string id)
+        => FrontEndDecisionCorpus.Programs.Single(program => program.Corpus == FrontEndDecisionCorpus.WitnessCorpus && program.Id == id);
+
+    /// <summary>
+    /// The lifting and forwarding decisions of one program, one line each, with every written name passed through
+    /// <paramref name="rename"/>: the slot roles shown, the forwarding reads and refusals by the names their level binds,
+    /// and what was left unattributed.
+    /// </summary>
+    private static IReadOnlyList<string> Decisions(FrontEndProgram program, Func<string, string>? rename = null)
+    {
+        string Name(string name) => name.StartsWith('.') ? "." + Name(name[1..]) : rename?.Invoke(name) ?? name;
+        var lines = new List<string>();
+        foreach (var role in program.SlotRoles)
+        {
+            var kind = role.Kind.Kind == LiftingCalleeKind.Builtin ? $"builtin {role.Kind.Builtin}" : role.Kind.Kind.ToString();
+            lines.Add($"{role.Role}: {Name(role.Callee)} [{kind}] position {role.Position}{(role.PositionKnown ? "" : " after a spread")} <- {Name(role.Reference)}");
+        }
+
+        foreach (var level in program.Levels)
+        {
+            var binds = $"({string.Join(", ", level.Parameters.Select(Name))})";
+            foreach (var forwarding in level.Forwardings)
+            {
+                lines.Add(forwarding.Kind switch
+                {
+                    FrontEndForwardingKind.Unavailable => $"unavailable in {binds}: {Name(forwarding.Name)}",
+                    FrontEndForwardingKind.Captured => $"read in {binds}: {Name(forwarding.Name)} captured at {forwarding.Level}",
+                    _ when forwarding.Requested is { } requested => $"read in {binds}: {Name(forwarding.Name)} by shape for {Name(requested)}, by name {forwarding.ByName}",
+                    _ => $"read in {binds}: {Name(forwarding.Name)} {forwarding.Kind}",
+                });
+            }
+        }
+
+        if (program.Lifts.MultiNameRefusals > 0)
+            lines.Add($"unattributed: {program.Lifts.MultiNameRefusals} bare reference, {program.Lifts.MultiNameRefusalNames} unbound names");
+        foreach (var refusal in program.BareRefusals)
+            lines.Add($"bare forwarding of {Name(refusal.Callee)}: {refusal.Reports} reports, attributed [{string.Join(", ", refusal.Attributed.Select(Name))}]");
+        return lines;
+    }
+
+    /// <summary>
+    /// WHAT THE OUTPUT SHOWS ABOUT SLOT ROLES, pinned: every supplied slot of every written call falls in exactly one
+    /// class, no written call is lost between detection and the complete tree, and the roles shown reach every callee
+    /// kind, both roles, and positions known and after a spread.
+    /// </summary>
+    [Fact]
+    public void SlotRoles_AreShownForEveryCalleeKindAndRole()
+    {
+        var guarded = FrontEndDecisionCorpus.Programs.Where(static program => program.Skip is null).ToList();
+        var totals = Totals.Of(FrontEndDecisionCorpus.Programs);
+        Assert.Equal(0, totals.NoFinalCounterpartSlots);
+        Assert.Equal(totals.WrittenPositions,
+            totals.ShownValue + totals.ShownCallable + totals.RefusedOrCallable + totals.NoRoleSensitiveReference + totals.CalleeNotRead
+            + totals.PositionNotRead + totals.ReceiverOutsideSupply + totals.SynthesizedCallSlots + totals.NoFinalCounterpartSlots);
+        Assert.All(guarded, static program => Assert.Equal(program.WrittenPositions, program.SlotOutcomes.Values.Sum()));
+        Assert.Equal(totals.ShownValue + totals.ShownCallable, guarded.Sum(static program => program.SlotRoles.Count));
+
+        var shown = guarded.SelectMany(static program => program.SlotRoles).ToList();
+        Assert.Equal(Enum.GetValues<LiftingCalleeKind>().Order(), shown.Select(static role => role.Kind.Kind).Distinct().Order());
+        foreach (var kind in Enum.GetValues<LiftingCalleeKind>())
+        {
+            // A family and a strict-value callee give every slot the value role, a user and a dynamic callee the
+            // callable role; a builtin gives both.
+            var roles = shown.Where(role => role.Kind.Kind == kind).Select(static role => role.Role).Distinct().Order().ToArray();
+            Assert.Equal(kind switch
+            {
+                LiftingCalleeKind.Family or LiftingCalleeKind.StrictValue => [LiftingRole.Value],
+                LiftingCalleeKind.User or LiftingCalleeKind.Dynamic => [LiftingRole.Callable],
+                _ => new[] { LiftingRole.Value, LiftingRole.Callable },
+            }, roles);
+        }
+
+        Assert.Contains(shown, static role => !role.PositionKnown && role.Role == LiftingRole.Value);
+        Assert.Contains(shown, static role => !role.PositionKnown && role.Role == LiftingRole.Callable);
+
+        Assert.Equal(0, totals.CalleeNotRead);
+        Assert.True(totals.ReportedValue >= 3);
+    }
+
+    /// <summary>
+    /// FD-P1: promotion is decided at DETECTION, on declarations no pass has classified, so its Lean probe is asked over
+    /// the resolved tree BEFORE exposure classification. These are the probes that depend on it. The list is the result
+    /// of a Lean control, not of a C# criterion: the same artifact generated with every tree taken from the COMPLETE
+    /// pipeline (after exposure classification) fails <c>lake env lean</c> at exactly these seven guards — each
+    /// <c>promotesIn … == some false</c>, a name C# resolves through an open whose member or provider exposure later
+    /// makes local-only, which a lookup over the classified tree refuses (control run 2026-11-20; rerun it when the
+    /// list or the encoding changes). The test pins what C# can check: each is a guarded resolved probe over an encoded
+    /// tree, that tree holds no local-only exposure, and the program's complete tree does.
+    /// </summary>
+    [Fact]
+    public void Promotion_FindsDeclarationsBeforeExposureClassifiesThem()
+    {
+        Assert.All(ExposureSensitivePromotions, entry =>
+        {
+            var program = FrontEndDecisionCorpus.Programs.Single(program => $"{program.Corpus}/{program.Id}" == entry.Program);
+            Assert.Null(program.Skip);
+            var level = program.Levels[entry.Level];
+            Assert.Equal(SiteKind.Tree, PromotionSite(program, level));
+            var promotion = Assert.Single(level.Promotions, promotion => promotion.Name == entry.Name);
+            Assert.Equal(FrontEndPromotionClass.Resolves, promotion.Class);
+
+            var afterExposure = LeanAstEncoder.EncodeProgram(SourceProvenance.ParseAllowingDiagnostics(program.Source).Root);
+            Assert.True(HoldsLocalOnlyExposure(afterExposure), $"{entry.Program}: the complete pipeline's tree holds no local-only exposure.");
+        });
+
+        Assert.All(FrontEndDecisionCorpus.Programs.Where(static program => program.Tree is not null), static program =>
+            Assert.False(HoldsLocalOnlyExposure(program.Tree!), $"{program.Corpus}/{program.Id}: an encoded tree holds a local-only exposure."));
+    }
+
+    private static bool HoldsLocalOnlyExposure(string encodedTree)
+        => encodedTree.Contains("privateLocalProp", StringComparison.Ordinal) || encodedTree.Contains("publicLocalProp", StringComparison.Ordinal);
+
+    private static readonly (string Program, int Level, string Name)[] ExposureSensitivePromotions =
+    [
+        ("explorer/special__openLocalOnlyCapturedParamsOutsideOwner", 1, "X"),
+        ("spec/open-local-only-member-read-by-inferring-sibling", 4, "X"),
+        ("spec/open-local-only-through-reference", 6, "Q"),
+        ("spec/open-local-only-enclosing-level", 5, "Q"),
+        ("spec/open-block-headed-reference-keeps-requirement", 6, "Q"),
+        ("spec/ownership-open-provided-captured-member-read-by-sibling-is-local-only", 4, "X"),
+        ("spec/ownership-open-head-between-opener-and-settling-level-charges-the-capture", 5, "X"),
+    ];
 
     /// <summary>
     /// Coverage ratchet: the number of decisions each specification function is checked on may only be RAISED (or
@@ -147,29 +422,38 @@ public class FrontEndDecisionLeanArtifactTests
         Assert.True(totals.ConflictingLevels >= MinimumConflictingLevels, $"levels with a reported collision {totals.ConflictingLevels} < {MinimumConflictingLevels}");
         Assert.True(totals.ValidityChains >= MinimumValidityChains, $"validity-checked chains {totals.ValidityChains} < {MinimumValidityChains}");
         Assert.True(totals.GuardedAmbiguousOpen >= 9);
-        Assert.True(totals.ForwardingUnavailable >= 4);
+        Assert.True(totals.ForwardingUnavailable >= MinimumForwardingUnavailable, $"unavailable sources {totals.ForwardingUnavailable} < {MinimumForwardingUnavailable}");
+        Assert.True(totals.UnavailableFromBareForwarding >= MinimumUnavailableFromBareForwarding, $"unavailable sources from bare-forwarding reports {totals.UnavailableFromBareForwarding} < {MinimumUnavailableFromBareForwarding}");
+        Assert.True(totals.ShownValue >= MinimumShownValue, $"value roles shown {totals.ShownValue} < {MinimumShownValue}");
+        Assert.True(totals.ShownCallable >= MinimumShownCallable, $"callable roles shown {totals.ShownCallable} < {MinimumShownCallable}");
+        Assert.True(totals.MultiNameRefusals >= MinimumMultiNameRefusals, $"multi-name refusals {totals.MultiNameRefusals} < {MinimumMultiNameRefusals}");
         Assert.Equal(0, totals.UnattributedLifts);
         Assert.Equal(0, totals.FinalTreeNoCounterpart);
     }
 
-    private const int MinimumPrograms = 3976;
-    private const int MinimumNameOccurrences = 17439;
-    private const int MinimumParameterVerdicts = 6058;
+    private const int MinimumPrograms = 4024;
+    private const int MinimumNameOccurrences = 17778;
+    private const int MinimumParameterVerdicts = 6169;
     private const int MinimumOpenHeads = 92;
     private const int MinimumParameterOpenHeads = 9;
-    private const int MinimumFamilies = 97;
-    private const int MinimumUnnameableFamilies = 18;
-    private const int MinimumForwardedLevels = 60;
-    private const int MinimumPromotionsOverChain = 8214;
-    private const int MinimumPromotionsOverTree = 64;
+    private const int MinimumFamilies = 106;
+    private const int MinimumUnnameableFamilies = 21;
+    private const int MinimumForwardedLevels = 81;
+    private const int MinimumPromotionsOverChain = 8364;
+    private const int MinimumPromotionsOverTree = 70;
     private const int MinimumPromotedNames = 154;
-    private const int MinimumResolvedThroughOpen = 33;
-    private const int MinimumForwardingOwn = 33;
+    private const int MinimumResolvedThroughOpen = 36;
+    private const int MinimumForwardingOwn = 45;
     private const int MinimumForwardingCaptured = 9;
-    private const int MinimumForwardingForwarded = 92;
-    private const int MinimumCollisionLevels = 222;
+    private const int MinimumForwardingForwarded = 113;
+    private const int MinimumCollisionLevels = 225;
     private const int MinimumConflictingLevels = 8;
-    private const int MinimumValidityChains = 210;
+    private const int MinimumValidityChains = 213;
+    private const int MinimumForwardingUnavailable = 20;
+    private const int MinimumUnavailableFromBareForwarding = 13;
+    private const int MinimumShownValue = 35;
+    private const int MinimumShownCallable = 335;
+    private const int MinimumMultiNameRefusals = 3;
 
     /// <summary>
     /// MANUALLY REVIEWED goldens of the collector, one per kind of decision. Everything else in the artifact is
@@ -414,6 +698,136 @@ public class FrontEndDecisionLeanArtifactTests
             """,
         };
 
+        // A slot role the output shows: `Inc` fills position 1 of the clause family `Pick`, a VALUE slot, so it is lifted
+        // and `Use` receives a forwarded `x`. The family's lifting signature names its positions `n` and `v`.
+        yield return new object[]
+        {
+            "Inc(x) = x + 1\nPick(0, v) = 0\nPick(n, v) = v\nUse = Pick(1, Inc)\nUse(4)",
+            """
+            def p_0 : List OwnerLevel := { parameters := [], properties := ["Use", "Inc", "Pick"] } :: prelude
+            def p_1 : List OwnerLevel := { parameters := [], properties := [], forwarded := ["x"] } :: p_0
+            def p_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p_0
+            def p_3 : List OwnerLevel := { parameters := ["v"], properties := [] } :: p_0
+            def p_4 : List OwnerLevel := { parameters := ["n", "v"], properties := [] } :: p_0
+            #guard selectOwnedDeclaration p_1 "Pick" == .property 1
+            #guard elaboratesToParameter p_1 "Pick" == false
+            #guard selectOwnedDeclaration p_1 "Inc" == .property 1
+            #guard elaboratesToParameter p_1 "Inc" == false
+            #guard selectOwnedDeclaration p_2 "x" == .parameter 0
+            #guard elaboratesToParameter p_2 "x" == true
+            #guard selectOwnedDeclaration p_4 "v" == .parameter 0
+            #guard elaboratesToParameter p_4 "v" == true
+            #guard selectOwnedDeclaration p_0 "Use" == .property 0
+            #guard elaboratesToParameter p_0 "Use" == false
+            #guard promotes p_0 "Use" == some false
+            #guard promotes p_1 "Pick" == some false
+            #guard promotes p_1 "Inc" == some false
+            #guard forwardingSource p_1 true "x" == .forwardedParameter
+            #guard liftingSlotRole .family 1 true == .value -- Pick: Inc
+            #guard familyLiftingSignature? [clause (.sequenceValue [.litInt 0, .bind "v"]), clause (.sequenceValue [.bind "n", .bind "v"])] == some [.capture { name := "n" }, .capture { name := "v" }] -- family Pick
+
+            """,
+        };
+
+        // A refused forward that names one binding: the closed `Use(x)` binds `x`, so of the two names `Scale` requests
+        // only `k` is unavailable.
+        yield return new object[]
+        {
+            "Scale(x, k) = x * k\nUse(x) = Scale + 0\nUse(3)",
+            """
+            def p_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Use"] } :: prelude
+            def p_1 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p_0
+            def p_2 : List OwnerLevel := { parameters := ["x"], properties := [] } :: p_0
+            #guard selectOwnedDeclaration p_1 "x" == .parameter 0
+            #guard elaboratesToParameter p_1 "x" == true
+            #guard selectOwnedDeclaration p_1 "k" == .parameter 0
+            #guard elaboratesToParameter p_1 "k" == true
+            #guard selectOwnedDeclaration p_2 "Scale" == .property 1
+            #guard elaboratesToParameter p_2 "Scale" == false
+            #guard selectOwnedDeclaration p_0 "Use" == .property 0
+            #guard elaboratesToParameter p_0 "Use" == false
+            #guard promotes p_0 "Use" == some false
+            #guard forwardingSource p_2 false "k" == .unavailable
+
+            """,
+        };
+
+        // The same operand where `Use(p)` binds neither name: one bare reference, two unbound names, no guard.
+        yield return new object[]
+        {
+            "Scale(x, k) = x * k\nUse(p) = Scale + 0\nUse(3)",
+            """
+            def p_0 : List OwnerLevel := { parameters := [], properties := ["Scale", "Use"] } :: prelude
+            def p_1 : List OwnerLevel := { parameters := ["x", "k"], properties := [] } :: p_0
+            def p_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p_0
+            #guard selectOwnedDeclaration p_1 "x" == .parameter 0
+            #guard elaboratesToParameter p_1 "x" == true
+            #guard selectOwnedDeclaration p_1 "k" == .parameter 0
+            #guard elaboratesToParameter p_1 "k" == true
+            #guard selectOwnedDeclaration p_2 "Scale" == .property 1
+            #guard elaboratesToParameter p_2 "Scale" == false
+            #guard selectOwnedDeclaration p_0 "Use" == .property 0
+            #guard elaboratesToParameter p_0 "Use" == false
+            #guard promotes p_0 "Use" == some false
+            -- 1 refused forward(s) not attributed: 2 unbound names share the bare reference(s)
+
+            """,
+        };
+
+        // Bare forwarding reports each parameter it cannot supply: `Use(p) = Mix` supplies `p` and refuses `q` and `r`.
+        yield return new object[]
+        {
+            "Mix(p, q, r) = p + q + r\nUse(p) = Mix\nUse(1)",
+            """
+            def p_0 : List OwnerLevel := { parameters := [], properties := ["Mix", "Use"] } :: prelude
+            def p_1 : List OwnerLevel := { parameters := ["p", "q", "r"], properties := [] } :: p_0
+            def p_2 : List OwnerLevel := { parameters := ["p"], properties := [] } :: p_0
+            #guard selectOwnedDeclaration p_1 "p" == .parameter 0
+            #guard elaboratesToParameter p_1 "p" == true
+            #guard selectOwnedDeclaration p_1 "q" == .parameter 0
+            #guard elaboratesToParameter p_1 "q" == true
+            #guard selectOwnedDeclaration p_1 "r" == .parameter 0
+            #guard elaboratesToParameter p_1 "r" == true
+            #guard selectOwnedDeclaration p_2 "Mix" == .property 1
+            #guard elaboratesToParameter p_2 "Mix" == false
+            #guard selectOwnedDeclaration p_0 "Use" == .property 0
+            #guard elaboratesToParameter p_0 "Use" == false
+            #guard promotes p_0 "Use" == some false
+            #guard forwardingSource p_2 false "q" == .unavailable
+            #guard forwardingSource p_2 false "r" == .unavailable
+
+            """,
+        };
+
+        // The by-shape supply beside an enclosing binding (FD-F2): `Use`'s own collector `items` is the read, and by
+        // name the callee's `xs` is `Outer`'s parameter, one level out.
+        yield return new object[]
+        {
+            "Get([*xs]) = xs.count\nOuter(*xs) = {\n    Use(*items) = [Get][0]\n    Use(3, 4)\n}\nOuter(1, 2, 3)",
+            """
+            def p_0 : List OwnerLevel := { parameters := [], properties := ["Get", "Outer"] } :: prelude
+            def p_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p_0
+            def p_2 : List OwnerLevel := { parameters := ["xs"], properties := ["Use"] } :: p_0
+            def p_3 : List OwnerLevel := { parameters := ["items"], properties := [] } :: p_2
+            #guard selectOwnedDeclaration p_1 "xs" == .parameter 0
+            #guard elaboratesToParameter p_1 "xs" == true
+            #guard selectOwnedDeclaration p_1 "count" == .property 2
+            #guard elaboratesToParameter p_1 "count" == false
+            #guard selectOwnedDeclaration p_3 "Get" == .property 2
+            #guard elaboratesToParameter p_3 "Get" == false
+            #guard selectOwnedDeclaration p_2 "Use" == .property 0
+            #guard elaboratesToParameter p_2 "Use" == false
+            #guard selectOwnedDeclaration p_0 "Outer" == .property 0
+            #guard elaboratesToParameter p_0 "Outer" == false
+            #guard promotes p_0 "Outer" == some false
+            #guard forwardingSource p_3 false "items" == .ownParameter -- by shape, for the callee's "xs"
+            #guard forwardingSource p_3 false "xs" == .capturedParameter 1 -- FD-F2: by name; C# supplies .ownParameter "items" by shape
+            #guard ownedConflicts p_2 == []
+            #guard validOwnedDeclarations p_3 == true
+
+            """,
+        };
+
     }
 
     private sealed record Totals(
@@ -455,7 +869,26 @@ public class FrontEndDecisionLeanArtifactTests
         int ConflictingLevels,
         int ConflictingNames,
         int ValidityChains,
-        int InvalidChains)
+        int InvalidChains,
+        int ByShapeSupplies,
+        int ByShapeBesideEnclosingBinding,
+        int UnavailableFromBareForwarding,
+        int BareRefusalsOfForm,
+        int MultiNameRefusals,
+        int MultiNameRefusalNames,
+        int WrittenCalls,
+        int WrittenPositions,
+        int ReceiverOutsideSupply,
+        int ShownValue,
+        int ReportedValue,
+        int ShownCallable,
+        int RefusedOrCallable,
+        int NoRoleSensitiveReference,
+        int CalleeNotRead,
+        int PositionNotRead,
+        int SynthesizedCallSlots,
+        int NoFinalCounterpartSlots,
+        int RoleProgramsShown)
     {
         public static Totals Of(IEnumerable<FrontEndProgram> programs)
         {
@@ -471,6 +904,8 @@ public class FrontEndDecisionLeanArtifactTests
             var asked = promotions.Where(static entry => entry.Promotion.IsAsked).ToList();
             var forwardings = levels.SelectMany(static pair => pair.Level.Forwardings).ToList();
             int Class(FrontEndPromotionClass promotionClass) => promotions.Count(entry => entry.Promotion.Class == promotionClass);
+            int Slots(FrontEndSlotOutcome outcome) => guarded.Sum(program => program.SlotOutcomes.GetValueOrDefault(outcome));
+            var bareRefusals = guarded.SelectMany(static program => program.BareRefusals).ToList();
             return new(
                 guarded.Count,
                 names.Count,
@@ -510,7 +945,26 @@ public class FrontEndDecisionLeanArtifactTests
                 levels.Count(static pair => pair.Level.Conflicts.Count > 0),
                 levels.Sum(static pair => pair.Level.Conflicts.Count),
                 levels.Count(static pair => GuardsValidity(pair.Level)),
-                levels.Count(static pair => GuardsValidity(pair.Level) && !ValidityExpected(pair.Level)));
+                levels.Count(static pair => GuardsValidity(pair.Level) && !ValidityExpected(pair.Level)),
+                forwardings.Count(static forwarding => forwarding.Requested is not null),
+                forwardings.Count(static forwarding => forwarding.Requested is not null && ByShapeFinding(forwarding) == EnclosingBindingShapeFindingId),
+                bareRefusals.Sum(static refusal => refusal.Attributed.Count),
+                bareRefusals.Sum(static refusal => refusal.Reports - refusal.Attributed.Count),
+                guarded.Sum(static program => program.Lifts.MultiNameRefusals),
+                guarded.Sum(static program => program.Lifts.MultiNameRefusalNames),
+                guarded.Sum(static program => program.WrittenCalls),
+                guarded.Sum(static program => program.WrittenPositions),
+                Slots(FrontEndSlotOutcome.ReceiverOutsideSupply),
+                Slots(FrontEndSlotOutcome.ShownValue) + Slots(FrontEndSlotOutcome.ReportedValue),
+                Slots(FrontEndSlotOutcome.ReportedValue),
+                Slots(FrontEndSlotOutcome.ShownCallable),
+                Slots(FrontEndSlotOutcome.RefusedOrCallable),
+                Slots(FrontEndSlotOutcome.NoRoleSensitiveReference),
+                Slots(FrontEndSlotOutcome.CalleeNotRead),
+                Slots(FrontEndSlotOutcome.PositionNotRead),
+                Slots(FrontEndSlotOutcome.SynthesizedCall),
+                Slots(FrontEndSlotOutcome.NoFinalCounterpart),
+                guarded.Count(static program => program.SlotRoles.Count > 0));
         }
     }
 
@@ -553,9 +1007,11 @@ public class FrontEndDecisionLeanArtifactTests
             (tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs), the SEM-2B generated corpus
             (fuzz/KatLang.ParserFuzz/Semantic/SemanticCorpus.cs, every base, alpha-rename and declaration-reorder source with
             `trace(x) = x` and `wait(x) = x` prepended, as lean/CoreTests/SemanticGeneratedCases.lean encodes it) and
-            the tutorial's source fences (tutorial.md, by ordinal). Lean has no front end: the other generated
+            the tutorial's source fences (tutorial.md, by ordinal); and on the front-end witnesses
+            (tests/KatLang.Tests/FrontEndWitnesses.cs), each a base program with its alpha-rename and its
+            declaration-reorder, the two SEM-2B transformations. Lean has no front end: the other generated
             corpora evaluate a tree C# already elaborated, so they take these decisions as INPUT. Here each
-            decision is an expectation. FD-F1 below pins a reported difference at the named occurrence.
+            decision is an expectation. FD-F1 and FD-F2 below record the by-shape supply at each named occurrence.
 
             What is compared (generator: tests/KatLang.Tests/FrontEndDecisionCorpus.cs):
             - `selectOwnedDeclaration` — C#'s owned-binding fact for the name in its scope (parameter or
@@ -579,22 +1035,45 @@ public class FrontEndDecisionLeanArtifactTests
               parameter binding owns (the caller excludes it; FD-1 checks the binding), a free name no reading of
               which participates (a dot fallback no receiver can select, the OD-B parameter-rooted path), a C#
               prelude member Lean's prelude does not model (`Math` members, `load`; Lean's prelude is pinned below);
-              and, over an encoded tree only, a program with an invalid open target or an unsupported literal or anonymous block address;
+              and, over an encoded tree only, a program with an invalid open target or an unsupported literal or anonymous block address.
+              Promotion is decided at DETECTION, on declarations no pass has classified yet: an encoded tree holds every
+              property as written (no local-only exposure), so a member or provider the complete pipeline later makes
+              local-only is found here as C# found it (FD-P1: seven probes answer otherwise over a tree taken after
+              exposure classification, pinned by `Promotion_FindsDeclarationsBeforeExposureClassifiesThem`);
             - `forwardingSource` — each requested capture of a lifted call against the corresponding synthesized
               argument, in order (including repeated names). The entire set of lifts agrees with the resolver's
               synthesis counter. An argument reads a parameter added to this level, one it already owned or the
-              nearest enclosing binding. A closed value operand that stays bare identifies an unavailable source
-              when its callee requires just that binding. FD-F1 (spec/forwarding-single-collector-by-shape) records
-              the by-shape exception: the callee requests xs, C# supplies the caller's items, Lean answers unavailable;
+              nearest enclosing binding. A REFUSED forward is `.unavailable` where the refusal names one binding: a
+              closed value operand that stays bare although its callee requires supplied arguments, when exactly one
+              requested name has no parameter binding there; and a closed lone row whose bare forwarding reported
+              `UnforwardableParameter` naming an unbound fixed capture, including a report beside a pattern mismatch. A bare
+              reference whose callee leaves two or more names unbound is ONE observation for all of them and is
+              not attributed, and a bare-forwarding refusal of a pattern's FORM is `bareForwardingArgument`'s
+              decision, not this function's: both are counted and left as comments.
+              THE BY-SHAPE SUPPLY (KatLang.lean, "Implicit argument resolution": a caller whose whole written list is
+              one collector re-supplies a callee whose whole list is one group holding a lone collector, by shape
+              rather than by name) is the language's rule, and `forwardingSource` decides by NAME only. Each such
+              occurrence therefore holds two guards: the read C# emitted, the caller's own collector
+              (`.ownParameter`), and this function's answer for the callee's name — `.unavailable` (FD-F1: by name
+              nothing would be supplied) or `.capturedParameter` (FD-F2: by name an ENCLOSING binding of that name
+              would be, and the rule does not say which wins);
             - `conflictingOwnedNames` (as `ownedConflicts chain`) — the properties of each declaring level the
               complete pipeline's `ParameterPropertyCollisionValidator` reported, located by declaration span. The
               root's phantom signature is checked against the root's own declarations only (chain `p_0`), and every
               nested level against the callable chain, as that validator does; `validOwnedDeclarations` over the
               same chain of every innermost level;
             - `liftingSlotRole` — `FormulaLiftingRoles.SlotRole` on every callee kind, positions 0..{RolePositions - 1},
-              with and without a known position. This one is the whole table, not per occurrence: which kind a
-              written call's callee has is implicit-argument resolution's private classification and is not
-              recoverable from the elaborated tree without re-implementing it.
+              with and without a known position: the whole table. And PER WRITTEN CALL, at every supplied slot whose
+              role the pipeline's OUTPUT shows. A diagnostic of kind UnliftableClauseFamily at the slot's own reference
+              identifies a value role. The tree alone shows the decision where a slot holds a bare reference whose
+              callee has a nameable lifting signature that requires supplied arguments: in a VALUE role it is the
+              synthesized call the complete tree holds there, and in a CALLABLE role it stays as written although
+              nothing could have refused its lift (an inferring body, or a closed one that binds every requested
+              name). The callee's KIND is read from its Q3 invocation endpoint, never from the resolver's private
+              classification, and its row of C#'s table must give the role shown, or generation throws; a selected
+              fallback `R.F(args)` is the call `F(R, args)`, and an edge the runtime decides gives its arguments a
+              dynamic callee. Every other slot shows no role (the partition says why): the kinds `user` and `dynamic`
+              give one row and cannot be told apart by any output, nor can `family` and `strictValue`.
 
             Each chain is rebuilt from the DETECTED tree's nesting (a body's stored parameter patterns and
             property names, a clause body's head binders), innermost level first, ending in the prelude's
@@ -604,7 +1083,8 @@ public class FrontEndDecisionLeanArtifactTests
             one block that names every one of them ({blocks.Count} blocks): nothing is sampled.
 
             Partition:
-            - corpus programs: {programs.Count} (explorer {CorpusCount(FrontEndDecisionCorpus.ExplorerCorpus)}, spec {CorpusCount(FrontEndDecisionCorpus.LanguageSpecCorpus)}, SEM-2B {CorpusCount(FrontEndDecisionCorpus.SemanticGeneratedCorpus)}, tutorial {CorpusCount(FrontEndDecisionCorpus.TutorialCorpusName)})
+            - corpus programs: {programs.Count} (explorer {CorpusCount(FrontEndDecisionCorpus.ExplorerCorpus)}, spec {CorpusCount(FrontEndDecisionCorpus.LanguageSpecCorpus)}, SEM-2B {CorpusCount(FrontEndDecisionCorpus.SemanticGeneratedCorpus)}, tutorial {CorpusCount(FrontEndDecisionCorpus.TutorialCorpusName)},
+              witness {CorpusCount(FrontEndDecisionCorpus.WitnessCorpus)}: {FrontEndWitnesses.All.Count} witnesses, three members each)
             - skipped, the parser rejected the source: {skipped.Count(static program => program.Skip == FrontEndSkip.SyntaxError)}
             - skipped, an unresolved `load` directive (module elaboration is async-only): {skipped.Count(static program => program.Skip == FrontEndSkip.UnresolvedLoad)}
             - skipped, parameter inference refused as circular: {skipped.Count(static program => program.Skip == FrontEndSkip.UndecidedInference)}
@@ -622,7 +1102,15 @@ public class FrontEndDecisionLeanArtifactTests
               by an enclosing parameter, {totals.NotAskedNotParticipating} not participating, {totals.NotAskedPreludeOnly} a C#-only prelude member;
               not guarded over an encoded tree: {totals.UnguardedRejected} in a program with an invalid open, {totals.UnguardedUnspellable} in a program the encoder cannot spell, {totals.UnguardedNoPath} with no property path
             - forwarding: {totals.ForwardingOwn + totals.ForwardingCaptured + totals.ForwardingForwarded} reads ({totals.ForwardingOwn} own, {totals.ForwardingCaptured} captured, {totals.ForwardingForwarded} forwarded) in {totals.AttributedLifts} lifted calls;
-              {totals.ForwardingUnavailable} unavailable sources at closed value operands; unattributed lifts: {totals.UnattributedLifts}
+              {totals.ByShapeSupplies} of the own reads supplied by shape under another name ({totals.ByShapeSupplies - totals.ByShapeBesideEnclosingBinding} FD-F1, {totals.ByShapeBesideEnclosingBinding} FD-F2); unattributed lifts: {totals.UnattributedLifts}
+            - refused forwards: {totals.ForwardingUnavailable} unavailable sources ({totals.ForwardingUnavailable - totals.UnavailableFromBareForwarding} at closed value operands, {totals.UnavailableFromBareForwarding} from bare-forwarding reports);
+              not attributed: {totals.MultiNameRefusals} bare references whose callee leaves {totals.MultiNameRefusalNames} names unbound between them,
+              {totals.BareRefusalsOfForm} bare-forwarding refusals of a pattern's form
+            - slot roles: {totals.WrittenCalls} call nodes, {totals.WrittenPositions} positions including dot receivers; role shown at {totals.ShownValue + totals.ShownCallable} slots of {totals.RoleProgramsShown} programs
+              ({totals.ShownValue} value, including {totals.ReportedValue} unliftable-family reports; {totals.ShownCallable} callable: an available lift not made); not shown: {totals.NoRoleSensitiveReference} hold no
+              role-sensitive reference, {totals.RefusedOrCallable} stay bare where a requested name is unbound (refused or callable);
+              {totals.ReceiverOutsideSupply} receivers outside the argument supply; not read: {totals.CalleeNotRead} with no static callee classification, {totals.PositionNotRead} after an inserted spread, {totals.SynthesizedCallSlots} of a call
+              the parser synthesized, {totals.NoFinalCounterpartSlots} with no counterpart in the complete tree
             - declaration validity: {totals.CollisionLevels} declaring levels checked ({totals.ConflictingLevels} with a reported collision, {totals.ConflictingNames} names);
               {totals.ValidityChains} innermost chains checked ({totals.InvalidChains} invalid)
 
@@ -658,7 +1146,7 @@ public class FrontEndDecisionLeanArtifactTests
             guardedIds.AddRange(members.Select(static member => $"{member.Corpus}/{member.Id}"));
         }
 
-        // One literal for all four corpora exceeds Lean's term-elaboration recursion limit.
+        // One literal for all the corpora exceeds Lean's term-elaboration recursion limit.
         var partitions = new List<string>();
         foreach (var corpus in programs.GroupBy(static program => program.Corpus))
         {
@@ -970,16 +1458,34 @@ public class FrontEndDecisionLeanArtifactTests
                     FrontEndForwardingKind.Unavailable => ".unavailable",
                     _ => throw new InvalidOperationException($"Unknown forwarding source {forwarding.Kind}."),
                 };
-                var name = LeanAstEncoder.QuoteString(forwarding.Requested ?? forwarding.Name);
-                var probe = $"forwardingSource {Chain(level, callable: false)} {(level.Infers ? "true" : "false")} {name}";
-                if (forwarding.Requested is null)
-                    Guard($"#guard {probe} == {source}");
-                else if (program.Corpus == FrontEndDecisionCorpus.LanguageSpecCorpus && program.Id == CollectorShapeWitness
-                         && level.Index == 2 && forwarding == new FrontEndForwarding("items", FrontEndForwardingKind.Own, 0, "xs"))
-                    Guard($"#guard {probe} == .unavailable -- FD-F1: C# supplies {source} \"{forwarding.Name}\" by shape");
-                else
-                    throw new InvalidOperationException($"{program.Corpus}/{program.Id} at level {level.Index}: {probe}, C# supplies {source} '{forwarding.Name}'. Review this by-shape occurrence.");
+                string Probe(string name) => $"forwardingSource {Chain(level, callable: false)} {(level.Infers ? "true" : "false")} {LeanAstEncoder.QuoteString(name)}";
+                Guard($"#guard {Probe(forwarding.Name)} == {source}{(forwarding.Requested is null ? "" : $" -- by shape, for the callee's {LeanAstEncoder.QuoteString(forwarding.Requested)}")}");
+                if (forwarding.Requested is { } requested)
+                {
+                    // The by-shape supply: the read above is the caller's own collector, and `forwardingSource`, which
+                    // decides by NAME, answers for the callee's name as forwarding by name would.
+                    var finding = ByShapeFinding(forwarding)
+                        ?? throw new InvalidOperationException(
+                            $"{program.Corpus}/{program.Id} at level {level.Index}: by name '{requested}' is {forwarding.ByName}, yet C# supplies '{forwarding.Name}' by shape. Review this occurrence.");
+                    Guard($"#guard {Probe(requested)} == {forwarding.ByName} -- {finding}: by name; C# supplies {source} {LeanAstEncoder.QuoteString(forwarding.Name)} by shape");
+                }
             }
+        }
+
+        foreach (var role in program.SlotRoles)
+        {
+            Guard($"#guard liftingSlotRole {CalleeKindTerm(role.Kind)} {role.Position} {(role.PositionKnown ? "true" : "false")} == " +
+                $"{(role.Role == LiftingRole.Value ? ".value" : ".callable")} -- {LeanComment(role.Callee)}: {LeanComment(role.Reference)}");
+        }
+
+        if (program.Lifts.MultiNameRefusals > 0)
+        {
+            Guard($"-- {program.Lifts.MultiNameRefusals} refused forward(s) not attributed: {program.Lifts.MultiNameRefusalNames} unbound names share the bare reference(s)");
+        }
+
+        foreach (var refusal in program.BareRefusals.Where(static refusal => refusal.Attributed.Count < refusal.Reports))
+        {
+            Guard($"-- bare forwarding of {LeanComment(refusal.Callee)} refused at level {refusal.Level.Index}: {refusal.Reports - refusal.Attributed.Count} report(s) of a pattern's form (bareForwardingArgument, not forwardingSource)");
         }
 
         foreach (var level in program.Levels.Where(GuardsCollisions))
@@ -999,6 +1505,33 @@ public class FrontEndDecisionLeanArtifactTests
 
         return builder.ToString();
     }
+
+    internal const string CollectorShapeFindingId = "FD-F1";
+    internal const string EnclosingBindingShapeFindingId = "FD-F2";
+
+    /// <summary>
+    /// The finding a by-shape supply is recorded under, by what forwarding BY NAME has for the callee's name: nothing
+    /// (FD-F1, the rule as the language states it), or an enclosing parameter binding (FD-F2, where the two rules each
+    /// have an answer). Null for anything else, which is no reviewed class.
+    /// </summary>
+    private static string? ByShapeFinding(FrontEndForwarding forwarding)
+        => forwarding.ByName is ".unavailable" ? CollectorShapeFindingId
+            : forwarding.ByName is { } source && source.StartsWith(".capturedParameter ", StringComparison.Ordinal) ? EnclosingBindingShapeFindingId
+            : null;
+
+    /// <summary>A callee kind as a Lean <c>LiftingCalleeKind</c> term, spelled as the role table spells it.</summary>
+    private static string CalleeKindTerm(LiftingCallee callee) => callee.Kind switch
+    {
+        LiftingCalleeKind.Dynamic => ".dynamic",
+        LiftingCalleeKind.User => ".user",
+        LiftingCalleeKind.Family => ".family",
+        LiftingCalleeKind.StrictValue => ".strictValue",
+        LiftingCalleeKind.Builtin => $"(.builtin .{callee.Builtin}Builtin)",
+        _ => throw new InvalidOperationException($"Unknown callee kind {callee.Kind}."),
+    };
+
+    /// <summary>A written name inside a Lean line comment: one line, as written.</summary>
+    private static string LeanComment(string text) => text.ReplaceLineEndings(" ");
 
     /// <summary>Whether the level's callable chain differs from its chain: it lies under a never-called root that infers or receives a name.</summary>
     private static bool HasCallableVariant(FrontEndLevel level)

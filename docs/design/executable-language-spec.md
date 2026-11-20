@@ -159,15 +159,21 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   above evaluate a tree C# already elaborated; this artifact guards the
   elaboration decisions themselves against the Lean front-end
   specification functions on the semantic explorer, LanguageSpec, all SEM-2B base and transformation sources with the
-  identity prelude, and the tutorial's source fences. The partition counts syntax failures and unresolved `load` separately.
+  identity prelude, and the tutorial's source fences, and on the front-end witnesses (`FrontEndWitnesses.cs`): small programs
+  that each show one lifting or forwarding decision, with their own alpha-rename and declaration-reorder members, since no
+  SEM-2B member holds a lifted or refused reference. The partition counts syntax failures and unresolved `load` separately.
   `FrontEndDecisionCorpus` compares the detected nodes and ownership facts with `selectOwnedDeclaration`, `elaboratesToParameter`
-  and `elaborateOpenHead`, the family heads with `familyLiftingSignature?`, and the entire role table with `liftingSlotRole`.
-  `shouldTreatAsImplicitParam` checks the detector's inference decisions at each candidate name, using the resolved providers
-  before exposure classification when a lookup site has opens. `forwardingSource` checks each requested capture against the actual
-  synthesized argument, plus attributable unavailability at a closed value operand. `conflictingOwnedNames` and
-  `validOwnedDeclarations` check the collision diagnostics of the complete pipeline. The correspondence ledger records the
-  scope, counts and FD-F1's differing answers for forwarding a single collector by shape.
-  `FrontEndDecisionLeanArtifactTests` pins the artifact, partition, coverage floors and reported occurrence. Regenerate with
+  and `elaborateOpenHead`, the family heads with `familyLiftingSignature?`, and `liftingSlotRole` with the entire role table and
+  with the role of every written slot the pipeline's output shows (a lifted reference, one left bare where its lift was available,
+  or an unliftable-family diagnostic on the reference). `shouldTreatAsImplicitParam` checks the detector's inference decisions at each candidate name, using the
+  resolved providers before exposure classification when a lookup site has opens. `forwardingSource` checks each requested
+  capture against the actual synthesized argument, plus a refused forward where it names one binding. A bare-forwarding diagnostic identifies its own parameter even beside a pattern-form refusal. `conflictingOwnedNames`
+  and `validOwnedDeclarations` check the collision diagnostics of the complete pipeline. The correspondence ledger records the
+  scope, counts, what the output cannot show, and the by-shape supply: FD-F1 (the language's rule, which `forwardingSource`
+  has no arm for) and FD-F2 (open: an enclosing parameter binds the callee's name).
+  `FrontEndDecisionLeanArtifactTests` pins the artifact, partition, coverage floors, the by-shape occurrences, each witness's
+  reviewed decisions and its member relation. To add a witness, add it to `FrontEndWitnesses.All`, write its reviewed decisions
+  in `WitnessDecisions`, regenerate, and raise the floors. Regenerate with
   `$env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"; dotnet test .\KatLang.slnx --filter FrontEndDecisionLeanArtifact`
 - `lean/KatLangArityLaws/MayCaptureCallsCorpus.lean` (built by the canonical
   `KatLangArityLaws` target; ledger E-21) — the PLAN-RETENTION GATE
