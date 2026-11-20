@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Numerics;
 using System.Text;
 using KatLang.Semantics;
 using Xunit.Abstractions;
@@ -17,9 +18,10 @@ namespace KatLang.Tests;
 /// modules, recovery trees) and host-constructed listings (disjoint, adjacent, overlapping,
 /// identical at different and equal depths, zero-width, default, rootless, repeated, random) are
 /// compared with the scan, kept here verbatim as the oracle. They also pin that the index stores
-/// at most two intervals per non-empty hull, that query cost grows sublinearly with the number
-/// of siblings, and that building the index takes O(S log S) counted steps for nested, tied,
-/// overlapping and wide listings. Implementation-only optimization: no editor-visible result changes.
+/// at most two intervals per non-empty hull, that a query inspects O(log S) counted index entries
+/// for S siblings, and that building the index takes O(S log S) counted steps for nested, tied,
+/// overlapping and wide listings. Both cost tests count work rather than time, so machine load
+/// cannot fail them. Implementation-only optimization: no editor-visible result changes.
 /// </summary>
 public class SemanticModelScopeLookupTests(ITestOutputHelper output)
 {
@@ -629,10 +631,23 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// A query does not inspect every scope: 64 times as many sibling regions cost far less than
-    /// 64 times as much. Measured 2026-11-20 (Release, tiering off): the binary search 54 ns over
-    /// 4,096 siblings and 66 ns over 65,536, the former scan 19 µs and 314 µs. The 16-times bound
-    /// is generous and the best of five runs is compared, so it is not a microbenchmark.
+    /// A query does not inspect every scope. The test counts each query's work, not its time.
+    /// <see cref="SemanticModel.FindScopeAtCounted"/> runs <see cref="SemanticModel.FindScopeAt"/>'s
+    /// own search and reports the entries it inspected: the index starts it compared with the
+    /// position, or the scopes a fallback scan visited. The count is the same on every run.
+    /// 512 and 32,768 sibling regions index 1,024 and 65,536 intervals. Each of the 8,192 queries
+    /// inspected 10 or 11 entries over the small listing and 16 or 17 over the large one. In total,
+    /// 64 times the scopes took 1.6 times the probes. The bounds are at least one probe and at most
+    /// ⌊log₂ I⌋ + 1 per query for I intervals, the same scope instance the public query selects,
+    /// and twice the small total for the large one. The small listing is checked first, so a query
+    /// that scans the intervals or the scopes (up to 1,024 or 513 probes there) fails at once. The
+    /// public query itself must also allocate nothing beyond the counter quantum (16 KiB for 8,192
+    /// queries). A scan written into it, outside the counted search, would allocate an enumerator
+    /// per query through the public listing (262,144 bytes). Like the probe count, bytes do not
+    /// depend on load. Elapsed time is printed, not asserted. The former 16-times time bound held in
+    /// full parallel runs, but the ratio reached 8.4 and 9.1 there, against 1.6 to 1.8 alone.
+    /// Measured 2026-11-20 (Release, tiering off): the binary search took 54 ns over 4,096 siblings
+    /// and 66 ns over 65,536, and the former scan 19 µs and 314 µs.
     /// </summary>
     [Fact]
     public void ScopeQueryCost_GrowsSublinearlyWithTheSiblingCount()
@@ -647,13 +662,43 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
             return (model, queries);
         }
 
-        static double BestMilliseconds(SemanticModel model, SourcePosition[] queries)
+        // The binary search halves the I intervals with each probe: at most ⌊log₂ I⌋ + 1 probes. A
+        // query that inspects nothing has a disconnected count, so at least one probe is required.
+        static (long Total, int Fewest, int Most) Probes(SemanticModel model, SourcePosition[] queries)
         {
             var root = model.ScopeVisibilities[0];
+            var intervals = model.ScopeIndexIntervals;
+            Assert.True(intervals > 0, $"no index intervals ({intervals})");
+            var limit = BitOperations.Log2((uint)intervals) + 1;
+            var (total, fewest, most, nested) = (0L, int.MaxValue, 0, 0);
+            foreach (var query in queries)
+            {
+                var scope = model.FindScopeAtCounted(query, out var probes);
+                Assert.Same(model.FindScopeAt(query), scope);
+                Assert.InRange(probes, 1, limit);
+                if (!ReferenceEquals(scope, root))
+                    nested++;
+                total += probes;
+                fewest = Math.Min(fewest, probes);
+                most = Math.Max(most, probes);
+            }
+
+            Assert.Equal(queries.Length / 2, nested);
+            return (total, fewest, most);
+        }
+
+        // The public query itself, five times: the fewest bytes a run allocated, the best time, and
+        // the collection pauses during the five runs.
+        static (long Bytes, double Milliseconds, TimeSpan Paused) PublicQueries(SemanticModel model, SourcePosition[] queries)
+        {
+            var root = model.ScopeVisibilities[0];
+            var bytes = long.MaxValue;
             var best = double.MaxValue;
+            var paused = GC.GetTotalPauseDuration();
             for (var run = 0; run < 5; run++)
             {
                 var nested = 0;
+                var before = GC.GetAllocatedBytesForCurrentThread();
                 var watch = Stopwatch.StartNew();
                 foreach (var query in queries)
                 {
@@ -662,22 +707,37 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
                 }
 
                 watch.Stop();
+                bytes = Math.Min(bytes, GC.GetAllocatedBytesForCurrentThread() - before);
                 Assert.Equal(queries.Length / 2, nested);
                 best = Math.Min(best, watch.Elapsed.TotalMilliseconds);
             }
 
-            return best;
+            return (bytes, best, GC.GetTotalPauseDuration() - paused);
         }
 
         var (small, smallQueries) = Siblings(512);
+        var smallProbes = Probes(small, smallQueries);
         var (large, largeQueries) = Siblings(32_768);
-        _ = BestMilliseconds(small, smallQueries);
-        var smallTime = BestMilliseconds(small, smallQueries);
-        var largeTime = BestMilliseconds(large, largeQueries);
-        output.WriteLine($"8,192 queries: {smallTime:F3} ms over 512 scopes, {largeTime:F3} ms over 32,768 scopes");
+        var largeProbes = Probes(large, largeQueries);
+        _ = PublicQueries(small, smallQueries);
+        var smallRuns = PublicQueries(small, smallQueries);
+        var largeRuns = PublicQueries(large, largeQueries);
+        output.WriteLine(
+            $"8,192 queries: {smallProbes.Total:N0} -> {largeProbes.Total:N0} probes ({(double)largeProbes.Total / smallProbes.Total:F2} times; "
+            + $"{smallProbes.Fewest}-{smallProbes.Most} -> {largeProbes.Fewest}-{largeProbes.Most} per query) over 512 -> 32,768 scopes "
+            + $"({small.ScopeIndexIntervals:N0} -> {large.ScopeIndexIntervals:N0} intervals), {smallRuns.Bytes:N0} -> {largeRuns.Bytes:N0} B; "
+            + $"not asserted: {smallRuns.Milliseconds:F3} -> {largeRuns.Milliseconds:F3} ms (best of five, "
+            + $"{largeRuns.Milliseconds / Math.Max(smallRuns.Milliseconds, 0.001):F1} times), garbage collection paused the process "
+            + $"{smallRuns.Paused.TotalMilliseconds:F1} -> {largeRuns.Paused.TotalMilliseconds:F1} ms during the five runs");
         Assert.True(
-            largeTime < 16 * Math.Max(smallTime, 0.05),
-            $"64 times the scopes made the queries {largeTime / smallTime:F1} times slower ({smallTime:F3} -> {largeTime:F3} ms).");
+            largeProbes.Total <= 2 * smallProbes.Total,
+            $"64 times the scopes made the queries take {(double)largeProbes.Total / smallProbes.Total:F1} times the probes ({smallProbes.Total:N0} -> {largeProbes.Total:N0}).");
+
+        // The public query allocates nothing. A scan through the public listing allocates an
+        // enumerator per query (32 bytes, 262,144 for 8,192 queries) even when it bypasses the
+        // counted search. The bound is the ~8 KB counter quantum of a background collection, twice.
+        Assert.True(smallRuns.Bytes <= 16_384, $"8,192 queries over 512 scopes allocated {smallRuns.Bytes:N0} B.");
+        Assert.True(largeRuns.Bytes <= 16_384, $"8,192 queries over 32,768 scopes allocated {largeRuns.Bytes:N0} B.");
     }
 
     /// <summary>
@@ -693,9 +753,10 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
     /// every boundary still selects the right scopes and allocates little, but it takes about S²
     /// steps on the nested and staircase listings and fails. Elapsed time is printed, not asserted:
     /// the full parallel suite measured time ratios of 70 to 144 for this unchanged work (64 was
-    /// the former bound), and a reproduction with allocating threads in the same process showed
-    /// collection pauses landing in the long builds and almost never in the short ones. Every
-    /// listing indexes at most two intervals per hull.
+    /// the former bound). With 16 allocating threads in the same process, 19 to 21 of 30 rows
+    /// exceeded 64 while every row's steps stayed the same: collection pauses landed in the long
+    /// builds and almost never in the short ones. Every listing indexes at most two intervals per
+    /// hull.
     /// </summary>
     [Theory]
     [InlineData("wide")]

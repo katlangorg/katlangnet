@@ -240,21 +240,74 @@ public sealed class SemanticModel
     /// instead of inspecting every region.
     /// </remarks>
     public ScopeVisibility FindScopeAt(SourcePosition position)
+        => FindScope<UncountedScopeProbes>(position);
+
+    /// <summary>
+    /// Test seam: <see cref="FindScopeAt"/>'s own query, which also reports the entries it
+    /// inspected. These are the index starts its binary search compared with the position, at
+    /// most ⌊log₂ I⌋ + 1 for I = <see cref="ScopeIndexIntervals"/>, or the listed scopes the
+    /// fallback scan visited. The count depends only on the listing and the position, unlike
+    /// elapsed time. The public query runs the same code with a counter that compiles to nothing.
+    /// </summary>
+    internal ScopeVisibility FindScopeAtCounted(SourcePosition position, out int probes)
+    {
+        CountedScopeProbes.Count = 0;
+        var scope = FindScope<CountedScopeProbes>(position);
+        probes = CountedScopeProbes.Count;
+        return scope;
+    }
+
+    // The query behind FindScopeAt and its counted seam. It is generic over a struct counter, so
+    // the JIT compiles a separate body for each counter. UncountedScopeProbes' empty static calls
+    // vanish from the public query, which therefore compiles as it did before the seam.
+    private ScopeVisibility FindScope<TProbes>(SourcePosition position)
+        where TProbes : struct, IScopeProbes
         => _scopeIndex is { } index
-            ? index.Find(position) ?? new ScopeVisibility(Span: null, Symbols: [])
-            : ScanScopes(position);
+            ? index.Find<TProbes>(position) ?? new ScopeVisibility(Span: null, Symbols: [])
+            : ScanScopes<TProbes>(position);
+
+    /// <summary>Counts the entries a scope query inspects (<see cref="FindScopeAtCounted"/>).</summary>
+    private interface IScopeProbes
+    {
+        static abstract void Probe();
+    }
+
+    /// <summary>The public query's counter: it counts nothing, and its calls compile to nothing.</summary>
+    private readonly struct UncountedScopeProbes : IScopeProbes
+    {
+        public static void Probe()
+        {
+        }
+    }
+
+    /// <summary>The seam's counter: one per inspected entry, kept per thread so concurrent queries do not mix.</summary>
+    private readonly struct CountedScopeProbes : IScopeProbes
+    {
+        [ThreadStatic] private static int t_count;
+
+        public static int Count
+        {
+            get => t_count;
+            set => t_count = value;
+        }
+
+        public static void Probe() => t_count++;
+    }
 
     /// <summary>
     /// The former query, kept for a listing the index refuses: one with a null entry (only the
-    /// internal constructor can receive one), on which every scan throws as it always did.
+    /// internal constructor can receive one), on which every scan throws as it always did. Each
+    /// visited scope is one probe.
     /// </summary>
-    private ScopeVisibility ScanScopes(SourcePosition position)
+    private ScopeVisibility ScanScopes<TProbes>(SourcePosition position)
+        where TProbes : struct, IScopeProbes
     {
         ScopeVisibility? root = null;
         ScopeVisibility? best = null;
         SourceSpan? bestHull = null;
         foreach (var scope in ScopeVisibilities)
         {
+            TProbes.Probe();
             if (scope.Span is not { } hull)
             {
                 root ??= scope;
@@ -367,8 +420,12 @@ public sealed class SemanticModel
         /// <summary>The steps the build's sweep took (<see cref="CandidateOrder"/>).</summary>
         public long BuildSteps { get; }
 
-        /// <summary>The containing scope the scan selects, else the root; null when the listing has neither.</summary>
-        public ScopeVisibility? Find(SourcePosition position)
+        /// <summary>
+        /// The containing scope the scan selects, else the root; null when the listing has neither.
+        /// Each start compared with the position is one probe: at most ⌊log₂ I⌋ + 1 for I intervals.
+        /// </summary>
+        public ScopeVisibility? Find<TProbes>(SourcePosition position)
+            where TProbes : struct, IScopeProbes
         {
             // The number of intervals starting at or before the position; the last of them holds it.
             var starts = _starts;
@@ -376,6 +433,7 @@ public sealed class SemanticModel
             var high = starts.Length;
             while (low < high)
             {
+                TProbes.Probe();
                 var middle = low + ((high - low) >> 1);
                 if (starts[middle] <= position)
                     low = middle + 1;
