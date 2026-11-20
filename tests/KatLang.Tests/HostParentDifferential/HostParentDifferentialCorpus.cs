@@ -39,7 +39,7 @@ public sealed record HostParentDivergence(string Reason, string CSharpNeutral, s
 
 /// <summary>
 /// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15,
-/// KL-06's failed-run publications HP-16) plus the discovered
+/// KL-06's failed-run publications HP-16, KL-07's neutral-text collision HP-17) plus the discovered
 /// shapes (record-equal / shared / reused host objects, parent-replacing wiring routes, alias and
 /// family variants). Pure, Lean-representable ASTs only: no host operations, integer numbers.
 /// A raw host chain has no implicit prelude level; the module controls pin this boundary too.
@@ -52,6 +52,9 @@ public static class HostParentDifferentialCorpus
     private static Expr R(string name) => new Expr.Resolve(name);
     private static Expr X(string name) => new Expr.Param(name);
     private static Expr N(int value) => new Expr.Num(value);
+    /// <summary>A HOST-BUILT string literal: unlike a source literal, it may hold the quote character.</summary>
+    private static Expr Str(string value) => new Expr.StringLiteral(value);
+    private static Expr ListOf(params Expr[] items) => new Expr.ListLiteral(new OutputBundle(items));
     private static Expr Add(Expr a, Expr b) => new Expr.Binary(BinaryOp.Add, a, b);
     private static Expr Sub(Expr a, Expr b) => new Expr.Binary(BinaryOp.Sub, a, b);
     private static Expr Mul(Expr a, Expr b) => new Expr.Binary(BinaryOp.Mul, a, b);
@@ -626,6 +629,23 @@ public static class HostParentDifferentialCorpus
         Case("HP-16c", "a failed owner publishes nothing while its host dependency P stays published",
             OpenedThrough(Scope(null, Prop("P", Body(N(7)))), [R("P"), Div(N(1), N(0))]), "P", "Run");
 
+        // HP-17: KL-07 — a host property holding a list of host-built strings, read through an opened block.
+        // The neutral text writes strings between unescaped quotes, so the two-string list and the
+        // one-string list (a host-built string holding the quote, which no source literal can) both read
+        // L['a', 'b']; only their kl-struct-v1 identities tell them apart (NeutralCollisionPairs).
+        Case("HP-17a", "KL-07: a host property holding the list of the two strings a and b",
+            OpenedThrough(Scope(null, Prop("P", Body(ListOf(Str("a"), Str("b"))))), [R("P")]), "P");
+        Case("HP-17b", "KL-07: a host property holding the list of the ONE host-built string a', 'b",
+            OpenedThrough(Scope(null, Prop("P", Body(ListOf(Str("a', 'b"))))), [R("P")]), "P");
+
         return cases.AsReadOnly();
     }
+
+    /// <summary>
+    /// KL-07: pairs of comparable cases whose successful values share their neutral text but are
+    /// different values. The generated artifact pins each case's <c>kl-struct-v1</c> identity and
+    /// also guards that neither case's Lean value has the OTHER case's identity, so substituting
+    /// one list for the other fails the structural guard while the neutral guard still passes.
+    /// </summary>
+    public static IReadOnlyList<(string Left, string Right)> NeutralCollisionPairs { get; } = [("HP-17a", "HP-17b")];
 }

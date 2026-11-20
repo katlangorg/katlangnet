@@ -28,8 +28,11 @@ artifacts: `lean/LanguageSpecCases.lean` (`LanguageSpecLeanArtifactTests`),
 `lean/CoreTests/HostParentDifferential.lean` (`HostParentDifferentialTests`) and
 `lean/CoreTests/SemanticGeneratedCases.lean` (`SemanticGeneratedLeanArtifactTests`);
 each emits its `SharedDefinitions` and `AppendErrorGuard`. `obs`
-retains its original contract; `errorObs` is separate. Failed supported cases
-need two extra Lean runs for the supplementary guard; successful cases do not.
+retains its original contract; `errorObs` is separate. Only the host-parent
+artifact also emits the KL-07 `structural` guards (§ Lean `kl-struct-v1`
+exporter). On supported failures, `errorObs` runs the plain and counted Lean
+evaluators again. Each `structural` guard on a host-parent success runs the plain
+evaluator once.
 The public engine adds one run only on failures and parse rejections where it
 was previously skipped. No production evaluator code or normal-run overhead changes.
 
@@ -58,7 +61,10 @@ Optimizer parity, entry-point parity and same-source budget laws declare it;
 cross-source transformations retain the normalized policy. A public surface
 without structured errors records that strict comparison was not exercised.
 Missing claimed structural/error data is a harness defect rather than equality
-of two absent fields. Lean-side export of `kl-struct-v1` is deferred.
+of two absent fields. The host-parent corpus uses the Lean-side `kl-struct-v1`
+exporter for successful values (KL-07 pilot, § Lean `kl-struct-v1` exporter
+below). The other three generated corpora retain their existing value, count
+and error observations.
 
 “Partial” means a Lean field or a public C# field (a rendered description or
 name) is deliberately excluded, so only the named fields are shared; C#-internal
@@ -118,6 +124,131 @@ names every variant with no catch-all arm, so a new C# variant fails the test
 build (`CS8509`) until it is classified. Lean's projection has no wildcard, so
 new constructors require a deliberate decision. Independent policy tests reject
 payload downgrades.
+
+## Lean `kl-struct-v1` exporter (KL-07 pilot)
+
+The neutral text writes strings between unescaped quotes, so the list of the two
+strings `a` and `b` and the list of the one host-built string `a', 'b` both read
+`L['a', 'b']`, although `Result.ValueComparer` tells them apart (KL-07). Only
+host-built strings can collide: a source literal cannot hold the quote, and
+`.string` on a number cannot produce one (STR-03). On 2026-11-18 the owner chose
+a Lean exporter of the existing `kl-struct-v1` format, introduced one corpus at a
+time, over escaping quotes in the neutral text. The neutral text (FORMAL-06) is
+unchanged.
+
+**Exporter.** `lean/CoreTests/StructuralIdentity.lean`
+(`StructuralIdentity.encode : Result → Option String`) is maintained test code;
+`lean/KatLang.lean` does not use it. It renders a completed Lean value as text
+byte-identical to `MetamorphicStructuralIdentity.Encode` on their shared
+domain. A Lean atom is an `Int`, written as its Decimal128 equality class: `0`,
+or `[-]<coefficient>e<exponent>` with trailing coefficient zeros moved into the
+exponent, so Lean `1200` and C# `1200` / `1200.00` all read `12e2`. A Lean string
+is a sequence of Unicode scalar values: a scalar outside the BMP contributes its
+UTF-16 surrogate pair, and the length counts UTF-16 code units. Definitions are
+interned by their text, with ids in left-to-right post-order of first completion,
+so sharing never shows. A value holding a call reference or argument view has no
+identity (`none`), just as the C# encoder refuses one.
+
+**Evidence.**
+
+- *Hand-reviewed examples.* The module's guards pin hand-written texts for:
+  the quote collision (both lists), `()` against `[]`, Booleans, numbers and
+  strings side by side, a backslash, printable ASCII, a line feed and a tab, BMP
+  and non-BMP characters, nested lists and sequences, equal subtrees with
+  different sharing, repeated values, negative integers, zero, an integer with
+  trailing decimal zeros, and multi-digit ids. Boundary checks on the helpers
+  cover the printable range, DEL and the end of the BMP.
+  `StructuralIdentityExamples` holds the same examples as C#-built values with
+  the same texts. `StructuralIdentityExporterTests` checks that the C# encoder
+  gives each text, including the C#-only fractional class (`1.5` and `1.50` read
+  `15e-1`); that two examples have equal texts exactly when their values are
+  equal; and that the Lean module guards exactly the texts of the 25
+  Lean-comparable examples.
+- *Cross-check against the C# encoder.* The generated
+  `lean/CoreTests/HostParentDifferential.lean` writes each Lean-comparable
+  example as a Lean literal and guards that the exporter's text equals the C#
+  encoder's text of the C# value. On each successful host-parent case (82 of 113),
+  a `structural` guard compares the exporter's text of the Lean plain run's value
+  with the C# encoder's text of the typed C# value. `HostParentDifferentialHarness.Observe`
+  encodes `counted.Value.Value` directly: rebuilding the value from neutral text
+  would lose the distinction under test. The `obs` (value and emitted count),
+  `errorObs` and cache guards are unchanged, including KL-06's failed-run guards.
+  No C#/Lean disagreement was found.
+
+**Where it is used.** Only in the host-parent corpus. Structural guards are not
+emitted for `LanguageSpecCases.lean`, `SemanticExplorerCases.lean` or
+`CoreTests/SemanticGeneratedCases.lean`.
+
+**KL-07 acceptance.** HP-17a and HP-17b put the two-string list and the
+one-string list in a host property that is read through an opened block. Both
+observe `ok raw=L['a', 'b'] n=1`, but their identities are
+`kl-struct-v1:3:t1:at1:bl2:0,1,;` and `kl-struct-v1:2:t6:a', 'bl1:0,;`.
+`HostParentDifferentialCorpus.NeutralCollisionPairs` declares the pair, and the
+generated artifact guards that neither Lean value has the other case's
+identity. On 2026-11-20 each program was substituted for the other in a scratch
+copy of the artifact. Each copy failed exactly two guards, both on the
+substituted case: its structural pin and its cross guard. Its neutral `obs` guard
+and its cache guards still passed.
+
+**Coverage claim.** The exporter establishes structural equality of completed
+values that both engines can represent. It does not cover:
+
+- Decimal128 representation (the spelling `1.0` against `1.00`): neutral text
+  and C#-side checks keep that;
+- unpaired UTF-16 surrogates: a Lean `String` cannot hold them, see the Lean
+  string boundary in `tests/KatLang.Tests/LeanAstEncoder.cs` (`Quote`);
+- host-visible object identity (as in KL-01): the format deliberately gives
+  equal subtrees the same text, whatever their CLR identity.
+
+**Measurements** (2026-11-20; Lean 4.35.0 and Lake 5.0.0; Windows 11 with 20
+logical processors). The baseline is the landed KL-06 output at `36986d89`.
+Rebuild command, from `lean/`: delete the build outputs of
+`CoreTests.HostParentDifferential` under `.lake/build` (`.olean`, `.ilean`,
+`.trace`, their hashes, and the IR `.c`, `.c.hash` and `.setup.json`), then run
+`lake build CoreTests.HostParentDifferential`. Every dependency (`KatLang`, plus
+`CoreTests.StructuralIdentity` for the pilot) stays built and cached, which is
+the situation after a change to the artifact alone. Three runs were made on each
+side. A supplementary run elaborated scratch copies of both files with
+`lake env lean`, interleaved over four rounds.
+
+| | Baseline | Pilot | Delta |
+| --- | --- | --- | --- |
+| Generated file | 166,029 bytes | 176,933 bytes | +10,904 (+6.6%) |
+| Cases (successful) | 111 (80) | 113 (82) | +2 (+2) |
+| `#guard` lines | 435 | 552 | +117: 82 structural, 25 examples, 2 KL-07 cross guards, 8 for HP-17a/b |
+| Module rebuild, wall-clock median | 9.62 s | 10.97 s | +1.35 s (+14%) |
+| Module rebuild, Lake-reported median | 8.7 s | 9.9 s | +1.2 s |
+| Interleaved scratch elaboration, median | 8.78 s | 10.01 s | +1.24 s (+14%) |
+| New exporter module (11,166 bytes), built once | — | 0.8 s (Lake) | +0.8 s |
+
+The dependent `KatLangArityLaws/MayCaptureCallsCorpus.lean` gains two gate
+guards (HP-17a/b). It imports the host-parent module but evaluates no structural
+guard. The target rebuild and the exporter's first build together suggest an
+estimated 2 s of extra work on this machine. The Lean CI job has a 30-minute
+timeout.
+
+**Estimates for the other three corpora (not migrated).** These are estimates,
+not a migration. One structural guard was added after each successful `obs` guard
+in scratch copies outside the tree. The expected text was derived from the
+neutral raw text, which is unambiguous in these source-built corpora; the same
+derivation reproduced all 80 C# identities of the host-parent baseline exactly.
+Each copy was elaborated with `lake env lean` against the built oleans, over two
+alternating rounds; the table gives the mean. A real migration would add the C#
+generator changes and possibly an example section, and Lake's C emission adds a
+little to elaboration time. The scratch guards call a longer function name, so the
+byte estimates run about 2 bytes per guard high. Every added guard passed in all three copies.
+
+| Corpus | Successful cases | File before | Estimated added bytes | Elaboration before | Estimated delta |
+| --- | --- | --- | --- | --- | --- |
+| `LanguageSpecCases.lean` | 369 | 318,639 | +39,239 (+12%) | 10.1 s | +2.4 s (+24%) |
+| `CoreTests/SemanticGeneratedCases.lean` | 481 | 663,676 | +64,531 (+10%) | 19.0 s | +3.6 s (+19%) |
+| `SemanticExplorerCases.lean` | 2,041 | 1,042,737 | +173,195 (+17%) | 32.0 s | +10.2 s (+32%) |
+| All three | 2,891 | 2,025,052 | about +277 KB | 61.2 s | about +16 s |
+
+Extending the exporter to these corpora is a separate owner decision, to be made
+on these measurements. In any later migration, the language specification's
+hand-written expectations stay an independent oracle. Logs and scratch tools are
+in `artifacts/validation/kl-struct-lean-pilot/`.
 
 ## Demand, effects and model boundaries
 

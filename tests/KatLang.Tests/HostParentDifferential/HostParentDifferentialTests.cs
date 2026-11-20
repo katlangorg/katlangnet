@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using KatLang.ParserFuzz;
 
 namespace KatLang.Tests;
 
@@ -11,7 +12,8 @@ namespace KatLang.Tests;
 /// evaluated by C# on every route (<see cref="HostParentDifferentialHarness"/>) and encoded for Lean
 /// by <see cref="LeanAstEncoder"/>; the artifact guards Lean's neutral observation and published
 /// zero-argument cache entries against the recorded C# ones, on success and on failure alike
-/// (KL-06), and <c>lake build CoreTests</c>
+/// (KL-06), and, on success, the Lean exporter's <c>kl-struct-v1</c> text of the value against the C#
+/// encoder's text of the C# value (KL-07 pilot, <see cref="StructuralIdentityExamples"/>); <c>lake build CoreTests</c>
 /// compiles it (it is imported by <c>lean/CoreTests.lean</c>). Every case is comparable: HOST-LEAN-O6 gave
 /// every host level its object's Lean host-scope token, which retired the last known model divergence
 /// (HP-14b). A future reviewed divergence would be excluded from the comparable partition and pinned on
@@ -59,7 +61,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15 and KL-06's HP-16.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16 and KL-07's HP-17.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -68,7 +70,7 @@ public class HostParentDifferentialTests
         Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(cases.Count, cases.Select(c => c.LeanName).Distinct(StringComparer.Ordinal).Count());
         var families = cases.Select(c => c.Id[..5]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(Enumerable.Range(1, 16).Select(n => $"HP-{n:00}"), families);
+        Assert.Equal(Enumerable.Range(1, 17).Select(n => $"HP-{n:00}"), families);
         Assert.All(cases, c => Assert.False(string.IsNullOrWhiteSpace(c.Description), c.Id));
     }
 
@@ -209,6 +211,80 @@ public class HostParentDifferentialTests
         ];
         Assert.Equal(expectedGuards, GenerateArtifact([hostCase]).Split('\n').Where(line => line.StartsWith("#guard ", StringComparison.Ordinal)
             && line.Contains($" {lean} ", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// KL-07 pilot ratchet, read back from the GENERATED text: every comparable SUCCESSFUL case has
+    /// exactly one <c>structural</c> guard, pinning the C# encoder's identity of its typed value (which
+    /// decodes back to a value equal to the plain run's), and no failing case has one.
+    /// </summary>
+    [Fact]
+    public void FidelityRatchet_EverySuccessfulCaseKeepsItsStructuralGuard()
+    {
+        const int MinimumStructuralGuards = 82;
+
+        var cases = HostParentDifferentialCorpus.AllCases();
+        var lines = GenerateArtifact(cases).Split('\n');
+        var guards = lines.Where(line => line.StartsWith("#guard structural hp_", StringComparison.Ordinal)
+            && line.Contains(" == some ", StringComparison.Ordinal)).ToList();
+        var successes = 0;
+        foreach (var hostCase in cases.Where(c => c.Divergence is null))
+        {
+            var observation = HostParentDifferentialHarness.Observe(hostCase);
+            var ofCase = guards.Where(line => line.StartsWith($"#guard structural {hostCase.LeanName} ", StringComparison.Ordinal)).ToList();
+            if (!observation.IsSuccess)
+            {
+                Assert.Null(observation.StructuralIdentity);
+                Assert.Empty(ofCase);
+                continue;
+            }
+
+            successes++;
+            var identity = Assert.IsType<string>(observation.StructuralIdentity);
+            Assert.Equal($"#guard structural {hostCase.LeanName} == some {LeanAstEncoder.QuoteString(identity)}", Assert.Single(ofCase));
+            Assert.True(MetamorphicStructuralIdentity.TryDecode(identity, out var decoded, out var problem), $"{hostCase.Id}: {problem}");
+            Assert.True(Result.ValueComparer.Equals(Evaluator.Run(hostCase.Program).Value, decoded), hostCase.Id);
+        }
+
+        Assert.Equal(successes, guards.Count);
+        Assert.True(successes >= MinimumStructuralGuards,
+            $"Structural guards on successful host-parent cases shrank below {MinimumStructuralGuards} (actual {successes}).");
+    }
+
+    /// <summary>
+    /// KL-07 acceptance, C# half: HP-17a (the two strings <c>a</c>, <c>b</c>) and HP-17b (the ONE
+    /// host-built string <c>a', 'b</c>) are different values with one neutral text and the reviewed
+    /// identities. The generated artifact pins that neutral text on both, their distinct identities, and
+    /// guards that neither Lean value has the other's identity. Substituting either program for the
+    /// other in a scratch copy of the artifact fails the structural guard while the neutral guard
+    /// still passes (recorded in <c>docs/design/differential-observations.md</c>).
+    /// </summary>
+    [Fact]
+    public void NeutralCollisionPair_SharesTheNeutralTextButNotTheIdentity()
+    {
+        var twoStrings = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == "HP-17a");
+        var oneString = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == "HP-17b");
+        Assert.Equal([("HP-17a", "HP-17b")], HostParentDifferentialCorpus.NeutralCollisionPairs);
+        Assert.False(Result.ValueComparer.Equals(Evaluator.Run(twoStrings.Program).Value, Evaluator.Run(oneString.Program).Value));
+
+        var left = HostParentDifferentialHarness.Observe(twoStrings);
+        var right = HostParentDifferentialHarness.Observe(oneString);
+        Assert.Equal("ok raw=L['a', 'b'] n=1", left.Neutral);
+        Assert.Equal(left.Neutral, right.Neutral);
+        Assert.Equal("kl-struct-v1:3:t1:at1:bl2:0,1,;", left.StructuralIdentity);
+        Assert.Equal("kl-struct-v1:2:t6:a', 'bl1:0,;", right.StructuralIdentity);
+
+        string[] expected =
+        [
+            "#guard obs hp_17a == \"ok raw=L['a', 'b'] n=1\"",
+            "#guard structural hp_17a == some \"kl-struct-v1:3:t1:at1:bl2:0,1,;\"",
+            "#guard obs hp_17b == \"ok raw=L['a', 'b'] n=1\"",
+            "#guard structural hp_17b == some \"kl-struct-v1:2:t6:a', 'bl1:0,;\"",
+            "#guard structural hp_17a != some \"kl-struct-v1:2:t6:a', 'bl1:0,;\"",
+            "#guard structural hp_17b != some \"kl-struct-v1:3:t1:at1:bl2:0,1,;\"",
+        ];
+        Assert.Equal(expected, GenerateArtifact([twoStrings, oneString]).Split('\n')
+            .Where(line => line.StartsWith("#guard obs ", StringComparison.Ordinal) || line.StartsWith("#guard structural ", StringComparison.Ordinal)));
     }
 
     /// <summary>
@@ -439,6 +515,7 @@ public class HostParentDifferentialTests
         var builder = new StringBuilder();
         builder.Append($"""
             import KatLang
+            import CoreTests.StructuralIdentity
 
             /-!
             GENERATED FILE - DO NOT EDIT BY HAND.
@@ -448,8 +525,10 @@ public class HostParentDifferentialTests
             Each program below is `LeanAstEncoder`'s encoding of the SAME constructed C# AST the C#
             evaluator ran on every route (plain, counted, generic, optimized, suspending async); each
             `#guard` pins the C# neutral observation and the C# published zero-argument cache entries
-            (per property name, and in total), on success and on failure alike (KL-06). A failing
-            guard is a Lean/C# divergence on that case.
+            (per property name, and in total), on success and on failure alike (KL-06). A successful
+            case's `structural` guard also pins the C# `kl-struct-v1` identity of its value against the
+            Lean exporter's text (KL-07 pilot; `CoreTests/StructuralIdentity.lean`). A failing guard is
+            a Lean/C# divergence on that case.
 
             Partition (machine-checked by the `*CaseIds.length` guards below):
             - corpus cases: {cases.Count}
@@ -496,11 +575,34 @@ public class HostParentDifferentialTests
             def cacheTotal (e : Expr) : Option Nat :=
               (publications e).map List.length
 
+            /-- KL-07 pilot: the `kl-struct-v1` identity (`StructuralIdentity.encode`,
+                `CoreTests/StructuralIdentity.lean`) of the value ONE plain run returns; `none` on
+                failure. Each successful case's guard compares it with the C# encoder's text of the C#
+                value (`MetamorphicStructuralIdentity.Encode`): unlike the neutral text, which writes
+                strings between unescaped quotes, it never writes two different values alike. Every
+                `#guard` is its own evaluation, so each structural guard runs its program once more. -/
+            def structural (e : Expr) : Option String :=
+              match runResult e with
+              | .ok value => StructuralIdentity.encode value
+              | .error _ => none
+
+            -- Exporter cross-check (KL-07; StructuralIdentityExamples): every Lean-comparable example
+            -- value was built by C# and is written here as a Lean literal; the expected text is the C#
+            -- encoder's text of the C# value.
 
             """.ReplaceLineEndings("\n"));
+        foreach (var example in StructuralIdentityExamples.LeanComparable)
+        {
+            builder.Append($"-- {example.Name}\n");
+            builder.Append($"#guard StructuralIdentity.encode {StructuralIdentityExamples.LeanLiteral(example.Value)} == " +
+                $"some {LeanAstEncoder.QuoteString(MetamorphicStructuralIdentity.Encode(example.Value))}\n");
+        }
+
+        builder.Append("\n\n");
 
         var comparableIds = new List<string>();
         var divergentIds = new List<string>();
+        var comparableObservations = new Dictionary<string, (HostParentCase Case, HostParentObservation Observation)>(StringComparer.Ordinal);
         foreach (var hostCase in cases)
         {
             var program = EncodeCase(hostCase);
@@ -526,6 +628,14 @@ public class HostParentDifferentialTests
             builder.Append($"-- {hostCase.Id}: {hostCase.Description}\n");
             builder.Append($"def {hostCase.LeanName} : Expr :=\n  {program}\n");
             builder.Append($"#guard obs {hostCase.LeanName} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n");
+            if (observation.IsSuccess)
+            {
+                // KL-07 pilot: the C# identity of the typed C# value against the Lean exporter's text.
+                var identity = observation.StructuralIdentity
+                    ?? throw new InvalidOperationException($"{hostCase.Id}: a successful observation has no structural identity.");
+                builder.Append($"#guard structural {hostCase.LeanName} == some {LeanAstEncoder.QuoteString(identity)}\n");
+            }
+
             LeanObsTemplate.AppendErrorGuard(builder, hostCase.LeanName, observation.ErrorPayload);
             // KL-06: publications are compared on success AND failure; a failed run keeps what its
             // successful owners published, and a watched name with no entry is guarded at zero.
@@ -538,7 +648,10 @@ public class HostParentDifferentialTests
             builder.Append($"#guard cacheTotal {hostCase.LeanName} == some {observation.PublishedTotal.ToString(CultureInfo.InvariantCulture)}\n");
             builder.Append('\n');
             comparableIds.Add(hostCase.Id);
+            comparableObservations.Add(hostCase.Id, (hostCase, observation));
         }
+
+        AppendNeutralCollisionGuards(builder, comparableObservations);
 
         SemanticExplorerLeanArtifactTests.AppendCountGuard(builder, "comparableCaseIds", comparableIds, comparableExpected,
             "Machine-checked comparable partition count: the id list is built by the loop that emits the guards\n" +
@@ -548,5 +661,36 @@ public class HostParentDifferentialTests
         builder.Append($"-- {comparableIds.Count} comparable cases, {divergentIds.Count} known divergences.\n");
         builder.Append("end HostParentDifferential\n");
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// KL-07 acceptance, for every declared pair (<see cref="HostParentDifferentialCorpus.NeutralCollisionPairs"/>)
+    /// whose two cases are generated: both succeed with ONE neutral text but different identities
+    /// (generation fails loudly otherwise), and each case's Lean value is guarded NOT to have the
+    /// other case's C# identity. The per-case guards already pin the shared neutral text, so
+    /// substituting one list for the other passes the neutral guard and fails the structural guard.
+    /// </summary>
+    private static void AppendNeutralCollisionGuards(
+        StringBuilder builder, IReadOnlyDictionary<string, (HostParentCase Case, HostParentObservation Observation)> comparable)
+    {
+        foreach (var (leftId, rightId) in HostParentDifferentialCorpus.NeutralCollisionPairs)
+        {
+            if (!comparable.TryGetValue(leftId, out var left) || !comparable.TryGetValue(rightId, out var right))
+                continue;
+            if (!left.Observation.IsSuccess || !right.Observation.IsSuccess
+                || left.Observation.Neutral != right.Observation.Neutral
+                || left.Observation.StructuralIdentity == right.Observation.StructuralIdentity)
+            {
+                throw new InvalidOperationException(
+                    $"KL-07 pair {leftId}/{rightId} must succeed with one neutral text and different identities: " +
+                    $"'{left.Observation.Neutral}' {left.Observation.StructuralIdentity} vs " +
+                    $"'{right.Observation.Neutral}' {right.Observation.StructuralIdentity}.");
+            }
+
+            builder.Append($"-- KL-07 acceptance ({leftId} / {rightId}): both values have the neutral text {left.Observation.Neutral},\n");
+            builder.Append("-- pinned above, but different kl-struct-v1 identities: neither Lean value has the other's.\n");
+            builder.Append($"#guard structural {left.Case.LeanName} != some {LeanAstEncoder.QuoteString(right.Observation.StructuralIdentity!)}\n");
+            builder.Append($"#guard structural {right.Case.LeanName} != some {LeanAstEncoder.QuoteString(left.Observation.StructuralIdentity!)}\n\n");
+        }
     }
 }

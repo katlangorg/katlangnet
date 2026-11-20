@@ -51,6 +51,7 @@ import CoreTests.ParentScopeValidation
 import CoreTests.RepeatedSpread
 import CoreTests.HostScopePropertyCache
 import CoreTests.HostScopeIdentity
+import CoreTests.StructuralIdentity
 import CoreTests.HostParentDifferential
 import CoreTests.SpreadFailureOrigin
 import CoreTests.SemanticGeneratedCases

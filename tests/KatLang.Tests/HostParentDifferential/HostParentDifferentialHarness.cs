@@ -1,5 +1,6 @@
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
+using KatLang.ParserFuzz;
 
 namespace KatLang.Tests;
 
@@ -8,12 +9,16 @@ namespace KatLang.Tests;
 /// Lean artifact plus the zero-argument property cache's PUBLISHED entries per binding name. The
 /// entries are kept beside a failure too (KL-06): a failed run still shows every entry a successful
 /// owner published before it, and the generated guards compare them on failing cases as well.
+/// A successful run also carries the <c>kl-struct-v1</c> identity of its typed value
+/// (<see cref="MetamorphicStructuralIdentity.Encode"/>, KL-07), which the generated guards compare
+/// with the Lean exporter's text: unlike <see cref="Neutral"/>, it never writes two values alike.
 /// </summary>
 public sealed record HostParentObservation(
     string Neutral,
     SharedErrorPayload? ErrorPayload,
     IReadOnlyDictionary<string, int> PublishedByName,
-    int PublishedTotal)
+    int PublishedTotal,
+    string? StructuralIdentity)
 {
     public bool IsSuccess => Neutral.StartsWith("ok ", StringComparison.Ordinal);
     public int Published(string name) => PublishedByName.TryGetValue(name, out var count) ? count : 0;
@@ -75,11 +80,14 @@ public static class HostParentDifferentialHarness
         if (plain.IsError)
         {
             var observed = DifferentialErrors.Observe(plain.Error);
-            return new($"err {observed.Category}", observed.Payload, genericCache.ByName, genericCache.Total);
+            return new($"err {observed.Category}", observed.Payload, genericCache.ByName, genericCache.Total,
+                StructuralIdentity: null);
         }
 
+        // KL-07: the identity of the TYPED value, encoded directly. Rebuilding it from the neutral
+        // text would lose exactly the distinction it exists for (strings between unescaped quotes).
         return new($"ok raw={SemanticExplorerHarness.Neutral(counted.Value.Value)} n={counted.Value.EmittedCount}",
-            null, genericCache.ByName, genericCache.Total);
+            null, genericCache.ByName, genericCache.Total, MetamorphicStructuralIdentity.Encode(counted.Value.Value));
     }
 
     private static void Require(string caseId, bool condition, string what)

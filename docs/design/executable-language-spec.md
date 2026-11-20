@@ -99,7 +99,10 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   graph; guards pin the neutral observation and the published zero-argument
   cache entries per property name and in total, on failing cases too: a
   failed run keeps what its successful owners published, read from the run's
-  final state (KL-06, HP-16a–c). Every host level is encoded
+  final state (KL-06, HP-16a–c). On every successful case a `structural`
+  guard also pins the C# `kl-struct-v1` identity of the value against the
+  test-side Lean exporter `lean/CoreTests/StructuralIdentity.lean` (KL-07
+  pilot, HP-17a/b; `docs/design/differential-observations.md`). Every host level is encoded
   with its OBJECT's host-scope token (`PropertyIdentity.host`, one per
   original `ScopeCtx` by reference, HOST-LEAN-O6). Evaluator-owned record copies
   that replace nonempty opens/property lists also carry `sharedView`/`moduleView`
@@ -107,8 +110,8 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   callable identity erases it. The encoder keeps context-qualified property
   provenance for cache and alias shapes. It emits exact owner positions when
   nonempty, and an explicitly empty list only where that changes access (KL-04,
-  HP-05j/k). All 111 cases are comparable (101 with
-  pre-wired parents, 192 named cache guards, 8 of them on failing cases); a future reviewed model divergence would be excluded from the
+  HP-05j/k). All 113 cases are comparable (103 with
+  pre-wired parents, 196 named cache guards, 8 of them on failing cases, 82 structural guards); a future reviewed model divergence would be excluded from the
   comparable partition by exact id and pinned on BOTH sides (the Lean value by
   a generated guard, the C# value by `HostParentDifferentialTests`). Regenerate with
   `$env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"; dotnet test .\KatLang.slnx --filter HostParentDifferential`
