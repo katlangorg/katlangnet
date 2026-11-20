@@ -539,7 +539,7 @@ internal sealed class ZeroArgPropertyPublications(
     // change of which entry a key finds), in a prompt-reclaim table. A cache with further
     // identity-partitioned stores passes the table they share and this store's slot in it.
     private readonly PartitionedMap<ZeroArgPropertyCacheKey, ZeroArgPropertyResult> _published = partitions is null
-        ? new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true)
+        ? new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey)
         : new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, partitions, partitionStore);
     // Transient: only the owners on the current evaluation chain, so it stays a plain set.
     private readonly HashSet<ZeroArgPropertyCacheKey> _active = new(ZeroArgPropertyCacheKeyComparer.Instance);
@@ -687,7 +687,7 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
     {
         if (trackStatistics)
         {
-            _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true);
+            _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey);
             _stats = new();
         }
     }
@@ -775,7 +775,7 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
             return;
         }
 
-        var partitions = new BindingContextPartitionTable(PartitionStoreCount, promptReclaim: true);
+        var partitions = new BindingContextPartitionTable(PartitionStoreCount);
         _results = new ZeroArgPropertyPublications(observationSink, partitions, PublishedStore);
         _statistics = new Statistics(partitions);
     }

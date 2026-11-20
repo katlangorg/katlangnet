@@ -179,7 +179,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
     // (through the source key), so no execution can reach a bind after its identity is gone. The
     // partition table is the prompt-reclaim form (see the class remarks).
     private readonly PartitionedMap<DeconstructionBindingExecution, IReadOnlyDictionary<string, NeedCell>> _results =
-        new(DeconstructionBindingCacheKeyComparer.Instance, BindingContextPartitions.OfDeconstruction, promptReclaim: true);
+        new(DeconstructionBindingCacheKeyComparer.Instance, BindingContextPartitions.OfDeconstruction);
 
     // Transient: group identity -> number of its binds currently running (absent when none).
     private readonly Dictionary<object, int> _runningBinds = new(ReferenceEqualityComparer.Instance);

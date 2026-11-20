@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using Xunit.Abstractions;
@@ -15,10 +16,11 @@ namespace KatLang.Tests;
 /// That form is sequential and takes no lock: the property cache relies on a run being ONE evaluation flow, which an
 /// async continuation may move to another thread only after the previous table operation returned.
 /// <para>These tests drive that model through the ASYNC cache: several independent runs at once, each a sequential flow
-/// that hops threads at every miss while collections clear dead identities, reading, publishing, failing, cancelling,
-/// invoking and dropping partitions. Every hit, miss, published value and count is the one the publication law gives,
-/// no entry a live key can name is lost, dead partitions leave the table, and the table stays far smaller than the
-/// identities that passed through it. In DEBUG builds the table also fails loudly if two operations ever overlap.</para>
+/// that suspends at every miss (through the pool, and periodically onto a new thread, so it provably changes threads)
+/// while collections clear dead identities, reading, publishing, failing, cancelling, invoking and dropping partitions.
+/// Every hit, miss, published value and count is the one the publication law gives, no entry a live key can name is
+/// lost, dead partitions leave the table, and the table stays far smaller than the identities that passed through it.
+/// In DEBUG builds the table also fails loudly if two operations ever overlap.</para>
 /// </summary>
 public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
 {
@@ -26,12 +28,13 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
     private const int Rounds = 4_096;
     private const int KeepEvery = 128;
     private const int CollectEvery = 256;
-    private const int DedicatedThreadHopEvery = 64;
+    private const int NewThreadHopEvery = 64;
 
     [Fact]
     public void EveryRunScopedPropertyCache_UsesThePromptReclaimTable()
     {
-        // The ConditionalWeakTable form reports a capacity of 0.
+        // Every partition table is the prompt-reclaim form since 2026-11-20 (the ConditionalWeakTable form, which
+        // reported a capacity of 0, was removed); a capacity pins that the cache keeps its entries in one.
         Assert.True(new RunScopedAsyncZeroArgPropertyResultCache().PromptTableCapacity > 0);
         Assert.True(new RunScopedZeroArgPropertyResultCache(collectStatistics: false).PromptTableCapacity > 0);
         Assert.True(new RunScopedZeroArgPropertyResultCache().PromptTableCapacity > 0);
@@ -51,8 +54,11 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
                 $"flow: {flow.Threads.Count} threads, {flow.Evaluations} evaluations, {flow.Cache.PublishedCount} published, "
                 + $"table capacity {report.Capacity} after {Rounds} identities, {live} live partitions ({report.Kept.Count} kept)");
 
-            // The sequential flow really moved between threads.
-            Assert.True(flow.Threads.Count >= 2, $"one flow ran on {flow.Threads.Count} thread(s)");
+            // The sequential flow really moved between threads: every new-thread hop resumed it — and the nested
+            // lookup and publication that follow the hop — on a thread other than the one that suspended. (A hop
+            // through the pool may resume on the very worker that suspended, so the threads seen prove nothing.)
+            Assert.Equal(Rounds / NewThreadHopEvery, flow.NewThreadResumptions.Count);
+            Assert.All(flow.NewThreadResumptions, AssertOnANewThread);
             Assert.Equal(flow.ExpectedEvaluations, flow.Evaluations);
             Assert.Equal(flow.ExpectedPublished, flow.Cache.PublishedCount);
             Assert.Equal(0, flow.Cache.ActiveOwnerCount);
@@ -81,21 +87,23 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
         var outcomes = await Task.WhenAll(Enumerable.Range(0, runs).Select(_ => Task.Run(async () =>
         {
             var cache = new RunScopedAsyncZeroArgPropertyResultCache();
-            var threads = new HashSet<int>();
             var live = -1;
             var operations = HostOperations.Create(
-                // Every step's local-only property suspends the run: its continuation may resume on another thread.
                 HostOperation.CreateAsync("hop", async (_, _) =>
                 {
                     await Task.Yield();
-                    lock (threads) threads.Add(Environment.CurrentManagedThreadId);
                     return new Result.Atom(0);
                 }),
                 HostOperation.CreateAsync("probe", async (_, _) =>
                 {
-                    await Task.Yield();
+                    // Read the same table on both threads while the evaluator is waiting for this probe.
+                    var beforeCollection = cache.LivePartitionCount();
+                    var suspended = Environment.CurrentManagedThreadId;
+                    await new Suspension(onANewThread: true);
+                    AssertOnANewThread(Resumption.After(suspended));
                     ForceFullCollection();
                     live = cache.LivePartitionCount();
+                    Assert.InRange(live, 0, beforeCollection);
                     return new Result.Atom(0);
                 }));
             var source = "G(v) = v + 1\nStep(x) = { P = x.G + hop() * 0\nP + 0 }\n"
@@ -103,18 +111,17 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
             var parsed = await SourceProvenance.ParseValidAsync(source, new RunOptions { HostOperations = operations });
             var (result, _) = await Evaluator.RunCountedObservedAsync(
                 new Expr.AlgorithmExpr(parsed.Root), zeroArgPropertyResultCache: cache, hostOperations: operations);
-            return (Result: result, cache.PublishedCount, cache.PromptTableCapacity, Live: live, Threads: threads.Count);
+            return (Result: result, cache.PublishedCount, cache.PromptTableCapacity, Live: live);
         })));
 
         foreach (var outcome in outcomes)
         {
-            output.WriteLine($"run: {outcome.Threads} threads, {outcome.PublishedCount} published, "
+            output.WriteLine($"run: {outcome.PublishedCount} published, "
                 + $"table capacity {outcome.PromptTableCapacity}, {outcome.Live} live partitions at the probe");
             Assert.True(outcome.Result.IsOk, outcome.Result.IsError ? outcome.Result.Error.ToString() : "");
             Assert.Equal(steps.ToString(CultureInfo.InvariantCulture), SixRouteAgreement.Neutral(outcome.Result.Value.Value));
             Assert.True(outcome.PublishedCount >= steps, $"published {outcome.PublishedCount}");
             Assert.InRange(outcome.Live, 0, 64);
-            Assert.True(outcome.Threads >= 2, $"one run resumed on {outcome.Threads} thread(s)");
         }
     }
 
@@ -127,7 +134,7 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
     [Fact]
     public void PromptReclaimTable_RejectsAnOverlappingOperation_InDebugBuilds()
     {
-        var table = new BindingContextPartitionTable(storeCount: 1, promptReclaim: true);
+        var table = new BindingContextPartitionTable(storeCount: 1);
         var identity = new object();
         table.GetOrCreate(identity)[0] = new object(); // store 0's partition, as a PartitionedMap would add it
         var slots = typeof(BindingContextPartitionTable).GetField("_prompt", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(table)!;
@@ -180,6 +187,7 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
         private Property Failing { get; } = LocalOnly("F");
         private Property Cancelled { get; } = LocalOnly("C");
         internal HashSet<int> Threads { get; } = [];
+        internal List<Resumption> NewThreadResumptions { get; } = [];
         internal int Evaluations { get; private set; }
         internal int ExpectedEvaluations { get; private set; }
         internal int ExpectedPublished { get; private set; }
@@ -204,8 +212,12 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
             var owned = await Cache.GetOrEvaluateAsync(Read(P, identity), async () =>
             {
                 Evaluations++;
+                var suspended = Environment.CurrentManagedThreadId;
                 await Hop(round);
                 Note();
+                if (OnANewThread(round))
+                    NewThreadResumptions.Add(Resumption.After(suspended));
+                // After a new-thread hop, this lookup and publication run on the new thread.
                 var nested = await Cache.GetOrEvaluateAsync(Read(Q, identity), () => Evaluate(10 * round + 1));
                 Assert.Equal(10 * round + 1, Value(nested));
                 Assert.Equal(10 * round + 1, Value(await Cache.GetOrEvaluateAsync(Read(Q, identity), MustHit)));
@@ -281,17 +293,64 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
 
         private void Note() => Threads.Add(Environment.CurrentManagedThreadId);
 
-        // A genuine suspension: usually back to the pool, sometimes onto a fresh dedicated thread.
-        private static async Task Hop(int round)
-        {
-            if (round % DedicatedThreadHopEvery == 0)
-                await Task.Factory.StartNew(static () => { }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            else
-                await Task.Yield();
-        }
+        // A genuine suspension: usually back to the pool, and every NewThreadHopEvery rounds onto a new thread.
+        private static Suspension Hop(int round) => new(OnANewThread(round));
+
+        private static bool OnANewThread(int round) => round % NewThreadHopEvery == 0;
 
         private static Property LocalOnly(string name)
             => new(name, new Algorithm.User(null, [], [], [], [new Expr.Num(0)]), Exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters);
+    }
+
+    /// <summary>Where a suspended flow resumed: the suspending thread's id, and the resuming thread's id and kind.</summary>
+    private readonly record struct Resumption(int Suspended, int Resumed, bool OnAPoolThread)
+    {
+        internal static Resumption After(int suspended)
+            => new(suspended, Environment.CurrentManagedThreadId, Thread.CurrentThread.IsThreadPoolThread);
+    }
+
+    // A new-thread hop resumed the flow on a thread of its own: no pool worker, and not the one that suspended.
+    private static void AssertOnANewThread(Resumption hop)
+    {
+        Assert.False(hop.OnAPoolThread, $"a new-thread hop resumed on pool thread {hop.Resumed}");
+        Assert.NotEqual(hop.Suspended, hop.Resumed);
+    }
+
+    /// <summary>
+    /// An awaitable that always suspends: through the thread pool, like <see cref="Task.Yield"/>, which may resume the
+    /// awaiting code on the very worker that suspended, or onto a NEW thread, which runs the awaiting code itself. The
+    /// suspending thread starts that thread while it is still running, so the two never share a managed thread id: a
+    /// new-thread hop moves the flow to another thread on every schedule. (Awaiting a long-running task does not: when the
+    /// task has finished before the await, the awaiting code simply continues on its own thread.)
+    /// </summary>
+    private readonly struct Suspension(bool onANewThread) : ICriticalNotifyCompletion
+    {
+        private readonly bool _onANewThread = onANewThread;
+
+        public Suspension GetAwaiter() => this;
+
+        public bool IsCompleted => false;
+
+        public void GetResult()
+        {
+        }
+
+        public void OnCompleted(Action continuation)
+        {
+            if (_onANewThread)
+                new Thread(continuation.Invoke) { IsBackground = true }.Start();
+            else
+                Task.Yield().GetAwaiter().OnCompleted(continuation);
+        }
+
+        // The async method builder restores the awaiting method's execution context itself.
+        public void UnsafeOnCompleted(Action continuation)
+        {
+            if (_onANewThread)
+                new Thread(continuation.Invoke) { IsBackground = true }.UnsafeStart();
+            else
+                Task.Yield().GetAwaiter().UnsafeOnCompleted(continuation);
+        }
     }
 
     private static ValueTask<EvalResult<ZeroArgPropertyResult>> MustHit()
@@ -338,6 +397,11 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
     private const int FewRounds = 100_000;
     private const int ManyRounds = 1_000_000;
     // The former tables grew by 38–48 MiB between the two sizes in Release; the flat profile by about 1 MiB.
+    // Re-measured on 2026-11-20 before deciding whether to tighten (MiB, one child per run): the uncached-statistics
+    // loop grew 0.1–0.6 in Debug and Release on Windows (13 pairs each, before and after the prompt-reclaim table
+    // became the only form) and 0.5–0.7 in Debug on Linux (WSL, 5), and
+    // 31.5–37.2 with its two stores in the former ConditionalWeakTable. This bound already lies far between the two,
+    // so it was left unchanged.
     private const long AllowedGrowthBytes = 16L * 1024 * 1024;
 
     /// <summary>The loop of <paramref name="variant"/> over <paramref name="rounds"/> rounds; its value is the round count.</summary>

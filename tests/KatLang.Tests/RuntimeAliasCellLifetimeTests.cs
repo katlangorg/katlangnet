@@ -430,9 +430,9 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// The store's PROMPT-RECLAIM partition table (the alias cells' form of
-    /// <see cref="BindingContextPartitionTable"/>, and the property cache's since 2026-11-17): the same weak
-    /// association as the <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey, TValue}"/> form —
+    /// The store's PROMPT-RECLAIM partition table (<see cref="BindingContextPartitionTable"/>, the alias cells'
+    /// first, the property cache's since 2026-11-17 and the only form since 2026-11-20): the same weak
+    /// association as the <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey, TValue}"/> the stores used before —
     /// an entry lives while its identity is reachable, although the entry's key refers back to the identity —
     /// but dead entries are freed in place when the table fills, so the table stays as small as the
     /// identities alive between collections instead of waiting for finalizers.
@@ -441,7 +441,7 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
     public void ThePromptReclaimTable_KeepsLiveIdentities_AndFreesDeadOnesInPlace()
     {
         var map = new PartitionedMap<ZeroArgPropertyCacheKey, int>(
-            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true);
+            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey);
         var owner = new object();
         var binding = new object();
         var run = new object();

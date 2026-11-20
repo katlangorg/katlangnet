@@ -11,9 +11,8 @@ namespace KatLang.Evaluation.Caching;
 /// whose entries carry a BINDING-CONTEXT IDENTITY (<see cref="ZeroArgPropertyCacheKey.ValueEnvironmentIdentity"/>:
 /// an activation's need-cell list, a value environment, or a planned loop's per-iteration identity)
 /// keeps every entry of one identity in that identity's own partition, held weakly by a
-/// <see cref="BindingContextPartitionTable"/> keyed by the identity OBJECT (a
-/// <see cref="ConditionalWeakTable{TKey, TValue}"/>, or the prompt-reclaim form with the same weak
-/// semantics). A partition therefore lives exactly as long as its identity is reachable. Every entry
+/// <see cref="BindingContextPartitionTable"/> keyed by the identity OBJECT (a prompt-reclaim table of
+/// dependent handles). A partition therefore lives exactly as long as its identity is reachable. Every entry
 /// of an exported binding (<see cref="ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity"/>) stays in
 /// one strong, run-wide dictionary.
 /// <para><b>Why dropping a partition is unobservable.</b> The key comparers compare the identity
@@ -40,12 +39,9 @@ internal sealed class PartitionedMap<TKey, TValue>
     private readonly BindingContextPartitionTable _partitions;
     private readonly int _store;
 
-    /// <summary>
-    /// A store with a partition table of its own; <paramref name="promptReclaim"/> selects the table's
-    /// reclamation (<see cref="BindingContextPartitionTable"/>).
-    /// </summary>
-    internal PartitionedMap(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf, bool promptReclaim = false)
-        : this(comparer, partitionOf, new BindingContextPartitionTable(storeCount: 1, promptReclaim), store: 0)
+    /// <summary>A store with a partition table of its own (<see cref="BindingContextPartitionTable"/>).</summary>
+    internal PartitionedMap(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf)
+        : this(comparer, partitionOf, new BindingContextPartitionTable(storeCount: 1), store: 0)
     {
     }
 
@@ -114,7 +110,7 @@ internal sealed class PartitionedMap<TKey, TValue>
     /// <summary>TEST SEAM: the values stored under the run-wide identity (an exported binding's entries).</summary>
     internal IReadOnlyCollection<TValue> RunWideValues => _runWide.Values;
 
-    /// <summary>TEST SEAM: the entry capacity of a prompt-reclaim partition table (0 for the other form).</summary>
+    /// <summary>TEST SEAM: the entry capacity of this store's prompt-reclaim partition table.</summary>
     internal int PromptTableCapacity => _partitions.PromptCapacity;
 
     private static bool IsRunWide(object identity)
@@ -196,12 +192,9 @@ internal sealed class PartitionedSet<TKey>
 {
     private readonly PartitionedMap<TKey, bool> _entries;
 
-    /// <summary>
-    /// A set with a partition table of its own; <paramref name="promptReclaim"/> selects the table's
-    /// reclamation (<see cref="BindingContextPartitionTable"/>).
-    /// </summary>
-    internal PartitionedSet(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf, bool promptReclaim = false)
-        => _entries = new PartitionedMap<TKey, bool>(comparer, partitionOf, promptReclaim);
+    /// <summary>A set with a partition table of its own (<see cref="BindingContextPartitionTable"/>).</summary>
+    internal PartitionedSet(IEqualityComparer<TKey> comparer, Func<TKey, object> partitionOf)
+        => _entries = new PartitionedMap<TKey, bool>(comparer, partitionOf);
 
     /// <summary>A set whose partitions live in slot <paramref name="store"/> of a shared table.</summary>
     internal PartitionedSet(
@@ -232,102 +225,71 @@ internal sealed class PartitionedSet<TKey>
 /// The weak table behind one or more <see cref="PartitionedMap{TKey, TValue}"/> stores of ONE run-scoped
 /// cache: binding-context identity OBJECT → one slot per store (that store's partition, created on its
 /// first addition). The table holds an identity weakly and its slots only while the identity is
-/// reachable (<see cref="ConditionalWeakTable{TKey, TValue}"/>), so one weak entry per identity serves
-/// every store that shares the table — the run-scoped statistics cache's published entries, seen keys
-/// and keys missed without a store — instead of one entry per store.
+/// reachable (dependent handles), so one weak entry per identity serves every store that shares the
+/// table — the run-scoped statistics cache's published entries, seen keys and keys missed without a
+/// store — instead of one entry per store.
 /// <para>No identity or partition is retained outside the weak table. Even one strong last-access
 /// shortcut could keep an unbounded chain of otherwise dead binding environments alive.</para>
-/// <para><b>Prompt reclamation</b> (<c>promptReclaim</c>). A <see cref="ConditionalWeakTable{TKey, TValue}"/>
-/// replaces its container whenever it fills, and each replaced container is a FINALIZABLE object that
-/// frees its dead entries' handles only in its second finalization — so in a loop that mints one
-/// identity per step, the dead entries wait for full collections and peak memory grows by about 40
-/// bytes per step until one happens (measured on the alias cells, November 2026: 54 MB at 10⁵ steps,
-/// 90 MB at 10⁶ and 177 MB at 3·10⁶, against a flat 49 MB). The prompt form holds the
-/// same weak association in ONE table of its own (<see cref="EphemeronSlots"/>): the same
-/// dependent-handle (ephemeron) semantics — a partition is reachable only while its identity is, even
-/// when the partition refers back to the identity — with dead entries freed, in place and at once, when
-/// the table fills. Which entry a key finds is the same in both forms. Its users: the zero-argument
-/// property cache's published entries and statistics key sets (property-cache prompt reclaim,
-/// 2026-11-17; a local-only property per loop step measured 61.5 / 109 / 214 MiB peak in Release at
-/// 10⁵ / 10⁶ / 3·10⁶ steps with the other form), the deconstruction shared-bind memo and the statistics
-/// key set of an uncached run (deconstruction-memo prompt reclaim, 2026-11-18; a local-only
-/// deconstruction per loop step measured 63.6 / 101.3 / 156.3 MiB with the other form), the
-/// runtime-alias binding cells (ALIAS-CELL-LIFETIME), the per-site callee memos and the observed
-/// plan-formation witness. No library store uses the <see cref="ConditionalWeakTable{TKey, TValue}"/>
-/// form any more; it remains the stores' default, which the store-level tests exercise.</para>
+/// <para><b>Prompt reclamation.</b> The table holds the weak association in ONE table of its own
+/// (<see cref="EphemeronSlots"/>): dependent-handle (ephemeron) semantics — a partition is reachable only
+/// while its identity is, even when the partition refers back to the identity — with dead entries freed,
+/// in place and at once, when the table fills. A <see cref="ConditionalWeakTable{TKey, TValue}"/>, which
+/// the stores used first, has the same weak semantics but replaces its container whenever it fills, and
+/// each replaced container is a FINALIZABLE object that frees its dead entries' handles only in its second
+/// finalization — so in a loop that mints one identity per step, the dead entries wait for full
+/// collections and peak memory grows by about 40 bytes per step until one happens (measured on the alias
+/// cells, November 2026: 54 MB at 10⁵ steps, 90 MB at 10⁶ and 177 MB at 3·10⁶, against a flat 49 MB).
+/// Which entry a key finds is the same in both. Its users: the runtime-alias binding cells
+/// (ALIAS-CELL-LIFETIME), the per-site callee memos, the observed plan-formation witness, the
+/// zero-argument property cache's published entries and statistics key sets (moved from the weak table
+/// by the property-cache prompt reclaim, 2026-11-17; a local-only property per loop step measured
+/// 61.5 / 109 / 214 MiB peak in Release at 10⁵ / 10⁶ / 3·10⁶ steps with the weak table), and the
+/// deconstruction shared-bind memo and the statistics key set of an uncached run (moved by the
+/// deconstruction-memo prompt reclaim, 2026-11-18; a local-only deconstruction per loop step
+/// 63.6 / 101.3 / 156.3 MiB with the weak table). Since 2026-11-20 this is the table's ONLY form: the
+/// <see cref="ConditionalWeakTable{TKey, TValue}"/> form, which no library store had used since
+/// 2026-11-18 and only the store-level tests still reached as the constructors' default, was removed, so
+/// those tests exercise the table every store uses.</para>
 /// </summary>
 internal sealed class BindingContextPartitionTable
 {
-    private readonly ConditionalWeakTable<object, object?[]>? _partitions;
-    private readonly EphemeronSlots? _prompt;
+    private readonly EphemeronSlots _prompt = new();
 
-    internal BindingContextPartitionTable(int storeCount, bool promptReclaim = false)
+    internal BindingContextPartitionTable(int storeCount)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(storeCount);
         StoreCount = storeCount;
-        if (promptReclaim)
-            _prompt = new EphemeronSlots();
-        else
-            _partitions = new ConditionalWeakTable<object, object?[]>();
     }
 
     /// <summary>Number of stores sharing the table (slots per identity).</summary>
     internal int StoreCount { get; }
 
     /// <summary>The slots of <paramref name="identity"/>, or null when no store has added under it.</summary>
-    internal object?[]? Find(object identity)
-        => _prompt is { } prompt
-            ? prompt.Find(identity)
-            : _partitions!.TryGetValue(identity, out var slots) ? slots : null;
+    internal object?[]? Find(object identity) => _prompt.Find(identity);
 
     /// <summary>The slots of <paramref name="identity"/>, created on its first addition by any store.</summary>
     internal object?[] GetOrCreate(object identity)
-    {
-        if (_prompt is { } prompt)
-            return prompt.Find(identity) ?? prompt.Add(identity, new object?[StoreCount]);
-
-        if (!_partitions!.TryGetValue(identity, out var slots))
-        {
-            slots = new object?[StoreCount];
-            _partitions.Add(identity, slots);
-        }
-
-        return slots;
-    }
+        => _prompt.Find(identity) ?? _prompt.Add(identity, new object?[StoreCount]);
 
     /// <summary>
     /// TEST SEAM: the number of reachable identities under which store <paramref name="store"/> holds a
-    /// partition. Enumerates the weak table, which never yields an identity that is no longer reachable.
+    /// partition. An entry whose identity is no longer reachable is never counted, reclaimed or not.
     /// </summary>
-    internal int LivePartitionCount(int store)
-    {
-        if (_prompt is { } prompt)
-            return prompt.LiveCount(store);
+    internal int LivePartitionCount(int store) => _prompt.LiveCount(store);
 
-        var count = 0;
-        foreach (var (_, slots) in (IEnumerable<KeyValuePair<object, object?[]>>)_partitions!)
-        {
-            if (slots[store] is not null)
-                count++;
-        }
-
-        return count;
-    }
-
-    /// <summary>TEST SEAM: the entry capacity of the prompt-reclaim table (0 for the other form).</summary>
-    internal int PromptCapacity => _prompt?.Capacity ?? 0;
+    /// <summary>TEST SEAM: the entry capacity of the prompt-reclaim table.</summary>
+    internal int PromptCapacity => _prompt.Capacity;
 
     /// <summary>
     /// TEST SEAM (null in production): called before each array the prompt-reclaim table's reclamation
     /// allocates — it allocates only when it doubles the table —, with which array it is, so a test can fail
     /// that allocation (throw an <see cref="OutOfMemoryException"/>) and check that the table is left exactly
-    /// as it was. Only the prompt-reclaim form has the hook.
+    /// as it was.
     /// </summary>
     internal Action<ReclaimAllocation>? PromptReclaimAllocationTestHook
     {
-        get => _prompt?.AllocationTestHook;
-        set => (_prompt ?? throw new InvalidOperationException("Only a prompt-reclaim table reclaims in place."))
-            .AllocationTestHook = value;
+        get => _prompt.AllocationTestHook;
+        set => _prompt.AllocationTestHook = value;
     }
 
     /// <summary>The arrays a reclamation that doubles the prompt-reclaim table allocates (<see cref="PromptReclaimAllocationTestHook"/>).</summary>
@@ -359,7 +321,7 @@ internal sealed class BindingContextPartitionTable
     /// its writes). A lookup reads a dependent only after matching the target to the identity the caller
     /// holds for the whole lookup; <see cref="Reclaim"/> disposes a handle only once its target is gone,
     /// which no live key can name, and moves only the entries, never a partition a caller holds. The
-    /// garbage collector clears a dead entry's target and dependent concurrently in either form; the one
+    /// garbage collector clears a dead entry's target and dependent at any moment, concurrently; the one
     /// finalizer runs only once the table itself is unreachable, and every operation keeps the table
     /// alive until its last handle access. A DEBUG build checks the sequential premise: an operation that
     /// begins while another is still running throws instead of racing a reclamation.</para>

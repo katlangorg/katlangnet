@@ -410,23 +410,32 @@ public sealed class LocalOnlyCacheRetentionTests(ITestOutputHelper output)
 /// which reports its peak working set; the parent compares the two. When every finished call's
 /// entry stayed until the run ended, the difference was about 280 MB; a partition now dies with its
 /// identity.
+/// <para><b>The bound, 6 MiB</b> (tightened from 40 MB on 2026-11-20, measured before tightening; four − one
+/// in MiB, one child process per run). With the prompt-reclaim partition table the difference measured
+/// 1.0–1.4 in Debug (13 pairs) and 1.2–2.6 in Release (13) on Windows, before and after that table became
+/// the only form, 0.8–1.3 in Debug on Linux (WSL, 5), and −0.6–1.5 in Debug with four probe streams running
+/// at once (16). With the property cache's published
+/// entries in the former <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey, TValue}"/>,
+/// whose dead entries wait for finalizers, it measured 10.9–11.2 in Debug and 9.9–12.0 in Release on
+/// Windows, and 10.9–11.2 in Debug on Linux — a regression the former 40 MB bound, sized for one weak table
+/// per store (37–43 MB), did not see. 6 MiB leaves at least 3.4 MiB above every prompt-form measurement
+/// and 3.9 MiB below every weak-table one.</para>
 /// </summary>
 public sealed class LocalOnlyCachePeakMemoryProcessTests(ITestOutputHelper output)
 {
     private const string Child = "KATLANG_LOCAL_ONLY_PEAK_CHILD";
     private const string Reduces = "KATLANG_LOCAL_ONLY_PEAK_REDUCES";
     private const string Marker = "KATLANG_LOCAL_ONLY_PEAK_MARKER";
-    private const long AllowedGrowthBytes = 40L * 1024 * 1024;
+    private const long AllowedGrowthBytes = 6L * 1024 * 1024;
 
     [Fact]
-    public async Task FourReduces_PeakWorkingSet_StaysWithinFortyMegabytesOfOne()
+    public async Task FourReduces_PeakWorkingSet_StaysWithinSixMiBOfOne()
     {
         var one = await PeakWorkingSetAsync(reduces: 1);
         var four = await PeakWorkingSetAsync(reduces: 4);
-        output.WriteLine($"peak working set: one reduce {one / 1048576.0:F1} MB, four reduces {four / 1048576.0:F1} MB");
-        Assert.True(
-            four - one < AllowedGrowthBytes,
-            $"peak working set: one reduce {one / 1048576.0:F1} MB, four reduces {four / 1048576.0:F1} MB");
+        var summary = $"peak working set: one reduce {one / 1048576.0:F1} MiB, four reduces {four / 1048576.0:F1} MiB";
+        output.WriteLine(summary);
+        Assert.True(four - one < AllowedGrowthBytes, summary);
     }
 
     [Fact]

@@ -31,7 +31,8 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
     [Fact]
     public void TheDeconstructionMemoAndTheUncachedStatistics_UseThePromptReclaimTable()
     {
-        // The ConditionalWeakTable form reports a capacity of 0.
+        // Every partition table is the prompt-reclaim form since 2026-11-20 (the ConditionalWeakTable form, which
+        // reported a capacity of 0, was removed); a capacity pins that the store keeps its entries in one.
         Assert.True(new RunScopedDeconstructionBindingCache().PromptTableCapacity > 0);
         Assert.True(UncachedZeroArgPropertyResultCache.CreateForRun().PromptTableCapacity > 0);
         Assert.Equal(0, UncachedZeroArgPropertyResultCache.Instance.PromptTableCapacity); // no statistics, no table
@@ -337,7 +338,9 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
 /// every entry, handle and bucket chain as it was: every identity the table held is still found with its very slots,
 /// the failed addition added nothing, a DEBUG build's overlap tripwire is released, and the next addition reclaims and
 /// succeeds. Before, the table compacted its entries first and doubled after, so a failure there left bucket chains that
-/// named moved entries, and a lookup missed identities the table still held.
+/// named moved entries, and a lookup missed identities the table still held. The same holds through the stores
+/// (2026-11-20): an addition whose growth fails stores and counts nothing in any store sharing the table, every live
+/// key still reads its value, and the next addition reclaims the dead identities' partitions.
 /// </summary>
 public sealed class PromptReclaimTableFailureAtomicityTests
 {
@@ -350,7 +353,7 @@ public sealed class PromptReclaimTableFailureAtomicityTests
     public void AFailedReclaimAllocation_LeavesTheTableAsItWas_AndTheNextAdditionSucceeds(string failingAllocation)
     {
         var failing = Enum.Parse<BindingContextPartitionTable.ReclaimAllocation>(failingAllocation);
-        var table = new BindingContextPartitionTable(storeCount: 1, promptReclaim: true);
+        var table = new BindingContextPartitionTable(storeCount: 1);
         // The first entries' identities die, so a reclamation would move every later entry down.
         AddDeadIdentities(table, Dead);
         var live = Enumerable.Range(0, InitialCapacity - Dead).Select(_ => new object()).ToArray();
@@ -399,7 +402,7 @@ public sealed class PromptReclaimTableFailureAtomicityTests
     [Fact]
     public void AReclamationThatDoesNotDouble_AllocatesNothing()
     {
-        var table = new BindingContextPartitionTable(storeCount: 1, promptReclaim: true);
+        var table = new BindingContextPartitionTable(storeCount: 1);
         // Half or fewer of the entries alive: the reclamation compacts in place.
         AddDeadIdentities(table, InitialCapacity / 2);
         var live = Enumerable.Range(0, InitialCapacity / 2).Select(_ => new object()).ToArray();
@@ -418,12 +421,96 @@ public sealed class PromptReclaimTableFailureAtomicityTests
         GC.KeepAlive(extra);
     }
 
-    [Fact]
-    public void OnlyThePromptReclaimForm_HasTheAllocationHook()
+    /// <summary>
+    /// The failure seen through the STORES: a map and a set sharing one table, as the statistics cache's stores do. An
+    /// addition whose growth fails — in either store, twice — adds and counts nothing; every live key of both stores
+    /// and an exported key still read their values. A dead identity's partition is unreachable at once (its value is
+    /// collected while the table still holds its entry), and the next addition reclaims those entries, doubles the table
+    /// and stores the keys the failed attempts could not.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(BindingContextPartitionTable.ReclaimAllocation.Entries))]
+    [InlineData(nameof(BindingContextPartitionTable.ReclaimAllocation.Buckets))]
+    public void AFailedGrowth_KeepsEveryStoresLiveKeys_AndTheNextAdditionReclaimsTheDeadPartitions(string failingAllocation)
     {
-        var table = new BindingContextPartitionTable(storeCount: 1);
-        Assert.Null(table.PromptReclaimAllocationTestHook);
-        Assert.Throws<InvalidOperationException>(() => table.PromptReclaimAllocationTestHook = static _ => { });
+        var failing = Enum.Parse<BindingContextPartitionTable.ReclaimAllocation>(failingAllocation);
+        var table = new BindingContextPartitionTable(storeCount: 2);
+        var values = new PartitionedMap<ZeroArgPropertyCacheKey, object>(
+            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, table, store: 0);
+        var seen = new PartitionedSet<ZeroArgPropertyCacheKey>(
+            ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, table, store: 1);
+        var (owner, binding, run) = (new object(), new object(), new object());
+        Func<object, ZeroArgPropertyCacheKey> key = identity => new(owner, binding, identity, run);
+
+        var exported = key(ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity);
+        var exportedValue = new object();
+        Assert.True(values.TryAdd(exported, exportedValue));
+        // The first identities die, so the reclamation would move every later entry down; the rest stay alive.
+        var dead = AddUnderDeadIdentities(values, seen, key, Dead);
+        var live = Enumerable.Range(0, InitialCapacity - Dead).Select(_ => new object()).ToArray();
+        var liveValues = new object[live.Length];
+        for (var index = 0; index < live.Length; index++)
+        {
+            Assert.True(values.TryAdd(key(live[index]), liveValues[index] = new object()));
+            Assert.True(seen.Add(key(live[index])));
+        }
+
+        ForceFullCollection();
+        // Collected while the table still holds their entries: no store keeps a dead identity's partition reachable.
+        Assert.All(dead, reference => Assert.False(reference.IsAlive));
+        Assert.Equal(InitialCapacity, Used(table)); // full: the next addition reclaims, and doubles (6 of 8 alive)
+        var (valuesAdded, seenAdded) = (values.AddedCount, seen.AddedCount);
+
+        var injected = new OutOfMemoryException("injected allocation failure");
+        table.PromptReclaimAllocationTestHook = allocation =>
+        {
+            if (allocation == failing)
+                throw injected;
+        };
+        var extra = new object();
+        var extraValue = new object();
+        Assert.Same(injected, Assert.Throws<OutOfMemoryException>(() => values.TryAdd(key(extra), extraValue)));
+        Assert.Same(injected, Assert.Throws<OutOfMemoryException>(() => seen.Add(key(extra))));
+
+        // Nothing stored or counted, nothing reclaimed, and every live and exported key still read.
+        AssertTripwireReleased(table);
+        Assert.Equal(InitialCapacity, table.PromptCapacity);
+        Assert.Equal(InitialCapacity, Used(table));
+        Assert.Equal((valuesAdded, seenAdded), (values.AddedCount, seen.AddedCount));
+        Assert.False(values.ContainsKey(key(extra)));
+        Assert.False(seen.Contains(key(extra)));
+        AssertEveryLiveKeyIsRead();
+        Assert.Equal(live.Length, values.LivePartitionCount());
+        Assert.Equal(live.Length, seen.LivePartitionCount());
+
+        // The next additions reclaim the dead entries, double the table and store the keys.
+        table.PromptReclaimAllocationTestHook = null;
+        Assert.True(values.TryAdd(key(extra), extraValue));
+        Assert.True(seen.Add(key(extra)));
+        Assert.Equal(2 * InitialCapacity, table.PromptCapacity);
+        Assert.Equal(live.Length + 1, Used(table)); // the dead identities' entries are gone
+        Assert.Equal((valuesAdded + 1, seenAdded + 1), (values.AddedCount, seen.AddedCount));
+        AssertEveryLiveKeyIsRead();
+        Assert.True(values.TryGetValue(key(extra), out var storedExtra));
+        Assert.Same(extraValue, storedExtra);
+        Assert.True(seen.Contains(key(extra)));
+        Assert.Equal(live.Length + 1, values.LivePartitionCount());
+        Assert.Equal(live.Length + 1, seen.LivePartitionCount());
+        GC.KeepAlive(live);
+        GC.KeepAlive(extra);
+
+        void AssertEveryLiveKeyIsRead()
+        {
+            for (var index = 0; index < live.Length; index++)
+            {
+                Assert.True(values.TryGetValue(key(live[index]), out var value));
+                Assert.Same(liveValues[index], value);
+                Assert.True(seen.Contains(key(live[index])));
+            }
+
+            Assert.True(values.TryGetValue(exported, out var exportedStored));
+            Assert.Same(exportedValue, exportedStored);
+        }
     }
 
     private static object?[] Add(BindingContextPartitionTable table, object identity)
@@ -431,6 +518,29 @@ public sealed class PromptReclaimTableFailureAtomicityTests
         var slots = table.GetOrCreate(identity);
         slots[0] = new object(); // store 0's partition, as a PartitionedMap would add it
         return slots;
+    }
+
+    // A separate frame, so no dead identity stays reachable from the asserting method's locals. Returns weak references
+    // to each dead identity and to the value its partition holds.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static List<WeakReference> AddUnderDeadIdentities(
+        PartitionedMap<ZeroArgPropertyCacheKey, object> values,
+        PartitionedSet<ZeroArgPropertyCacheKey> seen,
+        Func<object, ZeroArgPropertyCacheKey> key,
+        int count)
+    {
+        var references = new List<WeakReference>();
+        for (var index = 0; index < count; index++)
+        {
+            var identity = new object();
+            var value = new object();
+            Assert.True(values.TryAdd(key(identity), value));
+            Assert.True(seen.Add(key(identity)));
+            references.Add(new WeakReference(identity));
+            references.Add(new WeakReference(value));
+        }
+
+        return references;
     }
 
     // A separate frame, so no dead identity stays reachable from the asserting method's locals.

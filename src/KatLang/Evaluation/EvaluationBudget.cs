@@ -400,7 +400,7 @@ internal sealed class EvaluationBudget
         internal PartitionedMap<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary>? CalleeBuiltinSlotSummaries;
         // The one weak table of the two callee memos: slot 0 the transported names, slot 1 the builtin-aware summaries.
         private BindingContextPartitionTable? _calleePartitions;
-        internal BindingContextPartitionTable CalleePartitions => _calleePartitions ??= new(storeCount: 2, promptReclaim: true);
+        internal BindingContextPartitionTable CalleePartitions => _calleePartitions ??= new(storeCount: 2);
     }
 
     /// <summary>
@@ -440,7 +440,7 @@ internal sealed class EvaluationBudget
         => Volatile.Read(ref _aliasBindingCells)
            ?? Interlocked.CompareExchange(
                ref _aliasBindingCells,
-               new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey, promptReclaim: true),
+               new(ZeroArgPropertyCacheKeyComparer.Instance, BindingContextPartitions.OfPropertyKey),
                null)
            ?? _aliasBindingCells!;
 

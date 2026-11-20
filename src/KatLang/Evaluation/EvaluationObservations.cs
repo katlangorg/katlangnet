@@ -269,7 +269,7 @@ internal sealed class EvaluationObservations
     // strong dictionary kept every plan of an observed run — its caller context, values and supply — alive
     // until the run ended (about 1.4 KB per round of a META loop). The count above is unaffected.
     private readonly Evaluation.Caching.PartitionedMap<Evaluator.InvocationPlan, System.Runtime.CompilerServices.StrongBox<int>> _planSupplyFormations =
-        new(ReferenceEqualityComparer.Instance, static plan => plan, promptReclaim: true);
+        new(ReferenceEqualityComparer.Instance, static plan => plan);
 
     // Called by the plan's ONE supply publication (Evaluator.PublishPlanSupply) before the outcome is
     // published, so a reader that sees the outcome also sees the count. A run is ONE sequential flow
