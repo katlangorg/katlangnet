@@ -30,9 +30,12 @@ namespace KatLang.Formatting;
 /// decisions use width-CAPPED measurement (<see cref="CappedWidthSink"/>)
 /// that stops as soon as the remaining line width is exceeded, so a deeply
 /// shared (DAG) value costs at most O(width) measurement per emitted node
-/// instead of re-walking whole subtrees. Every emitted code unit — indentation,
-/// separators, quotes, and newlines included — goes through the bounded
-/// writer, which preserves the all-or-nothing display-limit contract.</para>
+/// instead of re-walking whole subtrees. A value measured to fit is written
+/// from the text its measurement kept, so an inline item is walked once, and
+/// the walks of one rendering call share one continuation stack. Every emitted
+/// code unit — indentation, separators, quotes, and newlines included — goes
+/// through the bounded writer, which preserves the all-or-nothing
+/// display-limit contract.</para>
 ///
 /// <para>String classification (quoting, length, line breaks) goes
 /// through the session's <see cref="DelimitedStringTextPolicy"/>, whose work is
@@ -149,12 +152,21 @@ internal static class StructuredLayoutRenderer
         private readonly bool _concise;
         private readonly CappedWidthSink _measure = new();
         private readonly Stack<Frame> _frames = new();
-        private readonly Dictionary<IReadOnlyList<Result>, bool> _structuredChildLayoutCache =
-            new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<IReadOnlyList<Result>, bool> _structuralPairRunCache =
-            new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<IReadOnlyList<Result>, Dictionary<int, bool>> _concisePairRunCache =
-            new(ReferenceEqualityComparer.Instance);
+
+        // The continuation stack of every value walk in this rendering call,
+        // measurements and inline appends alike: created by the first walk
+        // that enters a nested structure and reused by the later ones.
+        private Stack<ValueTextRenderer.SuspendedStructure>? _valueWalk;
+
+        // The value the last FitsInline call measured to fit; _measure holds
+        // its complete inline text until the next measurement.
+        private Result? _measuredInline;
+
+        // Created on first use: only values of PredicateCacheThreshold or more
+        // items consult them, so a small rendering allocates none.
+        private Dictionary<IReadOnlyList<Result>, bool>? _structuredChildLayoutCache;
+        private Dictionary<IReadOnlyList<Result>, bool>? _structuralPairRunCache;
+        private Dictionary<IReadOnlyList<Result>, Dictionary<int, bool>>? _concisePairRunCache;
         private bool _startedOutput;
 
         internal DelimitedStringTextPolicy Strings => _strings;
@@ -216,9 +228,9 @@ internal static class StructuredLayoutRenderer
             // The second pass charges nothing, and nothing was returned yet.
             _writer.RewindTo(checkpoint);
             _startedOutput = startedOutput;
-            _structuredChildLayoutCache.Clear();
-            _structuralPairRunCache.Clear();
-            _concisePairRunCache.Clear();
+            _structuredChildLayoutCache?.Clear();
+            _structuralPairRunCache?.Clear();
+            _concisePairRunCache?.Clear();
             RowRestarts++;
             return WriteRowLayout(row);
         }
@@ -255,7 +267,7 @@ internal static class StructuredLayoutRenderer
             }
 
             if (row is not (Result.SequenceValue or Result.ListValue)
-                || (FitsInline(row, 0, 0) && !RequiresStructuredLayout(row, asChild: false)))
+                || (FitsInline(row, 0, 0, keepText: true) && !RequiresStructuredLayout(row, asChild: false)))
             {
                 return StartLine(0) && AppendInline(row);
             }
@@ -305,7 +317,7 @@ internal static class StructuredLayoutRenderer
 
                 if (item is Result.SequenceValue or Result.ListValue
                     && (RequiresStructuredLayout(item, asChild: true)
-                        || !FitsInline(item, frame.Level, isLast ? 0 : 1)))
+                        || !FitsInline(item, frame.Level, isLast ? 0 : 1, keepText: true)))
                 {
                     if (!OpenDelimited(item, frame.Level, closeComma: !isLast)) return false;
                     continue;
@@ -384,7 +396,7 @@ internal static class StructuredLayoutRenderer
                     return WriteSpaceJoinedLine(childItems, frame.Level);
                 }
 
-                if (RequiresStructuredLayout(item, asChild: true) || !FitsInline(item, frame.Level, 0))
+                if (RequiresStructuredLayout(item, asChild: true) || !FitsInline(item, frame.Level, 0, keepText: true))
                 {
                     // A child sequence rendered as a complete indented block may
                     // hide its parentheses only when the indentation uniquely
@@ -417,7 +429,7 @@ internal static class StructuredLayoutRenderer
 
                 // Fits inline with parentheses: an ordinary line below.
             }
-            else if (item is (Result.SequenceValue or Result.ListValue) && !FitsInline(item, frame.Level, 0))
+            else if (item is (Result.SequenceValue or Result.ListValue) && !FitsInline(item, frame.Level, 0, keepText: true))
             {
                 // Lists always keep their brackets; empty and singleton
                 // sequences always keep their parentheses.
@@ -461,6 +473,7 @@ internal static class StructuredLayoutRenderer
 
             if (asChild
                 && items.Count >= PredicateCacheThreshold
+                && _structuredChildLayoutCache is not null
                 && _structuredChildLayoutCache.TryGetValue(items, out var cached))
             {
                 return cached;
@@ -472,14 +485,14 @@ internal static class StructuredLayoutRenderer
                 if (items[i] is Result.SequenceValue or Result.ListValue && ++structuredChildren >= 2)
                 {
                     if (asChild && items.Count >= PredicateCacheThreshold)
-                        TryCache(_structuredChildLayoutCache, items, true);
+                        TryCache(ref _structuredChildLayoutCache, items, true);
                     return true;
                 }
             }
 
             var result = asChild && items.Count >= 4 && IsStructuralPairRun(items);
             if (asChild && items.Count >= PredicateCacheThreshold)
-                TryCache(_structuredChildLayoutCache, items, result);
+                TryCache(ref _structuredChildLayoutCache, items, result);
             return result;
         }
 
@@ -604,6 +617,7 @@ internal static class StructuredLayoutRenderer
         private bool IsStructuralPairRun(IReadOnlyList<Result> items)
         {
             if (items.Count >= PredicateCacheThreshold
+                && _structuralPairRunCache is not null
                 && _structuralPairRunCache.TryGetValue(items, out var cached))
             {
                 return cached;
@@ -615,13 +629,13 @@ internal static class StructuredLayoutRenderer
                 if (items[i] is not Result.Str || items[i + 1] is not (Result.Atom or Result.Str or Result.Bool))
                 {
                     if (items.Count >= PredicateCacheThreshold)
-                        TryCache(_structuralPairRunCache, items, false);
+                        TryCache(ref _structuralPairRunCache, items, false);
                     return false;
                 }
             }
 
             if (items.Count >= PredicateCacheThreshold)
-                TryCache(_structuralPairRunCache, items, true);
+                TryCache(ref _structuralPairRunCache, items, true);
             return true;
         }
 
@@ -657,13 +671,14 @@ internal static class StructuredLayoutRenderer
             var attachLevels = false;
             if (items.Count >= PredicateCacheThreshold)
             {
-                if (_concisePairRunCache.TryGetValue(items, out levels)
+                if (_concisePairRunCache is not null
+                    && _concisePairRunCache.TryGetValue(items, out levels)
                     && levels.TryGetValue(level, out var cached))
                 {
                     return cached;
                 }
 
-                if (levels is null && _concisePairRunCache.Count < PredicateCacheCapacity)
+                if (levels is null && (_concisePairRunCache?.Count ?? 0) < PredicateCacheCapacity)
                 {
                     levels = [];
                     attachLevels = true;
@@ -675,7 +690,7 @@ internal static class StructuredLayoutRenderer
             {
                 levels.TryAdd(level, result);
                 if (attachLevels)
-                    _concisePairRunCache.TryAdd(items, levels);
+                    (_concisePairRunCache ??= new(ReferenceEqualityComparer.Instance)).TryAdd(items, levels);
             }
 
             return result;
@@ -695,10 +710,11 @@ internal static class StructuredLayoutRenderer
         }
 
         private static void TryCache(
-            Dictionary<IReadOnlyList<Result>, bool> cache,
+            ref Dictionary<IReadOnlyList<Result>, bool>? cache,
             IReadOnlyList<Result> items,
             bool value)
         {
+            cache ??= new(ReferenceEqualityComparer.Instance);
             if (cache.Count < PredicateCacheCapacity)
                 cache.TryAdd(items, value);
         }
@@ -759,17 +775,35 @@ internal static class StructuredLayoutRenderer
         /// that would emit the text, stopping at the remaining line width. A
         /// string leaf longer than the remaining width is refused on length
         /// alone, and one not classified within the work budget does not fit.
+        /// A caller about to write the value asks to keep its text for <see cref="AppendInline"/>.
+        /// Lookahead can test many siblings before the first write and only counts their text.
         /// </summary>
-        private bool FitsInline(Result value, int level, int reserve)
+        private bool FitsInline(Result value, int level, int reserve, bool keepText = false)
         {
+            _measuredInline = null;
             var budget = (long)_width - ColumnsOf(level) - reserve;
             if (budget < 0) return false;
-            _measure.Reset((int)Math.Min(budget, int.MaxValue));
-            return ValueTextRenderer.AppendValue(value, _displayOptions, _strings.Measurement, _measure);
+            _measure.Reset((int)Math.Min(budget, int.MaxValue), keepText);
+            if (!ValueTextRenderer.AppendValue(value, _displayOptions, _strings.Measurement, _measure, ref _valueWalk))
+                return false;
+
+            if (keepText) _measuredInline = value;
+            return true;
         }
 
+        /// <summary>
+        /// Writes a value inline. The value the last measurement found to fit
+        /// is written from the text that measurement kept: the measuring walk
+        /// went through the same renderer and completed, so it produced exactly
+        /// what this walk would write — the same punctuation and number text,
+        /// and for every string the same quoting decision, which both string
+        /// faces compute by one rule (a string the budgeted measurement cannot
+        /// classify never fits, so it is never written from a measurement).
+        /// </summary>
         private bool AppendInline(Result value)
-            => ValueTextRenderer.AppendValue(value, _displayOptions, _strings, _writer);
+            => ReferenceEquals(value, _measuredInline)
+                ? _writer.Append(_measure.Text)
+                : ValueTextRenderer.AppendValue(value, _displayOptions, _strings, _writer, ref _valueWalk);
 
         /// <summary>Ends the previous line (if any) and writes this line's indentation, all charged.</summary>
         private bool StartLine(int level)

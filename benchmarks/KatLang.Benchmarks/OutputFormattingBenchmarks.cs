@@ -14,20 +14,25 @@ internal static class OutputFormattingScenarios
 {
 	/// <summary>
 	/// The values, by name: a large flat list of integers; a large list of nested lists, three levels deep;
-	/// and two lists of numbers whose canonical text is exactly the renderer's atom stack buffer
-	/// (<c>1e63</c>, 64 UTF-16 code units, written from the buffer) and one code unit longer (<c>1e64</c>,
-	/// 65 code units, the one fixed-point string fallback).
+	/// the first three of those rows, a small output every formatter writes on one line (the control for the
+	/// fixed cost of one rendering); and two lists of numbers whose canonical text is exactly the renderer's
+	/// atom stack buffer (<c>1e63</c>, 64 UTF-16 code units, written from the buffer) and one code unit
+	/// longer (<c>1e64</c>, 65 code units, the one fixed-point string fallback).
 	/// </summary>
-	internal static readonly string[] Values = ["FlatList", "NestedLists", "Numbers64", "Numbers65"];
+	internal static readonly string[] Values = ["FlatList", "NestedLists", "SmallNested", "Numbers64", "Numbers65"];
 
 	internal const int FlatItems = 20_000;
 	internal const int NestedRows = 4_000;
+	internal const int SmallNestedRows = 3;
 	internal const int BoundaryItems = 2_000;
+
+	private const string NestedRow = "Row(i) = [i, [i * 2, [i * 3, i + 0.5]]]\n";
 
 	internal static string Source(string value) => value switch
 	{
 		"FlatList" => $"range(1, {FlatItems})",
-		"NestedLists" => $"Row(i) = [i, [i * 2, [i * 3, i + 0.5]]]\nrange(1, {NestedRows}).map(Row)",
+		"NestedLists" => $"{NestedRow}range(1, {NestedRows}).map(Row)",
+		"SmallNested" => $"{NestedRow}range(1, {SmallNestedRows}).map(Row)",
 		"Numbers64" => RepeatedLiteralList("1e63", BoundaryItems),
 		"Numbers65" => RepeatedLiteralList("1e64", BoundaryItems),
 		_ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown output-formatting value."),
@@ -94,12 +99,14 @@ internal static class OutputFormattingScenarios
 }
 
 /// <summary>
-/// Rendering of large evaluated values by the three built-in output formatters (<c>exact</c>,
+/// Rendering of evaluated values by the three built-in output formatters (<c>exact</c>,
 /// <c>readable</c>, <c>concise</c>; <see cref="OutputFormatters"/>), with allocated bytes per rendering.
 /// The values (<see cref="OutputFormattingScenarios"/>) are a 20,000-integer flat list, 4,000 nested lists
-/// three levels deep, and 2,000 numbers on each side of the 64-code-unit atom stack buffer: <c>Numbers64</c>
-/// is written from the buffer, <c>Numbers65</c> takes the string fallback, so the pair shows that fallback's
-/// cost. Each value is evaluated once in setup; only <see cref="OutputFormatter.Format"/> is measured.
+/// three levels deep, three of those nested lists (a small one-line output, the control for the fixed cost
+/// of one rendering), and 2,000 numbers on each side of the 64-code-unit atom stack buffer:
+/// <c>Numbers64</c> is written from the buffer, <c>Numbers65</c> takes the string fallback, so the pair
+/// shows that fallback's cost. Each value is evaluated once in setup; only
+/// <see cref="OutputFormatter.Format"/> is measured.
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]

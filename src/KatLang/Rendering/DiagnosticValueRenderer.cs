@@ -19,7 +19,7 @@ namespace KatLang.Rendering;
 /// <para><b>The bound applies during construction, never afterwards.</b> Rendering appends
 /// through <see cref="BoundedDiagnosticSink"/>, which refuses the first append that would
 /// cross <see cref="MaxRenderedValueLength"/>, and
-/// <see cref="ValueTextRenderer.AppendValue"/> abandons the walk on the first refusal. So
+/// <see cref="ValueTextRenderer.AppendValue(Result, DisplayOptions, IStringTextPolicy, IDisplaySink)"/> abandons the walk on the first refusal. So
 /// once no further visible text can be emitted the traversal stops: work is bounded by the
 /// output budget rather than by the graph, and the forbidden string is never built. This is
 /// the same policy <see cref="ExprNameRenderer"/> applies to the expression-name fragment of

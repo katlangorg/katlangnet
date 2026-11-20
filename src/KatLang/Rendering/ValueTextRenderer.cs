@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace KatLang.Rendering;
 
@@ -31,11 +32,41 @@ internal sealed class RawStringTextPolicy : IStringTextPolicy
 /// </summary>
 internal static class ValueTextRenderer
 {
+    /// <summary>
+    /// One structure the value walk has entered and will resume: its items, the index of its next
+    /// item, and its closing delimiter.
+    /// </summary>
+    internal readonly record struct SuspendedStructure(IReadOnlyList<Result> Items, int Next, string Close);
+
     internal static bool AppendValue(
         Result value,
         DisplayOptions displayOptions,
         IStringTextPolicy stringPolicy,
         IDisplaySink sink)
+    {
+        Stack<SuspendedStructure>? suspended = null;
+        return AppendValue(value, displayOptions, stringPolicy, sink, ref suspended);
+    }
+
+    /// <summary>
+    /// Appends one value like <see cref="AppendValue(Result, DisplayOptions, IStringTextPolicy, IDisplaySink)"/>,
+    /// with a continuation stack the caller keeps for its next walk. The first walk that enters a nested
+    /// structure creates the stack and stores it in <paramref name="suspended"/>. Each structural walk
+    /// clears it before visiting children because a refused walk can leave frames on it. A caller that walks many
+    /// values in one rendering (canonical display walks each row; a layout walks each item it measures or
+    /// writes) therefore allocates one stack, not one per nested value. One stack serves one walk at a
+    /// time: string policies append text and never start another walk.
+    /// <para>Kept out of line: with the stack passed by reference, tier-1 JIT with dynamic PGO
+    /// inlined this whole walk into the canonical row loop, and the <c>exact</c> formatter became
+    /// 30–50% slower on small nested values (measured 2026-11-21).</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool AppendValue(
+        Result value,
+        DisplayOptions displayOptions,
+        IStringTextPolicy stringPolicy,
+        IDisplaySink sink,
+        ref Stack<SuspendedStructure>? suspended)
     {
         IReadOnlyList<Result> items;
         string close;
@@ -65,7 +96,8 @@ internal static class ValueTextRenderer
 
         // Created on the first nested structure only: a flat sequence or list
         // (and every width-capped fit probe that stops inside one) needs none.
-        Stack<(IReadOnlyList<Result> Items, int Next, string Close)>? suspended = null;
+        // A kept stack may still hold the frames of a refused walk.
+        suspended?.Clear();
         var next = 0;
 
         while (true)
@@ -95,12 +127,12 @@ internal static class ValueTextRenderer
                     break;
                 case Result.SequenceValue sequence:
                     if (!sink.Append("(")) return false;
-                    (suspended ??= new()).Push((items, next, close));
+                    (suspended ??= new()).Push(new(items, next, close));
                     (items, next, close) = (sequence.Items, 0, ")");
                     break;
                 case Result.ListValue list:
                     if (!sink.Append("[")) return false;
-                    (suspended ??= new()).Push((items, next, close));
+                    (suspended ??= new()).Push(new(items, next, close));
                     (items, next, close) = (list.Items, 0, "]");
                     break;
                 case Result.CallReference reference:

@@ -663,10 +663,12 @@ public closed record RunResult
         DisplayOptions displayOptions,
         BoundedDisplayWriter writer)
     {
+        // The rows' walks share one continuation stack.
+        Stack<ValueTextRenderer.SuspendedStructure>? suspended = null;
         for (var i = 0; i < rows.Count; i++)
         {
             if (i > 0 && !writer.AppendRowSeparator()) return false;
-            if (!AppendValue(rows[i], displayOptions, writer)) return false;
+            if (!AppendValue(rows[i], displayOptions, writer, ref suspended)) return false;
         }
 
         return true;
@@ -722,7 +724,7 @@ public closed record RunResult
     /// <summary>
     /// Appends one value's canonical display form. The implementation is the
     /// shared formatter-neutral iterative renderer
-    /// (<see cref="ValueTextRenderer.AppendValue"/>) with the raw string
+    /// (<see cref="ValueTextRenderer.AppendValue(Result, DisplayOptions, IStringTextPolicy, IDisplaySink)"/>) with the raw string
     /// strategy. Presentation formatters reuse the renderer by supplying their
     /// own string-leaf policy; canonical display has no dependency on formatter
     /// types or options. See the depth/breadth traversal note on
@@ -730,6 +732,17 @@ public closed record RunResult
     /// </summary>
     internal static bool AppendValue(Result value, DisplayOptions displayOptions, BoundedDisplayWriter writer)
         => ValueTextRenderer.AppendValue(value, displayOptions, RawStringTextPolicy.Instance, writer);
+
+    /// <summary>
+    /// Appends one value's canonical display form with a continuation stack the caller keeps
+    /// across walks (<see cref="ValueTextRenderer.AppendValue(Result, DisplayOptions, IStringTextPolicy, IDisplaySink, ref Stack{ValueTextRenderer.SuspendedStructure})"/>).
+    /// </summary>
+    internal static bool AppendValue(
+        Result value,
+        DisplayOptions displayOptions,
+        BoundedDisplayWriter writer,
+        ref Stack<ValueTextRenderer.SuspendedStructure>? suspended)
+        => ValueTextRenderer.AppendValue(value, displayOptions, RawStringTextPolicy.Instance, writer, ref suspended);
 }
 
 /// <summary>
