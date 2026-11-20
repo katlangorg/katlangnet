@@ -46,6 +46,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.OrdinaryCallLookupTests.Lookups_AllocateNothing_AtAnyTier_GcIsolatedChild",
                 "KatLang.Tests.ReadOnlyViewAllocationTests.TakeOwnership_AllocatesTheValueAndOneViewOverTheGivenArray_GcIsolatedChild",
                 "KatLang.Tests.ScopeVisibilityRepresentationTests.Queries_AllocateIndependentlyOfTheScopeWidth_GcIsolatedChild",
+                "KatLang.Tests.SemanticModelNameLookupTests.NameQueries_AllocateOnlyTheirResultLists_GcIsolatedChild",
                 "KatLang.Tests.SemanticModelPositionLookupTests.PositionQueries_AllocateNothing_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.HostComparer_OneComparison_OfTheDifferentlySharedPair_AllocatesUnderEightMegabytes_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.ReferenceClassEntries_TheIsomorphicControlAndUnsharedTrees_StayUnderTheOneEntryBounds_GcIsolatedChild",

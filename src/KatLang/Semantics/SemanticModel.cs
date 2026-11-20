@@ -123,7 +123,8 @@ public sealed class SemanticModel
     {
         Root = root;
         IdentifierOccurrences = SafeReadOnlyCollection.Over(identifierOccurrences.ToArray());
-        Declarations = SafeReadOnlyCollection.Over(declarations.ToArray());
+        _declarations = declarations.ToArray();
+        Declarations = SafeReadOnlyCollection.Over(_declarations);
         _identifierResolutions = identifierResolutions.ToArray();
         IdentifierResolutions = SafeReadOnlyCollection.Over(_identifierResolutions);
         ResolutionSitesAreMonotone = SitesAreMonotone(_identifierResolutions);
@@ -150,6 +151,26 @@ public sealed class SemanticModel
 
     // The array behind IdentifierResolutions, read in place by position queries.
     private readonly IdentifierResolution[] _identifierResolutions;
+
+    // The array behind Declarations.
+    private readonly DeclarationOccurrence[] _declarations;
+
+    // FindResolutions' and FindDeclarations' name indexes. Each is built by its query's first call
+    // and published once (null until then, and for a listing with a null entry, which keeps the scan).
+    private NameIndex<IdentifierResolution, OrdinalNameHash>? _resolutionsByName;
+    private NameIndex<DeclarationOccurrence, OrdinalNameHash>? _declarationsByName;
+
+    /// <summary>
+    /// The number of keys in <see cref="FindResolutions"/>' name index, one per resolution with a
+    /// name; -1 until a call has built it, and for a listing with a null entry, whose query scans.
+    /// </summary>
+    internal int ResolutionNameKeys => Volatile.Read(ref _resolutionsByName)?.Keys ?? -1;
+
+    /// <summary>
+    /// The number of keys in <see cref="FindDeclarations"/>' name index, one per declaration with a
+    /// name; -1 until a call has built it, and for a listing with a null entry, whose query scans.
+    /// </summary>
+    internal int DeclarationNameKeys => Volatile.Read(ref _declarationsByName)?.Keys ?? -1;
 
     // FindScopeAt's position index over ScopeVisibilities; null only for a listing with a null entry.
     private readonly ScopePositionIndex? _scopeIndex;
@@ -623,19 +644,346 @@ public sealed class SemanticModel
     /// <summary>
     /// Finds all identifier resolutions with the supplied name.
     /// </summary>
+    /// <remarks>
+    /// Names compare ordinally. The resolutions come in <see cref="IdentifierResolutions"/> order, in
+    /// a new read-only list for each call that finds any. The first call indexes the resolutions by
+    /// name. Subsequent calls binary-search the index and inspect the sites with the requested hash.
+    /// </remarks>
     public IReadOnlyList<IdentifierResolution> FindResolutions(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        return SafeReadOnlyCollection.Over(IdentifierResolutions.Where(resolution => resolution.Occurrence.Name == name).ToArray());
+        return ResolutionsNamed<UncountedNameProbes>(name);
     }
 
     /// <summary>
     /// Finds all declaration occurrences with the supplied name.
     /// </summary>
+    /// <remarks>
+    /// Names compare ordinally. The declarations come in <see cref="Declarations"/> order, in a new
+    /// read-only list for each call that finds any. The first call indexes the declarations by name,
+    /// then subsequent calls binary-search the index and inspect the declarations with the requested hash.
+    /// </remarks>
     public IReadOnlyList<DeclarationOccurrence> FindDeclarations(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
-        return SafeReadOnlyCollection.Over(Declarations.Where(declaration => declaration.Name == name).ToArray());
+        return DeclarationsNamed<UncountedNameProbes>(name);
+    }
+
+    /// <summary>
+    /// Counts the comparisons that locate the query's hash run. The binary search makes at most
+    /// ⌊log₂ K⌋ + 1 comparisons for K = <see cref="ResolutionNameKeys"/> greater than zero. It then
+    /// compares each hash in the run and the following hash, if present. The count depends only on
+    /// the listing, the name and the process's string hashing, unlike elapsed time. The public query
+    /// runs the same code with a counter that compiles to nothing.
+    /// </summary>
+    internal IReadOnlyList<IdentifierResolution> FindResolutionsCounted(string name, out int probes)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        CountedNameProbes.Count = 0;
+        var found = ResolutionsNamed<CountedNameProbes>(name);
+        probes = CountedNameProbes.Count;
+        return found;
+    }
+
+    /// <summary>
+    /// Counts hash-run search comparisons as in <see cref="FindResolutionsCounted"/>, over
+    /// <see cref="DeclarationNameKeys"/> keys.
+    /// </summary>
+    internal IReadOnlyList<DeclarationOccurrence> FindDeclarationsCounted(string name, out int probes)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        CountedNameProbes.Count = 0;
+        var found = DeclarationsNamed<CountedNameProbes>(name);
+        probes = CountedNameProbes.Count;
+        return found;
+    }
+
+    /// <summary>
+    /// Test seam: <see cref="FindResolutions"/>' query through a new index whose hash is the name's
+    /// length, so that all names of one length share a hash and its key run. String hashes differ
+    /// between processes and rarely collide, so this is how tests reach the shared-hash path:
+    /// flagged runs, names compared item by item, and a run that another name owns alone. Null
+    /// when the listing has a null entry.
+    /// </summary>
+    internal IReadOnlyList<IdentifierResolution>? FindResolutionsByLengthHash(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return NameIndex<IdentifierResolution, LengthNameHash>.Build<ResolutionNames>(_identifierResolutions)
+            ?.Find<ResolutionNames, UncountedNameProbes>(name);
+    }
+
+    /// <summary>Test seam: <see cref="FindDeclarations"/>' query through a new length-hashed index (see <see cref="FindResolutionsByLengthHash"/>).</summary>
+    internal IReadOnlyList<DeclarationOccurrence>? FindDeclarationsByLengthHash(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return NameIndex<DeclarationOccurrence, LengthNameHash>.Build<DeclarationNames>(_declarations)
+            ?.Find<DeclarationNames, UncountedNameProbes>(name);
+    }
+
+    // The queries behind FindResolutions, FindDeclarations and their counted seams, generic over a
+    // struct counter like FindScope. A listing with a null entry gets no index and keeps the former
+    // scan, which throws on that entry as it always did.
+    private IReadOnlyList<IdentifierResolution> ResolutionsNamed<TProbes>(string name)
+        where TProbes : struct, INameProbes
+    {
+        var index = Volatile.Read(ref _resolutionsByName)
+            ?? Publish(ref _resolutionsByName, NameIndex<IdentifierResolution, OrdinalNameHash>.Build<ResolutionNames>(_identifierResolutions));
+        return index is not null ? index.Find<ResolutionNames, TProbes>(name) : ScanResolutions(name);
+    }
+
+    private IReadOnlyList<DeclarationOccurrence> DeclarationsNamed<TProbes>(string name)
+        where TProbes : struct, INameProbes
+    {
+        var index = Volatile.Read(ref _declarationsByName)
+            ?? Publish(ref _declarationsByName, NameIndex<DeclarationOccurrence, OrdinalNameHash>.Build<DeclarationNames>(_declarations));
+        return index is not null ? index.Find<DeclarationNames, TProbes>(name) : ScanDeclarations(name);
+    }
+
+    // The former queries, verbatim. Their lambdas capture the name, so they live apart from the
+    // indexed path, which would otherwise allocate the closure on every call.
+    private IReadOnlyList<IdentifierResolution> ScanResolutions(string name)
+        => SafeReadOnlyCollection.Over(IdentifierResolutions.Where(resolution => resolution.Occurrence.Name == name).ToArray());
+
+    private IReadOnlyList<DeclarationOccurrence> ScanDeclarations(string name)
+        => SafeReadOnlyCollection.Over(Declarations.Where(declaration => declaration.Name == name).ToArray());
+
+    /// <summary>
+    /// Publishes a name index built by a query's first call. When calls race, the first published
+    /// index wins and every caller uses it. A refused (null) index is not kept, so its query scans.
+    /// </summary>
+    private static NameIndex<T, OrdinalNameHash>? Publish<T>(ref NameIndex<T, OrdinalNameHash>? field, NameIndex<T, OrdinalNameHash>? built)
+        where T : class
+        => built is null ? null : Interlocked.CompareExchange(ref field, built, null) ?? built;
+
+    /// <summary>How a <see cref="NameIndex{T, THash}"/> hashes names. Equal names must hash alike.</summary>
+    private interface INameHash
+    {
+        static abstract int Of(string name);
+    }
+
+    /// <summary>The models' hash: the ordinal string hash.</summary>
+    private readonly struct OrdinalNameHash : INameHash
+    {
+        public static int Of(string name) => name.GetHashCode();
+    }
+
+    /// <summary>The test seams' hash: the name's length (<see cref="FindResolutionsByLengthHash"/>).</summary>
+    private readonly struct LengthNameHash : INameHash
+    {
+        public static int Of(string name) => name.Length;
+    }
+
+    /// <summary>Counts the index keys a name query inspects (<see cref="FindResolutionsCounted"/>).</summary>
+    private interface INameProbes
+    {
+        static abstract void Probe();
+    }
+
+    /// <summary>The public queries' counter: it counts nothing, and its calls compile to nothing.</summary>
+    private readonly struct UncountedNameProbes : INameProbes
+    {
+        public static void Probe()
+        {
+        }
+    }
+
+    /// <summary>The seams' counter: one per inspected key, kept per thread so concurrent queries do not mix.</summary>
+    private readonly struct CountedNameProbes : INameProbes
+    {
+        [ThreadStatic] private static int t_count;
+
+        public static int Count
+        {
+            get => t_count;
+            set => t_count = value;
+        }
+
+        public static void Probe() => t_count++;
+    }
+
+    /// <summary>How a <see cref="NameIndex{T, THash}"/> reads the name of a listed item.</summary>
+    private interface INamedItems<T>
+    {
+        /// <summary>
+        /// The item's name. False for an item the former scan could not read, which made it throw:
+        /// a null entry, or a resolution without an occurrence.
+        /// </summary>
+        static abstract bool TryGetName(T item, out string? name);
+    }
+
+    private readonly struct ResolutionNames : INamedItems<IdentifierResolution>
+    {
+        public static bool TryGetName(IdentifierResolution item, out string? name)
+        {
+            name = item?.Occurrence?.Name;
+            return item?.Occurrence is not null;
+        }
+    }
+
+    private readonly struct DeclarationNames : INamedItems<DeclarationOccurrence>
+    {
+        public static bool TryGetName(DeclarationOccurrence item, out string? name)
+        {
+            name = item?.Name;
+            return item is not null;
+        }
+    }
+
+    /// <summary>
+    /// The name index of <see cref="FindResolutions"/> or <see cref="FindDeclarations"/>: one key for
+    /// each listed item with a name, sorted. A key holds the hash of the item's name in its high half
+    /// (<typeparamref name="THash"/>: the ordinal string hash, except in a test seam) and the item's
+    /// listing position in its low half, so the items of one hash lie
+    /// together in listing order. A query binary-searches its name's hash and reads only the keys
+    /// with that hash, taking O(log N + H) key inspections for N keys and H entries with that hash. Nearly
+    /// always, one name owns its hash. Then the query compares the name of the run's first item
+    /// and copies the run. When the build finds two names with one hash, it flags that run's keys,
+    /// and the query compares the name of each item in the run. The index stores 8 bytes per item
+    /// and nothing per name, and reads the items from the model's own listing. A build hashes each
+    /// name once, sorts the keys (O(N log N)) and compares the names within each run. Because only
+    /// a query's first call builds the index, a model that is never queried by name stores and
+    /// builds nothing. An item whose name is null gets no key. The former scan never matched such
+    /// an item, because a null query name is refused.
+    /// </summary>
+    private sealed class NameIndex<T, THash>
+        where T : class
+        where THash : struct, INameHash
+    {
+        // The low half of a key: the listing position in bits 0-30 (a position is below 2^31), and in
+        // bit 31 the flag of a run whose hash more than one name shares. Every key of such a run has
+        // the flag, so the run keeps its listing order and its place among the other hashes.
+        private const long PositionBits = 0x7FFF_FFFF;
+        private const long SharedHash = 0x8000_0000;
+
+        private readonly T[] _listing;
+        private readonly long[] _keys;
+
+        private NameIndex(T[] listing, long[] keys)
+        {
+            _listing = listing;
+            _keys = keys;
+        }
+
+        public int Keys => _keys.Length;
+
+        /// <summary>
+        /// The items named <paramref name="name"/>, in listing order, in a new list (the shared empty
+        /// one when none). Each comparison to locate the start or end of the hash run is one probe.
+        /// </summary>
+        public IReadOnlyList<T> Find<TNames, TProbes>(string name)
+            where TNames : struct, INamedItems<T>
+            where TProbes : struct, INameProbes
+        {
+            // The first key with the name's hash: the hash in the high half, zero in the low half.
+            var hash = THash.Of(name);
+            var first = (long)hash << 32;
+            var keys = _keys;
+            var low = 0;
+            var high = keys.Length;
+            while (low < high)
+            {
+                TProbes.Probe();
+                var middle = low + ((high - low) >> 1);
+                if (keys[middle] < first)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+
+            var end = low;
+            while (end < keys.Length)
+            {
+                TProbes.Probe();
+                if ((int)(keys[end] >> 32) != hash)
+                    break;
+                end++;
+            }
+
+            if (end == low)
+                return SafeReadOnlyCollection<T>.Empty;
+
+            var listing = _listing;
+            T[] found;
+            if ((keys[low] & SharedHash) == 0)
+            {
+                // One name owns the hash: the run is that name's items, or none of the query's.
+                if (!HasName<TNames>(listing[(int)(keys[low] & PositionBits)], name))
+                    return SafeReadOnlyCollection<T>.Empty;
+                found = new T[end - low];
+                var run = keys.AsSpan(low, found.Length);
+                var target = found.AsSpan(0, run.Length);
+                for (var i = 0; i < run.Length; i++)
+                    target[i] = listing[(int)(run[i] & PositionBits)];
+                return SafeReadOnlyCollection.Over(found);
+            }
+
+            // Count matches before allocating. A shared hash can have many sites even on a miss.
+            var count = 0;
+            for (var i = low; i < end; i++)
+            {
+                if (HasName<TNames>(listing[(int)(keys[i] & PositionBits)], name))
+                    count++;
+            }
+
+            if (count == 0)
+                return SafeReadOnlyCollection<T>.Empty;
+
+            found = new T[count];
+            var next = 0;
+            for (var i = low; i < end; i++)
+            {
+                var item = listing[(int)(keys[i] & PositionBits)];
+                if (HasName<TNames>(item, name))
+                    found[next++] = item;
+            }
+            return SafeReadOnlyCollection.Over(found);
+        }
+
+        /// <summary>The index of the listing, or null when an item is unreadable (the scan's domain).</summary>
+        public static NameIndex<T, THash>? Build<TNames>(T[] listing)
+            where TNames : struct, INamedItems<T>
+        {
+            var keys = new long[listing.Length];
+            var named = 0;
+            for (var position = 0; position < listing.Length; position++)
+            {
+                if (!TNames.TryGetName(listing[position], out var name))
+                    return null;
+                if (name is not null)
+                    keys[named++] = ((long)THash.Of(name) << 32) | (uint)position;
+            }
+
+            if (named < keys.Length)
+                Array.Resize(ref keys, named);
+            Array.Sort(keys);
+
+            // Flag every run in which an item's name differs from the name of the run's first item.
+            for (var start = 0; start < keys.Length;)
+            {
+                var hash = (int)(keys[start] >> 32);
+                TNames.TryGetName(listing[(int)(keys[start] & PositionBits)], out var runName);
+                var shared = false;
+                var end = start + 1;
+                for (; end < keys.Length && (int)(keys[end] >> 32) == hash; end++)
+                    shared |= !HasName<TNames>(listing[(int)(keys[end] & PositionBits)], runName!);
+                if (shared)
+                {
+                    for (var i = start; i < end; i++)
+                        keys[i] |= SharedHash;
+                }
+
+                start = end;
+            }
+
+            return new NameIndex<T, THash>(listing, keys);
+        }
+
+        private static bool HasName<TNames>(T item, string name)
+            where TNames : struct, INamedItems<T>
+        {
+            TNames.TryGetName(item, out var itemName);
+            return string.Equals(itemName, name, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>
