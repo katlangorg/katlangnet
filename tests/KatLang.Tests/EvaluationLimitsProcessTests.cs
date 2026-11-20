@@ -286,6 +286,78 @@ public class EvaluationLimitsProcessTests
         WriteProbeMarker();
     }
 
+    /// <summary>
+    /// Recursion routed through PLANNED loop steps stops at the host-stack backstop on large threads instead of
+    /// killing the process (corpus input #11176, 2026-11-20). Each level of <c>F(n) = repeat(F(n), 1)</c> runs the
+    /// step's body in a new planned frame over the previous frame's value environment, and loop steps charge no
+    /// depth, so <see cref="EvaluationLimits"/> documents the structured
+    /// <see cref="EvalError.EvaluationStackExhausted"/> as this recursion's bound. The frames' environments used to
+    /// wrap one another (<see cref="LoopValueEnvironment"/>). Every frame enumerated the whole chain in frames that
+    /// no probe guards, and that recursion grows with the level while the backstop's reserve stays fixed. So a
+    /// large thread overflowed first. In Debug every planned route below overflowed at 16 MiB, with and without
+    /// tiered compilation. In Release the public engine did at 16 MiB, and the low-level planned route at 64 MiB, or
+    /// at 16 MiB once its code was optimized (tiering off, or warm in the corpus run). A 1 MiB thread stopped in
+    /// time, and the generic route never overflowed. The child runs each route on 1, 16 and 64 MiB threads, once
+    /// with tiering (Tier-0 frames first) and once without. The routes are the public engine, both synchronously
+    /// and through <see cref="KatLangEngine.RunAsync"/> (a synchronous configuration runs inline on the calling
+    /// thread), and the planned evaluator under the corpus's step budget, which the recursion never reaches. The
+    /// generic evaluator runs as the control. The evaluator probes check balanced depth and verify nested plan
+    /// execution at each stack size. Q-09a leaves the point where the backstop fires to the host.
+    /// </summary>
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0")]
+    public async Task RecursionThroughPlannedLoopSteps_StopsAtTheBackstop_OnLargeThreads_InSubprocess(string tieredCompilation)
+        => await RunProbeChild(
+            nameof(RecursionThroughPlannedLoopSteps_ProbeChild),
+            new Dictionary<string, string> { ["DOTNET_TieredCompilation"] = tieredCompilation });
+
+    [Fact]
+    public void RecursionThroughPlannedLoopSteps_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        const string source = "F(n)=repeat(F(n), 1)\nF(0)";
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var corpusLimits = new EvaluationLimits { MaxSteps = 200_000 };
+
+        static void AssertBackstop(EvalResult<Evaluator.CountedResult> result, EvaluationBudget budget, string route)
+        {
+            Assert.True(result.IsError, $"{route} completed an unbounded recursion");
+            var leaf = result.Error;
+            while (leaf is EvalError.WithContext(_, var inner))
+                leaf = inner;
+            Assert.True(leaf is EvalError.EvaluationStackExhausted, $"{route} stopped with {leaf.GetType().Name}");
+            Assert.Equal(0, budget.CurrentDepth);
+        }
+
+        static void AssertEngineBackstop(RunResult result, string route)
+        {
+            var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);
+            Assert.True(error.Code == KatLangErrorCode.EvaluationStackExhausted, $"{route} stopped with {error.Code}: {error.Message}");
+        }
+
+        foreach (var stackMiB in new[] { 1, 16, 64 })
+        {
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(stackMiB * 1024 * 1024, () =>
+            {
+                AssertEngineBackstop(KatLangEngine.Run(source), $"KatLangEngine.Run on {stackMiB} MiB");
+                AssertEngineBackstop(KatLangEngine.RunAsync(source).GetAwaiter().GetResult(), $"KatLangEngine.RunAsync on {stackMiB} MiB");
+
+                var diagnostics = new LoopOptimizationDiagnostics();
+                var planned = Evaluator.RunCountedObserved(program, corpusLimits, loopDiagnostics: diagnostics);
+                AssertBackstop(planned.Result, planned.Budget, $"planned on {stackMiB} MiB");
+                Assert.True(diagnostics.OptimizedLoopHits > 1, $"only {diagnostics.OptimizedLoopHits} planned loop(s) on {stackMiB} MiB");
+
+                var generic = Evaluator.RunCountedObserved(program, corpusLimits, enableOptimizations: false);
+                AssertBackstop(generic.Result, generic.Budget, $"generic on {stackMiB} MiB");
+            });
+        }
+
+        WriteProbeMarker();
+    }
+
     [Fact]
     public async Task StructuralAndDynamicDepthComposition_IsSafe_InSubprocess()
         => await RunProbeChild(nameof(StructuralAndDynamicDepthComposition_ProbeChild));

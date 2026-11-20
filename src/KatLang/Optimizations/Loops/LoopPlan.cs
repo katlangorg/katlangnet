@@ -82,49 +82,42 @@ internal readonly record struct PlannedLoopValue(
         => HasNumericValue ? null : Value?.AsBool();
 }
 
+/// <summary>
+/// The value environment a planned loop's generic fallbacks read (<see cref="LoopRunFrame.ValueEnvironment"/>):
+/// exactly the bindings of the environment the loop was entered with, in their order, under a cache identity of
+/// its own that <see cref="BeginIteration"/> refreshes each round of a partially planned loop. It holds no state:
+/// the frame binds the state through the need tier (<c>Evaluator.LoopNeedBindingContext</c>).
+/// <para><b>A view never wraps a view.</b> A loop that a planned step's own body starts again, which is recursion
+/// routed through loop steps (<c>F(n) = repeat(F(n), 1)</c>), builds one frame per level over the previous frame's
+/// environment, and such recursion charges no depth (<see cref="EvaluationLimits.MaxDepth"/>). When each view
+/// wrapped its parent, the views formed a chain with one link per level. Counting, indexing or enumerating it
+/// recursed through every link in frames that no stack probe guards, and every frame enumerated it once, for its
+/// captured slots. On a large thread the chain's recursion outgrew the backstop's fixed reserve, and the process
+/// died of a stack overflow instead of stopping with <see cref="EvalError.EvaluationStackExhausted"/>. A view
+/// built over a view therefore reads that view's bindings directly. The entries and their order are the same, so
+/// binding order, shadowing and lookups do not change and nothing is charged. Copying the captured slots then
+/// depends only on the number of bindings, independently of the number of enclosing planned frames.</para>
+/// </summary>
 internal sealed class LoopValueEnvironment : ValEnv, IValueEnvironmentCacheIdentityProvider
 {
-    private readonly IReadOnlyList<string> _stateNames;
-    private readonly Result[] _stateSlots;
-    private readonly ValEnv _parent;
+    // Never itself a LoopValueEnvironment (see the constructor), so every read is one hop deep.
+    private readonly ValEnv _bindings;
     private object _cacheIdentity = new();
 
-    public LoopValueEnvironment(
-        IReadOnlyList<string> stateNames,
-        Result[] stateSlots,
-        ValEnv parent)
-    {
-        _stateNames = stateNames;
-        _stateSlots = stateSlots;
-        _parent = parent;
-    }
+    public LoopValueEnvironment(ValEnv parent)
+        => _bindings = parent is LoopValueEnvironment view ? view._bindings : parent;
 
     public object CacheIdentity => _cacheIdentity;
 
     public void BeginIteration()
         => _cacheIdentity = new object();
 
-    public int Count => _stateSlots.Length + _parent.Count;
+    public int Count => _bindings.Count;
 
-    public (string Name, Result Value) this[int index]
-    {
-        get
-        {
-            if ((uint)index < (uint)_stateSlots.Length)
-                return (_stateNames[index], _stateSlots[index]);
-
-            return _parent[index - _stateSlots.Length];
-        }
-    }
+    public (string Name, Result Value) this[int index] => _bindings[index];
 
     public IEnumerator<(string Name, Result Value)> GetEnumerator()
-    {
-        for (var i = 0; i < _stateSlots.Length; i++)
-            yield return (_stateNames[i], _stateSlots[i]);
-
-        foreach (var item in _parent)
-            yield return item;
-    }
+        => _bindings.GetEnumerator();
 
     IEnumerator IEnumerable.GetEnumerator()
         => GetEnumerator();
@@ -157,7 +150,7 @@ internal sealed class LoopRunFrame
         _tempSlotHasValue = new bool[template.TempPlans.Count];
         _iterationOutputs = new PlannedLoopValue[
             template.NextStateOutputs.Count + (template.ContinuationOutput is null ? 0 : 1)];
-        _valueEnvironment = new LoopValueEnvironment([], [], parentValEnv);
+        _valueEnvironment = new LoopValueEnvironment(parentValEnv);
         Diagnostics = parentCtx.LoopDiagnostics;
         Diagnostics?.RecordLoopPlanExecution(template.DiagnosticKey);
     }

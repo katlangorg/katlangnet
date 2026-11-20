@@ -13,10 +13,10 @@ namespace KatLang.Tests;
 /// run-scoped <see cref="EvaluationObservations.DeconstructionFullBindCount"/> so no test is
 /// vacuous.
 ///
-/// <para>The sharpest dimension is the OPTIMIZED LOOP's mutable value environment:
-/// <see cref="LoopValueEnvironment"/> keeps one list object whose state slots mutate in place
-/// across iterations, so the owner reference, algorithm environment, counted environment, and
-/// run identity are all CONSTANT across iterations — the per-iteration
+/// <para>The sharpest dimension is the OPTIMIZED LOOP's value environment:
+/// <see cref="LoopValueEnvironment"/> is one object for the whole loop (it holds no state; the
+/// frame binds the state through the need tier), so the owner reference, algorithm environment,
+/// counted environment, and run identity are all CONSTANT across iterations — the per-iteration
 /// <see cref="LoopValueEnvironment.CacheIdentity"/> token (refreshed by
 /// <c>LoopRunFrame.BeginIteration</c> when the plan contains a generic fallback) is the ONLY key
 /// component separating iteration N from iteration N+1 for both caches. The loop tests fail
