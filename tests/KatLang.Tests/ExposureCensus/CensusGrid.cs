@@ -144,7 +144,8 @@ internal static class CensusGrid
     /// identities in its tree, the URLs its probe downloaded, and the front end's verdict on the UNQUALIFIED read
     /// <c>X</c> (the cell itself, except for the control, whose evaluated fixture reads <c>ModA.X</c>).
     /// </summary>
-    public static string ExpectedProviderVerdict(CensusCase @case) => @case.Dim("module") == "two-urls"
+    public static string ExpectedProviderVerdict(CensusCase @case) => @case.Kind == "carrier" ? Carrier(@case).Verdict
+        : @case.Dim("module") == "two-urls"
         ? $"providers 2; identities 2; fetched {ModuleCopyUrl},{ModuleUrl}; unqualified AmbiguousOpen"
         : $"providers 1; identities 1; fetched {ModuleUrl}; unqualified clean";
 
@@ -298,11 +299,13 @@ internal static class CensusGrid
     /// <summary>
     /// The UNQUALIFIED READ of a module cell, the front-end control of its provider verdict: the cell's own program reading
     /// <c>X</c>. It is the cell itself when the body reads <c>X</c> already (one module); the control <c>two-urls</c>'s
-    /// fixture reads <c>ModA.X</c> once, and the read replaces it, so two providers of <c>X</c> make it AmbiguousOpen.
+    /// fixture reads <c>ModA.X</c> once, and the read replaces it, so two providers of <c>X</c> make it AmbiguousOpen. A
+    /// carrier case (<see cref="CarrierFamilies"/>) and its ordinary twin have theirs by the same rule.
     /// </summary>
     public static CensusCase ModuleUnqualifiedRead(CensusCase @case)
     {
-        if (@case.Kind != "module") throw new ArgumentException($"Only a module cell has an unqualified read: {@case.Id}", nameof(@case));
+        if (@case.Kind is not ("module" or "carrier" or "carrier-twin"))
+            throw new ArgumentException($"Only a module cell or a carrier case has an unqualified read: {@case.Id}", nameof(@case));
         var at = @case.Body.IndexOf(QualifiedRead, StringComparison.Ordinal);
         if (at < 0) return @case;
         if (@case.Body.IndexOf(QualifiedRead, at + 1, StringComparison.Ordinal) >= 0)
@@ -324,10 +327,16 @@ internal static class CensusGrid
     /// </summary>
     public static CensusCase DeconstructionTwin(CensusCase @case)
     {
-        if (@case.Kind != "grid" || @case.Dims.Count == 0 || @case.Dim("pos") != "deconstruction")
-            throw new ArgumentException($"Only a pos=deconstruction grid cell has a rows twin: {@case.Id}", nameof(@case));
+        if (@case.Kind == "deconstruction-family")
+            return @case with { Body = Deconstruction(@case).Body(rowsTwin: true, staticRoute: false), Kind = "deconstruction-twin" };
+        if (!HasRowsTwin(@case))
+            throw new ArgumentException($"Only a pos=deconstruction grid cell or a deconstruction family case has a rows twin: {@case.Id}", nameof(@case));
         return Build(@case.Dims.Select(d => d.Value).ToArray(), "deconstruction-twin");
     }
+
+    /// <summary>Whether check T compares the case with its rows twin: a <c>pos=deconstruction</c> grid cell or a deconstruction family case.</summary>
+    public static bool HasRowsTwin(CensusCase @case)
+        => @case.Kind == "deconstruction-family" || (@case.Kind == "grid" && @case.Dims.Count > 0 && @case.Dim("pos") == "deconstruction");
 
     /// <summary>
     /// THE STATIC-ROUTE TWIN of a <c>head=rt-alg-call</c> cell: the same program with <c>L = &lt;path&gt;.Algorithm</c>
@@ -342,10 +351,20 @@ internal static class CensusGrid
     /// </summary>
     public static CensusCase StaticRouteTwin(CensusCase @case)
     {
-        if (@case.Kind != "grid" || @case.Dims.Count == 0 || @case.Dim("head") != "rt-alg-call")
-            throw new ArgumentException($"Only a head=rt-alg-call grid cell has a static-route twin: {@case.Id}", nameof(@case));
+        if (@case.Kind == "deconstruction-family" && Deconstruction(@case).StaticSelection is not null)
+            return @case with { Body = Deconstruction(@case).Body(rowsTwin: false, staticRoute: true), Kind = "static-route-twin" };
+        if (!HasStaticRouteTwin(@case))
+            throw new ArgumentException($"Only a head=rt-alg-call grid cell or the inline .Algorithm family case has a static-route twin: {@case.Id}", nameof(@case));
         return Build(@case.Dims.Select(d => d.Value).ToArray(), "static-route-twin");
     }
+
+    /// <summary>
+    /// Whether check R compares the case with its static-route twin: every <c>rt-alg-call</c> grid cell, and the deconstruction
+    /// family case that writes the same <c>.Algorithm</c> route inline.
+    /// </summary>
+    public static bool HasStaticRouteTwin(CensusCase @case)
+        => @case.Kind == "deconstruction-family" ? Deconstruction(@case).StaticSelection is not null
+            : @case.Kind == "grid" && @case.Dims.Count > 0 && @case.Dim("head") == "rt-alg-call";
 
     /// <summary>The grid or extension cell of a seven-value id, or the module cell of an eight-value one (null otherwise).</summary>
     public static CensusCase? TryParseId(string id)
@@ -525,6 +544,204 @@ internal static class CensusGrid
                 [.. mid, R("Y", "F.Mid.Y", "F.Mid.Y"), R("Read", "F.Mid.Read", "F.Mid.Read"), R("V", "F.Hop.V", "F.Hop.V")]),
         ];
     }
+
+    // ── The deconstruction family (2026-11-20) ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// One program of <see cref="DeconstructionFamilies"/>: F's declarations and the SELECTION the reader's deconstruction
+    /// reads (<c>a, b = &lt;selection&gt; + 0, 0</c>, then the row <c>a, b</c>), with the same selection over the static route
+    /// when the case has one.
+    /// </summary>
+    private sealed record DeconstructionShape(string Name, string[] Declarations, string Selection, string? StaticSelection = null)
+    {
+        public string Body(bool rowsTwin, bool staticRoute)
+        {
+            var selection = staticRoute ? StaticSelection ?? throw new InvalidOperationException($"{Name} has no static route.") : Selection;
+            var rows = rowsTwin ? $"{selection} + 0, 0" : $"a, b = {selection} + 0, 0\na, b";
+            return $"F(y) = {{\n{Indent(string.Join("\n", [.. Declarations, $"A = {{\n{Indent(rows, 2)}\n}}", "A"]), 2)}\n}}\n";
+        }
+    }
+
+    private const string CapDeclaration = "Cap(meta op) = op";
+    private const string ResultMemberFallback = "Missing(r) = {\n  Mk(k) = r * 0 + k + 2\n  Cap(Mk(0))\n}";
+
+    private static readonly DeconstructionShape[] DeconstructionShapes =
+    [
+        // rt-alg-call's route with its fixture written in the right-hand side: Sub returns a captured call of its member Run.
+        new("inline-alg-call", [CapDeclaration],
+            "{\n  public Sub = {\n    public Run = y\n    Cap(Run())\n  }\n}.Sub.Algorithm",
+            "{\n  public Sub = {\n    public Run = y\n    Cap(Run())\n  }\n}.Sub.Run"),
+        // rt-capture's route with the captured call's holder written in the right-hand side, read by either intrinsic.
+        new("inline-capture", [CapDeclaration], "Cap({\n  public Seed = y\n}.Seed()).Algorithm"),
+        new("inline-capture-invoke", [CapDeclaration], "Cap({\n  public Seed = y\n}.Seed()).Invoke()"),
+        // The result-member ending's callee form: the fallback result's captured algorithm called afresh, its argument read
+        // from a block written in the right-hand side.
+        new("result-member-argument", [CapDeclaration, "Lib = {\n  public Sub = {\n    public Q = 1\n    0\n  }\n  0\n}", ResultMemberFallback],
+            "Lib.Sub.Missing.Algorithm({\n  public Q = y\n}.Q)"),
+        // The result-member ending over a block written in the right-hand side, the route of the extension's own cells.
+        new("result-member-receiver", [CapDeclaration, ResultMemberFallback], "{\n  public Sub = {\n    y\n  }\n}.Sub.Missing.Invoke()"),
+    ];
+
+    private static DeconstructionShape Deconstruction(CensusCase @case)
+        => DeconstructionShapes.FirstOrDefault(shape => $"deconstruction={shape.Name}" == @case.Id)
+            ?? throw new ArgumentException($"Not a deconstruction family case: {@case.Id}", nameof(@case));
+
+    /// <summary>
+    /// THE DECONSTRUCTION FAMILY (2026-11-20): the extension's routes with a block WRITTEN IN a deconstruction right-hand
+    /// side, each a census case of its own inside <c>F(y)</c> whose reader is <c>A = { a, b = &lt;selection&gt; + 0, 0; a, b }</c>.
+    /// The evaluators wire such a block under the synthetic source property, one runtime level below the reader, and
+    /// exposure counts that level in the capture positions the block's members publish (da209fa0,
+    /// <c>ExposureWalkMemos.ForDeconstructionSourceRows</c>). A position counted on the written chain alone names the
+    /// source's level, which binds nothing, and the member is refused inside its own owner's call: the rows twin
+    /// (<see cref="DeconstructionTwin"/>), whose block is wired under the reader itself, then gives other outcomes, which is
+    /// check T's finding.
+    ///
+    /// <para>Of the original extension's 5,985 valid deconstruction cells, 5,545 write no
+    /// block in its right-hand side (the heads <c>rt-capture</c> and <c>rt-alg-call</c> select through the reference
+    /// <c>L</c>, and so does a <c>result-member</c> ending over any head but a literal), so no level is opened from the
+    /// source's region. The other 440 have a <c>block</c> or <c>group-block</c> head under <c>result-member</c>, where a selection
+    /// reads at most the literal's <c>Sub</c>. With <c>req</c> none, member or fallback, Sub's row is a constant and Sub
+    /// publishes no position. With <c>req</c> deep Sub requires the literal's own <c>Mid(p)</c>, a check no site can pass
+    /// (<see cref="ImpossibleMember"/>). With <c>req</c> container Sub is captured from <c>F</c>, but the selection is
+    /// refused as it stands: a block-headed path that continues through a lexical fallback into a call reference's intrinsic
+    /// (<c>{ … }.Sub.Missing.Invoke()</c>) refuses the block's captured member in both evaluators, C# and Lean, in the cell
+    /// and in its rows twin alike (<c>LocalOnlyProperty: Sub</c>, also where the fallback's result never reads its
+    /// receiver; the same block continued by a lexical edge, <c>.Missing.Next</c>, is admitted). A wrong position
+    /// therefore changes no runtime outcome there. <c>result-member-receiver</c> keeps that route as a case, pinned as refused.
+    /// The static model checks the positions of unselected declarations too. Under mutation B, M1 refused two existing
+    /// extension-cover cells with <c>req=member</c>, one of each block head, on all five probes. The remaining existing
+    /// cells with <c>req=member</c> or <c>req=container</c> were outside that model sample.</para>
+    ///
+    /// <para>The other four write an extension route where the position decides: the callable <c>.Algorithm</c> route over
+    /// a block whose <c>Sub</c> returns a captured call of its member (<c>inline-alg-call</c>, with its static route
+    /// <c>.Sub.Run</c> for check R), a captured call of a block's member read by either intrinsic (<c>inline-capture</c>,
+    /// <c>inline-capture-invoke</c>), and the result-member callee form whose argument is a block's member
+    /// (<c>result-member-argument</c>). Each gives one value per activation and is refused outside the call.</para>
+    /// </summary>
+    public static IReadOnlyList<CensusCase> DeconstructionFamilies()
+        => DeconstructionShapes.Select(shape => new CensusCase($"deconstruction={shape.Name}", [], shape.Body(rowsTwin: false, staticRoute: false),
+            [new CensusReader("A", ["F", "A"], "F.A")], "deconstruction-family")).ToArray();
+
+    // ── The loaded alias carrier (2026-11-20) ─────────────────────────────────────────────────────
+
+    public const string CarrierUrl = "https://mods.test/carrier.kat";
+    public const string CarrierCopyUrl = "https://mods.test/carrier-copy.kat";
+
+    /// <summary>
+    /// The carrier module's text. Its ONE row names an algorithm, so the loaded root elaborates to an alias that keeps
+    /// the module mark: a structural forwarding carrier (<c>Algorithm.Alias</c>, never a transparent reference). The row
+    /// <c>W</c> and the member <c>V</c> read a name only the module's own <c>open</c> provides; <c>X</c> and <c>Z</c> are
+    /// <c>Other</c>'s members, the names an open level reads through a second provider.
+    /// </summary>
+    public const string CarrierText = "open Lib\nLib = {\n  public W = 3\n}\npublic X = 1\npublic Z = 2\npublic V = W + 0\nW\n";
+
+    /// <summary>
+    /// One program of <see cref="CarrierFamilies"/>: the text with the carrier loaded (<c>ordinary: false</c>) or written
+    /// (<c>true</c>, the ordinary alias twin), the provider verdict the loaded program must show, the URLs it loads, and
+    /// whether the twin must DIFFER because a holder level declares the name the carrier's row and member read (the cut).
+    /// </summary>
+    private sealed record CarrierShape(string Name, Func<bool, string> Body, string Verdict, bool TwoUrls = false, bool Cut = false);
+
+    // The census's Lib with what an open walk charges: Sub's row reads y.
+    private const string CarrierLib = "Lib = {\n  public Sub = {\n    public Q = 1\n    y\n  }\n  0\n}";
+
+    private static string WrittenCarrier(string name) => $"{name} = {{\n{Indent(CarrierText.TrimEnd('\n'), 2)}\n}}";
+
+    private static string LoadedCarrier(string name, string url) => $"{name} = load('{url}')";
+
+    private static string CarrierProgram(string root, params string[] members)
+        => $"{root}F(y) = {{\n{Indent(string.Join("\n", [.. members, "A"]), 2)}\n}}\n";
+
+    private static readonly string OneCarrier = $"providers 1; identities 1; fetched {CarrierUrl}; unqualified clean";
+    private static readonly string NoCarrierProvider = $"providers 0; identities 1; fetched {CarrierUrl}; unqualified clean";
+
+    private static readonly CarrierShape[] CarrierShapes =
+    [
+        // THE SAME-URL CONTROL: two root holders of one canonical URL are one provider of X; the twin's second holder is
+        // a transparent reference to the written carrier.
+        new("open-same-url", ordinary => CarrierProgram(
+            ordinary ? $"{WrittenCarrier("ModA")}\nModB = ModA\n" : $"{LoadedCarrier("ModA", CarrierUrl)}\n{LoadedCarrier("ModB", CarrierUrl)}\n",
+            "open Lib.Sub, ModA, ModB", CarrierLib, "A = X + 0"), OneCarrier),
+        // The same control's other spelling: a holder and a written load of it; the twin opens its one declaration twice.
+        new("open-holder-load", ordinary => CarrierProgram(
+            ordinary ? $"{WrittenCarrier("ModA")}\n" : $"{LoadedCarrier("ModA", CarrierUrl)}\n",
+            ordinary ? "open Lib.Sub, ModA, ModA" : $"open Lib.Sub, ModA, load('{CarrierUrl}')", CarrierLib, "A = X + 0"), OneCarrier),
+        // THE DISTINCT-URL CONTROL: two canonical URLs serving the carrier's text are two providers, so the unqualified read
+        // is AmbiguousOpen and the fixture qualifies it; the twin writes the carrier twice, two declarations too.
+        new("open-two-urls", ordinary => CarrierProgram(
+            ordinary ? $"{WrittenCarrier("ModA")}\n{WrittenCarrier("ModB")}\n" : $"{LoadedCarrier("ModA", CarrierUrl)}\n{LoadedCarrier("ModB", CarrierCopyUrl)}\n",
+            "open Lib.Sub, ModA, ModB", CarrierLib, $"A = {QualifiedRead}"),
+            $"providers 2; identities 2; fetched {CarrierCopyUrl},{CarrierUrl}; unqualified AmbiguousOpen", TwoUrls: true),
+        // The carrier's single output, read as a value: the alias forwards to the row's target.
+        new("row", ordinary => CarrierProgram(
+            ordinary ? $"{WrittenCarrier("ModA")}\n" : $"{LoadedCarrier("ModA", CarrierUrl)}\n", "A = ModA + 0"), NoCarrierProvider),
+        // THE CUT: the holder is declared in F beside `W = y`. The loaded carrier is rooted at the prelude, so its row and its
+        // member read its own opened W; the written one reads F's.
+        new("cut-row", ordinary => CarrierProgram("", "W = y", ordinary ? WrittenCarrier("M") : LoadedCarrier("M", CarrierUrl), "A = M + 0"),
+            NoCarrierProvider, Cut: true),
+        new("cut-member", ordinary => CarrierProgram("", "W = y", ordinary ? WrittenCarrier("M") : LoadedCarrier("M", CarrierUrl), "A = M.V + 0"),
+            NoCarrierProvider, Cut: true),
+        new("cut-open", ordinary => CarrierProgram("", "open M", "W = y", ordinary ? WrittenCarrier("M") : LoadedCarrier("M", CarrierUrl), "A = V + 0"),
+            OneCarrier, Cut: true),
+    ];
+
+    private static CarrierShape Carrier(CensusCase @case)
+        => CarrierShapes.FirstOrDefault(shape => $"carrier={shape.Name}" == @case.Id)
+            ?? throw new ArgumentException($"Not a carrier case: {@case.Id}", nameof(@case));
+
+    /// <summary>
+    /// THE CARRIER FAMILY (2026-11-20): a SOURCE-LOADED MODULE WHOSE SINGLE OUTPUT IS AN ALIAS CARRIER
+    /// (<see cref="CarrierText"/>), the one source-reachable module shape the module dimension's text (members only, no
+    /// row) does not have. Each case is a census case of its own inside <c>F(y)</c>, parsed by the asynchronous front end
+    /// over a server of <see cref="CarrierUrl"/> (and <see cref="CarrierCopyUrl"/> for the distinct-URL control), with an
+    /// ORDINARY ALIAS TWIN (<see cref="CarrierTwin"/>): the same program with every loaded holder written at its own place
+    /// as an ordinary declaration, the first as the carrier's text in braces (a structural forwarding carrier too), a
+    /// second holder of the same URL as a transparent reference to it. Check P requires each case's provider verdict
+    /// (<see cref="ExpectedProviderVerdict"/>) and its twin relation (<see cref="CarrierContrast"/>).
+    /// <list type="bullet">
+    /// <item><c>open-same-url</c>, <c>open-holder-load</c> (the same-URL control in both spellings): one canonical URL is
+    /// one provider of <c>X</c> at <c>F</c>'s unused open level, whose walk of <c>Lib.Sub</c> charges the reader; equal to
+    /// the twin.</item>
+    /// <item><c>open-two-urls</c> (the distinct-URL control): two providers, the unqualified read AmbiguousOpen, the
+    /// qualified fixture a lexical read; equal to the twin, which writes the carrier twice.</item>
+    /// <item><c>row</c>: the carrier's single output read as a value from a root holder; equal to the twin.</item>
+    /// <item><c>cut-row</c>, <c>cut-member</c>, <c>cut-open</c>: the holder stands in <c>F</c> beside <c>W = y</c>. A loaded
+    /// module is rooted at the prelude (Q-31 H-P), so the row, the member read by a path and the member read through
+    /// <c>open M</c> give the module's own 3 and the reader stays exported; the twin reads <c>F</c>'s <c>W</c>, gives one
+    /// value per activation and is charged <c>y</c>. The twin relation is that difference, exactly.</item>
+    /// </list>
+    /// What each case can witness (measured 2026-11-20 against the two earlier static models, scratch evidence): the model
+    /// before the alias-root cut (3fba28fe) refused the source trees of the three cut cases; the model before one module
+    /// was one provider (bb1314f2) admitted the two same-URL cases with the reader's requirement removed; both earlier
+    /// models agree with today's on <c>open-two-urls</c> and <c>row</c>, whose evidence is the runtime's and the front
+    /// end's alone. Not built: a carrier under the extension heads, a written load in a clause branch (a deferred region,
+    /// as <see cref="ModuleExclusion"/>), and a module-marked transparent reference, which no source produces.
+    /// </summary>
+    public static IReadOnlyList<CensusCase> CarrierFamilies()
+        => CarrierShapes.Select(shape => new CensusCase($"carrier={shape.Name}", [], shape.Body(false),
+            [new CensusReader("A", ["F", "A"], "F.A")], "carrier",
+            Modules: shape.TwoUrls ? [new(CarrierUrl, CarrierText), new(CarrierCopyUrl, CarrierText)] : [new(CarrierUrl, CarrierText)])).ToArray();
+
+    /// <summary>The ORDINARY ALIAS TWIN of a carrier case: its program with every loaded holder written (it loads nothing).</summary>
+    public static CensusCase CarrierTwin(CensusCase @case)
+        => @case.Kind == "carrier" ? @case with { Body = Carrier(@case).Body(true), Kind = "carrier-twin", Modules = null }
+            : throw new ArgumentException($"Only a carrier case has an ordinary alias twin: {@case.Id}", nameof(@case));
+
+    /// <summary>
+    /// The twin relation of a carrier case, as the differences check P must find between it and its ordinary alias twin
+    /// (reader or <c>-</c>, and the detail): none for a case the holder's chain cannot change, and for a cut case the
+    /// module's constant against the twin's read of <c>F</c>'s <c>W</c> on every probe, with the reader's metadata.
+    /// </summary>
+    public static IReadOnlyList<(string Reader, string Detail)> CarrierContrast(CensusCase @case) => Carrier(@case).Cut
+        ?
+        [
+            ("-", "esc:A: module=ok 3; ordinary=err localOnlyProperty:A"),
+            ("-", "in5: module=ok 3; ordinary=ok 5"),
+            ("-", "in7: module=ok 3; ordinary=ok 7"),
+            ("-", "same: module=ok S[3, 3]; ordinary=ok S[5, 7]"),
+            ("A", "metadata: module=exported; ordinary=LocalOnlyCapturedAncestorParameters[y@0]"),
+        ]
+        : [];
 
     /// <summary>
     /// A deterministic subset covering every combination of three dimension values that occurs in some

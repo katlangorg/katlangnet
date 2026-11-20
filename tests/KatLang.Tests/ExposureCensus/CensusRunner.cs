@@ -33,6 +33,13 @@ internal sealed class CensusCaseResult
     /// </summary>
     public List<CensusGap> Impossible { get; } = [];
 
+    /// <summary>
+    /// The UNKNOWN-REQUIRED-NAME arm of U2, evaluated apart from <see cref="Gaps"/> and from the ratchet (see
+    /// <see cref="CensusRunner.Run"/>): an exported reader whose escaped read fails with <c>UnknownName</c> of a parameter
+    /// an enclosing level binds, with its class against the existing verdicts.
+    /// </summary>
+    public List<CensusGap> UnknownName { get; } = [];
+
     /// <summary>Every published requirement no level of its declaring chain can supply (<c>path: name@depth</c>).</summary>
     public List<string> UnsuppliedRequirements { get; } = [];
     public List<CensusLeanItem> Lean { get; } = [];
@@ -46,12 +53,13 @@ internal sealed class CensusCaseResult
 
 /// <summary>
 /// Evaluates census cases: parses each probe program, evaluates it on every route, and applies the
-/// under-charge check U and the over-charge check O (brief section 2), for a deconstruction cell the twin
+/// under-charge check U and the over-charge check O (brief section 2), for a deconstruction cell or family case the twin
 /// check T (a refusal inside the owner's own call is neither U nor O), for a callable <c>rt-alg</c> cell the
-/// static-route check R, and for a module cell the provider check P (its provider verdict and its provider twin). A case
-/// that loads modules is parsed through the asynchronous front end over a deterministic in-memory server of its own
-/// sources, and its engine routes are the asynchronous ones. Engine disagreements are findings of their own class. The
-/// model check (M) consumes <see cref="CensusCaseResult.Lean"/>, whose trees hold the loaded module graph as parsed.
+/// static-route check R, and for a module cell or carrier case the provider check P (its provider verdict and its provider
+/// or ordinary alias twin). A case that loads modules is parsed through the asynchronous front end over a deterministic
+/// in-memory server of its own sources, and its engine routes are the asynchronous ones. Engine disagreements are findings
+/// of their own class. The model check (M) consumes <see cref="CensusCaseResult.Lean"/>, whose trees hold the loaded module
+/// graph as parsed. U2's unknown-required-name arm is recorded apart (<see cref="CensusCaseResult.UnknownName"/>).
 /// </summary>
 internal static class CensusRunner
 {
@@ -183,6 +191,43 @@ internal static class CensusRunner
             found = properties.FirstOrDefault(p => p.Name == name);
             if (found is null) return null;
             current = found.Value;
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// Every declaration named <paramref name="name"/> at or below <paramref name="start"/>, those of algorithms written
+    /// inside expressions included (a block in a row or in a hoisted deconstruction source), in a fixed order.
+    /// <see cref="Find"/> reads declared paths only; a written block's members have none.
+    /// </summary>
+    internal static List<Property> DeclarationsNamed(Algorithm start, string name)
+    {
+        var found = new List<Property>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<object>();
+        pending.Push(start);
+        while (pending.TryPop(out var node))
+        {
+            if (!seen.Add(node)) continue;
+            switch (node)
+            {
+                case Algorithm.Conditional conditional:
+                    foreach (var open in conditional.Opens) pending.Push(open);
+                    foreach (var branch in conditional.Branches) pending.Push(branch.Body);
+                    break;
+                case Algorithm algorithm:
+                    foreach (var property in algorithm.Properties)
+                    {
+                        if (property.Name == name) found.Add(property);
+                        pending.Push(property.Value);
+                    }
+                    foreach (var open in algorithm.Opens) pending.Push(open);
+                    foreach (var row in algorithm.Output) pending.Push(row);
+                    break;
+                default:
+                    for (var i = 0; AstStructuralPreflight.TryGetChild(node, i, out var child); i++) pending.Push(child);
+                    break;
+            }
         }
         return found;
     }
@@ -364,9 +409,11 @@ internal static class CensusRunner
             {
                 var skipped = new CensusCaseResult { Case = @case, Skipped = label == "in5" ? codes : $"{codes} (probe {label})" };
                 // P: a module cell parses exactly when its provider twin does, so a missing download or a module cell
-                // dropped from the census is a gap, never a silent skip.
+                // dropped from the census is a gap, never a silent skip. A carrier case parses when its ordinary twin does.
                 if (@case.Kind == "module" && await Probes(CensusGrid.ModuleTwin(@case)) is not null)
                     skipped.Gaps.Add(new CensusGap("P", "module-validity-differs", @case.Id, "-", $"{label}: module cell {codes}; provider twin parses cleanly"));
+                else if (@case.Kind == "carrier" && await Probes(CensusGrid.CarrierTwin(@case)) is not null)
+                    skipped.Gaps.Add(new CensusGap("P", "module-validity-differs", @case.Id, "-", $"{label}: carrier case {codes}; ordinary alias twin parses cleanly"));
                 return skipped;
             }
             // The pre-screen above keeps diagnostics for skipped cells; every evaluated source then
@@ -474,9 +521,9 @@ internal static class CensusRunner
             }
         }
 
-        // T: a deconstruction cell against its rows twin (CensusGrid.DeconstructionTwin), always built from SOURCE, so a
-        // host-built cell is compared with the front end's own twin.
-        if (@case.Kind == "grid" && @case.Dims.Count > 0 && @case.Dim("pos") == "deconstruction")
+        // T: a deconstruction cell or family case against its rows twin (CensusGrid.DeconstructionTwin), always built from
+        // SOURCE, so a host-built cell is compared with the front end's own twin.
+        if (CensusGrid.HasRowsTwin(@case))
         {
             var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.DeconstructionTwin(@case), probes.Select(p => p.Label).ToArray());
             outcome.Gaps.AddRange(TwinDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
@@ -495,7 +542,11 @@ internal static class CensusRunner
         // its provider twin, the same cell with `Other` as the second provider, built from SOURCE: one module is one provider
         // of the text Other holds, so every probe and every reader's metadata must equal the twin's. The control's qualified
         // fixture reads `ModA` lexically, a different lookup, so it has its verdict and the other checks but no twin.
-        if (@case.Kind == "module")
+        // A carrier case (CensusGrid.CarrierFamilies) has its provider verdict by the same rule and its ORDINARY ALIAS TWIN,
+        // built from SOURCE, whose relation to it is the case's own (CensusGrid.CarrierContrast): no difference where the
+        // holder's chain cannot matter, and exactly the cut's differences where a holder level declares the name the carrier
+        // reads. A difference outside the relation and a difference of the relation that does not occur are gaps.
+        if (@case.Kind is "module" or "carrier")
         {
             var unqualified = CensusGrid.ModuleUnqualifiedRead(@case);
             var errors = unqualified == @case ? null : await Prescreen(unqualified, unqualified.Body + Inside5 + "\n");
@@ -513,8 +564,67 @@ internal static class CensusRunner
                 var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.ModuleTwin(@case), probes.Select(p => p.Label).ToArray());
                 outcome.Gaps.AddRange(ModuleTwinDifferences(@case.Id, outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
             }
+            else if (@case.Kind == "carrier")
+            {
+                var (twinOutcomes, twinMetadata) = TwinFacts(CensusGrid.CarrierTwin(@case), probes.Select(p => p.Label).ToArray());
+                outcome.Gaps.AddRange(CarrierTwinGaps(@case.Id, CensusGrid.CarrierContrast(@case), outcome.Outcomes, outcome.Metadata, twinOutcomes, twinMetadata));
+            }
+        }
+        // Compare U2's unknown-name observations with the completed case, including other readers and its twin checks.
+        // An escaped failure can add evidence even when the ordinary access-refusal check has nothing to report.
+        foreach (var reader in @case.Readers)
+        {
+            var escaped = o[$"esc:{reader.Label}"];
+            if (outcome.Metadata[reader.Label] != "exported" || UnknownRequiredName(parsed["in5"], reader.Path, escaped) is not { } unbound)
+                continue;
+            var peers = outcome.Gaps.Concat(outcome.Impossible).Select(g => $"{g.Check}/{g.Class}")
+                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var classification = o["in5"] == escaped && o["in7"] == escaped && o["same"] == escaped ? "unknown-name-inside-too"
+                : !outcome.InsideWorks ? "unknown-name-inside-fails"
+                : differ ? "unknown-name-with-wrong-value"
+                : peers.Length > 0 ? "unknown-name-with-other-verdict" : "unknown-name-alone";
+            var detail = $"{escaped}; requires {unbound}; inside={o["in5"]} / {o["in7"]} / {o["same"]}";
+            if (peers.Length > 0) detail += $"; case verdicts={string.Join(", ", peers)}";
+            outcome.UnknownName.Add(new CensusGap("U", classification, @case.Id, reader.Label, detail));
         }
         return outcome;
+    }
+
+    /// <summary>
+    /// Check P's twin verdict for a carrier case: the differences between the case and its ordinary alias twin must be
+    /// exactly <paramref name="contrast"/>. One gap per difference outside it (class <c>carrier-twin-differs</c>) and per
+    /// difference of it that does not occur (class <c>carrier-cut-missing</c>); no difference is exempt.
+    /// </summary>
+    internal static List<CensusGap> CarrierTwinGaps(string id, IReadOnlyList<(string Reader, string Detail)> contrast,
+        IReadOnlyDictionary<string, string> outcomes, IReadOnlyDictionary<string, string> metadata,
+        IReadOnlyDictionary<string, string> twinOutcomes, IReadOnlyDictionary<string, string> twinMetadata)
+    {
+        var observed = PairDifferences("P", "carrier-twin-differs", "module", "ordinary", id, outcomes, metadata, twinOutcomes, twinMetadata);
+        var gaps = observed.Where(gap => !contrast.Contains((gap.Reader, gap.Detail))).ToList();
+        gaps.AddRange(contrast.Where(expected => !observed.Any(gap => (gap.Reader, gap.Detail) == expected))
+            .Select(expected => new CensusGap("P", "carrier-cut-missing", id, expected.Reader, expected.Detail)));
+        return gaps;
+    }
+
+    /// <summary>
+    /// The parameter an escaped outcome names as unknown, as <c>name of Level</c>, when a level enclosing the reader binds
+    /// it (the innermost such level's declaration), else null: the outcome is no <c>UnknownName</c>, or the name is no
+    /// parameter the reader's chain could supply. The reader's own parameters are supplied by the escaped call itself.
+    /// </summary>
+    internal static string? UnknownRequiredName(Algorithm root, IReadOnlyList<string> path, string escaped)
+    {
+        const string prefix = "err unknownName:";
+        if (!escaped.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var name = escaped[prefix.Length..];
+        string? owner = null;
+        var current = root;
+        for (var i = 0; i < path.Count - 1; i++)
+        {
+            if (current.Properties.FirstOrDefault(p => p.Name == path[i]) is not { } property) return null;
+            current = property.Value;
+            if (current is Algorithm.User user && user.Params.Contains(name, StringComparer.Ordinal)) owner = path[i];
+        }
+        return owner is null ? null : $"{name} of {owner}";
     }
 
     /// <summary>
@@ -552,9 +662,11 @@ internal static class CensusRunner
     /// <summary>Whether check P compares the case with its provider twin: every module cell of one module (not the control).</summary>
     internal static bool HasModuleTwin(CensusCase @case) => @case.Kind == "module" && @case.Dim("module") != "two-urls";
 
-    /// <summary>Whether check R compares the case with its static-route twin: every <c>rt-alg-call</c> grid cell.</summary>
-    internal static bool HasStaticRouteTwin(CensusCase @case)
-        => @case.Kind == "grid" && @case.Dims.Count > 0 && @case.Dim("head") == "rt-alg-call";
+    /// <summary>
+    /// Whether check R compares the case with its static-route twin: every <c>rt-alg-call</c> grid cell, and the
+    /// deconstruction family case that writes the same route inline (<see cref="CensusGrid.HasStaticRouteTwin"/>).
+    /// </summary>
+    internal static bool HasStaticRouteTwin(CensusCase @case) => CensusGrid.HasStaticRouteTwin(@case);
 
     /// <summary>
     /// Check R's verdict: every probe outcome and every reader's metadata of a callable <c>rt-alg</c> cell equal its

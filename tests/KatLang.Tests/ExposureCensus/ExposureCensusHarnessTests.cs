@@ -510,6 +510,353 @@ public sealed class ExposureCensusHarnessTests
         Assert.Contains(unused.Gaps, g => g is { Check: "P", Class: "provider-verdict-differs" });
     }
 
+    // ── The deconstruction and carrier families, and U2's unknown-required-name arm (2026-11-20) ──
+
+    private static readonly string[] ReaderA = ["F", "A"];
+    private static readonly string[] ProbeLabels = ["in5", "in7", "same", "esc:A"];
+
+    private static CensusCase DeconstructionCase(string name) => CensusGrid.DeconstructionFamilies().Single(c => c.Id == "deconstruction=" + name);
+
+    private static CensusCase CarrierCase(string name) => CensusGrid.CarrierFamilies().Single(c => c.Id == "carrier=" + name);
+
+    private static (string In5, string In7, string Same, string Escaped) Probes(IReadOnlyDictionary<string, string> outcomes)
+        => (outcomes["in5"], outcomes["in7"], outcomes["same"], outcomes["esc:A"]);
+
+    /// <summary>
+    /// The deconstruction family: each case reads an extension route over a block WRITTEN IN the deconstruction's right-hand
+    /// side, differs from its rows twin in the deconstruction lines alone, and gives what that twin gives (check T), the
+    /// inline <c>.Algorithm</c> case also what its static route gives (check R). Four cases read the block's captured member
+    /// and keep one value per activation; <c>result-member-receiver</c>, the route of the extension's own block-headed
+    /// cells (a block-headed path continued through a lexical fallback into a call reference's intrinsic), is refused
+    /// inside the call in the case and in its twin alike. Their runtime outcomes cannot distinguish the lost level.
+    /// </summary>
+    [Fact]
+    public async Task DeconstructionFamily_ReadsABlockWrittenInTheRightHandSide_AndMatchesItsRowsTwin()
+    {
+        var family = CensusGrid.DeconstructionFamilies();
+        Assert.Equal(["deconstruction=inline-alg-call", "deconstruction=inline-capture", "deconstruction=inline-capture-invoke",
+            "deconstruction=result-member-argument", "deconstruction=result-member-receiver"], family.Select(c => c.Id));
+        var values = ("ok S[5, 0]", "ok S[7, 0]", "ok S[S[5, 0], S[7, 0]]", "err localOnlyProperty:A");
+        var expected = new Dictionary<string, (string, string, string, string)>
+        {
+            ["deconstruction=inline-alg-call"] = values,
+            ["deconstruction=inline-capture"] = values,
+            ["deconstruction=inline-capture-invoke"] = values,
+            // Mk(k) = r * 0 + k + 2, called afresh with the block's Q = y.
+            ["deconstruction=result-member-argument"] = ("ok S[7, 0]", "ok S[9, 0]", "ok S[S[7, 0], S[9, 0]]", "err localOnlyProperty:A"),
+            ["deconstruction=result-member-receiver"] = ("err localOnlyProperty:Sub", "err localOnlyProperty:Sub", "err localOnlyProperty:Sub", "err localOnlyProperty:A"),
+        };
+        foreach (var @case in family)
+        {
+            Assert.Equal(("deconstruction-family", 0), (@case.Kind, @case.Dims.Count));
+            Assert.Null(CensusGrid.ImpossibleMember(@case));
+            Assert.True(CensusGrid.HasRowsTwin(@case));
+            var twin = CensusGrid.DeconstructionTwin(@case);
+            Assert.Equal((@case.Id, "deconstruction-twin"), (twin.Id, twin.Kind));
+            // `a, b = <selection> + 0, 0` and the row `a, b` become `<selection> + 0, 0`; every other line is the case's own.
+            const string deconstruction = "    a, b = ", targets = " + 0, 0\n    a, b\n";
+            var start = @case.Body.IndexOf(deconstruction, StringComparison.Ordinal);
+            Assert.True(start >= 0 && start == @case.Body.LastIndexOf(deconstruction, StringComparison.Ordinal), @case.Id);
+            var close = @case.Body.IndexOf(targets, start, StringComparison.Ordinal);
+            Assert.True(close > start, @case.Id);
+            Assert.Equal(@case.Body[..start] + "    " + @case.Body[(start + deconstruction.Length)..close] + " + 0, 0\n" + @case.Body[(close + targets.Length)..], twin.Body);
+            // The selection writes a block inside the right-hand side.
+            Assert.Contains("{\n", @case.Body[start..close], StringComparison.Ordinal);
+            SourceProvenance.ParseValid(@case.Body + CensusRunner.SameRun);
+            SourceProvenance.ParseValid(twin.Body + CensusRunner.SameRun);
+
+            var result = await CensusRunner.Run(@case, collectLean: false);
+            Assert.Null(result.Skipped);
+            Assert.True(result.Gaps.Count == 0, $"{@case.Id}: {string.Join("\n", result.Gaps.Select(gap => gap.Line))}");
+            Assert.Empty(result.UnknownName);
+            Assert.Equal("LocalOnlyCapturedAncestorParameters[y@0]", result.Metadata["A"]);
+            Assert.Equal(expected[@case.Id], Probes(result.Outcomes));
+            var (twinOutcomes, twinMetadata) = CensusRunner.TwinFacts(twin, ProbeLabels);
+            Assert.Equal(expected[@case.Id], Probes(twinOutcomes));
+            Assert.Equal(result.Metadata, twinMetadata);
+        }
+
+        // Check R: the inline .Algorithm route against the static selection of the algorithm whose call Sub captures.
+        var inline = DeconstructionCase("inline-alg-call");
+        Assert.True(CensusRunner.HasStaticRouteTwin(inline));
+        var route = CensusGrid.StaticRouteTwin(inline);
+        Assert.Equal((inline.Id, "static-route-twin"), (route.Id, route.Kind));
+        Assert.Equal(inline.Body.Replace("}.Sub.Algorithm + 0, 0\n", "}.Sub.Run + 0, 0\n", StringComparison.Ordinal), route.Body);
+        Assert.NotEqual(inline.Body, route.Body);
+        Assert.Equal(values, Probes(CensusRunner.TwinFacts(route, ProbeLabels).Outcomes));
+        foreach (var other in family.Where(c => c.Id != inline.Id))
+        {
+            Assert.False(CensusRunner.HasStaticRouteTwin(other));
+            Assert.Throws<ArgumentException>(() => CensusGrid.StaticRouteTwin(other));
+        }
+        Assert.Throws<ArgumentException>(() => CensusGrid.DeconstructionTwin(CarrierCase("row")));
+
+        // The refused route is the extension's own block-headed cell: refused in the cell and in its rows twin alike, where
+        // the same literal read through a lexical continuation (the grid's mid-fallback ending) is admitted in both.
+        foreach (var (end, inside) in new[] { ("result-member", "err localOnlyProperty:Sub"), ("mid-fallback", "ok S[2, 0]") })
+        {
+            var cell = CensusGrid.Build(["block", "deconstruction", "none", "plain", "outside", end, "container"]);
+            var observed = await CensusRunner.Run(cell, collectLean: false);
+            Assert.Null(observed.Skipped);
+            Assert.Empty(observed.Gaps);
+            Assert.Equal(inside, observed.Outcomes["in5"]);
+            Assert.Equal(inside, CensusRunner.TwinFacts(CensusGrid.DeconstructionTwin(cell), ProbeLabels).Outcomes["in5"]);
+        }
+        // The refusal does not come from reading the receiver: a fallback whose result never reads it is refused too.
+        var receiver = DeconstructionCase("result-member-receiver");
+        var unread = receiver with { Body = receiver.Body.Replace("Mk(k) = r * 0 + k + 2", "Mk(k) = k + 2", StringComparison.Ordinal) };
+        Assert.NotEqual(receiver.Body, unread.Body);
+        Assert.Equal("err localOnlyProperty:Sub", CensusRunner.TwinFacts(unread, ProbeLabels).Outcomes["in5"]);
+    }
+
+    /// <summary>
+    /// What check T rests on for a block written in a deconstruction's right-hand side, read from the front end's own tree:
+    /// the block's captured member publishes its capture position ONE LEVEL DEEPER than the same block in the rows twin,
+    /// the synthetic source property's level (da209fa0, <c>ExposureWalkMemos.ForDeconstructionSourceRows</c>). A position
+    /// counted on the written chain alone would equal the twin's, and the evaluators would refuse the member inside its own
+    /// owner's call. Every family case shows it, and so does the original grid's block-headed cell, the positive control the
+    /// stored cover and <see cref="DeconstructionPosition_MatchesItsRowsTwinForEveryHead"/> keep. The refused
+    /// <c>result-member-receiver</c> publishes the right position too: its refusal is not the position's.
+    /// </summary>
+    [Fact]
+    public void DeconstructionSource_CountsItsLevelInABlocksCapturePositions()
+    {
+        (CensusCase Case, string Member)[] blocks =
+        [
+            (DeconstructionCase("inline-alg-call"), "Run"),
+            (DeconstructionCase("inline-capture"), "Seed"),
+            (DeconstructionCase("inline-capture-invoke"), "Seed"),
+            (DeconstructionCase("result-member-argument"), "Q"),
+            (DeconstructionCase("result-member-receiver"), "Sub"),
+            (CensusGrid.Build(["block", "deconstruction", "none", "plain", "outside", "found", "member"]), "G"),
+            (CensusGrid.Build(["group-block", "deconstruction", "none", "plain", "outside", "found", "member"]), "G"),
+        ];
+        foreach (var (@case, member) in blocks)
+        {
+            var written = Position(@case, member);
+            var rows = Position(CensusGrid.DeconstructionTwin(@case), member);
+            Assert.True(written.Name == "y" && rows.Name == "y" && written.OwnerDepth == rows.OwnerDepth + 1,
+                $"{@case.Id} {member}: deconstruction {CensusRunner.Requirement(written)}; rows {CensusRunner.Requirement(rows)}");
+        }
+
+        // The one declaration of that name the reader writes, in a block of its expressions, and its one requirement.
+        static CapturedParameterRequirement Position(CensusCase @case, string member)
+        {
+            var root = SourceProvenance.ParseValid(@case.Body + CensusRunner.Inside5 + "\n").Root;
+            var reader = CensusRunner.Find(root, ReaderA) ?? throw new InvalidDataException($"No reader A: {@case.Id}");
+            Assert.Null(CensusRunner.Find(root, [.. ReaderA, member]));
+            var declaration = Assert.Single(CensusRunner.DeclarationsNamed(reader.Value, member));
+            return Assert.Single(CensusRunner.Requirements(declaration));
+        }
+    }
+
+    /// <summary>
+    /// The carrier family: a loaded module whose single output row names an algorithm elaborates to an alias carrier that
+    /// keeps the module mark, and its ordinary alias twin writes the same text in braces at the holder's own place. Two
+    /// holders of one canonical URL (in both spellings) are one provider of <c>X</c>, charged the walk of <c>Lib.Sub</c>
+    /// exactly as the twin; two canonical URLs serving the text are two, whose unqualified read is AmbiguousOpen in the
+    /// module program and in the twin that writes the carrier twice; the single output read as a value forwards to the
+    /// row's target. Where the holder stands in <c>F</c> beside <c>W = y</c> the loaded carrier is cut from that chain: its
+    /// row, its member and its member read through an open give the module's own 3 from an exported reader, while the
+    /// written carrier reads <c>F</c>'s <c>W</c> and is charged <c>y</c>.
+    /// </summary>
+    [Fact]
+    public async Task CarrierFamily_ALoadedAliasCarrierIsOneProviderPerUrl_AndIsCutFromItsHolder()
+    {
+        var family = CensusGrid.CarrierFamilies();
+        Assert.Equal(["carrier=open-same-url", "carrier=open-holder-load", "carrier=open-two-urls", "carrier=row",
+            "carrier=cut-row", "carrier=cut-member", "carrier=cut-open"], family.Select(c => c.Id));
+        const string charged = "LocalOnlyCapturedAncestorParameters[y@0]";
+        var provided = (("ok 1", "ok 1", "ok S[1, 1]", "err localOnlyProperty:A"), charged);
+        var constant = (("ok 3", "ok 3", "ok S[3, 3]", "ok 3"), "exported");
+        var holderRead = (("ok 5", "ok 7", "ok S[5, 7]", "err localOnlyProperty:A"), charged);
+        // (the loaded program's probes and reader metadata; its ordinary alias twin's)
+        var expected = new Dictionary<string, (((string, string, string, string), string) Module, ((string, string, string, string), string) Ordinary)>
+        {
+            ["carrier=open-same-url"] = (provided, provided),
+            ["carrier=open-holder-load"] = (provided, provided),
+            ["carrier=open-two-urls"] = ((("ok 1", "ok 1", "ok S[1, 1]", "ok 1"), "exported"), (("ok 1", "ok 1", "ok S[1, 1]", "ok 1"), "exported")),
+            ["carrier=row"] = (constant, constant),
+            ["carrier=cut-row"] = (constant, holderRead),
+            ["carrier=cut-member"] = (constant, holderRead),
+            ["carrier=cut-open"] = (constant, holderRead),
+        };
+        var one = $"providers 1; identities 1; fetched {CensusGrid.CarrierUrl}; unqualified clean";
+        var none = $"providers 0; identities 1; fetched {CensusGrid.CarrierUrl}; unqualified clean";
+        var verdicts = new Dictionary<string, string>
+        {
+            ["carrier=open-same-url"] = one,
+            ["carrier=open-holder-load"] = one,
+            ["carrier=open-two-urls"] = $"providers 2; identities 2; fetched {CensusGrid.CarrierCopyUrl},{CensusGrid.CarrierUrl}; unqualified AmbiguousOpen",
+            ["carrier=row"] = none,
+            ["carrier=cut-row"] = none,
+            ["carrier=cut-member"] = none,
+            ["carrier=cut-open"] = one,
+        };
+        // The module's one row names an algorithm, and nothing else is a row.
+        Assert.EndsWith("public V = W + 0\nW\n", CensusGrid.CarrierText, StringComparison.Ordinal);
+        foreach (var @case in family)
+        {
+            var cut = @case.Id.StartsWith("carrier=cut-", StringComparison.Ordinal);
+            string[] holderPath = cut ? ["F", "M"] : ["ModA"];
+            Assert.Equal(("carrier", 0), (@case.Kind, @case.Dims.Count));
+            string[] urls = @case.Id == "carrier=open-two-urls" ? [CensusGrid.CarrierUrl, CensusGrid.CarrierCopyUrl] : [CensusGrid.CarrierUrl];
+            Assert.Equal(urls, @case.Modules!.Select(m => m.Key));
+            Assert.All(@case.Modules!, module => Assert.Equal(CensusGrid.CarrierText, module.Value));
+            Assert.Equal(verdicts[@case.Id], CensusGrid.ExpectedProviderVerdict(@case));
+
+            // The loaded holder is an alias that keeps the module mark: a carrier, never a transparent reference.
+            var root = (await SourceProvenance.ParseValidAsync(@case.Body + CensusRunner.Inside5 + "\n", CensusRunner.ModuleServer(@case).Options())).Root;
+            var holder = CensusRunner.Find(root, holderPath)!;
+            var loaded = Assert.IsType<Algorithm.Alias>(holder.Value);
+            Assert.True(loaded.IsModuleRoot && !loaded.IsReference, @case.Id);
+            Assert.Equal("exported", CensusRunner.Describe(holder));
+            Assert.Equal(@case.Id == "carrier=open-two-urls" ? 2 : 1, CensusRunner.ModuleIdentities(root));
+
+            // The ordinary alias twin loads nothing: the same text in braces at the holder's place, an ordinary carrier.
+            var twin = CensusGrid.CarrierTwin(@case);
+            Assert.Equal((@case.Id, "carrier-twin"), (twin.Id, twin.Kind));
+            Assert.Null(twin.Modules);
+            Assert.DoesNotContain("load(", twin.Body, StringComparison.Ordinal);
+            Assert.Contains($"{holderPath[^1]} = {{\n{CensusGrid.Indent(CensusGrid.CarrierText.TrimEnd('\n'), cut ? 4 : 2)}\n", twin.Body, StringComparison.Ordinal);
+            var twinRoot = SourceProvenance.ParseValid(twin.Body + CensusRunner.Inside5 + "\n").Root;
+            var written = Assert.IsType<Algorithm.Alias>(CensusRunner.Find(twinRoot, holderPath)!.Value);
+            Assert.True(!written.IsModuleRoot && !written.IsReference, @case.Id);
+            Assert.Equal(0, CensusRunner.ModuleIdentities(twinRoot));
+
+            var result = await CensusRunner.Run(@case, collectLean: false);
+            Assert.Null(result.Skipped);
+            Assert.True(result.Gaps.Count == 0, $"{@case.Id}: {string.Join("\n", result.Gaps.Select(gap => gap.Line))}");
+            Assert.Empty(result.UnknownName);
+            Assert.Empty(result.Impossible);
+            Assert.Equal(verdicts[@case.Id], result.ProviderVerdict);
+            Assert.Equal(expected[@case.Id].Module, (Probes(result.Outcomes), result.Metadata["A"]));
+            var (twinOutcomes, twinMetadata) = CensusRunner.TwinFacts(twin, ProbeLabels);
+            Assert.Equal(expected[@case.Id].Ordinary, (Probes(twinOutcomes), twinMetadata["A"]));
+            // The twin relation is those two rows' difference: none, or the cut's five lines.
+            Assert.Equal(cut ? 5 : 0, CensusGrid.CarrierContrast(@case).Count);
+            Assert.Equal(cut ? charged : "exported", CensusRunner.Describe(CensusRunner.Find(twinRoot, holderPath)));
+        }
+
+        // The same-URL twin's second holder is a transparent reference to the written carrier: one declaration, one provider.
+        var sameUrl = SourceProvenance.ParseValid(CensusGrid.CarrierTwin(CarrierCase("open-same-url")).Body + CensusRunner.Inside5 + "\n").Root;
+        Assert.True(Assert.IsType<Algorithm.Alias>(CensusRunner.Find(sameUrl, ["ModB"])!.Value).IsReference);
+
+        // The distinct-URL control: the unqualified read is AmbiguousOpen in the loaded program and in the twin's two carriers.
+        var control = CarrierCase("open-two-urls");
+        foreach (var program in new[] { control, CensusGrid.CarrierTwin(control) })
+        {
+            var unqualified = CensusGrid.ModuleUnqualifiedRead(program);
+            Assert.Equal(program.Body.Replace("A = ModA.X + 0", "A = X + 0", StringComparison.Ordinal), unqualified.Body);
+            Assert.NotEqual(program.Body, unqualified.Body);
+            var source = unqualified.Body + CensusRunner.Inside5 + "\n";
+            var parsed = program.Modules is null ? Parser.Parse(source) : await Parser.ParseAsync(source, CensusRunner.ModuleServer(unqualified).Options());
+            Assert.Equal(DiagnosticCode.AmbiguousOpen, Assert.Single(parsed.Diagnostics, d => d.Severity == DiagnosticSeverity.Error).Code);
+        }
+        // Every other case reads X unqualified already, or not at all.
+        Assert.All(family.Where(c => c.Id != control.Id), c => Assert.Same(c, CensusGrid.ModuleUnqualifiedRead(c)));
+    }
+
+    /// <summary>
+    /// The carrier checks cannot pass by accident: a distinct-URL control that loads one canonical URL twice shows one
+    /// provider and a clean unqualified read (not the control's verdict), a missing download is a validity difference (the
+    /// ordinary twin parses), a carrier that read its holder's chain would equal its twin and miss every difference of the
+    /// cut, and a twin that differs where the relation says equal is a difference of its own class.
+    /// </summary>
+    [Fact]
+    public async Task CarrierFamily_AMergedControlAMissingDownloadOrALostCutCannotPass()
+    {
+        var control = CarrierCase("open-two-urls");
+        var merged = control with
+        {
+            Body = control.Body.Replace($"ModB = load('{CensusGrid.CarrierCopyUrl}')", $"ModB = load('{CensusGrid.CarrierUrl}')", StringComparison.Ordinal),
+        };
+        Assert.NotEqual(control.Body, merged.Body);
+        var result = await CensusRunner.Run(merged, collectLean: false);
+        Assert.Null(result.Skipped);
+        Assert.Equal($"providers 1; identities 1; fetched {CensusGrid.CarrierUrl}; unqualified clean", result.ProviderVerdict);
+        Assert.Contains(result.Gaps, g => g is { Check: "P", Class: "provider-verdict-differs" });
+
+        var sameUrl = CarrierCase("open-same-url");
+        var missing = await CensusRunner.Run(sameUrl with { Modules = [new(CensusGrid.CarrierCopyUrl, CensusGrid.CarrierText)] }, collectLean: false);
+        Assert.NotNull(missing.Skipped);
+        var gap = Assert.Single(missing.Gaps);
+        Assert.Equal(("P", "module-validity-differs"), (gap.Check, gap.Class));
+
+        var cut = CarrierCase("cut-row");
+        var observed = await CensusRunner.Run(cut, collectLean: false);
+        var (twinOutcomes, twinMetadata) = CensusRunner.TwinFacts(CensusGrid.CarrierTwin(cut), ProbeLabels);
+        Assert.Empty(CensusRunner.CarrierTwinGaps(cut.Id, CensusGrid.CarrierContrast(cut), observed.Outcomes, observed.Metadata, twinOutcomes, twinMetadata));
+        var lost = CensusRunner.CarrierTwinGaps(cut.Id, CensusGrid.CarrierContrast(cut), twinOutcomes, twinMetadata, twinOutcomes, twinMetadata);
+        Assert.Equal(5, lost.Count);
+        Assert.All(lost, g => Assert.Equal(("P", "carrier-cut-missing", cut.Id), (g.Check, g.Class, g.Id)));
+        Assert.Equal(["-", "-", "-", "-", "A"], lost.Select(g => g.Reader));
+
+        var row = CarrierCase("row");
+        var differing = CensusRunner.CarrierTwinGaps(row.Id, CensusGrid.CarrierContrast(row), observed.Outcomes, observed.Metadata, twinOutcomes, twinMetadata);
+        Assert.Equal(5, differing.Count);
+        Assert.All(differing, g => Assert.Equal(("P", "carrier-twin-differs", row.Id), (g.Check, g.Class, g.Id)));
+        Assert.Throws<ArgumentException>(() => CensusGrid.CarrierTwin(DeconstructionCase("inline-capture")));
+    }
+
+    /// <summary>
+    /// U2's unknown-required-name arm, on HOST-BUILT trees (the front end charges both readers, so no source of the census
+    /// shows the arm). A reader whose only charge is its fallback's read of <c>y</c> is exported by the host: its escaped
+    /// read then fails with <c>UnknownName: y</c>, no access refusal. With parameters of its own the reader is not cached
+    /// across activations, so U1 sees consistent values and no existing check reports anything; the arm records the read
+    /// (<c>unknown-name-alone</c>). A parameterless reader is cached, U1 reports the wrong value, and the arm records the
+    /// same reader beside it (<c>unknown-name-with-wrong-value</c>). Neither observation is a gap.
+    /// </summary>
+    [Fact]
+    public async Task UnknownRequiredNameArm_SeesTheReadTheOtherChecksMiss()
+    {
+        static Func<Algorithm.User, Algorithm.User> Exported(string[] reader) => root =>
+        {
+            var property = CensusRunner.Find(root, reader)!;
+            return CensusRunner.Replace(root, reader, current => CensusRunner.Requirements(property).Aggregate(current, CensusRunner.Without));
+        };
+
+        var parameterized = CensusGrid.Build(["rt-capture", "value", "none", "param", "outside", "mid-fallback", "fallback"]);
+        var charged = await CensusRunner.Run(parameterized, collectLean: false);
+        Assert.Equal("LocalOnlyCapturedAncestorParameters[y@0]", charged.Metadata["A"]);
+        Assert.Empty(charged.Gaps);
+        Assert.Empty(charged.UnknownName);
+
+        var uncached = await CensusRunner.Run(parameterized, collectLean: false, hostBuilt: Exported(ReaderA));
+        Assert.Equal("exported", uncached.Metadata["A"]);
+        Assert.Equal(("ok 5", "ok 7", "ok S[5, 7]", "err unknownName:y"), Probes(uncached.Outcomes));
+        Assert.Empty(uncached.Gaps);
+        Assert.Empty(uncached.Impossible);
+        Assert.Equal(new CensusGap("U", "unknown-name-alone", parameterized.Id, "A", "err unknownName:y; requires y of F; inside=ok 5 / ok 7 / ok S[5, 7]"),
+            Assert.Single(uncached.UnknownName));
+
+        var plain = CensusGrid.Build(["rt-capture", "value", "none", "plain", "outside", "mid-fallback", "fallback"]);
+        var cached = await CensusRunner.Run(plain, collectLean: false, hostBuilt: Exported(ReaderA));
+        Assert.Equal("exported", cached.Metadata["A"]);
+        var wrong = Assert.Single(cached.Gaps);
+        Assert.Equal(("U", "under-charge-wrong-value"), (wrong.Check, wrong.Class));
+        var seen = Assert.Single(cached.UnknownName);
+        Assert.Equal(("U", "unknown-name-with-wrong-value", "A"), (seen.Check, seen.Class, seen.Reader));
+        Assert.EndsWith("case verdicts=U/under-charge-wrong-value", seen.Detail, StringComparison.Ordinal);
+
+        // The same exported parameterized reader on the .Algorithm route disagrees with its source twin in R.
+        // Its escaped unknown name is additional evidence, while the case already has a verdict.
+        var routed = CensusGrid.Build(["rt-alg-call", "value", "none", "param", "outside", "mid-fallback", "fallback"]);
+        var overlap = await CensusRunner.Run(routed, collectLean: false, hostBuilt: Exported(ReaderA));
+        Assert.Contains(overlap.Gaps, g => g.Check == "R");
+        var alongsideTwin = Assert.Single(overlap.UnknownName);
+        Assert.Equal("unknown-name-with-other-verdict", alongsideTwin.Class);
+        Assert.Contains("case verdicts=R/", alongsideTwin.Detail, StringComparison.Ordinal);
+
+        // The arm names a parameter an ENCLOSING level binds: no other unknown name, and never the reader's own parameter.
+        var tree = SourceProvenance.ParseValid(parameterized.Body + CensusRunner.Inside5 + "\n").Root;
+        Assert.Equal("y of F", CensusRunner.UnknownRequiredName(tree, ReaderA, "err unknownName:y"));
+        Assert.Null(CensusRunner.UnknownRequiredName(tree, ReaderA, "err unknownName:z"));
+        Assert.Null(CensusRunner.UnknownRequiredName(tree, ReaderA, "err unknownName:Undeclared"));
+        Assert.Null(CensusRunner.UnknownRequiredName(tree, ReaderA, "err localOnlyProperty:y"));
+        Assert.Null(CensusRunner.UnknownRequiredName(tree, ["F", "Absent", "A"], "err unknownName:y"));
+    }
+
     /// <summary>
     /// The HEAD probe (<see cref="CensusHeadProbe"/>, the tracked source the <c>check-head</c> scratch project compiles) writes
     /// exactly the protocol <see cref="ExposureCensusTests.HeadOutput"/> reads: run here against today's KatLang, its metadata

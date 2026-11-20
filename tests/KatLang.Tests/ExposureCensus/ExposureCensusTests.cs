@@ -35,20 +35,33 @@ namespace KatLang.Tests.ExposureCensus;
 /// gives, and every cell to parse exactly when its twin does; the stored cover is <c>census-module-subset.txt</c>. The extension
 /// heads have W families of their own (<see cref="CensusWork.ExtensionFamilies"/>).</para>
 ///
+/// <para>THE FAMILIES OF 2026-11-20, fixed cases beside the grids, whose cells, covers and counts they leave alone. The
+/// deconstruction family (<see cref="CensusGrid.DeconstructionFamilies"/>) writes the extension's routes over a block in a
+/// deconstruction right-hand side, where the block's capture positions count the synthetic source level; check T compares
+/// each case with its rows twin. Four cases expose the lost level at runtime. The static model also detects it in two
+/// existing extension-cover cells whose C# outcomes stay the same. The carrier
+/// family (<see cref="CensusGrid.CarrierFamilies"/>) loads a module whose single output is an alias carrier, with a same-URL
+/// and a distinct-URL control; check P requires each case's provider verdict and its relation to the ordinary alias twin,
+/// equality or the module root's cut. Both run in the default suite, in <c>full-extension</c> and in the extension's model
+/// sample. U2's unknown-required-name arm (an exported reader whose escaped read fails with <c>UnknownName</c> of an
+/// enclosing level's parameter) has a separate observation list (<see cref="CensusCaseResult.UnknownName"/>).
+/// The default subsets, fixed families and both full runtime modes require this list to be empty.</para>
+///
 /// <para>Modes (<c>KATLANG_EXPOSURE_CENSUS</c>; output directory <c>KATLANG_EXPOSURE_CENSUS_OUT</c>):
 /// <c>full</c> — every valid case of the grid, the fixed cases and the grid's work families, compared with the ratchet
 /// restricted to them (it also writes the recomputed grid cover and the model sample's retained witnesses, the regeneration
 /// path of the stored files, under the names of earlier runs);
-/// <c>full-extension</c> — every valid cell of the extension, the settlement families, every module cell and the extension
-/// heads' work families, compared with the ratchet restricted to them (it writes the recomputed extension and module covers;
-/// outputs <c>full-extension-*.txt</c> and <c>full-module-*.txt</c>); <c>full</c> and <c>full-extension</c> together are the
-/// whole census, and each requires every ratchet line to name a case or family the census has;
+/// <c>full-extension</c> — every valid cell of the extension, the settlement families, every module cell, the deconstruction
+/// and carrier families and the extension heads' work families, compared with the ratchet restricted to them (it writes the
+/// recomputed extension and module covers; outputs <c>full-extension-*.txt</c>, <c>full-module-*.txt</c> and
+/// <c>full-family-*.txt</c>); <c>full</c> and <c>full-extension</c> together are the whole census, and each requires every
+/// ratchet line to name a case or family the census has;
 /// <c>work</c> — every work family alone;
 /// <c>twins</c> — every block-headed reference cell against its declared copy, the same literal given a name
 /// (owner decisions Q3, 2026-11-14, and D2, 2026-11-15; the default suite compares the stored cover's cells);
 /// <c>emit-lean</c> — writes the encodings of the grid's model sample (its 3-way subset, the fixed cases and the retained
-/// witnesses) and of the extension's (the extension cover, the settlement families and the module cover) as Lean batch files
-/// for <c>lake env lean</c>;
+/// witnesses) and of the extension's (the extension cover, the settlement families, the module cover and the deconstruction
+/// and carrier families) as Lean batch files for <c>lake env lean</c>;
 /// <c>check-lean</c> — reads both samples' batch outputs and compares M1–M4 with the list;
 /// <c>emit-head</c> — writes every valid case's probe programs and module fixtures for the HEAD a4b545e8 probe,
 /// the probe's scratch project (<see cref="CensusHeadProbe"/>, tracked in this folder) and the
@@ -170,9 +183,23 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
 
     // The extension's model sample (2026-11-19), emitted into batches of its own so that the grid's batches keep their names and
     // contents: the stored extension cover, the settlement families and the stored module cover, whose trees hold the loaded
-    // module graph exactly as the asynchronous front end parsed it.
+    // module graph exactly as the asynchronous front end parsed it, and then the deconstruction and carrier families
+    // (2026-11-20), appended so that every earlier encoding keeps its batch and its place.
     private static IReadOnlyList<CensusCase> ExtensionModelCases()
-        => ExtensionSubset().Concat(CensusGrid.SettlementFamilies()).Concat(ModuleSubset()).ToArray();
+        => ExtensionSubset().Concat(CensusGrid.SettlementFamilies()).Concat(ModuleSubset()).Concat(FamilyCases()).ToArray();
+
+    /// <summary>
+    /// The families of 2026-11-20 in their common enumeration order: the deconstruction family
+    /// (<see cref="CensusGrid.DeconstructionFamilies"/>), then the carrier family (<see cref="CensusGrid.CarrierFamilies"/>).
+    /// </summary>
+    private static IReadOnlyList<CensusCase> FamilyCases() => [.. CensusGrid.DeconstructionFamilies(), .. CensusGrid.CarrierFamilies()];
+
+    // The unknown-required-name arm of U2 (CensusRunner.Run), evaluated apart from the gaps: no case of the census shows it
+    // in the stored covers or either full runtime sweep. Under the intermediate-edge fallback mutation, 3,745 extension
+    // cases produced observations. U1 flagged 2,553, including 298 also flagged by T. The remaining 1,192 had no gap
+    // line, including 192 rt-capture cases. The default and full runtime checks pin the empty list. Its positive control is host-built
+    // (ExposureCensusHarnessTests.UnknownRequiredNameArm_SeesTheReadTheOtherChecksMiss).
+    private static List<string> UnknownNames(IReadOnlyList<CensusCaseResult> results) => results.SelectMany(r => r.UnknownName).Select(g => g.Line).ToList();
 
     private const string GridLeanPrefix = CensusLean.GridPrefix;
     private const string ExtensionLeanPrefix = "census-extension";
@@ -214,6 +241,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         yield return $"valid\t{results.Count(r => r.Skipped is null)}";
         yield return $"inside-works\t{results.Count(r => r.Skipped is null && r.InsideWorks)}";
         yield return $"impossible-check\t{results.Sum(r => r.Impossible.Count)}";
+        yield return $"unknown-required-name\t{results.Sum(r => r.UnknownName.Count)}";
         yield return $"unsupplied-requirement-cases\t{results.Count(r => r.UnsuppliedRequirements.Count > 0)}";
         foreach (var group in results.SelectMany(r => r.Gaps).GroupBy(g => $"{g.Check}\t{g.Class}").OrderBy(g => g.Key, StringComparer.Ordinal))
             yield return $"gaps\t{group.Key}\t{group.Count()}";
@@ -254,6 +282,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("default-gaps.txt", results.SelectMany(r => r.Gaps).Select(g => g.Line));
         WriteIfRequested("default-observations.txt", Observations(results));
         WriteIfRequested("default-impossible.txt", results.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("default-unknown-required-name.txt", UnknownNames(results));
         WriteIfRequested("default-unsupplied-requirements.txt", Unsupplied(results));
 
         // Generation is total over the subset: a case that does not parse is a skip, never a silent drop.
@@ -261,6 +290,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         AssertMatchesRatchet(results.SelectMany(r => r.Gaps).ToList(), cases.Select(c => c.Id).ToHashSet(StringComparer.Ordinal), CSharpChecks, "default subset");
         Assert.Equal(ImpossibleObservationsInDefault, results.Sum(r => r.Impossible.Count));
         Assert.Empty(Unsupplied(results));
+        Assert.Empty(UnknownNames(results));
     }
 
     [Fact]
@@ -305,6 +335,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("default-extension-gaps.txt", results.SelectMany(r => r.Gaps).Select(g => g.Line));
         WriteIfRequested("default-extension-observations.txt", Observations(results));
         WriteIfRequested("default-extension-impossible.txt", results.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("default-extension-unknown-required-name.txt", UnknownNames(results));
         WriteIfRequested("default-extension-unsupplied-requirements.txt", Unsupplied(results));
 
         Assert.Equal(cases.Length, results.Count);
@@ -314,6 +345,46 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
             "default extension subset");
         Assert.Equal(ExtensionImpossibleObservationsInDefault, results.Sum(r => r.Impossible.Count));
         Assert.Empty(Unsupplied(results));
+        Assert.Empty(UnknownNames(results));
+    }
+
+    // ── Default mode: the deconstruction and carrier families (2026-11-20) ────────────────────────
+
+    /// <summary>
+    /// The deconstruction family (<see cref="CensusGrid.DeconstructionFamilies"/>: the extension's routes with a block written
+    /// in a deconstruction right-hand side, each against its rows twin) and the carrier family
+    /// (<see cref="CensusGrid.CarrierFamilies"/>: a source-loaded module whose single output is an alias carrier, with its
+    /// same-URL and distinct-URL controls, each against its ordinary alias twin). Every case is valid, every carrier case
+    /// shows its provider verdict, and their gaps equal the ratchet restricted to them: none.
+    /// </summary>
+    [Fact]
+    public async Task DefaultFamilies_GapsEqualTheRatchet()
+    {
+        var clock = Stopwatch.StartNew();
+        var deconstruction = CensusGrid.DeconstructionFamilies();
+        var carriers = CensusGrid.CarrierFamilies();
+        var cases = FamilyCases();
+        var results = await RunAll(cases, collectLean: false);
+        clock.Stop();
+        output.WriteLine($"deconstruction family {deconstruction.Count} + carrier family {carriers.Count}; {clock.Elapsed.TotalSeconds:F1} s");
+        Assert.All(results, r => Assert.Null(r.Skipped));
+        foreach (var line in Summary(results)) output.WriteLine(line);
+        WriteIfRequested("default-family-summary.txt", Summary(results).Prepend($"time\t{clock.Elapsed.TotalSeconds:F1} s\tcases\t{cases.Count}"));
+        WriteIfRequested("default-family-gaps.txt", results.SelectMany(r => r.Gaps).Select(g => g.Line));
+        WriteIfRequested("default-family-observations.txt", Observations(results));
+        WriteIfRequested("default-family-unknown-required-name.txt", UnknownNames(results));
+
+        Assert.Equal(cases.Count, results.Count);
+        Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
+        // Check T ran on every deconstruction case and check R on the one that has a static route; check P on every carrier.
+        Assert.All(deconstruction, c => Assert.True(CensusGrid.HasRowsTwin(c), c.Id));
+        Assert.Contains(deconstruction, CensusRunner.HasStaticRouteTwin);
+        Assert.All(results.Where(r => r.Case.Kind == "carrier"), r => Assert.Equal(CensusGrid.ExpectedProviderVerdict(r.Case), r.ProviderVerdict));
+        AssertMatchesRatchet(results.SelectMany(r => r.Gaps).ToList(), cases.Select(c => c.Id).ToHashSet(StringComparer.Ordinal), CSharpChecks,
+            "default families");
+        Assert.Empty(results.SelectMany(r => r.Impossible));
+        Assert.Empty(Unsupplied(results));
+        Assert.Empty(UnknownNames(results));
     }
 
     [Fact]
@@ -374,6 +445,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("default-module-gaps.txt", results.SelectMany(r => r.Gaps).Select(g => g.Line));
         WriteIfRequested("default-module-observations.txt", Observations(results));
         WriteIfRequested("default-module-impossible.txt", results.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("default-module-unknown-required-name.txt", UnknownNames(results));
         WriteIfRequested("default-module-unsupplied-requirements.txt", Unsupplied(results));
 
         Assert.Equal(cases.Count, results.Count);
@@ -384,6 +456,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
             "default module subset");
         Assert.Equal(ModuleImpossibleObservationsInDefault, results.Sum(r => r.Impossible.Count));
         Assert.Empty(Unsupplied(results));
+        Assert.Empty(UnknownNames(results));
     }
 
     [Fact]
@@ -518,6 +591,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         ids.UnionWith(CensusGrid.GenerateExtension().Cases.Select(c => c.Id));
         ids.UnionWith(CensusGrid.SettlementFamilies().Select(c => c.Id));
         ids.UnionWith(CensusGrid.GenerateModules().Cases.Select(c => c.Id));
+        ids.UnionWith(FamilyCases().Select(c => c.Id));
         ids.UnionWith(CensusWork.Families().Concat(CensusWork.ExtensionFamilies()).Select(f => f.Family.Id));
         ids.UnionWith([CensusWork.BoxSelfCheck().Id, CensusWork.DischargeSelfCheck().Id]);
         ids.UnionWith(DepthFamilies().Select(d => d.Id));
@@ -587,6 +661,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("full-skipped.txt", results.Where(r => r.Skipped is not null).Select(r => $"{r.Case.Id}\t{r.Skipped}"));
         WriteIfRequested("full-excluded.txt", excluded.Select(e => $"{e.Id}\t{e.Reason}"));
         WriteIfRequested("full-impossible.txt", results.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("full-unknown-required-name.txt", UnknownNames(results));
         WriteIfRequested("full-unsupplied-requirements.txt", Unsupplied(results));
 
         Assert.Equal(cover.Select(c => c.Id), Subset().Select(c => c.Id));
@@ -597,12 +672,14 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
             new HashSet<string>(CSharpChecks.Append("W"), StringComparer.Ordinal), "full");
         Assert.Equal(ImpossibleObservationsInFull, results.Sum(r => r.Impossible.Count));
         Assert.Empty(Unsupplied(results));
+        Assert.Empty(UnknownNames(results));
     }
 
     /// <summary>
     /// <c>full-extension</c> mode (2026-11-19): every valid cell of the extension (<see cref="CensusGrid.GenerateExtension"/>),
-    /// the settlement families, every module cell (<see cref="CensusGrid.GenerateModules"/>) and the extension heads' W
-    /// families, compared with the ratchet restricted to them. It writes the recomputed extension and module covers; the
+    /// the settlement families, every module cell (<see cref="CensusGrid.GenerateModules"/>), the deconstruction and carrier
+    /// families (<see cref="FamilyCases"/>, 2026-11-20) and the extension heads' W families, compared with the ratchet
+    /// restricted to them. It writes the recomputed extension and module covers; the
     /// extension cover is taken over the triples the valid grid lacks, which are the stored grid cover's (full mode keeps that
     /// cover equal to its recomputation and its triple count pinned). Every module cell parses exactly when its provider twin
     /// does, and every valid one shows its provider verdict.
@@ -635,6 +712,11 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("census-module-subset.txt", moduleCover.Select(c => c.Id).Prepend(ModuleSubsetHeader));
         var moduleGaps = moduleResults.SelectMany(r => r.Gaps).ToList();
 
+        // The deconstruction and carrier families (2026-11-20): fixed cases, each with its twin.
+        var familyCases = FamilyCases();
+        var familyResults = await RunAll(familyCases, collectLean: false);
+        var familyGaps = familyResults.SelectMany(r => r.Gaps).ToList();
+
         var workGaps = new List<CensusGap>();
         var work = RunExtensionWork(workGaps);
         clock.Stop();
@@ -655,6 +737,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("full-extension-skipped.txt", extensionResults.Where(r => r.Skipped is not null).Select(r => $"{r.Case.Id}\t{r.Skipped}"));
         WriteIfRequested("full-extension-excluded.txt", extensionExcluded.Select(e => $"{e.Id}\t{e.Reason}"));
         WriteIfRequested("full-extension-impossible.txt", extensionResults.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("full-extension-unknown-required-name.txt", UnknownNames(extensionResults));
         WriteIfRequested("full-extension-unsupplied-requirements.txt", Unsupplied(extensionResults));
         WriteIfRequested("full-extension-work.txt", work);
 
@@ -672,7 +755,18 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         WriteIfRequested("full-module-skipped.txt", moduleResults.Where(r => r.Skipped is not null).Select(r => $"{r.Case.Id}\t{r.Skipped}"));
         WriteIfRequested("full-module-excluded.txt", moduleExcluded.Select(e => $"{e.Id}\t{e.Reason}"));
         WriteIfRequested("full-module-impossible.txt", moduleResults.SelectMany(r => r.Impossible).Select(g => g.Line));
+        WriteIfRequested("full-module-unknown-required-name.txt", UnknownNames(moduleResults));
         WriteIfRequested("full-module-unsupplied-requirements.txt", Unsupplied(moduleResults));
+
+        var familySummary = Summary(familyResults)
+            .Prepend($"deconstruction-family\t{familyCases.Count(c => c.Kind == "deconstruction-family")}\tcarrier-family\t{familyCases.Count(c => c.Kind == "carrier")}")
+            .ToArray();
+        foreach (var line in familySummary) output.WriteLine("family " + line);
+        WriteIfRequested("full-family-summary.txt", familySummary);
+        WriteIfRequested("full-family-gaps.txt", familyGaps.Select(g => g.Line));
+        WriteIfRequested("full-family-observations.txt", Observations(familyResults));
+        WriteIfRequested("full-family-verdicts.txt", familyResults.Where(r => r.ProviderVerdict is not null).Select(r => $"{r.Case.Id}\t{r.ProviderVerdict}"));
+        WriteIfRequested("full-family-unknown-required-name.txt", UnknownNames(familyResults));
 
         Assert.Equal(extensionCover.Select(c => c.Id), ExtensionSubset().Select(c => c.Id));
         Assert.Equal(moduleCover.Select(c => c.Id), ModuleSubset().Select(c => c.Id));
@@ -682,14 +776,20 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         Assert.All(extensionResults.Where(r => r.Case.Kind == "settlement"), r => Assert.Null(r.Skipped));
         // Every valid module cell shows its provider verdict (a skipped one whose twin parses is a P gap of its own).
         Assert.All(moduleResults.Where(r => r.Skipped is null), r => Assert.NotNull(r.ProviderVerdict));
+        // Every family case is valid, and every carrier case shows its provider verdict.
+        Assert.All(familyResults, r => Assert.Null(r.Skipped));
+        Assert.All(familyResults.Where(r => r.Case.Kind == "carrier"), r => Assert.Equal(CensusGrid.ExpectedProviderVerdict(r.Case), r.ProviderVerdict));
         AssertRatchetNamesKnownIds();
-        AssertMatchesRatchet([.. extensionGaps, .. moduleGaps, .. workGaps],
-            extensionCases.Concat(modules).Select(c => c.Id).Concat(work.Select(w => w.Split('\t')[0])).ToHashSet(StringComparer.Ordinal),
+        AssertMatchesRatchet([.. extensionGaps, .. moduleGaps, .. familyGaps, .. workGaps],
+            extensionCases.Concat(modules).Concat(familyCases).Select(c => c.Id).Concat(work.Select(w => w.Split('\t')[0])).ToHashSet(StringComparer.Ordinal),
             new HashSet<string>(CSharpChecks.Append("W"), StringComparer.Ordinal), "full-extension");
         Assert.Equal(ExtensionImpossibleObservationsInFull, extensionResults.Sum(r => r.Impossible.Count));
         Assert.Equal(ModuleImpossibleObservationsInFull, moduleResults.Sum(r => r.Impossible.Count));
+        Assert.Empty(familyResults.SelectMany(r => r.Impossible));
         Assert.Empty(Unsupplied(extensionResults));
         Assert.Empty(Unsupplied(moduleResults));
+        Assert.Empty(Unsupplied(familyResults));
+        Assert.Empty(UnknownNames([.. extensionResults, .. moduleResults, .. familyResults]));
     }
 
     // ── Twins: a block-headed reference resolves like a named one (owner decision Q3, 2026-11-14) ─────
@@ -793,7 +893,8 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
     /// <summary>
     /// <c>emit-lean</c>: the grid's model sample (<see cref="ModelCases"/>) as <c>census-NNNN.lean</c> with <c>manifest.tsv</c>,
     /// the names and contents of earlier runs, and the extension's (<see cref="ExtensionModelCases"/>: the extension cover, the
-    /// settlement families and the module cover) as <c>census-extension-NNNN.lean</c> with <c>manifest-extension.tsv</c>.
+    /// settlement families, the module cover and the deconstruction and carrier families) as
+    /// <c>census-extension-NNNN.lean</c> with <c>manifest-extension.tsv</c>.
     /// </summary>
     [Fact]
     public async Task EmitLean_WritesTheEncodingBatches()
@@ -805,8 +906,15 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
             var items = results.SelectMany(r => r.Lean).ToList();
             var batches = CensusLean.Emit(items, OutDirectory, prefix);
             output.WriteLine($"{prefix}: {items.Count} encodings in {batches} batches ({results.Count(r => r.Skipped is null)} valid cases"
-                + $"{(results.Any(r => r.Case.Kind == "module") ? $", {results.Count(r => r.Case.Kind == "module")} module cells" : "")})");
+                + $"{string.Concat(SampleKinds(results).Select(kind => ", " + kind))})");
         }
+    }
+
+    // What a model sample holds beside grid cells: its module cells and its family cases (deconstruction and carrier).
+    private static IEnumerable<string> SampleKinds(IReadOnlyList<CensusCaseResult> results)
+    {
+        if (results.Count(r => r.Case.Kind == "module") is > 0 and var modules) yield return $"{modules} module cells";
+        if (results.Count(r => r.Case.Kind is "deconstruction-family" or "carrier") is > 0 and var families) yield return $"{families} family cases";
     }
 
     private static IEnumerable<(string Prefix, IReadOnlyList<CensusCase> Cases)> LeanSamples()
@@ -816,7 +924,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
     {
         var results = await RunAll(cases, collectLean: true, FullParallelism);
         Assert.All(results, r => Assert.Null(r.Skipped));
-        foreach (var r in results.Where(r => r.Case.Kind == "module"))
+        foreach (var r in results.Where(r => r.Case.Kind is "module" or "carrier"))
         {
             Assert.Equal(CensusGrid.ExpectedProviderVerdict(r.Case), r.ProviderVerdict);
             Assert.DoesNotContain(r.Gaps, g => g.Check == "P");
@@ -842,7 +950,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
             WriteIfRequested(prefix == GridLeanPrefix ? "lean-gaps.txt" : "lean-extension-gaps.txt", sample.Select(g => g.Line));
             var manifest = File.ReadLines(Path.Combine(OutDirectory, CensusLean.ManifestName(prefix))).ToArray();
             output.WriteLine($"{prefix}: {manifest.Length} encodings of {results.Count} cases"
-                + $"{(results.Any(r => r.Case.Kind == "module") ? $" ({results.Count(r => r.Case.Kind == "module")} module cells)" : "")}; gaps {sample.Count}");
+                + $"{(SampleKinds(results).ToArray() is { Length: > 0 } kinds ? $" ({string.Join(", ", kinds)})" : "")}; gaps {sample.Count}");
             foreach (var group in sample.GroupBy(g => $"{g.Check}\t{g.Class}").OrderBy(g => g.Key, StringComparer.Ordinal))
                 output.WriteLine($"{prefix}\t{group.Key}\t{group.Count()}");
             ids.UnionWith(manifest.Select(l => l.Split('\t')[1]));
@@ -878,7 +986,8 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         File.WriteAllText(Path.Combine(OutDirectory, "coverage.txt"),
             $"valid-grid={valid.Length}; triples={CensusGrid.TripleCount(valid)}; cover={cover.Count}; probes={gridProbes}\n"
             + $"valid-extension={validExtension.Length}; widened-triples={CensusGrid.Triples([.. valid, .. validExtension]).Count}; "
-            + $"extension-cover={extensionCover.Count}; settlement-families={CensusGrid.SettlementFamilies().Count}; probes={byScope["extension"].Count()}\n"
+            + $"extension-cover={extensionCover.Count}; settlement-families={CensusGrid.SettlementFamilies().Count}; "
+            + $"family-cases={FamilyCases().Count}; probes={byScope["extension"].Count()}\n"
             + $"valid-module={moduleCases}; probes={byScope["module"].Count()}\n");
         // The HEAD probe's scratch project (it compiles this folder's CensusHeadProbe.cs) and the commands that run it.
         CensusHeadProbe.WriteProject(Path.Combine(OutDirectory, "head-probe"), HeadProbeSourcePath);
@@ -890,12 +999,13 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
 
     /// <summary>
     /// Every probe program of every valid case, in the order the HEAD probe's output follows: the grid and the fixed cases
-    /// followed by the extension, settlement families and module cells. Module lines carry the same URL-to-source map
-    /// that the current parser receives.
+    /// followed by the extension, settlement families and module cells, and then the deconstruction and carrier families.
+    /// Module and carrier lines carry the same URL-to-source map that the current parser receives; the probe hands it to
+    /// <c>RunOptions.DownloadCode</c>, which a4b545e8 has with today's contract.
     /// </summary>
     private static CensusCase[] HeadCases()
         => [.. CensusGrid.Generate().Cases, .. CensusGrid.Fixed(), .. CensusGrid.GenerateExtension().Cases,
-            .. CensusGrid.SettlementFamilies(), .. CensusGrid.GenerateModules().Cases];
+            .. CensusGrid.SettlementFamilies(), .. CensusGrid.GenerateModules().Cases, .. FamilyCases()];
 
     private static async Task<List<string>> HeadPrograms()
     {
@@ -911,10 +1021,13 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         return rows.SelectMany(r => r).ToList();
     }
 
-    // A settlement family, or a grid id whose head or ending is an extension value (read from the id; no program is built).
+    // A settlement, deconstruction or carrier family case, or a grid id whose head or ending is an extension value (read from
+    // the id; no program is built).
     private static bool IsExtensionId(string id)
     {
-        if (id.StartsWith("settlement=", StringComparison.Ordinal)) return true;
+        if (id.StartsWith("settlement=", StringComparison.Ordinal) || id.StartsWith("deconstruction=", StringComparison.Ordinal)
+            || id.StartsWith("carrier=", StringComparison.Ordinal))
+            return true;
         var parts = id.Split('|');
         return parts.Length == CensusGrid.DimensionNames.Length && parts[0].StartsWith("head=", StringComparison.Ordinal)
             && parts[5].StartsWith("end=", StringComparison.Ordinal) && CensusGrid.IsExtension(parts[0]["head=".Length..], parts[5]["end=".Length..]);
@@ -965,7 +1078,7 @@ public sealed class ExposureCensusTests(ITestOutputHelper output)
         {
             var @case = cases[id];
             var o = head.Outcomes(id);
-            if (@case.Kind == "module")
+            if (@case.Kind is "module" or "carrier")
                 foreach (var (label, value) in o)
                     Assert.True(value.StartsWith("OK ", StringComparison.Ordinal) || value.StartsWith("FAIL ", StringComparison.Ordinal),
                         $"HEAD did not evaluate {id} {label}: {value}");
