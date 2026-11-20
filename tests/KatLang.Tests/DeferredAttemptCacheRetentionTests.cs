@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 
 namespace KatLang.Tests;
@@ -20,6 +21,12 @@ namespace KatLang.Tests;
 /// and requires them equal; the refused programs must report the same diagnostic at every selection and the
 /// published ones must keep their value. The sharing inside ONE attempt is unchanged, and is observed from inside
 /// a real attempt and through the journal directly.</para>
+///
+/// <para>THE EARLY TAKE-BACK (2026-11-19; the same resource rule, nothing observable changes). An attempt that
+/// reaches its freeze takes its entries back just before it (<c>DeferredModuleRegion.CompileLoadedBody</c>), so they
+/// are not part of the materialization's live peak, and keeps its claim on the cache until
+/// <c>RunCoreAsync</c> ends it. Between the two the cache refuses every add, before any table changes: an entry
+/// added then would be one no journal removes. The two direct tests of that state are at "The early take-back".</para>
 ///
 /// <para>Host conventions are those of <see cref="DeferredOpenTargetValidationTests"/>: an in-memory downloader
 /// that counts its calls, <c>AllowedHosts = ["modules.example"]</c>, a clean parse that downloads nothing, and the
@@ -559,6 +566,220 @@ public class DeferredAttemptCacheRetentionTests
         var kept = ElaboratedScopeLookup.CreateScope(unit, chain, completedContext: CompletedStructureContext.For(unit, chain));
         Assert.Same(kept, cache.CompletedLevels[(kept.CompletedContext!.Facts, kept.CompletedContext.Key)]);
         Assert.Equal(before.CompletedLevels + 1, cache.CompletedLevels.Count);
+    }
+
+    // ── The early take-back, and the writes the cache refuses after it ──────
+
+    /// <summary>
+    /// A published unit whose cache a test then drives directly, as
+    /// <see cref="MemberIndexAndBodyLevel_AreSharedInsideAnAttempt_AndTakenBackWithIt"/> does: the cache, the chain
+    /// recorded at the branch, the materialized unit, and the observations the parse gave the cache (it counts a
+    /// member-index build there).
+    /// </summary>
+    private static async Task<(OpenMemberIndexCache Cache, ElaboratedPropertyScope Chain, Algorithm Unit, FrontEndTraversalObservations Observations)>
+        PublishedUnitToDriveDirectly()
+    {
+        var rows = "  S = { public P = { public W = 4 } }\n" + "  Q(x) = 5\n";
+        for (var index = 1; index <= 3; index++)
+            rows += $"  A{index} = {{ open S\n    P.zz }}\n";
+        var host = new RunHost();
+        var stage = new SealStage();
+        var root = await ParseDeferred(Unit(rows + "  A1(Q)"), host, stage);
+        var region = RegionAt(root, "F");
+        var cache = CacheOf(region);
+        var before = Tables.Of(cache);
+        await AssertValue(root, 5);
+        Assert.True(region.TryGetMaterialized(out var unit));
+        // The published attempt took its entries back before its freeze and ended its claim afterwards.
+        Assert.Equal(before, Tables.Of(cache));
+        return (cache, region.Exposure!.Scope.PropertyScope, unit, stage.Observations);
+    }
+
+    /// <summary>
+    /// The body-level tables of a cache by parent, an EMPTY table included: <see cref="OpenMemberIndexCache.BodyLevelCount"/>
+    /// sums the bodies and cannot see a parent that holds none, which is what a refused add must not leave.
+    /// </summary>
+    private static System.Collections.IDictionary BodyLevelTablesByParent(OpenMemberIndexCache cache)
+        => (System.Collections.IDictionary)typeof(OpenMemberIndexCache)
+            .GetField("_bodyLevels", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(cache)!;
+
+    private static void AssertRefusedAfterTakeBack(Action add)
+    {
+        var error = Assert.Throws<InvalidOperationException>(add);
+        Assert.Contains("after it took its entries back", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TakeBackBeforeFreeze_RestoresEveryTable_AndEveryAddIsRefusedUntilTheAttemptEnds()
+    {
+        var (cache, chain, unit, observations) = await PublishedUnitToDriveDirectly();
+        Algorithm Body(string name) => unit.Properties.Single(property => property.Name == name).Value;
+        ElaboratedPropertyScope LevelOf(Algorithm body, ElaboratedPropertyScope parent)
+            => ElaboratedScopeLookup.CreateScope(body, parent, completedContext: CompletedStructureContext.For(body, parent));
+        var eagerFacts = chain.Root.CompletedContext!.Facts;
+
+        // What the cache holds before the attempt, one entry in each table. Written outside an attempt, so it stays,
+        // as the parse's own entries do.
+        var unitLevel = LevelOf(unit, chain);
+        var unitKey = (unitLevel.CompletedContext!.Facts, unitLevel.CompletedContext.Key);
+        Assert.NotSame(eagerFacts, unitKey.Facts);
+        Assert.Same(unitLevel, cache.CompletedLevels[unitKey]);
+        cache.OpenBlockHeadLevels.Add(unitKey.Facts, unitLevel);
+        var builds = observations.LookupOpenMemberIndexBuilds;
+        var heldIndex = cache.IndexOf(Body("S"));
+        Assert.Equal(builds + 1, observations.LookupOpenMemberIndexBuilds);
+        var heldBodyLevel = cache.BodyLevel(Body("S"), unitLevel);
+        var original = Tables.Of(cache);
+        var parents = BodyLevelTablesByParent(cache);
+        var originalParents = parents.Count;
+        builds = observations.LookupOpenMemberIndexBuilds;
+
+        void AssertOriginal()
+        {
+            Assert.Equal(original, Tables.Of(cache));
+            Assert.Same(heldIndex, cache.IndexOf(Body("S")));
+            Assert.Same(unitLevel, cache.CompletedLevels[unitKey]);
+            Assert.Same(unitLevel, cache.OpenBlockHeadLevels[unitKey.Facts]);
+            Assert.Equal(originalParents, parents.Count);
+            var held = Assert.IsAssignableFrom<System.Collections.IDictionary>(parents[unitLevel]);
+            Assert.Single(held);
+            Assert.Same(heldBodyLevel, held[Body("S")]);
+            Assert.Equal(builds, observations.LookupOpenMemberIndexBuilds);
+        }
+
+        // The attempt adds to all four tables: a body under a parent the cache knows, and one under a new parent.
+        var attempt = cache.BeginMaterializationAttempt();
+        var attemptLevel = LevelOf(Body("A2"), unitLevel);
+        var attemptKey = (attemptLevel.CompletedContext!.Facts, attemptLevel.CompletedContext.Key);
+        Assert.Same(attemptLevel, cache.CompletedLevels[attemptKey]);
+        cache.OpenBlockHeadLevels.Add(eagerFacts, chain.Root);
+        cache.IndexOf(Body("A1"));
+        cache.BodyLevel(Body("A1"), unitLevel);
+        cache.BodyLevel(Body("S"), attemptLevel);
+        var inside = Tables.Of(cache);
+        Assert.True(inside.CompletedLevels > original.CompletedLevels);
+        Assert.Equal(original.OpenBlockHeadLevels + 1, inside.OpenBlockHeadLevels);
+        Assert.Equal(original.MemberIndexes + 1, inside.MemberIndexes);
+        Assert.Equal(original.BodyLevels + 2, inside.BodyLevels);
+        Assert.Equal(originalParents + 1, parents.Count);
+        builds = observations.LookupOpenMemberIndexBuilds;
+
+        // The early take-back: every count is what it was, the attempt's entries are gone, the held ones are not.
+        attempt.TakeBackBeforeFreeze();
+        AssertOriginal();
+        Assert.False(cache.CompletedLevels.ContainsKey(attemptKey));
+        Assert.False(cache.OpenBlockHeadLevels.ContainsKey(eagerFacts));
+        Assert.False(parents.Contains(attemptLevel));
+
+        // A read of a held entry is what it always was.
+        Assert.Same(heldBodyLevel, cache.BodyLevel(Body("S"), unitLevel));
+        Assert.True(cache.CompletedLevels.TryGetValue(unitKey, out var foundLevel));
+        Assert.Same(unitLevel, foundLevel);
+        Assert.True(cache.OpenBlockHeadLevels.TryGetValue(unitKey.Facts, out var foundHead));
+        Assert.Same(unitLevel, foundHead);
+        AssertOriginal();
+
+        // So is a TryAdd of a key the table holds, by a caller or by a level that registers itself: a no-op.
+        Assert.False(cache.CompletedLevels.TryAdd(unitKey, attemptLevel));
+        Assert.False(cache.OpenBlockHeadLevels.TryAdd(unitKey.Facts, attemptLevel));
+        Assert.NotSame(unitLevel, LevelOf(unit, chain));
+        AssertOriginal();
+
+        // Every add is refused, before its table changes and before anything is built or counted for it.
+        AssertRefusedAfterTakeBack(() => cache.IndexOf(Body("A1")));
+        AssertOriginal();
+        // A new body under a parent the cache holds: the parent's table keeps exactly what it held. The unit is a
+        // body whose level registers no completed key of its own (shown below, where the add is accepted), so its
+        // refusal is the body-level table's own and not that of a level registering itself.
+        AssertRefusedAfterTakeBack(() => cache.BodyLevel(unit, unitLevel));
+        AssertOriginal();
+        AssertRefusedAfterTakeBack(() => cache.BodyLevel(Body("A1"), unitLevel));
+        AssertOriginal();
+        // A parent the cache has not seen: no table is created for it.
+        AssertRefusedAfterTakeBack(() => cache.BodyLevel(Body("S"), attemptLevel));
+        AssertOriginal();
+        Assert.False(parents.Contains(attemptLevel));
+        AssertRefusedAfterTakeBack(() => cache.CompletedLevels.TryAdd(attemptKey, attemptLevel));
+        AssertOriginal();
+        AssertRefusedAfterTakeBack(() => cache.CompletedLevels.Add(attemptKey, attemptLevel));
+        AssertOriginal();
+        // A new level registers itself in the completed levels: creating one under a key the cache lacks is the same add.
+        AssertRefusedAfterTakeBack(() => LevelOf(Body("A2"), unitLevel));
+        AssertOriginal();
+        Assert.False(cache.CompletedLevels.ContainsKey(attemptKey));
+        AssertRefusedAfterTakeBack(() => cache.OpenBlockHeadLevels.Add(eagerFacts, chain.Root));
+        AssertOriginal();
+        AssertRefusedAfterTakeBack(() => cache.OpenBlockHeadLevels.TryAdd(eagerFacts, chain.Root));
+        AssertOriginal();
+        Assert.False(cache.OpenBlockHeadLevels.ContainsKey(eagerFacts));
+
+        // The attempt still holds the cache: no other attempt begins, and a second early take-back changes nothing.
+        var second = Assert.Throws<InvalidOperationException>(() => cache.BeginMaterializationAttempt());
+        Assert.Contains("another attempt is still writing", second.Message, StringComparison.Ordinal);
+        attempt.TakeBackBeforeFreeze();
+        AssertRefusedAfterTakeBack(() => cache.IndexOf(Body("A1")));
+        AssertOriginal();
+
+        // The take-back that ends the attempt removes nothing more, and is idempotent; an early one after it is a no-op.
+        attempt.TakeBack();
+        AssertOriginal();
+        attempt.TakeBack();
+        attempt.TakeBackBeforeFreeze();
+        AssertOriginal();
+
+        // The cache takes the next attempt, whose adds are accepted and taken back as ever.
+        var next = cache.BeginMaterializationAttempt();
+        cache.IndexOf(Body("A1"));
+        cache.BodyLevel(Body("S"), attemptLevel);
+        Assert.Equal(original.MemberIndexes + 1, cache.Count);
+        Assert.Equal(original.BodyLevels + 1, cache.BodyLevelCount);
+        Assert.True(parents.Contains(attemptLevel));
+        // The body refused above under the held parent: accepted now, and its level registers no completed key.
+        var completedLevels = cache.CompletedLevels.Count;
+        cache.BodyLevel(unit, unitLevel);
+        Assert.Equal(completedLevels, cache.CompletedLevels.Count);
+        Assert.Equal(original.BodyLevels + 2, cache.BodyLevelCount);
+        builds = observations.LookupOpenMemberIndexBuilds;
+        next.TakeBack();
+        AssertOriginal();
+
+        // Outside an attempt nothing is refused and nothing is journaled: the entry stays.
+        cache.IndexOf(Body("A1"));
+        Assert.Equal(original.MemberIndexes + 1, cache.Count);
+    }
+
+    [Fact]
+    public async Task TakeBackBeforeFreeze_OfAnAttemptThatAddedNothing_RefusesWritesAllTheSame()
+    {
+        var (cache, chain, unit, _) = await PublishedUnitToDriveDirectly();
+        var body = unit.Properties.Single(static property => property.Name == "S").Value;
+        var original = Tables.Of(cache);
+        var parents = BodyLevelTablesByParent(cache);
+        var originalParents = parents.Count;
+
+        var attempt = cache.BeginMaterializationAttempt();
+        attempt.TakeBackBeforeFreeze();
+        Assert.Equal(original, Tables.Of(cache));
+
+        AssertRefusedAfterTakeBack(() => cache.IndexOf(body));
+        AssertRefusedAfterTakeBack(() => cache.BodyLevel(body, chain));
+        Assert.Equal(original, Tables.Of(cache));
+        Assert.Equal(originalParents, parents.Count);
+        Assert.Throws<InvalidOperationException>(() => cache.BeginMaterializationAttempt());
+
+        attempt.TakeBack();
+        Assert.Equal(original, Tables.Of(cache));
+        Assert.Equal(originalParents, parents.Count);
+
+        // An attempt that never takes its entries back early is unchanged: its adds are accepted until it ends.
+        var plain = cache.BeginMaterializationAttempt();
+        cache.IndexOf(body);
+        cache.BodyLevel(body, chain);
+        Assert.Equal(original.MemberIndexes + 1, cache.Count);
+        Assert.Equal(original.BodyLevels + 1, cache.BodyLevelCount);
+        plain.TakeBack();
+        Assert.Equal(original, Tables.Of(cache));
+        Assert.Equal(originalParents, parents.Count);
     }
 
     // ── Several units, and a region below a unit ────────────────────────────

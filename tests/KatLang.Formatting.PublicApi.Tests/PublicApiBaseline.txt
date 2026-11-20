@@ -2012,6 +2012,7 @@ public sealed record KatLang.RunResult.ParseFailure : KatLang.RunResult, System.
 public sealed record KatLang.RunResult.Success : KatLang.RunResult, System.IEquatable<KatLang.RunResult.Success>
   property public System.Collections.Generic.IReadOnlyList<System.Numerics.Decimal128> Atoms { get; }
   property protected override System.Type EqualityContract { get; }
+  property public System.Collections.Generic.IReadOnlyList<int> OutputRowCounts { get; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Result> OutputRows { get; }
   property public KatLang.Algorithm.User Root { get; }
   property public KatLang.Result Value { get; }

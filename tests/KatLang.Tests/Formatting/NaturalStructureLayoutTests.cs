@@ -437,7 +437,7 @@ public class NaturalStructureLayoutTests
     // ── Robustness of the new structural paths ───────────────────────────────
 
     private static RunResult.Success SuccessOf(Result value)
-        => new(new Algorithm.User(null, [], [], [], []), value, []);
+        => HandBuiltSuccess.OfValue(value);
 
     [Fact]
     public void DeeplyNestedBlocks_StayIterativeAndBounded()

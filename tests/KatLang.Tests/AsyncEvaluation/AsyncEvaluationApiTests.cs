@@ -200,6 +200,8 @@ public class AsyncEvaluationApiTests
                 Assert.Equal(expectedSuccess.Atoms, actualSuccess.Atoms);
                 Assert.Equal(expectedSuccess.EmittedCount, actualSuccess.EmittedCount);
                 Assert.Equal(expectedSuccess.OutputRows.Count, actualSuccess.OutputRows.Count);
+                // The partition of those rows over the root's rows is recorded by both row-loop twins.
+                Assert.Equal(expectedSuccess.OutputRowCounts, actualSuccess.OutputRowCounts);
                 break;
 
             case RunResult.ParseFailure expectedParse:

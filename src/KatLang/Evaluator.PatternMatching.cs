@@ -248,8 +248,15 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return EvalOutputRowsPreparedCore(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv);
+        return EvalOutputRowsPrepared(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static EvalResult<PreparedAlgorithmOutput> EvalOutputRowsPrepared(
+        IReadOnlyList<Expr> rows, EvalCtx rowCtx, EvalCtx reserveCtx, ValEnv valEnv)
+        => RootOutputRowRecorder.Claim(reserveCtx.Budget, rows) is { } recorder
+            ? EvalOutputRowsPreparedCore(recorder, rowCtx, reserveCtx, valEnv)
+            : EvalOutputRowsPreparedCore(new OrdinaryOutputRows(rows), rowCtx, reserveCtx, valEnv);
 
     /// <summary>
     /// The ONE shared output-row supply loop: evaluates ordered
@@ -280,11 +287,12 @@ public static partial class Evaluator
     /// the structured error, never change a run that has host stack headroom, and it
     /// moves no budget counter.</para>
     /// </summary>
-    private static EvalResult<PreparedAlgorithmOutput> EvalOutputRowsPreparedCore(
-        IReadOnlyList<Expr> rows,
+    private static EvalResult<PreparedAlgorithmOutput> EvalOutputRowsPreparedCore<TRows>(
+        TRows source,
         EvalCtx rowCtx,
         EvalCtx reserveCtx,
         ValEnv valEnv)
+        where TRows : IOutputRowSource
     {
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
@@ -292,15 +300,14 @@ public static partial class Evaluator
         var results = new List<Result>();
         var emittedCount = 0;
         TransientSupply bound = default;
-
         // Indexed, in written order: a body's rows are an OutputBundle, whose iterator-method
         // enumerator would cost one heap object per body evaluation (2026-11 allocation attribution).
-        for (var row = 0; row < rows.Count; row++)
+        for (var row = 0; row < source.Rows.Count; row++)
         {
-            var expr = rows[row];
+            var expr = source.Rows[row];
             var countedR = EvalCounted(expr, rowCtx, valEnv);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
-            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, in rowCtx);
+            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, source.Rows, in rowCtx);
 
             // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
             // passes the limit the remaining rows are formed count-only and the capture's own
@@ -309,22 +316,26 @@ public static partial class Evaluator
             {
                 AddCountedTopLevelValuesBounded(results, countedR.Value, reserveCtx.Budget, ref bound, expansion: true);
                 emittedCount += countedR.Value.EmittedCount;
-                continue;
+            }
+            else
+            {
+                // A non-spread output expression is always one visible output slot,
+                // even when it evaluates to the empty sequence value `()`. Only an
+                // explicit spread opens a sequence and can contribute zero items.
+                AddSlotBounded(results, countedR.Value.Value, reserveCtx.Budget, ref bound);
+                emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
             }
 
-            // A non-spread output expression is always one visible output slot,
-            // even when it evaluates to the empty sequence value `()`. Only an
-            // explicit spread opens a sequence and can contribute zero items.
-            AddSlotBounded(results, countedR.Value.Value, reserveCtx.Budget, ref bound);
-            emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
+            if (typeof(TRows) != typeof(OrdinaryOutputRows))
+                source.RecordRow(row, results.Count);
         }
 
         // Output-slot capture is a persistent collection: spread can expand it well beyond
         // any single input (`(A*, A*)` doubles), so the reservation happens
         // here, before the sequence value is built.
         if (bound.Overflowed)
-            return RefuseOverflowedCaptureAtRows(reserveCtx.Budget, bound, rows);
-        var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, rows);
+            return RefuseOverflowedCaptureAtRows(reserveCtx.Budget, bound, source.Rows);
+        var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, source.Rows);
         if (capturedR.IsError) return capturedR.Error;
 
         var counted = new CountedResult(capturedR.Value, emittedCount);
@@ -344,7 +355,7 @@ public static partial class Evaluator
         OutputBundle body,
         EvalCtx ctx,
         ValEnv valEnv)
-        => EvalOutputRowsPreparedCore(body, ctx, ctx, valEnv);
+        => EvalOutputRowsPrepared(body, ctx, ctx, valEnv);
 
     private static EvalResult<CountedResult> EvalCaptureCountedCore(
         OutputBundle body,

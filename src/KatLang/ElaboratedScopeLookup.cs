@@ -447,17 +447,30 @@ internal sealed class OpenTargetMemberIndex
 /// chain's root (an inline open target, a module) or as a prelude level of its own
 /// (<see cref="ElaboratedScopeLookup.OpenBlockHeadLevel"/>); a cache owned by the unit's root level would
 /// see only the first kind. So the cache itself journals what an attempt adds to its four tables
-/// (<see cref="BeginMaterializationAttempt"/>) and removes exactly those entries when the attempt ends
-/// (<see cref="AttemptWrites.TakeBack"/>, called by <c>DeferredModuleRegion.RunCoreAsync</c> under the
-/// loader's materialization gate), however it ends: refused, cancelled, faulted or published. Between
+/// (<see cref="BeginMaterializationAttempt"/>) and removes exactly those entries, under the loader's
+/// materialization gate, however the attempt ends: refused, cancelled, faulted or published. Between
 /// attempts the cache holds what the parse left in it and nothing else, so an attempt never retains its
 /// facts, its levels or its elaborated body here, and a branch that is refused at every selection adds
-/// nothing per selection. Inside one attempt nothing changes: its passes share its entries until it
-/// ends, as the passes of one parse do. The take-back costs what the attempt wrote, never the size of the
-/// cache. Every table is a work cache (a miss rebuilds an equal answer from the completed facts and the
-/// chain), so no lookup result depends on an entry an earlier attempt left. Before, such entries stayed:
-/// one set per refused selection, and under each key the eager publication shares with the unit (an
-/// inline open target of its placeholder) the level of the FIRST attempt, for every later one to find.</para>
+/// nothing per selection. Inside one attempt nothing changes: its passes share its entries until the
+/// last of them has run, as the passes of one parse do. The take-back costs what the attempt wrote, never
+/// the size of the cache. Every table is a work cache (a miss rebuilds an equal answer from the completed
+/// facts and the chain), so no lookup result depends on an entry an earlier attempt left. Before, such
+/// entries stayed: one set per refused selection, and under each key the eager publication shares with the
+/// unit (an inline open target of its placeholder) the level of the FIRST attempt, for every later one to
+/// find.</para>
+///
+/// <para><b>When the entries are taken back.</b> An attempt that reaches the freeze takes them back just before its facts
+/// are frozen (<see cref="AttemptWrites.TakeBackBeforeFreeze"/>, called by
+/// <c>DeferredModuleRegion.CompileLoadedBody</c>): its passes have made their last lookup by then, and the
+/// freeze is where a materialization's live memory peaks, so the entries are not held through it. The
+/// attempt keeps its claim on the cache, and from that point until it ends the cache REFUSES A WRITE: an
+/// entry added then would be one no journal removes, so adding one is an internal error, raised before any
+/// table changes and before anything is built or counted for it. A read, and the re-registration of a level
+/// the cache already holds, stay what they were. Every other ending takes the entries back in
+/// <c>DeferredModuleRegion.RunCoreAsync</c>'s <c>finally</c> (<see cref="AttemptWrites.TakeBack"/>): an
+/// attempt refused, cancelled or faulted before it reached its freeze. That call ends the claim on every
+/// path, also for an attempt that took its entries back early, whether it then published or failed inside
+/// the freeze: it finds nothing left to remove.</para>
 /// </summary>
 internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observations = null)
 {
@@ -475,9 +488,15 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
     internal void RecordCompletedRead() => observations?.RecordCompletedStaticStructureRead();
     private readonly Dictionary<Algorithm, OpenTargetMemberIndex> _indexes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ElaboratedPropertyScope, Dictionary<Algorithm, ElaboratedPropertyScope>> _bodyLevels = new();
-    // The materialization attempt whose passes are writing this cache, and what it added to the member indexes
-    // and the body levels, oldest first; all null outside an attempt (see AttemptWrites; the two level tables
-    // journal their own adds). A body-level entry with no body stands for the parent's table itself.
+    // The materialization attempt that holds this cache, and what it added to the member indexes and the body
+    // levels, oldest first; all null outside an attempt (see AttemptWrites; the two level tables journal their own
+    // adds). A body-level entry with no body stands for the parent's table itself.
+    //
+    // An add tests this field ONCE, before its table changes, so that an attempt that has taken its entries back
+    // can refuse it there (AttemptWrites.RefuseWriteAfterTakeBack); outside an attempt that test is all an add
+    // pays. The two lookups below therefore journal a key BEFORE they insert it. That is exact: the lookup just
+    // missed the key, so the table does not hold it, and the take-back removes the attempt's entry or, when the
+    // insertion failed, nothing.
     private AttemptWrites? _attempt;
     private List<Algorithm>? _attemptIndexes;
     private List<(ElaboratedPropertyScope Parent, Algorithm? Body)>? _attemptBodyLevels;
@@ -485,13 +504,21 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
     {
         if (!_bodyLevels.TryGetValue(parent, out var levels))
         {
+            if (_attempt is { } attempt)
+            {
+                attempt.RefuseWriteAfterTakeBack();
+                (_attemptBodyLevels ??= []).Add((parent, null));
+            }
             _bodyLevels.Add(parent, levels = new(ReferenceEqualityComparer.Instance));
-            if (_attempt is not null) (_attemptBodyLevels ??= []).Add((parent, null));
         }
         if (!levels.TryGetValue(body, out var level))
         {
+            if (_attempt is { } attempt)
+            {
+                attempt.RefuseWriteAfterTakeBack();
+                (_attemptBodyLevels ??= []).Add((parent, body));
+            }
             levels.Add(body, level = ElaboratedScopeLookup.CreateScope(body, parent));
-            if (_attempt is not null) (_attemptBodyLevels ??= []).Add((parent, body));
         }
         return level;
     }
@@ -510,9 +537,13 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
     {
         if (!_indexes.TryGetValue(target, out var index))
         {
+            if (_attempt is { } attempt)
+            {
+                attempt.RefuseWriteAfterTakeBack();
+                (_attemptIndexes ??= []).Add(target);
+            }
             observations?.RecordLookupOpenMemberIndexBuild();
             _indexes.Add(target, index = OpenTargetMemberIndex.Build(target));
-            if (_attempt is not null) (_attemptIndexes ??= []).Add(target);
         }
         return index;
     }
@@ -520,7 +551,9 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
     /// <summary>
     /// Starts journaling what ONE materialization attempt adds to this cache (see the class remarks). The attempts of
     /// a recorded chain belong to one parse and are serialized by its loader's materialization gate, so at most one
-    /// is in flight; a second one is an internal error, never a shared journal.
+    /// is in flight; a second one is an internal error, never a shared journal. An attempt is in flight until its
+    /// <see cref="AttemptWrites.TakeBack"/>, also after it has taken its entries back early
+    /// (<see cref="AttemptWrites.TakeBackBeforeFreeze"/>).
     /// </summary>
     internal AttemptWrites BeginMaterializationAttempt()
     {
@@ -531,12 +564,18 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
         return _attempt = new AttemptWrites(this);
     }
 
-    private void TakeBack(AttemptWrites attempt)
+    /// <summary>
+    /// Removes what <paramref name="attempt"/> added, and ends its claim when <paramref name="endAttempt"/>. An
+    /// attempt that took its entries back early has journaled nothing since (its writes were refused), so its
+    /// ending removes nothing.
+    /// </summary>
+    private void TakeBack(AttemptWrites attempt, bool endAttempt)
     {
         if (!ReferenceEquals(_attempt, attempt))
-            throw new InvalidOperationException(
-                "Internal error: a materialization attempt ended on a lookup cache it is not the one writing.");
-        _attempt = null;
+            throw new InvalidOperationException(endAttempt
+                ? "Internal error: a materialization attempt ended on a lookup cache it is not the one writing."
+                : "Internal error: a materialization attempt took its entries back from a lookup cache it is not the one writing.");
+        if (endAttempt) _attempt = null;
         _completedLevels?.TakeBackAttemptAdds();
         _openBlockHeadLevels?.TakeBackAttemptAdds();
         if (_attemptIndexes is { } indexes)
@@ -559,24 +598,59 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
 
     /// <summary>
     /// The writes of ONE materialization attempt to the cache of the chain recorded at its branch, from
-    /// <see cref="BeginMaterializationAttempt"/> until <see cref="TakeBack"/> removes exactly them. It holds no
-    /// entry itself: the journal lives with the tables, and this is the attempt's claim on it.
+    /// <see cref="BeginMaterializationAttempt"/> until <see cref="TakeBack"/> ends the attempt; exactly them are
+    /// removed, there or earlier by <see cref="TakeBackBeforeFreeze"/>. It holds no entry itself: the journal lives
+    /// with the tables, and this is the attempt's claim on it.
     /// </summary>
     internal sealed class AttemptWrites
     {
         private OpenMemberIndexCache? _cache;
+        // The attempt took its entries back and still holds its claim (TakeBackBeforeFreeze): it adds nothing more.
+        private bool _tookBackBeforeFreeze;
 
         internal AttemptWrites(OpenMemberIndexCache cache) => _cache = cache;
 
         /// <summary>
-        /// Removes every entry the attempt added, in all four tables, and ends the journal: the cache then holds
-        /// what it held when the attempt began. Idempotent. Work is proportional to what the attempt wrote.
+        /// Removes every entry the attempt added, in all four tables, and ends the attempt: the cache then holds
+        /// what it held when the attempt began, and takes the next attempt. After
+        /// <see cref="TakeBackBeforeFreeze"/> it removes nothing and only ends the claim. Idempotent. Work is
+        /// proportional to what the attempt wrote.
         /// </summary>
         internal void TakeBack()
         {
             if (_cache is not { } cache) return;
             _cache = null;
-            cache.TakeBack(this);
+            cache.TakeBack(this, endAttempt: true);
+        }
+
+        /// <summary>
+        /// The take-back of an attempt that is about to freeze its facts: removes every entry the attempt added,
+        /// exactly as <see cref="TakeBack"/> does, and KEEPS the attempt's claim on the cache. The cache then holds
+        /// what it held when the attempt began and, until <see cref="TakeBack"/> ends the claim, refuses every new
+        /// entry (<see cref="RefuseWriteAfterTakeBack"/>), so nothing the attempt still runs can leave one behind.
+        /// No other attempt can begin meanwhile. Idempotent, and a no-op once the attempt has ended.
+        /// </summary>
+        internal void TakeBackBeforeFreeze()
+        {
+            if (_cache is not { } cache || _tookBackBeforeFreeze) return;
+            _tookBackBeforeFreeze = true;
+            cache.TakeBack(this, endAttempt: false);
+        }
+
+        /// <summary>Whether the attempt has taken its entries back and still holds its claim: it adds nothing more.</summary>
+        internal bool WritesAreRefused => _tookBackBeforeFreeze;
+
+        /// <summary>
+        /// Called by every add to the cache while this attempt holds it, BEFORE the table changes: an attempt that
+        /// took its entries back early must add nothing, because nothing would remove the entry when it ends. The
+        /// entry would stay for the life of the chain, which is the retention the journal exists to prevent.
+        /// </summary>
+        internal void RefuseWriteAfterTakeBack()
+        {
+            if (_tookBackBeforeFreeze)
+                throw new InvalidOperationException(
+                    "Internal error: a materialization attempt tried to add an entry to a lookup cache after it took its entries back. " +
+                    "Between that take-back, just before its facts are frozen, and its end an attempt adds nothing to the cache.");
         }
     }
 
@@ -584,7 +658,9 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
     /// A table of levels that the levels themselves and the completed contexts write directly
     /// (<see cref="CompletedLevels"/>, <see cref="OpenBlockHeadLevels"/>): entries are only ever added, and each add
     /// made while a materialization attempt is in flight is journaled for that attempt's take-back, so no writer
-    /// needs to know whether one is.
+    /// needs to know whether one is. An attempt that has taken its entries back early adds nothing
+    /// (<see cref="AttemptWrites.TakeBackBeforeFreeze"/>): a new key is refused before the table changes, and a
+    /// <see cref="TryAdd"/> of a key the table holds is the no-op it always was.
     /// </summary>
     internal sealed class LevelTable<TKey>(OpenMemberIndexCache cache, IEqualityComparer<TKey>? comparer = null)
         where TKey : notnull
@@ -607,15 +683,29 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
 
         internal bool TryAdd(TKey key, ElaboratedPropertyScope level)
         {
+            if (cache._attempt is not { } attempt) return _levels.TryAdd(key, level);
+            if (attempt.WritesAreRefused)
+            {
+                if (_levels.ContainsKey(key)) return false;
+                attempt.RefuseWriteAfterTakeBack();
+            }
             if (!_levels.TryAdd(key, level)) return false;
-            if (cache._attempt is not null) (_attemptAdds ??= []).Add(key);
+            (_attemptAdds ??= []).Add(key);
             return true;
         }
 
         internal void Add(TKey key, ElaboratedPropertyScope level)
         {
+            if (cache._attempt is not { } attempt)
+            {
+                _levels.Add(key, level);
+                return;
+            }
+            // Journaled after the insertion, unlike a looked-up miss: an Add of a key the table holds throws, and
+            // that key is not the attempt's to take back.
+            attempt.RefuseWriteAfterTakeBack();
             _levels.Add(key, level);
-            if (cache._attempt is not null) (_attemptAdds ??= []).Add(key);
+            (_attemptAdds ??= []).Add(key);
         }
 
         internal void TakeBackAttemptAdds()

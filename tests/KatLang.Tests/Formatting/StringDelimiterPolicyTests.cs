@@ -16,10 +16,7 @@ public class StringDelimiterPolicyTests
 
     private static string FormatResult(Result value, StringDelimiterMode mode)
     {
-        var success = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []),
-            value,
-            []);
+        var success = HandBuiltSuccess.OfOnePlainRow(value);
         return OutputFormatters.Readable.Format(
             success,
             new OutputFormattingOptions { StringDelimiters = mode, NewLine = "\n" });

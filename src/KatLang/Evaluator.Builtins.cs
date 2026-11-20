@@ -524,7 +524,7 @@ public static partial class Evaluator
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
-        var preparedR = EvalOutputRowsPreparedCore(algorithm.Output, bodyCtx, ctx, valEnv);
+        var preparedR = EvalOutputRowsPrepared(algorithm.Output, bodyCtx, ctx, valEnv);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -563,7 +563,7 @@ public static partial class Evaluator
         var boundValues = ShadowValEnv(valEnv, names);
         var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues, names,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
-        var preparedR = EvalOutputRowsPreparedCore(algorithm.Output, bodyCtx, boundCtx, boundValues);
+        var preparedR = EvalOutputRowsPrepared(algorithm.Output, bodyCtx, boundCtx, boundValues);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);

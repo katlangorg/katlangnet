@@ -23,7 +23,7 @@
     published one.
   -->
   <PropertyGroup>
-    <KatLangVersion>0.8.271</KatLangVersion>
+    <KatLangVersion>0.8.272</KatLangVersion>
   </PropertyGroup>
 
   <!--

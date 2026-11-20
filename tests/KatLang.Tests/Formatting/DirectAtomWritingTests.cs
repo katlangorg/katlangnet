@@ -29,8 +29,9 @@ public class DirectAtomWritingTests
     private static DisplayOptions Places(int? min, int? max)
         => new(min, max, HostMinDecimalPlaces: null, HostMaxDecimalPlaces: null, MaxDisplayLength: int.MaxValue);
 
+    // One spread root row supplies every output row the value presents for the emitted count.
     private static RunResult.Success SuccessOf(Result value, int emittedCount = 1)
-        => new(new Algorithm.User(null, [], [], [], []), value, []) { EmittedCount = emittedCount };
+        => HandBuiltSuccess.OfOneSpreadRow(value, emittedCount);
 
     // Canonical spellings on both sides of the stack buffer (63, 64, and 65 code units), the
     // fallback-only values (non-finite, and every decimal-places setting), signed zero, stored

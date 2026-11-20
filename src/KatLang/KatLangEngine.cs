@@ -222,12 +222,38 @@ public closed record RunResult
     /// <summary>Parse and evaluation succeeded.</summary>
     public sealed record Success : RunResult
     {
-        internal Success(Algorithm.User Root, Result Value, IReadOnlyList<Decimal128> Atoms)
+        // Equality-transparent like the base's property-observation slot: the partition is
+        // ancillary host data, never part of the result's identity. A slot still adds one step to
+        // a synthesized hash combination and its public property one member to a synthesized
+        // printing, so this record writes GetHashCode and PrintMembers out below.
+        private readonly RuntimeStateSlot<IReadOnlyList<int>> _outputRowCounts;
+
+        /// <summary>
+        /// The one construction of a success. <paramref name="OutputRowCounts"/> is the completed
+        /// partition of <see cref="OutputRows"/> over the rows of <paramref name="Root"/>'s output
+        /// and is REQUIRED to be coherent: one entry per row of <c>Root.Output</c>, every entry at
+        /// least zero, and a sum equal to the number of output rows the value presents for
+        /// <paramref name="EmittedCount"/>. The array is handed over: it belongs to the published
+        /// read-only view from here on and the caller must not keep, reuse or write it.
+        /// </summary>
+        /// <exception cref="ArgumentException">The counts are not such a partition.</exception>
+        internal Success(
+            Algorithm.User Root,
+            Result Value,
+            IReadOnlyList<Decimal128> Atoms,
+            int EmittedCount,
+            int[] OutputRowCounts)
         {
+            ArgumentNullException.ThrowIfNull(Root);
+            ArgumentNullException.ThrowIfNull(Value);
+            ArgumentNullException.ThrowIfNull(OutputRowCounts);
+            RequireOutputRowPartition(OutputRowCounts, Root.Output.Count, RowCountOf(Value, EmittedCount));
+
             this.Root = Root;
             this.Value = Value;
             this.Atoms = Atoms;
-            EmittedCount = Value.ValueCount();
+            this.EmittedCount = EmittedCount;
+            _outputRowCounts = new(SafeReadOnlyCollection.Over(OutputRowCounts));
         }
 
         /// <summary>The elaborated program.</summary>
@@ -249,7 +275,7 @@ public closed record RunResult
         public void Deconstruct(out Algorithm.User Root, out Result Value, out IReadOnlyList<Decimal128> Atoms)
             => (Root, Value, Atoms) = (this.Root, this.Value, this.Atoms);
 
-        internal int EmittedCount { get; init; }
+        internal int EmittedCount { get; }
 
         /// <summary>
         /// The separately produced top-level output rows, exactly as canonical
@@ -279,8 +305,80 @@ public closed record RunResult
         /// is the one row <c>(55, 89)</c> — while a spread row <c>E*</c>
         /// contributes the items it supplies, possibly none.
         /// <see cref="OutputRows"/> is authoritative for presentation.</para>
+        ///
+        /// <para>This flat list does not say which written root output row produced which entry;
+        /// <see cref="OutputRowCounts"/> does, as one count per row of <see cref="Root"/>'s
+        /// output.</para>
         /// </summary>
         public IReadOnlyList<Result> OutputRows => RowsOf(Value, EmittedCount);
+
+        /// <summary>
+        /// How many entries of <see cref="OutputRows"/> each written root output row produced: one
+        /// entry per row of <see cref="Root"/>'s output (<see cref="Algorithm.User.Output"/>), in
+        /// the same order, so its count equals that output's row count.
+        /// <para><b>Partition.</b> Every entry is at least zero and the entries sum to the count of
+        /// <see cref="OutputRows"/>. Row <c>i</c>'s values are the next <c>OutputRowCounts[i]</c>
+        /// entries of <see cref="OutputRows"/>, in order, after those of the rows before it. A host
+        /// that labels each value with the source row it came from walks the two lists together.</para>
+        /// <para><b>Per row.</b> A row that is not a spread is one value boundary and produces
+        /// exactly one entry, also when its value is an empty sequence, list or string. A spread
+        /// row — an <see cref="Expr.SequenceSpread"/> in the elaborated root, which is a written
+        /// <c>E*</c> and equally a call the front end wrapped because its declaration is marked
+        /// <c>*</c>, with no star at the call site — produces the items it supplied, possibly
+        /// none. Read the row kind from the elaborated <see cref="Root"/>, not from the source
+        /// text. Should one supplied value ever be presented as several entries, all of them
+        /// belong to the row that supplied it: the sum always equals the count of
+        /// <see cref="OutputRows"/>.</para>
+        /// <para><b>Always present.</b> Every success carries the completed partition, recorded
+        /// while the run evaluated the root program's own output; nothing is evaluated again to
+        /// produce it and no <see cref="RunOptions"/> setting selects it. The view is read-only and
+        /// never hands out its storage. It is ancillary host data, not part of the result's
+        /// identity: it takes no part in this record's equality, hashing, or printing, the
+        /// deconstruction still yields <see cref="Root"/>, <see cref="Value"/> and
+        /// <see cref="Atoms"/>, and a <c>with</c> copy (including
+        /// <see cref="RunResult.WithHostDecimalPlaces"/>) shares it. <see cref="NoProgramOutput"/>,
+        /// <see cref="EvalFailure"/> and <see cref="ParseFailure"/> have no such member.</para>
+        /// </summary>
+        public IReadOnlyList<int> OutputRowCounts => _outputRowCounts.Value;
+
+        /// <summary>
+        /// The record printing of this variant exactly as the compiler synthesized it before
+        /// <see cref="OutputRowCounts"/> existed — the base members, then <see cref="Root"/>,
+        /// <see cref="Value"/>, <see cref="Atoms"/> and <see cref="OutputRows"/>, in that order —
+        /// written out so the ancillary partition stays out of it.
+        /// </summary>
+        protected override bool PrintMembers(StringBuilder builder)
+        {
+            if (base.PrintMembers(builder))
+                builder.Append(", ");
+            builder.Append("Root = ").Append(Root);
+            builder.Append(", Value = ").Append(Value);
+            builder.Append(", Atoms = ").Append(Atoms);
+            builder.Append(", OutputRows = ").Append(OutputRows);
+            return true;
+        }
+
+        /// <summary>
+        /// The hash of this variant exactly as the compiler synthesized it before the partition
+        /// slot existed: the base hash combined, in declaration order, with <see cref="Root"/>,
+        /// <see cref="Value"/>, <see cref="Atoms"/> and the emitted count. It is written out
+        /// because a synthesized hash would add one combination step for the slot — the slot
+        /// hashes to zero, but the step still multiplies everything before it. Equality stays
+        /// synthesized, so the compiler still compares every structural field, and the slot
+        /// compares equal to every other.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                var hash = base.GetHashCode();
+                hash = hash * -1521134295 + EqualityComparer<Algorithm.User>.Default.GetHashCode(Root);
+                hash = hash * -1521134295 + EqualityComparer<Result>.Default.GetHashCode(Value);
+                hash = hash * -1521134295 + EqualityComparer<IReadOnlyList<Decimal128>>.Default.GetHashCode(Atoms);
+                hash = hash * -1521134295 + EqualityComparer<int>.Default.GetHashCode(EmittedCount);
+                return hash;
+            }
+        }
     }
 
     /// <summary>
@@ -294,6 +392,49 @@ public closed record RunResult
         1 => SafeReadOnlyCollection.Over([value]),
         _ => value.ToItems(),
     };
+
+    /// <summary>
+    /// The number of rows <see cref="RowsOf"/> presents for the same arguments, by the same
+    /// zero/one/many discriminator and without building the one-row view. It is what a
+    /// <see cref="Success"/>'s <see cref="Success.OutputRowCounts"/> must sum to; the many case reads
+    /// the count of the value's existing item list and enumerates nothing.
+    /// </summary>
+    internal static int RowCountOf(Result value, int emittedCount) => emittedCount switch
+    {
+        0 => 0,
+        1 => 1,
+        _ => value.ToItems().Count,
+    };
+
+    /// <summary>
+    /// The coherence every <see cref="Success"/> is constructed with: <paramref name="counts"/> has
+    /// one entry per root output row, no entry is negative, and the entries sum to the number of
+    /// presented output rows. A violation is an internal construction error, never a program's.
+    /// </summary>
+    private static void RequireOutputRowPartition(int[] counts, int rootRowCount, int outputRowCount)
+    {
+        if (counts.Length != rootRowCount)
+        {
+            throw new ArgumentException(
+                $"The output row counts have {counts.Length} entries for a root of {rootRowCount} output rows.",
+                nameof(Success.OutputRowCounts));
+        }
+
+        long sum = 0;
+        foreach (var count in counts)
+        {
+            if (count < 0)
+                throw new ArgumentException("An output row count is negative.", nameof(Success.OutputRowCounts));
+            sum += count;
+        }
+
+        if (sum != outputRowCount)
+        {
+            throw new ArgumentException(
+                $"The output row counts sum to {sum} for {outputRowCount} output rows.",
+                nameof(Success.OutputRowCounts));
+        }
+    }
 
     /// <summary>Parse and evaluation completed, but the top-level program did not define output.</summary>
     public sealed record NoProgramOutput : RunResult
@@ -976,14 +1117,79 @@ public static class KatLangEngine
             };
         }
 
+        var output = evalResult.Value.Output;
         return new RunResult.Success(
             frontEndResult.ElaboratedRoot,
-            evalResult.Value.Output.Value,
-            hostAtoms)
+            output.Value,
+            hostAtoms,
+            output.EmittedCount,
+            ProjectOutputRowCounts(
+                evalResult.Value.RootRowSlotCounts, frontEndResult.ElaboratedRoot.Output.Count, output))
         {
-            EmittedCount = evalResult.Value.Output.EmittedCount,
             DisplayOptions = displayOptionsResult.Value,
         };
+    }
+
+    /// <summary>
+    /// Turns the root body's recorded per-row SLOT counts (<see cref="Evaluation.RootOutputRowRecorder"/>) into
+    /// the per-row counts of <see cref="RunResult.Success.OutputRows"/>
+    /// (<see cref="RunResult.Success.OutputRowCounts"/>), for the exported <paramref name="output"/>.
+    /// Three quantities are kept apart: the physical slots each row stored, the emitted count the
+    /// run propagated, and the rows the result presents. The row loop combines its slots with
+    /// <c>CombineOutputSlots</c> (a sole slot is the value itself, otherwise the value is the
+    /// sequence of the slots) and <see cref="RunResult.RowCountOf"/> applies the output-row rule to
+    /// the emitted count, so:
+    /// <list type="bullet">
+    ///   <item>when the presented rows are as many as the stored slots, every slot is one entry and
+    ///   keeps its recorded owner — no rows for no slots, the one value for the one slot, and the
+    ///   items of the combined sequence for two or more;</item>
+    ///   <item>when ONE slot was stored and it is presented as a different number of entries — the
+    ///   many rule opens that value's own items — every entry belongs to the row that supplied
+    ///   the slot, and the rows around it stay zero.</item>
+    /// </list>
+    /// Nothing else can come out of the row loop: every stored slot comes from a row that added at
+    /// least one to the emitted count, and a spread that emitted exactly one stores exactly one, so
+    /// two or more slots always present as that many items, and an output of no slots is never
+    /// presented as one row.
+    /// The remaining combinations are therefore an internal error, reported loudly instead of
+    /// published as a partition that does not describe the rows; the sum is then guaranteed by the
+    /// <see cref="RunResult.Success"/> constructor in every case. Counts only: no value is
+    /// flattened or enumerated and nothing is evaluated, charged, or observed for cancellation.
+    /// The array is the run's own and is completed in place.
+    /// </summary>
+    internal static int[] ProjectOutputRowCounts(int[]? rootRowSlotCounts, int rootRowCount, Evaluator.CountedResult output)
+    {
+        if (rootRowSlotCounts is null || rootRowSlotCounts.Length != rootRowCount)
+        {
+            throw new InvalidOperationException(
+                "A successful run did not record its root output rows: the root program body must be "
+                + "evaluated once by the shared output-row loop, over the elaborated root's own rows.");
+        }
+
+        var outputRowCount = RunResult.RowCountOf(output.Value, output.EmittedCount);
+        long slotCount = 0;
+        var lastSupplyingRow = -1;
+        for (var row = 0; row < rootRowSlotCounts.Length; row++)
+        {
+            if (rootRowSlotCounts[row] == 0)
+                continue;
+            slotCount += rootRowSlotCounts[row];
+            lastSupplyingRow = row;
+        }
+
+        if (slotCount == outputRowCount)
+            return rootRowSlotCounts;
+
+        if (slotCount == 1)
+        {
+            // The sole slot is the value itself, presented through its own items.
+            rootRowSlotCounts[lastSupplyingRow] = outputRowCount;
+            return rootRowSlotCounts;
+        }
+
+        throw new InvalidOperationException(
+            $"The root output rows stored {slotCount} slots but the result presents {outputRowCount} output rows "
+            + $"for an emitted count of {output.EmittedCount}.");
     }
 
     /// <summary>
@@ -1236,7 +1442,8 @@ public static class KatLangEngine
             };
         }
 
-        // A record copy shares every payload reference (root, value, atoms, emitted count).
+        // A record copy shares every payload reference (root, value, atoms, emitted count) and the
+        // ancillary output row counts.
         return success with { DisplayOptions = displayOptions };
     }
 

@@ -416,10 +416,8 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void ManuallyConstructedResults_UseTheDefaultHardDisplayCeiling()
     {
-        var success = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []),
-            new Result.Str(new string('x', EvaluationLimits.MaxSupportedDisplayLength + 1)),
-            []);
+        var success = Formatting.HandBuiltSuccess.OfOnePlainRow(
+            new Result.Str(new string('x', EvaluationLimits.MaxSupportedDisplayLength + 1)));
 
         Assert.True(success.ToDisplayString().Length <= EvaluationLimits.MaxSupportedDisplayLength);
     }
@@ -576,10 +574,8 @@ public class StringAndDisplayLimitsTests
     [Fact]
     public void RenderDisplay_ManuallyConstructedResults_UseTheDefaultHardDisplayCeiling()
     {
-        var success = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []),
-            new Result.Str(new string('x', EvaluationLimits.MaxSupportedDisplayLength + 1)),
-            []);
+        var success = Formatting.HandBuiltSuccess.OfOnePlainRow(
+            new Result.Str(new string('x', EvaluationLimits.MaxSupportedDisplayLength + 1)));
 
         var rendering = success.RenderDisplay();
         AssertReportsOverflow(rendering, EvaluationLimits.MaxSupportedDisplayLength);
@@ -597,8 +593,7 @@ public class StringAndDisplayLimitsTests
         for (var i = 0; i < 50_000; i++)
             value = Result.ListValue.TakeOwnership([value]);
 
-        var success = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []), value, []);
+        var success = Formatting.HandBuiltSuccess.OfOnePlainRow(value);
 
         var text = success.ToDisplayString();
         Assert.Equal(100_001, text.Length);

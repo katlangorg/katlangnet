@@ -133,10 +133,7 @@ public class OutputRowsTests
     [Fact]
     public void ManuallyConstructedSuccess_DerivesOneRowFromTheValue()
     {
-        var success = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []),
-            new Result.Atom(5),
-            []);
+        var success = HandBuiltSuccess.OfOnePlainRow(new Result.Atom(5));
 
         var row = Assert.Single(success.OutputRows);
         Assert.Equal(new Result.Atom(5), row);
@@ -188,10 +185,7 @@ public class OutputRowsTests
         // rows and equals the display rows (formerly 3 against 2 display rows, X-33).
         Assert.Equal(2, success.EmittedCount);
         Assert.Equal(2, success.OutputRows.Count);
-        Assert.Equal("(1, 2)", OutputFormatters.Exact.Format(new RunResult.Success(
-            success.Root,
-            success.OutputRows[0],
-            [])));
+        Assert.Equal("(1, 2)", OutputFormatters.Exact.Format(HandBuiltSuccess.OfOnePlainRow(success.OutputRows[0])));
         Assert.Equal(new Result.Atom(5), success.OutputRows[1]);
         Assert.Equal($"(1, 2){Environment.NewLine}5", success.ToDisplayString());
     }

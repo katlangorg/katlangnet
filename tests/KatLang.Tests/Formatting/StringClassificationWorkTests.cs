@@ -21,7 +21,7 @@ public class StringClassificationWorkTests
     private const string LimitPrefix = "Display output limit of";
 
     private static RunResult.Success SuccessOf(Result value)
-        => new(new Algorithm.User(null, [], [], [], []), value, []);
+        => HandBuiltSuccess.OfValue(value);
 
     private static Result Seq(params Result[] items) => Result.SequenceValue.TakeOwnership(items);
 

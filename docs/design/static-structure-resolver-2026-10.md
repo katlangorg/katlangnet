@@ -335,12 +335,14 @@ MiB. That is what the split buys: 6–10% less reachable while the facts are bui
 the materialization's own live peak, which is not in that window: sampled with a forced collection
 every 25 ms, the peak is 694 MiB before and after, about 30 s after `CompleteLookups` ends and 2 s
 before an 80 s sampled run returns. The resolution frame has ended by then in both builds. The stage
-measurements below locate the corresponding peak on `cafe9fc1`. Harness and logs are in
+measurements below locate the corresponding peak on `c6d5c8d0` (measured as `cafe9fc1`, the same
+patch on an older parent). Harness and logs are in
 `artifacts/validation/deferred-branch-open-crash/part-b/` (local only).
 
-**The live peak of a deferred unit (2026-11-18).** On `cafe9fc1`, six sampler-only runs of 71,886
-constant rows peaked near the end of `StaticStructureOperation.Freeze` (682.5–683.7 MiB above the
-pre-run live heap). With 42,586 parameterized rows the boundary measured 570.7–570.8 MiB there. At
+**The live peak of a deferred unit (2026-11-18).** On `c6d5c8d0` (measured as `cafe9fc1`, the same
+patch on an older parent), six sampler-only runs of 71,886 constant rows peaked near the end of
+`StaticStructureOperation.Freeze` (682.5–683.7 MiB above the pre-run live heap). With 42,586
+parameterized rows the boundary measured 570.7–570.8 MiB there. At
 the constant-row peak, 480.2 MiB survived materialization. The published continuation dominated
 322.0 MiB when materialization returned. The peak dump also shows 134.1 MiB held by the exporting
 operation, 45.6 MiB exclusive to the preceding snapshot and 2.0 MiB held by the finished collision
@@ -356,12 +358,28 @@ and 56.00 slots per row, including 26.00 for the parameterized rows' input graph
 at 228.06 and 268.09 slots per row, against 105.05 and 101.09 for the eager twins. The metadata
 bound first refuses 73,567 and 62,587 rows, respectively. The twins first hit the source-length
 limit at 122,070 and 88,306. The result tree, completed facts and published continuation account for
-the largest share under the current design, so no production trim was made. In two scratch
-comparisons on an 8 MiB heap-limit grid, ending the validator frame and taking the cache entries
-back before `Freeze` moved the first tested success from 696 to 672 MiB for constant rows.
-Parameterized rows first completed at 584 and 592 MiB in the baseline runs and at 560 MiB in both
-prototype runs. Stage tables, heap paths and charge sites are in
-`artifacts/validation/deferred-materialization-peak/` (local only).
+the largest share under the current design and stay; that measurement trimmed nothing. Two holders
+that outlived their last use were trimmed on 2026-11-19, measured on `3fba28fe` with three readings
+at the hook after `Freeze` per build. Before either trim the hook read 677.4 MiB for constant rows
+and 565.6–566.8 MiB for parameterized rows. **A:** the collision validator runs in a frame of its
+own (`DeferredModuleRegion.ValidateParameterPropertyCollisions`), so it ends with its visit and not
+with `CompileLoadedBody`. Alone it reads 675.4 and 543.5 MiB. **B:** an attempt that reaches the freeze takes its
+lookup-cache entries back just before `Freeze`, and the cache refuses a write from then until the
+attempt ends (`OpenMemberIndexCache.AttemptWrites.TakeBackBeforeFreeze`). No access to the four
+tables was observed between that point and the former take-back, on both shapes at full size and on
+fourteen attempt-ending cases. Alone it reads 655.7 and 552.8–554.1 MiB. Together they read
+651.1–653.7 and 530.8 MiB, 24–26 and 35–36 MiB below the baseline. On an 8 MiB heap-limit grid
+(`DOTNET_GCHeapHardLimit`, each endpoint run three or four times) the smallest limit that completed
+every run moved from 696 to 664 MiB for constant rows and from 592 to 568 MiB for parameterized
+rows, and the largest that failed every run from 680 to 656 and from 584 to 552 MiB. A grid point
+between them flipped in two of those four brackets: 688 MiB completed one of four baseline runs for
+constant rows, and 560 MiB one of four runs with both trims for parameterized rows. A alone gave
+688 and 576 MiB (failing at 680 and 560; 568 completed one of four), B alone 672 and 592 MiB
+(failing at 656 and 576; 664 completed two of four and 584 three of four). Values, diagnostics and
+the cache's table counts were identical before and after. Stage tables, heap paths and charge sites
+of the 2026-11-18 measurement are in `artifacts/validation/deferred-materialization-peak/`, the
+before and after readings in `artifacts/validation/deferred-materialization-peak-ab/` (both local
+only).
 
 Open-level entries grow with providers × DISTINCT opened names read (P × D), not P². For one block
 that opens P one-member providers and sums D ≥ 4 distinct opened names, entries are exactly

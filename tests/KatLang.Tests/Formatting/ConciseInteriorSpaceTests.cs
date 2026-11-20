@@ -147,7 +147,7 @@ public class ConciseInteriorSpaceTests
     public void SingleLineContent_JoinsRegardlessOfQuoting(string raw, bool quotable)
     {
         var value = new Result.SequenceValue([new Result.Str(raw), new Result.Atom(1)]);
-        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+        var success = HandBuiltSuccess.OfOnePlainRow(value);
         foreach (var mode in Enum.GetValues<StringDelimiterMode>())
         {
             var token = quotable && mode != StringDelimiterMode.Never ? $"'{raw}'" : raw;

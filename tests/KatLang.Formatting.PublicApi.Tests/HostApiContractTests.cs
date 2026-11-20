@@ -282,6 +282,7 @@ public class HostApiContractTests
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run("1, [2, 3]"));
         AssertReadOnly(success.Atoms);
         AssertReadOnly(success.OutputRows);
+        AssertReadOnly(success.OutputRowCounts);
         AssertReadOnly(Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run("1 +")).Errors);
         AssertReadOnly(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("1 / 0")).Errors);
         AssertReadOnly(Parser.Parse("1 +").Diagnostics);

@@ -137,7 +137,7 @@ public class StructuralNestingStackBackstopTests
             var text = File.ReadAllText(Path.Combine(sourceRoot, file));
             var match = Regex.Match(
                 text,
-                @"\s" + Regex.Escape(method) + @"\((?:[^{}]|\r|\n)*?\)\s*\{(?<body>[^}]*)",
+                @"\s" + Regex.Escape(method) + @"(?:<\w+>)?\((?:[^{}]|\r|\n)*?\)\s*(?:where\s+\w+\s*:\s*\w+\s*)?\{(?<body>[^}]*)",
                 RegexOptions.Singleline);
             Assert.True(match.Success, $"{file}: definition of {method} not found");
             var statements = match.Groups["body"].Value

@@ -214,7 +214,7 @@ public class ConciseFormatterTests
             new Result.Str("a"), new Result.Atom(1),
             new Result.Str($"b{separator}c"), new Result.Atom(2),
         ]);
-        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+        var success = HandBuiltSuccess.OfOnePlainRow(value);
 
         Assert.Equal(
             $"(\n  a,\n  1,\n  'b{separator}c',\n  2\n)",
@@ -232,7 +232,7 @@ public class ConciseFormatterTests
             new Result.Str("a"), new Result.Atom(1),
             new Result.Str("b"), new Result.Str($"x{separator}y"),
         ]);
-        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+        var success = HandBuiltSuccess.OfOnePlainRow(value);
 
         Assert.Equal(
             $"(\n  a,\n  1,\n  b,\n  'x{separator}y'\n)",

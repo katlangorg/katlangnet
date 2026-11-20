@@ -413,6 +413,8 @@ public class ReadOnlyViewStorageContractTests
         sites["RunResult.Success.Atoms"] = () => success.Atoms;
         sites["RunResult.Success.OutputRows (many rows)"] = () => success.OutputRows;
         sites["RunResult.Success.OutputRows (one row)"] = () => single.OutputRows;
+        sites["RunResult.Success.OutputRowCounts (many rows)"] = () => success.OutputRowCounts;
+        sites["RunResult.Success.OutputRowCounts (one row)"] = () => single.OutputRowCounts;
         sites["RunResult.ParseFailure.Errors"] = () => parseFailure.Errors;
         sites["RunResult.EvalFailure.Errors"] = () => EvalFailure("1 / 0").Errors;
         sites["KatLangException.Errors"] = () => new KatLangException([.. parseFailure.Errors]).Errors;

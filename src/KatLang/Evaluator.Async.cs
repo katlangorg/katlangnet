@@ -689,7 +689,8 @@ public static partial class Evaluator
     /// <summary>
     /// Async twin of the <see cref="RunCountedObserved"/> harness entry point: same
     /// budget hand-back so async tests can compare the OPERATIONAL counters a twin-path
-    /// run actually charged against a synchronous baseline.
+    /// run actually charged against a synchronous baseline. <paramref name="rootOutputRows"/> is the
+    /// same caller-made root output-row recorder seam, attached across the twin's evaluation.
     /// </summary>
     internal static async ValueTask<(EvalResult<CountedResult> Result, EvaluationBudget Budget)> RunCountedObservedAsync(
         Expr expr,
@@ -700,6 +701,7 @@ public static partial class Evaluator
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        RootOutputRowRecorder? rootOutputRows = null,
         CancellationToken cancellationToken = default)
     {
         // At most one deferred-region walk for this call: decided here when this entry builds
@@ -723,6 +725,7 @@ public static partial class Evaluator
                 hostOperations,
                 randomSeed,
                 treeRequiresAsyncEvaluation,
+                rootOutputRows,
                 cancellationToken);
         }
 
@@ -735,9 +738,18 @@ public static partial class Evaluator
             return (preparationError, preparation.Budget);
 
         var ctx = preparation.Ctx;
-        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
-            ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), expr, ctx);
+        EvalResult<CountedResult> result;
+        ctx.Budget.RootOutputRows = rootOutputRows;
+        try
+        {
+            result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
+                ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
+                : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), expr, ctx);
+        }
+        finally
+        {
+            ctx.Budget.RootOutputRows = null;
+        }
 
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);
@@ -784,9 +796,23 @@ public static partial class Evaluator
     {
         // ONE wired instance feeds the output and every property read (the property cache's owner identity).
         var wired = WireToCaller(ctx, alg);
-        var outputR = await EvalWiredRootProgramCountedAsync(wired, span, ctx).ConfigureAwait(false);
+        // The root claims the recorder on row-loop entry. Clear an unclaimed offer on every exit.
+        var rootOutputRows = new RootOutputRowRecorder(wired.Output);
+        EvalResult<CountedResult> outputR;
+        ctx.Budget.RootOutputRows = rootOutputRows;
+        try
+        {
+            outputR = await EvalWiredRootProgramCountedAsync(wired, span, ctx).ConfigureAwait(false);
+        }
+        finally
+        {
+            ctx.Budget.RootOutputRows = null;
+        }
         if (outputR.IsError)
             return outputR.Error;
+
+        // Read only now that the root output succeeded: counts never accompany a failure.
+        var rootRowSlotCounts = rootOutputRows.TakeSlotCounts();
 
         // In the given order; the first failing read is the run's failure and no later name is read.
         var properties = new CountedResult?[topLevelPropertyNames.Count];
@@ -799,7 +825,8 @@ public static partial class Evaluator
             properties[i] = propertyR.Value;
         }
 
-        return EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, properties));
+        return EvalResult<CountedRootProgramResult>.Ok(
+            new CountedRootProgramResult(outputR.Value, properties) { RootRowSlotCounts = rootRowSlotCounts });
     }
 
     /// <summary>MIRROR OF <see cref="EvalTopLevelZeroArgPropertyCounted"/> — keep in lock-step.</summary>
@@ -1464,8 +1491,16 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return await EvalOutputRowsPreparedCoreAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv).ConfigureAwait(false);
+        return await EvalOutputRowsPreparedAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv).ConfigureAwait(false);
     }
+
+    /// <summary>MIRROR OF <see cref="EvalOutputRowsPrepared"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalOutputRowsPreparedAsync(
+        IReadOnlyList<Expr> rows, EvalCtx rowCtx, EvalCtx reserveCtx, ValEnv valEnv)
+        => RootOutputRowRecorder.Claim(reserveCtx.Budget, rows) is { } recorder
+            ? EvalOutputRowsPreparedCoreAsync(recorder, rowCtx, reserveCtx, valEnv)
+            : EvalOutputRowsPreparedCoreAsync(new OrdinaryOutputRows(rows), rowCtx, reserveCtx, valEnv);
 
     /// <summary>
     /// MIRROR OF <see cref="EvalOutputRowsPreparedCore"/> — keep in lock-step, INCLUDING
@@ -1481,11 +1516,12 @@ public static partial class Evaluator
     /// on a low host stack the twin continues on a fresh one and the probe fires only if
     /// that stack is low too.
     /// </summary>
-    private static async ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalOutputRowsPreparedCoreAsync(
-        IReadOnlyList<Expr> rows,
+    private static async ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalOutputRowsPreparedCoreAsync<TRows>(
+        TRows source,
         EvalCtx rowCtx,
         EvalCtx reserveCtx,
         ValEnv valEnv)
+        where TRows : IOutputRowSource
     {
         // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
         if (StackHop.HostStackIsLow()) await new StackHop();
@@ -1495,14 +1531,13 @@ public static partial class Evaluator
         var results = new List<Result>();
         var emittedCount = 0;
         TransientSupply bound = default;
-
         // Indexed, as in the synchronous funnel (no bundle enumerator per body evaluation).
-        for (var row = 0; row < rows.Count; row++)
+        for (var row = 0; row < source.Rows.Count; row++)
         {
-            var expr = rows[row];
+            var expr = source.Rows[row];
             var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
-            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, in rowCtx);
+            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, source.Rows, in rowCtx);
 
             // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
             // passes the limit the remaining rows are formed count-only and the capture's own
@@ -1511,18 +1546,22 @@ public static partial class Evaluator
             {
                 AddCountedTopLevelValuesBounded(results, countedR.Value, reserveCtx.Budget, ref bound, expansion: true);
                 emittedCount += countedR.Value.EmittedCount;
-                continue;
+            }
+            else
+            {
+                // A non-spread output expression is always one visible output slot,
+                // even when it evaluates to the empty sequence value `()`.
+                AddSlotBounded(results, countedR.Value.Value, reserveCtx.Budget, ref bound);
+                emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
             }
 
-            // A non-spread output expression is always one visible output slot,
-            // even when it evaluates to the empty sequence value `()`.
-            AddSlotBounded(results, countedR.Value.Value, reserveCtx.Budget, ref bound);
-            emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
+            if (typeof(TRows) != typeof(OrdinaryOutputRows))
+                source.RecordRow(row, results.Count);
         }
 
         if (bound.Overflowed)
-            return RefuseOverflowedCaptureAtRows(reserveCtx.Budget, bound, rows);
-        var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, rows);
+            return RefuseOverflowedCaptureAtRows(reserveCtx.Budget, bound, source.Rows);
+        var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, source.Rows);
         if (capturedR.IsError) return capturedR.Error;
 
         var counted = new CountedResult(capturedR.Value, emittedCount);
@@ -1534,7 +1573,7 @@ public static partial class Evaluator
         OutputBundle body,
         EvalCtx ctx,
         ValEnv valEnv)
-        => EvalOutputRowsPreparedCoreAsync(body, ctx, ctx, valEnv);
+        => EvalOutputRowsPreparedAsync(body, ctx, ctx, valEnv);
 
     /// <summary>MIRROR OF <see cref="EvalCaptureCountedCore"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalCaptureCountedCoreAsync(
@@ -1884,7 +1923,7 @@ public static partial class Evaluator
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
-        var preparedR = await EvalOutputRowsPreparedCoreAsync(algorithm.Output, bodyCtx, ctx, valEnv).ConfigureAwait(false);
+        var preparedR = await EvalOutputRowsPreparedAsync(algorithm.Output, bodyCtx, ctx, valEnv).ConfigureAwait(false);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -1909,7 +1948,7 @@ public static partial class Evaluator
         var boundValues = ShadowValEnv(valEnv, names);
         var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues, names,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
-        var preparedR = await EvalOutputRowsPreparedCoreAsync(algorithm.Output, bodyCtx, boundCtx, boundValues).ConfigureAwait(false);
+        var preparedR = await EvalOutputRowsPreparedAsync(algorithm.Output, bodyCtx, boundCtx, boundValues).ConfigureAwait(false);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);

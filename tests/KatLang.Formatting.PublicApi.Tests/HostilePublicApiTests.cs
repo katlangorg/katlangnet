@@ -236,7 +236,7 @@ public class HostilePublicApiTests
             public class Consumer {
                 public object Rewrite(RunResult.Success s, ParseResult p) =>
                     new object[] { s with { Value = new Result.Atom(7) }, p with { Diagnostics = [] } };
-                public object Forge(Algorithm.User root) => new RunResult.Success(root, new Result.Atom(7), []);
+                public object Forge(Algorithm.User root) => new RunResult.Success(root, new Result.Atom(7), [], 1, new[] { 1 });
             }
             """, "produced-results-not-forgeable");
         Assert.NotEqual(0, negative.ExitCode);

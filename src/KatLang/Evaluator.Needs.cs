@@ -1538,7 +1538,7 @@ public static partial class Evaluator
             return EvalAlgOutputCountedCore(callee, ctx, values);
         if (OutputRowsAccessError(callee) is { } accessError)
             return accessError;
-        var prepared = EvalOutputRowsPreparedCore(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values);
+        var prepared = EvalOutputRowsPrepared(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values);
         return prepared.IsError
             ? prepared.Error
             : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
@@ -1552,7 +1552,7 @@ public static partial class Evaluator
             return await EvalAlgOutputCountedCoreAsync(callee, ctx, values).ConfigureAwait(false);
         if (OutputRowsAccessError(callee) is { } accessError)
             return accessError;
-        var prepared = await EvalOutputRowsPreparedCoreAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values).ConfigureAwait(false);
+        var prepared = await EvalOutputRowsPreparedAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values).ConfigureAwait(false);
         return prepared.IsError
             ? prepared.Error
             : EvalResult<CountedResult>.Ok(prepared.Value.Counted);

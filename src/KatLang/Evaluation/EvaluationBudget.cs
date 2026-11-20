@@ -92,6 +92,10 @@ internal sealed class EvaluationBudget
     internal long AliasChaseVisits => Interlocked.Read(ref _aliasChaseVisits);
     internal void NoteAliasChaseVisit() => Interlocked.Increment(ref _aliasChaseVisits);
 
+    /// <summary>Pending recorder for the engine's root output. The root's row loop claims and clears it
+    /// on entry, before evaluating any row or nested body.</summary>
+    internal RootOutputRowRecorder? RootOutputRows { get; set; }
+
     internal EvalError? CheckContinuation()
     {
         Volatile.Read(ref _requiredSourceCancellation)?.Throw();

@@ -152,7 +152,7 @@ public class ConciseNeverModeTests
     public void MultilineStrings_RetainPunctuationAndContent(string raw)
     {
         var value = new Result.SequenceValue([new Result.Str(raw), new Result.Atom(1)]);
-        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
+        var success = HandBuiltSuccess.OfOnePlainRow(value);
 
         var text = OutputFormatters.Concise.Format(success, Preset());
 
@@ -368,10 +368,7 @@ public class ConciseNeverModeTests
     // ── Robustness with large raw strings ───────────────────────────────────
 
     private static RunResult.Success SequenceWithString(string raw)
-        => new(
-            new Algorithm.User(null, [], [], [], []),
-            new Result.SequenceValue([new Result.Str(raw), new Result.Atom(1)]),
-            []);
+        => HandBuiltSuccess.OfValue(new Result.SequenceValue([new Result.Str(raw), new Result.Atom(1)]));
 
     [Fact]
     public void LargeSafeString_RendersFullyWithoutJoining()
@@ -439,10 +436,7 @@ public class ConciseNeverModeTests
         var wideItems = new Result[100_000];
         for (var i = 0; i < wideItems.Length; i++)
             wideItems[i] = new Result.Atom(i % 10);
-        var wide = new RunResult.Success(
-            new Algorithm.User(null, [], [], [], []),
-            Result.SequenceValue.TakeOwnership(wideItems),
-            []);
+        var wide = HandBuiltSuccess.OfOnePlainRow(Result.SequenceValue.TakeOwnership(wideItems));
         Assert.True(OutputFormatters.Concise.Format(wide, Preset(maxDisplayLength: 1_000)).Length <= 1_000);
 
         Result deep = new Result.Atom(1);
@@ -453,13 +447,13 @@ public class ConciseNeverModeTests
                 : Result.SequenceValue.TakeOwnership([deep]);
         }
 
-        var deepSuccess = new RunResult.Success(new Algorithm.User(null, [], [], [], []), deep, []);
+        var deepSuccess = HandBuiltSuccess.OfOnePlainRow(deep);
         Assert.True(OutputFormatters.Concise.Format(deepSuccess, Preset(width: 1, maxDisplayLength: 500)).Length <= 500);
 
         Result shared = new Result.Atom(1);
         for (var i = 0; i < 30; i++)
             shared = Result.ListValue.TakeOwnership([shared, shared]);
-        var sharedSuccess = new RunResult.Success(new Algorithm.User(null, [], [], [], []), shared, []);
+        var sharedSuccess = HandBuiltSuccess.OfOnePlainRow(shared);
         Assert.True(OutputFormatters.Concise.Format(sharedSuccess, Preset(maxDisplayLength: 10_000)).Length <= 10_000);
     }
 }

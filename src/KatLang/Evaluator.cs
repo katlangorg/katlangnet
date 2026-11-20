@@ -3527,6 +3527,11 @@ public static partial class Evaluator
     /// path the optimizers actually took (planned, fused, fallen back, or generic). They are
     /// write-only counters the evaluator increments through a null-conditional call: supplying
     /// one cannot change optimizer eligibility, evaluation order, or any result.</para>
+    ///
+    /// <para><paramref name="rootOutputRows"/> attaches a caller-made root output-row recorder
+    /// (<see cref="RootOutputRowRecorder"/>, made over the root's own output rows) for this run's
+    /// evaluation, exactly as the engine's funnel attaches its own, so a test can compare a recorded
+    /// run with an unrecorded one counter for counter. It is as passive as the collectors.</para>
     /// </summary>
     internal static (EvalResult<CountedResult> Result, EvaluationBudget Budget) RunCountedObserved(
         Expr expr,
@@ -3539,6 +3544,7 @@ public static partial class Evaluator
         HostOperations? hostOperations = null,
         long? randomSeed = null,
         TreeRouteFact? treeRequiresAsyncEvaluation = null,
+        RootOutputRowRecorder? rootOutputRows = null,
         CancellationToken cancellationToken = default)
     {
         using var preparation = PrepareSynchronousRun(
@@ -3558,9 +3564,18 @@ public static partial class Evaluator
             return (preparationError, preparation.Budget);
 
         var ctx = preparation.Ctx;
-        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
-            ? EvalRootProgramCounted(alg, expr.Span, ctx)
-            : EvalCounted(expr, ctx, []), expr, ctx);
+        EvalResult<CountedResult> result;
+        ctx.Budget.RootOutputRows = rootOutputRows;
+        try
+        {
+            result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
+                ? EvalRootProgramCounted(alg, expr.Span, ctx)
+                : EvalCounted(expr, ctx, []), expr, ctx);
+        }
+        finally
+        {
+            ctx.Budget.RootOutputRows = null;
+        }
 
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);
@@ -3721,9 +3736,23 @@ public static partial class Evaluator
     {
         // ONE wired instance feeds the output and every property read (the property cache's owner identity).
         var wired = WireToCaller(ctx, alg);
-        var outputR = EvalWiredRootProgramCounted(wired, span, ctx);
+        // The root claims the recorder on row-loop entry. Clear an unclaimed offer on every exit.
+        var rootOutputRows = new RootOutputRowRecorder(wired.Output);
+        EvalResult<CountedResult> outputR;
+        ctx.Budget.RootOutputRows = rootOutputRows;
+        try
+        {
+            outputR = EvalWiredRootProgramCounted(wired, span, ctx);
+        }
+        finally
+        {
+            ctx.Budget.RootOutputRows = null;
+        }
         if (outputR.IsError)
             return outputR.Error;
+
+        // Read only now that the root output succeeded: counts never accompany a failure.
+        var rootRowSlotCounts = rootOutputRows.TakeSlotCounts();
 
         // In the given order; the first failing read is the run's failure and no later name is read.
         var properties = new CountedResult?[topLevelPropertyNames.Count];
@@ -3736,7 +3765,8 @@ public static partial class Evaluator
             properties[i] = propertyR.Value;
         }
 
-        return EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, properties));
+        return EvalResult<CountedRootProgramResult>.Ok(
+            new CountedRootProgramResult(outputR.Value, properties) { RootRowSlotCounts = rootRowSlotCounts });
     }
 
     private static EvalResult<CountedResult?> EvalTopLevelZeroArgPropertyCounted(

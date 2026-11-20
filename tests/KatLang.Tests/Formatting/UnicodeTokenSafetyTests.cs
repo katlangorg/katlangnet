@@ -19,10 +19,7 @@ public class UnicodeTokenSafetyTests
         };
 
     private static RunResult.Success PairOf(string label, decimal value)
-        => new(
-            new Algorithm.User(null, [], [], [], []),
-            new Result.SequenceValue([new Result.Str(label), new Result.Atom(value)]),
-            []);
+        => HandBuiltSuccess.OfValue(new Result.SequenceValue([new Result.Str(label), new Result.Atom(value)]));
 
     private static string Concise(string label, decimal value, StringDelimiterMode mode)
         => OutputFormatters.Concise.Format(PairOf(label, value), Preset(mode));

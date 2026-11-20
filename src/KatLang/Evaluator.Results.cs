@@ -83,10 +83,19 @@ public static partial class Evaluator
     /// properties: <see cref="TopLevelProperties"/> has one entry per requested name, in request
     /// order, <c>null</c> exactly where the root declares no such property (and everywhere for a
     /// non-program expression). The list is owned by the finished run and never mutated.
+    /// <para><see cref="RootRowSlotCounts"/> is the root body's recorded output-row metadata
+    /// (<see cref="RootOutputRowRecorder"/>): one entry per row of the evaluated root's output, in
+    /// row order, holding the physical output slots that row supplied; the entries sum to the slots
+    /// <see cref="Output"/> was combined from. It exists only on this successful result, is
+    /// <c>null</c> for a non-program expression (which has no root rows), and is one fresh array
+    /// handed over to the result's one consumer (<see cref="KatLangEngine"/>'s outcome projection).</para>
     /// </summary>
     internal readonly record struct CountedRootProgramResult(
         CountedResult Output,
-        IReadOnlyList<CountedResult?> TopLevelProperties);
+        IReadOnlyList<CountedResult?> TopLevelProperties)
+    {
+        internal int[]? RootRowSlotCounts { get; init; }
+    }
 
     /// <summary>
     /// Evaluated bounds for the inclusive integer <c>range(start, stop)</c>

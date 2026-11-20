@@ -683,7 +683,8 @@ internal sealed class DeferredModuleRegion
                 var attemptLedger = Loader.CreateMaterializationLedger();
                 // The attempt's own writes to the lookup cache of the chain recorded at the branch: its
                 // demand-time passes run under that chain, whose cache lives as long as the tree. They are
-                // taken back below, under the gate, however the attempt ends (OpenMemberIndexCache).
+                // taken back under the gate, however the attempt ends (OpenMemberIndexCache): by the compile
+                // itself just before it freezes the unit's facts, and below for every other ending.
                 var lookupWrites = Exposure!.Scope.PropertyScope.MemberIndexes?.BeginMaterializationAttempt();
                 var published = false;
                 try
@@ -701,7 +702,7 @@ internal sealed class DeferredModuleRegion
                         // demand-time pass starts from the import site the region recorded: a
                         // diagnostic raised against module content — which carries no source
                         // location — is positioned at the site the current document wrote.
-                        var exposed = CompileLoadedBody(loaded, diagnostics, observations, modules, out var continuation, cancellationToken);
+                        var exposed = CompileLoadedBody(loaded, diagnostics, observations, modules, lookupWrites, out var continuation, cancellationToken);
                         if (exposed is not null)
                         {
                             lock (_runLock)
@@ -737,6 +738,8 @@ internal sealed class DeferredModuleRegion
                         // An attempt leaves nothing in the recorded chain's lookup cache, published or
                         // not: a published unit is the tree it returned, and a region its body defers
                         // again records its own chain. Refused selections therefore retain nothing.
+                        // An attempt that reached its freeze took its entries back there (CompileLoadedBody)
+                        // and could add none since: for it this removes nothing and ends its claim.
                         lookupWrites?.TakeBack();
                     }
                 }
@@ -764,7 +767,8 @@ internal sealed class DeferredModuleRegion
     }
 
     private Algorithm? CompileLoadedBody(Algorithm loaded, DiagnosticBag diagnostics, FrontEndTraversalObservations? observations,
-        ModuleUnits modules, out StaticStructureOperation.Continuation? continuation, CancellationToken cancellationToken)
+        ModuleUnits modules, OpenMemberIndexCache.AttemptWrites? lookupWrites, out StaticStructureOperation.Continuation? continuation,
+        CancellationToken cancellationToken)
     {
         continuation = null;
         try
@@ -799,8 +803,7 @@ internal sealed class DeferredModuleRegion
                 return null;
             }
             if (diagnostics.HasReportedErrors) return null;
-            new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite) { CancellationToken = cancellationToken }
-                .VisitAlgorithm(resolved);
+            ValidateParameterPropertyCollisions(resolved, diagnostics, cancellationToken);
             OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite,
                 completedModules: Loader.ModuleUnits, cancellationToken: cancellationToken);
             InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite, cancellationToken);
@@ -819,6 +822,13 @@ internal sealed class DeferredModuleRegion
                 ReportUnchargedEnclosingParameters(resolved, structural.Pattern, uncharged, diagnostics);
                 return null;
             }
+            // The passes that look names up under the recorded chain have all run (exposure was the last), and
+            // the freeze below is where a materialization's live memory peaks. The attempt's entries in that
+            // chain's lookup cache are therefore taken back HERE and not held through the freeze and the
+            // publication. From here until the attempt ends the cache refuses a new entry (OpenMemberIndexCache),
+            // so nothing below can leave one that no journal would remove. Every ending that does not reach this
+            // line, and one inside the freeze, is finished by RunCoreAsync as before.
+            lookupWrites?.TakeBackBeforeFreeze();
             continuation = operation.Freeze(cancellationToken);
             return exposed;
         }
@@ -837,6 +847,16 @@ internal sealed class DeferredModuleRegion
             return null;
         }
     }
+
+    /// <summary>
+    /// Runs the collision validator in a separate frame so its per-callable state becomes collectible when the
+    /// visit ends. In the measured tier-0 build, constructing it in <see cref="CompileLoadedBody"/> kept it
+    /// reachable through the subsequent freeze.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void ValidateParameterPropertyCollisions(Algorithm resolved, DiagnosticBag diagnostics, CancellationToken cancellationToken)
+        => new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite) { CancellationToken = cancellationToken }
+            .VisitAlgorithm(resolved);
 
     /// <summary>
     /// Reports <see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/> once per enclosing binding the

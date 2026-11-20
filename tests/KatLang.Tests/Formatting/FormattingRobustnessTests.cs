@@ -15,7 +15,7 @@ public class FormattingRobustnessTests
     private const string LimitPrefix = "Display output limit of";
 
     private static RunResult.Success SuccessOf(Result value)
-        => new(new Algorithm.User(null, [], [], [], []), value, []);
+        => HandBuiltSuccess.OfValue(value);
 
     private static Result DeepList(int depth)
     {
