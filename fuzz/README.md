@@ -542,8 +542,8 @@ The metamorphic target asks a different question: **do two programs that must me
 thing also behave the same way, and cost the same?** That catches a class the single-run
 targets structurally cannot — a form that computes the right answer while charging the wrong
 amount of work, or that crosses a resource boundary its equivalent form does not. (The
-duplicate dotted-receiver materialization recorded in `SEMANTIC-ALIGNMENT.md` is exactly that
-shape: correct values, doubled item accounting.)
+duplicate dotted-receiver materialization recorded in the git history of `SEMANTIC-ALIGNMENT.md`
+is exactly that shape: correct values, doubled item accounting.)
 
 Consequently the fuzz input is **not a program**. A metamorphic testcase is
 

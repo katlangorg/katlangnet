@@ -24,32 +24,16 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
 * `Disciplined m`: `m` keeps every existing cell's suspension, completed VALUE and prepared plan
   supply. `NeedSupply.form`, `NeedPlan.prepare`, `NeedPlan.execute`, `NeedDemand.suspendedValue`,
   `NeedDemand.step`, `NeedPlan.reify` and `NeedPlan.invoke` are PROVED disciplined from their
-  callbacks' discipline; the historical named obligation was `ProductionDiscipline`. R7 (October
-  2026): it is now a THEOREM, `KatLang.EvaluatorDiscipline.productionDiscipline_holds`
-  (`KatLangArityLaws/EvaluatorDiscipline.lean`, which imports this file), in this exact general
-  form. The production specializations that have no hypothesis are stated there, once
-  (`production_value_disciplined'`, `production_invocations_keep_value'`,
-  `production_meta_value_orders'`); the two below (`production_invoke_disciplined`,
-  `production_value_then_meta`) keep it.
+  callbacks' discipline. The production discharge of `ProductionDiscipline` is in [ledger E-2 and E-19](../../docs/design/formal-correspondence-ledger.md#evaluator-and-heap).
 * `Oblivious a m` (only for `fresh_plan_is_ordinary_call`): `m` neither reads nor writes the plan
   record of cell `a`, over ALL valid input heaps and plan records. This is a sufficient
   abstract callback contract, NOT a property established for the production dispatch:
   dispatch can demand `a` when `a` is suspended. `CallPlanGuards.dispatchIsNotGloballyOblivious`
-  pins that counterexample. `PlanConservativity.lean` relativizes it (`ObliviousOn P a`,
-  `fresh_plan_is_ordinary_call_on`) and transfers it through the core from per-body obligations;
-  the entry hypothesis `a` evaluating, even strengthened by no stored reference to `a`, is
-  insufficient for reachable META states (`PlanConservativityGuards`), so production conservativity is not a
-  theorem (ledger `docs/design/formal-correspondence-ledger.md` row E-18).
+  pins that counterexample. The reachable-state goal, the per-body contracts and the route comparisons
+  have separate domains. See [ledger E-18](../../docs/design/formal-correspondence-ledger.md#e-18-plan-conservativity).
 
-Not claimed here: the production bridge is R7's (`EvaluatorCore.lean`, the total core; there is
-no `partial` evaluator left), `ProductionDiscipline` is discharged in `EvaluatorDiscipline.lean`,
-and that the ordinary call is `ordinaryCall` is now a theorem for the call and extension routes on
-completed runs (`PlanConservativity.ordinaryCall_is_written_call_named`, `ordinaryCall_is_written_call`,
-`written_call_is_evalCallCountedExpr`; against dot evaluation `PlanRouteBridge.member_bridge` and
-`ordinaryCall_extension_is_dot_call`; the `.Algorithm` route stays unbridged, ledger E-18).
-That the recursive edge installs `productionPlanRoute` is `rfl` (`production_demand`,
-`EvaluatorCore.productionPlanRoute_is_core`). C# concurrency, cancellation, terminality and resource
-accounting are not modelled.
+The recursive edge installs `productionPlanRoute` by definition (`production_demand`).
+C# concurrency, cancellation, terminality and resource accounting are outside this model.
 -/
 
 namespace KatLang.CallPlan
@@ -1420,28 +1404,9 @@ def Oblivious {α : Type} (a : Nat) (m : EvalM α) : Prop :=
     of the production `evalCallCountedExpr` → `evalResolvedCallCounted` (the latter forms the supply
     with `NeedSupply.form evalSupplySpread` and dispatches through `evalSuppliedCallCounted`, the
     same dispatch `productionPlanRoute` installs) over the route's callee and effective bundle
-    (META-S3-4: an extension is the call `F(t, args)`, `effective`). The correspondence with the
-    total production definitions is proved for call and extension routes on completed runs in
-    `PlanConservativity.ordinaryCall_is_written_call_named` (named by the route's own dispatch name,
-    `NeedPlan.writtenDispatchName`: the member for a member call `t.N(args)`) and
-    `ordinaryCall_is_written_call` (off the member call, named by the written callee); the bridge to
-    `evalCallCountedExpr` additionally excludes an `X.Algorithm` callee. `PlanRouteBridge` adds the
-    route bridges to ordinary DOT evaluation (ledger E-18): the extension-dot equality, and — since
-    the E-18 member-route correction of November 11 2026 aligned the planned member dispatch name —
-    the member-dot equality `member_bridge` (one run from one entry state; a plain first argument
-    over a member-selecting receiver whose parameter head, if any, has a structure-normal supplied
-    CALLABLE, `member_bridge_inert` for every bundle over a state-inert
-    receiver). The `.Algorithm` route has only a plan-side decomposition. Its receiver READ is the
-    ordinary intrinsic's since the E-18 receiver-read correction of November 11 2026
-    (`receiver_cell_reads_invocation_receiver`, `invocationReceiverValue_eq`,
-    `algorithm_callee_is_planned_callee`; `algorithmReceiverFailureAgrees` is the regression of the
-    former outcome difference), but `algorithmHeapDiffers` refutes exact final-state equality — the
-    plan allocates its link and receiver cells — and `SelfObservation.outcomeDiffers` refutes
-    unconditional outcome agreement, so the `.Algorithm` bridge is the CONDITIONAL one of
-    `PlanAlgorithmBridge.lean` (the insertion relation of `HeapInsertion.lean`, the non-observation
-    contract `InsertedOn`).
-    `InvocationPlanGuards.agrees`, `InvocationRouteGuards` and `PlanRouteBridgeGuards` give finite
-    executable evidence. -/
+    (META-S3-4: an extension is the call `F(t, args)`, `effective`). The comparison with
+    production uses the route's dispatch name and origin. For the theorem for each route, its
+    completion and entry-state premises, and the executable counterexamples, see [ledger E-18](../../docs/design/formal-correspondence-ledger.md#e-18-plan-conservativity). -/
 def ordinaryCall (route : NeedPlan.Route) (a : Nat)
     (shape : NeedPlan.CallShape) (r : PlanRoute) : EvalM CountedResult := do
   let eff := NeedPlan.effective shape r

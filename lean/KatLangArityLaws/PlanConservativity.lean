@@ -45,71 +45,8 @@ authoritative evaluator. Proved here, with standard axioms only:
   call is the shell around the re-counted `evalCallCountedExpr`, up to the plan record, under the
   same invariant contracts and the stated structural/completion premises.
 
-NOT proved: the invariant contracts for ANY non-trivial production `P`. The simulation conclusion
-is FALSE under the entry hypotheses "`a` is `evaluating`" and
-"`a` is `evaluating` and no stored value is `callRef a` / `argView a`": a reachable state built from
-`EvalState.empty` by a META program (`R = Capture(Wrap(Inner((Capture(R.Arguments*).Invoke())*)))`,
-`first(R.Arguments)`) satisfies both and makes the plan-routed and the ordinary outcome DIFFER
-(`PlanConservativityGuards.selfInvokeOutcomeDiffers`; `obligations_fail_at` is the kernel half of
-that refutation for allocation-closed invariants). These guards refute the simulation on the
-candidate states; they do not by themselves instantiate `obligations_fail_at` for `noStoredRef`,
-which is NOT `PushClosed`. Neither are `unreachableFromRefs` or `refFree`: an arbitrary push can
-store `callRef a`. Moreover, `PlanCalls Q` includes all arguments to its four operation families,
-so it does not admit a META-free restriction of those calls. `unrestrictedDispatchCreatesRef`
-exhibits a META dispatch from a reference-free flight state that stores a reference to `a`,
-refuting preservation for that proposed invariant under the current call domain. A META-free
-theorem needs allocation and call contracts restricted by admissible inputs, as well as the
-per-body proof; the present generic production instance does not supply them.
-`PlanConservativityAdmissible.lean` (November 11 2026) supplies the admissible contracts
-(`FormAdmissible`, `PlanCallsOn`, `PlanOutputs`; `production_fresh_plan_adm`, instantiated at
-`evaluating` ∧ `refFree` by `production_fresh_plan_refFree`) and discharges the `evaluating` half
-for every body (`PlanActiveCells.lean`); the reference-free half and every body's obliviousness
-remain open, and `refFree` itself is not kept by loop-only runs
-(`PlanConservativityAdmissibleGuards.loopRunStoresReference`).
-
-The remaining step-1 routes are in `PlanRouteBridge.lean`. The extension route IS the production
-dot evaluation (`ordinaryCall_extension_is_dot_call`, through the E-17 dot funnel). The member route
-IS the production dot evaluation too (`member_bridge`: one run from one entry state), since the E-18
-member-route correction of November 11 2026 named the planned member dispatch by its member
-(`NeedPlan.writtenDispatchName`) — for a plain first argument over a member-selecting receiver
-(a parameter head additionally requires a structure-normal supplied CALLABLE)
-and for every bundle over a state-inert receiver; an empty or spread-first bundle over any other
-receiver is stated relative to the origin agreement (`member_bridge_of_origin`), which
-`MemberStability.lean` discharges wherever the receiver's navigation is settled when the origin is
-read (`member_bridge_settled`, the whole-run invariant `NavStable`; a permanent witness shows the
-premise necessary). The `.Algorithm` route is decomposed into production operations here
-(`ordinaryCall_algorithm_is_production` equates it with the proof-local `algorithmPlanCall`, not the
-ordinary evaluator) and bridged CONDITIONALLY in `PlanAlgorithmBridge.lean`. Its receiver READ was a
-language-visible difference — a receiver without output
-failed with its own missing output under a property frame on the plan route — until the E-18
-receiver-read correction of November 11 2026 gave the plan's retained receiver cell the ordinary
-invocation receiver evaluator (`NeedInvocationRole`, `EvalBody.invocationReceiverValue` in
-`KatLang.lean`; `receiver_cell_reads_invocation_receiver`, `invocationReceiverValue_eq`; regression
-`algorithmReceiverFailureAgrees`). Exact final-state equality is false
-(`algorithmHeapDiffers`: the plan allocates its link and receiver cells) and so is unconditional
-outcome agreement (`PlanRouteBridgeGuards.SelfObservation.outcomeDiffers`: 9 against 10 when the
-run observes the plan's own callee record), so the `.Algorithm` bridge is stated under the
-insertion relation of `HeapInsertion.lean` and relative to the non-observation contract
-`PlanAlgorithmBridge.InsertedOn`, whose production discharge is the META-free programme's. E-18
-stays OPEN.
-
-M2 after the review repair: the tail contract is asked only from the ADMISSIBLE tail entries of
-a receiver value (`PlanAlgorithmBridge.After`) — the old universal premise, refuted by
-`PlanAlgorithmBridgeGuards.tailContractSelfReferenceDiffers`, is gone, and the self-reference is
-excluded by `self_reference_records_callee`; every bridge concludes the COMPLETE relation
-`HeapInsertion.Inserted` (`Frame` by `production_frame`, from an explicit preservation obligation);
-and `PlanAlgorithmBridgeInstances` applies the final theorems, every premise kernel-proved, to
-reached states for a successful and for a failing receiver read in both written forms.
-`PlanAlgorithmBridgeParameterInstances` additionally applies both final parameter bridge theorems
-to successful reference-valued reads in an own-parameter supply context, with every premise
-kernel-proved, repeated-demand memo reuse and a shifted callee allocation. The closing pass
-(`PlanAlgorithmBridgeSourceInstances` and its four companion modules) applies the final theorems
-to GENUINE SOURCE PROGRAMS in both written forms: the full `R.Algorithm(0)` positive control, a
-structured failure, a captured-reference receiver, an alias, an effectful receiver with memo
-sharing, an address-bearing result and a captured-ancestor parameter receiver — every premise
-proved; the run equations by proof-producing evaluation (`cbv`) over the production definitions,
-since the kernel cannot evaluate through the well-founded helpers. M2's instance obligation is
-closed; the production DISCHARGE of the contract stays the META-free programme's.
+For the status of the contracts, the reachable META counterexamples, and the call, extension,
+member and intrinsic route comparisons, see [ledger E-18](../../docs/design/formal-correspondence-ledger.md#e-18-plan-conservativity).
 -/
 
 namespace KatLang.PlanConservativity

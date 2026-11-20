@@ -225,7 +225,7 @@ public class CallbackNestedPatternBindingTests
         // demand is still passed as a callable — never demanded before (or instead of) its
         // invocations — and an empty collection runs it zero times. (The same callable
         // FORWARDED THROUGH A PARAMETER currently reaches the slot as its demanded value — a
-        // pre-existing callback-channel defect recorded in SEMANTIC-ALIGNMENT.md beside S3,
+        // pre-existing callback-channel defect recorded with the S3 hostile review,
         // which never affects a nested-pattern callee: a top-level group needs one slot.)
         var ticks = new List<Decimal128>();
         var operations = TickOperations(ticks);

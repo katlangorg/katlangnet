@@ -51,11 +51,9 @@ proved in `KatLangArityLaws/EvaluatorInstallation.lean` (`dot_invoke_arm`, `invo
 `invoke_production`; `user_supply_binds`, whose binder capabilities carry `NeedPlan.reference` by
 the definition of `NeedChannels.capabilities`); `CallReferenceGuards.lean` runs whole programs.
 
-NOT claimed: the
-reachable-state refinement (open, ledger E-18; refuted for META states) and `ProductionDiscipline` (open until R7; now
-the theorem `productionDiscipline_holds`, `EvaluatorDiscipline.lean`); run identity — Lean
-has one run per `EvalState` and no channel that brings a value into another run, so foreign-run
-and terminal-run rejection are C#-only obligations; C# concurrency, cancellation and resources.
+Reachable-state plan correspondence is recorded in [ledger E-18](../../docs/design/formal-correspondence-ledger.md#e-18-plan-conservativity). Heap discipline and installation are in [ledger E-2 and E-19](../../docs/design/formal-correspondence-ledger.md#evaluator-and-heap).
+Lean has one run per state. Run identity, ended- and foreign-run rejection, concurrency,
+cancellation and resources are C# obligations.
 -/
 
 namespace KatLang.CallReferenceLaws

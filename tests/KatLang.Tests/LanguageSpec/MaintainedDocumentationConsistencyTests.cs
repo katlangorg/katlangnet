@@ -18,9 +18,10 @@ namespace KatLang.Tests.LanguageSpec;
 ///   an <c>open</c> member or the DECLARED members of structural navigation are meant
 ///   (K1-08: selection never depends on exposure).</item>
 /// </list>
-/// Historical records (the alignment manifest, the dated design notes) narrate superseded
-/// rules on purpose and are not scanned; tests are not scanned either, because they quote
-/// stale shapes to reject them.
+/// Historical records (the dated design notes) narrate superseded rules on purpose and are
+/// not scanned; tests are not scanned either, because they quote stale shapes to reject them.
+/// The alignment manifest and the proof ledger state current rules and current proof status
+/// only (their dated history is in git since 2026-11-20), so both are scanned.
 /// </summary>
 public class MaintainedDocumentationConsistencyTests
 {
@@ -42,6 +43,8 @@ public class MaintainedDocumentationConsistencyTests
         "docs/design/language-rules/call-by-need.md",
         "src/KatLang/CALLABLES.md",
         "src/KatLang/BINDING-ARCHITECTURE.md",
+        "src/KatLang/SEMANTIC-ALIGNMENT.md",
+        "docs/design/formal-correspondence-ledger.md",
     ];
 
     /// <summary>
@@ -255,7 +258,7 @@ public class MaintainedDocumentationConsistencyTests
         // R8/X-13 (2026-10-12): Lean theorem names retired because the name claimed more than the
         // statement proved (a dot-call, forwarding or selection law that was argument preparation, a
         // congruence or a historical-binder instance), or renamed to state their scope. Current-rule
-        // text cites the current names; the old-to-new mapping lives in the dated R8 entry of
+        // text cites the current names; the old-to-new mapping is the dated R8 entry in the git history of
         // SEMANTIC-ALIGNMENT.md. Names still borne by CoreArityAlgebraProofs algebra checks are not listed.
         {
             @"(?<![\w?])(?:"
@@ -311,8 +314,8 @@ public class MaintainedDocumentationConsistencyTests
         // CallableArgumentBindings, isFunctionShaped, repeatsAtLevel, bindsName / anyBindsName, the
         // fixture's findCollecting, repeatedMergeStep, the laws-file fixtures) and the retired
         // two-binder guard are deleted; git history keeps them. Current-rule text cites the
-        // production Model-C laws instead; the dated R8 and retirement entries of
-        // SEMANTIC-ALIGNMENT.md (not scanned) keep the record.
+        // production Model-C laws instead; the dated R8 and retirement entries in the git history of
+        // SEMANTIC-ALIGNMENT.md keep the record.
         {
             @"\bHistoricalReadyBinding\b|(?<![\w?])(?:historical_(?:(?:binder|bind_params|repeated_name)\w*|\*)|"
             + @"bindParameterPatternList_(?:\w+|\*)|bindCallableArguments(?:_(?:\w+|\*))?|CallableArgumentBindings|"
@@ -329,7 +332,7 @@ public class MaintainedDocumentationConsistencyTests
         // and the legacy algorithm-tier failure channel with its readers (Lean
         // AlgBinding.valueFailure?, AlgEnv.lookupBinding, parameterValueFailure?,
         // argumentParameterValueFailure?; C# ParameterValueFailure, ParameterHasValueOutcome,
-        // LookupAlgBinding). The dated P3 entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        // LookupAlgBinding). The dated P3 entry in the git history of SEMANTIC-ALIGNMENT.md keeps the record.
         {
             @"(?<![\w?])(?:matchCallPattern|matchCallBranches|matchCountedPatternInto|matchCountedStructureInto|"
             + @"matchCountedCallPattern|matchCountedCallBranches|(?-i:matchCountedPattern)|lookupBinding|"
@@ -345,8 +348,8 @@ public class MaintainedDocumentationConsistencyTests
         // WithAlgEnv / WithCountedParamEnv, the activation and cache-key identities of both tiers,
         // and the loop planner's TryFindCountedParam / GetCountedParamSlot. A parameter's VALUE and
         // CALLABLE identity are its supplied cell's. (The planner's live NeedParameter rendering
-        // "CountedParamSlot(name)" is not a retired name.) The dated entry of SEMANTIC-ALIGNMENT.md
-        // (not scanned) keeps the record.
+        // "CountedParamSlot(name)" is not a retired name.) The dated entry in the git history of
+        // SEMANTIC-ALIGNMENT.md keeps the record.
         {
             @"(?<![\w?])(?:AlgEnv|AlgBinding|CountedParamEnv|withAlgEnv|withCountedParamEnv|ShadowAlgEnv|"
             + "ShadowCountedParamEnv|LookupAlg|LookupCountedParam|AlgorithmEnvironmentIdentity|"
@@ -359,7 +362,7 @@ public class MaintainedDocumentationConsistencyTests
         // pre-Model-C per-slot resolver resolveArgAlgExpr; git history keeps both. Current-rule text
         // cites the need cells instead. Both Lean names are matched case-sensitively, so the LIVE
         // C# method ResolveArgAlgsWithSequenceSpread (it delegates to ResolveNeedSupply) is not
-        // flagged. The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        // flagged. The dated entry in the git history of SEMANTIC-ALIGNMENT.md keeps the record.
         {
             @"(?<![\w?])(?-i:resolveArgAlgsWithSequenceSpread|resolveArgAlgExpr)(?![\w?])",
             "the dead Lean helper resolveArgAlgsWithSequenceSpread (retired 2026-10-13) or its per-slot resolver resolveArgAlgExpr (deleted by Model C)"
@@ -377,7 +380,7 @@ public class MaintainedDocumentationConsistencyTests
         // and VariadicCallItem.Callable (a failed VALUE demand's projection) stay live, so the
         // retired callable? / Callable is matched only through its retired owner
         // (ResolvedArgumentAlgorithm., AlgorithmArg.). ExpectPreparedValueSuffixArg is no whole-word
-        // PreparedValue. The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        // PreparedValue. The dated entry in the git history of SEMANTIC-ALIGNMENT.md keeps the record.
         {
             @"(?<![\w?])(?:applyBuiltinResolved|requireCallableValues|expandSequenceSpreadBuiltinArguments(?:Async)?|"
             + @"BuildCallableCallItemsAsync|skipMissingValue|spreadsSequence|InvokedAlgorithm|PreparedValue)(?![\w?])|"
@@ -389,7 +392,7 @@ public class MaintainedDocumentationConsistencyTests
         // only caller of EvaluationObservations.RecordCountedArgumentReification, when an evaluated
         // value became Ready data with no CALLABLE identity (NEED-06, Q-06). The recorder then had
         // no caller, CountedArgumentReificationCount was always zero, and both are retired. The
-        // dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        // dated entry in the git history of SEMANTIC-ALIGNMENT.md keeps the record.
         {
             @"(?<![\w?])(?:RecordCountedArgumentReification|CountedArgumentReificationCount)(?![\w?])",
             "the reification counter retired on 2026-10-13 (EvaluationObservations.CountedArgumentReificationCount and its recorder)"
@@ -403,15 +406,15 @@ public class MaintainedDocumentationConsistencyTests
         // (with isEmptySequenceChain) one CoreTests fixture; all are retired, as is the uncalled
         // pre-K1-08 Lean lookupPropDefExportedAny? (both definitions). The scan is
         // case-insensitive, so each name covers its C# and Lean spelling (and the deleted Lean
-        // countedArgAlgorithm). The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the
-        // record.
+        // countedArgAlgorithm). The dated entry in the git history of SEMANTIC-ALIGNMENT.md keeps
+        // the record.
         {
             @"(?<![\w?])(?:ResultToExpr(?:Leaf|Frame|StructureExpansionCount)?|RecordResultToExprStructureExpansion|"
             + @"ResultsToExprBundle|IsEmptySequenceChain|CountedArgAlgorithm|lookupPropDefExportedAny\??)(?![\w?])",
             "the Result-to-Expr reification retired on 2026-10-13 (ResultToExpr / resultToExpr with its helpers and work counter), the uncalled lookupPropDefExportedAny?, or the deleted counted-argument wrapper"
         },
         // B3-5★ (November 2026) deleted the resolver's processing order: every inferred signature is selected before the
-        // rewrite. The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        // rewrite. The dated entry in the git history of SEMANTIC-ALIGNMENT.md keeps the record.
         {
             @"(?<![\w.])(?:PropertyLoop|EnsureOnDemand|ProcessedFormOnDemand|DemandDepthBudget|SiblingOrderLookup|SettleSoftCycleConsumers|"
             + @"PropertyProcessingOrderTests|CollectSiblingDependencyIndices|OwnedMemberSibling|OpenedSiblingProvider|PendingProperties)(?!\w)",

@@ -114,8 +114,8 @@ of the plain algebra:
    > templates are `dot-inline-collect` / `dot-nested-collect` /
    > `dot-list-literal-collect` / `dot-written-fixed-prefix` /
    > `dot-written-suffix-whole` / `dot-written-suffix-collected` /
-   > `dot-empty-collect`. See `SEMANTIC-ALIGNMENT.md` "Dot-call passes a
-   > value" and the `KatLangArityLaws` `dot_receiver_*` bridge laws.
+   > `dot-empty-collect`. See `SEMANTIC-ALIGNMENT.md` § Grace + DotCall semantic laws
+   > (law 2, DOT-CALL PASSES A VALUE) and the `KatLangArityLaws` `dot_receiver_*` bridge laws.
    >
    > **Refined (September 2026, the collector supply-boundary law).** The
    > dotted equivalence is untouched, but what a COLLECTING callee binds for

@@ -3,7 +3,7 @@ import KatLang
 open KatLang
 
 /-!
-# Candidate static input domain of navigation admissibility (ledger E-18, F1 CLOSED)
+# Static input domain of navigation admissibility
 
 `NavigationContract` reduces "a reachable production navigation is a navigation-core run" to one
 per-body obligation of a call contract. The cell clause of that contract rests on STATIC facts of
@@ -77,142 +77,18 @@ lookup reaches after every level's own declarations and BEFORE any `open` (`prel
   level (the anchoring of a container's chain, `75c3f1f2`), it is not the reader's. This is the
   owner decision of 2026-11-13 (exposure charges exactly the access checks and value reads the
   evaluator performs on static selections), which the C# front end now implements
-  (`PropertyExposureResolver`; ledger E-18, F1). The F1 review's R1 (intermediate members dropped)
-  and R2 (reference target walks, inline-block heads and consulted open levels under-charged by C#)
-  have their functional repairs; the counterfactuals are `NavigationSourceDomainGuards.AccessChecks`.
-  The C1 follow-up (2026-11-13) made the C# open-walk charging linear for readers with bound owners
-  (one settlement per consulted level) with unchanged metadata, and removed the candidate's I28
-  over-charge: opening a runtime reference charges nothing, as `structureOf`'s open mode already gave
-  (`AccessChecks.runtimeReferenceOpen_sourceDomain`). No predicate or evaluator rule changed.
+  (`PropertyExposureResolver`). The model records each check at the site where it occurs.
+  An impossible check at that site contributes no requirement.
 
-  INDEPENDENT C1/I28 REVIEW (2026-11-14): F1 DEFER; exposure acceptance STOPPED. The C1 sharing is
-  conditional: scaling the `Lib.Mid.Sub` discharge witness still repeats the walks per reader
-  (3,522 / 11,972 / 43,872 settlement frames at widths 25 / 50 / 100). The claimed full selection
-  trail also has a counterexample: opening `L = Lib.Sub.Algorithm` on the intrinsic route checks
-  `Sub` before reaching the runtime link, but `walkSteps` returns `runtime` without its prefix,
-  and `structureOf` in open mode replaces it by an empty trail. Thus `SourceDomain` admits a
-  host-built tree whose reader omits that check's requirement. The C# front end correctly charges
-  this source, and both evaluators agree. This is a predicate gap, not a language change.
-  Evidence: `artifacts/validation/e18-c1-i28-20261114-review/`. The historical closure claim above
-  is superseded; this module remains a candidate fragment. C# correspondence is still ASSUMED.
-
-  E-18 F1 CLOSEOUT (2026-11-15, owner decisions Q1–Q3 of 2026-11-14): EXPOSURE CORRECT; SETTLEMENT
-  LINEAR; MODEL AGREES; F1 CLOSED, superseding the STOPPED / F1 DEFER verdict above. B2 stays
-  DEFERRED and ledger E-18 stays OPEN. Q2: each access check is charged at the site the evaluator
-  makes it: a written path at the reading site; an open target's walk, a crossed reference's target
-  walk included, at the consulted level; the member an open provides at the reading site; a value
-  crossing in the reference's own scope. Q1: a check that can never pass at its site charges
-  nothing; the fail-closed entry (owner depth -1, and a names-only requirement no level binds) is
-  retired, and no published requirement is one that no chain can supply. Q3: the block head of a
-  reference's row read in open mode is keyed under the reference
-  (`StaticStructureQueries.DirectPath`), so a block-headed reference resolves like a named one. The
-  route census (`ExposureCensusTests`) holds three ratchet lines (two over-charges of its fixed
-  self-checks and the model's stricter verdict on one of them); 26,102 cases are valid (912
-  block-headed open targets naming a missing member or `.Algorithm` are now `UnresolvedOpenTarget`,
-  as their named twins were); 7,478 observations are in the impossible-check class, decided by the
-  grid and by behavior in agreement; no inside outcome that worked on `a4b545e8` fails now.
-  Settlement keeps a settlement when no cycle cut inside it reached a settlement that began before
-  it; all 2,442 work families are within the 2.5 doubling bound (285 were not), the `Lib.Mid.Sub`
-  discharge witness takes 204 / 379 / 729 frames at 25 / 50 / 100 (formerly 3,522 / 11,972 /
-  43,872), and every observation is identical before and after that change. Lean: a missing or
-  runtime end keeps the checks made before it (`Sel.miss`, `Sel.runtime`), so the static prefix of a
-  runtime open is on the trail and the review's host-built copy is refused; each scope restricts the
-  checks made inside it (`Located.within`, `Sel.within`); guards
-  `NavigationSourceDomainGuards.CheckSites`. The model check leaves no M1, M2 or M4 line, the corpus
-  tally has no `paramsBound` or `exposureFull` failure, and the axiom audit finds only `propext`,
-  `Classical.choice` and `Quot.sound`. C# correspondence, model/evaluator agreement and fuel
-  sufficiency remain assumptions; no `NavRuns` premise, per-body obligation or B2 criterion is
-  discharged. Evidence: `artifacts/validation/e18-f1-closeout-20261115/`.
-
-  Independent reviewer correction (2026-11-15): F1 DEFER; acceptance BLOCKED, superseding this
-  closeout's F1 CLOSED claim until all required checks pass. The preceding DotNet phase failed
-  `StaticStructureDefaultCutoverTests.ResolutionWithoutAnAdmittedOperationIsPhysicallyAbsent`
-  because `ImplicitArgumentResolver.OutputSpreading.cs` contains `StructuralOperation!`; the brief
-  excludes that file, so its failure cannot be waived or repaired in this task. The required twin
-  equality is also unresolved: `GridBuiltTwinDifference` exempts 91 differing pairs, including
-  three outside the inventory's prediction, rather than establishing the brief's equality
-  criterion. The 2,442 work families comprise 1,733 measured families within bound and 709
-  excluded families; the exclusions are not passing measurements. The exposure/model findings and
-  their evidence remain recorded above; B2 stays DEFERRED and E-18 OPEN. Independent review
-  evidence: `artifacts/validation/review-e18-f1-20261115/`.
-
-  E-18 F1 FINISH (2026-11-15, owner decisions D1 and D2 of 2026-11-15): F1 CLOSED against the route
-  census, superseding the reviewer's F1 DEFER; acceptance BLOCKED verdict above. B2 stays DEFERRED
-  and ledger E-18 stays OPEN. Both review findings are resolved, neither by a change to exposure, to
-  this model or to an evaluator. D1: `ImplicitArgumentResolver.OutputSpreading.cs` no longer writes
-  `StructuralOperation!` (the field is non-nullable, so the operator did nothing at run time);
-  `StaticStructureDefaultCutoverTests.ResolutionWithoutAnAdmittedOperationIsPhysicallyAbsent`
-  passes and the DotNet phase has no failure. D2: the twin of a block-headed reference is the
-  DECLARED COPY of the same literal, `Lit = { <literal> }` followed by `L = Lit.<path>`
-  (`CensusGrid.DeclaredCopy`). The grid's `ref1` cell was never that twin: it points at the real
-  `Lib`, whose `Mid` holds the reader and is activated, while the literal is a stripped copy, and
-  all 91 pairs the retired comparison exempted have the reader there. Each of the 5,136 generated
-  `head=blockref` cells, valid or not, gives exactly its declared copy's error diagnostics,
-  signatures and probe outcomes (census mode `twins`, no exemption), and
-  `ExposureCensusTests.DefaultSubset_BlockHeadedReferencesMatchTheirDeclaredCopies` keeps that
-  equality in the default suite for the stored cover's 51 cells. The comparison sees Q3: with
-  `blockHeadUnderScope` passed as `false`, 2,506 of the 5,136 pairs and 9 of the 51 differ. The
-  `ref1` pairing and its exemption categories are deleted, so the mention of
-  `GridBuiltTwinDifference` above is history. The closeout's other results stand as the reviewer
-  re-measured them, and the final candidate gives them again: census `full` (26,102 valid cases,
-  7,478 impossible-check observations, no unsupplied requirement, the three ratchet lines, and no
-  work family flagged: 1,733 measured within the bound, 709 excluded by the work generator's own
-  structural rules, the same as before the closeout), the model check (one line, the M3 of a fixed
-  self-check) and the comparison with `a4b545e8` (no regression). C# correspondence,
-  model/evaluator agreement and fuel sufficiency remain assumptions; no `NavRuns` premise,
-  per-body obligation or B2 criterion is discharged. Evidence:
-  `artifacts/validation/e18-f1-finish-20261115/`.
-
-  SAME-MODULE PROVIDER IDENTITY (2026-11-18). On the two-holder fixture the former positional
-  comparison made `openedAt` miss the member that production selects. `Located.providerKey` uses the
-  module declaration token for a loaded module and the shared algorithm declaration in its module
-  scope for a descendant. An owner's view counts in that scope; the provider's own view is erased
-  as in `PropertyIdentity.callableDeclaration`. Unidentified declarations keep their written positions.
-  All target walks precede deduplication. The first provider supplies the member for the reader's
-  access check. Navigation, cycle checks and the locations on the trail use the original paths.
-  `NavigationSourceDomainGuards.ModuleProviders` compares the model with production on these routes.
-  On its source-derived capture witness, `exposureFull` admits the emitted tree and refuses the
-  copy missing the reader's requirement; the former predicate admitted both. F1 is closed against
-  its route census, B2 is deferred, and E-18 remains open (formal correspondence ledger).
-
-  REFERENCE-ROOT CUT (2026-11-19). A loaded module is rooted at the prelude whatever its root is:
-  `Algorithm.withParent` re-parents a module-identified ALIAS exactly as it re-parents a
-  module-identified block. The model cut the chain for a block root only. A module whose root is a
-  transparent reference had its target walked on its HOLDER's stack (`structureOf`), and an alias
-  root's row, opens and members were walked at the holder's levels (`collectAlg`, `chkAlg`). So the
-  model selected a holder-level target — a declaration of the holder, or a member the holder's
-  `open` provides — where production answers `unknownName`. Now the chain is cut at the module in
-  all three (`Located.ownScope`, which `memberOf` already applied to a module's members).
-  The walkers' half is reachable from SOURCE: the front end elaborates a loaded module whose one
-  row is an alias target to a module-identified alias (a carrier), and the model REFUSED the front
-  end's own tree of such a program when a name the module reads through its own `open` is also
-  declared by its holder, where both evaluators run it (`ReferenceRootCut.carrierMember`,
-  `carrierRow`). A module-identified TRANSPARENT reference is host-built only: the front end never
-  forms a reference from a module body. What the cut changes, for a module-rooted alias only:
-  - both target walks search the module's own declarations and end at the prelude. A value
-    lookup can then consult the module's own opens. An open target uses direct lexical lookup
-    (`openStructure`). Neither route adds a holder level's provider walks to the trail;
-  - a value crossing is checked `within` the root's own position alone;
-  - the root's row, opens and members are checked on a stack that starts at the root, so a
-    parameter only a holder binds is unbound there (`paramsBound`, as for a block root), and a
-    member's requirements are counted from the root.
-  Positional keys are NOT cut (`c.key`, the `#target` block key, `childKey` of the uncut stack):
-  navigation, the trail's locations and the cycle check read the same keys as before, and a chase
-  that formerly returned to a holder's alias now ends in a miss before it. The access checks, the
-  check sites and the anchoring by position (`Located.map`) are unchanged. Every other tree is
-  walked exactly as before. Guards: `NavigationSourceDomainGuards.ReferenceRootCut` (production
-  beside the model, with the ordinary-alias twin of each case, which still finds its target). The
-  cut makes `reqAlg_paramRow` and `declared_paramRow` false of a module-rooted parameter-row alias,
-  so both now exclude it (`hroot`).
-
-  SHARED DECLARATIONS OUTSIDE A MODULE (2026-11-19). A declaration with a supplied `shared`
-  identity was compared by its declaring scope only inside a module; outside one it kept its
-  written position, so two holders of one such declaration were two providers where production
-  counts one. `declaringScope` now ends the comparison at a module or at the first level
-  production identifies afresh, whose position stands for it and everything above it
-  (`ProviderKey.declared`). No source program is known to hold such a declaration twice under one
-  scope outside a module (the source-derived corpora carry no shared identity); the guarded trees
-  are host-built (`NavigationSourceDomainGuards.SharedProviders`).
+  A loaded module's identity is its declaration token. For another identified declaration
+  `Located.providerKey` compares its declaration in its declaring scope. An unidentified
+  declaration retains its position. Target walks precede deduplication and keep their original
+  trail and cycle keys. `Located.ownScope` cuts the chain of every loaded root, including an
+  alias: its row, opens and members are resolved there. Its transparent reference can consult its
+  own opens on a value walk, while an open-target walk uses direct lexical lookup. Outside a
+  module, `declaringScope` ends at the first freshly identified level and uses its position for
+  that level and the chain above. The associated source, host-built and corpus evidence and the
+  limits of these comparisons are recorded in [ledger E-18.12](../../docs/design/formal-correspondence-ledger.md#e-1812-the-static-exposure-model-f1).
 
   Runtime-only routes — parameter and computed heads, `.Algorithm` links, runtime reference rows —
   contribute nothing statically (`Sel.runtime`). A chase meeting a key it already passed is the
@@ -246,33 +122,12 @@ SUFFICIENCY is argued, NOT PROVED: a proof needs the invariant that every locate
 subterm of the stack's declarations with a key no other alias declaration shares, which the
 model does not carry. Exhaustion is fail-closed either way: a selection never silently drops.
 
-## What is and is not claimed
+## Parameter-row consequence
 
-`SourceDomain` (bound parameters and static exposure over every static selection the model covers)
-is the static input-domain contract of ledger E-18 F1 (closed 2026-11-13). C# correspondence is
-ASSUMED, not proved:
-`NavigationSourceDomainGuards` checks it on source-derived trees (C# fidelity tests,
-`NavigationSourceDomainWitnessTests`) and rejects host-built trees with a requirement removed on
-the guarded routes (`HostBuilt`, `ExposureFragment`, `OpenedFragment`, `SelectionGaps`,
-`SelectionRoutes`, `AccessChecks`, `CheckSites`, `ModuleProviders`, `ReferenceRootCut`,
-`SharedProviders`). The F1 closeout above records
-the corpus evidence. Lean has no model of `ParameterDetector` or `PropertyExposureResolver`,
-and the selection rules above are this module's
-model of the evaluator's static selections, not the evaluator's own lookup functions (those are
-monadic over runtime contexts; agreement is the assumption, exercised by the guards).
-
-The parameter-row consequence used by the gate lemma (`NavigationOwnership`): under any exposure
-mode, a member whose algorithm is a parameter-row alias `.param y` declares `(y, k)`, `k` the
-NEAREST level of its declaring stack that binds `y` (`declared_paramRow`) — unless the alias is a
-loaded module's root, whose chain is cut at its own level and whose row no holder level binds.
-
-Whether `SourceDomain` gives the proposed navigation invariant is NOT proved here. The B2
-preparation (2026-11-12) found `SourceLike` source programs on which production reached a
-parameter-row alias wired under an UNACTIVATED owner (`OutsideContainer`) and one whose navigation
-allocated on every run (`EscapedContainer`); since the anchoring of a container's chain (owner
-decision 2026-11-13) both reach an owned member, and the second is re-read
-(`NavigationSourceDomainGuards`). Both fail `exposureDeep`; `DeepSourceLike` excludes programs a
-front end accepts, so it is a restriction of the source domain, not a description of it.
+`declared_paramRow` concerns an exposed parameter-row alias other than a loaded module root.
+Given `memberExposed` and the nearest binding's owner index, its declared requirements contain
+that name and index. A module's chain begins at its own root. For the model's assumptions,
+the domain of the fixtures, the census and the source-entry obligation, see [ledger E-18.12](../../docs/design/formal-correspondence-ledger.md#e-1812-the-static-exposure-model-f1).
 -/
 
 namespace KatLang.NavigationSourceDomain

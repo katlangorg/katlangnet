@@ -46,16 +46,8 @@ under them. Nothing here changes a definition of `KatLang.lean`.
   reference-free value environment, and `production_fresh_plan_refFree` instantiates the
   simulation there.
 
-NOT proved here: `BodyKeepsGiven Q (Active a) StoredRefFree`, `BodyObliviousOn Q (ActiveRefFree a) a`,
-or the three output contracts, for any non-trivial admissible domain. `StoredRefFree` is in fact
-NOT preserved by loop-only runs: Lean's `while`/`repeat` bind their step through the builtin
-`meta step` parameter, which stores a Ready `callRef` adapter for the STEP cell
-(`PlanConservativityAdmissibleGuards.loopRunStoresReference`, which also checks a reference to a
-still-suspended plan); conservativity still holds there
-while the stored reference does not reach `a` (both are executable observations, not a sufficiency
-theorem). A loop-covering invariant must therefore exclude
-REACHABILITY of `a` from stored references (the guards' `unreachableFromRefs`), not references in
-general; see the ledger row E-18.
+The loop-only guard observes a stored step reference. The admissible domain, the distinct-demand
+counterexample to state-only keeping and the remaining output obligations are recorded in [ledger E-18](../../docs/design/formal-correspondence-ledger.md#e-18-plan-conservativity).
 -/
 
 namespace KatLang.PlanConservativityAdmissible

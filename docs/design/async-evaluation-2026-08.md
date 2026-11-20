@@ -152,7 +152,7 @@ no-per-node-probe policy — unchanged.
 > `F(n) = {×30 F(n - 1) }×30` program) where this twin-only backstop already returned the
 > structured error. The per-node policy is still unchanged — the probe is per row loop —
 > and the twin may still stop earlier than the synchronous family on the same program. See
-> `SEMANTIC-ALIGNMENT.md` (Depth note) and `StructuralNestingStackBackstopProcessTests`.
+> `StructuralNestingStackBackstopProcessTests`; the depth note is in the git history of `SEMANTIC-ALIGNMENT.md`.
 
 ### Measured synchronous-completion stack capacity (1 MiB thread, `--async-stack-capacity`)
 

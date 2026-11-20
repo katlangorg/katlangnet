@@ -50,11 +50,9 @@ call these definitions is proved in `KatLangArityLaws/EvaluatorInstallation.lean
 `sequence_builtin_binding_installs`, `count_arm`,
 `first_arm`, `last_arm`, `supply_spread_installs`); `ArgumentViewGuards.lean` runs whole programs.
 
-NOT claimed: the reachable-state refinement (open, ledger E-18; refuted for META states) and `ProductionDiscipline`
-(which now also names `evalSupplySpread`; open until R7, now the theorem `productionDiscipline_holds`,
-`EvaluatorDiscipline.lean`); run identity and the ended-run, foreign-run and terminal
-refusals (C#-only obligations: Lean has one run per state); C# concurrency, cancellation and
-resource accounting.
+For reachable-state plan correspondence see [ledger E-18](../../docs/design/formal-correspondence-ledger.md#e-18-plan-conservativity). Heap discipline and installation are in [ledger E-2 and E-19](../../docs/design/formal-correspondence-ledger.md#evaluator-and-heap).
+Run identity, ended-, foreign- and terminal-run refusal, concurrency, cancellation and resource
+accounting are properties of the host implementation.
 -/
 
 namespace KatLang.ArgumentViewLaws

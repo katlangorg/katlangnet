@@ -1068,7 +1068,7 @@ internal enum StaticCycleCheck
     /// forms the aliases so, and a dot receiver's static structure predicts them so). Its providers are the ones every
     /// name lookup reads: a reference written as an open target is followed exactly where it becomes an alias, so the
     /// front end selects what the evaluator, which opens only formed aliases, selects — up to the navigated-body defect
-    /// (SEMANTIC-ALIGNMENT.md (12), not repaired), where the detector's readings judge a navigated body through their own
+    /// (ALIAS-UNIFY-1 correction (12), not repaired), where the detector's readings judge a navigated body through their own
     /// strata and refuse an alias the resolver forms.
     /// </summary>
     Formation,

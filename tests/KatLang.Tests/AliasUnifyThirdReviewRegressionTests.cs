@@ -275,7 +275,7 @@ public sealed class AliasUnifyThirdReviewRegressionTests
         // repetitions that never grow with the chain — a pass that kept its first answers would have S(h), one that
         // answered only by its seeds one more link per pass. (A chain COLLECTED wrongly under a wrong self-read loses one
         // link per pass whatever its links read, its seeds never decided again, and a lost one whose links read their
-        // successors first is regained one link per pass: the recorded limit of SEMANTIC-ALIGNMENT (12).)
+        // successors first is regained one link per pass: the recorded limit of ALIAS-UNIFY-1 correction (12).)
         var source = SelfReadBeforeAReverseChain(size);
         await OkAsync(source, "5");
         var (s, observations) = DetectBody(source, "S");

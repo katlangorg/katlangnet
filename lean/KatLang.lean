@@ -10903,7 +10903,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                     -- any `.Algorithm` route decision it reads was taken by the failed demand, and those
                     -- projections are sticky); a runtime terminal or a failed chase keeps the carrier.
                     -- C#: `NameCarrierValueTerminal`, which observes this chase without initiating it
-                    -- (META-S3-0b); see SEMANTIC-ALIGNMENT.md, ALIAS-UNIFY-1 corrections (5) and (11).
+                    -- (META-S3-0b; ALIAS-UNIFY-1 corrections (5) and (11)).
                     match <- evalAttempt (rec.resolveAliasValueTarget carrier ctx) with
                     | .ok (.runtime _ _) => pure (some carrier)
                     | .ok terminal => pure (some terminal.alg)

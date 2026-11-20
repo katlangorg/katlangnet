@@ -2235,7 +2235,7 @@ internal static class PropertyDependencyGraphBuilder
     /// property exported although its value depends on the parameter: structural
     /// navigation could then read a dynamic binding through it, and the run-wide
     /// zero-argument property cache of an exported binding would have served one
-    /// activation's value to another (SEMANTIC-ALIGNMENT, F3).</para>
+    /// activation's value to another (finding F3).</para>
     /// </summary>
     private static SummarySeed CollectDotCallSummarySeed(
         Expr.DotCall dotCall,

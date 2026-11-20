@@ -1249,7 +1249,7 @@ public static partial class Evaluator
         // correct-rounding guarantee. The transcendental members call the
         // platform Decimal128 functions directly (DEC-RC2-1: the .NET 11 RC2
         // accuracy correction superseded KatLang's endpoint and near-1
-        // reformulations; see SEMANTIC-ALIGNMENT.md K6-R3). Domain violations
+        // reformulations, K6-R3). Domain violations
         // follow IEEE: Sqrt(-1) and Ln(-1) are NaN, Ln(0) is -Infinity, and
         // non-finite inputs propagate. Transcendental results are
         // quantum-canonicalized (see CanonicalizeMathResult); the

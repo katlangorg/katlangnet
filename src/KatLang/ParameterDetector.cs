@@ -1598,8 +1598,8 @@ internal static class ParameterDetector
     /// - Pattern binder names are rewritten to <see cref="Expr.Param"/> (resolved via valEnv at runtime).
     /// - No other free identifiers become implicit parameters.
     /// - The branch body's <see cref="Algorithm.User.ParameterPatterns"/> list is empty.
-    /// - The body's own `open` list is elaborated (branch-owned opens, see
-    ///   SEMANTIC-ALIGNMENT.md), and nested algorithms within the body — brace blocks,
+    /// - The body's own `open` list is elaborated (branch-owned opens, PV-24:
+    ///   ClauseFamilyOpenOwnershipTests), and nested algorithms within the body — brace blocks,
     ///   property values, and nested clause families alike — are processed normally.
     ///
     /// This enforces the invariant that conditional branch inputs come ONLY from the
