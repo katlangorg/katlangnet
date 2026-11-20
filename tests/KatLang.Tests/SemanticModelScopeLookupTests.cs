@@ -18,8 +18,8 @@ namespace KatLang.Tests;
 /// identical at different and equal depths, zero-width, default, rootless, repeated, random) are
 /// compared with the scan, kept here verbatim as the oracle. They also pin that the index stores
 /// at most two intervals per non-empty hull, that query cost grows sublinearly with the number
-/// of siblings, and that building the index scales with the scopes for nested, tied and wide
-/// listings. Implementation-only optimization: no editor-visible result changes.
+/// of siblings, and that building the index takes O(S log S) counted steps for nested, tied,
+/// overlapping and wide listings. Implementation-only optimization: no editor-visible result changes.
 /// </summary>
 public class SemanticModelScopeLookupTests(ITestOutputHelper output)
 {
@@ -681,12 +681,21 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Building the index scales with the scopes whatever their shape: 16 times as many nested,
-    /// tied, overlapping or sibling regions took 16–22.5 times as long and allocated 16 times
-    /// the bytes in the Release measurements (4,096 to 65,536 scopes, tiering off). Construction
-    /// allocated about 76 bytes per scope for wide, nested and tied hulls, and 92 for the
-    /// staircase. The bounds are 64 times the build time (best of three) and 20 times the bytes.
-    /// Every listing indexes at most two intervals per hull.
+    /// Building the index scales with the scopes whatever their shape. The test counts the
+    /// builder's work, not its time: <see cref="SemanticModel.ScopeIndexBuildSteps"/> is the number
+    /// of candidate comparisons and expiry checks the sweep made, the same on every run of a
+    /// listing. 16 times as many nested, tied, overlapping or sibling regions (2,048 to 32,768) took
+    /// 16 to 22.1 times the steps, where S log₂ S predicts 21.8: about 2.4 S log₂ S steps at most
+    /// for S hulls. The builds also allocated 16 times the bytes: about 76 bytes per scope for wide,
+    /// nested and tied hulls, and 92 for the staircase. The bounds are 4 S log₂ S steps at each size,
+    /// 32 times the steps and 20 times the bytes. The small listing is checked before the large one
+    /// is built, so a quadratic sweep fails quickly. A sweep that rescans its active candidates at
+    /// every boundary still selects the right scopes and allocates little, but it takes about S²
+    /// steps on the nested and staircase listings and fails. Elapsed time is printed, not asserted:
+    /// the full parallel suite measured time ratios of 70 to 144 for this unchanged work (64 was
+    /// the former bound), and a reproduction with allocating threads in the same process showed
+    /// collection pauses landing in the long builds and almost never in the short ones. Every
+    /// listing indexes at most two intervals per hull.
     /// </summary>
     [Theory]
     [InlineData("wide")]
@@ -697,10 +706,12 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
     public void IndexConstruction_ScalesWithTheScopes(string shape)
     {
         var dictionary = new Dictionary<DeclarationOccurrence, PropertyInfo>(ReferenceEqualityComparer.Instance);
-        (double Milliseconds, long Bytes, SemanticModel Model) Build(ScopeVisibility[] listing)
+        (long Steps, long Bytes, double Milliseconds, TimeSpan Paused, SemanticModel Model) Build(ScopeVisibility[] listing)
         {
-            var best = double.MaxValue;
+            var steps = -1L;
             var bytes = long.MaxValue;
+            var best = double.MaxValue;
+            var paused = GC.GetTotalPauseDuration();
             SemanticModel? model = null;
             for (var run = 0; run < 4; run++)
             {
@@ -709,22 +720,46 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
                 model = new SemanticModel(HostRoot, [], [], [], [], dictionary, listing);
                 watch.Stop();
                 bytes = Math.Min(bytes, GC.GetAllocatedBytesForCurrentThread() - before);
-                if (run > 0)
+                if (run == 0)
+                {
+                    steps = model.ScopeIndexBuildSteps;
+                }
+                else
+                {
                     best = Math.Min(best, watch.Elapsed.TotalMilliseconds);
+                    Assert.Equal(steps, model.ScopeIndexBuildSteps);
+                }
             }
 
-            return (best, bytes, model!);
+            return (steps, bytes, best, GC.GetTotalPauseDuration() - paused, model!);
+        }
+
+        // Each hull enters the sweep's queue once and leaves it at most once. PriorityQueue's
+        // four-way heap compares about log₄ S times on the way in and 4 log₄ S on the way out
+        // (2.5 log₂ S a hull; a binary heap would take 3), and each departure and each boundary
+        // add at most one expiry check: 4 S log₂ S covers both. Every hull costs at least one
+        // step, so a disconnected count fails too.
+        static void AssertSweepStepsAreBounded(SemanticModel model, long steps)
+        {
+            var hulls = NonEmptyHulls(model);
+            Assert.InRange(steps, hulls, 4L * hulls * (long)Math.Ceiling(Math.Log2(hulls)));
         }
 
         var small = Build(Shaped(shape, 2_048));
-        var large = Build(Shaped(shape, 32_768));
-        output.WriteLine($"{shape}: {small.Milliseconds:F3} ms / {small.Bytes:N0} B for 2,048 scopes, {large.Milliseconds:F3} ms / {large.Bytes:N0} B for 32,768");
-
         AssertIndexIsBoundedByTheHulls(small.Model);
+        AssertSweepStepsAreBounded(small.Model, small.Steps);
+        var large = Build(Shaped(shape, 32_768));
+        output.WriteLine(
+            $"{shape}: {small.Steps:N0} -> {large.Steps:N0} steps ({(double)large.Steps / small.Steps:F2} times), "
+            + $"{small.Bytes:N0} -> {large.Bytes:N0} B ({(double)large.Bytes / small.Bytes:F2} times); not asserted: "
+            + $"{small.Milliseconds:F3} -> {large.Milliseconds:F3} ms (best of three), garbage collection paused the process "
+            + $"{small.Paused.TotalMilliseconds:F1} -> {large.Paused.TotalMilliseconds:F1} ms during the four builds");
+
         AssertIndexIsBoundedByTheHulls(large.Model);
+        AssertSweepStepsAreBounded(large.Model, large.Steps);
         Assert.True(
-            large.Milliseconds < 64 * Math.Max(small.Milliseconds, 0.05),
-            $"16 times the scopes made the build {large.Milliseconds / small.Milliseconds:F1} times slower ({small.Milliseconds:F3} -> {large.Milliseconds:F3} ms).");
+            large.Steps <= 32 * small.Steps,
+            $"16 times the scopes made the build take {(double)large.Steps / small.Steps:F1} times the steps ({small.Steps:N0} -> {large.Steps:N0}).");
         Assert.True(
             large.Bytes < 20 * small.Bytes,
             $"16 times the scopes made the build allocate {(double)large.Bytes / small.Bytes:F1} times as much ({small.Bytes:N0} -> {large.Bytes:N0} B).");

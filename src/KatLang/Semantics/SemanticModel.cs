@@ -161,6 +161,13 @@ public sealed class SemanticModel
     internal int ScopeIndexIntervals => _scopeIndex?.Intervals ?? -1;
 
     /// <summary>
+    /// The work building <see cref="FindScopeAt"/>'s position index took: the candidate comparisons
+    /// and expiry checks of its sweep, O(S log S) for S non-empty hulls. A function of the listing
+    /// alone, unlike elapsed time. -1 when the listing has a null entry and the query scans.
+    /// </summary>
+    internal long ScopeIndexBuildSteps => _scopeIndex?.BuildSteps ?? -1;
+
+    /// <summary>
     /// Whether the resolution sites' starts AND ends both never decrease in listing order. The
     /// builder lists sites by start, then end, so this holds whenever no site strictly contains
     /// another — the usual case for a parsed document, whose identifier sites are written names
@@ -347,14 +354,18 @@ public sealed class SemanticModel
         private readonly ScopeVisibility?[] _winners;
         private readonly ScopeVisibility? _root;
 
-        private ScopePositionIndex(SourcePosition[] starts, ScopeVisibility?[] winners, ScopeVisibility? root)
+        private ScopePositionIndex(SourcePosition[] starts, ScopeVisibility?[] winners, ScopeVisibility? root, long buildSteps)
         {
             _starts = starts;
             _winners = winners;
             _root = root;
+            BuildSteps = buildSteps;
         }
 
         public int Intervals => _starts.Length;
+
+        /// <summary>The steps the build's sweep took (<see cref="CandidateOrder"/>).</summary>
+        public long BuildSteps { get; }
 
         /// <summary>The containing scope the scan selects, else the root; null when the listing has neither.</summary>
         public ScopeVisibility? Find(SourcePosition position)
@@ -415,9 +426,8 @@ public sealed class SemanticModel
             // scan's choice first; a hull ending at or before the boundary no longer contains it
             // and leaves when it surfaces. The first remaining hull then contains the whole
             // interval up to the next boundary and is preferred over every other that does.
-            var candidates = new PriorityQueue<int, int>(
-                hulls,
-                Comparer<int>.Create((left, right) => Prefer(scopes, left, right)));
+            var order = new CandidateOrder(scopes);
+            var candidates = new PriorityQueue<int, int>(hulls, order);
             var starts = new SourcePosition[boundaries.Length];
             var winners = new ScopeVisibility?[boundaries.Length];
             var intervals = 0;
@@ -430,7 +440,7 @@ public sealed class SemanticModel
 
                 for (; entered < hulls && hullStarts[entered] <= boundary; entered++)
                     candidates.Enqueue(byStart[entered], byStart[entered]);
-                while (candidates.TryPeek(out var first, out _) && scopes[first].Span!.Value.End <= boundary)
+                while (candidates.TryPeek(out var first, out _) && order.HasEnded(first, boundary))
                     candidates.Dequeue();
 
                 var winner = candidates.TryPeek(out var selected, out _) ? scopes[selected] : null;
@@ -443,29 +453,50 @@ public sealed class SemanticModel
 
             Array.Resize(ref starts, intervals);
             Array.Resize(ref winners, intervals);
-            return new ScopePositionIndex(starts, winners, root);
+            return new ScopePositionIndex(starts, winners, root, order.Steps);
         }
 
         /// <summary>
-        /// Orders two containing hulls by listing index as the scan prefers them (negative when
-        /// <paramref name="left"/> wins): the deeper scope, at equal depth the inner hull
-        /// (<see cref="IsInnerSpan"/>), and of identical hulls at one depth the earlier listed —
-        /// the scan replaces its choice only by a strictly preferred scope, so it keeps the first.
+        /// The sweep's only view of its candidates, the listing indices of the non-empty hulls: the
+        /// scan's preference between two of them and whether one has ended. Each answer is one step
+        /// of the build's work, counted in <see cref="Steps"/>. A hull enters the queue once and
+        /// leaves it at most once, at O(log S) comparisons a move, so a build takes O(S log S) steps.
+        /// A sweep that revisited every candidate at each boundary would take O(S²) on nested or
+        /// overlapping hulls.
         /// </summary>
-        private static int Prefer(ScopeVisibility[] scopes, int left, int right)
+        private sealed class CandidateOrder(ScopeVisibility[] scopes) : IComparer<int>
         {
-            var leftScope = scopes[left];
-            var rightScope = scopes[right];
-            if (leftScope.NestingDepth != rightScope.NestingDepth)
-                return leftScope.NestingDepth > rightScope.NestingDepth ? -1 : 1;
+            public long Steps { get; private set; }
 
-            var leftHull = leftScope.Span!.Value;
-            var rightHull = rightScope.Span!.Value;
-            if (IsInnerSpan(leftHull, rightHull))
-                return -1;
-            if (IsInnerSpan(rightHull, leftHull))
-                return 1;
-            return left.CompareTo(right);
+            /// <summary>Whether the candidate's hull ends at or before the boundary, so it no longer contains it.</summary>
+            public bool HasEnded(int candidate, SourcePosition boundary)
+            {
+                Steps++;
+                return scopes[candidate].Span!.Value.End <= boundary;
+            }
+
+            /// <summary>
+            /// Orders two containing hulls by listing index as the scan prefers them (negative when
+            /// <paramref name="left"/> wins): the deeper scope, at equal depth the inner hull
+            /// (<see cref="IsInnerSpan"/>), and of identical hulls at one depth the earlier listed —
+            /// the scan replaces its choice only by a strictly preferred scope, so it keeps the first.
+            /// </summary>
+            public int Compare(int left, int right)
+            {
+                Steps++;
+                var leftScope = scopes[left];
+                var rightScope = scopes[right];
+                if (leftScope.NestingDepth != rightScope.NestingDepth)
+                    return leftScope.NestingDepth > rightScope.NestingDepth ? -1 : 1;
+
+                var leftHull = leftScope.Span!.Value;
+                var rightHull = rightScope.Span!.Value;
+                if (IsInnerSpan(leftHull, rightHull))
+                    return -1;
+                if (IsInnerSpan(rightHull, leftHull))
+                    return 1;
+                return left.CompareTo(right);
+            }
         }
     }
 

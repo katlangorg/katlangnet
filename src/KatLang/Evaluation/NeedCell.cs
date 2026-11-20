@@ -16,7 +16,8 @@ internal abstract class NeedNode
     // AddDependency). A Ready cell has no budget either, but it never takes part in an edge.
     private static readonly Lock UnownedDependencyGate = new();
     // The node whose computation the current logical flow is running: the parent of a VALUE
-    // demand or of a runtime CALLABLE projection.
+    // demand or of a runtime CALLABLE projection. Written only by EnterComputation and
+    // LeaveComputation.
     private protected static readonly AsyncLocal<NeedNode?> Current = new();
     // The run this node belongs to (budget identity is graph identity).
     private protected readonly EvaluationBudget? _budget;
@@ -70,6 +71,33 @@ internal abstract class NeedNode
 
     // Test observation only: whether the current logical flow is running some node's computation.
     internal static bool HasCurrentNode => Current.Value is not null;
+
+    // Installs `node` as the flow's current node for a computation this flow starts, in both
+    // families. The node is written to the logical context because a fork captured inside the
+    // computation must inherit it. Returns the context captured before the write, and in `inner`
+    // the context the write produced (each null while flow is suppressed), for LeaveComputation.
+    private protected static ExecutionContext? EnterComputation(NeedNode node, out ExecutionContext? inner)
+    {
+        var outer = ExecutionContext.Capture();
+        Current.Value = node;
+        inner = ExecutionContext.Capture();
+        return outer;
+    }
+
+    // Makes `parent` the flow's current node again once the computation has ended (C# implementation
+    // only, 2026-11-20). If the flow's context is still `inner`, nothing has changed it since the node
+    // was installed. Then `outer` holds exactly the values to restore, `parent` included, and restoring
+    // that object allocates no new context. This saves one context per nested computation. Otherwise
+    // only the node is written back, so a change made meanwhile is kept, such as a host's own AsyncLocal
+    // or suppressed flow. A nested computation that left by this path restores its caller's `inner`
+    // object, so the caller can take this path too.
+    private protected static void LeaveComputation(NeedNode? parent, ExecutionContext? outer, ExecutionContext? inner)
+    {
+        if (outer is not null && inner is not null && ReferenceEquals(ExecutionContext.Capture(), inner))
+            ExecutionContext.Restore(outer);
+        else
+            Current.Value = parent;
+    }
 
     // All active edges, including independently started async chains, are checked
     // atomically before waiting. Iteration bounds the host stack independently of depth.
@@ -313,23 +341,42 @@ internal sealed class NeedCell : NeedNode
     /// published or not — a re-entry's flow-local <see cref="EvalError.DemandCycle"/> included —
     /// keyed by (cell, channel) and replayed at the demand point where the resolver reads them.
     /// It belongs to that resolution alone: a nested observation scope never sees it.
+    /// <para>The first recorded pair is held inline, and later pairs go to a table for their
+    /// channel (C# implementation only, 2026-11-20). Almost every resolution that performs a step
+    /// performs exactly one, so it allocates no table.</para>
     /// </summary>
     internal sealed class ResolutionRecord
     {
+        private NeedCell? _firstCell;
+        private Channel _firstChannel;
+        private EvalResult<Evaluator.CountedResult> _firstValue;
+        private EvalResult<Algorithm?> _firstCallable;
         private Dictionary<NeedCell, EvalResult<Evaluator.CountedResult>>? _values;
         private Dictionary<NeedCell, EvalResult<Algorithm?>>? _callables;
 
         internal bool Contains(NeedCell cell, Channel channel)
-            => channel == Channel.Value ? _values?.ContainsKey(cell) == true : _callables?.ContainsKey(cell) == true;
+            => IsFirst(cell, channel)
+                || (channel == Channel.Value ? _values?.ContainsKey(cell) == true : _callables?.ContainsKey(cell) == true);
 
         internal void RecordValue(NeedCell cell, EvalResult<Evaluator.CountedResult> outcome)
-            => (_values ??= new(IdentityComparer.Instance)).Add(cell, outcome);
+        {
+            if (TakeFirst(cell, Channel.Value)) _firstValue = outcome;
+            else (_values ??= new(IdentityComparer.Instance)).Add(cell, outcome);
+        }
 
         internal void RecordCallable(NeedCell cell, EvalResult<Algorithm?> outcome)
-            => (_callables ??= new(IdentityComparer.Instance)).Add(cell, outcome);
+        {
+            if (TakeFirst(cell, Channel.Callable)) _firstCallable = outcome;
+            else (_callables ??= new(IdentityComparer.Instance)).Add(cell, outcome);
+        }
 
         internal bool TryGetValue(NeedCell cell, out EvalResult<Evaluator.CountedResult> outcome)
         {
+            if (IsFirst(cell, Channel.Value))
+            {
+                outcome = _firstValue;
+                return true;
+            }
             if (_values is not null && _values.TryGetValue(cell, out outcome)) return true;
             outcome = default;
             return false;
@@ -337,8 +384,30 @@ internal sealed class NeedCell : NeedNode
 
         internal bool TryGetCallable(NeedCell cell, out EvalResult<Algorithm?> outcome)
         {
+            if (IsFirst(cell, Channel.Callable))
+            {
+                outcome = _firstCallable;
+                return true;
+            }
             if (_callables is not null && _callables.TryGetValue(cell, out outcome)) return true;
             outcome = default;
+            return false;
+        }
+
+        private bool IsFirst(NeedCell cell, Channel channel) => ReferenceEquals(_firstCell, cell) && _firstChannel == channel;
+
+        // Claims the inline slot for the first pair recorded. A pair is recorded at most once, because
+        // Guard A never performs a recorded pair again. A repeat throws, as the tables' Add does.
+        private bool TakeFirst(NeedCell cell, Channel channel)
+        {
+            if (_firstCell is null)
+            {
+                _firstCell = cell;
+                _firstChannel = channel;
+                return true;
+            }
+            if (IsFirst(cell, channel))
+                throw new ArgumentException("META-S3-0b: a resolution recorded the same operation twice.");
             return false;
         }
 
@@ -693,12 +762,12 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                Current.Value = node;
+                var outer = EnterComputation(node, out var inner);
                 try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
                     ? _suspension is not null ? Evaluator.ProjectSuspendedCallable(this, Source!, _suspension) : node.Project!()
                     : new EvalError.EvaluationStackExhausted { Span = Span }); }
                 catch (Exception error) { CompleteProjectionException(node, error); }
-                finally { Current.Value = parent; }
+                finally { LeaveComputation(parent, outer, inner); }
                 return ProjectionStarterOutcome(node);
             }
             try { return task.GetAwaiter().GetResult(); }
@@ -749,14 +818,14 @@ internal sealed class NeedCell : NeedNode
         // TWIN-ONLY (intentional difference from the synchronous ProjectRuntime): see StackHop.
         if (StackHop.HostStackIsLow()) await new StackHop();
         var previous = Current.Value;
-        Current.Value = node;
+        var outer = EnterComputation(node, out var inner);
         try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
             ? _suspension is not null
                 ? await Evaluator.ProjectSuspendedCallableAsync(this, Source!, _suspension).ConfigureAwait(false)
                 : await node.ProjectAsync!().ConfigureAwait(false)
             : new EvalError.EvaluationStackExhausted { Span = Span }); }
         catch (Exception error) { CompleteProjectionException(node, error); }
-        finally { Current.Value = previous; }
+        finally { LeaveComputation(previous, outer, inner); }
     }
 
     // Under the gate, with no outcome yet: starts the runtime projection's flight (null: the caller
@@ -862,12 +931,12 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                Current.Value = this;
+                var outer = EnterComputation(this, out var inner);
                 try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
                     ? _suspension is not null ? Evaluator.EvalSuspendedValue(this, _suspension) : _evaluate!()
                     : new EvalError.EvaluationStackExhausted { Span = Span }); }
                 catch (Exception error) { CompleteException(error); }
-                finally { Current.Value = parent; }
+                finally { LeaveComputation(parent, outer, inner); }
                 return StarterOutcome();
             }
             try { return task.GetAwaiter().GetResult(); }
@@ -926,14 +995,14 @@ internal sealed class NeedCell : NeedNode
         // TWIN-ONLY (intentional difference from the synchronous Demand): see StackHop.
         if (StackHop.HostStackIsLow()) await new StackHop();
         var previous = Current.Value;
-        Current.Value = this;
+        var outer = EnterComputation(this, out var inner);
         try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
             ? _suspension is not null
                 ? await Evaluator.EvalSuspendedValueAsync(this, _suspension).ConfigureAwait(false)
                 : await _evaluateAsync!().ConfigureAwait(false)
             : new EvalError.EvaluationStackExhausted { Span = Span }); }
         catch (Exception error) { CompleteException(error); }
-        finally { Current.Value = previous; }
+        finally { LeaveComputation(previous, outer, inner); }
     }
 
     // Under the gate, with no outcome yet: starts the VALUE flight (null: the caller computes) or

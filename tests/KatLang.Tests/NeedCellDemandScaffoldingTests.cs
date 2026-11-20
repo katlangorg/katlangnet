@@ -293,23 +293,26 @@ public class NeedCellDemandScaffoldingTests
         return operation.Result;
     }
 
-    // Match the logical context on the measuring thread, including any keys the test runner set.
-    private static long ContextBytes(bool nested = false)
+    // The logical context of `installs` nested computations on the measuring thread, including any
+    // keys the test runner set: each installs its node, and each restores the context object captured
+    // before its own installation (NeedNode.LeaveComputation), which allocates nothing. Since
+    // 2026-11-20 a nested computation therefore costs one context, not two.
+    private static long ContextBytes(int installs = 1)
     {
         var current = new AsyncLocal<object?>();
-        var parent = new object();
-        var child = new object();
+        var nodes = Enumerable.Range(0, installs).Select(static _ => new object()).ToArray();
+        var outer = ExecutionContext.Capture()!;
         return Bytes(() =>
         {
-            current.Value = parent;
-            if (nested)
-            {
-                current.Value = child;
-                current.Value = parent;
-            }
-            current.Value = null;
+            foreach (var node in nodes) current.Value = node;
+            ExecutionContext.Restore(outer);
         });
     }
+
+    private static NeedCell Projecting(NeedCell child, EvaluationBudget budget)
+        => new(() => child.ProjectCallable().IsOk ? Seven : throw new InvalidOperationException(),
+            () => CompleteSynchronously(child.ProjectCallableAsync()).IsOk ? new(Seven) : throw new InvalidOperationException(),
+            budget: budget);
 
     [Fact]
     public void AnUnjoinedSynchronousDemand_AllocatesOnlyItsContext_GcIsolatedChild()
@@ -326,8 +329,9 @@ public class NeedCellDemandScaffoldingTests
         Assert.True(cell.HasCompletedValue);
         Assert.False(cell.HasValueInFlight);
 
-        // The two levels of logical context only: the parent's one wait-for edge is held inline
-        // (216 bytes for the former edge table on .NET 11 x64).
+        // One context per level: the parent's one wait-for edge is held inline (216 bytes for the
+        // former edge table on .NET 11 x64), and the child's exit restores the parent's own context
+        // object (72 bytes for one more context on .NET 11 x64 with no other key in it).
         NeedCell Nested()
         {
             var child = Fresh();
@@ -335,9 +339,17 @@ public class NeedCellDemandScaffoldingTests
         }
         _ = Nested().Demand();
         var parent = Nested();
-        Assert.Equal(ContextBytes(nested: true), Bytes(() => _ = parent.Demand()));
+        Assert.Equal(ContextBytes(installs: 2), Bytes(() => _ = parent.Demand()));
         Assert.Equal(0, parent.ActiveDependencyCount);
         Assert.False(parent.HasPromotedDependencies);
+
+        // The same for a runtime CALLABLE projection nested in a VALUE computation.
+        NeedCell Projection() => NeedCell.WithRuntimeProjection(static () => Seven, static () => new(Seven),
+            static () => EvalResult<Algorithm?>.Ok(null), static () => new(EvalResult<Algorithm?>.Ok(null)), budget: budget);
+        _ = Projecting(Projection(), budget).Demand();
+        var projecting = Projecting(Projection(), budget);
+        Assert.Equal(ContextBytes(installs: 2), Bytes(() => _ = projecting.Demand()));
+        Assert.Equal(0, projecting.ActiveDependencyCount);
         Assert.False(NeedNode.HasCurrentNode);
         GcIsolatedAllocation.Complete();
     }
@@ -352,13 +364,33 @@ public class NeedCellDemandScaffoldingTests
         NeedCell Fresh() => new(static () => Seven, static () => new(Seven), budget: budget);
         _ = CompleteSynchronously(Fresh().DemandAsync()); // warm-up
 
-        var expected = StateMachineBytes(typeof(NeedCell), "DemandAsync")
-            + StateMachineBytes(typeof(NeedCell), "EvaluateAsync")
-            + ContextBytes();
+        var demand = StateMachineBytes(typeof(NeedCell), "DemandAsync")
+            + StateMachineBytes(typeof(NeedCell), "EvaluateAsync");
 
         var cell = Fresh();
         var allocated = Bytes(() => _ = CompleteSynchronously(cell.DemandAsync()));
-        Assert.Equal(expected, allocated);
+        Assert.Equal(demand + ContextBytes(), allocated);
+
+        // One context per level here too: the child's explicit exit restores the parent's own context
+        // object, which the async method would have restored next anyway.
+        NeedCell Nested()
+        {
+            var child = Fresh();
+            return new NeedCell(() => child.Demand(), () => child.DemandAsync(), budget: budget);
+        }
+        _ = CompleteSynchronously(Nested().DemandAsync());
+        var parent = Nested();
+        Assert.Equal(2 * demand + ContextBytes(installs: 2), Bytes(() => _ = CompleteSynchronously(parent.DemandAsync())));
+        Assert.Equal(0, parent.ActiveDependencyCount);
+
+        NeedCell Projection() => NeedCell.WithRuntimeProjection(static () => Seven, static () => new(Seven),
+            static () => EvalResult<Algorithm?>.Ok(null), static () => new(EvalResult<Algorithm?>.Ok(null)), budget: budget);
+        _ = CompleteSynchronously(Projecting(Projection(), budget).DemandAsync());
+        var projecting = Projecting(Projection(), budget);
+        var projection = StateMachineBytes(typeof(NeedCell), "ProjectRuntimeAsync")
+            + StateMachineBytes(typeof(NeedCell), "ProjectRuntimeComputationAsync");
+        Assert.Equal(demand + projection + ContextBytes(installs: 2), Bytes(() => _ = CompleteSynchronously(projecting.DemandAsync())));
+        Assert.Equal(0, projecting.ActiveDependencyCount);
         Assert.False(NeedNode.HasCurrentNode);
         GcIsolatedAllocation.Complete();
     }
@@ -440,12 +472,15 @@ public class NeedCellDemandScaffoldingTests
     /// <summary>
     /// A whole evaluator run's allocations divided by its element or user-call count. Debug and
     /// Release have separate bounds because a Debug async state machine allocates even when it
-    /// completes inline. Each bound is below its measured pre-change value. Since 2026-11-19 the
-    /// IfHeavy and RecursiveCalls bounds lie midway between the values measured before and after the
-    /// inline first wait-for edge and the cell's own monitor as its gate, and the RuntimeProjection
-    /// bounds midway between the final value and the same code with an eagerly created projection
-    /// completion (104 bytes per element), so each of the three changes fails a bound on its own;
-    /// MathHeavy keeps its 2026-11-18 bound.
+    /// completes inline. Each bound is below its measured pre-change value. Since 2026-11-20 every bound
+    /// lies midway between the values measured before and after a nested computation's exit restores
+    /// its caller's context object (72 bytes per nested computation on .NET 11 x64). On the twin route,
+    /// RuntimeProjection's bound lies midway between the final value and the smaller value left by
+    /// reverting either that change or the inline first pair of a resolution record (392 bytes per
+    /// element in Release: two one-step records). Reverting either change on its own therefore fails a
+    /// bound. Each margin is smaller than every saving of 2026-11-18/19 (the inline first wait-for edge,
+    /// the cell's own monitor as its gate, the projection completion created by its first joiner), so
+    /// those still fail too.
     /// </summary>
     [Fact]
     public void DemandAndMathWorkloads_StayBelowTheirMeasuredBounds_GcIsolatedChild()
@@ -456,14 +491,14 @@ public class NeedCellDemandScaffoldingTests
         var failures = new List<string>();
         foreach (var (workload, asynchronous, debugBound, releaseBound) in new (string, bool, int, int)[]
         {
-            ("IfHeavy", false, 3_010, 2_200),
-            ("RecursiveCalls", false, 3_490, 2_730),
-            ("MathHeavy", false, 4_380, 3_480),
-            ("RuntimeProjection", false, 7_730, 5_530),
-            ("IfHeavy", true, 15_140, 2_200),
-            ("RecursiveCalls", true, 20_130, 2_730),
-            ("MathHeavy", true, 20_940, 3_480),
-            ("RuntimeProjection", true, 27_820, 6_460),
+            ("IfHeavy", false, 2_916, 2_108),
+            ("RecursiveCalls", false, 3_203, 2_443),
+            ("MathHeavy", false, 4_218, 3_306),
+            ("RuntimeProjection", false, 7_608, 5_408),
+            ("IfHeavy", true, 15_058, 2_107),
+            ("RecursiveCalls", true, 19_864, 2_442),
+            ("MathHeavy", true, 20_732, 3_305),
+            ("RuntimeProjection", true, 27_322, 5_944),
         })
         {
 #if DEBUG

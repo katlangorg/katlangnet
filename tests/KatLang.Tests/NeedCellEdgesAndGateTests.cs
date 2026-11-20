@@ -346,15 +346,17 @@ public class NeedCellEdgesAndGateTests
         return operation.Result;
     }
 
-    // The logical context the computation sets and clears, on the measuring thread.
+    // The logical context of one computation on the measuring thread: its node is installed, then the
+    // context object captured before is restored (NeedNode.LeaveComputation), which allocates nothing.
     private static long ContextBytes()
     {
         var current = new AsyncLocal<object?>();
         var node = new object();
+        var outer = ExecutionContext.Capture()!;
         return Bytes(() =>
         {
             current.Value = node;
-            current.Value = null;
+            ExecutionContext.Restore(outer);
         });
     }
 
