@@ -77,6 +77,42 @@ public class SemanticExplorerLeanArtifactTests
     }
     private const string ArtifactRelativePath = "lean/SemanticExplorerCases.lean";
 
+    /// <summary>
+    /// KL-06 pilot on this corpus: the exact surface cases whose published zero-argument cache
+    /// entries are guarded, each with its REVIEWED expectation — hand-written here, required of C#
+    /// when the artifact is generated (<see cref="ZeroArgPublicationObserver.ObservePilotCase"/>)
+    /// and pinned on Lean by the generated guards. One case per class: a success with entries, a
+    /// success with an empty cache, a failure AFTER a publication, and the pre-publication control
+    /// (a failure whose only property never completed). Every other case has NO cache observation
+    /// (no guard), which is not an empty cache. The neutral guards are unchanged.
+    /// </summary>
+    internal static readonly IReadOnlyList<(string CaseId, string Entries)> CachePublicationPilot =
+    [
+        ("root__p12", ""),                                 // (1, 2)
+        ("indexBig__p12", "x=1"),                          // x = (1, 2) / x[9]
+        ("special__listSpreadConcat", "A=1 B=1"),          // A = [1, 2] / B = [3, 4] / [A*, B*]
+        ("special__repeatedNameFailedThenValue", "Bad=0"), // Bad = 1 / 0 / Q(x, x) = x / Q(Bad, 7)
+    ];
+
+    /// <summary>The pilot cases with their neutral observation and Lean definition name, in corpus order.</summary>
+    internal static IReadOnlyList<CachePilotCase> CachePilotCases()
+    {
+        var expectations = CachePublicationPilot.ToDictionary(
+            entry => entry.CaseId, entry => CachePublicationExpectation.Parse(entry.Entries), StringComparer.Ordinal);
+        var pilot = SemanticExplorerCorpus.AllCases()
+            .Where(c => c.LeanProgram is not null && expectations.ContainsKey(c.Id))
+            .Select(c => new CachePilotCase(c.Id, $"case_{c.Id}", SemanticExplorerHarness.Observe(c).Neutral, expectations[c.Id]))
+            .ToList();
+        if (pilot.Count != expectations.Count)
+        {
+            throw new InvalidOperationException(
+                "A cache-publication pilot id names no Lean-representable semantic-explorer case: " +
+                string.Join(", ", expectations.Keys.Except(pilot.Select(c => c.CaseId), StringComparer.Ordinal)));
+        }
+
+        return pilot;
+    }
+
     [Fact]
     public void GeneratedLeanArtifact_MatchesCurrentCSharpObservations()
     {
@@ -265,6 +301,7 @@ public class SemanticExplorerLeanArtifactTests
         var allCases = SemanticExplorerCorpus.AllCases();
         var expectedSurface = allCases.Count(c => c.LeanProgram is not null);
         var expectedInternal = SemanticExplorerCorpus.InternalNodeCases().Count;
+        var cachePilot = CachePilotCases().ToDictionary(c => c.CaseId, StringComparer.Ordinal);
 
         var builder = new StringBuilder();
         builder.Append($"""
@@ -286,6 +323,7 @@ public class SemanticExplorerLeanArtifactTests
             - internal-node cases: {expectedInternal}
             - neutral guards: {expectedSurface + expectedInternal} case guards + 2 count guards
             - supplementary errorObs guards compare supported shared payloads independently
+            - {CachePilotCase.PartitionLine(cachePilot.Values, expectedSurface + expectedInternal)}
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -300,8 +338,12 @@ public class SemanticExplorerLeanArtifactTests
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
         LeanObsTemplate.AppendProjectionContracts(builder);
+        builder.Append(LeanObsTemplate.CacheObservationDefinitions.ReplaceLineEndings("\n"));
+        builder.Append("\n\n");
+        LeanObsTemplate.AppendCacheObservationContracts(builder);
 
         var surfaceIds = new List<string>();
+        var cachePilotIds = new List<string>();
         foreach (var explorerCase in allCases)
         {
             if (explorerCase.LeanProgram is null)
@@ -319,6 +361,16 @@ public class SemanticExplorerLeanArtifactTests
             builder.Append($"def case_{explorerCase.Id} : Expr :=\n  {explorerCase.LeanProgram}\n");
             builder.Append($"#guard obs case_{explorerCase.Id} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n\n");
             LeanObsTemplate.AppendErrorGuard(builder, $"case_{explorerCase.Id}", observation.ErrorPayload);
+            if (cachePilot.TryGetValue(explorerCase.Id, out var pilotCase))
+            {
+                // KL-06 pilot: C# must publish exactly the reviewed entries on the cache-recording
+                // routes (which must give this case's neutral observation); the guards pin them on Lean.
+                ZeroArgPublicationObserver.ObservePilotCase("Semantic-explorer differential", explorerCase.Id,
+                    SourceProvenance.ParseValid(explorerCase.Source).Root, observation.Neutral, pilotCase.Expectation);
+                ZeroArgPublicationObserver.AppendCacheGuards(builder, pilotCase.LeanName, pilotCase.Expectation);
+                cachePilotIds.Add(explorerCase.Id);
+            }
+
             surfaceIds.Add(explorerCase.Id);
         }
 
@@ -328,6 +380,10 @@ public class SemanticExplorerLeanArtifactTests
             "Machine-checked surface partition count: the id list is built by the same\n" +
             "loop that emits the guards above, while the expected total is computed\n" +
             "independently from the corpus partition, so a generation bug fails `lake build`.");
+
+        AppendCountGuard(builder, "cachePilotCaseIds", cachePilotIds, CachePublicationPilot.Count,
+            "Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards\n" +
+            "the loop above emitted; the expected total is the length of the reviewed pilot table.");
 
         builder.Append("""
             /-!

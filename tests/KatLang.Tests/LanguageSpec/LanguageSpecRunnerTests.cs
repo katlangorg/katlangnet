@@ -77,6 +77,31 @@ public class LanguageSpecRunnerTests
         Assert.Equal(specCase.ExpectedDisplay, observation.Display!.ReplaceLineEndings("\n"));
     }
 
+    public static TheoryData<string> CachePilotCaseIds()
+    {
+        var data = new TheoryData<string>();
+        foreach (var specCase in Cases.Where(c => c.ExpectedCachePublications is not null))
+            data.Add(specCase.Id);
+        return data;
+    }
+
+    /// <summary>
+    /// KL-06 pilot: a case's hand-written <see cref="SpecCase.ExpectedCachePublications"/> is what
+    /// C# publishes on the cache-recording routes (generic, optimized, suspending async), each of
+    /// which must give the case's canonical neutral observation. The generated Lean guards pin the
+    /// same canonical entries on Lean.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(CachePilotCaseIds))]
+    public void Case_MatchesCanonicalCachePublications(string caseId)
+    {
+        var specCase = CasesById[caseId];
+        var root = SourceProvenance.ParseValid(specCase.Source).Root;
+        var observed = ZeroArgPublicationObserver.ObservePilotCase(
+            "Language-spec", caseId, root, specCase.CanonicalNeutral!, specCase.ExpectedCachePublications!);
+        Assert.Equal(specCase.ExpectedCachePublications!.Total, observed.Total);
+    }
+
     public static TheoryData<string, int> ProbeIds()
     {
         var data = new TheoryData<string, int>();
@@ -142,6 +167,8 @@ public class LanguageSpecRunnerTests
         {
             Assert.True(specCase.ExpectedErrorPayload is null || specCase.Outcome == SpecOutcome.EvalError,
                 $"{specCase.Id}: supplementary error payloads require EvalError.");
+            Assert.True(specCase.ExpectedCachePublications is null || specCase.IsLeanRepresentable,
+                $"{specCase.Id}: a cache expectation requires a Lean-guarded case (it is pinned on both sides).");
             switch (specCase.Outcome)
             {
                 case SpecOutcome.Evaluates:

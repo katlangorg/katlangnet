@@ -16,6 +16,9 @@ Partition (machine-checked by the `*CaseIds.length` guards below):
 - internal-node cases: 19
 - neutral guards: 2570 case guards + 2 count guards
 - supplementary errorObs guards compare supported shared payloads independently
+- cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
+  (2 with entries, 2 with an empty cache; 2 of them fail);
+  the other 2566 programs have no cache observation, which is not an empty cache
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -185,6 +188,46 @@ def errorObs (e : Expr) : SharedErrorObservation :=
 #guard sharedError (.illegalInEval "reason") == none
 #guard sharedError (.withContext "context" (.arityMismatch 2 1)) == (some { kind := "arity", names := [], counts := [2, 1] })
 
+/-- KL-06: the comparable publication set of ONE finished run, read from its outcome and its
+    final state. `EvalM` keeps the completed state on failure (`runResultWithState` drops it
+    there), so a failed run still shows every entry a successful owner published before the
+    failure, while a failed owner published none. An incomplete outcome (R7; no public run
+    returns it) or an owner still active when the run ended has NO comparable publication set
+    (C#: the harness requires every owner released): it observes `none`, which no guard
+    expects, and never an empty cache (`some []`). -/
+def publicationsOf (outcome : Except Error Result) (state : EvalState) : Option ZeroArgPropertyCache :=
+  if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
+  else some state.zeroArgPropertyCache
+
+/-- The zero-argument property cache entries ONE plain run published, on success AND on
+    failure. Every `#guard` is its own evaluation, so each cache guard below runs its
+    program once. -/
+def publications (e : Expr) : Option ZeroArgPropertyCache :=
+  match (runResultM e).runState EvalState.empty with
+  | (outcome, state) => publicationsOf outcome state
+
+/-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
+    run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
+def cacheEntries (e : Expr) (name : String) : Option Nat :=
+  (publications e).map fun cache => (cache.filter (·.1.propertyName == name)).length
+
+/-- Every published zero-argument property cache entry of one run. -/
+def cacheTotal (e : Expr) : Option Nat :=
+  (publications e).map List.length
+
+-- KL-06 observation states (hand-written states, not evaluator programs): NO OBSERVATION
+-- (`none`: an incomplete outcome, or an owner still active), a completed run with an EMPTY
+-- cache (`some 0`) and a completed run with entries are three different observations, and
+-- a failed run keeps the entries of its state exactly as a successful one does.
+def observedEntryProbe : ZeroArgPropertyCacheKey :=
+  { accessKind := .lexical, owner := "", hostOwners := [], componentOwners := [], propertyName := "P",
+    propertyAlgorithm := "", valEnv := none, bindingContext := none }
+#guard (publicationsOf (.error .fuelExhausted) EvalState.empty).isNone
+#guard (publicationsOf (.ok (.atom 0)) { EvalState.empty with activeZeroArgProperties := [observedEntryProbe] }).isNone
+#guard (publicationsOf (.ok (.atom 0)) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero)
+    { EvalState.empty with zeroArgPropertyCache := [(observedEntryProbe, (.atom 7, 1))] }).map List.length == some 1
 -- root__e: ()
 def case_root__e : Expr :=
   .algorithmExpr (alg [] [] [] [(.emptySequence 0)])
@@ -250,6 +293,7 @@ def case_root__p12 : Expr :=
   .algorithmExpr (alg [] [] [] [(.capture [.num 1, .num 2])])
 #guard obs case_root__p12 == "ok raw=S[1, 2] n=1"
 
+#guard cacheTotal case_root__p12 == some 0
 -- root__p123: (1, 2, 3)
 def case_root__p123 : Expr :=
   .algorithmExpr (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])
@@ -6181,6 +6225,8 @@ def case_indexBig__p12 : Expr :=
 #guard obs case_indexBig__p12 == "err index"
 
 #guard errorObs case_indexBig__p12 == .matched (some { kind := "index", names := [], counts := [] })
+#guard cacheEntries case_indexBig__p12 "x" == some 1
+#guard cacheTotal case_indexBig__p12 == some 1
 -- indexBig__p123: x = (1, 2, 3) \n x[9]
 def case_indexBig__p123 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])])] [(.index (.resolve "x") [.num 9])])
@@ -12040,6 +12086,9 @@ def case_special__listSpreadConcat : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [(.listLiteral [(.sequenceSpread (.resolve "A")), (.sequenceSpread (.resolve "B"))])])
 #guard obs case_special__listSpreadConcat == "ok raw=L[1, 2, 3, 4] n=1"
 
+#guard cacheEntries case_special__listSpreadConcat "A" == some 1
+#guard cacheEntries case_special__listSpreadConcat "B" == some 1
+#guard cacheTotal case_special__listSpreadConcat == some 2
 -- special__listMixedSpread: A = [1, 2] \n B = [3, 4] \n [A, B*]
 def case_special__listMixedSpread : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "B" (alg [] [] [] [(.listLiteral [.num 3, .num 4])])] [(.listLiteral [.resolve "A", (.sequenceSpread (.resolve "B"))])])
@@ -13005,6 +13054,8 @@ def case_special__repeatedNameFailedThenValue : Expr :=
 #guard obs case_special__repeatedNameFailedThenValue == "err div0"
 
 #guard errorObs case_special__repeatedNameFailedThenValue == .matched (some { kind := "div0", names := [], counts := [] })
+#guard cacheEntries case_special__repeatedNameFailedThenValue "Bad" == some 0
+#guard cacheTotal case_special__repeatedNameFailedThenValue == some 0
 -- special__repeatedNameValueThenFailed: Bad = 1 / 0 \n Q(x, x) = x \n Q(7, Bad)
 def case_special__repeatedNameValueThenFailed : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Q" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Q") [.num 7, .resolve "Bad"])])
@@ -15817,6 +15868,18 @@ def surfaceCaseIds : List String := [
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
 #guard surfaceCaseIds.length == 2551
+
+/--
+Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards
+the loop above emitted; the expected total is the length of the reviewed pilot table.
+-/
+def cachePilotCaseIds : List String := [
+  "root__p12",
+  "indexBig__p12",
+  "special__listSpreadConcat",
+  "special__repeatedNameFailedThenValue"
+]
+#guard cachePilotCaseIds.length == 4
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —

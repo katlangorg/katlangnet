@@ -58,8 +58,22 @@ public class LanguageSpecArtifactsTests
         var artifact = GenerateArtifact();
         var guardLines = artifact.Split('\n').Count(line => line.StartsWith("#guard ", StringComparison.Ordinal));
         var payloadGuards = LanguageSpecCorpus.AllCases().Count(c => c.IsLeanRepresentable && c.ExpectedErrorPayload is not null);
-        Assert.Equal(leanGuarded + payloadGuards + DifferentialErrorContracts.All.Count + 1, guardLines);
+        // KL-06 pilot: per pilot case one guard per listed name plus its total guard; the pilot's
+        // count guard; and the observation-state guards on `publicationsOf`.
+        var pilot = CachePilotCases();
+        var cacheGuards = pilot.Sum(c => c.Expectation.Entries.Count + 1) + 1 + LeanObsTemplate.CacheObservationContractGuards;
+        Assert.Equal(leanGuarded + payloadGuards + DifferentialErrorContracts.All.Count + 1 + cacheGuards, guardLines);
     }
+
+    /// <summary>
+    /// KL-06 pilot on this corpus: the Lean-guarded cases that carry a hand-written
+    /// <see cref="SpecCase.ExpectedCachePublications"/>, in corpus order.
+    /// </summary>
+    internal static IReadOnlyList<CachePilotCase> CachePilotCases()
+        => LanguageSpecCorpus.AllCases()
+            .Where(c => c.IsLeanRepresentable && c.ExpectedCachePublications is not null)
+            .Select(c => new CachePilotCase(c.Id, $"case_{c.Id.Replace('-', '_')}", c.CanonicalNeutral!, c.ExpectedCachePublications!))
+            .ToList();
 
     internal static string GenerateArtifact()
     {
@@ -67,6 +81,7 @@ public class LanguageSpecArtifactsTests
         var leanGuarded = cases.Where(c => c.IsLeanRepresentable).ToList();
         var parseLevel = cases.Count(c => c.Outcome == SpecOutcome.ParseError);
         var csharpOnly = cases.Count(c => !c.IsLeanRepresentable && c.Outcome != SpecOutcome.ParseError);
+        var cachePilot = CachePilotCases();
 
         var builder = new StringBuilder();
         builder.Append($"""
@@ -93,6 +108,9 @@ public class LanguageSpecArtifactsTests
             - probe observations (C#-only by design): {cases.Sum(c => c.Probes.Count)}
             - internal-node cases live in the semantic-explorer corpus, not here: see
               lean/SemanticExplorerCases.lean
+            - {CachePilotCase.PartitionLine(cachePilot, leanGuarded.Count)};
+              each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
+              C# runner requires the same entries of C#
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
@@ -107,8 +125,12 @@ public class LanguageSpecArtifactsTests
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
         LeanObsTemplate.AppendProjectionContracts(builder);
+        builder.Append(LeanObsTemplate.CacheObservationDefinitions.ReplaceLineEndings("\n"));
+        builder.Append("\n\n");
+        LeanObsTemplate.AppendCacheObservationContracts(builder);
 
         var emittedIds = new List<string>();
+        var cachePilotIds = new List<string>();
         foreach (var specCase in leanGuarded)
         {
             var leanName = specCase.Id.Replace('-', '_');
@@ -117,6 +139,14 @@ public class LanguageSpecArtifactsTests
             builder.Append($"def case_{leanName} : Expr :=\n  {specCase.LeanProgram}\n");
             builder.Append($"#guard obs case_{leanName} == {LeanAstEncoder.QuoteString(specCase.CanonicalNeutral ?? "")}\n\n");
             LeanObsTemplate.AppendErrorGuard(builder, $"case_{leanName}", specCase.ExpectedErrorPayload);
+            if (specCase.ExpectedCachePublications is { } cacheExpectation)
+            {
+                // KL-06 pilot: the CANONICAL cache expectation, like every guard of this artifact
+                // (LanguageSpecRunnerTests requires the same entries of C#).
+                ZeroArgPublicationObserver.AppendCacheGuards(builder, $"case_{leanName}", cacheExpectation);
+                cachePilotIds.Add(specCase.Id);
+            }
+
             emittedIds.Add(specCase.Id);
         }
 
@@ -126,6 +156,11 @@ public class LanguageSpecArtifactsTests
             "Machine-checked Lean-guarded partition count: the id list is built by the\n" +
             "same loop that emits the guards above, while the expected total is computed\n" +
             "independently from the corpus partition, so a generation bug fails `lake build`.");
+
+        SemanticExplorerLeanArtifactTests.AppendCountGuard(builder, "cachePilotCaseIds", cachePilotIds, cachePilot.Count,
+            "Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards\n" +
+            "the loop above emitted; the expected total is the number of Lean-guarded cases that carry\n" +
+            "a hand-written cache expectation, computed independently from the corpus.");
 
         builder.Append("end LanguageSpecCases\n");
         return builder.ToString();

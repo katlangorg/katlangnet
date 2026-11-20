@@ -161,19 +161,23 @@ def errorObs (e : Expr) : SharedErrorObservation :=
       else .mismatch
   | _, _ => .mismatch
 
-/-- KL-06: the zero-argument property cache entries ONE plain run published, on success AND on
-    failure, derived from the run's outcome and its final state. `EvalM` keeps the completed
-    state on failure (`runResultWithState` drops it there), so a failed run still shows every
-    entry a successful owner published before the failure, while a failed owner published
-    none. An incomplete outcome (R7; no public run returns it) or an owner still active when
-    the run ended has no comparable publication set (C#: the harness requires every owner
-    released), so it observes `none`, which no guard expects. Every `#guard` is its own
-    evaluation, so each cache guard below runs its program once. -/
+/-- KL-06: the comparable publication set of ONE finished run, read from its outcome and its
+    final state. `EvalM` keeps the completed state on failure (`runResultWithState` drops it
+    there), so a failed run still shows every entry a successful owner published before the
+    failure, while a failed owner published none. An incomplete outcome (R7; no public run
+    returns it) or an owner still active when the run ended has NO comparable publication set
+    (C#: the harness requires every owner released): it observes `none`, which no guard
+    expects, and never an empty cache (`some []`). -/
+def publicationsOf (outcome : Except Error Result) (state : EvalState) : Option ZeroArgPropertyCache :=
+  if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
+  else some state.zeroArgPropertyCache
+
+/-- The zero-argument property cache entries ONE plain run published, on success AND on
+    failure. Every `#guard` is its own evaluation, so each cache guard below runs its
+    program once. -/
 def publications (e : Expr) : Option ZeroArgPropertyCache :=
   match (runResultM e).runState EvalState.empty with
-  | (outcome, state) =>
-      if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
-      else some state.zeroArgPropertyCache
+  | (outcome, state) => publicationsOf outcome state
 
 /-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
     run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
@@ -184,6 +188,19 @@ def cacheEntries (e : Expr) (name : String) : Option Nat :=
 def cacheTotal (e : Expr) : Option Nat :=
   (publications e).map List.length
 
+-- KL-06 observation states (hand-written states, not evaluator programs): NO OBSERVATION
+-- (`none`: an incomplete outcome, or an owner still active), a completed run with an EMPTY
+-- cache (`some 0`) and a completed run with entries are three different observations, and
+-- a failed run keeps the entries of its state exactly as a successful one does.
+def observedEntryProbe : ZeroArgPropertyCacheKey :=
+  { accessKind := .lexical, owner := "", hostOwners := [], componentOwners := [], propertyName := "P",
+    propertyAlgorithm := "", valEnv := none, bindingContext := none }
+#guard (publicationsOf (.error .fuelExhausted) EvalState.empty).isNone
+#guard (publicationsOf (.ok (.atom 0)) { EvalState.empty with activeZeroArgProperties := [observedEntryProbe] }).isNone
+#guard (publicationsOf (.ok (.atom 0)) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero)
+    { EvalState.empty with zeroArgPropertyCache := [(observedEntryProbe, (.atom 7, 1))] }).map List.length == some 1
 /-- KL-07 pilot: the `kl-struct-v1` identity (`StructuralIdentity.encode`,
     `CoreTests/StructuralIdentity.lean`) of the value ONE plain run returns; `none` on
     failure. Each successful case's guard compares it with the C# encoder's text of the C#

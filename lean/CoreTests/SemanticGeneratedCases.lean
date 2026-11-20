@@ -30,6 +30,10 @@ guards below):
 - excluded by exact id: 0
 - included cases: 264 (187 success, 77 runtime failure)
 - guarded transformation members: 414 (264 alpha-rename, 150 declaration-reorder)
+- cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
+  (2 with entries, 2 with an empty cache; 2 of them fail);
+  4 transformation members of those cases guard their published total;
+  the other 670 programs have no cache observation, which is not an empty cache
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"
@@ -169,6 +173,46 @@ def errorObs (e : Expr) : SharedErrorObservation :=
       else .mismatch
   | _, _ => .mismatch
 
+/-- KL-06: the comparable publication set of ONE finished run, read from its outcome and its
+    final state. `EvalM` keeps the completed state on failure (`runResultWithState` drops it
+    there), so a failed run still shows every entry a successful owner published before the
+    failure, while a failed owner published none. An incomplete outcome (R7; no public run
+    returns it) or an owner still active when the run ended has NO comparable publication set
+    (C#: the harness requires every owner released): it observes `none`, which no guard
+    expects, and never an empty cache (`some []`). -/
+def publicationsOf (outcome : Except Error Result) (state : EvalState) : Option ZeroArgPropertyCache :=
+  if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
+  else some state.zeroArgPropertyCache
+
+/-- The zero-argument property cache entries ONE plain run published, on success AND on
+    failure. Every `#guard` is its own evaluation, so each cache guard below runs its
+    program once. -/
+def publications (e : Expr) : Option ZeroArgPropertyCache :=
+  match (runResultM e).runState EvalState.empty with
+  | (outcome, state) => publicationsOf outcome state
+
+/-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
+    run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
+def cacheEntries (e : Expr) (name : String) : Option Nat :=
+  (publications e).map fun cache => (cache.filter (·.1.propertyName == name)).length
+
+/-- Every published zero-argument property cache entry of one run. -/
+def cacheTotal (e : Expr) : Option Nat :=
+  (publications e).map List.length
+
+-- KL-06 observation states (hand-written states, not evaluator programs): NO OBSERVATION
+-- (`none`: an incomplete outcome, or an owner still active), a completed run with an EMPTY
+-- cache (`some 0`) and a completed run with entries are three different observations, and
+-- a failed run keeps the entries of its state exactly as a successful one does.
+def observedEntryProbe : ZeroArgPropertyCacheKey :=
+  { accessKind := .lexical, owner := "", hostOwners := [], componentOwners := [], propertyName := "P",
+    propertyAlgorithm := "", valEnv := none, bindingContext := none }
+#guard (publicationsOf (.error .fuelExhausted) EvalState.empty).isNone
+#guard (publicationsOf (.ok (.atom 0)) { EvalState.empty with activeZeroArgProperties := [observedEntryProbe] }).isNone
+#guard (publicationsOf (.ok (.atom 0)) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero)
+    { EvalState.empty with zeroArgPropertyCache := [(observedEntryProbe, (.atom 7, 1))] }).map List.length == some 1
 -- sem2b/v1/sys/meta/0: v1(meta v2) = v2 \n v3 = v1 \n v4(v5, v6, v7) = trace((v5 * 100) + (v6 * 10) + v7) \n v8 = v3(v4(trace(1), trace(2), trace(3))) \n v9(v10, v11, v12) = v12 \n [v9(v8.Arguments*), v8.Algorithm(4, 5, 6), v8.Algorithm(v8.Arguments*)] \n 997
 def case_sem2b_2Fv1_2Fsys_2Fmeta_2F0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v8" (alg [] [] [] [(.call (.resolve "v3") [(.call (.resolve "v4") [(.call (.resolve "trace") [.num 1]), (.call (.resolve "trace") [.num 2]), (.call (.resolve "trace") [.num 3])])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .metaRef }] [] [] [.param "v2"]), privateProp "v4" (alg ["v5", "v6", "v7"] [] [] [(.call (.resolve "trace") [(.binary .add (.binary .add (.binary .mul (.param "v5") (.num 100)) (.binary .mul (.param "v6") (.num 10))) (.param "v7"))])]), privateProp "v9" (alg ["v10", "v11", "v12"] [] [] [.param "v12"])] [(.listLiteral [(.call (.resolve "v9") [(.sequenceSpread (.dotCall (.resolve "v8") "Arguments" none))]), (.dotCall (.resolve "v8") "Algorithm" (some [.num 4, .num 5, .num 6])), (.dotCall (.resolve "v8") "Algorithm" (some [(.sequenceSpread (.dotCall (.resolve "v8") "Arguments" none))]))]), .num 997])
@@ -626,10 +670,13 @@ def case_sem2b_2Fv1_2Fsys_2Falias_2Dfail_2F3_reorder : Expr :=
 def case_sem2b_2Fv1_2Fsys_2Fcache_2F0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.call (.resolve "wait") [.num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [.resolve "v1", (.call (.resolve "v1") [])]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fcache_2F0 == "ok raw=S[L[1, 1], 997] n=2"
+#guard cacheEntries case_sem2b_2Fv1_2Fsys_2Fcache_2F0 "v1" == some 1
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F0 == some 1
 -- sem2b/v1/sys/cache/0 [alpha-rename]
 def case_sem2b_2Fv1_2Fsys_2Fcache_2F0_alpha : Expr :=
   .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.call (.resolve "wait") [.num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [.resolve "w1", (.call (.resolve "w1") [])]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fcache_2F0_alpha == "ok raw=S[L[1, 1], 997] n=2"
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F0_alpha == some 1
 
 -- sem2b/v1/sys/cache/1: v1 = wait(1) \n [v1(), v1] \n 997
 def case_sem2b_2Fv1_2Fsys_2Fcache_2F1 : Expr :=
@@ -644,10 +691,12 @@ def case_sem2b_2Fv1_2Fsys_2Fcache_2F1_alpha : Expr :=
 def case_sem2b_2Fv1_2Fsys_2Fcache_2F2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.param "v2"))])] [(.call (.resolve "v1") [(.call (.resolve "wait") [.num 1])]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fcache_2F2 == "ok raw=S[2, 997] n=2"
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F2 == some 0
 -- sem2b/v1/sys/cache/2 [alpha-rename]
 def case_sem2b_2Fv1_2Fsys_2Fcache_2F2_alpha : Expr :=
   .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [] [(.binary .add (.param "w2") (.param "w2"))])] [(.call (.resolve "w1") [(.call (.resolve "wait") [.num 1])]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fcache_2F2_alpha == "ok raw=S[2, 997] n=2"
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F2_alpha == some 0
 
 -- sem2b/v1/sys/cache/3: v1(v2) = v2 + v2 \n v3(v4) = v1(v4) \n v3(wait(1)) \n 997
 def case_sem2b_2Fv1_2Fsys_2Fcache_2F3 : Expr :=
@@ -703,11 +752,14 @@ def case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.binary .div (.call (.resolve "wait") [.num 1]) (.num 0))]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [.resolve "v1", .resolve "v1"]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 == "err div0"
 #guard errorObs case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 == .matched (some { kind := "div0", names := [], counts := [] })
+#guard cacheEntries case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 "v1" == some 0
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 == some 0
 -- sem2b/v1/sys/cache-fail/0 [alpha-rename]
 def case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0_alpha : Expr :=
   .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.binary .div (.call (.resolve "wait") [.num 1]) (.num 0))]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [.resolve "w1", .resolve "w1"]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0_alpha == "err div0"
 #guard errorObs case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0_alpha == .matched (some { kind := "div0", names := [], counts := [] })
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0_alpha == some 0
 
 -- sem2b/v1/sys/cache-fail/1: v1 = wait(1) / 0 \n [v1, v1] \n 997
 def case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F1 : Expr :=
@@ -856,11 +908,14 @@ def case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.index (.resolve "v1") [.num 9]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 == "err index"
 #guard errorObs case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 == .matched (some { kind := "index", names := [], counts := [] })
+#guard cacheEntries case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 "v1" == some 1
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 == some 1
 -- sem2b/v1/sys/select-fail/3 [alpha-rename]
 def case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3_alpha : Expr :=
   .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.index (.resolve "w1") [.num 9]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3_alpha == "err index"
 #guard errorObs case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3_alpha == .matched (some { kind := "index", names := [], counts := [] })
+#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3_alpha == some 1
 
 -- sem2b/v1/sys/loop/0: v1(v2) = v2 + 1 \n repeat(v1(1), 0) \n 997
 def case_sem2b_2Fv1_2Fsys_2Floop_2F0 : Expr :=
@@ -3989,6 +4044,18 @@ def guardedMemberIds : List String := [
   "sem2b/v1/seed-nested/5EED2B000002/3 declaration-reorder"
 ]
 #guard guardedMemberIds.length == 414
+
+/--
+Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards
+the loop above emitted; the expected total is the length of the reviewed pilot table.
+-/
+def cachePilotCaseIds : List String := [
+  "sem2b/v1/sys/cache/0",
+  "sem2b/v1/sys/cache/2",
+  "sem2b/v1/sys/cache-fail/0",
+  "sem2b/v1/sys/select-fail/3"
+]
+#guard cachePilotCaseIds.length == 4
 
 -- 264 differential cases, 414 transformation members.
 end SemanticGeneratedCases

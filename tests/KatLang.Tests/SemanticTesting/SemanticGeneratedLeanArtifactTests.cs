@@ -82,6 +82,45 @@ public class SemanticGeneratedLeanArtifactTests
 
     private const int MaximumArtifactBytes = 800_000;
 
+    /// <summary>
+    /// KL-06 pilot on this corpus: the exact included cases whose published zero-argument cache
+    /// entries are guarded, each with its REVIEWED expectation for the identity-prelude BASE member
+    /// — hand-written here, required of C# when the artifact is generated
+    /// (<see cref="ZeroArgPublicationObserver.ObservePilotCase"/>) and pinned on Lean by the
+    /// generated guards. One case per class: a success with entries, a success with an empty cache,
+    /// a failure AFTER a publication, and the pre-publication control (a failure whose only property
+    /// never completed). A pilot case's transformation members are guarded on their published TOTAL,
+    /// which must equal the base member's (an alpha-rename renames the entries, so names are guarded
+    /// on the base member only). Every other program has NO cache observation (no guard), which is
+    /// not an empty cache. The neutral guards and the constructed expectations are unchanged.
+    /// </summary>
+    internal static readonly IReadOnlyList<(string CaseId, string Entries)> CachePublicationPilot =
+    [
+        ("sem2b/v1/sys/cache/0", "v1=1"),       // v1 = wait(1) / [v1, v1()] / 997
+        ("sem2b/v1/sys/cache/2", ""),           // v1(v2) = v2 + v2 / v1(wait(1)) / 997
+        ("sem2b/v1/sys/cache-fail/0", "v1=0"),  // v1 = wait(1) / 0 / [v1, v1] / 997
+        ("sem2b/v1/sys/select-fail/3", "v1=1"), // v1 = 11, 12, 13 / v1[9] / 997
+    ];
+
+    /// <summary>The pilot cases (base members) with their neutral observation and Lean definition name, in corpus order.</summary>
+    internal static IReadOnlyList<CachePilotCase> CachePilotCases()
+    {
+        var expectations = CachePublicationPilot.ToDictionary(
+            entry => entry.CaseId, entry => CachePublicationExpectation.Parse(entry.Entries), StringComparer.Ordinal);
+        var pilot = IncludedCases(SemanticCorpus.All())
+            .Where(c => expectations.ContainsKey(c.CaseId))
+            .Select(c => new CachePilotCase(c.CaseId, LeanName(c.CaseId), ObserveMember(c, BuildMember(c)).Observation.Neutral, expectations[c.CaseId]))
+            .ToList();
+        if (pilot.Count != expectations.Count)
+        {
+            throw new InvalidOperationException(
+                "A cache-publication pilot id names no included SEM-2B case: " +
+                string.Join(", ", expectations.Keys.Except(pilot.Select(c => c.CaseId), StringComparer.Ordinal)));
+        }
+
+        return pilot;
+    }
+
     [Fact]
     public void GeneratedLeanArtifact_MatchesCurrentCSharpObservations()
     {
@@ -482,6 +521,8 @@ public class SemanticGeneratedLeanArtifactTests
         var alphaMembers = included.Count(c => c.Members.Any(m => m.Role == SemanticMember.AlphaRenameRole));
         var reorderMembers = included.Count(c => c.Members.Any(m => m.Role == SemanticMember.DeclarationReorderRole));
         var expectedMembers = included.Sum(c => c.Members.Length - 1);
+        var cachePilot = CachePilotCases().ToDictionary(c => c.CaseId, StringComparer.Ordinal);
+        var cachePilotMembers = included.Where(c => cachePilot.ContainsKey(c.CaseId)).Sum(c => c.Members.Length - 1);
 
         var builder = new StringBuilder();
         builder.Append($"""
@@ -517,6 +558,7 @@ public class SemanticGeneratedLeanArtifactTests
             - excluded by exact id: {byId}
             - included cases: {included.Count} ({successes} success, {included.Count - successes} runtime failure)
             - guarded transformation members: {expectedMembers} ({alphaMembers} alpha-rename, {reorderMembers} declaration-reorder)
+            - {CachePilotCase.PartitionLine(cachePilot.Values, included.Count + expectedMembers, cachePilotMembers)}
 
             Regenerate from the repo root with:
               $env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"
@@ -530,9 +572,13 @@ public class SemanticGeneratedLeanArtifactTests
         builder.Append('\n');
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
+        builder.Append(LeanObsTemplate.CacheObservationDefinitions.ReplaceLineEndings("\n"));
+        builder.Append("\n\n");
+        LeanObsTemplate.AppendCacheObservationContracts(builder);
 
         var ids = new List<string>();
         var memberIds = new List<string>();
+        var cachePilotIds = new List<string>();
         foreach (var c in included)
         {
             if (c.CaseId.Contains('"') || c.CaseId.Contains('\\'))
@@ -557,6 +603,15 @@ public class SemanticGeneratedLeanArtifactTests
             builder.Append($"def {name} : Expr :=\n  {program}\n");
             builder.Append($"#guard obs {name} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n");
             LeanObsTemplate.AppendErrorGuard(builder, name, observation.ErrorPayload);
+            cachePilot.TryGetValue(c.CaseId, out var pilotCase);
+            if (pilotCase is not null)
+            {
+                // KL-06 pilot: C# must publish exactly the reviewed entries on the cache-recording
+                // routes (which must give this member's neutral observation); the guards pin them on Lean.
+                ZeroArgPublicationObserver.ObservePilotCase("SEM-2C differential", c.CaseId, root, observation.Neutral, pilotCase.Expectation);
+                ZeroArgPublicationObserver.AppendCacheGuards(builder, name, pilotCase.Expectation);
+                cachePilotIds.Add(c.CaseId);
+            }
 
             // The case's transformation members (alpha-rename, declaration-reorder): the SEM-2B
             // runner requires each to meet the case's anchors and to be SemanticEqual to the base
@@ -582,6 +637,8 @@ public class SemanticGeneratedLeanArtifactTests
                 builder.Append($"def {memberName} : Expr :=\n  {memberProgram}\n");
                 builder.Append($"#guard obs {memberName} == {LeanAstEncoder.QuoteString(observation.Neutral)}\n");
                 LeanObsTemplate.AppendErrorGuard(builder, memberName, memberObservation.ErrorPayload);
+                if (pilotCase is not null)
+                    AppendMemberCacheTotalGuard(builder, c, transformed, memberName, memberRoot, memberObservation.Neutral, pilotCase.Expectation);
                 memberIds.Add(MemberListEntry(c.CaseId, transformed.Role));
             }
 
@@ -599,8 +656,34 @@ public class SemanticGeneratedLeanArtifactTests
             "declaration-reorder member, built by the emitting loop; the expected total is the number of\n" +
             "non-base `SemanticCase.Members` entries of the included cases, computed independently.");
 
+        SemanticExplorerLeanArtifactTests.AppendCountGuard(builder, "cachePilotCaseIds", cachePilotIds, CachePublicationPilot.Count,
+            "Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards\n" +
+            "the loop above emitted; the expected total is the length of the reviewed pilot table.");
+
         builder.Append($"-- {ids.Count} differential cases, {memberIds.Count} transformation members.\n");
         builder.Append("end SemanticGeneratedCases\n");
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// KL-06 pilot, transformation member of a pilot case: C# must publish as many entries as the
+    /// reviewed base expectation lists (an alpha-rename renames them, a reorder keeps them), on
+    /// routes that give the member's neutral observation; the guard pins that total on Lean.
+    /// </summary>
+    private static void AppendMemberCacheTotalGuard(
+        StringBuilder builder, SemanticCase c, SemanticMember transformed, string memberName, Algorithm memberRoot,
+        string memberNeutral, CachePublicationExpectation baseExpectation)
+    {
+        var published = ZeroArgPublicationObserver.ObserveSourceProgram(
+            "SEM-2C differential", $"{c.CaseId} [{transformed.Role}]", memberRoot, memberNeutral);
+        if (published.Total != baseExpectation.Total)
+        {
+            throw new InvalidOperationException(
+                $"Identity-prelude {transformed.Role} member of '{c.CaseId}' published {published.Total} cache entries " +
+                $"[{CachePublicationExpectation.Describe(published)}], but the base member's reviewed expectation is " +
+                $"{baseExpectation.Total} [{baseExpectation}].");
+        }
+
+        builder.Append($"#guard cacheTotal {memberName} == some {baseExpectation.Total.ToString(CultureInfo.InvariantCulture)}\n");
     }
 }

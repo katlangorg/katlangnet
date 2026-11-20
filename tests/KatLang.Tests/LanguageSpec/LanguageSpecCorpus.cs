@@ -1676,6 +1676,8 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "(10, 20)\n10\n20\n997",
             ExpectedRaw = "S[S[10, 20], 10, 20, 997]",
             ExpectedEmittedCount = 4,
+            // KL-06 pilot, success with entries: both reads share the ONE entry of `Coordinates`.
+            ExpectedCachePublications = CachePublicationExpectation.Parse("Coordinates=1"),
             Explanation = "Property-style access observes a multi-item body as one sequence value; caller-site spread turns it back into separate output rows.",
         },
         new()
@@ -4991,6 +4993,8 @@ public static class LanguageSpecCorpus
             Source = "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
+            // KL-06 pilot, pre-publication control: `L` is the failing owner, so it publishes nothing.
+            ExpectedCachePublications = CachePublicationExpectation.Parse("L=0"),
             Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]", "ok raw=L[0, 0] n=1")],
             Explanation = "Map demands its whole collection before invoking transforms. Expanded ordinary calls may leave indexed arguments unused, so the unfolding equation compares result values for pure, deterministic, total computations.",
         },
@@ -5003,6 +5007,9 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "[0, 0]",
             ExpectedRaw = "L[0, 0]",
             ExpectedEmittedCount = 1,
+            // KL-06 pilot, success with an EMPTY cache: `L` is never demanded as a value, so the
+            // completed run published nothing (watched at zero).
+            ExpectedCachePublications = CachePublicationExpectation.Parse("L=0"),
             Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)", "err div0")],
             Explanation = "Each ordinary call leaves its unused argument undemanded. Map's collection is a demanded VALUE slot. Q-25 preserves Model-C demand; its unfolding equation promises result-value equivalence only for pure, deterministic, total computations.",
         },
@@ -5705,6 +5712,8 @@ public static class LanguageSpecCorpus
             Source = "x = (1, 2)\nx[9]",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "index",
+            // KL-06 pilot, failure AFTER a publication: `x` completed, so the failed run keeps its entry.
+            ExpectedCachePublications = CachePublicationExpectation.Parse("x=1"),
             Explanation = "Selecting past the last item is an index error, not an empty result.",
         },
         new()

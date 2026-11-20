@@ -2,10 +2,11 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// The shared Lean observation machinery emitted into every generated
-/// differential artifact (<c>lean/SemanticExplorerCases.lean</c> and
-/// <c>lean/LanguageSpecCases.lean</c>). Both artifacts are self-contained
-/// Lean files, but their observation definitions originate from this single
-/// C# constant, so the two can never drift apart. The category names in
+/// differential artifact (<c>lean/SemanticExplorerCases.lean</c>,
+/// <c>lean/LanguageSpecCases.lean</c>, <c>lean/CoreTests/HostParentDifferential.lean</c> and
+/// <c>lean/CoreTests/SemanticGeneratedCases.lean</c>). The artifacts are self-contained
+/// Lean files, but their observation definitions originate from these C#
+/// constants, so they can never drift apart. The category names in
 /// <c>errCategory</c> must stay aligned with
 /// <see cref="SemanticExplorerHarness.ErrorCategory"/>.
 /// </summary>
@@ -24,6 +25,70 @@ internal static class LeanObsTemplate
             builder.Append($"#guard sharedError {c.LeanError} == {c.Expected?.Lean ?? "none"}\n");
         builder.Append('\n');
     }
+
+    /// <summary>The number of <c>#guard</c> lines <see cref="AppendCacheObservationContracts"/> emits.</summary>
+    internal const int CacheObservationContractGuards = 5;
+
+    /// <summary>
+    /// KL-06 observation-state guards on <c>publicationsOf</c> itself (hand-written states, not
+    /// evaluator programs): a finished run without a comparable publication set observes
+    /// <c>none</c>; a completed run observes its cache, empty or not, whether it succeeded or failed.
+    /// So a guard at <c>some 0</c> can never be satisfied by a missing observation.
+    /// </summary>
+    internal static void AppendCacheObservationContracts(System.Text.StringBuilder builder)
+    {
+        builder.Append("""
+            -- KL-06 observation states (hand-written states, not evaluator programs): NO OBSERVATION
+            -- (`none`: an incomplete outcome, or an owner still active), a completed run with an EMPTY
+            -- cache (`some 0`) and a completed run with entries are three different observations, and
+            -- a failed run keeps the entries of its state exactly as a successful one does.
+            def observedEntryProbe : ZeroArgPropertyCacheKey :=
+              { accessKind := .lexical, owner := "", hostOwners := [], componentOwners := [], propertyName := "P",
+                propertyAlgorithm := "", valEnv := none, bindingContext := none }
+            #guard (publicationsOf (.error .fuelExhausted) EvalState.empty).isNone
+            #guard (publicationsOf (.ok (.atom 0)) { EvalState.empty with activeZeroArgProperties := [observedEntryProbe] }).isNone
+            #guard (publicationsOf (.ok (.atom 0)) EvalState.empty).map List.length == some 0
+            #guard (publicationsOf (.error .divByZero) EvalState.empty).map List.length == some 0
+            #guard (publicationsOf (.error .divByZero)
+                { EvalState.empty with zeroArgPropertyCache := [(observedEntryProbe, (.atom 7, 1))] }).map List.length == some 1
+
+            """.ReplaceLineEndings("\n"));
+    }
+
+    /// <summary>
+    /// KL-06 Lean definitions of the zero-argument cache observation, shared by the four generated
+    /// artifacts: <c>publicationsOf</c> (the comparable publication set of a finished run, or
+    /// <c>none</c>), <c>publications</c> (one plain run), <c>cacheEntries</c> (per property name)
+    /// and <c>cacheTotal</c>. The C# counterpart is <see cref="ZeroArgPublicationObserver"/>.
+    /// </summary>
+    public const string CacheObservationDefinitions = """
+        /-- KL-06: the comparable publication set of ONE finished run, read from its outcome and its
+            final state. `EvalM` keeps the completed state on failure (`runResultWithState` drops it
+            there), so a failed run still shows every entry a successful owner published before the
+            failure, while a failed owner published none. An incomplete outcome (R7; no public run
+            returns it) or an owner still active when the run ended has NO comparable publication set
+            (C#: the harness requires every owner released): it observes `none`, which no guard
+            expects, and never an empty cache (`some []`). -/
+        def publicationsOf (outcome : Except Error Result) (state : EvalState) : Option ZeroArgPropertyCache :=
+          if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
+          else some state.zeroArgPropertyCache
+
+        /-- The zero-argument property cache entries ONE plain run published, on success AND on
+            failure. Every `#guard` is its own evaluation, so each cache guard below runs its
+            program once. -/
+        def publications (e : Expr) : Option ZeroArgPropertyCache :=
+          match (runResultM e).runState EvalState.empty with
+          | (outcome, state) => publicationsOf outcome state
+
+        /-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
+            run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
+        def cacheEntries (e : Expr) (name : String) : Option Nat :=
+          (publications e).map fun cache => (cache.filter (·.1.propertyName == name)).length
+
+        /-- Every published zero-argument property cache entry of one run. -/
+        def cacheTotal (e : Expr) : Option Nat :=
+          (publications e).map List.length
+        """;
 
     /// <summary>
     /// Lean definitions for <c>neutral</c>, <c>errCategory</c>,

@@ -21,6 +21,11 @@ Partition (machine-checked by the `specCaseIds.length` guard below):
 - probe observations (C#-only by design): 1570
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
+- cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
+  (2 with entries, 2 with an empty cache; 2 of them fail);
+  the other 473 programs have no cache observation, which is not an empty cache;
+  each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
+  C# runner requires the same entries of C#
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_LANGUAGE_SPEC = "1"
@@ -190,6 +195,46 @@ def errorObs (e : Expr) : SharedErrorObservation :=
 #guard sharedError (.illegalInEval "reason") == none
 #guard sharedError (.withContext "context" (.arityMismatch 2 1)) == (some { kind := "arity", names := [], counts := [2, 1] })
 
+/-- KL-06: the comparable publication set of ONE finished run, read from its outcome and its
+    final state. `EvalM` keeps the completed state on failure (`runResultWithState` drops it
+    there), so a failed run still shows every entry a successful owner published before the
+    failure, while a failed owner published none. An incomplete outcome (R7; no public run
+    returns it) or an owner still active when the run ended has NO comparable publication set
+    (C#: the harness requires every owner released): it observes `none`, which no guard
+    expects, and never an empty cache (`some []`). -/
+def publicationsOf (outcome : Except Error Result) (state : EvalState) : Option ZeroArgPropertyCache :=
+  if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
+  else some state.zeroArgPropertyCache
+
+/-- The zero-argument property cache entries ONE plain run published, on success AND on
+    failure. Every `#guard` is its own evaluation, so each cache guard below runs its
+    program once. -/
+def publications (e : Expr) : Option ZeroArgPropertyCache :=
+  match (runResultM e).runState EvalState.empty with
+  | (outcome, state) => publicationsOf outcome state
+
+/-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
+    run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
+def cacheEntries (e : Expr) (name : String) : Option Nat :=
+  (publications e).map fun cache => (cache.filter (·.1.propertyName == name)).length
+
+/-- Every published zero-argument property cache entry of one run. -/
+def cacheTotal (e : Expr) : Option Nat :=
+  (publications e).map List.length
+
+-- KL-06 observation states (hand-written states, not evaluator programs): NO OBSERVATION
+-- (`none`: an incomplete outcome, or an owner still active), a completed run with an EMPTY
+-- cache (`some 0`) and a completed run with entries are three different observations, and
+-- a failed run keeps the entries of its state exactly as a successful one does.
+def observedEntryProbe : ZeroArgPropertyCacheKey :=
+  { accessKind := .lexical, owner := "", hostOwners := [], componentOwners := [], propertyName := "P",
+    propertyAlgorithm := "", valEnv := none, bindingContext := none }
+#guard (publicationsOf (.error .fuelExhausted) EvalState.empty).isNone
+#guard (publicationsOf (.ok (.atom 0)) { EvalState.empty with activeZeroArgProperties := [observedEntryProbe] }).isNone
+#guard (publicationsOf (.ok (.atom 0)) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero) EvalState.empty).map List.length == some 0
+#guard (publicationsOf (.error .divByZero)
+    { EvalState.empty with zeroArgPropertyCache := [(observedEntryProbe, (.atom 7, 1))] }).map List.length == some 1
 -- need-selected-signature-payload [errors]: Inc(x) = x + 1 \n F(x, y) = x(y) \n F(Inc)
 def case_need_selected_signature_payload : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["x", "y"] [] [] [(.call (.param "x") [.param "y"])])] [(.call (.resolve "F") [.resolve "Inc"])])
@@ -690,6 +735,8 @@ def case_property_value_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Coordinates" (alg [] [] [] [.num 10, .num 20])] [.resolve "Coordinates", (.sequenceSpread (.resolve "Coordinates")), .num 997])
 #guard obs case_property_value_boundary == "ok raw=S[S[10, 20], 10, 20, 997] n=4"
 
+#guard cacheEntries case_property_value_boundary "Coordinates" == some 1
+#guard cacheTotal case_property_value_boundary == some 1
 -- spread-capture-count [item-supply-vs-value]: A = [1, 2, 3] \n  \n (A*).count
 def case_spread_capture_count : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])])] [(.dotCall (.capture [(.sequenceSpread (.resolve "A"))]) "count" none)])
@@ -1501,11 +1548,15 @@ def case_map_demands_collection_before_transforms : Expr :=
   .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.call (.resolve "map") [.resolve "L", .resolve "F"])])
 #guard obs case_map_demands_collection_before_transforms == "err div0"
 
+#guard cacheEntries case_map_demands_collection_before_transforms "L" == some 0
+#guard cacheTotal case_map_demands_collection_before_transforms == some 0
 -- expanded-map-calls-may-skip-indexed-arguments [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n [F(L[0]), F(L[1])]
 def case_expanded_map_calls_may_skip_indexed_arguments : Expr :=
   .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.listLiteral [(.call (.resolve "F") [(.index (.resolve "L") [.num 0])]), (.call (.resolve "F") [(.index (.resolve "L") [.num 1])])])])
 #guard obs case_expanded_map_calls_may_skip_indexed_arguments == "ok raw=L[0, 0] n=1"
 
+#guard cacheEntries case_expanded_map_calls_may_skip_indexed_arguments "L" == some 0
+#guard cacheTotal case_expanded_map_calls_may_skip_indexed_arguments == some 0
 -- map-identity-preserves-empty-elements [collection-builtins]: Id(x) = x \n map([(), 1, [], 2], Id)
 def case_map_identity_preserves_empty_elements : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Id" (alg ["x"] [] [] [.param "x"])] [(.call (.resolve "map") [(.listLiteral [(.emptySequence 0), .num 1, (.listLiteral []), .num 2]), .resolve "Id"])])
@@ -1696,6 +1747,8 @@ def case_index_out_of_range : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.index (.resolve "x") [.num 9])])
 #guard obs case_index_out_of_range == "err index"
 
+#guard cacheEntries case_index_out_of_range "x" == some 1
+#guard cacheTotal case_index_out_of_range == some 1
 -- variadic-selection-several-values [equality-and-indexing]: Data = 10, 20, 30 \n Data[2, 0, 2]
 def case_variadic_selection_several_values : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Data" (alg [] [] [] [.num 10, .num 20, .num 30])] [(.index (.resolve "Data") [.num 2, .num 0, .num 2])])
@@ -3077,5 +3130,18 @@ def specCaseIds : List String := [
   "output-spread-reference-certainly-read"
 ]
 #guard specCaseIds.length == 477
+
+/--
+Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards
+the loop above emitted; the expected total is the number of Lean-guarded cases that carry
+a hand-written cache expectation, computed independently from the corpus.
+-/
+def cachePilotCaseIds : List String := [
+  "property-value-boundary",
+  "map-demands-collection-before-transforms",
+  "expanded-map-calls-may-skip-indexed-arguments",
+  "index-out-of-range"
+]
+#guard cachePilotCaseIds.length == 4
 
 end LanguageSpecCases

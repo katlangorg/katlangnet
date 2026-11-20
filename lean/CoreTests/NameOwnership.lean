@@ -719,6 +719,51 @@ def navigatedCaptureKeepsUnavailableOwner (outerName : String) : Bool :=
 #guard navigatedCaptureKeepsUnavailableOwner "n"
 #guard navigatedCaptureKeepsUnavailableOwner "m"
 
+/-- KL-04, HAND-WRITTEN (no encoder is involved; the generated HP-05j/k guards of
+    `CoreTests/HostParentDifferential.lean` pin the same pair through `LeanAstEncoder`): one
+    local-only member `L` that names an input `absent` which no level binds, with its exact-owner
+    depths ABSENT (`none`) or EXPLICITLY EMPTY (`some []`). -/
+def unownedCapturedMember (depths : Option (List (String × Option Nat))) : KatLang.PropDef :=
+  { publicLocalProp "L" (.localCapturedAncestorParams ["absent"]) (alg [] [] [] [.num 7]) with
+    requiredOwnerDepths := depths }
+
+/-- `Box = { public L = 7 }` holding that member. -/
+def unownedCapturedMemberBox (depths : Option (List (String × Option Nat))) : Algorithm :=
+  alg [] [] [unownedCapturedMember depths] []
+
+/-- The owner lookup itself (`memberAccessible?`), asked at the root that declares `Box`: a site
+    with a scope, on whose chain nothing binds `absent`. -/
+def unownedCapturedMemberAccessible (depths : Option (List (String × Option Nat))) : Bool :=
+  let box := unownedCapturedMemberBox depths
+  let site : KatLang.EvalCtx := { callStack := [alg [] [] [privateProp "Box" box] []] }
+  KatLang.memberAccessible? site box (unownedCapturedMember depths)
+
+/-- The evaluator's use of that lookup: the structural read `Box.L` from the root. -/
+def unownedCapturedMemberRead (depths : Option (List (String × Option Nat))) : Except Error Result :=
+  runResult (.algorithmExpr (alg [] [] [privateProp "Box" (unownedCapturedMemberBox depths)]
+    [Expr.dotCall (.resolve "Box") "L" none]))
+
+def unownedCapturedMemberIsRefused (depths : Option (List (String × Option Nat))) : Bool :=
+  !unownedCapturedMemberAccessible depths &&
+    match unownedCapturedMemberRead depths with
+    | .error err => innermostRefusesCapturedMember "L" ["absent"] err
+    | _ => false
+
+def unownedCapturedMemberIsAccepted (depths : Option (List (String × Option Nat))) : Bool :=
+  unownedCapturedMemberAccessible depths &&
+    match unownedCapturedMemberRead depths with
+    | .ok (Result.atom 7) => true
+    | _ => false
+
+-- ABSENT depths fall back to the nearest owner of each required name; `absent` has none: refused.
+#guard unownedCapturedMemberIsRefused none
+-- An EXPLICITLY EMPTY list requires no owner at all: accepted. The two are different metadata.
+#guard unownedCapturedMemberIsAccepted (some [])
+-- Controls: the empty list is accepted because it requires NOTHING, not because depth metadata is
+-- present. A listed requirement that no owner satisfies is refused, with a depth and without one.
+#guard unownedCapturedMemberIsRefused (some [("absent", some 0)])
+#guard unownedCapturedMemberIsRefused (some [("absent", none)])
+
 /-- Static navigation can name the enclosing active declaration, including through opens. -/
 def navigatedCaptureUsesActiveOwner (outerName : String) (throughOpen : Bool) : Bool :=
   let lib := alg [] [] [publicLocalProp "X" (.localCapturedAncestorParams ["n"])

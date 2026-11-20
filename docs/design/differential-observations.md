@@ -32,7 +32,9 @@ retains its original contract; `errorObs` is separate. Only the host-parent
 artifact also emits the KL-07 `structural` guards (§ Lean `kl-struct-v1`
 exporter). On supported failures, `errorObs` runs the plain and counted Lean
 evaluators again. Each `structural` guard on a host-parent success runs the plain
-evaluator once.
+evaluator once. All four artifacts also emit the KL-06 cache observation
+(`CacheObservationDefinitions`): the host-parent artifact guards it on every
+case, the other three on a four-case pilot each (§ Cache publications).
 The public engine adds one run only on failures and parse rejections where it
 was previously skipped. No production evaluator code or normal-run overhead changes.
 
@@ -249,6 +251,263 @@ Extending the exporter to these corpora is a separate owner decision, to be made
 on these measurements. In any later migration, the language specification's
 hand-written expectations stay an independent oracle. Logs and scratch tools are
 in `artifacts/validation/kl-struct-lean-pilot/`.
+
+## Cache publications (KL-06 and its pilots)
+
+The zero-argument property cache is observable semantics, and what a run
+PUBLISHED is a final-state observation that the neutral text does not carry.
+KL-06 compared it on the host-parent corpus only, on success and on failure. On
+2026-11-20 the observation was extended to one small pilot in each of the three
+source corpora. Their neutral, payload and count guards are unchanged.
+
+**Observation.** C#: `ZeroArgPublicationObserver` runs the program on three
+cache-recording routes — generic, optimized and the genuinely suspending async
+twin — over the run-scoped publication law. The two synchronous routes compare
+entry counts per binding name. The async route checks the total and that all
+access used the async interface. All three check that every owner was released. Lean:
+`publicationsOf`, `publications`, `cacheEntries` and `cacheTotal`, one text
+(`LeanObsTemplate.CacheObservationDefinitions`) emitted into all four artifacts;
+each cache guard runs its program once.
+
+**Three states, never written alike.**
+
+| State | C# | Lean | Guard |
+| --- | --- | --- | --- |
+| No observation | no expectation (`CachePublicationState.NotObserved`) | an unselected program has no observation expression; if an observed run is incomplete or still has an active owner, the observer returns `none` | no program guard for an unselected case; an observed case requires `some` |
+| Completed, empty cache | total 0 | `some []` | `cacheTotal … == some 0`, plus `cacheEntries … "N" == some 0` for a watched name |
+| Completed, with entries | total n > 0 | `some cache` | one `cacheEntries` guard per name and one `cacheTotal` guard |
+
+A run completes in success or in failure: a failed run keeps what its successful
+owners published before the failure, and a failed owner publishes nothing. Five
+hand-written guards on `publicationsOf` in each artifact pin the states on
+synthetic outcomes and states (no evaluator run): an incomplete outcome and an
+active owner give `none`; an empty state gives `some 0` after success and after
+failure; a failed outcome over a one-entry state gives `some 1`.
+
+**Host-parent corpus.** Every one of its 113 cases keeps its cache guards (196
+named, 8 of them on the 31 failing cases; HP-16a–c are the failed-run witnesses).
+Its three coverage floors had fallen behind the corpus (102 comparable, 96
+pre-wired, 181 named guards on successes) and are now the current counts: 113,
+103 and 188. `CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet` takes
+one unit of exactly one metric away in memory — HP-16a removed; HP-02f run on a
+parent-free program; HP-10g no longer watching its unpublished `Large` — and
+requires the ratchet to report that metric alone. Against the old floors all
+three controls failed (each drop was absorbed), so a control also fails whenever
+a floor is stale. KL-04's absent-versus-empty exact-owner pair (HP-05j/k) reaches
+Lean through `LeanAstEncoder`; `lean/CoreTests/NameOwnership.lean` now pins the
+same pair on hand-written terms (`unownedCapturedMember`): absent depths are
+refused, an explicitly empty list is accepted, and a listed requirement that no
+owner satisfies is refused with or without a depth, both at `memberAccessible?`
+and through the structural read `Box.L`.
+
+**Pilots.** Four existing cases per corpus, one per class. No corpus case was
+added, so no program text and no other artifact changed.
+
+| Corpus | Success with entries | Success, empty cache | Failure after a publication | Failure before any (control) |
+| --- | --- | --- | --- | --- |
+| `SemanticExplorerCases.lean` | `special__listSpreadConcat`: `A=1 B=1` | `root__p12`: nothing | `indexBig__p12`: `err index`, `x=1` | `special__repeatedNameFailedThenValue`: `err div0`, `Bad=0` |
+| `LanguageSpecCases.lean` | `property-value-boundary`: `Coordinates=1` | `expanded-map-calls-may-skip-indexed-arguments`: `L=0` | `index-out-of-range`: `err index`, `x=1` | `map-demands-collection-before-transforms`: `err div0`, `L=0` |
+| `CoreTests/SemanticGeneratedCases.lean` | `sem2b/v1/sys/cache/0`: `v1=1` | `sem2b/v1/sys/cache/2`: nothing | `sem2b/v1/sys/select-fail/3`: `err index`, `v1=1` | `sem2b/v1/sys/cache-fail/0`: `err div0`, `v1=0` |
+
+A name at zero is watched and unpublished. Where the expectation comes from
+follows each corpus's own oracle:
+
+- *Language specification.* `SpecCase.ExpectedCachePublications` is hand-written
+  on the canonical case. `LanguageSpecRunnerTests.Case_MatchesCanonicalCachePublications`
+  requires it of C#; the generated guards require it of Lean.
+- *Semantic explorer and SEM-2C.* A reviewed table in the artifact test
+  (`CachePublicationPilot`). Generation observes the case and refuses a table
+  entry C# does not meet, so a guard never pins an unreviewed number.
+- *SEM-2C transformation members.* An alpha-rename renames the entries, so each
+  pilot case's member (four alpha-rename members; none of the four cases has a
+  reorder member) guards its published TOTAL, which C# requires to equal the
+  base member's.
+
+`CachePublicationPilotTests` pins the exact guard lines by hand, that each pilot
+covers the four classes, that no other program of an artifact has a cache
+guard, and that the C# observer rejects a wrong expectation.
+
+**Census (2026-11-20, scratch run, not part of the suite).** Every
+Lean-comparable program of the three corpora was observed on the C# routes and by
+a scratch Lean file importing the built corpus modules.
+
+| Corpus | Programs | Success with entries | Success, empty | Failure with entries | Failure, empty | Entries |
+| --- | --- | --- | --- | --- | --- | --- |
+| Semantic explorer (surface and internal-node) | 2,570 | 834 | 1,207 | 154 | 375 | 1,171 |
+| Language specification | 477 | 151 | 218 | 13 | 95 | 242 |
+| SEM-2C base members | 264 | 105 | 82 | 28 | 49 | 194 |
+| SEM-2C transformation members | 414 | 191 | 103 | 52 | 68 | 363 |
+| All | 3,725 | 1,281 | 1,610 | 247 | 587 | 1,970 |
+
+C# and Lean published the same entries under the same names on all 3,725
+programs, and each C# route gave the corpus's own neutral observation. The 19
+internal-node programs declare no property and publish nothing. Every member of
+the 264 SEM-2C cases published as many entries as its base member. The names
+include the front end's hoisted deconstruction source (`$deconstruct$0`), which
+both sides publish under that name. The census is evidence that a full
+migration would pass today; it is not a migration, and nothing in the suite
+re-runs it.
+
+**Coverage after the pilots.** Guarded programs: host-parent 113 of 113; semantic
+explorer 4 of 2,570; language specification 4 of 477; SEM-2C 4 of 264 base
+members by name plus 4 of 414 members by total. Every other program of the three
+source corpora has no cache observation.
+
+**Mutation sensitivity (2026-11-20).** Lean side, on scratch copies outside the
+tree, elaborated with `lake env lean`. For each source corpus the copy holds the
+artifact's header and shared definitions and its pilot cases (plus the one
+program a substitution needs); the host-parent artifact was mutated whole. Every
+unmutated copy elaborated with no failing guard. The cells count failing
+`#guard`s.
+
+| Mutant | Explorer | Specification | SEM-2C | Host-parent |
+| --- | --- | --- | --- | --- |
+| The entry kept after the failure is guarded at 0 | 1 | 1 | 1 | — |
+| The pre-publication control's total is guarded at 1 | 1 | 1 | 1 | — |
+| The empty success's total is guarded at 1 | 1 | 1 | 1 | — |
+| The failure-after-publication case runs another corpus program with the same neutral observation that publishes nothing | 2 | 2 | 2 | — |
+| `publicationsOf` reports an empty cache for a failed run | 3 | 3 | 4 | 7 |
+| `publicationsOf` reports an empty cache where it has no observation | 2 | 2 | 2 | 2 |
+| `publicationsOf` reports no observation for a failed run | 6 | 6 | 8 | 41 |
+
+- A wrong number fails exactly the guard that holds it; the case's other guards
+  still pass.
+- The substituted program (`special__firstEmpty`, `list-index-out-of-range`,
+  `sem2b/v1/seed/5EED2B000004/8`: each `err index` with an empty cache) fails
+  the case's named and total cache guards while its `obs` and `errorObs` guards
+  still pass: the neutral observation cannot see the difference.
+- An observer that drops a failed run's entries fails the one-entry state guard
+  and the cache guards of every failure that follows a publication (in SEM-2C
+  also the member's total; in the host-parent artifact HP-14i, HP-16a and
+  HP-16c).
+- An observer that writes a missing observation as an empty cache fails only the
+  two `isNone` state guards. No run of a corpus program reaches that state, so
+  those hand-written guards are what keeps `none` apart from `some 0`.
+- An observer with no observation on failure fails both failure state guards and
+  every cache guard of a failing case (host-parent: 31 totals and 8 named).
+
+C# side: `PilotCase_CacheObserverRejectsWrongReviewedExpectations` gives each of
+the 12 pilot cases a wrong reviewed expectation — an entry under a name the run
+never published, one entry too many, an empty cache for a run that published
+(with and without the watched names) — and another neutral observation. For
+every nonempty pilot it also moves a publication to another name while keeping
+the total fixed. Each check requires the observer to identify the corpus and
+case. The explorer and SEM-2C use the observer during generation. The
+specification checks C# in its runner and emits its hand-written oracle directly.
+`FailedRun_KeepsWhatWasPublishedBeforeTheFailure_AndNothingAfter` observes one
+program text with its two rows swapped (`X`, then `1 / 0`; `1 / 0`, then `X`).
+The host-parent coverage-drop controls are described above.
+
+Model mutants: two mutants of the Lean model's `memberAccessible?` were built in
+scratch workspaces outside the tree (`KatLang`, then `CoreTests.NameOwnership`
+and `CoreTests.HostParentDifferential`; about 40 s each). Treating an explicitly
+empty exact-owner list as absent fails exactly one guard of
+`NameOwnership.lean`, the new `unownedCapturedMemberIsAccepted (some [])`, and
+the four generated guards of HP-05k: until now only that encoder-derived case
+told the two apart. Treating absent depths as an empty list fails
+`unownedCapturedMemberIsRefused none`, nine older guards of that module and the
+fifteen generated guards of HP-05d, e, h, i and j.
+
+Three mutants of the Lean model's publication law
+(`evalZeroArgPropertyAccessCounted`) were built the same way against the four
+regenerated artifacts:
+
+| Model mutant | Explorer | Specification | SEM-2C | Host-parent |
+| --- | --- | --- | --- | --- |
+| A successful owner stores no entry | 5 | did not finish | 6 | 100 or more |
+| A failed owner stores an entry | 2 | 2 | 3 | 17 |
+| A failed owner stays active (Lean then has no observation: `none`) | 2 | 2 | 3 | 18 |
+
+In the explorer and SEM-2C artifacts every failing guard is a pilot cache
+guard: none of their neutral, payload or count guards (2,917 and 829 before the
+pilots) fails under any of the three mutants. Under the first mutant the
+specification module stopped in Lean's interpreter with a deep-recursion error
+before reporting a guard. Its log leaves the case and its termination behaviour
+undetermined. The host-parent module stopped at Lean's limit of 100 errors (cache guards,
+and five `obs` and five `structural` guards). Under the other two, the failing
+guards of the three source corpora are exactly the pre-publication controls'
+(named and total, and the SEM-2C member's total); the host-parent failures are
+cache guards of failing cases. No mutant of the C# evaluator was built: the
+shared checkout's production code was left untouched, so on the C# side the
+evidence is the reviewed expectations, the route agreement and the census.
+
+A separate review exercised the 16 selected source programs and HP-16a–c,
+using their generated definitions and guards together in a small Lean module.
+Every guard passed against the current model. The same successful-owner mutant
+failed four specification guards in this module, the named and total guards
+on `Coordinates` and `x`. Across the 19 programs, suppressing a successful
+publication failed 19 cache guards, publishing on failure failed 12, and
+leaving a failed owner active failed 13. All their result and error guards
+continued to pass. Replacing just the expected name after publication in
+each of the four corpora failed exactly those four named guards. The correct
+totals still passed.
+
+**Cost (2026-11-20; Lean 4.35.0 and Lake 5.0.0; Windows 11 with 20 logical
+processors, under other load that day: absolute times are about twice those of
+the KL-07 table above).**
+
+| Artifact | Bytes before | Bytes after | `#guard` lines | Added guards |
+| --- | --- | --- | --- | --- |
+| `CoreTests/HostParentDifferential.lean` | 176,933 | 178,246 (+1,313) | 552 → 557 | 5 state guards (`publicationsOf` split out of `publications`; its 113 cases unchanged) |
+| `LanguageSpecCases.lean` | 318,639 | 322,825 (+4,186) | 521 → 535 | 5 state, 8 on the pilot cases, 1 count |
+| `CoreTests/SemanticGeneratedCases.lean` | 663,676 | 667,901 (+4,225) | 829 → 846 | 5 state, 7 on the pilot cases, 4 member totals, 1 count |
+| `SemanticExplorerCases.lean` | 1,042,737 | 1,046,592 (+3,855) | 2,917 → 2,931 | 5 state, 8 on the pilot cases, 1 count |
+
+- *Regeneration.* One flagged `dotnet test --no-build` run per artifact, wall
+  clock including test-host start: host-parent 12–17 s, language specification
+  14–18 s (it also rewrites the two prompt blocks, which did not change), SEM-2C
+  23–26 s, semantic explorer 26–40 s. The cache observer runs three routes per
+  selected program, including the four SEM-2C alpha-rename members. The
+  specification runs those routes in its C# runner. Each artifact was generated twice and the two generations
+  were byte-identical. An incremental build of the test project took 49–76 s.
+- *Lean elaboration.* Baseline and regenerated copies were elaborated with
+  `lake env lean` outside the build directory, interleaved over three rounds.
+  Medians, baseline → pilot: host-parent 23.5 → 20.6 s, language specification
+  18.6 → 17.3 s, SEM-2C 31.5 → 31.5 s, semantic explorer 49.0 → 47.8 s. Rounds
+  differed by up to 2× with the machine's load. The SEM-2C timing used an
+  earlier 667,913-byte pilot with the same guard count. These measurements
+  cannot establish a marginal cost for the final pilots.
+- *Dependents.* No program text changed, so
+  `KatLangArityLaws/MayCaptureCallsCorpus.lean` was not regenerated; it imports
+  the corpus modules and is rebuilt with them.
+- *Real builds.* `lake build` of the four affected targets, one at a time,
+  rebuilt `CoreTests.NameOwnership` (17 s), `CoreTests.HostParentDifferential`
+  and `CoreTests.SemanticGeneratedCases` (34 s each, side by side),
+  `SemanticExplorerCases` (46 s), `LanguageSpecCases` (13 s) and
+  `KatLangArityLaws.MayCaptureCallsCorpus` (20 s, Lake-reported): 122 s of wall
+  clock for `CoreTests`, `SemanticExplorerCases`, `LanguageSpecCases` and
+  `KatLangArityLaws` together.
+
+**Estimate for a full migration (not done).** Scratch copies outside the tree
+added, for each previously unguarded program, one `cacheEntries` guard per
+published name and one `cacheTotal` guard, with the numbers of the C# census.
+The existing pilots, including the four SEM-2C total-only member guards, were retained. The pilot
+copies and these copies were elaborated in two alternating rounds (means below).
+All 5,652 added guards passed.
+
+| Corpus | Programs | Added guards | Bytes | Elaboration |
+| --- | --- | --- | --- | --- |
+| `LanguageSpecCases.lean` | 477 | 705 | 322,825 → 372,710 (+15%) | 15.0 → 21.1 s (+41%) |
+| `CoreTests/SemanticGeneratedCases.lean` | 678 | 1,213 | 667,901 → 766,310 (+15%) | 31.1 → 47.7 s (+53%) |
+| `SemanticExplorerCases.lean` | 2,570 | 3,734 | 1,046,592 → 1,253,421 (+20%) | 56.8 → 82.6 s (+45%) |
+| All three | 3,725 | 5,652 | +355,123 | 102.9 → 151.4 s (+47%) |
+
+Every cache guard is its own evaluation. The 5,652 added guards cover the
+3,709 programs outside the pilots. An alternative with one whole name-and-count
+guard per program would take 3,725 evaluations across the complete corpus. The SEM-2C copy would be within 5% of that
+artifact's 800,000-byte cap. A real migration would also add the expectations'
+review: observed and reviewed tables for the explorer and SEM-2C, and
+hand-written expectations for the specification, whose canonical oracle must
+stay independent of observation.
+
+**Not covered.** The pilots do not observe the cache on the public engine, on
+the host-operation programs of SEM-2B, or under cancellation. They compare entry
+counts per binding name, not the cached values (the neutral guard holds the
+value a program returns) and not cache keys: two bindings of one name in
+different scopes are two entries under that name, as in the host-parent corpus.
+Extending the observation to all 3,725 programs is a separate owner decision, to
+be made on the census and the cost above. Logs, the census tables and the
+scratch tools are in `artifacts/validation/kl-cache-pilots/`.
 
 ## Demand, effects and model boundaries
 

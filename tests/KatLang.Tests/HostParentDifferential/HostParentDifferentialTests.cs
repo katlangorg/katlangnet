@@ -94,34 +94,136 @@ public class HostParentDifferentialTests
     }
 
     /// <summary>
-    /// Coverage ratchet: the pinned minimums may only be RAISED (or lowered in a reviewed diff that
-    /// deliberately removes cases). An encoder regression cannot pass silently — a case that stops
-    /// encoding fails generation loudly — and a case moved to the divergent partition breaks the
-    /// exact id list above. Cache guards are read back from the GENERATED artifact: the SUCCESS
-    /// floor is pinned here, and failing cases by exact enumeration
+    /// The pinned coverage floors: the CURRENT counts of the corpus. They may only be RAISED (or
+    /// lowered in a reviewed diff that deliberately removes cases); the coverage-drop controls
+    /// (<see cref="CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet"/>) fail while a floor
+    /// is below its current count, so a floor cannot go stale after cases are added.
+    /// </summary>
+    private const int MinimumComparableCases = 113;
+    private const int MinimumComparableCasesWithPreWiredParents = 103;
+    private const int MinimumSuccessCacheGuards = 188;
+
+    private const string ComparableMetric = "comparable";
+    private const string PreWiredMetric = "pre-wired";
+    private const string SuccessCacheGuardMetric = "success-cache-guards";
+
+    /// <summary>The three ratcheted metrics of a case list; cache guards are read back from the GENERATED text.</summary>
+    private sealed record HostParentCoverage(int Comparable, int PreWired, int SuccessCacheGuards);
+
+    private static bool HasPreWiredParent(HostParentCase hostCase)
+        => LeanAstEncoder.EncodeExpr(hostCase.Program).Contains("Algorithm.withParent (some ", StringComparison.Ordinal);
+
+    private static HostParentCoverage MeasureCoverage(IReadOnlyList<HostParentCase> cases)
+    {
+        var comparable = cases.Where(c => c.Divergence is null).ToList();
+        var wired = comparable.Count(HasPreWiredParent);
+        var successes = comparable.Where(c => HostParentDifferentialHarness.Observe(c).IsSuccess).ToList();
+        var guards = EmittedCacheGuards.Parse(GenerateArtifact(cases));
+        Assert.All(successes, c => Assert.Single(guards.Totals(c.LeanName)));
+        var cacheGuards = successes.Sum(c => guards.Names(c.LeanName).Select(g => g.Name).Distinct(StringComparer.Ordinal).Count());
+        return new(comparable.Count, wired, cacheGuards);
+    }
+
+    /// <summary>The metrics of <paramref name="coverage"/> that are below their pinned floor, each with its message.</summary>
+    private static List<(string Metric, string Message)> CoverageShortfalls(HostParentCoverage coverage)
+    {
+        var shortfalls = new List<(string Metric, string Message)>();
+        if (coverage.Comparable < MinimumComparableCases)
+        {
+            shortfalls.Add((ComparableMetric,
+                $"Comparable host-parent differential coverage shrank below {MinimumComparableCases} (actual {coverage.Comparable})."));
+        }
+
+        if (coverage.PreWired < MinimumComparableCasesWithPreWiredParents)
+        {
+            shortfalls.Add((PreWiredMetric,
+                $"Comparable cases with an encoded pre-wired parent shrank below {MinimumComparableCasesWithPreWiredParents} (actual {coverage.PreWired})."));
+        }
+
+        if (coverage.SuccessCacheGuards < MinimumSuccessCacheGuards)
+        {
+            shortfalls.Add((SuccessCacheGuardMetric,
+                $"Per-property cache guards on successful cases shrank below {MinimumSuccessCacheGuards} (actual {coverage.SuccessCacheGuards})."));
+        }
+
+        return shortfalls;
+    }
+
+    /// <summary>
+    /// Coverage ratchet: an encoder regression cannot pass silently — a case that stops encoding
+    /// fails generation loudly — and a case moved to the divergent partition breaks the exact id
+    /// list above. Cache guards are read back from the GENERATED artifact: the SUCCESS floor is
+    /// pinned here, and failing cases by exact enumeration
     /// (<see cref="FidelityRatchet_ComparableFailuresKeepTheirPublicationGuards"/>, KL-06).
     /// </summary>
     [Fact]
     public void FidelityRatchet_ComparableHostParentCoverageCannotSilentlyShrink()
     {
-        const int MinimumComparableCases = 102;
-        const int MinimumComparableCasesWithPreWiredParents = 96;
-        const int MinimumSuccessCacheGuards = 181;
+        var shortfalls = CoverageShortfalls(MeasureCoverage(HostParentDifferentialCorpus.AllCases()));
+        Assert.True(shortfalls.Count == 0, string.Join(" ", shortfalls.Select(s => s.Message)));
+    }
 
-        var cases = HostParentDifferentialCorpus.AllCases();
-        var comparable = cases.Where(c => c.Divergence is null).ToList();
-        var wired = comparable.Count(c => LeanAstEncoder.EncodeExpr(c.Program).Contains("Algorithm.withParent (some ", StringComparison.Ordinal));
-        var successes = comparable.Where(c => HostParentDifferentialHarness.Observe(c).IsSuccess).ToList();
-        var guards = EmittedCacheGuards.Parse(GenerateArtifact(cases));
-        Assert.All(successes, c => Assert.Single(guards.Totals(c.LeanName)));
-        var cacheGuards = successes.Sum(c => guards.Names(c.LeanName).Select(g => g.Name).Distinct(StringComparer.Ordinal).Count());
+    /// <summary>
+    /// Coverage-drop controls, one per ratcheted metric. Each takes ONE unit of exactly one metric
+    /// away from the current corpus (in memory; the corpus is untouched) and requires the ratchet to
+    /// report exactly that metric:
+    /// <list type="bullet">
+    /// <item><c>comparable</c>: HP-16a is removed. It fails and has no pre-wired parent, so only the
+    /// comparable count drops.</item>
+    /// <item><c>pre-wired</c>: HP-02f keeps its id but runs HP-16a's parent-free program. Both fail,
+    /// so the comparable count and the success cache guards stay as they are.</item>
+    /// <item><c>success-cache-guards</c>: HP-10g stops watching <c>Large</c>, a property it never
+    /// publishes, which removes that one named guard and nothing else.</item>
+    /// </list>
+    /// A floor below the current count absorbs the drop, so a control also fails whenever its floor
+    /// is stale: raise the floor to the count the message reports.
+    /// </summary>
+    [Theory]
+    [InlineData(ComparableMetric)]
+    [InlineData(PreWiredMetric)]
+    [InlineData(SuccessCacheGuardMetric)]
+    public void CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet(string metric)
+    {
+        var all = HostParentDifferentialCorpus.AllCases();
+        HostParentCase Named(string id) => all.Single(c => c.Id == id);
+        var failingWithoutParent = Named("HP-16a");
+        var failingWithParent = Named("HP-02f");
+        var watchingAnUnpublishedName = Named("HP-10g");
 
-        Assert.True(comparable.Count >= MinimumComparableCases,
-            $"Comparable host-parent differential coverage shrank below {MinimumComparableCases} (actual {comparable.Count}).");
-        Assert.True(wired >= MinimumComparableCasesWithPreWiredParents,
-            $"Comparable cases with an encoded pre-wired parent shrank below {MinimumComparableCasesWithPreWiredParents} (actual {wired}).");
-        Assert.True(cacheGuards >= MinimumSuccessCacheGuards,
-            $"Per-property cache guards on successful cases shrank below {MinimumSuccessCacheGuards} (actual {cacheGuards}).");
+        // The premises that make each drop hit one metric only.
+        Assert.False(HostParentDifferentialHarness.Observe(failingWithoutParent).IsSuccess);
+        Assert.False(HasPreWiredParent(failingWithoutParent));
+        Assert.False(HostParentDifferentialHarness.Observe(failingWithParent).IsSuccess);
+        Assert.True(HasPreWiredParent(failingWithParent));
+        var watching = HostParentDifferentialHarness.Observe(watchingAnUnpublishedName);
+        Assert.True(watching.IsSuccess);
+        Assert.Contains("Large", watchingAnUnpublishedName.WatchedProperties);
+        Assert.Equal(0, watching.Published("Large"));
+
+        IReadOnlyList<HostParentCase> reduced = metric switch
+        {
+            ComparableMetric => all.Where(c => c.Id != failingWithoutParent.Id).ToList(),
+            PreWiredMetric => all.Select(c => c.Id == failingWithParent.Id ? c with { Program = failingWithoutParent.Program } : c).ToList(),
+            SuccessCacheGuardMetric => all.Select(c => c.Id == watchingAnUnpublishedName.Id
+                ? c with { WatchedProperties = c.WatchedProperties.Where(name => name != "Large").ToList() }
+                : c).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(metric), metric, "Unknown coverage metric."),
+        };
+
+        var current = MeasureCoverage(all);
+        var dropped = MeasureCoverage(reduced);
+        var expected = metric switch
+        {
+            ComparableMetric => current with { Comparable = current.Comparable - 1 },
+            PreWiredMetric => current with { PreWired = current.PreWired - 1 },
+            _ => current with { SuccessCacheGuards = current.SuccessCacheGuards - 1 },
+        };
+        Assert.Equal(expected, dropped);
+
+        var shortfalls = CoverageShortfalls(dropped);
+        Assert.True(shortfalls.Count == 1 && shortfalls[0].Metric == metric,
+            $"Dropping one unit of '{metric}' ({current} -> {dropped}) must fail the ratchet on exactly that metric, but it reported " +
+            $"[{string.Join(", ", shortfalls.Select(s => s.Metric))}]. A floor below the current count is stale: raise it to the current count.");
     }
 
     /// <summary>
@@ -429,10 +531,6 @@ public class HostParentDifferentialTests
             LeanAstEncoder.EncodeExpr(empty.Program));
     }
 
-    private static List<string> WatchedNames(HostParentCase hostCase, HostParentObservation observation)
-        => hostCase.WatchedProperties.Concat(observation.PublishedByName.Keys).Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal).ToList();
-
     /// <summary>
     /// The cache guards a generated artifact emits per Lean case name, read back from its TEXT so the
     /// ratchets pin what was generated. A <c>#guard cache…</c> line of any other shape fails loudly.
@@ -551,30 +649,10 @@ public class HostParentDifferentialTests
         builder.Append('\n');
         builder.Append(LeanObsTemplate.SharedDefinitions.ReplaceLineEndings("\n"));
         builder.Append("\n\n");
+        builder.Append(LeanObsTemplate.CacheObservationDefinitions.ReplaceLineEndings("\n"));
+        builder.Append("\n\n");
+        LeanObsTemplate.AppendCacheObservationContracts(builder);
         builder.Append("""
-            /-- KL-06: the zero-argument property cache entries ONE plain run published, on success AND on
-                failure, derived from the run's outcome and its final state. `EvalM` keeps the completed
-                state on failure (`runResultWithState` drops it there), so a failed run still shows every
-                entry a successful owner published before the failure, while a failed owner published
-                none. An incomplete outcome (R7; no public run returns it) or an owner still active when
-                the run ended has no comparable publication set (C#: the harness requires every owner
-                released), so it observes `none`, which no guard expects. Every `#guard` is its own
-                evaluation, so each cache guard below runs its program once. -/
-            def publications (e : Expr) : Option ZeroArgPropertyCache :=
-              match (runResultM e).runState EvalState.empty with
-              | (outcome, state) =>
-                  if outcome.isIncomplete || !state.activeZeroArgProperties.isEmpty then none
-                  else some state.zeroArgPropertyCache
-
-            /-- Published zero-argument property cache entries of one run named `name` (C#: the entries the
-                run-scoped publication law PUBLISHED for bindings of that name, kept beside a failure). -/
-            def cacheEntries (e : Expr) (name : String) : Option Nat :=
-              (publications e).map fun cache => (cache.filter (·.1.propertyName == name)).length
-
-            /-- Every published zero-argument property cache entry of one run. -/
-            def cacheTotal (e : Expr) : Option Nat :=
-              (publications e).map List.length
-
             /-- KL-07 pilot: the `kl-struct-v1` identity (`StructuralIdentity.encode`,
                 `CoreTests/StructuralIdentity.lean`) of the value ONE plain run returns; `none` on
                 failure. Each successful case's guard compares it with the C# encoder's text of the C#
@@ -639,13 +717,7 @@ public class HostParentDifferentialTests
             LeanObsTemplate.AppendErrorGuard(builder, hostCase.LeanName, observation.ErrorPayload);
             // KL-06: publications are compared on success AND failure; a failed run keeps what its
             // successful owners published, and a watched name with no entry is guarded at zero.
-            foreach (var name in WatchedNames(hostCase, observation))
-            {
-                builder.Append($"#guard cacheEntries {hostCase.LeanName} {LeanAstEncoder.QuoteString(name)} == " +
-                    $"some {observation.Published(name).ToString(CultureInfo.InvariantCulture)}\n");
-            }
-
-            builder.Append($"#guard cacheTotal {hostCase.LeanName} == some {observation.PublishedTotal.ToString(CultureInfo.InvariantCulture)}\n");
+            ZeroArgPublicationObserver.AppendCacheGuards(builder, hostCase.LeanName, hostCase.WatchedProperties, observation.Publications);
             builder.Append('\n');
             comparableIds.Add(hostCase.Id);
             comparableObservations.Add(hostCase.Id, (hostCase, observation));

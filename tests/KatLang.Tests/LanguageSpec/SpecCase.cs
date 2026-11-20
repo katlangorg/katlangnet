@@ -78,6 +78,18 @@ public sealed record SpecCase
     public SharedErrorPayload? ExpectedErrorPayload { get; init; }
 
     /// <summary>
+    /// Optional HAND-WRITTEN expectation of the zero-argument property cache entries the run
+    /// published (KL-06 pilot; never regenerated): the guarded binding names with their published
+    /// counts, a name at zero being watched and unpublished. <c>null</c> is NO cache observation
+    /// (no guard); an expectation that publishes nothing is a completed run with an EMPTY cache,
+    /// which is a different statement. Applies to Evaluates and EvalError cases alike — a failed
+    /// run keeps what its successful owners published before the failure — and only to
+    /// Lean-guarded cases: the C# runner requires the entries of C#, the generated Lean guards
+    /// require them of Lean.
+    /// </summary>
+    public CachePublicationExpectation? ExpectedCachePublications { get; init; }
+
+    /// <summary>
     /// Optional stable fragment of a parser diagnostic message. The structured
     /// classification lives in <see cref="ExpectedDiagnosticCode"/>; use the
     /// fragment additionally for deliberately-worded diagnostics (e.g. the
