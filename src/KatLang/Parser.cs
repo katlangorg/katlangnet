@@ -40,13 +40,9 @@ public sealed class Parser
     private readonly CancellationToken _activeCancellationToken;
     private int _pos;
 
-    // Passive per-parse count of token-index steps: one per consumed token (Advance),
-    // one per significant-index probe (NextSignificantIndex), and the clause-head
-    // region memo's charges (TryCloseDelimiterRegion: one per token slot when it is
-    // allocated, one per entry read or written). It is the deterministic cost model
-    // the lookahead linearity regressions read through ParserTraversalObservations;
-    // it never influences parsing.
-    private long _tokenSteps;
+    // Token consumptions and index probes. ParserTraversalObservations.TokenSteps also
+    // includes the clause-head memo's access and initialization work.
+    private long _tokenVisits;
 
     // One-entry memo of the most recent LookaheadThroughTildesToPropertyDefFrom scan,
     // keyed by the run's first significant token index (see that method).
@@ -677,7 +673,7 @@ public sealed class Parser
                 violation.Span);
         }
 
-        traversalObservations?.RecordTokenSteps(parser._tokenSteps);
+        parser.RecordTraversal(traversalObservations);
         return new SyntaxParseResult(root, diagnostics) { FullyRecursiveHeight = structuralHeight };
     }
 
@@ -815,7 +811,7 @@ public sealed class Parser
 
     private Token Advance()
     {
-        _tokenSteps++;
+        _tokenVisits++;
         var token = Current; // normalises _pos past any leading skipped tokens
         if (_pos < _tokens.Count - 1) _pos++;
         // skip any skipped tokens so the next Current call lands on a real token
@@ -840,7 +836,7 @@ public sealed class Parser
     {
         for (var index = NextSignificantIndex(_pos) - 1; index >= 0 && IsSkippedByGrammar(_tokens[index].Kind); index--)
         {
-            _tokenSteps++;
+            _tokenVisits++;
             if (_tokens[index].Kind == TokenKind.Bad)
             {
                 var token = _tokens[index];
@@ -1089,7 +1085,7 @@ public sealed class Parser
     // this instead of bespoke raw _tokens[...] skipping loops.
     private int NextSignificantIndex(int index)
     {
-        _tokenSteps++;
+        _tokenVisits++;
         while (index < _tokens.Count - 1 && IsSkippedByGrammar(_tokens[index].Kind))
             index++;
         return Math.Min(index, _tokens.Count - 1);
@@ -3187,12 +3183,27 @@ public sealed class Parser
         return true;
     }
 
-    // Per-parse delimiter-region memo of the clause-head scan, indexed by token position.
-    // For the opening delimiter at significant index i: 0 while undecided; close + 1 when
-    // the region it opens closes within itself at the closer index close; ~breakIndex
-    // (negative) when it does not, breakIndex being the first mismatched closer or the end
-    // of input. Allocated by the first region walk (see TryCloseDelimiterRegion).
-    private int[]? _delimiterRegionEnds;
+    // Per-parse delimiter-region memo of the clause-head scan: a WINDOW over token positions,
+    // slot s holding the entry of the token at _regionMemoBase + s. For the opening delimiter
+    // at significant index i: 0 while undecided (every position outside the window is
+    // undecided); close + 1 when the region it opens closes within itself at the closer index
+    // close; ~breakIndex (negative) when it does not, breakIndex being the first mismatched
+    // closer or the end of input. Every slot at or above _regionMemoUsed is 0. Prepared by
+    // each region walk (PrepareRegionMemo); never sized to the whole token stream up front.
+    private int[] _regionMemo = [];
+    private int _regionMemoBase;
+    private int _regionMemoUsed;
+
+    // Storage work (one step per slot allocated, copied, or cleared), cumulative allocated
+    // slots, and entry reads/writes. These passive counts exclude visits to the token stream.
+    private long _regionMemoInitializationSteps;
+    private long _regionMemoAllocatedSlots;
+    private long _regionMemoAccessSteps;
+
+    // The first window holds the rest of the token stream when that is at most twice this many
+    // slots, and this many (4 KiB) otherwise: room for the nested openers of an ordinary row,
+    // never a slot per token of a large, mostly flat document. Internal for the scaling pins.
+    internal const int RegionMemoInitialSlots = 1024;
 
     // Reused across walks. Capacity grows only when a walk reaches a new maximum depth.
     private readonly List<int> _delimiterRegionOpeners = [];
@@ -3217,17 +3228,17 @@ public sealed class Parser
     /// (<see cref="ClassifyDeclarationStartsInOrder"/>).
     /// The walk inspects tokens through <see cref="NextSignificantIndex"/>, so comments and
     /// reported characters stay invisible, and it charges every memo read, every memo
-    /// write, and the memo's one allocation (one step per token slot) to the traversal
-    /// count: reused or failed work is never free in the scaling regressions.</para>
+    /// write, and the memo's storage work (one step per slot allocated, copied, or cleared,
+    /// see <see cref="PrepareRegionMemo"/>) to the traversal count: reused or failed work is
+    /// never free in the scaling regressions.</para>
     /// </summary>
     private bool TryCloseDelimiterRegion(int openIndex, out int endIndex)
     {
-        var ends = _delimiterRegionEnds ?? AllocateDelimiterRegionEnds();
-        _tokenSteps++;
-        var known = ends[openIndex];
+        var known = ReadRegionMemo(openIndex);
         if (known != 0)
             return DecodeDelimiterRegionEnd(known, out endIndex);
 
+        PrepareRegionMemo(openIndex);
         var openers = _delimiterRegionOpeners;
         openers.Clear();
         openers.Add(openIndex);
@@ -3239,11 +3250,11 @@ public sealed class Parser
             switch (kind)
             {
                 case TokenKind.LParen or TokenKind.LBracket or TokenKind.LBrace:
-                    _tokenSteps++;
-                    known = ends[index];
+                    known = ReadRegionMemo(index);
                     if (known > 0)
                     {
                         // Closed within itself: resume after its closer, every region around it unchanged.
+                        System.Diagnostics.Debug.Assert(known - 1 > index, "A closed region ends after its own opener.");
                         index = known - 1;
                         continue;
                     }
@@ -3256,8 +3267,7 @@ public sealed class Parser
                     var innermost = openers[^1];
                     if (ClosingDelimiterOf(_tokens[innermost].Kind) != kind)
                         return BreakOpenDelimiterRegions(index, out endIndex);
-                    _tokenSteps++;
-                    ends[innermost] = index + 1;
+                    WriteRegionMemo(innermost, index + 1);
                     openers.RemoveAt(openers.Count - 1);
                     if (openers.Count != 0)
                         continue;
@@ -3277,18 +3287,105 @@ public sealed class Parser
     /// </summary>
     private bool BreakOpenDelimiterRegions(int breakIndex, out int endIndex)
     {
-        var ends = _delimiterRegionEnds!;
         var openers = _delimiterRegionOpeners;
         for (var i = 0; i < openers.Count; i++)
-        {
-            _tokenSteps++;
-            ends[openers[i]] = ~breakIndex;
-        }
+            WriteRegionMemo(openers[i], ~breakIndex);
 
         openers.Clear();
         endIndex = breakIndex;
         return false;
     }
+
+    /// <summary>The memo entry of the opening delimiter at <paramref name="index"/> (one charged read).</summary>
+    private int ReadRegionMemo(int index)
+    {
+        _regionMemoAccessSteps++;
+        var slot = index - _regionMemoBase;
+        return (uint)slot < (uint)_regionMemo.Length ? _regionMemo[slot] : 0;
+    }
+
+    /// <summary>
+    /// Records <paramref name="entry"/> for the opening delimiter at <paramref name="index"/>
+    /// (one charged write). A walk writes only at or after the opener it started from, which
+    /// <see cref="PrepareRegionMemo"/> placed in the window, so the window only ever grows
+    /// forward here. Cover the requested slot and at least double the capacity when there
+    /// is room, so the total allocation and copying stay linear in the largest window.
+    /// </summary>
+    private void WriteRegionMemo(int index, int entry)
+    {
+        _regionMemoAccessSteps++;
+        var slot = index - _regionMemoBase;
+        System.Diagnostics.Debug.Assert(slot >= 0, "A walk writes only at or after the opener its window starts at.");
+        if (slot >= _regionMemo.Length)
+        {
+            var capacity = Math.Max(slot + 1L, 2L * _regionMemo.Length);
+            ReplaceRegionMemo(_regionMemoBase, (int)Math.Min(capacity, _tokens.Count - _regionMemoBase));
+        }
+        _regionMemo[slot] = entry;
+        if (slot >= _regionMemoUsed)
+            _regionMemoUsed = slot + 1;
+    }
+
+    /// <summary>
+    /// Prepares the memo window for a walk from the undecided opener at
+    /// <paramref name="openIndex"/>. Every memo read is at a token AFTER the cursor
+    /// (<c>_pos</c>): a walk starts at the <c>(</c> after the head token a lookahead asks
+    /// about (a name, or a reserved literal), which is at or after the cursor's significant
+    /// token, and reads only after its start. So once the cursor has reached every entry the
+    /// window holds, no later query of the parse can read one, and the window is cleared (one
+    /// step per slot) and moved to start at <paramref name="openIndex"/>. The first window
+    /// holds at most <see cref="RegionMemoInitialSlots"/> slots unless the
+    /// rest of the stream is small, and grows to accommodate nested openers that reach past
+    /// it. The test-only out-of-order entry (<see cref="ClassifyDeclarationStartsInOrder"/>)
+    /// never moves the cursor, so nothing it decided is dropped; a walk that starts before the
+    /// window widens it once to the whole stream, which keeps the bound for any query order.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void PrepareRegionMemo(int openIndex)
+    {
+        if (_regionMemoUsed == 0 || _regionMemoBase + _regionMemoUsed <= _pos + 1)
+        {
+            if (_regionMemoUsed != 0)
+            {
+                Array.Clear(_regionMemo, 0, _regionMemoUsed);
+                _regionMemoInitializationSteps += _regionMemoUsed;
+                _regionMemoUsed = 0;
+            }
+
+            _regionMemoBase = openIndex;
+            if (_regionMemo.Length == 0)
+            {
+                var rest = _tokens.Count - openIndex;
+                ReplaceRegionMemo(openIndex, rest <= 2 * RegionMemoInitialSlots ? rest : RegionMemoInitialSlots);
+            }
+        }
+        else if (openIndex < _regionMemoBase)
+        {
+            ReplaceRegionMemo(0, _tokens.Count);
+        }
+    }
+
+    /// <summary>
+    /// Moves the memo's entries into a new window of <paramref name="length"/> slots starting
+    /// at token position <paramref name="newBase"/>, at or before the current start, charging
+    /// one step per slot allocated and per slot copied.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private void ReplaceRegionMemo(int newBase, int length)
+    {
+        var replacement = new int[length];
+        var shift = _regionMemoBase - newBase;
+        Array.Copy(_regionMemo, 0, replacement, shift, _regionMemoUsed);
+        _regionMemoInitializationSteps += length + (long)_regionMemoUsed;
+        _regionMemoAllocatedSlots += length;
+        if (_regionMemoUsed != 0)
+            _regionMemoUsed += shift;
+        _regionMemo = replacement;
+        _regionMemoBase = newBase;
+    }
+
+    private void RecordTraversal(ParserTraversalObservations? observations)
+        => observations?.Record(_tokenVisits, _regionMemoAccessSteps, _regionMemoInitializationSteps, _regionMemoAllocatedSlots);
 
     private static bool DecodeDelimiterRegionEnd(int known, out int endIndex)
     {
@@ -3300,17 +3397,6 @@ public sealed class Parser
 
         endIndex = ~known;
         return false;
-    }
-
-    /// <summary>
-    /// Allocates the region memo on the first walk, charging its zeroed preparation one step
-    /// per token slot, so the memo's linear setup is part of the observed traversal work.
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
-    private int[] AllocateDelimiterRegionEnds()
-    {
-        _tokenSteps += _tokens.Count;
-        return _delimiterRegionEnds = new int[_tokens.Count];
     }
 
     private static TokenKind ClosingDelimiterOf(TokenKind opener) => opener switch
@@ -4518,7 +4604,7 @@ public sealed class Parser
                 includeCommaSpanningBindingPatterns);
         }
 
-        traversalObservations?.RecordTokenSteps(parser._tokenSteps);
+        parser.RecordTraversal(traversalObservations);
         return verdicts;
     }
 

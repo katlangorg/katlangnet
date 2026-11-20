@@ -510,9 +510,12 @@ public class ParserNestingDepthTests
     // pre-change parser (810049ee, the same counts as the research baseline 7db03e0a)
     // took 94, 212, 592, 1,164 and 1,928 token steps for depths 4, 8, 16, 24 and 32.
     // The region an opening delimiter opens is now decided once per parse
-    // (TryCloseDelimiterRegion, a token-indexed memo whose allocation, reads and writes
-    // are charged to the same counter), so a parse costs a bounded number of token
-    // steps per token at every admitted depth and width, malformed regions included.
+    // (TryCloseDelimiterRegion, a memo indexed by token position whose storage work, reads
+    // and writes are charged to the same counter), so a parse costs a bounded number of
+    // token steps per token at every admitted depth and width, malformed regions included.
+    // The memo is a window over token positions (its own pins follow the tests below); for
+    // these short documents it covers the rest of the stream from the first candidate, so
+    // the depth pins count what the former whole-stream memo counted.
     //
     // THE BOUND: at most MaxStepsPerToken token steps per lexed token (end of input
     // included), at sampled depths from 1 to the deepest the nesting budget admits. This
@@ -923,6 +926,305 @@ public class ParserNestingDepthTests
         var reported = SourceProvenance.ParseAllowingDiagnostics(NestedCandidatePrefix + Rep("I(@", depth) + "1" + Rep(")", depth));
         Assert.Equal(Enumerable.Repeat(DiagnosticCode.UnexpectedCharacter, depth), reported.Diagnostics.Select(d => d.Code));
         Assert.Equal(expected, LeanAstEncoder.EncodeProgram(reported.Root));
+    }
+
+    // ── The other clause-head arms and recovery consumers walk the same memo (KL-03) ──
+    //
+    // Besides the identifier arm above, THE declaration-start relation reads a clause head in
+    // its `public` arm and its reserved-literal arm (`true(…) = …`, also after `public`, whose
+    // skip reads the verdict again), and boundary consumers ask the relation during recovery:
+    // a Grace marker run after a non-name operand leaves the nested row an adjacent row, and an
+    // open target is asked whether it begins a declaration. Each shape puts a nested candidate
+    // chain, matched or malformed, behind one of them, so that arm's walk is the outermost.
+
+    private static string NestedCalls(int depth) => Rep("I(", depth) + "1" + Rep(")", depth);
+
+    private static string NestedCallsMismatched(int depth) => Rep("I(", depth) + "1]" + Rep(")", depth);
+
+    private static string NestedCallsUnclosed(int depth) => Rep("I(", depth) + "1";
+
+    private static readonly Dictionary<string, Func<int, string>> NestedCandidateArmSources = new()
+    {
+        ["PublicRow"] = d => NestedCandidatePrefix + "public " + NestedCalls(d) + "\nGood = 41\nGood",
+        ["PublicHead"] = d => NestedCandidatePrefix + "public " + NestedCalls(d) + " = 2\nGood = 41\nGood",
+        ["PublicMismatch"] = d => NestedCandidatePrefix + "public " + NestedCallsMismatched(d) + " = 2\nGood = 41\nGood",
+        ["PublicUnclosed"] = d => NestedCandidatePrefix + "public " + NestedCallsUnclosed(d) + "\nGood = 41\nGood",
+        ["ReservedLiteralHead"] = d => NestedCandidatePrefix + "true(" + NestedCalls(d) + ") = 2\nGood = 41\nGood",
+        ["PublicReservedLiteralHead"] = d => NestedCandidatePrefix + "public false(" + NestedCalls(d) + ") = 2\nGood = 41\nGood",
+        ["ReservedLiteralRow"] = d => NestedCandidatePrefix + "true(" + NestedCalls(d) + ")\nGood = 41\nGood",
+        ["ReservedLiteralMismatch"] = d => NestedCandidatePrefix + "true(" + NestedCallsMismatched(d) + ") = 2\nGood = 41\nGood",
+        ["ReservedLiteralUnclosed"] = d => NestedCandidatePrefix + "true(" + NestedCallsUnclosed(d) + "\nGood = 41\nGood",
+        ["GraceRecoveredRow"] = d => NestedCandidatePrefix + "1 ~~~" + NestedCalls(d) + "\nGood = 41\nGood",
+        ["GraceRecoveredMismatch"] = d => NestedCandidatePrefix + "1 ~~~" + NestedCallsMismatched(d) + "\nGood = 41\nGood",
+        ["GraceRecoveredUnclosed"] = d => NestedCandidatePrefix + "1 ~~~" + NestedCallsUnclosed(d) + "\nGood = 41\nGood",
+        ["GraceRunBeforeHead"] = d => NestedCandidatePrefix + "~~~\n" + NestedCalls(d) + " = 2\nGood = 41\nGood",
+        ["OpenTarget"] = d => NestedCandidatePrefix + "open " + NestedCalls(d) + "\nGood = 41\nGood",
+        ["OpenTargetMismatch"] = d => NestedCandidatePrefix + "open " + NestedCallsMismatched(d) + "\nGood = 41\nGood",
+        ["OpenTargetUnclosed"] = d => NestedCandidatePrefix + "open " + NestedCallsUnclosed(d) + "\nGood = 41\nGood",
+        ["OpenTargetAfterComma"] = d => NestedCandidatePrefix + "open A,\n" + NestedCalls(d) + "\nGood = 41\nGood",
+        ["OpenTargetAfterCommaHead"] = d => NestedCandidatePrefix + "open A,\n" + NestedCalls(d) + " = 2\nGood = 41\nGood",
+    };
+
+    public static TheoryData<string> NestedCandidateArmShapes() => new(NestedCandidateArmSources.Keys);
+
+    [Theory]
+    [MemberData(nameof(NestedCandidateArmShapes))]
+    public void NestedCandidatesBehindOtherClauseHeadArms_TokenStepsStayLinear(string shape)
+    {
+        var stepsByDepth = new Dictionary<int, long>();
+        foreach (var depth in new[] { 1, 2, 4, 8, 16, 32, 63, 126 })
+        {
+            var source = NestedCandidateArmSources[shape](depth);
+            var tokens = TokenCount(source);
+            var observations = new ParserTraversalObservations();
+            var result = Parser.ParseSyntaxObserved(source, observations);
+            Assert.DoesNotContain(result.Diagnostics, d => d.Code == DiagnosticCode.NestingTooDeep);
+            AssertWithinLinearBound($"{shape} at depth {depth}", observations.TokenSteps, tokens);
+            if (stepsByDepth.TryGetValue(depth / 2, out var half))
+                Assert.True(observations.TokenSteps <= 2.5 * half, $"{shape}: {half} -> {observations.TokenSteps} steps (depth {depth / 2} -> {depth})");
+            stepsByDepth[depth] = observations.TokenSteps;
+
+            // A short document's memo is one window over the rest of the stream: never more
+            // slots than tokens, and its initialization is part of the bounded step count.
+            Assert.InRange(observations.RegionMemoAllocatedSlots, 1, tokens);
+            Assert.InRange(observations.RegionMemoInitializationSteps, observations.RegionMemoAllocatedSlots, observations.TokenSteps);
+
+            var unobserved = Parser.ParseSyntax(source);
+            Assert.Equal(
+                unobserved.Diagnostics.Select(d => (d.Code, d.Span, d.Message)),
+                result.Diagnostics.Select(d => (d.Code, d.Span, d.Message)));
+            Assert.Equal(LeanAstEncoder.EncodeProgram(unobserved.Root), LeanAstEncoder.EncodeProgram(result.Root));
+
+            if (depth <= 8)
+            {
+                // Out of order, the walks of this arm meet regions an inner walk decided first.
+                var indexes = Enumerable.Range(0, tokens).Reverse().ToArray();
+                var verdicts = Parser.ClassifyDeclarationStartsInOrder(source, indexes, includeCommaSpanningBindingPatterns: true);
+                for (var i = 0; i < indexes.Length; i++)
+                    Assert.Equal(Parser.ClassifyDeclarationStartsInOrder(source, [indexes[i]], includeCommaSpanningBindingPatterns: true)[0], verdicts[i]);
+            }
+        }
+    }
+
+    // ── The region memo follows the walks, not the document (KL-03) ────────────
+    //
+    // The memo was one int per token, allocated and charged by the first walk, so ONE shallow
+    // candidate anywhere in a large, mostly flat document paid a slot per token: at 100,011
+    // tokens a three-token clause head took 200,044 token steps, 100,011 of them the memo's
+    // allocation, and 400,068 bytes of memo, against 100,013 steps for the document without
+    // it. The memo is now a window the walks share (Parser.PrepareRegionMemo): its first
+    // allocation holds at most RegionMemoInitialSlots slots unless the rest of the stream is
+    // small, a parse moves it to each later walk once the cursor has passed every entry it
+    // holds, and it grows when a walk reaches a nested opener past its end.
+    // ParserTraversalObservations reports its initialization (slots
+    // allocated, copied, cleared) and its allocated slots apart from the token visits.
+
+    public enum ShallowCandidate
+    {
+        /// <summary>`I(x) = x` before the flat list: the first window is the capped one.</summary>
+        ClauseHeadFirst,
+
+        /// <summary>`J(y) = y` after the flat list: the first window is the few tokens left.</summary>
+        ClauseHeadLast,
+
+        /// <summary>Both: the second walk reuses the first window once the cursor has passed it.</summary>
+        ClauseHeadsAtBothEnds,
+
+        /// <summary>`public F(x) = x` first: the public clause arm walks.</summary>
+        PublicHeadFirst,
+
+        /// <summary>`true(x) = 1` first: the reserved-literal arm walks, and its skip reads the verdict again.</summary>
+        ReservedLiteralHeadFirst,
+
+        /// <summary>`1 ~~~I(1)` first: Grace recovery leaves `I(1)` an adjacent row, which the body loop classifies.</summary>
+        GraceRecoveredRowFirst,
+
+        /// <summary>`open I(1)` first: open-target recovery asks whether the target begins a declaration.</summary>
+        OpenTargetFirst,
+
+        /// <summary>One shallow call with an inner opener beyond the first window, before the flat tail.</summary>
+        SpacedOpenersFirst,
+    }
+
+    private static string FlatList(int items) => "[" + string.Join(", ", Enumerable.Repeat("1", items)) + "]";
+
+    private static string ShallowCandidateSource(ShallowCandidate candidate, string flat) => candidate switch
+    {
+        ShallowCandidate.ClauseHeadFirst => "I(x) = x\nX = " + flat + "\nX",
+        ShallowCandidate.ClauseHeadLast => "X = " + flat + "\nJ(y) = y\nX",
+        ShallowCandidate.ClauseHeadsAtBothEnds => "I(x) = x\nX = " + flat + "\nJ(y) = y\nX",
+        ShallowCandidate.PublicHeadFirst => "public F(x) = x\nX = " + flat + "\nX",
+        ShallowCandidate.ReservedLiteralHeadFirst => "true(x) = 1\nX = " + flat + "\nX",
+        ShallowCandidate.GraceRecoveredRowFirst => "1 ~~~I(1)\nX = " + flat + "\nX",
+        ShallowCandidate.OpenTargetFirst => "open I(1)\nX = " + flat + "\nX",
+        ShallowCandidate.SpacedOpenersFirst => "I(" + Rep("1, ", 600) + "J(1))\nX = " + flat + "\nX",
+        _ => throw new ArgumentOutOfRangeException(nameof(candidate), candidate, null),
+    };
+
+    [Theory]
+    [InlineData(ShallowCandidate.ClauseHeadFirst)]
+    [InlineData(ShallowCandidate.ClauseHeadLast)]
+    [InlineData(ShallowCandidate.ClauseHeadsAtBothEnds)]
+    [InlineData(ShallowCandidate.PublicHeadFirst)]
+    [InlineData(ShallowCandidate.ReservedLiteralHeadFirst)]
+    [InlineData(ShallowCandidate.GraceRecoveredRowFirst)]
+    [InlineData(ShallowCandidate.OpenTargetFirst)]
+    [InlineData(ShallowCandidate.SpacedOpenersFirst)]
+    public void ClauseHeadRegionMemo_ShallowCandidatesInALargeFlatDocument_PayOnlyForTheirWalks(ShallowCandidate candidate)
+    {
+        (long Visits, long MemoAccesses, long Initialization, long Slots, string Diagnostics)? first = null;
+        foreach (var items in new[] { 5_000, 20_000, 80_000 })
+        {
+            var flat = FlatList(items);
+            var control = new ParserTraversalObservations();
+            Parser.ParseSyntaxObserved("X = " + flat + "\nX", control);
+            Assert.Equal(0, control.RegionMemoAllocatedSlots);
+
+            var source = ShallowCandidateSource(candidate, flat);
+            var observations = new ParserTraversalObservations();
+            var result = Parser.ParseSyntaxObserved(source, observations);
+            var maxSlots = candidate == ShallowCandidate.SpacedOpenersFirst
+                ? 3 * Parser.RegionMemoInitialSlots  // the initial window and its first doubling
+                : 2 * Parser.RegionMemoInitialSlots;
+            Assert.InRange(observations.RegionMemoAllocatedSlots, 1, maxSlots);
+
+            // The flat list costs the same token visits with or without the candidate, so what
+            // the candidate adds — its rows, its walk, and the memo — must not grow with it.
+            var measured = (
+                Visits: observations.TokenVisits - control.TokenVisits,
+                MemoAccesses: observations.RegionMemoAccessSteps,
+                Initialization: observations.RegionMemoInitializationSteps,
+                Slots: observations.RegionMemoAllocatedSlots,
+                Diagnostics: string.Join(" | ", result.Diagnostics.Select(d => $"{d.Code} {d.Span} {d.Message}")));
+            Assert.True(measured.Visits > 0, $"{candidate}: the candidate's rows and walk cost token visits.");
+            Assert.True(measured.MemoAccesses > 0);
+            if (first is { } smallest)
+                Assert.Equal(smallest, measured);
+            first ??= measured;
+        }
+    }
+
+    [Fact]
+    public void ClauseHeadRegionMemo_SparseNestedRows_ShareOneWindow()
+    {
+        // A nested candidate row after every 1,000 list items: each walk after the first finds
+        // the window behind the cursor and reuses it, clearing the slots up to the last entry
+        // the previous walk wrote (the openers of `I(I(I(r)))` sit at slots 0, 2 and 4: five
+        // per row, one for the `I(x)` head). The memo allocates once however many rows there
+        // are, and its initialization follows the walked rows, never the tokens between them.
+        foreach (var rows in new[] { 10, 40, 160 })
+        {
+            var source = NestedCandidatePrefix
+                + string.Concat(Enumerable.Range(0, rows).Select(row => $"X{row} = {FlatList(1_000)}\n{Rep("I(", 3)}{row}{Rep(")", 3)}\n"))
+                + "Good = 41\nGood";
+            var tokens = TokenCount(source);
+            var observations = new ParserTraversalObservations();
+            var result = Parser.ParseSyntaxObserved(source, observations);
+            Assert.Empty(result.Diagnostics);
+            var root = Assert.IsType<Algorithm.User>(result.Root);
+            Assert.Equal(rows + 2, root.Properties.Count);
+            Assert.Equal(rows + 1, root.Output.Count);
+            Assert.All(root.Output.Take(rows), row => Assert.IsType<Expr.Call>(row));
+
+            AssertWithinLinearBound($"{rows} sparse rows", observations.TokenSteps, tokens);
+            Assert.Equal(Parser.RegionMemoInitialSlots, observations.RegionMemoAllocatedSlots);
+            Assert.Equal(1 + 5L * (rows - 1), observations.RegionMemoInitializationSteps - observations.RegionMemoAllocatedSlots);
+        }
+    }
+
+    [Fact]
+    public void ClauseHeadRegionMemo_WideRegion_WidensOnceAndKeepsEarlierEntries()
+    {
+        // One walk whose nested openers reach past the first window: the outer call holds a
+        // 126-deep candidate chain first (127 call levels, the deepest the budget admits), then
+        // more than RegionMemoInitialSlots tokens of arguments, then one more call. The walk
+        // decides the chain inside the first window and widens it at the last call. The
+        // widening must move the chain's entries with it.
+        // Losing them would not show in the per-token bound: the chain's first candidate would
+        // walk it again once and re-decide every level inside. So the pin asks that candidate
+        // right after the outer walk and requires a read, not a walk of its 381 tokens.
+        var source = NestedCandidatePrefix + "I(" + NestedCalls(126) + ", " + Rep("x, ", 1_200) + "I(1))\nGood = 41\nGood";
+        var tokens = TokenCount(source);
+        var observations = new ParserTraversalObservations();
+        var result = Parser.ParseSyntaxObserved(source, observations);
+        Assert.Empty(result.Diagnostics);
+        var root = Assert.IsType<Algorithm.User>(result.Root);
+        Assert.Equal(new[] { "Good", "I" }, root.Properties.Select(p => p.Name));
+        var outer = Assert.IsType<Expr.Call>(root.Output[0]);
+        Assert.Equal(1_202, outer.Args.Count);
+        Expr chain = outer.Args[0];
+        for (var level = 0; level < 126; level++)
+            chain = Assert.Single(Assert.IsType<Expr.Call>(chain).Args);
+        Assert.Equal(1m, Assert.IsType<Expr.Num>(chain).Value);
+        Assert.IsType<Expr.Call>(outer.Args[^1]);
+
+        AssertWithinLinearBound("wide region", observations.TokenSteps, tokens);
+        Assert.InRange(observations.RegionMemoAllocatedSlots, Parser.RegionMemoInitialSlots + 1, Parser.RegionMemoInitialSlots + (long)tokens);
+
+        // Token 6 is the row's outer `I`, token 8 the chain's first candidate.
+        var lexed = Lexer.Tokenize(source).Tokens;
+        Assert.Equal(("I", TokenKind.LParen, "I"), (lexed[6].StringValue, lexed[7].Kind, lexed[8].StringValue));
+        var outerWalk = new ParserTraversalObservations();
+        Parser.ClassifyDeclarationStartsInOrder(source, [6], includeCommaSpanningBindingPatterns: true, outerWalk);
+        Assert.True(outerWalk.RegionMemoAllocatedSlots > Parser.RegionMemoInitialSlots, "The outer walk widens its window.");
+        var thenChain = new ParserTraversalObservations();
+        Parser.ClassifyDeclarationStartsInOrder(source, [6, 8], includeCommaSpanningBindingPatterns: true, thenChain);
+        Assert.Equal(1, thenChain.RegionMemoAccessSteps - outerWalk.RegionMemoAccessSteps);
+        Assert.Equal(outerWalk.RegionMemoInitializationSteps, thenChain.RegionMemoInitializationSteps);
+        Assert.InRange(thenChain.TokenSteps - outerWalk.TokenSteps, 1, 32);
+
+        // The same verdicts in every query order: in order the window widens mid-walk; out of
+        // order a walk that starts before it widens it to the whole stream.
+        var indexes = Enumerable.Range(0, lexed.Count)
+            .Where(i => lexed[i] is { Kind: TokenKind.LParen } or { Kind: TokenKind.Identifier, StringValue: not "x" } || i % 97 == 0)
+            .ToArray();
+        var fresh = indexes.Select(i => Parser.ClassifyDeclarationStartsInOrder(source, [i], includeCommaSpanningBindingPatterns: true)[0]).ToArray();
+        var random = new Random(20261120);
+        foreach (var order in new[]
+        {
+            Enumerable.Range(0, indexes.Length).ToArray(),
+            Enumerable.Range(0, indexes.Length).Reverse().ToArray(),
+            Enumerable.Range(0, indexes.Length).OrderBy(_ => random.Next()).ToArray(),
+        })
+        {
+            Assert.Equal(
+                order.Select(k => fresh[k]),
+                Parser.ClassifyDeclarationStartsInOrder(source, order.Select(k => indexes[k]).ToArray(), includeCommaSpanningBindingPatterns: true));
+        }
+
+        Assert.Equal(2, fresh.Count(verdict => verdict != Parser.DeclarationStart.None));
+    }
+
+    [Fact]
+    public void ClauseHeadRegionMemo_LargeFlatDocument_AllocatesNoSlotPerToken()
+    {
+        // GC-measured and deliberately coarse (in-process): the shallow candidates at both ends
+        // of a 100,017-token document cost less than one byte per token over the same document
+        // without them. The whole-stream memo alone was four bytes per token (400,092 bytes
+        // here); the window is 4 KiB, the two clause rows a few more. Each side takes the
+        // smallest of three warmed parses, which absorbs a background collection's ~8 KB
+        // allocation-quantum report (dotnet/runtime#134724). A pool trim cannot add a refill
+        // here: these clean parses rent no pooled arrays (the lexer and parser wrap their own
+        // lists, and no diagnostic text is formatted).
+        var flat = FlatList(50_000);
+        var candidates = "I(x) = x\nX = " + flat + "\nJ(y) = y\nX";
+        var tokens = TokenCount(candidates);
+        var extra = SmallestParseAllocation(candidates) - SmallestParseAllocation("X = " + flat + "\nX");
+        Assert.True(extra < tokens, $"The candidates added {extra} bytes over {tokens} tokens; the memo must not hold a slot per token.");
+
+        static long SmallestParseAllocation(string source)
+        {
+            Parser.ParseSyntax(source);
+            var smallest = long.MaxValue;
+            for (var i = 0; i < 3; i++)
+            {
+                var before = GC.GetAllocatedBytesForCurrentThread();
+                Parser.ParseSyntax(source);
+                smallest = Math.Min(smallest, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+
+            return smallest;
+        }
     }
 
     // ── Surface parser never emits the internal SequenceConstruct node ────────
