@@ -306,17 +306,19 @@ public sealed class ExposureSettlementShareTests
         Assert.False(share.TryGet(keys[3], out _));
         Assert.False(share.TryGet(keys[4], out _));
 
-        // The combined content and former bound-owner key length crosses a weight boundary at 64 characters.
+        // The combined content and bound-owner key length crosses a weight boundary at 64 characters. Bound owners are
+        // charged one character each and one per separator, whatever ids this process has issued.
         var weighed = new FrontEndTraversalObservations();
         var narrow = new SettlementShare(weighed, capacity: 2);
         narrow.Store(new SettlementShare.Key(new string('c', 64), level, Bound: null), Settled());
         narrow.Store(new SettlementShare.Key("x", level, Bound: null), Settled());
         Assert.Equal(1, weighed.SettlementShareStores);
         var owners = new[] { Owner(), Owner(), Owner() };
-        var boundLength = string.Join(",", owners.Select(OwnerQualifiedParameter.OwnerKey).Order()).Length;
+        var boundLength = 5;
+        Assert.Equal(boundLength, Owners(owners)!.StableKeyLength);
         var content = new string('c', 64 - boundLength);
         var boundKey = new SettlementShare.Key(content, level, Owners(owners));
-        Assert.Equal(1, (boundKey with { Content = content[1..] }).Weight);
+        Assert.Equal(1, new SettlementShare.Key(content[1..], level, Owners(owners)).Weight);
         Assert.Equal(2, boundKey.Weight);
         narrow = new SettlementShare(observations: null, capacity: 1);
         narrow.Store(boundKey, Settled());
@@ -544,5 +546,79 @@ public sealed class ExposureSettlementShareTests
         var owner = ExposureOpenChainComplexityTests.Member(parsed.Root, "O").Value;
         ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(owner, "R"), ("p", 0));
         Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 8L * liftedLength + 8 * capturedLength + 32);
+    }
+
+    // ── Reproducible admission (2026-11-20) ─────────────────────────────────────
+
+    /// <summary>
+    /// A reference key's admission charge is the length of its key text with every process-wide id in it — the origin's
+    /// requirement identity and each bound owner's id — written at its widest, 19 digits: a function of the reference's
+    /// structure, never shorter than the key itself, and what the share's key carries.
+    /// </summary>
+    [Fact]
+    public void ReferenceKeyCharge_IsItsKeyWithEveryIdAtItsWidest()
+    {
+        var root = SourceProvenance.ParseValid("F(a) = a\nG(b) = b\n0").Root;
+        var (owner, other) = (root.Properties[0].Value, root.Properties[1].Value);
+        var context = AnalyzedStaticStructures.ForBoundAst(root);
+        var widestId = new string('9', SummaryReference.StableIdWidth);
+        Assert.Equal(long.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture).Length, widestId.Length);
+        foreach (var openPath in new[] { false, true })
+        foreach (var selection in Enum.GetValues<PendingSelection>())
+        foreach (var members in new string[][] { [], ["Sub"], ["Sub", "Q1234567890"] })
+        foreach (var bound in new Algorithm[][] { [], [owner], [owner, other] })
+        {
+            var reference = new PendingReference("Head", members, context, bound, openPath, selection);
+            var origin = selection == PendingSelection.Lexical
+                ? $"completed:{widestId}:{openPath}"
+                : $"completed:{widestId}:{openPath}:{selection}";
+            var widest = SummaryReference.KeyParts([
+                SummaryReference.KeyParts([origin, "Head", SummaryReference.KeyParts(members)]),
+                string.Join(",", bound.Select(_ => widestId))]);
+            Assert.Equal(widest.Length, reference.StableContentKeyLength);
+            Assert.InRange(reference.ContentKey.Length, 1, reference.StableContentKeyLength);
+            var key = new SettlementShare.Key(reference, LevelAt(0), Bound: null);
+            Assert.Same(reference.ContentKey, key.Content);
+            Assert.Equal(reference.StableContentKeyLength, key.ContentLength);
+        }
+
+        // A raw path has no origin id; its bound owners are still ids.
+        var raw = new SummaryReference("A", ["B"], [owner]);
+        Assert.Equal(SummaryReference.KeyParts([SummaryReference.KeyParts(["", "A", SummaryReference.KeyParts(["B"])]), widestId]).Length,
+            raw.StableContentKeyLength);
+
+        // Virtual widths may exceed the longest actual string. They must still put such a key over capacity.
+        var length = SummaryReference.StableBoundOwnersKeyLength(int.MaxValue);
+        Assert.Equal(20L * int.MaxValue - 1, length);
+        Assert.True(new SettlementShare.Key("x", LevelAt(0), Owners(owner), length).Weight > SettlementShare.DefaultCapacity);
+    }
+
+    /// <summary>
+    /// What the share retains is a function of the program: the lifted and captured chains retain the same weight before
+    /// and after the process issues unrelated owner identities and scope keys. The weights formerly counted the ids'
+    /// decimal digits, so ten million such ids took this program from 9,341 to 15,720 units, and at a capacity of 9,456
+    /// units from 2,324 kept settlements and 9,074 frames to 1,110 and 70,612 (measured with a scratch capacity).
+    /// </summary>
+    [Fact]
+    public void RetainedWeight_DoesNotDependOnIdsIssuedEarlier()
+    {
+        var source = LiftedOwnerDefinition(150, "Lifted") + ExposureOpenChainComplexityTests.NestedOwnerChain(250, last: "p");
+        (long Weight, long Stores, long Frames) Settle()
+        {
+            var observations = new FrontEndTraversalObservations();
+            Assert.Empty(Parser.ParseObserved(source, options: null, observations).Diagnostics);
+            return (observations.SettlementShareRetainedWeight, observations.SettlementShareStores, observations.RequiredAncestorSettlementFrames);
+        }
+
+        var before = Settle();
+        var template = SourceProvenance.ParseValid("1").Root;
+        for (var i = 0; i < 200_000; i++)
+        {
+            OwnerQualifiedParameter.OwnerKey(template with { });
+            _ = new StaticScopeKey(parent: null, template);
+        }
+
+        Assert.Equal(before, Settle());
+        Assert.Equal((8_678L, 2_792L, 3_188L), before);
     }
 }

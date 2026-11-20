@@ -12,7 +12,8 @@ namespace KatLang.Tests;
 /// reference per level (<c>PendingSelection.OpenWalks</c>) that the run's settlement share keeps, so M
 /// readers of M opened names cost linear settlement frames in M. Readers with BOUND OWNERS (their own
 /// parameters, a parameterized block around them, a clause family) reuse one unbound settlement of the level's
-/// walks too (C1, <c>PendingResolution.SharedOpenWalksLevel</c>), and the per-reader seam
+/// walks too (C1, <c>PendingResolution.SharedOpenWalksLevel</c>), also when those walks read a summary of the level in
+/// progress (kept for that level's solve while it stands), and the per-reader seam
 /// (<see cref="PropertyExposureResolver.OpenWalksPerReaderForTesting"/>) shows the published metadata is the
 /// unshared settlement's. Each oracle counts deterministic work
 /// (<see cref="FrontEndTraversalObservations"/>), and classification is pinned exactly.
@@ -203,6 +204,88 @@ public sealed class ExposureAccessCheckComplexityTests(ITestOutputHelper output)
         Assert.Equal(0, observations.OpenWalksSettlementsWithBoundOwners);
     }
 
+    // ── C1 while the level is in progress (2026-11-20) ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// <see cref="OpenFamily"/>'s unused-target readers over runtime targets whose walks read a summary of the level in
+    /// progress: each target <c>L{i} = X{i}.Sub.Algorithm</c> crosses a <c>Sub</c> whose value calls <c>Cap</c>, a member
+    /// of <c>F</c> itself (the census's <c>rt-alg-call</c> head).
+    /// </summary>
+    private static string LiveOpenFamily(int width)
+    {
+        var source = new System.Text.StringBuilder("F(y) = {\n  open ");
+        source.Append(string.Join(", ", Enumerable.Range(0, width).Select(i => $"L{i}")));
+        source.Append(", Other\n  Other = {\n    public X = 1\n  }\n");
+        for (var i = 0; i < width; i++)
+        {
+            source.Append($"  X{i} = {{\n    public Sub = {{\n      public Q{i} = 1\n      public Run = y\n      Cap(Run())\n    }}\n    0\n  }}\n");
+            source.Append($"  L{i} = X{i}.Sub.Algorithm\n");
+        }
+        source.Append("  Cap(meta op) = op\n");
+        for (var i = 0; i < width; i++) source.Append($"  A{i}(z) = X + 0\n");
+        source.Append("  0\n}\nF(5)\n");
+        return source.ToString();
+    }
+
+    /// <summary>
+    /// The level's walks read <c>Cap</c>'s summary while <c>F</c> is being solved, so their settlement cannot be kept in
+    /// the run's share, which keeps final results only. Formerly every reader with bound owners therefore walked the
+    /// level twice — the unbound walks, refused as live, and then its own: 2M settlements of M + 1 targets, three frames
+    /// each, about 6M² frames (the census flagged <c>W|head=rt-alg-call|…</c> at 4,026 / 15,551 / 61,101). A live summary is the same for both routes within
+    /// one settlement, so the unbound walks answer every reader, and the level keeps them for the rest of its solve while
+    /// that summary stands: one computation of the level's walks over all of the readers, none with bound owners.
+    /// </summary>
+    [Fact]
+    public void OpenWalksReadingTheLevelInProgress_AreSettledOnceForEveryReader()
+    {
+        var frames = new long[3];
+        var widths = new[] { 25, 50, 100 };
+        for (var k = 0; k < widths.Length; k++)
+        {
+            var source = LiveOpenFamily(widths[k]);
+            var (root, observations) = Exposed(source);
+            AssertEveryReaderRequiresY(root, widths[k]);
+            Assert.Equal(1, Assert.Single(observations.OpenWalksSettlements.Values));
+            Assert.Equal(0, observations.OpenWalksSettlementsWithBoundOwners);
+            frames[k] = observations.RequiredAncestorSettlementFrames;
+            var unshared = new FrontEndTraversalObservations();
+            var perReader = WithOpenWalks(true, () => ExposureOpenChainComplexityTests.Exposed(source, unshared));
+            Assert.Equal(MetadataOf(perReader), MetadataOf(root));
+            output.WriteLine($"width {widths[k]}: {frames[k]} frames, per-reader {unshared.RequiredAncestorSettlementFrames}");
+        }
+
+        Assert.InRange((double)frames[1] / frames[0], 1.5, 2.5);
+        Assert.InRange((double)frames[2] / frames[1], 1.5, 2.5);
+    }
+
+    /// <summary>
+    /// A kept settlement of the level's walks answers only while the summaries it read stand. <c>K</c> reads both
+    /// readers, so they are solved first, while <c>Cap</c>'s summary is still empty: <c>A0</c> settles the walks and
+    /// <c>A1</c> reuses them, which records <c>A1</c>'s read of <c>Cap</c>. <c>Cap</c> then gains <c>w</c> through
+    /// <c>K</c>, both readers are evaluated again, and the kept walks no longer stand: they are settled a second
+    /// time, and only then does each reader require <c>w</c>. Reusing them unchecked, or without recording their read
+    /// of <c>Cap</c>, leaves a reader without <c>w</c>.
+    /// </summary>
+    [Fact]
+    public void KeptOpenWalks_AreSettledAgainWhenASummaryTheyReadChanges()
+    {
+        var (root, observations) = Exposed(StaleSummarySource);
+        foreach (var reader in new[] { "A0", "A1", "Cap", "K" })
+            ExposureOpenChainComplexityTests.AssertRequires(ExposureOpenChainComplexityTests.Member(root, "G", "F", reader), ("w", 1), ("y", 0));
+        Assert.Equal(2, Assert.Single(observations.OpenWalksSettlements.Values));
+        Assert.Equal(0, observations.OpenWalksSettlementsWithBoundOwners);
+        var perReader = WithOpenWalks(true, () => ExposureOpenChainComplexityTests.Exposed(StaleSummarySource, new FrontEndTraversalObservations()));
+        Assert.Equal(MetadataOf(perReader), MetadataOf(root));
+    }
+
+    private const string StaleSummarySource = "G(w) = {\n  F(y) = {\n    open L0, L1, Other\n"
+        + "    X0 = {\n      public Sub = {\n        public Q0 = 1\n        public Run = y\n        Cap(Run())\n      }\n      0\n    }\n"
+        + "    L0 = X0.Sub.Algorithm\n"
+        + "    X1 = {\n      public Sub = {\n        public Q1 = 1\n        public Run = y\n        Cap(Run())\n      }\n      0\n    }\n"
+        + "    L1 = X1.Sub.Algorithm\n"
+        + "    Other = {\n      public X = 1\n    }\n"
+        + "    Cap(meta op) = K + 0\n    K = w + A0(1) + A1(1)\n    A0(z) = X + 0\n    A1(z) = X + 0\n    0\n  }\n  F(5)\n}\nG(7)\n";
+
     /// <summary>
     /// The trap a share keyed by the level alone would fall into: <c>Mid</c>'s own reads of <c>Q</c> discharge
     /// <c>p</c> (<c>Mid</c> is a bound owner of its own summary), while the reader <c>A</c> inside <c>Mid</c> keeps it.
@@ -267,6 +350,27 @@ public sealed class ExposureAccessCheckComplexityTests(ITestOutputHelper output)
     public void CensusWorkFamily_SettlesWithinTheDoublingBound(string id)
     {
         var (family, excluded) = ExposureCensus.CensusWork.Families().Single(candidate => candidate.Family.Id == id);
+        Assert.Null(excluded);
+        Assert.Null(ExposureCensus.CensusWork.Diagnostics(family.Program(ExposureCensus.CensusWork.Widths[0])));
+        var measured = ExposureCensus.CensusWork.Measure(family);
+        output.WriteLine($"{id}: frames {string.Join(" / ", measured.Frames)}; checkpoints {string.Join(" / ", measured.Checkpoints)}");
+        Assert.True(measured.WithinBound, measured.Problem);
+    }
+
+    /// <summary>
+    /// The three extension work families the census listed until 2026-11-20 (<c>census-gaps.txt</c>), all with the
+    /// <c>rt-alg-call</c> head and readers with bound owners whose walks of <c>F</c>'s opens read <c>Cap</c>, a member of
+    /// the level in progress. Formerly 4,026 / 15,551 / 61,101 frames (the block readers 4,152 / 15,802 / 61,602) and
+    /// 3,170 / 11,320 / 42,620 summary checkpoints, every reader walking the level twice
+    /// (<see cref="OpenWalksReadingTheLevelInProgress_AreSettledOnceForEveryReader"/>).
+    /// </summary>
+    [Theory]
+    [InlineData("W|head=rt-alg-call|reader=param|place=outside|level=enc1|use=unused")]
+    [InlineData("W|head=rt-alg-call|reader=param|place=outside|level=two|use=unused")]
+    [InlineData("W|head=rt-alg-call|reader=block|place=outside|level=enc2|use=unused")]
+    public void CensusExtensionWorkFamily_SettlesWithinTheDoublingBound(string id)
+    {
+        var (family, excluded) = ExposureCensus.CensusWork.ExtensionFamilies().Single(candidate => candidate.Family.Id == id);
         Assert.Null(excluded);
         Assert.Null(ExposureCensus.CensusWork.Diagnostics(family.Program(ExposureCensus.CensusWork.Widths[0])));
         var measured = ExposureCensus.CensusWork.Measure(family);
@@ -360,6 +464,9 @@ public sealed class ExposureAccessCheckComplexityTests(ITestOutputHelper output)
         data.Add("F(y) = {\n  open Lib.Mid.Sub\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + 0\n      A(0) + Q\n    }\n    0\n  }\n  Lib.Mid(5)\n}\nF(1)\n");
         data.Add("F(y) = {\n  open Lib.Mid.Sub, X.Sub\n  X = {\n    public Sub = {\n      public T = 1\n      y\n    }\n    0\n  }\n  Lib = {\n    public Mid(p) = {\n      public Sub = {\n        public Q = 1\n        p\n      }\n      A(z) = Q + T\n      B = { C(w) = Q + 0\n        C(1) }\n      A(0) + Q\n    }\n    0\n  }\n  R(z) = T + Q\n  Lib.Mid(5)\n}\nF(1)\n");
         data.Add("F(y) = {\n  open L, Other\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  Other = { public Z = 2 }\n  A(z) = Z + 0\n  N(w) = {\n    open M\n    M = Lib\n    B(v) = Q + Z\n    B(1)\n  }\n  N(1)\n}\nF(5)\n");
+        // Walks that read a summary of the level in progress (C1 while the level is in progress, 2026-11-20).
+        data.Add(LiveOpenFamily(4));
+        data.Add(StaleSummarySource);
         return data;
     }
 

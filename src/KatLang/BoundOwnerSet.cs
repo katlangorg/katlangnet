@@ -32,21 +32,24 @@ internal sealed class BoundOwnerSet : IEquatable<BoundOwnerSet>
     private readonly ulong _sum;
     private readonly FrontEndTraversalObservations? _observations;
 
-    private BoundOwnerSet(ImmutableHashSet<Algorithm> owners, ulong xor, ulong sum, long legacyKeyLength,
-        FrontEndTraversalObservations? observations)
+    private BoundOwnerSet(ImmutableHashSet<Algorithm> owners, ulong xor, ulong sum, FrontEndTraversalObservations? observations)
     {
         _owners = owners;
         _xor = xor;
         _sum = sum;
-        LegacyKeyLength = legacyKeyLength;
         _observations = observations;
     }
 
     public int Count => _owners.Count;
 
-    // The share's admission charge used the decimal ids plus separators. Accumulate the length
-    // when an owner is inserted so the same keys fit without forming or walking any key text.
-    internal long LegacyKeyLength { get; }
+    /// <summary>
+    /// The share's admission charge for these owners, in key characters (<c>PropertyExposureResolver.SettlementShare.Key</c>):
+    /// one per owner and one per separator between two, which bounds the owner memberships a kept key retains. A set holds
+    /// no text, so the charge is structural: it depends on the number of owners alone and equal content weighs the same in
+    /// every process. Until November 20 2026 it was the length of the owners' decimal ids with separators, a key text no
+    /// longer built, which grew with every id the process had issued for unrelated work.
+    /// </summary>
+    internal long StableKeyLength => 2L * Count - 1;
 
     public bool Contains(Algorithm owner) => _owners.Contains(owner);
 
@@ -59,7 +62,6 @@ internal sealed class BoundOwnerSet : IEquatable<BoundOwnerSet>
         var extended = current?._owners ?? NoOwners;
         var xor = current?._xor ?? 0;
         var sum = current?._sum ?? 0;
-        var keyLength = current?.LegacyKeyLength ?? -1; // The first insertion has no separator.
         observations?.RecordSettlementBoundOwnerVisits(owners.Count);
         for (var i = 0; i < owners.Count; i++)
         {
@@ -71,12 +73,11 @@ internal sealed class BoundOwnerSet : IEquatable<BoundOwnerSet>
             var mixed = Mix(unchecked((ulong)id));
             xor ^= mixed;
             sum = unchecked(sum + mixed);
-            keyLength += DecimalLength(id) + 1;
         }
 
         if (current is not null && ReferenceEquals(extended, current._owners))
             return current;
-        return extended.Count == 0 ? null : new BoundOwnerSet(extended, xor, sum, keyLength, observations);
+        return extended.Count == 0 ? null : new BoundOwnerSet(extended, xor, sum, observations);
     }
 
     public bool Equals(BoundOwnerSet? other)
@@ -102,17 +103,6 @@ internal sealed class BoundOwnerSet : IEquatable<BoundOwnerSet>
     public override bool Equals(object? obj) => Equals(obj as BoundOwnerSet);
 
     public override int GetHashCode() => unchecked((int)(_xor ^ (_xor >> 32)) * 31 + (int)(_sum ^ (_sum >> 32)));
-
-    private static int DecimalLength(long id)
-    {
-        var length = 1;
-        while (id >= 10)
-        {
-            id /= 10;
-            length++;
-        }
-        return length;
-    }
 
     // SplitMix64's finalizer: owner ids are small consecutive integers, which XOR and addition alone would
     // let cancel between different sets far too easily.

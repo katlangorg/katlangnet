@@ -1211,35 +1211,70 @@ internal static class PropertyExposureResolver
         /// </summary>
         internal const int MaxCandidates = 8;
 
-        /// <summary><see cref="Content"/> is a pending reference's content key or a seed.</summary>
-        internal readonly record struct Key(object Content, SummaryScope Level, BoundOwnerSet? Bound)
+        /// <summary>
+        /// <see cref="Content"/> is a pending reference's content key or a seed; <see cref="ContentLength"/> is the length
+        /// the share charges for the content's text (<see cref="Weight"/>), a function of the content.
+        /// </summary>
+        internal readonly record struct Key(object Content, SummaryScope Level, BoundOwnerSet? Bound, long ContentLength)
         {
+            /// <summary>A reference's key: its content key, charged at <see cref="SummaryReference.StableContentKeyLength"/>.</summary>
+            public Key(PendingReference Content, SummaryScope Level, BoundOwnerSet? Bound)
+                : this(Content.ContentKey, Level, Bound, Content.StableContentKeyLength) { }
+
+            /// <summary>A seed's key: the seed itself, which holds no key text.</summary>
+            public Key(PropertyDependencyGraphBuilder.SummarySeed Content, SummaryScope Level, BoundOwnerSet? Bound)
+                : this(Content, Level, Bound, 0) { }
+
+            /// <summary>A key whose content is text holding no process-wide id, charged at its length.</summary>
+            public Key(string Content, SummaryScope Level, BoundOwnerSet? Bound)
+                : this(Content, Level, Bound, Content.Length) { }
+
             /// <summary>
-            /// One unit per entry, plus one per 64 characters of combined content key and former bound-owner
-            /// key length. This preserves admission, including when earlier lifted chains compete for space
-            /// with later reusable settlements. Each owner contributes at least one character and each pair
-            /// of adjacent owners contributes a separator, which bounds retained owner memberships.
+            /// One unit per entry, plus one per 64 characters of the content's key text — every process-wide id in it
+            /// counted at its widest (<see cref="SummaryReference.StableIdWidth"/> digits,
+            /// <see cref="SummaryReference.StableContentKeyLength"/>), so never less than the text the key retains — and of
+            /// the bound owners' structural charge (<see cref="BoundOwnerSet.StableKeyLength"/>: one per owner and
+            /// separator). Equal content weighs the same in every process: until November 20 2026 both counted the ids'
+            /// decimal digits, so a program near the bound was admitted differently, and settled in other frames, after
+            /// the process had issued more ids for unrelated work.
             /// </summary>
-            internal long Weight => 1 + (((Content as string)?.Length ?? 0) + (Bound?.LegacyKeyLength ?? 0)) / 64;
+            internal long Weight => 1 + (ContentLength + (Bound?.StableKeyLength ?? 0)) / 64;
         }
 
         /// <summary>
         /// A completed settlement and what its computation depended on beyond its key: the deepest landing
         /// of its site lookups (<see cref="SummaryScope.NoOwnerLookup"/> when it made none), whether it read
-        /// a summary of the level in progress, the fact views it consulted with the versions it read
-        /// (<see cref="InconsistentViews"/>: it saw one view at two versions), and what it read of its bound
-        /// owners (<see cref="Footprint"/>, <see cref="Emptiness"/>).
+        /// a summary of the level in progress (and which, <see cref="LiveReads"/>), the fact views it consulted
+        /// with the versions it read (<see cref="InconsistentViews"/>: it saw one view at two versions), and what
+        /// it read of its bound owners (<see cref="Footprint"/>, <see cref="Emptiness"/>).
         /// </summary>
         internal sealed class Settled(RequirementSet result, int siteDepth, bool readLive,
             (StaticLookupFacts Facts, int Version)[] views, bool inconsistentViews,
             (Algorithm Owner, bool Present)[]? footprint = null, BoundOwnerEmptiness emptiness = BoundOwnerEmptiness.Unread,
-            bool ownerOffChain = false)
+            bool ownerOffChain = false, string[]? liveReads = null)
         {
             public RequirementSet Result => result;
             public int SiteDepth => siteDepth;
             public bool ReadLive => readLive;
             public (StaticLookupFacts Facts, int Version)[] Views => views;
             public bool InconsistentViews => inconsistentViews;
+
+            /// <summary>
+            /// The summaries of the level in progress the computation read, each name once, when <see cref="ReadLive"/>
+            /// and it read at most <see cref="PendingResolution.MaxLiveReads"/> of them; null otherwise (none, or
+            /// unknown). Only a result whose live reads are known is kept beyond its run
+            /// (<c>PendingResolution</c>'s open walks of the level in progress).
+            /// </summary>
+            public string[]? LiveReads => liveReads;
+
+            /// <summary>
+            /// Whether this result, when its computation also saw no cycle cut, is the settlement of its key at
+            /// <paramref name="level"/> from every site while the summaries of the level in progress it read stand: it
+            /// saw no view at two versions, and no site lookup landed below <paramref name="level"/>.
+            /// <see cref="StandsFromEverySite"/> adds that it read no such summary.
+            /// </summary>
+            public bool AnswersEverySite(SummaryScope level)
+                => !inconsistentViews && siteDepth <= level.Depth;
 
             /// <summary>
             /// Every bound-owner membership the computation read, with its answer for the bound owners it ran
@@ -1264,7 +1299,7 @@ internal static class PropertyExposureResolver
             /// <paramref name="level"/> from every site for the rest of the run while its views stand.
             /// </summary>
             public bool StandsFromEverySite(SummaryScope level)
-                => !readLive && !inconsistentViews && siteDepth <= level.Depth;
+                => !readLive && AnswersEverySite(level);
 
             /// <summary>
             /// Whether <paramref name="bound"/> gives every read of <see cref="Footprint"/> and
@@ -1434,6 +1469,7 @@ internal static class PropertyExposureResolver
                     candidates.Add((settled, weight));
                     _retained += weight;
                     observations?.RecordSettlementShareStore();
+                    observations?.RecordSettlementShareRetainedWeight(_retained);
                     return;
                 }
             }
@@ -1442,6 +1478,7 @@ internal static class PropertyExposureResolver
                 return;
             _retained += weight;
             observations?.RecordSettlementShareStore();
+            observations?.RecordSettlementShareRetainedWeight(_retained);
         }
 
         private static long RetainedWeight(Key key, Settled settled)
@@ -1495,9 +1532,25 @@ internal static class PropertyExposureResolver
         // cycle cut, and the frame says how far out the cut reaches (Frame.OutermostCut).
         private readonly Dictionary<SettlementKey, Frame> _inProgress = [];
         // Unlike anchoring, settlement reads live equations. A complete result that read one, or that depends
-        // on its site, is reused only inside ONE synchronous Run; the run's share keeps the others.
+        // on its site, is reused only inside ONE synchronous Run; the run's share keeps the others, and
+        // _liveOpenWalks the level's own open walks.
         private readonly Dictionary<SettlementKey, SettlementShare.Settled> _completed = [];
         private readonly Dictionary<SeedSettlementKey, SettlementShare.Settled> _completedSeeds = [];
+
+        /// <summary>
+        /// The most summaries of the level in progress one settlement records by name
+        /// (<see cref="SettlementShare.Settled.LiveReads"/>): one that read more is reused only inside its Run, so
+        /// recording and merging the names costs a constant per frame.
+        /// </summary>
+        internal const int MaxLiveReads = 16;
+
+        // C1 WHILE THE LEVEL IS IN PROGRESS (implementation only): the level's unbound open-walk settlement
+        // (SharedOpenWalksLevel) whose walks read summaries of this level, kept for the rest of this level's solve with
+        // those summaries as read. A later Run reuses it exactly when every one of them and every view it consulted still
+        // stands: it is then the settlement that Run would compute (its key holds the site, it is whole, no summary
+        // changes within a Run), and its live reads are recorded again for the new top-level settlement. The run's share
+        // keeps only settlements that read no live summary, so without this every reader walked the level again.
+        private Dictionary<SettlementKey, (SettlementShare.Settled Settled, RequirementSet[] Read)>? _liveOpenWalks;
         private HashSet<string>? _levelReads;
         // The frame whose body is running: what it consults beyond its key is recorded on it (see Frame).
         private Frame? _running;
@@ -1515,8 +1568,7 @@ internal static class PropertyExposureResolver
             if (ReferenceEquals(level, levelInProgress))
             {
                 _levelReads?.Add(name);
-                if (_running is { } frame)
-                    frame.ReadLive = true;
+                _running?.NoteLiveRead(name);
             }
 
             return true;
@@ -1591,7 +1643,14 @@ internal static class PropertyExposureResolver
 
             /// <summary>Set on a frame that computes a settlement the run's share may keep.</summary>
             public SettlementShare.Key? ShareKey;
-            public bool ReadLive;
+
+            /// <summary>Whether this settlement read a summary of the level in progress, itself or in what it reached or reused.</summary>
+            public bool ReadLive { get; private set; }
+
+            // Those summaries by name, each once; null once there are more than MaxLiveReads or a reused result's are
+            // unknown (_liveReadsUnknown), and then the settlement is reused only inside its Run.
+            private List<string>? _liveReads;
+            private bool _liveReadsUnknown;
 
             /// <summary>
             /// Set on the walk of an open target settled AT its consulted level (owner decision Q2), to that level: the
@@ -1725,11 +1784,53 @@ internal static class PropertyExposureResolver
                 _views.Add((facts, version));
             }
 
+            /// <summary>A read of the summary <paramref name="name"/> of the level in progress (<c>TryLookupSummary</c>).</summary>
+            public void NoteLiveRead(string name)
+            {
+                ReadLive = true;
+                if (_liveReadsUnknown)
+                    return;
+                _liveReads ??= [];
+                foreach (var known in _liveReads)
+                    if (string.Equals(known, name, StringComparison.Ordinal))
+                        return;
+                if (_liveReads.Count == MaxLiveReads)
+                {
+                    LiveReadsUnknown();
+                    return;
+                }
+
+                _liveReads.Add(name);
+            }
+
+            private void LiveReadsUnknown()
+            {
+                ReadLive = true;
+                _liveReadsUnknown = true;
+                _liveReads = null;
+            }
+
+            // The live reads of a nested settlement or a reused result, as this frame's: names, or unknown (null with
+            // readLive).
+            private void AbsorbLiveReads(bool readLive, IReadOnlyList<string>? names)
+            {
+                if (!readLive)
+                    return;
+                if (names is null)
+                {
+                    LiveReadsUnknown();
+                    return;
+                }
+
+                for (var i = 0; i < names.Count; i++)
+                    NoteLiveRead(names[i]);
+            }
+
             public void Absorb(Frame nested)
             {
                 OutermostCut = Math.Min(OutermostCut, nested.OutermostCut);
                 NoteSiteLanding(nested.SiteDepth);
-                ReadLive |= nested.ReadLive;
+                AbsorbLiveReads(nested.ReadLive, nested._liveReads);
                 _inconsistentViews |= nested._inconsistentViews;
                 if (nested._views is { } views)
                     foreach (var (facts, version) in views)
@@ -1748,7 +1849,7 @@ internal static class PropertyExposureResolver
             {
                 Result = settled.Result;
                 NoteSiteLanding(settled.SiteDepth);
-                ReadLive |= settled.ReadLive;
+                AbsorbLiveReads(settled.ReadLive, settled.LiveReads);
                 _inconsistentViews |= settled.InconsistentViews;
                 foreach (var (facts, version) in settled.Views)
                     NoteView(facts, version);
@@ -1758,11 +1859,12 @@ internal static class PropertyExposureResolver
 
             public SettlementShare.Settled Complete()
                 => new(Result, SiteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews,
-                    _exactBoundOwners ? null : _footprint is null ? [] : [.. _footprint], _emptiness, OwnerOffChain);
+                    _exactBoundOwners ? null : _footprint is null ? [] : [.. _footprint], _emptiness, OwnerOffChain,
+                    _liveReads is null ? null : [.. _liveReads]);
 
-            /// <summary><see cref="SettlementShare.Settled.StandsFromEverySite"/> of what this frame has recorded so far.</summary>
-            public bool StandsFromEverySite(SummaryScope level)
-                => !ReadLive && !_inconsistentViews && SiteDepth <= level.Depth;
+            /// <summary><see cref="SettlementShare.Settled.AnswersEverySite"/> of what this frame has recorded so far.</summary>
+            public bool AnswersEverySite(SummaryScope level)
+                => !_inconsistentViews && SiteDepth <= level.Depth;
         }
 
         /// <summary>
@@ -1806,6 +1908,9 @@ internal static class PropertyExposureResolver
                                 _completedSeeds.TryAdd(seedKey, settled);
                             if (frame.ShareKey is { } shareKey && settled.StandsFromEverySite(shareKey.Level))
                                 shared.Store(shareKey, settled);
+                            else if (frame.RunsUnbound && frame.CacheKey is { } unboundKey && settled.LiveReads is { } live
+                                && settled.AnswersEverySite(unboundKey.Level))
+                                KeepLiveOpenWalks(unboundKey, settled, live);
                         }
 
                         if (frames.TryPeek(out var enclosing))
@@ -1834,6 +1939,49 @@ internal static class PropertyExposureResolver
         // passed, so this is no cancellation checkpoint: those stay one per frame pushed (Run). The ledger is null
         // only for a standalone analysis, which has no operation (SettlementLedgerOf).
         private void ChargeFrame() => ledger?.Work(SettlementFrameWork);
+
+        // Keeps the level's unbound open-walk settlement that read the summaries `live` of this level (_liveOpenWalks),
+        // with each one as it is now: no summary changes within a Run, so these are the ones it read.
+        private void KeepLiveOpenWalks(SettlementKey key, SettlementShare.Settled settled, string[] live)
+        {
+            var read = new RequirementSet[live.Length];
+            for (var i = 0; i < live.Length; i++)
+                read[i] = LiveSummary(live[i]);
+            (_liveOpenWalks ??= [])[key] = (settled, read);
+        }
+
+        // A kept open-walk settlement of this level, while every summary it read and every view it consulted stands; its
+        // live reads become reads of the top-level settlement in progress, exactly as if it had been computed in it.
+        private bool TryLiveOpenWalks(SettlementKey key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SettlementShare.Settled? settled)
+        {
+            settled = null;
+            if (_liveOpenWalks is null || !_liveOpenWalks.TryGetValue(key, out var kept))
+                return false;
+            var live = kept.Settled.LiveReads!;
+            for (var i = 0; i < live.Length; i++)
+            {
+                if (!LiveSummary(live[i]).Equals(kept.Read[i]))
+                {
+                    _liveOpenWalks.Remove(key);
+                    return false;
+                }
+            }
+
+            if (!kept.Settled.ViewsStand())
+            {
+                _liveOpenWalks.Remove(key);
+                return false;
+            }
+
+            foreach (var name in live)
+                _levelReads?.Add(name);
+            settled = kept.Settled;
+            return true;
+        }
+
+        // The current summary of a property of the level in progress, as TryLookupSummary reads it.
+        private RequirementSet LiveSummary(string name)
+            => levelInProgress.Summaries.TryGetValue(name, out var summary) ? summary : default;
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, BoundOwnerSet? boundOwners)
         {
@@ -1925,8 +2073,9 @@ internal static class PropertyExposureResolver
                 self.OwnOwners = pending.BoundOwners;
             }
             var key = new SettlementKey(pending.ContentKey, level, site, boundOwners);
-            var shareKey = new SettlementShare.Key(pending.ContentKey, level, boundOwners);
-            if (shared.TryGet(shareKey, out var settled) || _completed.TryGetValue(key, out settled))
+            var shareKey = new SettlementShare.Key(pending, level, boundOwners);
+            if (shared.TryGet(shareKey, out var settled) || _completed.TryGetValue(key, out settled)
+                || self.RunsUnbound && TryLiveOpenWalks(key, out settled))
             {
                 self.Reuse(settled);
                 yield break;
@@ -1947,13 +2096,16 @@ internal static class PropertyExposureResolver
                 if (pending.Selection == PendingSelection.OpenWalks && SharedOpenWalksLevel(self, pending, level, boundOwners) is { } opening)
                 {
                     // C1: the level's walks settled ONCE, at the level itself with no bound owners, answer every reader
-                    // that consults it when that settlement stands from every site there (see SharedOpenWalksLevel).
-                    // That settlement reads none of this reader's bound owners: only the choice of this route does.
+                    // that consults it when that settlement answers every site there (see SharedOpenWalksLevel).
+                    // That settlement reads none of this reader's bound owners: only the choice of this route does. A
+                    // summary of the level in progress it read is the one this reader's own walks would read in this Run,
+                    // so it does not decide the route; it keeps the result out of the run's share, and _liveOpenWalks
+                    // keeps it for the rest of this level's solve instead.
                     var unbound = ReferenceFrame(PropertyDependencyGraphBuilder.SummaryMemo.OpenWalksOf(pending.Origin),
                         opening, site, boundOwners: null);
                     unbound.RunsUnbound = true;
                     yield return unbound;
-                    if (unbound.IsWhole && unbound.StandsFromEverySite(opening))
+                    if (unbound.IsWhole && unbound.AnswersEverySite(opening))
                     {
                         self.Result = unbound.Result;
                         yield break;
@@ -2349,13 +2501,18 @@ internal static class PropertyExposureResolver
         /// <item>no level from L up to (not including) L′ is passed by the anchoring of L′'s walks
         /// (<see cref="OpenWalkAnchorsBelow"/>): their direct anchorings and reference-crossing lookups start at the
         /// frame's level, and from such a level they would stop earlier than from L′;</item>
-        /// <item>the caller's check: the unbound settlement saw no cycle cut and stands from every site at L′.</item>
+        /// <item>the caller's check: the unbound settlement saw no cycle cut and answers every site at L′
+        /// (<see cref="SettlementShare.Settled.AnswersEverySite"/>: no view read at two versions, no site lookup below
+        /// L′).</item>
         /// </list>
         /// Then every selection and anchoring is the same from L and from L′ (3); every owner a bound owner could
         /// discharge (<see cref="SummaryScope.TryResolveRequirement"/>, a parameter head) landed at or above L′ (4), where
-        /// none is in B (2), so B discharges nothing the unbound walk charged. Readers of any bound owners at any depth
-        /// below L′ thus reuse one settlement, kept in the run's share. Otherwise the result depends on the reader or
-        /// the site, and it is settled per reader exactly as before.
+        /// none is in B (2), so B discharges nothing the unbound walk charged. A summary of the level in progress the
+        /// walks read is adopted as it is, whatever the bound owners, and no summary changes within one Run, so it gives
+        /// both routes the same set and does not decide the route. Readers of any bound owners at any depth below L′
+        /// thus reuse one settlement: kept in the run's share, or, when it read a summary of the level in progress, for
+        /// the rest of that level's solve while those summaries stand (<c>_liveOpenWalks</c>). Otherwise the result
+        /// depends on the reader or the site, and it is settled per reader exactly as before.
         ///
         /// <para>The route reads B: whether it is empty (the null shortcut of (1), and the skipped test of (2)), and
         /// each membership (2) tests up to the first owner found. Each read is noted on <paramref name="self"/>'s

@@ -576,8 +576,10 @@ internal sealed class FrontEndTraversalObservations
     // seed keys, and settling pending references in the exposure pass.
 
     /// <summary>
-    /// Characters serialized for the base-seed keys the member solver uses to share expansions within a level.
-    /// Each PROCESS-WIDE id inside a key (a bound or qualifying owner's <c>OwnerQualifiedParameter.OwnerKey</c>,
+    /// The size of the base-seed contents the member solver shares expansions by within a level, in characters of their
+    /// canonical text (<c>SummarySeed.ContentKey</c>), one per member and solve. The solver compares the contents
+    /// themselves (November 20 2026) and builds that text only for this observer.
+    /// Each PROCESS-WIDE id inside the text (a bound or qualifying owner's <c>OwnerQualifiedParameter.OwnerKey</c>,
     /// a completed origin's requirement identity) counts as ONE character, with the length prefixes around it
     /// measured on that id-free text: the count depends only on the operation, never on how many ids the
     /// process issued before it, so two runs of one input agree on it.
@@ -625,6 +627,20 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordSettlementShareStore()
         => SettlementShareStores = checked(SettlementShareStores + 1);
+
+    /// <summary>
+    /// The largest weight a run's settlement share retained (<c>PropertyExposureResolver.SettlementShare.Key.Weight</c>
+    /// plus one per fact view and footprint membership; compared with <c>SettlementShare.DefaultCapacity</c>). A key's
+    /// process-wide ids are counted at their widest and its bound owners structurally, so the weight is a function of
+    /// the operation alone: two runs of one input agree on it however many ids the process issued between them.
+    /// </summary>
+    public long SettlementShareRetainedWeight { get; private set; }
+
+    internal void RecordSettlementShareRetainedWeight(long retained)
+    {
+        if (retained > SettlementShareRetainedWeight)
+            SettlementShareRetainedWeight = retained;
+    }
 
     /// <summary>
     /// Settlement frames answered from the run's share instead of walking what their reference reaches:

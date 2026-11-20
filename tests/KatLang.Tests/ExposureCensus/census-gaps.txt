@@ -5,9 +5,6 @@
 M3	model-stricter	selfcheck=runtime-dot-unread-receiver	A	r=y@0
 O	over-charge-inherited	selfcheck=I25-eager-own-open	A	r=y@0
 O	over-charge-inherited	selfcheck=runtime-dot-unread-receiver	A	r=y@0
-W	work-bound	W|head=rt-alg-call|reader=param|place=outside|level=enc1|use=unused	-	frames 4026 -> 15551; summary checkpoints 3170 -> 11320; frames 15551 -> 61101; summary checkpoints 11320 -> 42620
-W	work-bound	W|head=rt-alg-call|reader=param|place=outside|level=two|use=unused	-	frames 4026 -> 15551; summary checkpoints 3199 -> 11374; frames 15551 -> 61101; summary checkpoints 11374 -> 42724
-W	work-bound	W|head=rt-alg-call|reader=block|place=outside|level=enc2|use=unused	-	frames 4152 -> 15802; summary checkpoints 3321 -> 11621; frames 15802 -> 61602; summary checkpoints 11621 -> 43221
 # The extension's model sample (2026-11-19): the static model admits the copies of the off-chain re-entry readers without the y@0 the front end charges them, the open owner question of 0a1718d2 (left as it is).
 M2	model-false-admission	settlement=re-entry-2	H	r=y@0
 M2	model-false-admission	settlement=re-entry-4	H3	r=y@0

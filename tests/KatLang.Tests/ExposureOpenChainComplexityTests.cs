@@ -680,6 +680,56 @@ public sealed class ExposureOpenChainComplexityTests
         Assert.True(new PendingReferenceSet([Reference("V", owner), Reference("V")]).SetEquals(new PendingReferenceSet([Reference("V")])));
         Assert.False(new PendingReferenceSet([Reference("V", owner)]).SetEquals(new PendingReferenceSet([Reference("V")])));
     }
+
+    /// <summary>
+    /// The member solver's expansion cache compares base seeds by CONTENT (<c>SummarySeed.ContentHash</c>,
+    /// <c>ContentEquals</c>; November 20 2026), never by serialized text. Its verdict is the content key's on every pair
+    /// below — seeds that differ only in a pending reference's head, member path or bound owners, in a required or a
+    /// visible name, or in an owner-qualified parameter's owner — and seeds of equal content built in another order or
+    /// through an absorbed part are equal, with equal hashes.
+    /// </summary>
+    [Fact]
+    public void SeedContentComparison_AgreesWithTheContentKey()
+    {
+        var root = SourceProvenance.ParseValid("F(a) = a\nG(b) = b\n0").Root;
+        var owner = root.Properties[0].Value;
+        var other = root.Properties[1].Value;
+        var context = AnalyzedStaticStructures.ForBoundAst(root);
+        static PropertyDependencyGraphBuilder.SummarySeed Seed(string[]? required = null, string[]? visible = null,
+            SummaryReference[]? references = null, OwnerQualifiedParameter[]? qualified = null)
+            => new(required, visible, references, qualified);
+        PendingReference Reference(string head, string[] members, params Algorithm[] bound) => new(head, members, context, bound);
+
+        var seeds = new[]
+        {
+            Seed(),
+            Seed(required: ["a"]),
+            Seed(required: ["a", "b"]),
+            Seed(visible: ["a"]),
+            Seed(required: ["a"], references: [Reference("V", [])]),
+            Seed(required: ["a"], references: [Reference("V", ["X"])]),
+            Seed(required: ["a"], references: [Reference("V", [], owner)]),
+            Seed(required: ["a"], references: [Reference("W", [])]),
+            Seed(qualified: [new OwnerQualifiedParameter("a", owner)]),
+            Seed(qualified: [new OwnerQualifiedParameter("a", other)]),
+        };
+        for (var i = 0; i < seeds.Length; i++)
+        for (var j = 0; j < seeds.Length; j++)
+            Assert.Equal(seeds[i].ContentKey == seeds[j].ContentKey, seeds[i].ContentEquals(seeds[j]));
+
+        var forward = Seed(required: ["a", "b"], references: [Reference("V", []), Reference("W", ["X"])]);
+        var backward = Seed(required: ["b", "a"], references: [Reference("W", ["X"]), Reference("V", [])]);
+        Assert.True(forward.ContentEquals(backward));
+        Assert.Equal(forward.ContentHash(), backward.ContentHash());
+
+        // A completed seed of more than eight entries is held by reference, folded when its content is compared.
+        var wide = Enumerable.Range(0, 9).Select(i => $"w{i}").ToArray();
+        var holder = Seed(required: ["z"]).AbsorbCompleted(Seed(required: wide));
+        var written = Seed(required: [.. wide, "z"]);
+        Assert.Equal(written.ContentHash(), holder.ContentHash());
+        Assert.True(holder.ContentEquals(written));
+        Assert.Equal(written.ContentKey, holder.ContentKey);
+    }
 }
 
 /// <summary>

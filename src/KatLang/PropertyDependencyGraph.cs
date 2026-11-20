@@ -72,6 +72,46 @@ internal class SummaryReference : IEquatable<SummaryReference>
         KeyParts([IdFreeOriginKey, Head, KeyParts(Members)]),
         string.Join(",", BoundOwners.Select(static _ => "#"))]);
 
+    /// <summary>
+    /// The decimal width of the widest PROCESS-WIDE id a key can hold (<see cref="long.MaxValue"/> has 19 digits): an
+    /// owner's <see cref="OwnerQualifiedParameter.OwnerKey"/> and a completed origin's requirement identity are positive
+    /// <see cref="long"/> counters, which grow with every id the process has issued, whatever the program.
+    /// </summary>
+    internal const int StableIdWidth = 19;
+
+    /// <summary>
+    /// The length <see cref="ContentKey"/> has with every process-wide id in it written at <see cref="StableIdWidth"/>
+    /// digits, from the reference's structure alone: the same in every process, however many ids were issued before,
+    /// and never shorter than the key itself (the settlement share's admission weight,
+    /// <c>PropertyExposureResolver.SettlementShare.Key</c>). Builds no text.
+    /// </summary>
+    internal long StableContentKeyLength
+    {
+        get
+        {
+            long members = 0;
+            foreach (var member in Members)
+                members += PartLength(member.Length);
+            var resolution = PartLength(StableOriginKeyLength) + PartLength(Head.Length) + PartLength(members);
+            return PartLength(resolution) + PartLength(StableBoundOwnersKeyLength(BoundOwners.Count));
+        }
+    }
+
+    /// <summary>The length of the comma-separated ids of <paramref name="owners"/> owners, each at <see cref="StableIdWidth"/> digits.</summary>
+    internal static long StableBoundOwnersKeyLength(int owners) => owners == 0 ? 0 : (long)owners * (StableIdWidth + 1) - 1;
+
+    // The origin part's length with its id at StableIdWidth digits (none here).
+    private protected virtual int StableOriginKeyLength => 0;
+
+    // The length KeyParts gives one part of `length` characters: its decimal length, a colon, the part.
+    private static long PartLength(long length)
+    {
+        var digits = 1;
+        for (var rest = length; rest >= 10; rest /= 10)
+            digits++;
+        return digits + 1 + length;
+    }
+
     internal static string KeyParts(IEnumerable<string> parts)
         => string.Concat(parts.Select(static part => $"{part.Length}:{part}"));
 
@@ -102,6 +142,16 @@ internal sealed class PendingReference(string head, IReadOnlyList<string> member
         => selection == PendingSelection.Lexical ? $"completed:{identity}:{openPath}" : $"completed:{identity}:{openPath}:{selection}";
 
     private protected override string IdFreeOriginKey => OriginKey("#", OpenPath, Selection);
+
+    // OriginKey's length with the identity at StableIdWidth digits, per open-path flag and selection (values 0, 1, …):
+    // rendered once, by OriginKey itself, so it follows the key's own layout.
+    private static readonly int Selections = Enum.GetValues<PendingSelection>().Length;
+    private static readonly int[] StableOriginKeyLengths =
+        [.. from openPath in new[] { false, true }
+            from selection in Enum.GetValues<PendingSelection>()
+            select OriginKey(new string('0', StableIdWidth), openPath, selection).Length];
+
+    private protected override int StableOriginKeyLength => StableOriginKeyLengths[(OpenPath ? Selections : 0) + (int)Selection];
 
     internal override SummaryReference WithBoundOwners(IReadOnlyList<Algorithm> owners)
         => new PendingReference(Head, Members, Origin, owners, OpenPath, Selection);
@@ -812,23 +862,21 @@ internal static class PropertyDependencyGraphBuilder
             }
         }
 
-        /// <summary>Content identity (sorted), for seed equality within a fixed point.</summary>
-        internal string ContentKey => ContentKeyFor(observations: null);
-
-        internal string ContentKeyFor(FrontEndTraversalObservations? observations)
-        {
+        /// <summary>
+        /// The content as canonical text (sorted, length-prefixed): equal exactly when <see cref="ContentEquals"/> is.
+        /// Only a test oracle and the shape of what <see cref="RecordKeyCharacters"/> measures: the member solver
+        /// compares contents directly (<see cref="ContentHash"/>, <see cref="ContentEquals"/>) and builds no text.
+        /// </summary>
+        internal string ContentKey
             // Reads the folded sets directly: most seeds are empty, and a key must not materialize what it describes.
-            var key = IsEmpty ? EmptyContentKey : SummaryReference.KeyParts([
+            => IsEmpty ? EmptyContentKey : SummaryReference.KeyParts([
                 _requiredAncestorOwnedParameterNames is { } required ? FrontEndRegionKeys.NameSet(required) : string.Empty,
                 _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
                 _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.ContentKey)) : string.Empty,
                 _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.ContentKey)) : string.Empty]);
-            observations?.RecordSummaryKeyCharacters((IsEmpty ? key : IdFreeContentKey()).Length);
-            return key;
-        }
 
         /// <summary>
-        /// <see cref="ContentKeyFor"/>'s key with every process-wide id written as <c>#</c>
+        /// <see cref="ContentKey"/> with every process-wide id written as <c>#</c>
         /// (<see cref="SummaryReference.IdFreeContentKey"/>, <see cref="OwnerQualifiedParameter.IdFreeContentKey"/>):
         /// the text <see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/> counts. Built only for an observer.
         /// </summary>
@@ -840,6 +888,69 @@ internal static class PropertyDependencyGraphBuilder
                 _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.IdFreeContentKey)) : string.Empty]);
 
         private static readonly string EmptyContentKey = SummaryReference.KeyParts([string.Empty, string.Empty, string.Empty, string.Empty]);
+
+        /// <summary>
+        /// Records, for an observer, the id-free length of this seed's content text — the size of the content the member
+        /// solver compares (<see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/>); builds nothing without one.
+        /// </summary>
+        internal void RecordKeyCharacters(FrontEndTraversalObservations? observations)
+        {
+            if (observations is null)
+                return;
+            observations.RecordSummaryKeyCharacters((IsEmpty ? EmptyContentKey : IdFreeContentKey()).Length);
+        }
+
+        /// <summary>
+        /// An order-independent hash of the folded content: equal content (<see cref="ContentEquals"/>), equal hash. Each
+        /// set contributes its count and the sum and the mixed XOR of its elements' hashes under the set's own equality
+        /// (a reference by its content key, a qualified parameter by name and owner); it builds no text.
+        /// </summary>
+        internal int ContentHash()
+        {
+            Fold();
+            return HashCode.Combine(SetHash(_requiredAncestorOwnedParameterNames), SetHash(_visiblePropertyDependencyNames),
+                PendingHash(_pendingReferences), SetHash(_ownerQualifiedParameters));
+
+            static int SetHash<T>(HashSet<T>? set)
+            {
+                if (set is null || set.Count == 0)
+                    return 0;
+                var (sum, xor) = (0, 0);
+                foreach (var item in set)
+                {
+                    var hash = set.Comparer.GetHashCode(item!);
+                    sum = unchecked(sum + hash);
+                    xor ^= unchecked(hash * -1640531535);
+                }
+                return HashCode.Combine(set.Count, sum, xor);
+            }
+
+            static int PendingHash(PendingReferenceSet? set)
+            {
+                if (set is null || set.Count == 0)
+                    return 0;
+                var (sum, xor) = (0, 0);
+                foreach (var reference in set)
+                {
+                    var hash = reference.GetHashCode();
+                    sum = unchecked(sum + hash);
+                    xor ^= unchecked(hash * -1640531535);
+                }
+                return HashCode.Combine(set.Count, sum, xor);
+            }
+        }
+
+        /// <summary>
+        /// Equal folded content: the same four sets (<see cref="StructurallyEquals"/> once nothing is absorbed) — required
+        /// names, visible names, pending references by content key, owner-qualified parameters by name and owner. Two seeds
+        /// are content-equal exactly when their <see cref="ContentKey"/>s are equal.
+        /// </summary>
+        internal bool ContentEquals(SummarySeed other)
+        {
+            Fold();
+            other.Fold();
+            return StructurallyEquals(other);
+        }
     }
 
     /// <summary>
@@ -2296,7 +2407,10 @@ internal static class PropertyDependencyGraphBuilder
     /// costs its delta). Base seeds of equal content expand to equal content while the member seeds
     /// they read stand, so any other expansion is reused, validated by those reads, for every member
     /// whose base seed has that content (K members reading one opened or navigated member expand it
-    /// once). A member seed is never mutated after it enters the map (every one is its own expansion at
+    /// once). Equal content is decided on the seeds themselves — a hash computed once per member, then
+    /// set equality (<see cref="SeedContent"/>) — never on serialized text: measured on November 20 2026,
+    /// computing and storing the former text keys cost more allocation than the expansions their hits avoided
+    /// in both measured corpora. A member seed is never mutated after it enters the map (every one is its own expansion at
     /// this level, so it is already qualified), and every consumer clones a member seed before
     /// accumulating, so sharing is unobservable. Change detection compares structure first (own sets
     /// and the seeds held by reference) and folds only when that cannot decide.</para>
@@ -2392,8 +2506,8 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         var readers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
-        var contentKeys = new string?[properties.Count];
-        Dictionary<string, (SummarySeed Result, (string Name, SummarySeed Read)[] Reads)>? expansions = null;
+        var contents = new SeedContent?[properties.Count];
+        Dictionary<SeedContent, (SummarySeed Result, (string Name, SummarySeed Read)[] Reads)>? expansions = null;
         while (queue.TryDequeue(out var index))
         {
             queued[index] = false;
@@ -2469,10 +2583,9 @@ internal static class PropertyDependencyGraphBuilder
             if (TryShareMemberSeed(baseSeed, recorded, level) is { } shared)
                 return shared;
 
-            var key = contentKeys[index] ??= baseSeed.ContentKeyFor(memos.Observations);
-            expansions ??= new(StringComparer.Ordinal);
-            if (expansions.TryGetValue(key, out var expansion)
-                && expansion.Reads.All(read => ReferenceEquals(seeds[read.Name], read.Read)))
+            var key = contents[index] ??= SeedContent.Of(baseSeed, memos.Observations);
+            expansions ??= new(SeedContent.Comparer);
+            if (expansions.TryGetValue(key, out var expansion) && ReadsStand(expansion.Reads))
             {
                 foreach (var (readName, _) in expansion.Reads)
                     recorded.Reads.Add(readName);
@@ -2481,8 +2594,43 @@ internal static class PropertyDependencyGraphBuilder
 
             memos.Observations?.RecordSummaryMemberExpansion();
             var expanded = ExpandAtLevel(baseSeed, level);
-            expansions[key] = (expanded, [.. recorded.Reads.Select(readName => (readName, seeds[readName]))]);
+            var reads = new (string Name, SummarySeed Read)[recorded.Reads.Count];
+            var at = 0;
+            foreach (var readName in recorded.Reads)
+                reads[at++] = (readName, seeds[readName]);
+            expansions[key] = (expanded, reads);
             return expanded;
+        }
+
+        // Whether every member seed an expansion read is still the one it read.
+        bool ReadsStand((string Name, SummarySeed Read)[] reads)
+        {
+            foreach (var (name, read) in reads)
+                if (!ReferenceEquals(seeds[name], read))
+                    return false;
+            return true;
+        }
+    }
+
+    // A base seed's CONTENT as the expansion cache's key (SolveMemberSeeds): its order-independent hash, computed once per
+    // member, and content equality (SummarySeed.ContentEquals) — the four sets themselves, never serialized text. Base seeds
+    // are not mutated while their level is solved, so a key stays valid for the whole solve.
+    private readonly record struct SeedContent(SummarySeed Seed, int Hash)
+    {
+        public static SeedContent Of(SummarySeed seed, FrontEndTraversalObservations? observations)
+        {
+            seed.RecordKeyCharacters(observations);
+            return new(seed, seed.ContentHash());
+        }
+
+        public static readonly IEqualityComparer<SeedContent> Comparer = new ContentComparer();
+
+        private sealed class ContentComparer : IEqualityComparer<SeedContent>
+        {
+            public bool Equals(SeedContent x, SeedContent y)
+                => x.Hash == y.Hash && (ReferenceEquals(x.Seed, y.Seed) || x.Seed.ContentEquals(y.Seed));
+
+            public int GetHashCode(SeedContent content) => content.Hash;
         }
     }
 
