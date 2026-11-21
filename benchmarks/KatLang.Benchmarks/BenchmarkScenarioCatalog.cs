@@ -289,7 +289,7 @@ internal static class BenchmarkScenarioCatalog
 		new(() => Load(
 			id: "sequence-order-100k",
 			displayName: "Sequence order 100k",
-			description: "range(100000, 1).order.first: a stable ascending sort of 100,000 descending numbers.",
+			description: "range(100000, 1).order.first: a stable ascending sort of 100,000 descending numbers (dense whole numbers, so the counting sort since 2026-11-21).",
 			origin: CollectionResultOrigin,
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-order-100k.kat",
 			expectedAtoms: [1m]));
@@ -298,7 +298,7 @@ internal static class BenchmarkScenarioCatalog
 		new(() => Load(
 			id: "sequence-order-desc-100k",
 			displayName: "Sequence orderDesc 100k",
-			description: "range(1, 100000).orderDesc.first: the reverse of the stable ascending sort of 100,000 ascending numbers.",
+			description: "range(1, 100000).orderDesc.first: the reverse of the stable ascending sort of 100,000 ascending numbers (dense whole numbers, so the counting sort since 2026-11-21).",
 			origin: CollectionResultOrigin,
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-order-desc-100k.kat",
 			expectedAtoms: [100000m]));
@@ -376,6 +376,15 @@ internal static class BenchmarkScenarioCatalog
 			origin: LargeObjectOrigin,
 			resourceName: "KatLang.Benchmarks.Scenarios.sequence-property-filter-count-100k.kat",
 			expectedAtoms: [100000m]));
+
+	private static readonly Lazy<BenchmarkScenario> SequenceOrderFraction100kScenario =
+		new(() => Load(
+			id: "sequence-order-fraction-100k",
+			displayName: "Sequence order fraction 100k",
+			description: "range(100000, 1).map(Eighth).order.first with Eighth(n) = n / 8 exercises the comparison sort on 100,000 descending values, including fractions.",
+			origin: "Order counting sort for dense whole numbers (2026-11-21).",
+			resourceName: "KatLang.Benchmarks.Scenarios.sequence-order-fraction-100k.kat",
+			expectedAtoms: [0.125m]));
 
 	private static readonly Lazy<BenchmarkScenario> DispatchNonCandidateCallsScenario =
 		new(() => Load(
@@ -556,6 +565,8 @@ internal static class BenchmarkScenarioCatalog
 	public static BenchmarkScenario SequenceRetainedTake100k => SequenceRetainedTake100kScenario.Value;
 
 	public static BenchmarkScenario SequencePropertyFilterCount100k => SequencePropertyFilterCount100kScenario.Value;
+
+	public static BenchmarkScenario SequenceOrderFraction100k => SequenceOrderFraction100kScenario.Value;
 
 	public static BenchmarkScenario DispatchNonCandidateCalls => DispatchNonCandidateCallsScenario.Value;
 

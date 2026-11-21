@@ -97,7 +97,10 @@ public class SequencePipelineRepeatedBenchmarks
 /// builders allocate their exact result array once and hand it over, and the numeric builtins read the
 /// numbers through a view instead of a copied <c>List&lt;Decimal128&gt;</c>. <c>Atoms100k</c> and
 /// <c>RetainedTake100k</c> (2026-11-18) add <c>atoms</c> over the same source and a 50,000-item
-/// <c>take</c> of a retained collector (NEED-07) holding its 100,000 cells. Filter:
+/// <c>take</c> of a retained collector (NEED-07) holding its 100,000 cells. <c>Order100k</c> and <c>OrderDesc100k</c>
+/// sort dense whole numbers, which take the counting sort since 2026-11-21; <c>OrderFraction100k</c> keeps the
+/// comparison sort measured on fractional inputs. <c>MapSum100k</c> also maps 100,000 items, using an ascending
+/// range and a different callback. Filter:
 /// <c>--filter *SequenceBuiltinLargeList*</c>. No <c>[RankColumn]</c>, as in
 /// <see cref="SequencePipelineLargeListBenchmarks"/>.
 /// </summary>
@@ -111,6 +114,7 @@ public class SequenceBuiltinLargeListBenchmarks
 	private static readonly BenchmarkScenario Distinct100kScenario = BenchmarkScenarioCatalog.SequenceDistinct100k;
 	private static readonly BenchmarkScenario Order100kScenario = BenchmarkScenarioCatalog.SequenceOrder100k;
 	private static readonly BenchmarkScenario OrderDesc100kScenario = BenchmarkScenarioCatalog.SequenceOrderDesc100k;
+	private static readonly BenchmarkScenario OrderFraction100kScenario = BenchmarkScenarioCatalog.SequenceOrderFraction100k;
 	private static readonly BenchmarkScenario Sum100kScenario = BenchmarkScenarioCatalog.SequenceSum100k;
 	private static readonly BenchmarkScenario Avg100kScenario = BenchmarkScenarioCatalog.SequenceAvg100k;
 	private static readonly BenchmarkScenario Min100kScenario = BenchmarkScenarioCatalog.SequenceMin100k;
@@ -136,6 +140,9 @@ public class SequenceBuiltinLargeListBenchmarks
 
 	[Benchmark]
 	public IReadOnlyList<Decimal128> OrderDesc100k() => Run(OrderDesc100kScenario);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> OrderFraction100k() => Run(OrderFraction100kScenario);
 
 	[Benchmark]
 	public IReadOnlyList<Decimal128> Sum100k() => Run(Sum100kScenario);

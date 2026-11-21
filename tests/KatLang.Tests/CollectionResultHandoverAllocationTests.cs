@@ -26,6 +26,8 @@ namespace KatLang.Tests;
 /// that change.</para>
 /// <para>A collector cell's whole-value materialization (November 2026, implementation-only) fills its exact array the
 /// same way instead of a <c>List&lt;Result&gt;</c> that <c>MakeCollectionListResult</c> copied.</para>
+/// <para>Dense whole numbers (November 2026, implementation-only) take a counting sort whose bucket array is no
+/// longer than the position array, so <c>order</c> is measured on both paths.</para>
 /// </summary>
 public class CollectionResultHandoverAllocationTests
 {
@@ -114,25 +116,56 @@ public class CollectionResultHandoverAllocationTests
         GcIsolatedAllocation.Complete();
     }
 
+    // Three times a permutation of 0..n-1, plus one: n whole numbers spanning 3n - 2 integers, too
+    // sparse for the counting sort, so the comparison sort runs.
+    private static Result SparsePermuted(int n)
+        => ListOf(Enumerable.Range(0, n).Select(i => (3 * (int)((i * 7919L) % n)) + 1));
+
     [Fact]
     public void OrderResults_AllocateThePositionsTheNumbersAndOneExactArray_GcIsolatedChild()
     {
         if (!GcIsolatedAllocation.EnterChild())
             return;
 
-        // Per item: one sorted input position (4 bytes), one new number and one result slot — no
-        // 32-byte (value, index) sort key, no numeric list, no sorted copy, no second result array.
+        // The comparison sort, per item: one sorted input position (4 bytes), one new number and one
+        // result slot — no 32-byte (value, index) sort key, no numeric list, no sorted copy, no second
+        // result array.
         var expected = ArrayBytes(typeof(int), Large) - ArrayBytes(typeof(int), Small)
             + ((Large - Small) * ObjectBytes(typeof(Result.Atom)))
             + ResultArrayDelta(Small, Large);
         foreach (var builtin in new[] { BuiltinId.order, BuiltinId.orderDesc })
-            Assert.Equal(expected, CallBytes(builtin, Args(Permuted(Large))) - CallBytes(builtin, Args(Permuted(Small))));
+            Assert.Equal(expected, CallBytes(builtin, Args(SparsePermuted(Large))) - CallBytes(builtin, Args(SparsePermuted(Small))));
         GcIsolatedAllocation.Complete();
     }
 
-    // Cancel on the first inspected sort value, deterministically between binding and reservation.
-    // A reservation moved ahead of sorting would charge the list and miss this cancellation.
-    private sealed class CancelOnSortRead(CancellationTokenSource source) : IReadOnlyList<Result>
+    /// <summary>
+    /// Dense whole numbers take the counting sort (November 2026, implementation-only): one bucket per
+    /// integer the values span instead of one position per item, and the same new numbers and exact array.
+    /// A permutation of 1..n spans n integers, so its buckets cost what the positions cost; ten values
+    /// repeated cost ten buckets at any length, where the comparison sort would add a position per item.
+    /// </summary>
+    [Fact]
+    public void OrderResults_OfDenseWholeNumbers_AllocateTheBucketsTheNumbersAndOneExactArray_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var perItem = ((Large - Small) * ObjectBytes(typeof(Result.Atom))) + ResultArrayDelta(Small, Large);
+        var spanning = ArrayBytes(typeof(int), Large) - ArrayBytes(typeof(int), Small) + perItem;
+        Result Repeated(int n) => ListOf(Enumerable.Range(0, n).Select(static i => (int)((i * 7919L) % 10)));
+        foreach (var builtin in new[] { BuiltinId.order, BuiltinId.orderDesc })
+        {
+            Assert.Equal(spanning, CallBytes(builtin, Args(Permuted(Large))) - CallBytes(builtin, Args(Permuted(Small))));
+            Assert.Equal(perItem, CallBytes(builtin, Args(Repeated(Large))) - CallBytes(builtin, Args(Repeated(Small))));
+        }
+        GcIsolatedAllocation.Complete();
+    }
+
+    // Cancels when the order inspection first reads an item after the first, deterministically between
+    // binding and reservation: both sorts read the items before they reserve. The counting sort's check
+    // stops at a first item that is not whole, so for fractions the comparison sort makes that read. A
+    // reservation moved ahead of either sort would charge the list and miss this cancellation.
+    private sealed class CancelOnSortRead(CancellationTokenSource source, bool whole) : IReadOnlyList<Result>
     {
         public int Count => 3;
 
@@ -140,8 +173,9 @@ public class CollectionResultHandoverAllocationTests
         {
             get
             {
-                source.Cancel();
-                return new Result.Atom(Count - index);
+                if (index > 0)
+                    source.Cancel();
+                return new Result.Atom(whole ? Count - index : Count - index + 0.5m);
             }
         }
 
@@ -150,15 +184,17 @@ public class CollectionResultHandoverAllocationTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Order_CancellationDuringSortPrecedesResultReservation(bool descending)
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public void Order_CancellationDuringSortPrecedesResultReservation(bool descending, bool whole)
     {
         using var cancellation = new CancellationTokenSource();
         var budget = EvaluationBudget.Create(null, cancellationToken: cancellation.Token);
         var ctx = Evaluator.EvalCtx.Empty with { Budget = budget };
         var viewType = typeof(Evaluator).GetNestedType("SingleAtomicNumberItems", BindingFlags.NonPublic)!;
-        var numbers = Activator.CreateInstance(viewType, new CancelOnSortRead(cancellation));
+        var numbers = Activator.CreateInstance(viewType, new CancelOnSortRead(cancellation, whole));
         var sort = typeof(Evaluator).GetMethod("MakeSortedNumberListResult", BindingFlags.NonPublic | BindingFlags.Static)!;
 
         var failure = Assert.Throws<TargetInvocationException>(() => sort.Invoke(null, [ctx, numbers, descending]));

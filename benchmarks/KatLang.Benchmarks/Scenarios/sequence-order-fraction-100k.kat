@@ -1,0 +1,2 @@
+Eighth(n) = n / 8
+range(100000, 1).map(Eighth).order.first

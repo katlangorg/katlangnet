@@ -1336,6 +1336,32 @@ public class EvaluatorCollectionBuiltinTests
         Assert.Equal(ascending, list.Items.Select(Spelling));
     }
 
+    /// <summary>
+    /// The two tests above sort dense whole numbers, which take the counting sort
+    /// (November 2026, implementation-only). Fractions take the comparison sort, which
+    /// must keep the same stable order and the same reverse for <c>orderDesc</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("order")]
+    [InlineData("orderDesc")]
+    public void Eval_OrderOfFractions_IsStable_AndOrderDescIsItsReverse(string builtin)
+    {
+        var spellings = Enumerable.Range(0, 40).Select(static i => i % 2 == 0 ? "0.50" : "0.5").ToList();
+        var source = $"{builtin}((2.5, 0.25, {string.Join(", ", spellings)}, 0.250))";
+
+        var result = EvalFull(source);
+        if (result.IsError)
+            Assert.Fail($"Expected a list but got: {result.Error}");
+        var list = Assert.IsType<Result.ListValue>(result.Value);
+
+        var expected = new List<string> { "0.25", "0.250" };
+        expected.AddRange(spellings);
+        expected.Add("2.5");
+        if (builtin == "orderDesc")
+            expected.Reverse();
+        Assert.Equal(expected, list.Items.Select(Spelling));
+    }
+
     private static string Spelling(Result item)
         => KatLang.Rendering.ValueTextRenderer.FormatNumberInvariant(Assert.IsType<Result.Atom>(item).Value);
 

@@ -234,6 +234,8 @@ public class CollectionMaterializationLimitsTests
     [InlineData("range(1, 200).skip(300)", 200, "")]
     [InlineData("range(200, 1).order", 200, "1..200")]
     [InlineData("range(1, 200).orderDesc", 200, "200..1")]
+    [InlineData("[8, 1, 5].order", 3, "1,5,8")]
+    [InlineData("[8, 1, 5].orderDesc", 3, "8,5,1")]
     [InlineData("Mod(x) = x mod 70\nrange(1, 200).map(Mod).distinct", 400, "1..69,0")]
     [InlineData("atoms([range(1, 70), (range(71, 130))])", 132, "1..130")]
     public async Task ExactListBuilders_ListTheResultInOrder_AndReserveItsTrueCount(string source, int sourceCount, string expectedItems)

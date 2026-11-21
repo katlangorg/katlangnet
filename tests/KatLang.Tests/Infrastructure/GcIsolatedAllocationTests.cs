@@ -24,6 +24,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.FusedDotReceiverItems_AllocateNothingPerItem_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.NumericReducers_AllocateNothingPerItem_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.OrderResults_AllocateThePositionsTheNumbersAndOneExactArray_GcIsolatedChild",
+                "KatLang.Tests.CollectionResultHandoverAllocationTests.OrderResults_OfDenseWholeNumbers_AllocateTheBucketsTheNumbersAndOneExactArray_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.RetainedTake_AllocatesOneExactArray_GcIsolatedChild",
                 "KatLang.Tests.CollectionResultHandoverAllocationTests.SliceResults_AllocateOneExactArray_GcIsolatedChild",
                 "KatLang.Tests.FamilyLiteralHeadBindingTests.FlatLiteralHead_AllocatesOnlyItsEnvironment_GcIsolatedChild",
