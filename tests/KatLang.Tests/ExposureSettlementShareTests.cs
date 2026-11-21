@@ -231,7 +231,7 @@ public sealed class ExposureSettlementShareTests
         var level = LevelAt(1);
         var facts = new VersionedFacts();
         var other = new VersionedFacts();
-        var key = new SettlementShare.Key("reference", level, Bound: null);
+        var key = SettlementShareTestKeys.TextKey("reference", level, bound: null);
         share.Store(key, Settled(views: [(facts, facts.ViewVersion), (other, other.ViewVersion)]));
 
         Assert.True(share.TryGet(key, out var kept));
@@ -271,7 +271,7 @@ public sealed class ExposureSettlementShareTests
 
         var observations = new FrontEndTraversalObservations();
         var share = new SettlementShare(observations);
-        var key = new SettlementShare.Key("reference", level, Bound: null);
+        var key = SettlementShareTestKeys.TextKey("reference", level, bound: null);
         Assert.Throws<InvalidOperationException>(() => share.Store(key, Settled(siteDepth: 3)));
         Assert.Throws<InvalidOperationException>(() => share.Store(key, Settled(readLive: true)));
         Assert.False(share.TryGet(key, out _));
@@ -296,7 +296,7 @@ public sealed class ExposureSettlementShareTests
         var level = LevelAt(0);
         var observations = new FrontEndTraversalObservations();
         var share = new SettlementShare(observations, capacity: 3);
-        var keys = Enumerable.Range(0, 5).Select(i => new SettlementShare.Key($"k{i}", level, Bound: null)).ToArray();
+        var keys = Enumerable.Range(0, 5).Select(i => SettlementShareTestKeys.TextKey($"k{i}", level, bound: null)).ToArray();
         foreach (var key in keys)
             share.Store(key, Settled());
 
@@ -310,15 +310,15 @@ public sealed class ExposureSettlementShareTests
         // charged one character each and one per separator, whatever ids this process has issued.
         var weighed = new FrontEndTraversalObservations();
         var narrow = new SettlementShare(weighed, capacity: 2);
-        narrow.Store(new SettlementShare.Key(new string('c', 64), level, Bound: null), Settled());
-        narrow.Store(new SettlementShare.Key("x", level, Bound: null), Settled());
+        narrow.Store(SettlementShareTestKeys.TextKey(new string('c', 64), level, bound: null), Settled());
+        narrow.Store(SettlementShareTestKeys.TextKey("x", level, bound: null), Settled());
         Assert.Equal(1, weighed.SettlementShareStores);
         var owners = new[] { Owner(), Owner(), Owner() };
         var boundLength = 5;
         Assert.Equal(boundLength, Owners(owners)!.StableKeyLength);
         var content = new string('c', 64 - boundLength);
-        var boundKey = new SettlementShare.Key(content, level, Owners(owners));
-        Assert.Equal(1, new SettlementShare.Key(content[1..], level, Owners(owners)).Weight);
+        var boundKey = SettlementShareTestKeys.TextKey(content, level, Owners(owners));
+        Assert.Equal(1, SettlementShareTestKeys.TextKey(content[1..], level, Owners(owners)).Weight);
         Assert.Equal(2, boundKey.Weight);
         narrow = new SettlementShare(observations: null, capacity: 1);
         narrow.Store(boundKey, Settled());
@@ -390,10 +390,10 @@ public sealed class ExposureSettlementShareTests
         // A key holding either of the equal sets is one key.
         var level = LevelAt(0);
         var share = new SettlementShare(observations: null);
-        share.Store(new SettlementShare.Key("reference", level, ab), Settled());
-        Assert.True(share.TryGet(new SettlementShare.Key("reference", level, ba), out _));
-        Assert.False(share.TryGet(new SettlementShare.Key("reference", level, justA), out _));
-        Assert.False(share.TryGet(new SettlementShare.Key("reference", level, Bound: null), out _));
+        share.Store(SettlementShareTestKeys.TextKey("reference", level, ab), Settled());
+        Assert.True(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, ba), out _));
+        Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, justA), out _));
+        Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, bound: null), out _));
     }
 
     [Fact]

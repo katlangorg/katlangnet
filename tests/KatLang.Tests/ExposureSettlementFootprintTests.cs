@@ -373,12 +373,12 @@ public sealed class ExposureSettlementFootprintTests
         var observations = new FrontEndTraversalObservations();
         var share = new SettlementShare(observations);
         var level = LevelAt(1);
-        share.Store(new SettlementShare.Key("reference", level, Owners(a)), settled);
-        Assert.True(share.TryGet(new SettlementShare.Key("reference", level, Owners(a, c)), out var kept));
+        share.Store(SettlementShareTestKeys.TextKey("reference", level, Owners(a)), settled);
+        Assert.True(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, Owners(a, c)), out var kept));
         Assert.Same(settled, kept);
-        Assert.False(share.TryGet(new SettlementShare.Key("reference", level, Owners(a, b)), out _));
-        Assert.False(share.TryGet(new SettlementShare.Key("reference", LevelAt(1), Owners(a)), out _));
-        Assert.False(share.TryGet(new SettlementShare.Key("other", level, Owners(a)), out _));
+        Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, Owners(a, b)), out _));
+        Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", LevelAt(1), Owners(a)), out _));
+        Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("other", level, Owners(a)), out _));
         Assert.Equal(1, observations.SettlementShareCandidateHits);
         Assert.Equal(2, observations.SettlementShareCandidateVisits);
     }
@@ -397,10 +397,10 @@ public sealed class ExposureSettlementFootprintTests
         {
             var observations = new FrontEndTraversalObservations();
             var share = new SettlementShare(observations);
-            share.Store(new SettlementShare.Key("reference", level, Owners(a)), settled);
-            Assert.True(share.TryGet(new SettlementShare.Key("reference", level, Owners(a)), out _));
-            Assert.False(share.TryGet(new SettlementShare.Key("reference", level, Owners(a, b)), out _));
-            Assert.False(share.TryGet(new SettlementShare.Key("reference", level, Bound: null), out _));
+            share.Store(SettlementShareTestKeys.TextKey("reference", level, Owners(a)), settled);
+            Assert.True(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, Owners(a)), out _));
+            Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, Owners(a, b)), out _));
+            Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, bound: null), out _));
             Assert.Equal(0, observations.SettlementShareCandidateHits);
             Assert.Equal(1, observations.SettlementShareHits);
         }
@@ -422,19 +422,19 @@ public sealed class ExposureSettlementFootprintTests
         var owners = Enumerable.Range(0, SettlementShare.MaxCandidates + 2).Select(_ => Owner()).ToArray();
         // Each settlement read its own owner as present: no two answer one bound-owner set of a single owner.
         foreach (var owner in owners)
-            share.Store(new SettlementShare.Key("reference", level, Owners(owner)), Read(footprint: [(owner, true)]));
-        share.Store(new SettlementShare.Key("reference", level, Owners(owners[0], owners[^1])), Read(footprint: [(owners[0], true)]));
+            share.Store(SettlementShareTestKeys.TextKey("reference", level, Owners(owner)), Read(footprint: [(owner, true)]));
+        share.Store(SettlementShareTestKeys.TextKey("reference", level, Owners(owners[0], owners[^1])), Read(footprint: [(owners[0], true)]));
         Assert.Equal(owners.Length, observations.SettlementShareStores);
 
         var visitsBefore = observations.SettlementShareCandidateVisits;
         foreach (var owner in owners)
-            Assert.True(share.TryGet(new SettlementShare.Key("reference", level, Owners(owner)), out _));
+            Assert.True(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, Owners(owner)), out _));
         Assert.Equal(SettlementShare.MaxCandidates, observations.SettlementShareCandidateHits);
         Assert.InRange(observations.SettlementShareCandidateVisits - visitsBefore, 1,
             (long)owners.Length * SettlementShare.MaxCandidates);
 
         // The exactly kept ones answer their own key only.
-        Assert.False(share.TryGet(new SettlementShare.Key("reference", level, Owners(owners[^1], Owner())), out _));
+        Assert.False(share.TryGet(SettlementShareTestKeys.TextKey("reference", level, Owners(owners[^1], Owner())), out _));
     }
 
     /// <summary>
@@ -447,7 +447,7 @@ public sealed class ExposureSettlementFootprintTests
         var a = Owner();
         var b = Owner();
         var level = LevelAt(0);
-        var key = new SettlementShare.Key("reference", level, Owners(a));
+        var key = SettlementShareTestKeys.TextKey("reference", level, Owners(a));
         Assert.Equal(1, key.Weight);
 
         var narrow = new SettlementShare(observations: null, capacity: 2);
@@ -490,7 +490,7 @@ public sealed class ExposureSettlementFootprintTests
         var share = new SettlementShare(observations, capacity: 2);
         for (var i = 0; i < 32; i++)
         {
-            var key = new SettlementShare.Key($"reference{i}", level, Owners(owner));
+            var key = SettlementShareTestKeys.TextKey($"reference{i}", level, Owners(owner));
             share.Store(key, new SettlementShare.Settled(default, SummaryScope.NoOwnerLookup, readLive: false,
                 views: [(facts, facts.ViewVersion)], inconsistentViews: false, footprint: []));
             Assert.True(share.TryGet(key, out _));

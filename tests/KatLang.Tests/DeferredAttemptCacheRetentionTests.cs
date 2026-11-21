@@ -26,7 +26,9 @@ namespace KatLang.Tests;
 /// reaches its freeze takes its entries back just before it (<c>DeferredModuleRegion.CompileLoadedBody</c>), so they
 /// are not part of the materialization's live peak, and keeps its claim on the cache until
 /// <c>RunCoreAsync</c> ends it. Between the two the cache refuses every add, before any table changes: an entry
-/// added then would be one no journal removes. The two direct tests of that state are at "The early take-back".</para>
+/// added then would be one no journal removes. The two direct tests of that state are at "The early take-back", with
+/// two through the unit's freeze stage: where the take-back happens in a real attempt, and a cancellation inside the
+/// freeze.</para>
 ///
 /// <para>Host conventions are those of <see cref="DeferredOpenTargetValidationTests"/>: an in-memory downloader
 /// that counts its calls, <c>AllowedHosts = ["modules.example"]</c>, a clean parse that downloads nothing, and the
@@ -88,12 +90,17 @@ public class DeferredAttemptCacheRetentionTests
 
     /// <summary>
     /// A passive observer of the unit's exposure stage "retarget-and-seal", which every attempt that reaches exposure
-    /// passes after validation and the exposure walk: the one point where a test can act inside an attempt. The
-    /// parse passes the same stage, so the handler is set only once the tree exists.
+    /// passes after validation and the exposure walk, and of the unit's freeze ("deferred-freeze": begin just after
+    /// the early take-back, end once the facts are frozen), which only an attempt that is about to publish reaches:
+    /// the points where a test can act inside an attempt. The parse passes the seal too, so a handler is set only
+    /// once the tree exists.
     /// </summary>
     private sealed class SealStage
     {
         public Action? AtSeal { get; set; }
+
+        /// <summary>The unit's freeze: <c>true</c> when it begins, <c>false</c> when it has returned.</summary>
+        public Action<bool>? AtFreeze { get; set; }
 
         public FrontEndTraversalObservations Observations { get; }
 
@@ -104,6 +111,8 @@ public class DeferredAttemptCacheRetentionTests
                 {
                     if (name == "retarget-and-seal" && begin)
                         AtSeal?.Invoke();
+                    else if (name == "deferred-freeze")
+                        AtFreeze?.Invoke(begin);
                 },
             };
     }
@@ -780,6 +789,106 @@ public class DeferredAttemptCacheRetentionTests
         plain.TakeBack();
         Assert.Equal(original, Tables.Of(cache));
         Assert.Equal(originalParents, parents.Count);
+    }
+
+    [Fact]
+    public async Task RealAttempt_HasTakenItsEntriesBackWhenItsFreezeBegins_AndHoldsTheCacheUntilItEnds()
+    {
+        // Seen from inside the real attempt: at the unit's seal its levels are registered; when its freeze begins
+        // (the "deferred-freeze" stage) they are already back, the attempt still holds the cache, which refuses an
+        // add and a second attempt, and the freeze adds nothing. The attempt then publishes and its end releases
+        // the claim.
+        var host = new RunHost();
+        var stage = new SealStage();
+        var root = await ParseDeferred(ThreeBlocks, host, stage);
+        var region = RegionAt(root, "F");
+        var cache = CacheOf(region);
+        var before = Tables.Of(cache);
+        Assert.Equal(0, before.MemberIndexes);
+
+        var events = new List<string>();
+        Tables atSeal = default, atFreeze = default, frozen = default;
+        Exception? add = null, secondAttempt = null;
+        stage.AtSeal = () =>
+        {
+            events.Add("seal");
+            atSeal = Tables.Of(cache);
+        };
+        stage.AtFreeze = begin =>
+        {
+            events.Add(begin ? "freeze" : "frozen");
+            if (!begin)
+            {
+                frozen = Tables.Of(cache);
+                return;
+            }
+
+            atFreeze = Tables.Of(cache);
+            // The cache holds no member index, so an index of the root would be a new entry.
+            add = Record.Exception(() => cache.IndexOf(root));
+            secondAttempt = Record.Exception(() => cache.BeginMaterializationAttempt());
+        };
+        await AssertValue(root, 6);
+        stage.AtSeal = null;
+        stage.AtFreeze = null;
+
+        Assert.Equal(["seal", "freeze", "frozen"], events);
+        Assert.Equal(new Tables(17, 1, 0, 0), atSeal);
+        Assert.Equal(before, atFreeze);
+        Assert.Equal(before, frozen);
+        Assert.Contains("after it took its entries back", Assert.IsType<InvalidOperationException>(add).Message, StringComparison.Ordinal);
+        Assert.Contains("another attempt is still writing", Assert.IsType<InvalidOperationException>(secondAttempt).Message, StringComparison.Ordinal);
+        Assert.True(region.IsMaterialized);
+        Assert.Equal(1, region.MaterializationAttempts);
+        Assert.Equal(before, Tables.Of(cache));
+        // Its end released the claim: the cache takes the next attempt.
+        cache.BeginMaterializationAttempt().TakeBack();
+        Assert.Equal(before, Tables.Of(cache));
+    }
+
+    [Fact]
+    public async Task CancellationInsideTheFreeze_LeavesNothing_EndsTheClaim_AndTheNextSelectionPublishes()
+    {
+        // The attempt is cancelled when its freeze begins, after the early take-back: the freeze's own check throws,
+        // so the freeze never reports its end, and RunCoreAsync's finally ends the claim of an attempt that has
+        // nothing left to take back.
+        var host = new RunHost();
+        var stage = new SealStage();
+        var root = await ParseDeferred(ThreeBlocks, host, stage);
+        var region = RegionAt(root, "F");
+        var cache = CacheOf(region);
+        var before = Tables.Of(cache);
+
+        for (var selection = 1; selection <= 3; selection++)
+        {
+            using var cancellation = new CancellationTokenSource();
+            var events = new List<bool>();
+            Tables atFreeze = default;
+            stage.AtFreeze = begin =>
+            {
+                events.Add(begin);
+                if (!begin)
+                    return;
+                atFreeze = Tables.Of(cache);
+                cancellation.Cancel();
+            };
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunFlat(root, cancellation.Token));
+            stage.AtFreeze = null;
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+            Assert.Equal([true], events);
+            Assert.Equal(before, atFreeze);
+            Assert.Equal(before, Tables.Of(cache));
+            Assert.Equal(selection, region.MaterializationAttempts);
+            Assert.False(region.IsMaterialized);
+            // The claim ended with the attempt: the cache takes the next one.
+            cache.BeginMaterializationAttempt().TakeBack();
+        }
+
+        // Nothing of the cancelled freezes stands in the way: the same tree publishes, with the twin's value.
+        await AssertValue(root, 6);
+        Assert.True(region.IsMaterialized);
+        Assert.Equal(4, region.MaterializationAttempts);
+        Assert.Equal(before, Tables.Of(cache));
     }
 
     // ── Several units, and a region below a unit ────────────────────────────

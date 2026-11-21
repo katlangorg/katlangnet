@@ -1,6 +1,7 @@
-using System.Diagnostics;
 using System.Text;
 using KatLang.Semantics;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit.Abstractions;
 
 namespace KatLang.Tests;
@@ -16,8 +17,7 @@ namespace KatLang.Tests;
 /// providers (deduplicated, ambiguous, dotted, module-backed, missing) and recovery trees; for
 /// host-constructed listings with tied, adjacent, zero-width and multi-line sites; and for nested
 /// or unordered listings, which keep the scan. They also pin that a query allocates nothing and
-/// that its cost does not grow with the number of sites. Implementation-only optimization: no
-/// editor-visible result changes.
+/// that the number of sites it inspects grows at most logarithmically.
 /// </summary>
 public class SemanticModelPositionLookupTests(ITestOutputHelper output)
 {
@@ -498,14 +498,32 @@ public class SemanticModelPositionLookupTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// A position query does not scan the listing: 64 times as many sites cost far less than 64
-    /// times as much. Measured 2026-11-17: the binary search costs 1.6–1.8 times as much, the
-    /// former scan 62 times. The 16-times bound is generous and the best of five runs is
-    /// compared, so it is not a microbenchmark.
+    /// A position query does not scan the listing. The test counts each query's work, not its
+    /// time. <see cref="SemanticModel.FindResolutionAtCounted"/> runs
+    /// <see cref="SemanticModel.FindResolutionAt"/>'s own search and reports the sites it
+    /// inspected: the sites its binary search compared with the position, or the sites a scan
+    /// visited. The count is the same on every run. The bounds are at least one probe and at most
+    /// ⌊log₂ R⌋ + 1 per query for R sites, the same site instance the public query returns, and
+    /// twice the small total for the large listing (64 times the sites). The small listing is
+    /// checked first, so a query that scans the sites (up to 512 probes there) fails at once. The
+    /// public query itself must also allocate nothing beyond the counter quantum (16 KiB for 8,192
+    /// queries). The former LINQ query allocated a closure, a delegate and an enumerator per call
+    /// (112 bytes, 917,504 for 8,192 queries), even where it bypassed the counted search. Like the
+    /// probe count, this bound does not depend on elapsed time.
     /// </summary>
     [Fact]
     public void PositionQueryCost_DoesNotGrowWithTheSiteCount()
     {
+        // Probes can only measure the algorithm the public entry point delegates to. A private
+        // array scan in the wrapper returns the same results and also allocates zero bytes.
+        var source = File.ReadAllText(Path.Combine(RepoRoot.Find(), "src/KatLang/Semantics/SemanticModel.cs"));
+        var publicQuery = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes()
+            .OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == nameof(SemanticModel.FindResolutionAt));
+        var expression = publicQuery.ExpressionBody?.Expression
+            ?? (publicQuery.Body?.Statements is [ReturnStatementSyntax returned] ? returned.Expression : null);
+        Assert.True(SyntaxFactory.AreEquivalent(SyntaxFactory.ParseExpression("FindResolution<UncountedScopeProbes>(position)"), expression),
+            "FindResolutionAt must delegate its entire search to the query measured by FindResolutionAtCounted.");
+
         static (SemanticModel Model, SourcePosition[] Queries) Listing(int sites)
         {
             var listing = new IdentifierResolution[sites];
@@ -520,35 +538,61 @@ public class SemanticModelPositionLookupTests(ITestOutputHelper output)
             return (model, queries);
         }
 
-        static double BestMilliseconds(SemanticModel model, SourcePosition[] queries)
+        // The binary search halves the R sites with each probe: at most ⌊log₂ R⌋ + 1 probes. A query
+        // that inspects nothing has a disconnected count, so at least one probe is required.
+        static (long Total, int Fewest, int Most) Probes(SemanticModel model, SourcePosition[] queries)
         {
-            var best = double.MaxValue;
-            for (var run = 0; run < 5; run++)
+            var limit = System.Numerics.BitOperations.Log2((uint)model.IdentifierResolutions.Count) + 1;
+            var (total, fewest, most, found) = (0L, int.MaxValue, 0, 0);
+            foreach (var query in queries)
             {
-                var found = 0;
-                var watch = Stopwatch.StartNew();
-                foreach (var query in queries)
-                {
-                    if (model.FindResolutionAt(query) is not null)
-                        found++;
-                }
-
-                watch.Stop();
-                Assert.Equal(queries.Length / 2, found);
-                best = Math.Min(best, watch.Elapsed.TotalMilliseconds);
+                var resolution = model.FindResolutionAtCounted(query, out var probes);
+                Assert.Same(model.FindResolutionAt(query), resolution);
+                Assert.InRange(probes, 1, limit);
+                if (resolution is not null)
+                    found++;
+                total += probes;
+                fewest = Math.Min(fewest, probes);
+                most = Math.Max(most, probes);
             }
 
-            return best;
+            Assert.Equal(queries.Length / 2, found);
+            return (total, fewest, most);
+        }
+
+        static long AllocatedBytes(SemanticModel model, SourcePosition[] queries)
+        {
+            var found = 0;
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            foreach (var query in queries)
+            {
+                if (model.FindResolutionAt(query) is not null)
+                    found++;
+            }
+
+            var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(queries.Length / 2, found);
+            return bytes;
         }
 
         var (small, smallQueries) = Listing(512);
+        var smallProbes = Probes(small, smallQueries);
         var (large, largeQueries) = Listing(32_768);
-        _ = BestMilliseconds(small, smallQueries);
-        var smallTime = BestMilliseconds(small, smallQueries);
-        var largeTime = BestMilliseconds(large, largeQueries);
-        output.WriteLine($"8,192 queries: {smallTime:F3} ms over 512 sites, {largeTime:F3} ms over 32,768 sites");
+        var largeProbes = Probes(large, largeQueries);
+        var smallBytes = AllocatedBytes(small, smallQueries);
+        var largeBytes = AllocatedBytes(large, largeQueries);
+        output.WriteLine(
+            $"8,192 queries: {smallProbes.Total:N0} -> {largeProbes.Total:N0} probes ({(double)largeProbes.Total / smallProbes.Total:F2} times; "
+            + $"{smallProbes.Fewest}-{smallProbes.Most} -> {largeProbes.Fewest}-{largeProbes.Most} per query) over 512 -> 32,768 sites, "
+            + $"{smallBytes:N0} -> {largeBytes:N0} B");
         Assert.True(
-            largeTime < 16 * Math.Max(smallTime, 0.05),
-            $"64 times the sites made the queries {largeTime / smallTime:F1} times slower ({smallTime:F3} -> {largeTime:F3} ms).");
+            largeProbes.Total <= 2 * smallProbes.Total,
+            $"64 times the sites made the queries take {(double)largeProbes.Total / smallProbes.Total:F1} times the probes ({smallProbes.Total:N0} -> {largeProbes.Total:N0}).");
+
+        // The public query allocates nothing. The former LINQ query allocated 112 bytes per call
+        // (917,504 for 8,192 queries) even outside the counted search. The bound is the ~8 KB counter
+        // quantum of a background collection, twice.
+        Assert.True(smallBytes <= 16_384, $"8,192 queries over 512 sites allocated {smallBytes:N0} B.");
+        Assert.True(largeBytes <= 16_384, $"8,192 queries over 32,768 sites allocated {largeBytes:N0} B.");
     }
 }

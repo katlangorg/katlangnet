@@ -1225,10 +1225,6 @@ internal static class PropertyExposureResolver
             public Key(PropertyDependencyGraphBuilder.SummarySeed Content, SummaryScope Level, BoundOwnerSet? Bound)
                 : this(Content, Level, Bound, 0) { }
 
-            /// <summary>A key whose content is text holding no process-wide id, charged at its length.</summary>
-            public Key(string Content, SummaryScope Level, BoundOwnerSet? Bound)
-                : this(Content, Level, Bound, Content.Length) { }
-
             /// <summary>
             /// One unit per entry, plus one per 64 characters of the content's key text — every process-wide id in it
             /// counted at its widest (<see cref="SummaryReference.StableIdWidth"/> digits,

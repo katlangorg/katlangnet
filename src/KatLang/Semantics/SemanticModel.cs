@@ -287,7 +287,10 @@ public sealed class SemanticModel
             ? index.Find<TProbes>(position) ?? new ScopeVisibility(Span: null, Symbols: [])
             : ScanScopes<TProbes>(position);
 
-    /// <summary>Counts the entries a scope query inspects (<see cref="FindScopeAtCounted"/>).</summary>
+    /// <summary>
+    /// Counts the entries a position query inspects (<see cref="FindScopeAtCounted"/>,
+    /// <see cref="FindResolutionAtCounted"/>).
+    /// </summary>
     private interface IScopeProbes
     {
         static abstract void Probe();
@@ -584,13 +587,41 @@ public sealed class SemanticModel
     /// (half-open: the site's first column is inside, the column just past its last
     /// character is not).
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public IdentifierResolution? FindResolutionAt(SourcePosition position)
+        => FindResolution<UncountedScopeProbes>(position);
+
+    /// <summary>
+    /// Test seam: <see cref="FindResolutionAt"/>'s own query, which also reports the sites it
+    /// inspected. These are the sites its binary search compared with the position, at most
+    /// ⌊log₂ R⌋ + 1 for R listed resolutions, or the sites the scan of a listing that is not
+    /// monotone visited. The count depends only on the listing and the position, unlike elapsed
+    /// time. The public query runs the same code with a counter that compiles to nothing.
+    /// </summary>
+    internal IdentifierResolution? FindResolutionAtCounted(SourcePosition position, out int probes)
+    {
+        CountedScopeProbes.Count = 0;
+        var resolution = FindResolution<CountedScopeProbes>(position);
+        probes = CountedScopeProbes.Count;
+        return resolution;
+    }
+
+    // The query behind FindResolutionAt and its counted seam, generic over a struct counter like
+    // FindScope. It is inlined into both, and the public query is not inlined into its callers,
+    // as the pre-seam method (469 bytes) never was. So callers call it exactly as before, and its
+    // body is the pre-seam body (UncountedScopeProbes' calls vanish) except that its three returns
+    // share one epilogue: 453 bytes (measured 2026-11-21, Release, tiering off). Behind a one-line
+    // wrapper that callers inline, every caller re-packed the position for the call instead.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private IdentifierResolution? FindResolution<TProbes>(SourcePosition position)
+        where TProbes : struct, IScopeProbes
     {
         var resolutions = _identifierResolutions;
         if (!ResolutionSitesAreMonotone)
         {
             foreach (var resolution in resolutions)
             {
+                TProbes.Probe();
                 if (resolution.Occurrence.Span.Contains(position))
                     return resolution;
             }
@@ -607,6 +638,7 @@ public sealed class SemanticModel
         var high = resolutions.Length;
         while (low < high)
         {
+            TProbes.Probe();
             var middle = low + ((high - low) >> 1);
             if (resolutions[middle].Occurrence.Span.End > position)
                 high = middle;

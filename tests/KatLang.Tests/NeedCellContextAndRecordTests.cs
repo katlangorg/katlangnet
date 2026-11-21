@@ -488,16 +488,22 @@ public class NeedCellContextAndRecordTests
     }
 
     // A successful VALUE replay preserves both the payload object and the emitted count.
-    private static void AssertSameOutcome<T>(EvalResult<T> expected, EvalResult<T> actual)
+    private static void AssertSameOutcome(EvalResult<Evaluator.CountedResult> expected, EvalResult<Evaluator.CountedResult> actual)
     {
         Assert.Equal(expected.IsError, actual.IsError);
         if (expected.IsError) Assert.Same(expected.Error, actual.Error);
-        else if (expected.Value is Evaluator.CountedResult value)
+        else
         {
-            var replayed = Assert.IsType<Evaluator.CountedResult>(actual.Value);
-            Assert.Same(value.Value, replayed.Value);
-            Assert.Equal(value.EmittedCount, replayed.EmittedCount);
+            Assert.Same(expected.Value.Value, actual.Value.Value);
+            Assert.Equal(expected.Value.EmittedCount, actual.Value.EmittedCount);
         }
+    }
+
+    // A successful CALLABLE replay preserves the algorithm object itself (or the absent callable).
+    private static void AssertSameOutcome(EvalResult<Algorithm?> expected, EvalResult<Algorithm?> actual)
+    {
+        Assert.Equal(expected.IsError, actual.IsError);
+        if (expected.IsError) Assert.Same(expected.Error, actual.Error);
         else Assert.Same(expected.Value, actual.Value);
     }
 

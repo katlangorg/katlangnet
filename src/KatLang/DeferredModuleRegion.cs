@@ -829,7 +829,11 @@ internal sealed class DeferredModuleRegion
             // so nothing below can leave one that no journal would remove. Every ending that does not reach this
             // line, and one inside the freeze, is finished by RunCoreAsync as before.
             lookupWrites?.TakeBackBeforeFreeze();
+            // Diagnostic-only: the unit's freeze, reported to a test's stage observer (none in production) after the
+            // take-back above; a freeze that throws reports no end.
+            observations?.StageObserver?.Invoke("deferred-freeze", true);
             continuation = operation.Freeze(cancellationToken);
+            observations?.StageObserver?.Invoke("deferred-freeze", false);
             return exposed;
         }
         catch (StaticQueryLimitExceededException error)

@@ -42,8 +42,9 @@ namespace KatLang;
 internal sealed class FrontEndTraversalObservations
 {
     // Diagnostic-only phase boundaries; absent on production invocations. Besides the in-pass stages
-    // (completed-publication, retarget-and-seal, analysis-region-reuse) it receives each elaboration
-    // pass's begin and end under a FrontEndPassStage name (PassBoundary).
+    // (completed-publication, retarget-and-seal, analysis-region-reuse, and a deferred unit's
+    // deferred-freeze) it receives each elaboration pass's begin and end under a FrontEndPassStage
+    // name (PassBoundary).
     internal Action<string, bool>? StageObserver { get; set; }
 
     /// <summary>
