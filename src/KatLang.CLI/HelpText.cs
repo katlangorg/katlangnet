@@ -6,18 +6,20 @@ namespace KatLang.CLI;
 internal static class HelpText
 {
     // The transport bounds quoted under --allow-loading are HttpSourceDownloader's
-    // MaxResponseBodyBytes and DownloadTimeout, and the range quoted under
+    // MaxResponseBodyBytes and DownloadTimeout, the range quoted under
     // --min-decimal-places and --max-decimal-places is KatLang's
-    // RunOptions.DecimalPlacesLimit; the help tests pin them to those constants.
+    // RunOptions.DecimalPlacesLimit, and the limits quoted under --code-link are
+    // CodeLink.MaxSourceLength and CodeLink.MaxPayloadLength; the help tests pin them
+    // to those constants.
     public const string Usage = """
         Usage:
           katlang run <file> [--allow-loading] [--random-seed <integer>]
                              [--min-decimal-places <integer>]
-                             [--max-decimal-places <integer>]
+                             [--max-decimal-places <integer>] [--code-link]
           katlang eval <source> [--allow-loading] [--random-seed <integer>]
                                 [--min-decimal-places <integer>]
-                                [--max-decimal-places <integer>]
-          katlang check <file> [--allow-loading]
+                                [--max-decimal-places <integer>] [--code-link]
+          katlang check <file> [--allow-loading] [--code-link]
 
         Options:
           --allow-loading    Allow the program to download and run KatLang
@@ -70,6 +72,21 @@ internal static class HelpText
                              the same count for a fixed number of places
                              (2 and 2 for money). A minimum above the maximum
                              is an error.
+
+          --code-link        After the command's output and diagnostics, write
+                             one last line to stderr with a link that opens
+                             this exact program in the KatLang Playground on
+                             katlang.org and runs it:
+                               katlang-link: https://katlang.org/#code/<payload>
+                             A program that is empty, longer than 50,000 UTF-16
+                             code units, or whose payload would be longer than
+                             8,192 characters has no link, and the line says
+                             why instead:
+                               katlang-link: none: <reason>
+                             The line is written whatever the program does,
+                             once its source has been read; stdout and the exit
+                             status are unchanged. The link carries the source
+                             itself, so anyone who has it can read the program.
 
           --version          Show the KatLang version.
           --help             Show help.

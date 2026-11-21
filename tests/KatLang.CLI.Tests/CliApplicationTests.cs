@@ -432,7 +432,7 @@ public sealed class CliApplicationTests
     /// item slots and strings contribute no host atoms — while the rendered
     /// text doubles per level and passes KatLang's display ceiling.
     /// </summary>
-    private const string DisplayOverflowSource =
+    internal const string DisplayOverflowSource =
         "'first output row'\nToText(x) = x.string\nValues = range(1, 1000).map(ToText)\n"
         + "L0 = [Values, Values]\nL1 = [L0, L0]\nL2 = [L1, L1]\nL3 = [L2, L2]\n"
         + "L4 = [L3, L3]\nL5 = [L4, L4]\nL6 = [L5, L5]\nL7 = [L6, L6]\nL7\n";
@@ -1212,7 +1212,7 @@ public sealed class CliApplicationTests
         Assert.Equal(Success, result.ExitCode);
         Assert.Contains("katlang run <file> [--allow-loading] [--random-seed <integer>]", help);
         Assert.Contains("katlang eval <source> [--allow-loading] [--random-seed <integer>]", help);
-        Assert.Contains("katlang check <file> [--allow-loading]\n", help + "\n");
+        Assert.Contains("katlang check <file> [--allow-loading] [--code-link]\n", help + "\n");
         Assert.DoesNotContain("check <file> [--allow-loading] [--random-seed", help);
         Assert.Contains("\n  --random-seed <integer>\n                     Seed KatLang's random operations (Math.Random,\n", help);
         Assert.Contains("Not valid for check", help);
@@ -1970,12 +1970,12 @@ public sealed class CliApplicationTests
         Assert.Contains(
             "katlang run <file> [--allow-loading] [--random-seed <integer>]\n"
             + "                     [--min-decimal-places <integer>]\n"
-            + "                     [--max-decimal-places <integer>]\n", help);
+            + "                     [--max-decimal-places <integer>] [--code-link]\n", help);
         Assert.Contains(
             "katlang eval <source> [--allow-loading] [--random-seed <integer>]\n"
             + "                        [--min-decimal-places <integer>]\n"
-            + "                        [--max-decimal-places <integer>]\n", help);
-        Assert.Contains("katlang check <file> [--allow-loading]\n", help + "\n");
+            + "                        [--max-decimal-places <integer>] [--code-link]\n", help);
+        Assert.Contains("katlang check <file> [--allow-loading] [--code-link]\n", help + "\n");
         Assert.DoesNotContain("check <file> [--allow-loading] [--m", help);
 
         // The quoted range is KatLang's own, once per option, and the text says what each

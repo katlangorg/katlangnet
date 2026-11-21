@@ -7,8 +7,9 @@ namespace KatLang.CLI;
 /// exit code out.
 ///
 /// <para>The pipeline is deliberately flat — parse the command line, obtain the
-/// source, configure the public KatLang API, run or check, print, exit. No
-/// KatLang language semantics live here: parsing, elaboration, module loading,
+/// source, configure the public KatLang API, run or check, print, with
+/// <c>--code-link</c> write the program's code link last, exit. No KatLang
+/// language semantics live here: parsing, elaboration, module loading,
 /// evaluation, diagnostics, and result formatting all belong to the KatLang
 /// package.</para>
 /// </summary>
@@ -45,10 +46,61 @@ public static class CliApplication
         // terminal-safe diagnostic channel (SEC-07).
         var diagnostics = new DiagnosticWriter(error);
 
+        // With --code-link, the program text, recorded once the command has it and before the
+        // command runs, so that the link line follows whatever happens next: output,
+        // diagnostics, a cancellation, or an unexpected error. A usage or file error stops the
+        // command before it has a source, and so before there is a link.
+        string? linkedSource = null;
+        int exitCode;
         try
         {
-            return await RunCoreAsync(
-                args,
+            var parsed = CommandLine.Parse(args);
+            if (parsed.Error is { } usageError)
+            {
+                // The usage error quotes raw arguments; as one CLI line, any line break or
+                // control character in them is escaped.
+                diagnostics.WriteLine($"{CommandLine.ProgramName}: {usageError}");
+                diagnostics.WriteLine(HelpText.UsageHint);
+                return FailureExitCode;
+            }
+
+            var invocation = parsed.Invocation!;
+
+            switch (invocation.Kind)
+            {
+                case CliCommandKind.Help:
+                    output.WriteLine(HelpText.Usage);
+                    return SuccessExitCode;
+
+                case CliCommandKind.Version:
+                    output.WriteLine(HelpText.VersionLine());
+                    return SuccessExitCode;
+            }
+
+            string source;
+            if (invocation.Kind == CliCommandKind.Eval)
+            {
+                source = invocation.Argument;
+            }
+            else
+            {
+                var fileRead = await TryReadSourceFileAsync(
+                    invocation.Argument,
+                    diagnostics,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!fileRead.Success)
+                    return FailureExitCode;
+
+                source = fileRead.Source;
+            }
+
+            if (invocation.Options.CodeLink)
+                linkedSource = source;
+
+            exitCode = await RunCommandAsync(
+                invocation,
+                source,
                 output,
                 diagnostics,
                 loadingDownloader,
@@ -57,63 +109,32 @@ public static class CliApplication
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             diagnostics.WriteLine($"{CommandLine.ProgramName}: cancelled.");
-            return FailureExitCode;
+            exitCode = FailureExitCode;
         }
         catch (Exception ex)
         {
             diagnostics.WriteUnexpectedError(ex);
-            return FailureExitCode;
+            exitCode = FailureExitCode;
         }
+
+        if (linkedSource is not null)
+            exitCode = WriteCodeLink(linkedSource, output, diagnostics, exitCode);
+
+        return exitCode;
     }
 
-    private static async Task<int> RunCoreAsync(
-        IReadOnlyList<string> args,
+    /// <summary>
+    /// <c>run</c>, <c>eval</c> and <c>check</c> once the source has been obtained: configure the
+    /// public KatLang API from the command options, then run or check.
+    /// </summary>
+    private static async Task<int> RunCommandAsync(
+        CliInvocation invocation,
+        string source,
         TextWriter output,
         DiagnosticWriter error,
         Func<string, CancellationToken, ValueTask<string>>? loadingDownloader,
         CancellationToken cancellationToken)
     {
-        var parsed = CommandLine.Parse(args);
-        if (parsed.Error is { } usageError)
-        {
-            // The usage error quotes raw arguments; as one CLI line, any line break or
-            // control character in them is escaped.
-            error.WriteLine($"{CommandLine.ProgramName}: {usageError}");
-            error.WriteLine(HelpText.UsageHint);
-            return FailureExitCode;
-        }
-
-        var invocation = parsed.Invocation!;
-
-        switch (invocation.Kind)
-        {
-            case CliCommandKind.Help:
-                output.WriteLine(HelpText.Usage);
-                return SuccessExitCode;
-
-            case CliCommandKind.Version:
-                output.WriteLine(HelpText.VersionLine());
-                return SuccessExitCode;
-        }
-
-        string source;
-        if (invocation.Kind == CliCommandKind.Eval)
-        {
-            source = invocation.Argument;
-        }
-        else
-        {
-            var fileRead = await TryReadSourceFileAsync(
-                invocation.Argument,
-                error,
-                cancellationToken).ConfigureAwait(false);
-
-            if (!fileRead.Success)
-                return FailureExitCode;
-
-            source = fileRead.Source;
-        }
-
         // The ONE place the command options map onto the KatLang package. With
         // --allow-loading, KatLang gets a downloader and resolves load /
         // open '<url>' under its own host and module policy; without it,
@@ -231,6 +252,29 @@ public static class CliApplication
             return SuccessExitCode;
 
         return FailureExitCode;
+    }
+
+    /// <summary>
+    /// <c>--code-link</c>: after everything else the command wrote, the program's code link
+    /// (<see cref="CodeLink.Line"/>) as the last line of stderr. Program output is flushed first,
+    /// so a reader of both streams sees the rows before the link. The link is presentation only:
+    /// stdout and the exit code stay what the command made them, unless stdout itself fails
+    /// here, which is reported like any other output failure.
+    /// </summary>
+    private static int WriteCodeLink(string source, TextWriter output, DiagnosticWriter error, int exitCode)
+    {
+        try
+        {
+            output.Flush();
+        }
+        catch (Exception ex)
+        {
+            error.WriteUnexpectedError(ex);
+            exitCode = FailureExitCode;
+        }
+
+        error.WriteLine(CodeLink.Line(source));
+        return exitCode;
     }
 
     private static async Task<(bool Success, string Source)> TryReadSourceFileAsync(

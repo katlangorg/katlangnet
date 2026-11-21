@@ -20,12 +20,15 @@ internal enum CliCommandKind
 /// <see cref="MinDecimalPlaces"/> (<c>--min-decimal-places</c>) and
 /// <see cref="MaxDecimalPlaces"/> (<c>--max-decimal-places</c>) configure evaluation and its
 /// display, and are present only for the evaluating commands (<c>run</c> and <c>eval</c>).
+/// <see cref="CodeLink"/> (<c>--code-link</c>) asks every command that has a source for the
+/// program's code link as the last line of stderr (<see cref="KatLang.CLI.CodeLink"/>).
 /// </summary>
 internal readonly record struct CliOptions(
     bool AllowLoading,
     long? RandomSeed,
     int? MinDecimalPlaces,
-    int? MaxDecimalPlaces);
+    int? MaxDecimalPlaces,
+    bool CodeLink);
 
 /// <summary>
 /// A fully parsed command line. <see cref="Argument"/> is the single positional
@@ -48,8 +51,8 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 
 /// <summary>
 /// The whole v1 grammar:
-/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--min-decimal-places &lt;integer&gt;] [--max-decimal-places &lt;integer&gt;]</c>,
-/// <c>katlang check &lt;file&gt; [--allow-loading]</c>,
+/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--min-decimal-places &lt;integer&gt;] [--max-decimal-places &lt;integer&gt;] [--code-link]</c>,
+/// <c>katlang check &lt;file&gt; [--allow-loading] [--code-link]</c>,
 /// plus the standalone <c>--help</c> and <c>--version</c> flags. It is small
 /// enough that a hand-written parser is clearer — and dependency-free — compared
 /// with a command-line framework.
@@ -89,6 +92,7 @@ internal static class CommandLine
     public const string RandomSeedOption = "--random-seed";
     public const string MinDecimalPlacesOption = "--min-decimal-places";
     public const string MaxDecimalPlacesOption = "--max-decimal-places";
+    public const string CodeLinkOption = "--code-link";
     public const string HelpOption = "--help";
     public const string VersionOption = "--version";
 
@@ -102,6 +106,7 @@ internal static class CommandLine
         long? randomSeed = null;
         int? minDecimalPlaces = null;
         int? maxDecimalPlaces = null;
+        var codeLink = false;
         var helpCount = 0;
         var versionCount = 0;
         var optionsEnded = false;
@@ -155,6 +160,12 @@ internal static class CommandLine
                         return maxError;
 
                     break;
+                case CodeLinkOption:
+                    if (codeLink)
+                        return SpecifiedMoreThanOnce(CodeLinkOption);
+
+                    codeLink = true;
+                    break;
                 case HelpOption:
                     helpCount++;
                     break;
@@ -166,7 +177,7 @@ internal static class CommandLine
             }
         }
 
-        var options = new CliOptions(allowLoading, randomSeed, minDecimalPlaces, maxDecimalPlaces);
+        var options = new CliOptions(allowLoading, randomSeed, minDecimalPlaces, maxDecimalPlaces, codeLink);
 
         if (helpCount > 1)
             return SpecifiedMoreThanOnce(HelpOption);

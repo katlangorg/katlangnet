@@ -223,6 +223,23 @@ The `katlang` CLI's `--allow-loading` flag is off by default: without it, source
 
 These bounds apply per download. KatLang's `SourceProcessingLimits` (decoded per-module source length, aggregate source, module count, import depth) still apply separately to the text the transport returns. A refused or timed-out download is reported as an ordinary `load: failed to fetch` diagnostic with exit code 1.
 
+## Command-line code links
+
+With `--code-link`, `run`, `eval` and `check` end with a link to the program they read. After the command's usual output (rows on stdout, diagnostics on stderr), the CLI flushes stdout and writes one last line to stderr:
+
+```
+katlang-link: https://katlang.org/#code/<payload>
+```
+
+Opening the link shows the program in the KatLang Playground on katlang.org and runs it there. The payload is `LZString.compressToEncodedURIComponent(source)` from lz-string 1.5.0, the format of katlang.org's code links, computed by the CLI itself in the same process as the run. The source is the program text exactly as the command evaluates it — the `eval` argument, or the file's text after the one leading byte order mark the CLI drops — as UTF-16 code units, with line breaks, tabs, trailing spaces and a final line break kept as written; the payload is not percent-encoded.
+
+- The line is written whatever the program does once the CLI has its source: success, a KatLang error at any stage, output over the display limit, even a cancellation. A usage or file error that stops the command before it has the source writes no link line.
+- A program that cannot be a code link gets `katlang-link: none: <reason>` instead: an empty program, one longer than 50,000 UTF-16 code units, or one whose payload would be longer than 8,192 characters.
+- The option changes neither stdout nor the exit status; without it the CLI computes and writes nothing extra. Like every option, it may be written once, anywhere before a bare `--`.
+- The link carries the program's source and nothing else (no results, settings or identity), so anyone who has it can read the program.
+
+For example, `katlang eval --code-link "100 - 3 * 5 ^ 2"` prints `25` on stdout and `katlang-link: https://katlang.org/#code/IwBhAIFpwZnAqcBWcA9cAmIA` on stderr.
+
 ## Reproducible randomness
 
 `Math.Random` / `random` and `Math.RandomInt` / `randomInt` are nondeterministic by default: every evaluation draws from fresh entropy. A host can make one evaluation reproducible by supplying a seed:

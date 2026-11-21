@@ -1,0 +1,65 @@
+{
+  "format": "LZString.compressToEncodedURIComponent(source), lz-string 1.5.0; see docs/code-links.md",
+  "vectors": [
+    {
+      "name": "arithmetic",
+      "source": "100 - 3 * 5 ^ 2",
+      "payload": "IwBhAIFpwZnAqcBWcA9cAmIA",
+      "url": "https://katlang.org/#code/IwBhAIFpwZnAqcBWcA9cAmIA"
+    },
+    {
+      "name": "comments-and-blank-lines",
+      "source": "# One resistor is connected to a 4V power supply.\n\nU = 4\nI = 0.5\nU / I\n",
+      "payload": "MQAg8gdgpiBOUGcCWCAuB7WIUgMboml1SgBMQMQBDEAFgDUQAHdAdyiwQFcmmAbAJ4A6AFAiAqiAC8dEQElpIAAxCArBJAB6EHJFA",
+      "url": "https://katlang.org/#code/MQAg8gdgpiBOUGcCWCAuB7WIUgMboml1SgBMQMQBDEAFgDUQAHdAdyiwQFcmmAbAJ4A6AFAiAqiAC8dEQElpIAAxCArBJAB6EHJFA"
+    },
+    {
+      "name": "latvian",
+      "source": "# Latviski: āčēģīķļņšūž ĀČĒĢĪĶĻŅŠŪŽ\n'Sveika, pasaule!'",
+      "payload": "MQAgMghgLgbglgZwNZwFwkICAhYQEMiAhiQEGpAQdkBAeQEDFAQQ0BBrQED9AEQAEBAYQECRAQIkBAqQEDZAQbkBBRQEANAQFaAgX0AAUAHIAyjACmcJBAA0IAA4QEEAK4AbGQEJxQA",
+      "url": "https://katlang.org/#code/MQAgMghgLgbglgZwNZwFwkICAhYQEMiAhiQEGpAQdkBAeQEDFAQQ0BBrQED9AEQAEBAYQECRAQIkBAqQEDZAQbkBBRQEANAQFaAgX0AAUAHIAyjACmcJBAA0IAA4QEEAK4AbGQEJxQA"
+    },
+    {
+      "name": "quotes-and-special-characters",
+      "source": "'She said \"hi\" {braces} \\ `ticks` $ + - % & ? = / : ;'",
+      "payload": "OQZQFgpgBAzghgSwCZQERgaqBvARgJzgGMIYBfKAHSgAMAXBIgaxhqgBIoBqKAWigCkUAGRQA-FAC8UAPRQAXFADcwIA",
+      "url": "https://katlang.org/#code/OQZQFgpgBAzghgSwCZQERgaqBvARgJzgGMIYBfKAHSgAMAXBIgaxhqgBIoBqKAWigCkUAGRQA-FAC8UAPRQAXFADcwIA"
+    },
+    {
+      "name": "crlf-line-endings",
+      "source": "A = 1\r\nB = 2\r\nA + B\r\n",
+      "payload": "IIAgvCCMCwBQBC4QCY6gNQnnIA",
+      "url": "https://katlang.org/#code/IIAgvCCMCwBQBC4QCY6gNQnnIA"
+    },
+    {
+      "name": "tabs-and-trailing-spaces",
+      "source": "\tX = 1   \n\tX\t\n",
+      "payload": "JADQBAvGCMZwUKY8g",
+      "url": "https://katlang.org/#code/JADQBAvGCMZwUKY8g"
+    },
+    {
+      "name": "supplementary-characters",
+      "source": "'😀 𝄞 𝔸' # emoji, G clef, double-struck A",
+      "payload": "OSXg3AB7AEgsG4eLsYrBuA5d4EDEECmBbA9gKwEsAaCAcQgGMAbDAMxIBMcBXAIxoFoBnAFwCdmFANYQAgkA",
+      "url": "https://katlang.org/#code/OSXg3AB7AEgsG4eLsYrBuA5d4EDEECmBbA9gKwEsAaCAcQgGMAbDAMxIBMcBXAIxoFoBnAFwCdmFANYQAgkA"
+    },
+    {
+      "name": "script-like-text",
+      "source": "'<script>alert(1)</script>' # <img src=x onerror=alert(2)>",
+      "payload": "OQHgzgxgTglgDgFwHwEMA2BTKCAUBGAShAHpJZElgACAYipBgFsBzKsKCAXgA8qB7AHZYofKJ3RZcAJgJIgA",
+      "url": "https://katlang.org/#code/OQHgzgxgTglgDgFwHwEMA2BTKCAUBGAShAHpJZElgACAYipBgFsBzKsKCAXgA8qB7AHZYofKJ3RZcAJgJIgA"
+    },
+    {
+      "name": "single-character",
+      "source": "1",
+      "payload": "IxA",
+      "url": "https://katlang.org/#code/IxA"
+    },
+    {
+      "name": "payload-with-plus-and-minus",
+      "source": "Values = 22, 66, 154\n# {braces} and ~tildes~ | pipes\nValues.sum",
+      "payload": "GoQwNgrgpgzgBAXjgJmQGjgNkxgjAVgBYAoAYjgG8AjAJxAGNYBfOEAOwBM4A-AFwEswHWNzgAfOAAd+k2MVCRYAOhgQAtkA",
+      "url": "https://katlang.org/#code/GoQwNgrgpgzgBAXjgJmQGjgNkxgjAVgBYAoAYjgG8AjAJxAGNYBfOEAOwBM4A-AFwEswHWNzgAfOAAd+k2MVCRYAOhgQAtkA"
+    }
+  ]
+}
