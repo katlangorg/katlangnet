@@ -508,6 +508,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     /// the result reader rejects as malformed.)
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void SupervisedBatches_IsolateACrash_AndKeepEveryFailingReproducer()
     {
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-exhaustive-batches-");
@@ -566,6 +567,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     [Theory]
     [InlineData(BatchOnlyCrashMode, 4)]
     [InlineData(AfterResultsCrashMode, 3)]
+    [Trait("Tier", "Slow")]
     public void AChildCrash_RemainsAFailureWhenEveryStandaloneCasePasses(string workerMode, int count)
     {
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-batch-only-crash-");

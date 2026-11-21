@@ -191,6 +191,19 @@ public class WeightedCostCompositionTests
         return low;
     }
 
+    /// <summary>
+    /// Whether <paramref name="tree"/> fits <paramref name="targetCost"/>, exactly
+    /// <c>MeasureCost(tree) &lt;= targetCost</c> for a target up to the ceiling, by the same monotone
+    /// acceptance <see cref="MeasureCost(object)"/> relies on, in ONE preflight check instead of a
+    /// binary search. The builders ask only this question; every assertion measures the exact cost.
+    /// </summary>
+    private static bool FitsTarget(Expr tree, int targetCost)
+    {
+        if (targetCost < 1 || targetCost > Ceiling)
+            throw new ArgumentOutOfRangeException(nameof(targetCost), targetCost, "A fit check needs a target inside the measurable range.");
+        return AstStructuralPreflight.Check(tree, targetCost, EvaluatorProfile) is null;
+    }
+
     /// <summary>Marginal production cost of one more layer of <paramref name="mechanism"/>.</summary>
     private static int MeasureLayerWeight(WeightedMechanism mechanism)
         => MeasureLayerWeight(mechanism, Ceiling, EvaluatorProfile);
@@ -257,7 +270,7 @@ public class WeightedCostCompositionTests
                     pure = Index.Wrap(pure);
 
                 var pureLayers = 0;
-                while (MeasureCost(first.Wrap(pure)) <= targetCost)
+                while (FitsTarget(first.Wrap(pure), targetCost))
                 {
                     pure = first.Wrap(pure);
                     pureLayers++;
@@ -302,7 +315,7 @@ public class WeightedCostCompositionTests
             while (true)
             {
                 var pair = first.Wrap(second.Wrap(candidateTree));
-                if (MeasureCost(pair) > targetCost)
+                if (!FitsTarget(pair, targetCost))
                     break;
 
                 candidateTree = pair;
@@ -315,13 +328,13 @@ public class WeightedCostCompositionTests
 
             // Extra first layers preserve direction and use any remainder that cannot fit
             // another complete interleaved cycle.
-            while (MeasureCost(first.Wrap(candidateTree)) <= targetCost)
+            while (FitsTarget(first.Wrap(candidateTree), targetCost))
             {
                 candidateTree = first.Wrap(candidateTree);
                 firstCount++;
             }
 
-            if (MeasureCost(second.Wrap(candidateTree)) <= targetCost)
+            if (FitsTarget(second.Wrap(candidateTree), targetCost))
                 continue;
 
             var candidateCost = MeasureCost(candidateTree);
@@ -950,7 +963,7 @@ public class WeightedCostCompositionTests
             while (true)
             {
                 var triple = first.Wrap(second.Wrap(third.Wrap(candidateTree)));
-                if (MeasureCost(triple) > targetCost)
+                if (!FitsTarget(triple, targetCost))
                     break;
 
                 candidateTree = triple;
@@ -961,14 +974,14 @@ public class WeightedCostCompositionTests
                 continue;
 
             var firstCount = cycles;
-            while (MeasureCost(first.Wrap(candidateTree)) <= targetCost)
+            while (FitsTarget(first.Wrap(candidateTree), targetCost))
             {
                 candidateTree = first.Wrap(candidateTree);
                 firstCount++;
             }
 
-            if (MeasureCost(second.Wrap(candidateTree)) <= targetCost
-                || MeasureCost(third.Wrap(candidateTree)) <= targetCost)
+            if (FitsTarget(second.Wrap(candidateTree), targetCost)
+                || FitsTarget(third.Wrap(candidateTree), targetCost))
             {
                 continue;
             }
@@ -1082,7 +1095,7 @@ public class WeightedCostCompositionTests
     private static int LayersAtCeiling(WeightedMechanism weighted, int joinsPerLayer)
     {
         var layers = 0;
-        while (MeasureCost(JoinInterleavedTree(weighted, joinsPerLayer, layers + 1)) <= Ceiling)
+        while (FitsTarget(JoinInterleavedTree(weighted, joinsPerLayer, layers + 1), Ceiling))
             layers++;
         return layers;
     }
@@ -1119,7 +1132,7 @@ public class WeightedCostCompositionTests
 
         // Top up with weight-1 padding innermost so the case really sits on the boundary.
         var pad = targetCost - measured;
-        for (var i = 0; i < pad && MeasureCost(Index.Wrap(tree)) <= targetCost; i++)
+        for (var i = 0; i < pad && FitsTarget(Index.Wrap(tree), targetCost); i++)
             tree = Index.Wrap(tree);
 
         return new CompositionCase(

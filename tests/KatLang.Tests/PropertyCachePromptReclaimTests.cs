@@ -425,6 +425,7 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
     [InlineData("runtime-alias")]
     [InlineData("local-deconstruction")]
     [InlineData(UncachedStatisticsDeconstruction)]
+    [Trait("Tier", "Slow")]
     public async Task PeakWorkingSet_StaysWithinSixteenMiB_FromTenToTheFifthToTenToTheSixthRounds(string variant)
     {
         var few = await PeakWorkingSetAsync(variant, FewRounds);

@@ -18,6 +18,7 @@ public class ContinuousIntegrationPolicyTests
     private const string ValidatePath = ".github/workflows/validate.yml";
     private const string ReleasePath = ".github/workflows/release.yml";
     private const string SemanticNightlyPath = ".github/workflows/semantic-nightly.yml";
+    private const string SlowTierNightlyPath = ".github/workflows/slow-tier-nightly.yml";
     private const string SemanticSweepScriptPath = "scripts/run-semantic-sweeps.ps1";
     private const string DotNetSetupPath = ".github/actions/setup-baseline-dotnet";
     private const string LeanInstallPath = "scripts/install-lean-toolchain.sh";
@@ -53,6 +54,7 @@ public class ContinuousIntegrationPolicyTests
     {
         Assert.True(File.Exists(Absolute(ValidatePath)), $"Missing {ValidatePath}.");
         Assert.True(File.Exists(Absolute(ReleasePath)), $"Missing {ReleasePath}.");
+        Assert.True(File.Exists(Absolute(SlowTierNightlyPath)), $"Missing {SlowTierNightlyPath}.");
     }
 
     [Fact]
@@ -439,6 +441,7 @@ public class ContinuousIntegrationPolicyTests
     [InlineData(ReleasePath, "dotnet-validation", "./scripts/validate-all.ps1 -Phase DotNet")]
     [InlineData(ReleasePath, StackSuiteJob, "./scripts/validate-stack-suites.ps1")]
     [InlineData(ReleasePath, "build", "dotnet publish ")]
+    [InlineData(SlowTierNightlyPath, SlowTierJob, "./scripts/validate-all.ps1 -Phase DotNet -Tier Slow")]
     public void DotNetJobs_SetUpTheBaselineSdkBeforeBuilding(string workflow, string job, string command)
     {
         var section = JobSection(Text(workflow), job);
@@ -1029,6 +1032,75 @@ public class ContinuousIntegrationPolicyTests
             $"The job allows {allowance} s. The measured baseline, a full {perRecipe}-s recipe budget and reporting reserve require {needed} s.");
     }
 
+    // ── The test tiers (owner decisions 6 and 7, 2026-11-20) ─────────────────
+
+    private const string SlowTierJob = "slow-tier";
+
+    /// <summary>
+    /// The .NET phase runs ONE tier: Fast (the default) excludes the Slow trait, Slow selects only it,
+    /// Full runs every test, and a tier that executes no test fails the phase. The filters name the
+    /// trait SlowTierInventoryTests pins, so the tiers split the suite by that one trait and no test
+    /// can drop out of both.
+    /// </summary>
+    [Fact]
+    public void ValidateScript_HasTheFastSlowFullTierContract()
+    {
+        var source = Text("scripts/validate-all.ps1");
+        Assert.Contains("[ValidateSet(\"Fast\", \"Slow\", \"Full\")]", source, StringComparison.Ordinal);
+        Assert.Contains("[string]$Tier = \"Fast\"", source, StringComparison.Ordinal);
+        var excludeSlow = $"{SlowTierInventoryTests.TraitName}!={SlowTierInventoryTests.SlowValue}";
+        var onlySlow = $"{SlowTierInventoryTests.TraitName}={SlowTierInventoryTests.SlowValue}";
+        Assert.Contains($"\"Fast\" {{ \"{excludeSlow}\" }}", source, StringComparison.Ordinal);
+        Assert.Contains($"\"Slow\" {{ \"{onlySlow}\" }}", source, StringComparison.Ordinal);
+        Assert.Contains("default { $null }", source, StringComparison.Ordinal);
+        Assert.Contains("\"--results-directory\", $testResults) + $tierArguments)", source, StringComparison.Ordinal);
+        Assert.Contains("Write-ValidationRecord \"test tier: $Tier; executed tests: $executedTests\"", source, StringComparison.Ordinal);
+        Assert.Contains("throw \"The $Tier tier executed no test.\"", source, StringComparison.Ordinal);
+        // The Release stack suites select their classes by name, whatever the tier.
+        Assert.DoesNotContain("Tier", Text(StackSuiteScriptPath), StringComparison.Ordinal);
+    }
+
+    /// <summary>Pull requests and pushes validate the fast tier, and a release validates the full tier.</summary>
+    [Fact]
+    public void ValidateAndReleaseWorkflows_RunTheFastAndTheFullTier()
+    {
+        var validate = Text(ValidatePath);
+        Assert.Single(Regex.Matches(validate, @"validate-all\.ps1 -Phase DotNet -Tier Fast\n").Cast<Match>());
+        Assert.DoesNotMatch(@"-Tier (?:Slow|Full)\b", validate);
+        var release = Text(ReleasePath);
+        Assert.Single(Regex.Matches(release, @"validate-all\.ps1 -Phase DotNet -Tier Full\n").Cast<Match>());
+        Assert.DoesNotMatch(@"-Tier (?:Fast|Slow)\b", release);
+    }
+
+    /// <summary>
+    /// The slow tier runs on main every night and on demand, never on pull requests or pushes: one
+    /// read-only job that installs the baseline SDK, runs the slow tier through the canonical script,
+    /// and uploads its diagnostics whatever the outcome.
+    /// </summary>
+    [Fact]
+    public void SlowTierNightly_RunsOnlyTheSlowTier_OnScheduleOrDemand()
+    {
+        var source = Text(SlowTierNightlyPath);
+        Assert.Matches(@"(?m)^on:\n  schedule:\n    - cron: ""[0-9*/, -]+""\n  workflow_dispatch:\n\n", source);
+        Assert.DoesNotMatch(@"(?m)^  (?:push|pull_request|pull_request_target|repository_dispatch|workflow_run|workflow_call):", source);
+        Assert.Matches(@"(?m)^permissions:\n  contents: read$", source);
+        Assert.DoesNotContain("contents: write", source, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(source, @"(?m)^  [a-z][a-z-]*:\n    name: ").Cast<Match>());
+        var job = JobSection(source, SlowTierJob);
+        Assert.Matches(@"(?m)^    runs-on: ubuntu-24\.04$", job);
+        Assert.Single(Regex.Matches(job, @"(?m)^    timeout-minutes: [0-9]+$").Cast<Match>());
+        Assert.Single(Regex.Matches(source, @"validate-all\.ps1 -Phase DotNet -Tier Slow\n").Cast<Match>());
+        Assert.DoesNotContain("-Phase Lean", source, StringComparison.Ordinal);
+
+        var run = job.IndexOf("validate-all.ps1 -Phase DotNet -Tier Slow", StringComparison.Ordinal);
+        var upload = job.IndexOf("name: slow-tier-diagnostics", StringComparison.Ordinal);
+        Assert.True(run > 0 && upload > run, "the diagnostics upload must follow the slow-tier step");
+        var step = job[job.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
+        Assert.Contains("if: ${{ always() }}", step, StringComparison.Ordinal);
+        Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^          path: artifacts/validation/$", job);
+    }
+
     [Fact]
     public void ValidateWorkflow_ExposesTheStandaloneToolBuildCheckOnce()
     {
@@ -1130,7 +1202,7 @@ public class ContinuousIntegrationPolicyTests
 
     /// <summary>Every workflow: the shared policies (pins, secrets, checkouts, caches, canonical commands) cover each.</summary>
     private static string WorkflowText()
-        => Text(ValidatePath) + "\n" + Text(ReleasePath) + "\n" + Text(SemanticNightlyPath);
+        => Text(ValidatePath) + "\n" + Text(ReleasePath) + "\n" + Text(SemanticNightlyPath) + "\n" + Text(SlowTierNightlyPath);
 
     private static string WorkflowAndLocalActionText()
         => string.Join("\n", LocalActionPaths.Select(path => Text($"{path}/action.yml")).Prepend(WorkflowText()));

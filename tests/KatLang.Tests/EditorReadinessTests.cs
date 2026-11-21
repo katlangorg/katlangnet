@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using KatLang.ParserFuzz;
 
 namespace KatLang.Tests;
@@ -9,9 +10,49 @@ namespace KatLang.Tests;
 /// without an unexpected exception. "The campaign covered X" is therefore a measured claim rather
 /// than an assumption, and the whole space is proven to stay inside fixed bounds.
 /// </summary>
-public class EditorReadinessTests
+public class EditorReadinessTests(EditorReadinessTests.FirstReports firstReports)
+    : IClassFixture<EditorReadinessTests.FirstReports>
 {
     private static List<EditorParameters> Stratified { get; } = EditorSpace.EnumerateStratified().ToList();
+
+    /// <summary>
+    /// ONE harness execution per stratified point, made when a fact first needs it and shared by the
+    /// three facts that read a report: the whole-harness run, the fingerprint-content check, and the
+    /// first half of the stability check, whose second half is a fresh, independent execution. Each
+    /// execution still runs the harness's own A/A and A/B/A request checks. An exception is kept with
+    /// its point and rethrown, unchanged, by every fact that reads that point.
+    /// </summary>
+    public sealed class FirstReports
+    {
+        private readonly Lazy<IReadOnlyList<FirstReport>> _reports = new(() => [.. Stratified.Select(Execute)]);
+
+        internal IReadOnlyList<FirstReport> All => _reports.Value;
+
+        private static FirstReport Execute(EditorParameters parameters)
+        {
+            try
+            {
+                return new FirstReport(parameters, EditorInvariants.Run(parameters.Encode()), null);
+            }
+            catch (Exception exception)
+            {
+                return new FirstReport(parameters, null, ExceptionDispatchInfo.Capture(exception));
+            }
+        }
+    }
+
+    internal sealed record FirstReport(EditorParameters Parameters, EditorReport? Report, ExceptionDispatchInfo? Failure)
+    {
+        /// <summary>The report, or the harness exception rethrown with its original stack.</summary>
+        public EditorReport Value
+        {
+            get
+            {
+                Failure?.Throw();
+                return Report!;
+            }
+        }
+    }
 
     [Fact]
     public void TheStratifiedSpace_ReachesEveryTemplateSurfaceCursorEditAndMode()
@@ -27,6 +68,7 @@ public class EditorReadinessTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void EveryStratifiedPoint_RunsTheWholeHarnessWithoutAnUnexpectedException()
     {
         var outcomes = new SortedSet<string>(StringComparer.Ordinal);
@@ -34,19 +76,17 @@ public class EditorReadinessTests
         var unavailableModules = 0;
         var built = 0;
 
-        foreach (var parameters in Stratified)
+        foreach (var (parameters, first, failure) in firstReports.All)
         {
-            EditorReport report;
-            try
+            if (failure is not null)
             {
-                report = EditorInvariants.Run(parameters.Encode());
-            }
-            catch (Exception exception)
-            {
+                var exception = failure.SourceException;
                 Assert.Fail(
                     $"Editor harness threw on {parameters}:\n  {exception.GetType().Name}: {exception.Message}");
                 return;
             }
+
+            var report = first!;
 
             Assert.NotNull(report.Fingerprint);
             Assert.True(
@@ -76,12 +116,13 @@ public class EditorReadinessTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void EveryStratifiedPoint_ProducesAStableFingerprint()
     {
-        foreach (var parameters in Stratified)
+        foreach (var shared in firstReports.All)
         {
-            var payload = parameters.Encode();
-            var first = EditorInvariants.Run(payload);
+            var payload = shared.Parameters.Encode();
+            var first = shared.Value;
             var second = EditorInvariants.Run(payload);
             Assert.Equal(first.Fingerprint, second.Fingerprint);
             Assert.Equal(first.Case.HexUnits, second.Case.HexUnits);
@@ -90,6 +131,7 @@ public class EditorReadinessTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void Fingerprints_CarryNothingThatCouldDifferBetweenRuns()
     {
         string[] forbidden =
@@ -97,9 +139,10 @@ public class EditorReadinessTests
             "threadid", "managedthread", "processid", "elapsed", "ticks", "hashcode", "@0x", "system.", "\n",
         ];
 
-        foreach (var parameters in Stratified)
+        foreach (var shared in firstReports.All)
         {
-            var report = EditorInvariants.Run(parameters.Encode());
+            var parameters = shared.Parameters;
+            var report = shared.Value;
             var lowered = report.Fingerprint.ToLowerInvariant();
             foreach (var token in forbidden)
                 Assert.False(

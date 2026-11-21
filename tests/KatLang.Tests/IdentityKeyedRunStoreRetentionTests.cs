@@ -350,6 +350,7 @@ public sealed class IdentityKeyedRunStorePeakMemoryProcessTests(ITestOutputHelpe
     [InlineData("flat-binder-per-site")]
     [InlineData("flat-binder-builtin-per-site")]
     [InlineData("observed-meta")]
+    [Trait("Tier", "Slow")]
     public async Task PeakWorkingSet_StaysWithinFortyMiB_FromTenToTheFifthToTenToTheSixthRounds(string variant)
     {
         if (ForcedInvocationPlansHook.Forced && variant != "observed-meta") return; // no per-site run

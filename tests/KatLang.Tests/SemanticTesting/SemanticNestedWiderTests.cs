@@ -55,6 +55,7 @@ public class SemanticNestedWiderTests(ITestOutputHelper output)
     /// parses with no error diagnostic: the recipe writes no intended refusal.
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void EveryWiderProgram_ParsesCleanly_InEveryMember()
     {
         var options = new RunOptions { HostOperations = MetamorphicHostFixture.Synchronous().Operations };

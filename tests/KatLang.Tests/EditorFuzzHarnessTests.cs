@@ -89,6 +89,7 @@ public class EditorFuzzHarnessTests
     // ── Replay determinism and isolation ─────────────────────────────────────
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void RepeatedRuns_AreIdentical_AndIndependentAcrossInterleaving()
     {
         var payloads = EditorSpace.EnumerateStratified().Take(400).Select(p => p.Encode()).ToList();

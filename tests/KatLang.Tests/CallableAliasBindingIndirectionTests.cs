@@ -672,7 +672,29 @@ public class CallableAliasBindingIndirectionTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(ChainCases))]
+    [Trait("Tier", "Slow")]
     public void AliasChains_NormalizeOnAOneMebibyteStack(int length, string declarations, string target, string call, decimal expected)
+        => AssertAliasChainNormalizesOnAOneMebibyteStack(length, declarations, target, call, expected);
+
+    /// <summary>The per-pull-request slice of the theory above: every target at every length below 10,000 links.</summary>
+    [Theory]
+    [MemberData(nameof(ChainCasesUpToAThousandLinks))]
+    public void AliasChains_NormalizeOnAOneMebibyteStack_UpToAThousandLinks(int length, string declarations, string target, string call, decimal expected)
+        => AssertAliasChainNormalizesOnAOneMebibyteStack(length, declarations, target, call, expected);
+
+    public static TheoryData<int, string, string, string, decimal> ChainCasesUpToAThousandLinks()
+    {
+        var data = new TheoryData<int, string, string, string, decimal>();
+        foreach (var row in ChainCases())
+        {
+            if ((int)row[0] < 10_000)
+                data.Add((int)row[0], (string)row[1], (string)row[2], (string)row[3], (decimal)row[4]);
+        }
+
+        return data;
+    }
+
+    private static void AssertAliasChainNormalizesOnAOneMebibyteStack(int length, string declarations, string target, string call, decimal expected)
     {
         // The first call chases the chain once (iteratively — a 1 MiB thread survives any length) and
         // remembers every link; a thousand further calls through the last link, as a callback, reuse it.
@@ -753,7 +775,29 @@ public class CallableAliasBindingIndirectionTests(ITestOutputHelper output)
     /// </summary>
     [Theory]
     [MemberData(nameof(MemberPathChainCases))]
+    [Trait("Tier", "Slow")]
     public void MemberPathAliasChains_NormalizeOnAOneMebibyteStack(int length, bool mixed)
+        => AssertMemberPathAliasChainNormalizesOnAOneMebibyteStack(length, mixed);
+
+    /// <summary>The per-pull-request slice of the theory above: both forms at every length below 10,000 links.</summary>
+    [Theory]
+    [MemberData(nameof(MemberPathChainCasesUpToAThousandLinks))]
+    public void MemberPathAliasChains_NormalizeOnAOneMebibyteStack_UpToAThousandLinks(int length, bool mixed)
+        => AssertMemberPathAliasChainNormalizesOnAOneMebibyteStack(length, mixed);
+
+    public static TheoryData<int, bool> MemberPathChainCasesUpToAThousandLinks()
+    {
+        var data = new TheoryData<int, bool>();
+        foreach (var row in MemberPathChainCases())
+        {
+            if ((int)row[0] < 10_000)
+                data.Add((int)row[0], (bool)row[1]);
+        }
+
+        return data;
+    }
+
+    private static void AssertMemberPathAliasChainNormalizesOnAOneMebibyteStack(int length, bool mixed)
     {
         var source = MemberPathChain(length, mixed);
         var engine = OnOneMebibyteStack(() => KatLangEngine.Run(source));
@@ -826,7 +870,22 @@ public class CallableAliasBindingIndirectionTests(ITestOutputHelper output)
     [InlineData(3)]
     [InlineData(1_000)]
     [InlineData(10_000)]
+    [Trait("Tier", "Slow")]
     public async Task AlgorithmLinkChains_ReportTheSameArityMismatchOnEveryRoute(int length)
+        => await AssertAlgorithmLinkChainReportsTheArityMismatchOnEveryRoute(length);
+
+    /// <summary>
+    /// The per-pull-request slice of the theory above, without the 10,000-link row. A thousand links
+    /// still exhausted a 1 MiB stack before the route decisions stopped nesting host frames (about 300
+    /// did), so this row still tells recursion from iteration.
+    /// </summary>
+    [Theory]
+    [InlineData(3)]
+    [InlineData(1_000)]
+    public async Task AlgorithmLinkChains_ReportTheSameArityMismatchOnEveryRoute_UpToAThousandLinks(int length)
+        => await AssertAlgorithmLinkChainReportsTheArityMismatchOnEveryRoute(length);
+
+    private static async Task AssertAlgorithmLinkChainReportsTheArityMismatchOnEveryRoute(int length)
     {
         var source = AlgorithmLinkChain(length);
         Assert.Equal(AlgorithmLinkChainOutcome, await Outcome(source));

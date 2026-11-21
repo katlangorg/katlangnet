@@ -1,7 +1,14 @@
 [CmdletBinding()]
 param(
     [ValidateSet("All", "DotNet", "Lean")]
-    [string]$Phase = "All"
+    [string]$Phase = "All",
+
+    # The .NET test tier (owner decisions 6 and 7, 2026-11-20). Slow tests carry
+    # [Trait("Tier", "Slow")] and are pinned by SlowTierInventoryTests: Fast runs every other test,
+    # Slow runs only them, Full runs both. Local V3 and every pull request use Fast (plus the slow
+    # tests of the touched area, AGENTS.md coverage map); the nightly job runs Slow; a release Full.
+    [ValidateSet("Fast", "Slow", "Full")]
+    [string]$Tier = "Fast"
 )
 
 $ErrorActionPreference = "Stop"
@@ -367,7 +374,7 @@ function Initialize-ValidationDiagnostics {
 function Write-ValidationEnvironment {
     try {
         $runtime = [System.Runtime.InteropServices.RuntimeInformation]
-        Write-ValidationRecord "validate-all.ps1 -Phase $Phase"
+        Write-ValidationRecord "validate-all.ps1 -Phase $Phase -Tier $Tier"
         Write-ValidationRecord "started (UTC): $([DateTime]::UtcNow.ToString('o'))"
         Write-ValidationRecord "host: $($runtime::OSDescription); $($runtime::OSArchitecture); PowerShell $($PSVersionTable.PSVersion); $([Environment]::ProcessorCount) processors"
         foreach ($name in @("GITHUB_WORKFLOW", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_REF", "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion")) {
@@ -467,6 +474,25 @@ function Write-TestResultSummary {
     catch {
         Write-ValidationWarning "Could not summarize the test results: $($_.Exception.Message)"
     }
+}
+
+function Get-ExecutedTestCount {
+    param([Parameter(Mandatory = $true)][string]$Directory)
+
+    # A gate, not an observation: a tier that executed nothing must fail, so a TRX that cannot be read
+    # fails the phase instead of counting as zero.
+    $executed = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath $Directory -Filter "*.trx" -File)) {
+        $trx = [xml](Get-Content -LiteralPath $file.FullName -Raw)
+        $ns = [System.Xml.XmlNamespaceManager]::new($trx.NameTable)
+        $ns.AddNamespace("t", "http://microsoft.com/schemas/VisualStudio/TeamTest/2010")
+        $counters = $trx.SelectSingleNode("/t:TestRun/t:ResultSummary/t:Counters", $ns)
+        if ($null -ne $counters) {
+            $executed += [int]$counters.GetAttribute("executed")
+        }
+    }
+
+    return $executed
 }
 
 function Invoke-ValidationPhase {
@@ -592,21 +618,35 @@ try {
             Invoke-Native -FilePath "dotnet" -Arguments @(
                 "build", "./KatLang.slnx", "-p:UseSharedCompilation=false")
 
-            Write-Section "C# test suite"
+            Write-Section "C# test suite ($Tier tier)"
             # One TRX per test project: the logger reserves each prefix_framework_timestamp file
             # with CreateNew and moves to the next free name, so projects never overwrite each other.
             $testResults = Join-Path $diagnosticsDirectory "test-results"
             $testProjects = (Select-String -LiteralPath "./KatLang.slnx" -Pattern 'Path="tests/' -AllMatches).Matches.Count
+            $tierFilter = switch ($Tier) {
+                "Fast" { "Tier!=Slow" }
+                "Slow" { "Tier=Slow" }
+                default { $null }
+            }
+            $tierArguments = if ($null -ne $tierFilter) { @("--filter", $tierFilter) } else { @() }
+            Write-ValidationRecord "test tier: $Tier; filter: $(if ($null -ne $tierFilter) { $tierFilter } else { '(none: every test)' })"
             $inheritedTestDiagnostics = [Environment]::GetEnvironmentVariable($testDiagnosticsVariable)
             [Environment]::SetEnvironmentVariable($testDiagnosticsVariable, $diagnosticsDirectory)
             try {
-                Invoke-Native -FilePath "dotnet" -Arguments @(
+                Invoke-Native -FilePath "dotnet" -Arguments (@(
                     "test", "./KatLang.slnx", "-p:UseSharedCompilation=false", "--no-build",
-                    "--logger", "trx;LogFilePrefix=katlang", "--results-directory", $testResults)
+                    "--logger", "trx;LogFilePrefix=katlang", "--results-directory", $testResults) + $tierArguments)
             }
             finally {
                 [Environment]::SetEnvironmentVariable($testDiagnosticsVariable, $inheritedTestDiagnostics)
                 Write-TestResultSummary -Directory $testResults -ExpectedFiles $testProjects
+            }
+
+            $executedTests = Get-ExecutedTestCount -Directory $testResults
+            Write-ValidationRecord "test tier: $Tier; executed tests: $executedTests"
+            Write-Host "$Tier tier: $executedTests test(s) executed."
+            if ($executedTests -eq 0) {
+                throw "The $Tier tier executed no test."
             }
 
             Write-Section "Git diff check"

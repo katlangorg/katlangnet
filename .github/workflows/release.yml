@@ -92,9 +92,10 @@ jobs:
       - name: Install baseline .NET SDK from global.json
         uses: ./.github/actions/setup-baseline-dotnet
 
+      # The full tier: the per-PR fast tier plus the nightly slow tier, on the release commit.
       - name: Validate the release commit with .NET
         shell: pwsh
-        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet
+        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet -Tier Full
 
   lean-validation:
     name: Lean validation

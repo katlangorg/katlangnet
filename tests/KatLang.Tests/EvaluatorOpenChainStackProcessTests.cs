@@ -162,6 +162,7 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
     /// and timing during the sweep.
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task OpenChain_NeverCrashes_UnderCpuLoad()
         => await RunProbeChild(nameof(OpenChainWindow_ProbeChild), stress: true);
 

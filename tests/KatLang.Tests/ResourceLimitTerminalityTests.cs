@@ -896,7 +896,36 @@ public class ResourceLimitTerminalityTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AbsorptionShapedPrograms))]
+    [Trait("Tier", "Slow")]
     public void TheLimitLaw_ALimitMayStopARunButNeverChangeItsValue(string shape, string source)
+        => AssertTheLimitLaw(shape, source, [3, 7]);
+
+    /// <summary>
+    /// The per-pull-request slice of the limit law above: five of its shapes (a fixed argument, a
+    /// repeated name, a loop step, a string and the self-reference) under one seed, every limit value of
+    /// every dimension. The slow tier runs all seventeen shapes under both seeds.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AbsorptionShapedProgramSlice))]
+    public void TheLimitLaw_ALimitMayStopARunButNeverChangeItsValue_ForFiveShapes(string shape, string source)
+        => AssertTheLimitLaw(shape, source, [3]);
+
+    public static TheoryData<string, string> AbsorptionShapedProgramSlice
+    {
+        get
+        {
+            var slice = new TheoryData<string, string>();
+            foreach (var row in AbsorptionShapedPrograms)
+            {
+                if (row[0] is "fixed" or "repeated-name" or "loop-step" or "string" or "self-reference")
+                    slice.Add((string)row[0], (string)row[1]);
+            }
+
+            return slice;
+        }
+    }
+
+    private static void AssertTheLimitLaw(string shape, string source, long[] seeds)
     {
         _ = shape;
         var sweeps = new (string Name, int From, int To, Func<int, EvaluationLimits> Make)[]
@@ -909,7 +938,7 @@ public class ResourceLimitTerminalityTests
             ("MaxMaterializedStringChars", 1, 120, static n => new EvaluationLimits { MaxMaterializedStringChars = n }),
         };
 
-        foreach (var seed in new long[] { 3, 7 })
+        foreach (var seed in seeds)
         {
             var reference = Outcome(source, seed, limits: null);
             foreach (var (name, from, to, make) in sweeps)

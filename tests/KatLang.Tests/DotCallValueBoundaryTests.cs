@@ -143,9 +143,27 @@ public class DotCallValueBoundaryTests
 
     [Theory]
     [MemberData(nameof(Receivers))]
+    [Trait("Tier", "Slow")]
     public void DottedCall_AssemblesTheArgumentsOfTheDirectCall(string receiver)
+        => AssertDottedCallAssemblesTheArgumentsOfTheDirectCall(receiver, Callees);
+
+    /// <summary>
+    /// The per-pull-request slice of the theory above: every receiver against a quarter of the callee
+    /// shapes, a different quarter for consecutive receivers, so every callee shape still meets about
+    /// seven receivers of different kinds and origins. The slow tier checks every pair.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Receivers))]
+    public void DottedCall_AssemblesTheArgumentsOfTheDirectCall_ForARotatingQuarterOfTheCallees(string receiver)
     {
-        foreach (var (callee, extraArgs) in Callees)
+        var offset = Receivers.Cast<object[]>().Select(static row => (string)row[0]).ToList().IndexOf(receiver);
+        Assert.True(offset >= 0, $"{receiver} is not a receiver of the full theory.");
+        AssertDottedCallAssemblesTheArgumentsOfTheDirectCall(receiver, [.. Callees.Where((_, index) => (index + offset) % 4 == 0)]);
+    }
+
+    private static void AssertDottedCallAssemblesTheArgumentsOfTheDirectCall(string receiver, (string Callee, string ExtraArgs)[] callees)
+    {
+        foreach (var (callee, extraArgs) in callees)
         {
             foreach (var spread in new[] { false, true })
             {

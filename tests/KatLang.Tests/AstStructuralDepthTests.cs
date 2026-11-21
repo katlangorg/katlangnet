@@ -2024,6 +2024,7 @@ public class AstStructuralDepthProcessTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task DeepHostAsts_NativeRecordEqualityAndHashing_AreStackSafe_InSubprocess()
         => await RunProbeChild(nameof(NativeRecordEqualityAndHashing_ProbeChild));
 

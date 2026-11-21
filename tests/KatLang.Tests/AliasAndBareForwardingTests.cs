@@ -357,11 +357,31 @@ public class AliasAndBareForwardingTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AliasCalleeIndexes))]
+    [Trait("Tier", "Slow")]
     public async Task AnAlias_IsItsCallee_ForEverySupply(int calleeIndex)
+        => await AssertAnAliasIsItsCallee(calleeIndex, AliasSupplies);
+
+    /// <summary>
+    /// The per-pull-request slice of the transparency law above: every callee shape under eight of its
+    /// supplies (nothing, two arguments, a sequence, a list, effects, a failure, a callable and random
+    /// draws). The slow tier runs every supply.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AliasCalleeIndexes))]
+    public async Task AnAlias_IsItsCallee_ForEightRepresentativeSupplies(int calleeIndex)
+        => await AssertAnAliasIsItsCallee(calleeIndex, AliasSupplySlice);
+
+    private static readonly string[] AliasSupplySlice =
+    [
+        .. AliasSupplies.Where(static supply => supply is ""
+            or "7, 8" or "(1, 2)" or "[1, 2]" or "trace(7), trace(7)" or "7, Bad" or "Inc" or "randomInt(0, 9), randomInt(0, 9)"),
+    ];
+
+    private static async Task AssertAnAliasIsItsCallee(int calleeIndex, string[] supplies)
     {
         var declaration = Vocabulary + AliasCallees[calleeIndex] + "\n";
         var callee = CalleeName(AliasCallees[calleeIndex]);
-        foreach (var supply in AliasSupplies)
+        foreach (var supply in supplies)
         {
             var direct = await OnEveryRoute(declaration + $"{callee}({supply})", seed: 11);
             var alias = await OnEveryRoute(declaration + $"Al1 = {callee}\nAl1({supply})", seed: 11);

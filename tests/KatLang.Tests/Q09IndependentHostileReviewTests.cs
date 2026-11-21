@@ -38,7 +38,64 @@ public class Q09IndependentHostileReviewTests
         }
     }
 
-    private static async Task<Seen> Run(string source, int route, EvaluationLimits? limits = null,
+    /// <summary>Forwards the shared trace operation of a <see cref="Fixture"/> to the run in progress.</summary>
+    private sealed class TraceTarget
+    {
+        private Func<Result, Result>? _current;
+
+        public Result Trace(Result value)
+            => (_current ?? throw new InvalidOperationException("A shared trace operation was called outside a run."))(value);
+
+        public RunScope Enter(Func<Result, Result> trace)
+        {
+            _current = trace;
+            return new RunScope(this);
+        }
+
+        public readonly struct RunScope(TraceTarget target) : IDisposable
+        {
+            public void Dispose() => target._current = null;
+        }
+    }
+
+    /// <summary>One elaborated source with the host operations it was parsed with.</summary>
+    private sealed record Fixture(Expr.AlgorithmExpr Program, HostOperations Operations, TraceTarget Target);
+
+    // Every run of one source reuses one elaboration per host-operation kind: the scans below run each
+    // source on three routes under many limits, and their padded sources reach 32,768 rows. The tree and
+    // its host operations stay the pair one parse produced, and the operations forward to the current
+    // run's trace, so effects, cancellation, caches and budgets stay per run. Runs of one source are
+    // consecutive, so only the current source's fixtures are kept.
+    private string? _fixtureSource;
+    private readonly Dictionary<bool, Fixture> _fixtures = [];
+
+    private Fixture FixtureFor(string source, bool suspend)
+    {
+        if (!string.Equals(_fixtureSource, source, StringComparison.Ordinal))
+        {
+            _fixtures.Clear();
+            _fixtureSource = source;
+        }
+
+        if (_fixtures.TryGetValue(suspend, out var fixture))
+            return fixture;
+
+        var target = new TraceTarget();
+        var operations = HostOperations.Create(HostOperation.Create("trace", (args, _) => target.Trace(args[0]), "v"));
+        if (suspend)
+            operations = HostOperations.Create(HostOperation.CreateAsync("trace", async (args, _) =>
+            {
+                await Task.Yield();
+                return target.Trace(args[0]);
+            }, "v"));
+        var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
+        Assert.False(parsed.HasErrors, $"Illegal fixture:\n{source}\n{string.Join("\n", parsed.Diagnostics)}");
+        fixture = new Fixture(new Expr.AlgorithmExpr(parsed.Root), operations, target);
+        _fixtures[suspend] = fixture;
+        return fixture;
+    }
+
+    private async Task<Seen> Run(string source, int route, EvaluationLimits? limits = null,
         int cancelAt = 0, bool suspend = false)
     {
         using var cancellation = new CancellationTokenSource();
@@ -49,16 +106,10 @@ public class Q09IndependentHostileReviewTests
             if (cancelAt > 0 && effects.Count == cancelAt) cancellation.Cancel();
             return value;
         }
-        var operations = HostOperations.Create(HostOperation.Create("trace", (args, _) => Trace(args[0]), "v"));
-        if (suspend)
-            operations = HostOperations.Create(HostOperation.CreateAsync("trace", async (args, _) =>
-            {
-                await Task.Yield();
-                return Trace(args[0]);
-            }, "v"));
-        var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
-        Assert.False(parsed.HasErrors, $"Illegal fixture:\n{source}\n{string.Join("\n", parsed.Diagnostics)}");
-        var program = new Expr.AlgorithmExpr(parsed.Root);
+        var fixture = FixtureFor(source, suspend);
+        using var run = fixture.Target.Enter(Trace);
+        var operations = fixture.Operations;
+        var program = fixture.Program;
         var loops = new LoopOptimizationDiagnostics();
         var pipelines = new SequencePipelineDiagnostics();
         var syncCache = new WatchingCache();
@@ -210,25 +261,46 @@ public class Q09IndependentHostileReviewTests
         Console.WriteLine($"Independent corpus: programs={programs}; runs={runs}; mismatches=0");
     }
 
+    private static readonly string[] RawTargetBodies =
+    [
+        "Step(s) = -(-(s + 1))\nrepeat(Step({ trace(2) }), 7)",
+        "Step(s) = if(0 < s < 8 != false, s + 1, s)\nrepeat(Step({ trace(2) }), 7)",
+        "Step(s) = { T = s + 1\n T() + if(true, T, s) }\nrepeat(Step({ trace(2) }), 7)",
+        "range(trace(1), trace(5)).filter({ trace(x) mod 2 == 0 }).count",
+        "Step(s) = if(true, s, 0)\nrepeat(Step({ trace(7) }), 1)",
+        // Q-26 changes planner coverage here; move checkpoint blocks through the inner
+        // invocation and the subsequent row as well as through a spread handover.
+        "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib(trace(n), n), 2), n + 1\nrepeat(Step(0, 0), 3)",
+        "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib(trace(a), b), 2)* }\nrepeat(Step(0, 1), 3)",
+    ];
+
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task ExactRawTargets_AndEveryTransitionNearBulkBoundary_OnThreeRoutes()
     {
-        string[] sources = [
-            "Step(s) = -(-(s + 1))\nrepeat(Step({ trace(2) }), 7)",
-            "Step(s) = if(0 < s < 8 != false, s + 1, s)\nrepeat(Step({ trace(2) }), 7)",
-            "Step(s) = { T = s + 1\n T() + if(true, T, s) }\nrepeat(Step({ trace(2) }), 7)",
-            "range(trace(1), trace(5)).filter({ trace(x) mod 2 == 0 }).count",
-            "Step(s) = if(true, s, 0)\nrepeat(Step({ trace(7) }), 1)",
-            // Q-26 changes planner coverage here; move checkpoint blocks through the inner
-            // invocation and the subsequent row as well as through a spread handover.
-            "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib(trace(n), n), 2), n + 1\nrepeat(Step(0, 0), 3)",
-            "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib(trace(a), b), 2)* }\nrepeat(Step(0, 1), 3)",
-        ];
+        var runs = await ScanRawTargets([4095, 4096, 4097, 8191, 8192, 8193, 12287, 12288, 12289, 16403, 32768], static _ => true);
+        Console.WriteLine($"Exact raw targets and moving-boundary runs={runs}; mismatches=0");
+    }
+
+    /// <summary>
+    /// The per-pull-request slice of the scan above: every body at the first bulk boundary (4095, 4096
+    /// and 4097 raw checkpoints) on all three routes, and the moving batch-end checkpoint of the first
+    /// body. The slow tier runs every target and slides every body.
+    /// </summary>
+    [Fact]
+    public async Task ExactRawTargets_AtTheFirstBulkBoundary_OnThreeRoutes()
+    {
+        var runs = await ScanRawTargets([4095, 4096, 4097], static body => body == RawTargetBodies[0]);
+        Console.WriteLine($"Exact raw targets at the first boundary runs={runs}; mismatches=0");
+    }
+
+    private async Task<int> ScanRawTargets(long[] targets, Func<string, bool> slides)
+    {
         var runs = 0;
-        foreach (var body in sources)
+        foreach (var body in RawTargetBodies)
         {
             var baseline = await Run(body, 0);
-            foreach (var target in new long[] { 4095, 4096, 4097, 8191, 8192, 8193, 12287, 12288, 12289, 16403, 32768 })
+            foreach (var target in targets)
             {
                 var padded = string.Concat(Enumerable.Repeat("0\n", checked((int)(target - baseline.Raw)))) + body;
                 var expected = await Run(padded, 0);
@@ -242,6 +314,8 @@ public class Q09IndependentHostileReviewTests
                     runs += 3;
                 }
             }
+            if (!slides(body))
+                continue;
             // Slide the batch-end checkpoint over every logical point of the operation,
             // rather than only measuring the completed total on either side of a block.
             for (var prefix = 4096 - baseline.Raw - 2; prefix <= 4096; prefix++)
@@ -257,7 +331,7 @@ public class Q09IndependentHostileReviewTests
                 }
             }
         }
-        Console.WriteLine($"Exact raw targets and moving-boundary runs={runs}; mismatches=0");
+        return runs;
     }
 
     [Theory]

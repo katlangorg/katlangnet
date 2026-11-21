@@ -768,7 +768,20 @@ public class BudgetCrossTalkMatrixTests
     /// probe values, singly and in pairs, on both sides of the primary boundary.
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void BudgetConfiguration_UnrelatedLimitValueDoesNotChangeVerdict()
+        => AssertUnrelatedLimitValuesDoNotChangeTheVerdict(everyPairValue: true);
+
+    /// <summary>
+    /// The per-pull-request slice of the value sweep above: every unrelated limit at every non-binding
+    /// value, and every pair of unrelated limits at their first non-binding values. The slow tier sweeps
+    /// every pair at every combination of their values.
+    /// </summary>
+    [Fact]
+    public void BudgetConfiguration_UnrelatedLimitValueDoesNotChangeVerdict_ForEveryPairAtItsFirstValues()
+        => AssertUnrelatedLimitValuesDoNotChangeTheVerdict(everyPairValue: false);
+
+    private static void AssertUnrelatedLimitValuesDoNotChangeTheVerdict(bool everyPairValue)
     {
         var failures = new List<string>();
         var executions = 0;
@@ -801,9 +814,9 @@ public class BudgetCrossTalkMatrixTests
                     {
                         for (var j = i + 1; j < others.Length; j++)
                         {
-                            foreach (var vi in others[i].NonBindingValues)
+                            foreach (var vi in everyPairValue ? others[i].NonBindingValues : others[i].NonBindingValues.Take(1))
                             {
-                                foreach (var vj in others[j].NonBindingValues)
+                                foreach (var vj in everyPairValue ? others[j].NonBindingValues : others[j].NonBindingValues.Take(1))
                                 {
                                     executions++;
                                     AssertNoCrossTalk(
@@ -981,7 +994,21 @@ public class BudgetCrossTalkMatrixTests
     /// surfaces do, under every limit subset.
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void EngineAgreesOnSuccessWithTheStructuredSurfaces()
+        => AssertEngineAgreesOnSuccessWithTheStructuredSurfaces(static (_, _) => true);
+
+    /// <summary>
+    /// The per-pull-request slice of the agreement matrix above: for every case, primary and probe, no
+    /// other limit, each other limit alone, and all of them together. The slow tier runs every subset of
+    /// the other limits.
+    /// </summary>
+    [Fact]
+    public void EngineAgreesOnSuccessWithTheStructuredSurfaces_ForNoneEachAndAllOtherLimits()
+        => AssertEngineAgreesOnSuccessWithTheStructuredSurfaces(
+            static (mask, width) => System.Numerics.BitOperations.PopCount((uint)mask) <= 1 || mask == (1 << width) - 1);
+
+    private static void AssertEngineAgreesOnSuccessWithTheStructuredSurfaces(Func<int, int, bool> includesMask)
     {
         var failures = new List<string>();
         var executions = 0;
@@ -995,6 +1022,8 @@ public class BudgetCrossTalkMatrixTests
                 {
                     for (var mask = 0; mask < 1 << others.Length; mask++)
                     {
+                        if (!includesMask(mask, others.Length))
+                            continue;
                         var extras = new List<(LimitDimension, long)>();
                         for (var bit = 0; bit < others.Length; bit++)
                         {

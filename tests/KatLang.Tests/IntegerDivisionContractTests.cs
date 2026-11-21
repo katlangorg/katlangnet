@@ -258,15 +258,31 @@ public class IntegerDivisionContractTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void BoundaryMatrix_SourceEvaluationAndPlannedLoop_AgreeWithTheHelper()
+        => AssertSourceEvaluationAndPlannedLoopAgreeWithTheHelper(stride: 1);
+
+    /// <summary>
+    /// The per-pull-request slice of the program matrix above: every eighth same-quantum row in matrix
+    /// order (so every digit count and target), with all four sign combinations. The slow tier runs every
+    /// row; the helper matrix above still covers every row and quantum on every pull request.
+    /// </summary>
+    [Fact]
+    public void BoundaryMatrix_SourceEvaluationAndPlannedLoop_AgreeWithTheHelper_OnEveryEighthRow()
+        => AssertSourceEvaluationAndPlannedLoopAgreeWithTheHelper(stride: 8);
+
+    private static void AssertSourceEvaluationAndPlannedLoopAgreeWithTheHelper(int stride)
     {
         var failures = new List<string>();
         var checkedPrograms = 0;
+        var row = 0;
         foreach (var (cx, ex, cy, ey, why) in BoundaryMatrix())
         {
             // Every evaluator-level program is a real parse; keep the family bounded
             // to the same-quantum rows (the helper matrix above covers every quantum).
             if (ex != ey || ex < -100)
+                continue;
+            if (row++ % stride != 0)
                 continue;
 
             foreach (var (sx, sy) in SignCombinations)
@@ -306,7 +322,7 @@ public class IntegerDivisionContractTests
         }
 
         Assert.True(failures.Count == 0, $"{failures.Count} of {checkedPrograms} programs disagreed:\n" + string.Join("\n", failures.Take(30)));
-        Assert.True(checkedPrograms >= 1_000, $"The program family degenerated: only {checkedPrograms} programs.");
+        Assert.True(checkedPrograms >= 1_000 / stride, $"The program family degenerated: only {checkedPrograms} programs.");
     }
 
     private static string Neutral(EvalResult<Evaluator.CountedResult> result)

@@ -383,10 +383,11 @@ pin) instead of relying on the display-only fenced form.
 
 ## 7. Running all validation
 
-`pwsh .\scripts\validate-all.ps1` runs everything: the C# suite (spec runner,
-tutorial checks, generator-block freshness, artifact freshness, partition
-identities), `git diff --check`, and all Lean targets including
-`LanguageSpecCases`.
+`pwsh .\scripts\validate-all.ps1` runs the fast tier of the C# suite (spec
+runner, tutorial checks, generator-block freshness, artifact freshness,
+partition identities; none of them is in the slow tier), `git diff --check`,
+and all Lean targets including `LanguageSpecCases`. `-Tier Full` adds the slow
+tier (AGENTS.md § Test tiers).
 
 ## 8. Verification levels (use these words)
 

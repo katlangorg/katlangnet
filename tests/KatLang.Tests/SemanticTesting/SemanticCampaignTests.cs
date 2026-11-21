@@ -822,6 +822,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    [Trait("Tier", "Slow")]
     public void ASupervisedCampaign_FindsThePlantedFailureInAChild_AndRetainsItsEvidence(bool reduce)
     {
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-supervised-");

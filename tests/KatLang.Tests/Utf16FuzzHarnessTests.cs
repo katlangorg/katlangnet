@@ -558,6 +558,7 @@ public class Utf16FuzzHarnessTests
     // ── Determinism and isolation ────────────────────────────────────────────
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void EveryCaseIsRepeatable_Isolated_AndOrderIndependent()
     {
         var forward = new List<string>(Stratified.Count);

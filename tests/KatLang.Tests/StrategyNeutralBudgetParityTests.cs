@@ -355,16 +355,37 @@ public class StrategyNeutralBudgetParityTests
     /// a step budget of exactly the consumption (and one less) must give the same verdict.
     /// </summary>
     [Theory]
-    [InlineData("Step = {x + 1}\nrepeat(Step(0), {N})", 6, 3)]
-    [InlineData("Step(s) = {\n  T1 = s + 1\n  T2 = T1 + 1\n  T3 = T2 + 1\n  T4 = T3 + 1\n  T5 = T4 + 1\n  T6 = T5 + 1\n  T7 = T6 + 1\n  T8 = T7 + 1\n  T9 = T8 + 1\n  T10 = T9 + 1\n  T10\n}\nrepeat(Step(0), {N})", null, null)]
-    [InlineData("Step(s) = if(s > 5, s - 1, s + 2) * 1\nrepeat(Step(0), {N})", null, null)]
-    [InlineData("Step(s, t) = s + 1, if(0 < s < 1000000 != false, t + 1, t)\nrepeat(Step(0, 0), {N})", null, null)]
-    [InlineData("Step(s) = s + 1, s < {N}\nwhile(Step(0))", null, null)]
+    [MemberData(nameof(LongLoopTemplates))]
+    [Trait("Tier", "Slow")]
     public void LongLoops_ChargeExactlyTheGenericCheckpoints_AcrossBlockBoundaries(string template, int? perIteration, int? setup)
+        => AssertLongLoopsChargeTheGenericCheckpoints(template, perIteration, setup, blocks: 3, longRun: true);
+
+    /// <summary>
+    /// The per-pull-request slice of the long-loop exactness theory above: every template, walking the
+    /// FIRST block boundary one iteration at a time on both sides, without the 99,999-iteration run.
+    /// The slow tier walks the first three boundaries and adds the long run.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(LongLoopTemplates))]
+    public void LongLoops_ChargeExactlyTheGenericCheckpoints_AcrossTheFirstBlockBoundary(string template, int? perIteration, int? setup)
+        => AssertLongLoopsChargeTheGenericCheckpoints(template, perIteration, setup, blocks: 1, longRun: false);
+
+    public static TheoryData<string, int?, int?> LongLoopTemplates => new()
     {
-        var counts = new SortedSet<long> { 1, 99_999 };
+        { "Step = {x + 1}\nrepeat(Step(0), {N})", 6, 3 },
+        { "Step(s) = {\n  T1 = s + 1\n  T2 = T1 + 1\n  T3 = T2 + 1\n  T4 = T3 + 1\n  T5 = T4 + 1\n  T6 = T5 + 1\n  T7 = T6 + 1\n  T8 = T7 + 1\n  T9 = T8 + 1\n  T10 = T9 + 1\n  T10\n}\nrepeat(Step(0), {N})", null, null },
+        { "Step(s) = if(s > 5, s - 1, s + 2) * 1\nrepeat(Step(0), {N})", null, null },
+        { "Step(s, t) = s + 1, if(0 < s < 1000000 != false, t + 1, t)\nrepeat(Step(0, 0), {N})", null, null },
+        { "Step(s) = s + 1, s < {N}\nwhile(Step(0))", null, null },
+    };
+
+    private static void AssertLongLoopsChargeTheGenericCheckpoints(string template, int? perIteration, int? setup, int blocks, bool longRun)
+    {
+        var counts = new SortedSet<long> { 1 };
+        if (longRun)
+            counts.Add(99_999);
         // The iteration counts at which the generic checkpoint total crosses each of the first
-        // three block boundaries, walked one iteration at a time on both sides.
+        // `blocks` block boundaries, walked one iteration at a time on both sides.
         var oneIteration = Observe(template.Replace("{N}", "1"), optimize: false);
         var twoIterations = Observe(template.Replace("{N}", "2"), optimize: false);
         var slope = twoIterations.Checkpoints - oneIteration.Checkpoints;
@@ -373,7 +394,7 @@ public class StrategyNeutralBudgetParityTests
             Assert.Equal(expectedSlope, slope);
         if (setup is { } expectedSetup)
             Assert.Equal(expectedSetup, intercept);
-        for (var block = 1; block <= 3; block++)
+        for (var block = 1; block <= blocks; block++)
         {
             var crossing = (EvaluationBudget.ExpressionCheckpointsPerStep * (long)block - intercept) / slope;
             for (var n = crossing - 3; n <= crossing + 3; n++)
@@ -496,7 +517,10 @@ public class StrategyNeutralBudgetParityTests
     /// stops — the regression a per-iteration step charge exists to prevent (without it, removing
     /// the strategy switch let a runaway planned loop run forever under <c>MaxSteps</c>). A host
     /// cancellation token is the backstop that turns such a regression into a failure instead of a
-    /// hang.
+    /// hang. The backstop only has to be finite and out of a correct run's reach: the 50,000-step
+    /// case stops at its budget in about 3 s on an idle machine, but took 66 s beside a saturated
+    /// test host (2026-11-20), past the former 60-second deadline. Ten minutes per route keeps the
+    /// regression a failure without failing a correct run on a loaded machine.
     /// </summary>
     [Theory]
     [InlineData("Step(s) = s + 1, true\nwhile(Step(0))", 50_000L)]
@@ -509,7 +533,7 @@ public class StrategyNeutralBudgetParityTests
         var limits = new EvaluationLimits { MaxSteps = maxSteps };
         EvalResult<Evaluator.CountedResult> Run(bool optimize, LoopOptimizationDiagnostics diagnostics, out EvaluationBudget budget)
         {
-            using var backstop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            using var backstop = new CancellationTokenSource(TimeSpan.FromMinutes(10));
             var (result, observed) = Evaluator.RunCountedObserved(
                 program, limits, enableOptimizations: optimize, loopDiagnostics: diagnostics, cancellationToken: backstop.Token);
             budget = observed;

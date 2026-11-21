@@ -28,9 +28,11 @@ jobs:
       - name: Install baseline .NET SDK from global.json
         uses: ./.github/actions/setup-baseline-dotnet
 
+      # The fast tier: every test except the [Trait("Tier", "Slow")] tests SlowTierInventoryTests
+      # pins. Those run nightly (slow-tier-nightly.yml), and release.yml runs both tiers.
       - name: Run .NET validation
         shell: pwsh
-        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet
+        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet -Tier Fast
 
       # Runs after a failed or timed-out validation too; the job result stays the validation result.
       - name: Upload .NET validation diagnostics

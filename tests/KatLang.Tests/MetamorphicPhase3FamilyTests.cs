@@ -1263,10 +1263,28 @@ public class MetamorphicPhase3FamilyTests
     /// materializing is allowed to move the boundary, but within one policy the law is absolute.</para>
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task SearchedBoundaries_AreMonotoneAcrossTheirCompleteInterval()
+    {
+        var executed = await SweepSearchedBoundaries(static _ => true);
+        Assert.True(executed > 100_000, $"the exhaustive sweep executed only {executed} limit values.");
+    }
+
+    /// <summary>
+    /// The per-pull-request slice of the sweep above: the complete interval of every searched
+    /// dimension, with the optimizer on and off, for two templates whose boundaries cross inside it,
+    /// a collection count (<c>range-count</c>) and a string length (<c>string-rows</c>). The slow tier
+    /// sweeps every boundary template.
+    /// </summary>
+    [Fact]
+    public async Task SearchedBoundaries_AreMonotoneAcrossTheirCompleteInterval_ForTwoTemplates()
+        => await SweepSearchedBoundaries(static template => template.Id is "range-count" or "string-rows");
+
+    private static async Task<long> SweepSearchedBoundaries(Func<MetamorphicBudgetSource, bool> includes)
     {
         var units = (
             from template in MetamorphicBudgetLawTemplate.BoundaryTemplates
+            where includes(template)
             from dimension in MetamorphicBoundaryPolicy.SearchedDimensions
             from optimize in new[] { true, false }
             select (template, dimension, optimize)).ToList();
@@ -1324,7 +1342,7 @@ public class MetamorphicPhase3FamilyTests
         // A sweep that never observed a failure-to-success transition would prove nothing, so at
         // least some registered template must genuinely cross its boundary inside the interval.
         Assert.True(withTransition > 0, "no searched template crossed its boundary inside the interval.");
-        Assert.True(executed > 100_000, $"the exhaustive sweep executed only {executed} limit values.");
+        return executed;
     }
 
     /// <summary>

@@ -85,6 +85,7 @@ public class SemanticSupervisionTests
     private static readonly TimeSpan SlowReadyDelay = TimeSpan.FromSeconds(4);
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void NormalCompletion_ReturnsTheWorkersSemanticVerdict()
     {
         using var workspace = new Workspace(Case);
@@ -96,6 +97,7 @@ public class SemanticSupervisionTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void AbnormalExit_IsACrash_AndTheReproducerIsRetained()
     {
         using var workspace = new Workspace(Case);
@@ -108,6 +110,7 @@ public class SemanticSupervisionTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void MalformedOrIncompleteOutput_HasItsOwnClassification()
     {
         using (var workspace = new Workspace(Case))
@@ -132,6 +135,7 @@ public class SemanticSupervisionTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void UnbrokenOutput_IsBoundedAndDrained_AndSupervisionEvidenceIsRetained()
     {
         using var workspace = new Workspace(Case);
@@ -146,6 +150,7 @@ public class SemanticSupervisionTests
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task ExternalCancellation_TerminatesAnAlreadyRunningWorker()
     {
         using var workspace = new Workspace(Case);
@@ -180,6 +185,7 @@ public class SemanticSupervisionTests
     /// reports a timeout — never a semantic result, never a language-level cancellation.
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void Timeout_TerminatesTheWorkerTree_AndKeepsTheReproducer()
     {
         // The worker's pid file is its readiness signal, so the 3-second workload deadline starts
@@ -245,6 +251,7 @@ public class SemanticSupervisionTests
     /// whose vstest batch child completed no member within 60 s of its launch).
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void BatchProgressDeadline_CountsFromReadiness_NotFromLaunch()
     {
         using var workspace = new Workspace(Case);

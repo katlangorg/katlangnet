@@ -92,7 +92,14 @@ public class DeferredProvisionalParitySweepTests(ITestOutputHelper output)
     private sealed record Standalone(bool NeedsDownloader, bool HasRootOpen, IReadOnlyList<string> RootParameters,
         IReadOnlyList<string> CallableParameters, IReadOnlySet<string> RootProperties);
 
-    private static Standalone Inspect(string program)
+    // The four sweeps of one corpus read the same standalone metadata for each program, so it is derived once
+    // per program text: one parse per program instead of one per sweep. The record holds only names and flags.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Standalone> Inspections =
+        new(StringComparer.Ordinal);
+
+    private static Standalone Inspect(string program) => Inspections.GetOrAdd(program, InspectStandalone);
+
+    private static Standalone InspectStandalone(string program)
     {
         var parsed = Parser.Parse(program);
         var root = parsed.Root;
@@ -434,18 +441,22 @@ public class DeferredProvisionalParitySweepTests(ITestOutputHelper output)
     // 1,934 values / 2 with host parameters / 1 local-only reader; S2 2,564 / 1,920 / 1,117 / 41, in both variants.
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task SemanticExplorerCorpus_HolderVariant_RootParameters()
         => await AssertSweep("explorer", ExplorerPrograms(), Variant.Holder, Shape.RootParameters, 2400, 1800, 1, 1);
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task SemanticExplorerCorpus_HolderVariant_RootAndCallableParameters()
         => await AssertSweep("explorer", ExplorerPrograms(), Variant.Holder, Shape.RootAndCallableParameters, 2400, 1800, 1000, 30);
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task SemanticExplorerCorpus_OpenVariant_RootParameters()
         => await AssertSweep("explorer", ExplorerPrograms(), Variant.Open, Shape.RootParameters, 2400, 1800, 1, 1);
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task SemanticExplorerCorpus_OpenVariant_RootAndCallableParameters()
         => await AssertSweep("explorer", ExplorerPrograms(), Variant.Open, Shape.RootAndCallableParameters, 2400, 1800, 1000, 30);
 

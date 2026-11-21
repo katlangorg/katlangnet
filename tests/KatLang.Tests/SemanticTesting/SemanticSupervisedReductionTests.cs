@@ -77,6 +77,7 @@ public class SemanticSupervisedReductionTests(ITestOutputHelper output)
     }
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public void ASupervisedReduction_OfAChildThatFailsOnAKnownShape_IsMinimalStableAndKeepsItsSignature()
     {
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-supervised-reduce-");

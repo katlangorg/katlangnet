@@ -886,7 +886,18 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(DeepRecordGraphs.ShapeData), MemberType = typeof(DeepRecordGraphs))]
+    [Trait("Tier", "Slow")]
     public void TwoHundredThousandLevels_EqualAndHashWithoutRecursion(string shape)
+        => DeepRecordGraphs.AssertExpressionShape(shape, DeepRecordGraphs.Depth);
+
+    /// <summary>
+    /// The per-pull-request slice of the theory above: a left-deep binary chain and the graph that mixes
+    /// every kind, both at the full 200,000 levels.
+    /// </summary>
+    [Theory]
+    [InlineData("binaryLeft")]
+    [InlineData("mixed")]
+    public void TwoHundredThousandLevels_EqualAndHashWithoutRecursion_ForTwoShapes(string shape)
         => DeepRecordGraphs.AssertExpressionShape(shape, DeepRecordGraphs.Depth);
 
     [Fact]

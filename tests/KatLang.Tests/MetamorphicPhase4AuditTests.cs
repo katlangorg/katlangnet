@@ -488,6 +488,7 @@ public class MetamorphicPhase4AuditTests
     /// this repository knows about.</para>
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void EveryRejection_IsNamedMeasurableAndLeavesRealCoverage()
     {
         var shape = new Regex("^[a-z][a-z0-9-]*$", RegexOptions.CultureInvariant);

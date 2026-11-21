@@ -185,6 +185,7 @@ public class DeferredCompileStackProcessTests
         => await RunProbeChild(nameof(ThreadSizeSweep_ProbeChild), route, shape);
 
     [Fact]
+    [Trait("Tier", "Slow")]
     public async Task DeferredCompile_NeverCrashes_AcrossThreadSizes_UnderCpuLoad()
         => await RunProbeChild(nameof(ThreadSizeSweepUnderCpuLoad_ProbeChild));
 

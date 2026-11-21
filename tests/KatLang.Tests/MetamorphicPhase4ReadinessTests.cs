@@ -44,6 +44,7 @@ public class MetamorphicPhase4ReadinessTests
     /// own preconditions.
     /// </summary>
     [Fact]
+    [Trait("Tier", "Slow")]
     public void TheStratifiedSample_ReachesEveryFamilyRelationAndExecutionShape()
     {
         var acceptedByFamily = new Tally();

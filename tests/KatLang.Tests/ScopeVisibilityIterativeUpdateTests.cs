@@ -113,11 +113,32 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
 
     private static string Name(int index) => $"n{index:D7}";
 
+    private static readonly string[] ScriptNames =
+        ["ascending", "descending", "random", "reversed-random", "alternating", "replacements", "removals", "cycles", "mixed", "vshape"];
+
+    private static readonly string[] PriorityModes = ["pseudo-random", "constant", "increasing", "decreasing", "collisions", "vshape"];
+
     public static IEnumerable<object[]> Scripts()
-        => from script in new[] { "ascending", "descending", "random", "reversed-random", "alternating", "replacements", "removals", "cycles", "mixed", "vshape" }
-           from priority in new[] { "pseudo-random", "constant", "increasing", "decreasing", "collisions", "vshape" }
+        => from script in ScriptNames
+           from priority in PriorityModes
            from collide in new[] { false, true }
            select new object[] { script, priority, collide };
+
+    /// <summary>
+    /// The per-pull-request slice of <see cref="Scripts"/>: ten of its rows, which reach every script,
+    /// every priority mode and both collision settings, and keep the V-shaped join (vshape/vshape) whose
+    /// spine length the differential asserts. The slow tier runs all 120 rows.
+    /// </summary>
+    public static IEnumerable<object[]> ScriptSlice()
+    {
+        for (var index = 0; index < ScriptNames.Length; index++)
+        {
+            var script = ScriptNames[index];
+            var priority = script == "vshape" ? "vshape" : PriorityModes[index % PriorityModes.Length];
+            var collide = (index + index / PriorityModes.Length) % 2 == 1;
+            yield return [script, priority, collide];
+        }
+    }
 
     /// <summary>
     /// A deterministic per-name priority (a function of the name, as <see cref="VisibilityTreeBuilder.PriorityOverride"/>
@@ -232,7 +253,17 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
 
     [Theory]
     [MemberData(nameof(Scripts))]
+    [Trait("Tier", "Slow")]
     public void IterativeUpdates_MatchTheRecursiveAlgorithm_NodeForNodeAndMakeForMake(string script, string priorityMode, bool collide)
+        => AssertIterativeUpdatesMatchTheRecursiveAlgorithm(script, priorityMode, collide);
+
+    /// <summary>The per-pull-request slice of the differential above (<see cref="ScriptSlice"/>).</summary>
+    [Theory]
+    [MemberData(nameof(ScriptSlice))]
+    public void IterativeUpdates_MatchTheRecursiveAlgorithm_OnAStratifiedSlice(string script, string priorityMode, bool collide)
+        => AssertIterativeUpdatesMatchTheRecursiveAlgorithm(script, priorityMode, collide);
+
+    private static void AssertIterativeUpdatesMatchTheRecursiveAlgorithm(string script, string priorityMode, bool collide)
     {
         const int size = 160;
         var priority = Priority(priorityMode, size);
@@ -280,23 +311,30 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
                 oracle[op.Name] = (op.Symbol!, op.Meta, op.Twin);
             }
 
+            // These checks run on every step, and the helpers' on every node of every version, so a
+            // failure message is formatted only when its check fails.
             var where = $"step {step} ({(op.IsRemoval ? "remove" : "set")} {op.Name}) of {script}/{priorityMode}/collide={collide}";
-            Assert.True(ReferenceEquals(nextShared, nextSharedReference), $"different node in one builder at {where}");
-            Assert.True(ReferenceEquals(nextReference, referenceRoot) == ReferenceEquals(nextCandidate, candidateRoot), $"no-op disagreement at {where}");
-            Assert.True(ReferenceEquals(nextShared, sharedRoot) == ReferenceEquals(nextCandidate, candidateRoot), $"shared no-op disagreement at {where}");
-            Assert.True(
-                referenceObservations.ScopeVisibilityNodesCreated == candidateObservations.ScopeVisibilityNodesCreated
-                    && referenceObservations.ScopeVisibilityNodesReused == candidateObservations.ScopeVisibilityNodesReused,
-                $"Make sequence diverged at {where}: reference {referenceObservations.ScopeVisibilityNodesCreated}/{referenceObservations.ScopeVisibilityNodesReused}, "
-                    + $"candidate {candidateObservations.ScopeVisibilityNodesCreated}/{candidateObservations.ScopeVisibilityNodesReused} (created/reused)");
+            if (!ReferenceEquals(nextShared, nextSharedReference))
+                Assert.Fail($"different node in one builder at {where}");
+            if (ReferenceEquals(nextReference, referenceRoot) != ReferenceEquals(nextCandidate, candidateRoot))
+                Assert.Fail($"no-op disagreement at {where}");
+            if (ReferenceEquals(nextShared, sharedRoot) != ReferenceEquals(nextCandidate, candidateRoot))
+                Assert.Fail($"shared no-op disagreement at {where}");
+            if (!(referenceObservations.ScopeVisibilityNodesCreated == candidateObservations.ScopeVisibilityNodesCreated
+                    && referenceObservations.ScopeVisibilityNodesReused == candidateObservations.ScopeVisibilityNodesReused))
+            {
+                Assert.Fail(
+                    $"Make sequence diverged at {where}: reference {referenceObservations.ScopeVisibilityNodesCreated}/{referenceObservations.ScopeVisibilityNodesReused}, "
+                        + $"candidate {candidateObservations.ScopeVisibilityNodesCreated}/{candidateObservations.ScopeVisibilityNodesReused} (created/reused)");
+            }
             AssertSameShape(nextReference, nextCandidate, where);
             AssertTreap(nextCandidate, where);
-            AssertContent(oracle, nextCandidate, where);
+            var content = AssertContent(oracle, nextCandidate, where);
 
             referenceRoot = nextReference;
             candidateRoot = nextCandidate;
             sharedRoot = nextShared;
-            history.Add((candidateRoot, Content(candidateRoot)));
+            history.Add((candidateRoot, content));
         }
 
         // Every historical version is untouched by the later updates.
@@ -624,20 +662,24 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
     private static List<(VisibleSymbol Symbol, int Meta, VisibleSymbol? Twin)> Content(VisibilityNode? root)
         => VisibilityTree.InOrder(root).Select(node => (node.Symbol, node.Meta, node.DeferredTwin)).ToList();
 
-    private static void AssertContent(SortedDictionary<string, (VisibleSymbol Symbol, int Meta, VisibleSymbol? Twin)> oracle, VisibilityNode? root, string where)
+    /// <summary>Checks <paramref name="root"/>'s content and every lookup against the oracle, and returns the content.</summary>
+    private static List<(VisibleSymbol Symbol, int Meta, VisibleSymbol? Twin)> AssertContent(SortedDictionary<string, (VisibleSymbol Symbol, int Meta, VisibleSymbol? Twin)> oracle, VisibilityNode? root, string where)
     {
         var actual = Content(root);
-        Assert.True(oracle.Values.SequenceEqual(actual), $"content differs from the dictionary oracle at {where}");
+        if (!oracle.Values.SequenceEqual(actual))
+            Assert.Fail($"content differs from the dictionary oracle at {where}");
         var index = 0;
         foreach (var (name, expected) in oracle)
         {
             var found = VisibilityTree.Find(root, name, out var position, out _);
-            Assert.True(found is not null && ReferenceEquals(found.Symbol, expected.Symbol) && position == index, $"lookup of {name} at {where}");
+            if (!(found is not null && ReferenceEquals(found.Symbol, expected.Symbol) && position == index))
+                Assert.Fail($"lookup of {name} at {where}");
             Assert.Same(found, VisibilityTree.ElementAt(root!, index));
             index++;
         }
 
         Assert.Null(VisibilityTree.Find(root, "absent"));
+        return actual;
     }
 
     /// <summary>Exact structural equality of two trees from different builders: every node's entry, priority, count and child shape.</summary>
@@ -649,17 +691,19 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
         {
             if (pair.Expected is null || pair.Actual is null)
             {
-                Assert.True(pair.Expected is null && pair.Actual is null, $"child presence differs at {where}");
+                if (!(pair.Expected is null && pair.Actual is null))
+                    Assert.Fail($"child presence differs at {where}");
                 continue;
             }
 
-            Assert.True(
-                ReferenceEquals(pair.Expected.Symbol, pair.Actual.Symbol)
+            if (!(ReferenceEquals(pair.Expected.Symbol, pair.Actual.Symbol)
                     && ReferenceEquals(pair.Expected.DeferredTwin, pair.Actual.DeferredTwin)
                     && pair.Expected.Meta == pair.Actual.Meta
                     && pair.Expected.Priority == pair.Actual.Priority
-                    && pair.Expected.Count == pair.Actual.Count,
-                $"node {pair.Expected.Name} differs from {pair.Actual.Name} at {where}");
+                    && pair.Expected.Count == pair.Actual.Count))
+            {
+                Assert.Fail($"node {pair.Expected.Name} differs from {pair.Actual.Name} at {where}");
+            }
             pending.Push((pair.Expected.Right, pair.Actual.Right));
             pending.Push((pair.Expected.Left, pair.Actual.Left));
         }
@@ -671,15 +715,20 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
         string? previous = null;
         foreach (var node in VisibilityTree.InOrder(root))
         {
-            Assert.True(previous is null || string.CompareOrdinal(previous, node.Name) < 0, $"ordinal order broken at {node.Name} ({where})");
+            if (!(previous is null || string.CompareOrdinal(previous, node.Name) < 0))
+                Assert.Fail($"ordinal order broken at {node.Name} ({where})");
             previous = node.Name;
-            Assert.True(node.Count == 1 + (node.Left?.Count ?? 0) + (node.Right?.Count ?? 0), $"count of {node.Name} ({where})");
-            foreach (var child in new[] { node.Left, node.Right })
-            {
-                if (child is not null)
-                    Assert.True(VisibilityTree.HigherPriority(node.Priority, node.Name, child.Priority, child.Name), $"heap order broken under {node.Name} ({where})");
-            }
+            if (node.Count != 1 + (node.Left?.Count ?? 0) + (node.Right?.Count ?? 0))
+                Assert.Fail($"count of {node.Name} ({where})");
+            AssertHeapOrder(node, node.Left, where);
+            AssertHeapOrder(node, node.Right, where);
         }
+    }
+
+    private static void AssertHeapOrder(VisibilityNode node, VisibilityNode? child, string where)
+    {
+        if (child is not null && !VisibilityTree.HigherPriority(node.Priority, node.Name, child.Priority, child.Name))
+            Assert.Fail($"heap order broken under {node.Name} ({where})");
     }
 
     private static int Height(VisibilityNode? root)

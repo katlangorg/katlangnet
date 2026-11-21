@@ -1,0 +1,50 @@
+name: slow tier nightly
+
+# The slow test tier (owner decisions 6 and 7, 2026-11-20): every test tagged [Trait("Tier", "Slow")]
+# and pinned by SlowTierInventoryTests. Pull requests and pushes run the fast tier in validate.yml,
+# this job runs the slow tier on main every night, and release.yml validates a release with both
+# tiers. Scheduled and manual only. A failure fails the run visibly, and the diagnostics are uploaded
+# whatever the outcome. The slow tests' medians over ten validate.yml runs (2026-11-20) sum to 77.5
+# test-minutes, about 63 after that week's reductions of Q09, EditorReadiness and ScopeVisibility, so
+# four workers need about 16 minutes plus the build; slow runners take about 1.7 times as long. On a
+# 4-processor ARM VPS the whole phase took 34 minutes (2026-11-21). The job allows 60 minutes, like
+# the validation jobs.
+on:
+  schedule:
+    - cron: "41 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  slow-tier:
+    name: Slow tier validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install baseline .NET SDK from global.json
+        uses: ./.github/actions/setup-baseline-dotnet
+
+      - name: Run the slow test tier
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase DotNet -Tier Slow
+
+      # Runs after a failed or timed-out run too; the job result stays the validation result.
+      - name: Upload slow-tier diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slow-tier-diagnostics
+          path: artifacts/validation/
+          if-no-files-found: warn
+          retention-days: 30
