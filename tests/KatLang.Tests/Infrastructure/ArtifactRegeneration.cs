@@ -61,6 +61,10 @@ internal static class RegenerationFlags
         Prefix + "MAY_CAPTURE_CALLS",
         "lean/KatLangArityLaws/MayCaptureCallsCorpus.lean");
 
+    public static readonly RegenerationFlag ModuleDifferential = new(
+        Prefix + "MODULE_DIFFERENTIAL",
+        "lean/CoreTests/ModuleDifferential.lean");
+
     // The three flags below regenerate Lean PROOF modules whose text is generated (tests/KatLang.Tests/LeanProofModules/).
 
     public static readonly RegenerationFlag MemberRereadInstances = new(
@@ -78,7 +82,7 @@ internal static class RegenerationFlags
     public static readonly IReadOnlyList<RegenerationFlag> All =
     [
         LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated, FrontEndDecisions,
-        MayCaptureCalls,
+        MayCaptureCalls, ModuleDifferential,
         MemberRereadInstances, PublishedCallableInstances, EvaluatorPublications,
     ];
 }

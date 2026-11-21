@@ -3,6 +3,7 @@ import LanguageSpecCases
 import SemanticExplorerCases
 import CoreTests.SemanticGeneratedCases
 import CoreTests.HostParentDifferential
+import CoreTests.ModuleDifferential
 
 /-!
 GENERATED FILE - DO NOT EDIT BY HAND.
@@ -21,14 +22,15 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4058
-- guarded: 3923 (464 may capture calls, 3459 cannot)
-- excluded: 135
+- corpus programs: 4068
+- guarded: 3930 (464 may capture calls, 3466 cannot)
+- excluded: 138
   language-spec: 654 programs, 541 guarded (49 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2564 programs, 2551 guarded (53 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 687 programs, 678 guarded (354 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
   host-parent: 134 programs, 134 guarded (8 may capture calls)
+  modules: 10 programs, 7 guarded (0 may capture calls), 3 excluded: C#-only by the corpus's reviewed reason
 
 Exclusion rules that currently exclude nothing: a tree the structural preflight refuses (no
 run admits it); a tree that holds a deferred module region (C#'s first clause; Lean has no
@@ -7938,5 +7940,29 @@ def hostParentPrograms : List Expr := [
 #guard hostParentPrograms.length == 134
 #guard (hostParentPrograms.filter Expr.mayCaptureCalls).length == 8
 
--- 3923 gate guards over 4058 corpus programs.
+/-! ## modules -/
+
+#guard Expr.mayCaptureCalls ModuleDifferential.same_url == false
+#guard Expr.mayCaptureCalls ModuleDifferential.nested_first == false
+#guard Expr.mayCaptureCalls ModuleDifferential.distinct_url == false
+#guard Expr.mayCaptureCalls ModuleDifferential.module_shadow == false
+#guard Expr.mayCaptureCalls ModuleDifferential.inline_shadow == false
+#guard Expr.mayCaptureCalls ModuleDifferential.one_provider == false
+#guard Expr.mayCaptureCalls ModuleDifferential.two_providers == false
+
+/-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
+    expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
+def modulePrograms : List Expr := [
+  ModuleDifferential.same_url,
+  ModuleDifferential.nested_first,
+  ModuleDifferential.distinct_url,
+  ModuleDifferential.module_shadow,
+  ModuleDifferential.inline_shadow,
+  ModuleDifferential.one_provider,
+  ModuleDifferential.two_providers
+]
+#guard modulePrograms.length == 7
+#guard (modulePrograms.filter Expr.mayCaptureCalls).length == 0
+
+-- 3930 gate guards over 4068 corpus programs.
 end KatLang.MayCaptureCallsCorpus

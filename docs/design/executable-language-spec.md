@@ -205,18 +205,26 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   `$env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"; dotnet test .\KatLang.slnx --filter FrontEndDecisionLeanArtifact`
 - `lean/KatLangArityLaws/MayCaptureCallsCorpus.lean` (built by the canonical
   `KatLangArityLaws` target; ledger E-21) — the PLAN-RETENTION GATE
-  differential. For every Lean-comparable program of the four corpora above
+  differential. For every Lean-comparable program of the five evaluation corpora
   (LanguageSpec, the semantic explorer with its internal-node cases, the SEM-2C
-  generated cases and the host-built HOST-DIFF-1 corpus) one guard pins C#'s
+  generated cases, the host-built HOST-DIFF-1 corpus and the module pilot below) one guard pins C#'s
   verdict of `AstStructuralPreflight.MayCaptureCalls` (J7) against Lean's
   `Expr.mayCaptureCalls`. The file imports those corpus modules and re-emits no
   program: `MayCaptureCallsLeanArtifactTests` re-encodes each tree and requires it
   to equal the definition the corpus module holds, and every program without a
-  guard is excluded by a counted rule. Regenerate AFTER any of the four corpus
+  guard is excluded by a counted rule. Regenerate AFTER any of the five corpus
   artifacts with
   `$env:KATLANG_REGENERATE_MAY_CAPTURE_CALLS = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact`
+- `lean/CoreTests/ModuleDifferential.lean` (MODULE-DIFF-1, imported by the
+  canonical `CoreTests` target) evaluates seven elaborated programs from the
+  module identity, hygiene, and open-provider fixtures. Three C#-only cases cover
+  a front-end rejection, a failed fetch, and a deferred module region.
+  `ModuleDifferentialTests` compares the C# and Lean observations against the
+  corpus's hand-written expectations. The channel inventory is in
+  `docs/design/differential-observations.md` § Module programs. Regenerate with
+  `$env:KATLANG_REGENERATE_MODULE_DIFFERENTIAL = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter ModuleDifferential`
 
-The four evaluation artifacts above embed the same observation machinery (`neutral`,
+The five evaluation artifacts above embed the same observation machinery (`neutral`,
 `errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
 emitted from the single C# constant `LeanObsTemplate.SharedDefinitions`. When
 adding an error kind, extend `errCategory` and `sharedError` there AND
@@ -224,7 +232,7 @@ adding an error kind, extend `errCategory` and `sharedError` there AND
 `SemanticExplorerHarness.ErrorCategory` delegates to) together, record its
 reviewed policy (a constructor-projection golden in `DifferentialErrorContracts`,
 or the host-only inventory of `DifferentialObservationTests` for a C#-only
-kind), then regenerate all four evaluation artifacts with their registered flags.
+kind), then regenerate all five evaluation artifacts with their registered flags.
 The front-end decision artifact calls the model's specification functions directly.
 The gate differential imports the Lean gate and checks it on the existing corpus definitions.
 

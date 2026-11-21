@@ -22,17 +22,18 @@ Finite generated corpora are bounded evidence, not an evaluator refinement proof
 `MetamorphicErrorDetail`, shared as source between the tests and standalone fuzz
 target, owns the C# category and supplementary field policy. `DifferentialErrors`
 maps it to the existing Q-67 records without changing their contract.
-`LeanObsTemplate` owns the Lean projections of all four generated observation
+`LeanObsTemplate` owns the Lean projections of all five generated observation
 artifacts: `lean/LanguageSpecCases.lean` (`LanguageSpecLeanArtifactTests`),
 `lean/SemanticExplorerCases.lean` (`SemanticExplorerLeanArtifactTests`),
-`lean/CoreTests/HostParentDifferential.lean` (`HostParentDifferentialTests`) and
-`lean/CoreTests/SemanticGeneratedCases.lean` (`SemanticGeneratedLeanArtifactTests`);
+`lean/CoreTests/HostParentDifferential.lean` (`HostParentDifferentialTests`),
+`lean/CoreTests/SemanticGeneratedCases.lean` (`SemanticGeneratedLeanArtifactTests`) and
+`lean/CoreTests/ModuleDifferential.lean` (`ModuleDifferentialTests`, § Module programs);
 each emits its `SharedDefinitions` and `AppendErrorGuard`. `obs`
 retains its original contract; `errorObs` is separate. Only the host-parent
 artifact also emits the KL-07 `structural` guards (§ Lean `kl-struct-v1`
 exporter). On supported failures, `errorObs` runs the plain and counted Lean
 evaluators again. Each `structural` guard on a host-parent success runs the plain
-evaluator once. All four artifacts also emit the KL-06 cache observation
+evaluator once. The first four artifacts also emit the KL-06 cache observation
 (`CacheObservationDefinitions`): the host-parent artifact guards it on every
 case, the other three on a four-case pilot each (§ Cache publications). The
 hand-maintained `lean/CoreTests/PlannedLoopPublications.lean` embeds the same
@@ -270,7 +271,7 @@ twin — over the run-scoped publication law. The two synchronous routes compare
 entry counts per binding name. The async route checks the total and that all
 access used the async interface. All three check that every owner was released. Lean:
 `publicationsOf`, `publications`, `cacheEntries` and `cacheTotal`, one text
-(`LeanObsTemplate.CacheObservationDefinitions`) emitted into all four artifacts;
+(`LeanObsTemplate.CacheObservationDefinitions`) emitted into the four cache-observing artifacts;
 each cache guard runs its program once.
 
 **What a publication is (F01, owner decision Option A, 2026-11-21).** A
@@ -595,6 +596,40 @@ are not added either.
 Extending the observation to all 3,725 programs is a separate owner decision, to
 be made on the census and the cost above. Logs, the census tables and the
 scratch tools are in `artifacts/validation/kl-cache-pilots/`.
+
+## Module programs (MODULE-DIFF-1 pilot)
+
+The pilot uses ten named programs drawn from `ModuleIdentityTests` and
+`ModuleHygieneTests`. The fixtures in `ModuleDifferentialCorpus` specify the
+expected values, emitted counts, error payloads, diagnostic positions and requested
+URLs. `ModuleRouteAgreement.Modules` serves six fixed files in memory and raises a
+local error for a missing URL. Each parse and engine run gets a fresh downloader.
+
+| Fixtures | Hand-written expectation |
+| --- | --- |
+| `same_url`, `nested_first`, `distinct_url` | A direct holder and a nested import of the same canonical URL read one cached tick. Both declaration orders yield `(1, 1, 2)`, including a fresh explicit call. Giving the direct holder identical bytes under a distinct URL yields `(1, 2, 3)`. |
+| `module_shadow`, `inline_shadow` | A module reads the prelude's `sum` and returns 3. The same body written inline reads the caller's `sum` and returns 999. |
+| `one_provider`, `two_providers`, `written_ambiguity` | A receiver-decided fallback returns 10 with one provider. Two providers give a runtime `ambiguousOpen` naming `F`. Writing the ambiguous name directly gives a C# front-end diagnostic at the name. |
+| `missing_module`, `selected_branch` | A missing file gives a positioned `LoadFetchFailed` after one request. A deferred branch fetches nothing during parsing, fetches once when selected, and returns 1. |
+
+**Compared with Lean.** Seven admitted programs have a FORMAL-06 `obs` guard over the
+encoded tree and the fixture's expected observation. The runtime ambiguity also has
+a Q-67 `errorObs` guard. Both sides check plain and counted evaluation. C# checks
+the public asynchronous engine against the same values, counts and error details.
+The dependent E-21 artifact checks the plan-retention gate on those seven trees.
+
+**C# only.** Each fixture runs with the in-memory files supplied in both orders.
+Each order must meet the same per-URL request counts and pinned outcome. The
+encoded trees must also match for a given source. Parser and public-engine
+diagnostics are checked by code and span. The deferred branch runs on the public
+engine and on both asynchronous evaluator routes. A refused parse or a tree
+admitted with a deferred region has no Lean evaluator guard. An unexpected encoder
+refusal fails the test.
+
+Lean consumes the tree the C# front end elaborated. The pilot covers numeric and
+sequence results and the provider error above. It measures neither downloader
+request order nor cache-entry counts, structural keys, host events, scheduling,
+cancellation, resource limits, or editor behavior.
 
 ## Demand, effects and model boundaries
 

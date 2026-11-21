@@ -10,16 +10,16 @@ namespace KatLang.Tests;
 /// Generates and pins <c>lean/KatLangArityLaws/MayCaptureCallsCorpus.lean</c>: Lean's program gate
 /// (<c>Expr.mayCaptureCalls</c>, <c>lean/KatLangArityLaws/MayCaptureCalls.lean</c>) checked against C#'s gate of
 /// invocation-plan retention (J7, <see cref="AstStructuralPreflight.MayCaptureCalls"/>) on every Lean-comparable
-/// program of the four differential corpora: <see cref="LanguageSpecCorpus"/>, <see cref="SemanticExplorerCorpus"/>
+/// program of the differential corpora: <see cref="LanguageSpecCorpus"/>, <see cref="SemanticExplorerCorpus"/>
 /// (surface and internal-node cases), the SEM-2C generated cases (<see cref="SemanticGeneratedLeanArtifactTests"/>,
-/// base and transformation members) and <see cref="HostParentDifferentialCorpus"/> (the only corpus whose trees carry
-/// host-attached parent scopes).
+/// base and transformation members), <see cref="HostParentDifferentialCorpus"/> (host-attached parent scopes),
+/// and <see cref="ModuleDifferentialCorpus"/> (loaded modules).
 ///
 /// <para><b>The two sides.</b> C#'s verdict is the fact the run's own admission walk decides
 /// (<see cref="AstStructuralPreflight.CheckAdmittedProgram"/>: <c>MayCaptureCalls</c>) over the elaborated tree the
 /// corpus evaluates. The Lean program is the definition the corpus's own generated module already holds for that tree
 /// (<c>LanguageSpecCases.case_…</c>, <c>SemanticExplorerCases.case_…</c>, <c>SemanticGeneratedCases.case_…</c>,
-/// <c>HostParentDifferential.hp_…</c>): the generated file imports those modules and re-emits no program. Each
+/// <c>HostParentDifferential.hp_…</c>, <c>ModuleDifferential.same_url</c>): the generated file imports the programs. Each
 /// program's tree is re-encoded here (<see cref="LeanAstEncoder"/>) and required to equal the text that module
 /// defines, so the verdict and the definition are of the SAME tree.</para>
 ///
@@ -46,6 +46,7 @@ public class MayCaptureCallsLeanArtifactTests
     internal const string ExplorerInternalCorpus = "explorer-internal";
     internal const string GeneratedCorpus = "generated";
     internal const string HostParentCorpus = "host-parent";
+    internal const string ModuleCorpus = "modules";
 
     /// <summary>The corpora in emission order, each with the Lean namespace of its generated module.</summary>
     internal static readonly IReadOnlyList<(string Corpus, string LeanNamespace, string ListName)> Corpora =
@@ -55,6 +56,7 @@ public class MayCaptureCallsLeanArtifactTests
         (ExplorerInternalCorpus, "SemanticExplorerCases", "explorerInternalPrograms"),
         (GeneratedCorpus, "SemanticGeneratedCases", "generatedPrograms"),
         (HostParentCorpus, "HostParentDifferential", "hostParentPrograms"),
+        (ModuleCorpus, "ModuleDifferential", "modulePrograms"),
     ];
 
     /// <summary>Why a corpus program has no guard.</summary>
@@ -89,15 +91,12 @@ public class MayCaptureCallsLeanArtifactTests
     internal sealed record GateProgram(
         string Corpus, string Id, string? LeanReference, bool MayCaptureCalls, bool HasMetaBinder, GateExclusion? Exclusion);
 
-    private static readonly Lazy<IReadOnlyList<GateProgram>> LazyPrograms = new(() => BuildPrograms().AsReadOnly());
-
-    /// <summary>Every program of the four corpora, in emission order.</summary>
-    internal static IReadOnlyList<GateProgram> Programs => LazyPrograms.Value;
+    private static readonly Lazy<Task<IReadOnlyList<GateProgram>>> Programs = new(BuildProgramsAsync);
 
     [Fact]
-    public void GeneratedLeanArtifact_MatchesCurrentCSharpGateVerdicts()
+    public async Task GeneratedLeanArtifact_MatchesCurrentCSharpGateVerdicts()
     {
-        var expected = GenerateArtifact();
+        var expected = GenerateArtifact(await Programs.Value);
         var path = Path.Combine(RepoRoot.Find(), ArtifactRelativePath);
         var flag = RegenerationFlags.MayCaptureCalls;
 
@@ -123,12 +122,12 @@ public class MayCaptureCallsLeanArtifactTests
     /// <summary>
     /// The partition is exact and nothing is sampled: every program of every corpus is enumerated once, each is
     /// guarded or excluded by one counted rule, and the exclusions are exactly the corpora's own Lean exclusions —
-    /// no tree is refused by the preflight, none holds a deferred region, and no Lean program is hand-authored.
+    /// every comparable tree passes preflight without a deferred region and has a derived Lean program.
     /// </summary>
     [Fact]
-    public void Partition_IsExact_AndExclusionsAreTheCorporaOwn()
+    public async Task Partition_IsExact_AndExclusionsAreTheCorporaOwn()
     {
-        var programs = Programs;
+        var programs = await Programs.Value;
         Assert.Equal(programs.Count, programs.Select(static p => p.Corpus + ":" + p.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.All(programs, static p => Assert.True((p.LeanReference is null) == (p.Exclusion is not null), p.Corpus + ":" + p.Id));
 
@@ -146,12 +145,14 @@ public class MayCaptureCallsLeanArtifactTests
             generatedIncluded.Sum(static c => c.Members.Length) + (generated.Count - generatedIncluded.Count),
             CountOf(GeneratedCorpus));
         Assert.Equal(hostParent.Count, CountOf(HostParentCorpus));
+        Assert.Equal(ModuleDifferentialCorpus.Cases.Count, CountOf(ModuleCorpus));
 
         Assert.Equal(spec.Count(static c => c.IsLeanRepresentable), Guarded(SpecCorpus));
         Assert.Equal(explorer.Count(static c => c.LeanProgram is not null), Guarded(ExplorerCorpus));
         Assert.Equal(SemanticExplorerCorpus.InternalNodeCases().Count, Guarded(ExplorerInternalCorpus));
         Assert.Equal(generatedIncluded.Sum(static c => c.Members.Length), Guarded(GeneratedCorpus));
         Assert.Equal(hostParent.Count, Guarded(HostParentCorpus));
+        Assert.Equal(ModuleDifferentialCorpus.Cases.Count(c => c.Exclusion is null), Guarded(ModuleCorpus));
         Assert.All(Corpora, corpus => Assert.True(Guarded(corpus.Corpus) > 0, corpus.Corpus));
 
         // The three rules below exclude a program that HAS a Lean program. Each is counted in the artifact's
@@ -160,12 +161,12 @@ public class MayCaptureCallsLeanArtifactTests
         RequireExcluded(GateExclusion.DeferredRegion, ExpectedDeferredRegion);
         RequireExcluded(GateExclusion.HandAuthoredLeanProgram, ExpectedHandAuthoredLeanPrograms);
 
-        static int CountOf(string corpus) => Programs.Count(p => p.Corpus == corpus);
-        static int Guarded(string corpus) => Programs.Count(p => p.Corpus == corpus && p.LeanReference is not null);
+        int CountOf(string corpus) => programs.Count(p => p.Corpus == corpus);
+        int Guarded(string corpus) => programs.Count(p => p.Corpus == corpus && p.LeanReference is not null);
 
-        static void RequireExcluded(GateExclusion rule, int expected)
+        void RequireExcluded(GateExclusion rule, int expected)
         {
-            var excluded = Programs.Where(p => p.Exclusion == rule).Select(static p => p.Corpus + ":" + p.Id).ToList();
+            var excluded = programs.Where(p => p.Exclusion == rule).Select(static p => p.Corpus + ":" + p.Id).ToList();
             Assert.True(excluded.Count == expected,
                 $"{excluded.Count} corpus program(s) with a Lean program are excluded from the gate agreement by the rule " +
                 $"'{Describe(rule)}' (pinned: {expected}): {string.Join(", ", excluded)}. Review them and move the pin.");
@@ -182,9 +183,9 @@ public class MayCaptureCallsLeanArtifactTests
     /// include both kinds C# distinguishes: a <c>meta</c> binder and a loop spelling without one.
     /// </summary>
     [Fact]
-    public void CoverageRatchet_BothVerdictsAreGuardedInEveryCorpusThatHoldsThem()
+    public async Task CoverageRatchet_BothVerdictsAreGuardedInEveryCorpusThatHoldsThem()
     {
-        var guarded = Programs.Where(static p => p.LeanReference is not null).ToList();
+        var guarded = (await Programs.Value).Where(static p => p.LeanReference is not null).ToList();
         var fired = guarded.Where(static p => p.MayCaptureCalls).ToList();
 
         Assert.True(guarded.Count >= MinimumGuardedPrograms, $"guarded programs {guarded.Count} < {MinimumGuardedPrograms}");
@@ -209,11 +210,12 @@ public class MayCaptureCallsLeanArtifactTests
     /// Every comparable program has exactly one guard, with its own verdict and corpus definition.
     /// </summary>
     [Fact]
-    public void GeneratedArtifact_GuardsReconcileWithThePartition()
+    public async Task GeneratedArtifact_GuardsReconcileWithThePartition()
     {
-        var guardLines = GenerateArtifact().Split('\n')
+        var programs = await Programs.Value;
+        var guardLines = GenerateArtifact(programs).Split('\n')
             .Where(static line => line.StartsWith("#guard Expr.mayCaptureCalls ", StringComparison.Ordinal));
-        var guarded = Programs.Where(static p => p.LeanReference is not null).ToList();
+        var guarded = programs.Where(static p => p.LeanReference is not null).ToList();
         Assert.Equal(guarded.Count, guarded.Select(static p => p.LeanReference).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(guarded.Select(static p =>
             $"#guard Expr.mayCaptureCalls {p.LeanReference} == {(p.MayCaptureCalls ? "true" : "false")}"), guardLines);
@@ -230,6 +232,7 @@ public class MayCaptureCallsLeanArtifactTests
             "lean/SemanticExplorerCases.lean",
             "lean/CoreTests/SemanticGeneratedCases.lean",
             "lean/CoreTests/HostParentDifferential.lean",
+            "lean/CoreTests/ModuleDifferential.lean",
         ];
         foreach (var path in paths)
         {
@@ -255,7 +258,7 @@ public class MayCaptureCallsLeanArtifactTests
 
     // ── The corpus walk ─────────────────────────────────────────────────────
 
-    private static List<GateProgram> BuildPrograms()
+    private static async Task<IReadOnlyList<GateProgram>> BuildProgramsAsync()
     {
         var programs = new List<GateProgram>();
         var definitions = ReadProgramDefinitions();
@@ -336,7 +339,19 @@ public class MayCaptureCallsLeanArtifactTests
         foreach (var hostCase in HostParentDifferentialCorpus.AllCases())
             programs.Add(Decide(HostParentCorpus, hostCase.Id, "HostParentDifferential." + hostCase.LeanName, hostCase.Program));
 
-        return programs;
+        foreach (var fixture in ModuleDifferentialCorpus.Cases)
+        {
+            if (fixture.Exclusion is not null)
+            {
+                programs.Add(Excluded(ModuleCorpus, fixture.Id, GateExclusion.CSharpOnly));
+                continue;
+            }
+
+            var parsed = await SourceProvenance.ParseValidAsync(fixture.Source, ModuleDifferentialCorpus.Server().Options());
+            programs.Add(Decide(ModuleCorpus, fixture.Id, "ModuleDifferential." + fixture.Id, new Expr.AlgorithmExpr(parsed.Root)));
+        }
+
+        return programs.AsReadOnly();
 
         GateProgram Decide(string corpus, string id, string leanReference, Expr tree)
         {
@@ -376,9 +391,8 @@ public class MayCaptureCallsLeanArtifactTests
 
     // ── The artifact ────────────────────────────────────────────────────────
 
-    internal static string GenerateArtifact()
+    private static string GenerateArtifact(IReadOnlyList<GateProgram> programs)
     {
-        var programs = Programs;
         var guarded = programs.Where(static p => p.LeanReference is not null).ToList();
         var fired = guarded.Count(static p => p.MayCaptureCalls);
 
@@ -389,6 +403,7 @@ public class MayCaptureCallsLeanArtifactTests
             import SemanticExplorerCases
             import CoreTests.SemanticGeneratedCases
             import CoreTests.HostParentDifferential
+            import CoreTests.ModuleDifferential
 
             /-!
             GENERATED FILE - DO NOT EDIT BY HAND.

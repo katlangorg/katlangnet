@@ -54,6 +54,7 @@ import CoreTests.HostScopePropertyCache
 import CoreTests.HostScopeIdentity
 import CoreTests.StructuralIdentity
 import CoreTests.HostParentDifferential
+import CoreTests.ModuleDifferential
 import CoreTests.SpreadFailureOrigin
 import CoreTests.SemanticGeneratedCases
 import CoreTests.FrontEndDecisionCases

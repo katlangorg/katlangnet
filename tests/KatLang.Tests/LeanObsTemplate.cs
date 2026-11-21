@@ -3,8 +3,9 @@ namespace KatLang.Tests;
 /// <summary>
 /// The shared Lean observation machinery emitted into every generated
 /// differential artifact (<c>lean/SemanticExplorerCases.lean</c>,
-/// <c>lean/LanguageSpecCases.lean</c>, <c>lean/CoreTests/HostParentDifferential.lean</c> and
-/// <c>lean/CoreTests/SemanticGeneratedCases.lean</c>). The artifacts are self-contained
+/// <c>lean/LanguageSpecCases.lean</c>, <c>lean/CoreTests/HostParentDifferential.lean</c>,
+/// <c>lean/CoreTests/SemanticGeneratedCases.lean</c> and
+/// <c>lean/CoreTests/ModuleDifferential.lean</c>). The artifacts are self-contained
 /// Lean files, but their observation definitions originate from these C#
 /// constants, so they can never drift apart. The category names in
 /// <c>errCategory</c> must stay aligned with
