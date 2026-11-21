@@ -120,6 +120,38 @@ internal interface IZeroArgPropertyResultCache
 }
 
 /// <summary>
+/// PASSIVE OBSERVER of the zero-argument property publications a PLANNED LOOP makes in its own
+/// storage (KL-06 F01, owner decision Option A, November 21 2026).
+/// <para><b>What a publication is.</b> A zero-argument property is published when it first
+/// establishes a reusable value in its owning invocation. On the generic strategy that is a store of
+/// the run's cache (<see cref="ZeroArgPropertyPublications"/>). A planned loop keeps the value of a
+/// planned step property in the round's frame slot instead (<c>LoopRunFrame.EstablishTempSlot</c>) and
+/// never asks the cache. A loop round is an actual call of the step, so the first store of a slot in
+/// a round is the same publication: an exported and a local-only property alike, established by a
+/// bare read or by a qualifying zero-supply call that found the slot empty (CACHE-PUB-1). A later
+/// read of the slot, a fresh call of an established slot, an undemanded property and a calculation
+/// that fails before its store publish nothing, and a later failure of the run removes nothing.</para>
+/// <para><b>Who observes.</b> A run's cache that implements this interface is told of each such
+/// store, once, with the declared binding (an alias step property has no slot: its target's binding
+/// is reported, as its target's entry is published on the generic strategy). The frame reads the
+/// observer once, when a planned loop starts. Only a harness cache implements it
+/// (<c>ZeroArgPublicationObserver</c> in the tests): no cache that <c>src/KatLang</c> constructs does,
+/// so an ordinary run pays one null check per established slot and stores nothing more. The cache's
+/// own counters (<see cref="RunScopedZeroArgPropertyResultCache.PublishedCount"/>, the statistics
+/// snapshot) keep counting the entries of ITS store only.</para>
+/// <para><b>Observation only.</b> The call is made after the slot is stored. It evaluates nothing,
+/// charges nothing and cannot change the stored value, the returned result or any later decision.</para>
+/// </summary>
+internal interface IPlannedLoopPublicationObserver
+{
+    /// <summary>
+    /// A planned loop round established the slot of <paramref name="binding"/>: the round's one
+    /// publication of that zero-argument property.
+    /// </summary>
+    void PlannedLoopSlotPublished(Property binding);
+}
+
+/// <summary>
 /// The cache key, and with it the cache's semantic LAW (Lean:
 /// <c>zeroArgPropertyCacheKey</c>). A stored value belongs to the declaring binding
 /// in its owning invocation, or to the run when there is no owning call.

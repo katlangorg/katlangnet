@@ -34,9 +34,13 @@ exporter). On supported failures, `errorObs` runs the plain and counted Lean
 evaluators again. Each `structural` guard on a host-parent success runs the plain
 evaluator once. All four artifacts also emit the KL-06 cache observation
 (`CacheObservationDefinitions`): the host-parent artifact guards it on every
-case, the other three on a four-case pilot each (§ Cache publications).
+case, the other three on a four-case pilot each (§ Cache publications). The
+hand-maintained `lean/CoreTests/PlannedLoopPublications.lean` embeds the same
+definitions for the F01 loop cases (`PlannedLoopPublicationTests` checks its text).
 The public engine adds one run only on failures and parse rejections where it
-was previously skipped. No production evaluator code or normal-run overhead changes.
+was previously skipped. Q-67 changed no production evaluator code and no
+normal-run overhead. The F01 decision of 2026-11-21 added one production hook,
+the planned loop's publication report (§ Cache publications).
 
 ## Complete constructor policy
 
@@ -268,6 +272,76 @@ access used the async interface. All three check that every owner was released. 
 `publicationsOf`, `publications`, `cacheEntries` and `cacheTotal`, one text
 (`LeanObsTemplate.CacheObservationDefinitions`) emitted into all four artifacts;
 each cache guard runs its program once.
+
+**What a publication is (F01, owner decision Option A, 2026-11-21).** A
+publication is counted when a zero-argument property first establishes a
+reusable value in its owning invocation. Each loop round is a fresh invocation
+of the step, so each round that successfully establishes a step property's value
+publishes it once, whether the property is local-only or exported.
+
+- *The finding.* The planned loop keeps the value of a planned step property in
+  the round's frame slot and never asks the property cache. The optimized route
+  therefore reported no publication for it, while the generic route and Lean
+  reported one per round. The values agreed, so no neutral guard could see it:
+  `Step(n, total) = { Next = n + 1 ⏎ Next, total + Next }` /
+  `Step(0, 0).repeat(3)` is `S[3, 6]` on every route, with `Next` published
+  three times by generic C# and Lean and never by optimized C#. Since the
+  inner-property lifetime rule the same holds for an exported step property
+  (`T = 5`).
+- *The decision.* The frame storage stays. A successful store of a frame slot
+  counts as a successful store of the cache does, under the property's own
+  binding name, when the slot is first established in a round. A later read in
+  the round adds nothing. A qualifying zero-supply call `T()` that finds the
+  slot empty establishes it; a later `T()` still executes fresh and adds
+  nothing. An undemanded property and a calculation that fails before it
+  establishes its value publish nothing. A later ordinary failure keeps what
+  was published.
+- *The mechanism.* `LoopRunFrame.EstablishTempSlot` is the one place a slot is
+  stored. Both callers reach it only for an empty slot and only after the
+  property's calculation succeeded. It reports the store to the run's
+  `IPlannedLoopPublicationObserver`, with the declared binding: an alias step
+  property shares its target's slot, so its target is reported, as on the
+  generic route. Only a harness cache implements the interface (the recorder of
+  `ZeroArgPublicationObserver`), so an ordinary run pays one null check per
+  established slot, and the cache's own counters still count its own store
+  only. The count comes from actual stores: after a handover the planned rounds
+  are frame-slot stores and the generic rounds are cache stores, and the round
+  that handed over is never evaluated again. The async route pins the generic
+  strategies, so it has no frame slot.
+- *Lean.* The model is unchanged. A round binds a fresh context, so its entries
+  already had their own keys.
+- *Pins.* `PlannedLoopPublicationTests` holds 15 source programs with
+  hand-written expectations and `lean/CoreTests/PlannedLoopPublications.lean`
+  the encoding of the same elaborated programs with their neutral and cache
+  guards (hand-maintained; the C# class checks the module text). The module
+  embeds the shared observation definitions and the five state guards verbatim.
+
+| Case | Result | Published |
+| --- | --- | --- |
+| Local-only property read twice per round (the F01 witness) | `S[3, 6]` | `Next=3` |
+| Exported constant property | `15` | `T=3` |
+| Two properties, one reading the other | `39` | `A=3 B=3` |
+| Call, then read; read, then call; two calls | `926` each | `A=3` each |
+| Exported property called, then read | `252` | `E=3` |
+| Alias property | `14` | `A=3`, `B=0` |
+| `while` (the condition row establishes the slot) | `2` | `Next=3` |
+| Undemanded property | `6` | `Unused=0` |
+| Calculation fails in the first round | `err div0` | `Bad=0` |
+| Calculation fails in the second round | `err div0` | `T=1` |
+| Failure in a round after its publication | `err div0` | `T=2` |
+| Failure after the loop | `err div0` | `T=3` |
+| Handover to the generic strategy after one planned round | `S[S[], 3]` | `T=3` (1 frame slot, 2 cache stores) |
+
+For every case the C# test reads the planner diagnostics of the very run it
+compares: the loop was entered planned, every row and step property is a plan,
+and the expected entries came from frame slots. It also requires the generic
+publication order and the generic step, checkpoint, depth and materialization
+counts of the optimized route, and that an unobserved optimized run has the
+observed run's result and counts while its cache stores nothing for a planned
+property. Without the report all 13 cases that publish fail with "generic and
+optimized routes published different cache entries" (measured 2026-11-21 before
+the report was added). The pilots, the census numbers and the corpus guards
+below are unchanged by this decision; widening them stays a separate decision.
 
 **Three states, never written alike.**
 
@@ -507,6 +581,17 @@ the host-operation programs of SEM-2B, or under cancellation. They compare entry
 counts per binding name, not the cached values (the neutral guard holds the
 value a program returns) and not cache keys: two bindings of one name in
 different scopes are two entries under that name, as in the host-parent corpus.
+The same limits hold for the F01 loop cases. The census above predates the F01
+decision and the inner-property lifetime rule, and its scratch tools are not in
+the tree. Its C# half was repeated on 2026-11-21 with the publication report in
+place (a scratch test, not kept): 2,551 explorer surface programs, 541
+specification programs, 264 SEM-2C base members and 414 transformation members.
+None of those 3,770 runs established a planned frame slot, and the C# routes
+agreed on their publication observations. The explorer and SEM-2C entry totals equal the
+table's (1,171, 194 and 363); the specification has grown to 541 programs with
+392 entries. The Lean half was not repeated for unguarded programs. The five
+further language-specification cases proposed in the 2026-11-21 widening report
+are not added either.
 Extending the observation to all 3,725 programs is a separate owner decision, to
 be made on the census and the cost above. Logs, the census tables and the
 scratch tools are in `artifacts/validation/kl-cache-pilots/`.

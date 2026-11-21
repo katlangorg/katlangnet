@@ -1,4 +1,5 @@
 using KatLang.Evaluation;
+using KatLang.Evaluation.Caching;
 using System.Collections;
 using System.Numerics;
 
@@ -133,6 +134,9 @@ internal sealed class LoopRunFrame
     private readonly bool[] _tempSlotHasValue;
     private readonly PlannedLoopValue[] _iterationOutputs;
     private readonly LoopValueEnvironment _valueEnvironment;
+    // KL-06 F01: the run's cache when it observes planned-loop publications (a harness recorder),
+    // read once per loop. Null in every run whose cache src/KatLang constructed.
+    private readonly IPlannedLoopPublicationObserver? _publicationObserver;
 
     public LoopRunFrame(
         LoopPlanTemplate template,
@@ -151,6 +155,7 @@ internal sealed class LoopRunFrame
         _iterationOutputs = new PlannedLoopValue[
             template.NextStateOutputs.Count + (template.ContinuationOutput is null ? 0 : 1)];
         _valueEnvironment = new LoopValueEnvironment(parentValEnv);
+        _publicationObserver = parentCtx.ZeroArgPropertyResultCache as IPlannedLoopPublicationObserver;
         Diagnostics = parentCtx.LoopDiagnostics;
         Diagnostics?.RecordLoopPlanExecution(template.DiagnosticKey);
     }
@@ -221,12 +226,24 @@ internal sealed class LoopRunFrame
     /// <para>This also boxes arithmetic-only temps. Selective boxing saved one atom per such temp per
     /// iteration. Its timing relative to the inline control varied with JIT tiering (KL-01 measurements
     /// in <c>benchmarks/README.md</c>).</para>
+    /// <para>THIS STORE IS THE ROUND'S PUBLICATION of the temp (KL-06 F01, owner decision Option A,
+    /// November 21 2026): a round is an actual call of the step, and the property first establishes
+    /// its reusable value in that call here, exactly where the generic strategy stores its cache
+    /// entry. Both callers reach this method only for an EMPTY slot — the bare read after a miss, and
+    /// the qualifying zero-supply call that found the slot empty — and only after the temp's
+    /// calculation succeeded, so the store happens at most once per temp per round. It is reported to
+    /// the run's publication observer, when the run has one
+    /// (<see cref="IPlannedLoopPublicationObserver"/>), under the DECLARED binding: an alias temp
+    /// shares its target's plan and slot, so its target's binding is reported. The report follows the
+    /// store, evaluates and charges nothing, and cannot change the stored value.</para>
     /// </summary>
     public PlannedLoopValue EstablishTempSlot(int index, PlannedLoopValue value)
     {
+        System.Diagnostics.Debug.Assert(!_tempSlotHasValue[index], "A planned temp slot is established once per round.");
         value = value.WithResult();
         _tempSlots[index] = value;
         _tempSlotHasValue[index] = true;
+        _publicationObserver?.PlannedLoopSlotPublished(Template.TempPlans[index].Binding);
         return value;
     }
 
