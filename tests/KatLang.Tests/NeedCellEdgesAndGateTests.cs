@@ -324,20 +324,13 @@ public class NeedCellEdgesAndGateTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
-    // One instance of the type, with nothing else.
-    private static long InstanceBytes(Type type)
-    {
-        _ = RuntimeHelpers.GetUninitializedObject(type);
-        return Bytes(() => _ = RuntimeHelpers.GetUninitializedObject(type));
-    }
-
     // An async method's own state machine: a struct in an optimized build, which a synchronous
     // completion never boxes, but a heap class in a Debug build (one object per call).
     private static long StateMachineBytes(Type owner, string method)
     {
         var type = owner.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!
             .GetCustomAttribute<AsyncStateMachineAttribute>()!.StateMachineType;
-        return type.IsValueType ? 0 : InstanceBytes(type);
+        return type.IsValueType ? 0 : InstanceSize.Of(type);
     }
 
     private static T CompleteSynchronously<T>(ValueTask<T> operation)
@@ -370,7 +363,7 @@ public class NeedCellEdgesAndGateTests
         var value = Seven.Value;
         _ = NeedCell.Ready(value); // warm-up
         _ = Node(budget);
-        var cell = InstanceBytes(typeof(NeedCell));
+        var cell = InstanceSize.Of(typeof(NeedCell));
         Assert.Equal(cell, Bytes(() => _ = NeedCell.Ready(value)));
         Assert.Equal(cell, Bytes(() => _ = Node(budget)));
         GcIsolatedAllocation.Complete();

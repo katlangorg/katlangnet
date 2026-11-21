@@ -250,12 +250,6 @@ public class CollectionBuiltinDispatchTests
         return Bytes(() => _ = Array.CreateInstanceFromArrayType(arrayType, length));
     }
 
-    private static long ObjectBytes(Type type)
-    {
-        _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
-        return Bytes(() => _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type));
-    }
-
     private static Evaluator.ResolvedArgumentAlgorithm Supplied(Result value)
         => new(null) { Cell = NeedCell.Ready(new(value, value.ValueCount())) };
 
@@ -320,7 +314,7 @@ public class CollectionBuiltinDispatchTests
         Assert.Equal(0m, Assert.IsType<Result.Atom>(warm.Value.Value).Value);
 
         var expected = ArrayBytes(ItemType, 3) + ArrayBytes(PreparedType, 2)
-            + ObjectBytes(PreparedType.GetNestedType("AlgorithmArg")!) + ObjectBytes(PreparedType.GetNestedType("ValueArg")!);
+            + InstanceSize.Of(PreparedType.GetNestedType("AlgorithmArg")!) + InstanceSize.Of(PreparedType.GetNestedType("ValueArg")!);
         Assert.Equal(expected, Bytes(() => _ = Apply(BuiltinId.reduce, args, ctx, values)));
         GcIsolatedAllocation.Complete();
     }

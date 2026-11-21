@@ -282,9 +282,7 @@ public class NeedCellDemandScaffoldingTests
     {
         var type = owner.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!
             .GetCustomAttribute<AsyncStateMachineAttribute>()!.StateMachineType;
-        if (type.IsValueType) return 0;
-        _ = RuntimeHelpers.GetUninitializedObject(type);
-        return Bytes(() => _ = RuntimeHelpers.GetUninitializedObject(type));
+        return type.IsValueType ? 0 : InstanceSize.Of(type);
     }
 
     private static T CompleteSynchronously<T>(ValueTask<T> operation)

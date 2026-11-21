@@ -69,12 +69,6 @@ public class CollectionResultHandoverAllocationTests
         return Bytes(() => _ = Array.CreateInstanceFromArrayType(arrayType, length));
     }
 
-    private static long ObjectBytes(Type type)
-    {
-        _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
-        return Bytes(() => _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type));
-    }
-
     private static long ResultArrayDelta(int smaller, int larger)
         => ArrayBytes(typeof(Result), larger) - ArrayBytes(typeof(Result), smaller);
 
@@ -131,7 +125,7 @@ public class CollectionResultHandoverAllocationTests
         // result slot — no 32-byte (value, index) sort key, no numeric list, no sorted copy, no second
         // result array.
         var expected = ArrayBytes(typeof(int), Large) - ArrayBytes(typeof(int), Small)
-            + ((Large - Small) * ObjectBytes(typeof(Result.Atom)))
+            + ((Large - Small) * InstanceSize.Of(typeof(Result.Atom)))
             + ResultArrayDelta(Small, Large);
         foreach (var builtin in new[] { BuiltinId.order, BuiltinId.orderDesc })
             Assert.Equal(expected, CallBytes(builtin, Args(SparsePermuted(Large))) - CallBytes(builtin, Args(SparsePermuted(Small))));
@@ -150,7 +144,7 @@ public class CollectionResultHandoverAllocationTests
         if (!GcIsolatedAllocation.EnterChild())
             return;
 
-        var perItem = ((Large - Small) * ObjectBytes(typeof(Result.Atom))) + ResultArrayDelta(Small, Large);
+        var perItem = ((Large - Small) * InstanceSize.Of(typeof(Result.Atom))) + ResultArrayDelta(Small, Large);
         var spanning = ArrayBytes(typeof(int), Large) - ArrayBytes(typeof(int), Small) + perItem;
         Result Repeated(int n) => ListOf(Enumerable.Range(0, n).Select(static i => (int)((i * 7919L) % 10)));
         foreach (var builtin in new[] { BuiltinId.order, BuiltinId.orderDesc })
@@ -250,7 +244,7 @@ public class CollectionResultHandoverAllocationTests
 
         var small = ListOf(Enumerable.Range(1, Small));
         var large = ListOf(Enumerable.Range(1, Large));
-        var expected = ((Large - Small) * ObjectBytes(typeof(Result.Atom))) + ResultArrayDelta(Small, Large);
+        var expected = ((Large - Small) * InstanceSize.Of(typeof(Result.Atom))) + ResultArrayDelta(Small, Large);
         Assert.Equal(expected, CallBytes(BuiltinId.atoms, Args(large)) - CallBytes(BuiltinId.atoms, Args(small)));
 
         // Both lists produce a single atom. Their input widths must not size a result buffer.

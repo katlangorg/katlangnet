@@ -353,9 +353,7 @@ public class OrdinaryCallBindingAllocationTests
     {
         var type = typeof(Evaluator).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)!
             .GetCustomAttribute<System.Runtime.CompilerServices.AsyncStateMachineAttribute>()!.StateMachineType;
-        if (type.IsValueType) return 0;
-        _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type);
-        return Bytes(() => _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type));
+        return type.IsValueType ? 0 : InstanceSize.Of(type);
     }
 
     [Fact]
