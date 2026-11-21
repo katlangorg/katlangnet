@@ -1243,6 +1243,11 @@ public closed record Result
     ///
     /// <para>One helper serves both views so the rule is stated once. It is inlined, so peeling
     /// adds no call and the public views' <c>null</c> observer folds away.</para>
+    ///
+    /// <para>In <c>KatLangArityLaws/ScalarViewPeeling.lean</c>, <c>asInt_eq_numberOf_terminal</c>
+    /// and <c>asBool_eq_booleanOf_terminal</c> equate Lean's scalar views with <see cref="NumberOf"/>
+    /// and <see cref="BooleanOf"/> as modeled on the peeled terminal. Lean's numeric payload is an
+    /// <c>Int</c>. The C# scalar-view regressions check the stored <see cref="Decimal128"/> bits.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private Result ScalarViewTerminal(ValueTraversalObservations? observations)
