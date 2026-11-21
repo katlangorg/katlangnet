@@ -22,13 +22,13 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4068
-- guarded: 3930 (464 may capture calls, 3466 cannot)
+- corpus programs: 4125
+- guarded: 3987 (475 may capture calls, 3512 cannot)
 - excluded: 138
   language-spec: 654 programs, 541 guarded (49 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2564 programs, 2551 guarded (53 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
-  generated: 687 programs, 678 guarded (354 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
+  generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
   host-parent: 134 programs, 134 guarded (8 may capture calls)
   modules: 10 programs, 7 guarded (0 may capture calls), 3 excluded: C#-only by the corpus's reviewed reason
 
@@ -6698,6 +6698,63 @@ def explorerInternalPrograms : List Expr := [
 #guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain == true
 #guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain_alpha == true
 #guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain_reorder == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_alpha == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed_alpha == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst_alpha == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_alpha == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_reorder == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault_alpha == true
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_reorder == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_alpha == false
+#guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_reorder == false
 #guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0 == true
 #guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0_alpha == true
 #guard Expr.mayCaptureCalls SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0_reorder == true
@@ -7380,6 +7437,63 @@ def generatedPrograms : List Expr := [
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain,
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain_alpha,
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_reorder,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_alpha,
+  SemanticGeneratedCases.case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_reorder,
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0,
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0_alpha,
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0_reorder,
@@ -7659,8 +7773,8 @@ def generatedPrograms : List Expr := [
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2Dnested_2F5EED2B000002_2F3_alpha,
   SemanticGeneratedCases.case_sem2b_2Fv1_2Fseed_2Dnested_2F5EED2B000002_2F3_reorder
 ]
-#guard generatedPrograms.length == 678
-#guard (generatedPrograms.filter Expr.mayCaptureCalls).length == 354
+#guard generatedPrograms.length == 735
+#guard (generatedPrograms.filter Expr.mayCaptureCalls).length == 365
 
 /-! ## host-parent -/
 
@@ -7964,5 +8078,5 @@ def modulePrograms : List Expr := [
 #guard modulePrograms.length == 7
 #guard (modulePrograms.filter Expr.mayCaptureCalls).length == 0
 
--- 3930 gate guards over 4068 corpus programs.
+-- 3987 gate guards over 4125 corpus programs.
 end KatLang.MayCaptureCallsCorpus

@@ -707,3 +707,15 @@ member guard pins the BASE member's neutral text. The guards do NOT observe the
 host-operation programs in Lean (their relation to the identity-prelude members
 is C# evidence), host events, async suspension or cancellation, or optimizer
 paths.
+
+The named tick block (`sys/tick/…`, 23 cases since 2026-11-21) observes
+evaluation order through `tick()` rather than host events. The counter is
+language state Lean models, and its values are part of the result. These
+guards therefore check, on Lean, the order inside `map`, `filter` and
+`reduce` callbacks, `repeat` and `while` rows, and selectors. They also check
+member reads through transparent references and forwarding carriers, and the
+per-activation lifetime of two nested parameterized owners' local properties.
+The block's three fault shapes trace their ticks: which ticks ran before the
+fault is C# host-event evidence, and Lean checks the error kind. Each shape's
+named rejected reading (`fuzz/README.md` § Families and interactions) is a C#
+control of the anchor's sensitivity. It is not a Lean mutation test.

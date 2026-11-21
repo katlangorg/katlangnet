@@ -1591,8 +1591,9 @@ structural model.
 
 | Piece | File |
 |---|---|
-| Grammar model (symbols, scopes, renderer; SEM-2B adds dot edges, postfix selection, list literals, fixed-name primitives, binary operators, META parameters and list patterns) | `tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` (linked into this project) |
+| Grammar model (symbols, scopes, renderer; SEM-2B adds dot edges, postfix selection, list literals, fixed-name primitives, binary operators, META parameters and list patterns; the tick block adds symbol-addressed member reads, `MExpr.MemberRead`) | `tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` (linked into this project) |
 | Productions (8 families), contexts, invalid productions | `Semantic/SemanticGrammar.cs` |
+| The named tick block (`sys/tick/<group>/<shape>`): its shapes, rules and rejected readings | `Semantic/SemanticTickShapes.cs` |
 | The wide nested-pattern production of `seed-nested-wide` | `Semantic/SemanticNestedWide.cs` |
 | The wider nested-pattern production of `seed-nested-wider` and its reference binder | `Semantic/SemanticNestedWider.cs` |
 | Case model, kinds, intended paths, expectation | `Semantic/SemanticCase.cs` |
@@ -1706,8 +1707,8 @@ choice sequence (2,432 `placement`, 960 `repeated`, 1,872 `spread`, 1,152 `meta-
 and `MPattern.Meta` (a META parameter in a parameter-list head); every earlier production renders
 byte-identically.
 
-The named path block `sem2b/v1/sys/path/<Path>/<shape>` (`SemanticCorpus.PathVariants`, appended
-after every other systematic case) widens the thin optimizer loop paths. Each case is the `loop`
+The 34 cases in `sem2b/v1/sys/path/<Path>/<shape>` (`SemanticCorpus.PathVariants`, following
+the original systematic cases) widen the thin optimizer loop paths. Each case is the `loop`
 production with its kind, fallback shape, count, `wait`/`trace` choice and `repeat` spelling forced
 by `SemanticChooser.Forcing` (every other dimension is the ordinary systematic chooser's), placed
 bare, in a list, property, cached double read, wrapper call, live `if` or brace scope, or beside one
@@ -1718,6 +1719,84 @@ projects its step and consults the optimizer, so no `while` form reaches the sho
 traced and waited steps at every count 1–4. `SemanticPathCoverageTests` pins a digest of every
 pre-existing case (sources, expectation, paths, profiles), checks that the block adds only
 `sys/path/` ids, and requires every claim of a path case to be admitted on evidence.
+
+The named tick block `sem2b/v1/sys/tick/<group>/<shape>` (`Semantic/SemanticTickShapes.cs`,
+appended after the path block) adds the productions § 7 of the 2026-11-20 C#/Lean differential bug
+hunt found uncovered: 23 fixed programs, each observed through `tick()`. The run's one counter is
+genuine language state that Lean models, and its values are part of the RESULT. The identity-prelude
+member carries the order of successful tick computations into its Lean guard. The C# host fixture
+records `trace:x` or `wait:x` and returns `x`; the identity prelude returns `x` in Lean.
+Each successful tick fragment ends its row with a count control. A partner fragment can also log an event. A fault
+shape wraps its ticks in `trace(…)`: the C# event log pins what ran before the fault, and Lean sees
+the error kind. Each shape also constructs the expectation of one NAMED REJECTED READING over the
+same program. `SemanticTickShapeTests` requires that expectation to differ from the intended one, and
+`sync-generic`, `sync-optimized` and `async-twin` must each reject it. Fault shapes take no partner
+fragment, whose `trace(d)` values would collide with the traced ticks.
+
+| Id (`sys/tick/…`) | Rule (expectation) | Intended result (Lean and C#) | C# host events / paths | Rejected reading |
+| --- | --- | --- | --- | --- |
+| `callback/map` (property-double) | collection first, then one transform per element | `[[13, 24], 5]` | — / CacheHit | elements demanded inside each transform: `[[12, 34], 5]` |
+| `callback/filter` (if-false) | predicate per element, first to last | `[[2, 5], 4]` | — / DeadComputationUntouched | last to first: `[[5], 4]` |
+| `callback/reduce` (wrapper) | collection, then initial once, then each step's result, left to right | `[17, 6]` | — | nested-call unfolding: `[15, 6]` |
+| `callback/map-fault` | a failing transform ends the run | `DivByZero` | `trace:1, trace:2` / FirstFailureStops | every transform runs: adds `trace:3` |
+| `loop/repeat-rows` | one round: rows left to right, each original cell at its first use | `[(12, 34), 5]` | — / GenericInsideOptimizedLoop | arguments run before the round: `(13, 24)` |
+| `loop/repeat-rows-crossed` | the same with the rows reading the cells crossed | `[(12, 34), 5]` (same) | — / GenericInsideOptimizedLoop | `(23, 14)` (differs) |
+| `loop/while-flag-first` (list) | flag first, transition after a true flag | `[2, 4]` | — / GenericInsideOptimizedLoop | step-first order: `[1, 5]` |
+| `loop/while-dead-transition` (meta partner first) | a false first flag forms no transition row | `[0, 1]` | partner's `trace:1` / OptimizedLoop | transition first: `[0, 2]` |
+| `loop/while-fault` | a failing flag ends the loop before its round's transition | `DivByZero` | `trace:1..3` / GenericInsideOptimizedLoop, FirstFailureStops | step-first: success `1`, `trace:1..4` |
+| `select/receiver-first` (cache partner first) | receiver once, then selectors left to right | `[(2, 3), 6]` | partner's `wait:1` / AsyncSuspension (the partner's) | selectors first: `[(4, 5), 6]` |
+| `select/spread-formation` (brace) | spread selectors run during formation | `[(13, 12, 13), 4]` | — | written order: `[(11, 13, 14), 4]` |
+| `select/retained` | a retained collector demands only the selected cell | `[(1, 1), 2]` | — | whole list: `[(2, 2), 4]` |
+| `select/eager-result` | a call result is eager | `[(2, 2), 4]` | — | selected argument only: `[(1, 1), 2]` |
+| `select/reject` | an out-of-range selector stops the selection | `BadIndex` | `trace:1` / FirstFailureStops | all selectors first: adds `trace:2` |
+| `member/transparent` | `A = Lib`: `A.M` is `Lib.M`, one entry | `[1, 1, 2]` | — / CacheHit | an entry per reference: `[1, 2, 3]` |
+| `member/carrier` | `C = { M = … ⏎ Lib }` keeps its own `M` | `[1, 2, 3]` | — | the target's member: `[1, 1, 2]` |
+| `member/transparent-chain` (select partner after) | `B = A = Lib`: one entry through the chain | `[1, 1, 1, 2]` | — / CacheHit | an entry per link: `[1, 2, 3, 4]` |
+| `member/passed` (if-true) | a passed reference is its target, a passed carrier keeps its members | `[1, 2, 1, 3]` | — / CacheHit, DeadComputationUntouched | carrier transports its target: `[1, 1, 1, 2]` |
+| `owners/inner-local` | `Inner`'s local per inner activation | `[[111, 212], [321, 422], 5]` | — | per outer activation |
+| `owners/outer-local` | `Outer`'s local per outer activation | `[[111, 112], [221, 222], 3]` | — / CacheHit | per inner activation |
+| `owners/inner-local-same-args` | each `Inner(1)` gets fresh state inside the same outer call | `[[111, 211], [311, 411], 5]` | — | sharing within an outer call gives `[[111, 111], [211, 211], 3]` |
+| `owners/outer-local-same-args` | each `Outer(1)` gets fresh state, shared by its two inner calls | `[[111, 111], [211, 211], 3]` | — / CacheHit | sharing across outer calls gives `[[111, 111], [111, 111], 2]` |
+| `owners/chain` (property) | each owner's local lives for its own activation | `[[13, 15], [47, 50], 7]` | — / CacheHit | inner local shared per outer activation |
+
+The values list the shape's own row; contexts and partner fragments wrap or precede it as
+everywhere else. Five variant pairs differ in one construct. For a mirror pair, the rejected reading
+of each shape is the other shape's rule: transparent/carrier, retained/eager-result and
+inner-/outer-local. The loop pair observes the same state, while the rejected reading tells its
+members apart. The equal-argument owner pair contrasts the two owners. The tick shapes draw no
+chooser decision. Each base runs sync-generic, sync-optimized, async-twin, the public sync engine
+and the optimized rerun; six also run the public async engine under the existing profile rule.
+All 23 have `alpha-rename`, and the 11 cases whose root has two or more declarations also run
+`declaration-reorder`. The new `RequiredInteractions`
+pairs (`tick-order` × callback, loop, select and failure; `member-read` × transparent-reference and
+carrier; `nested-owner` × `activation-state`) are coverage floors. `SemanticTickShapeTests` pins the
+block's ids and digest, the evidence admission of every claim, the controls, the pairs, the
+Lean/C# observation split and the member-read model node.
+
+| Fixed-corpus observation | Before the tick block | With the tick block |
+| --- | ---: | ---: |
+| Accepted cases (valid / invalid) | 273 (264 / 9) | 296 (287 / 9) |
+| Profile runs, including transformations | 1,752 | 1,907 |
+| Evidence-backed claims admitted / rejected | 182 / 0 | 195 / 0 |
+| GenericInsideOptimizedLoop / OptimizedLoop | 13 / 13 | 17 / 14 |
+| CacheHit / AsyncSuspension | 39 / 83 | 46 / 84 |
+| FirstFailureStops / DeadComputationUntouched | 20 / 75 | 23 / 77 |
+| Alpha-rename / declaration-reorder relations | 264 / 150 | 287 / 161 |
+
+Loop paths, cache hits and the partner's suspension use runner diagnostics. FirstFailureStops
+and DeadComputationUntouched use the exact outcome and host-event anchors.
+
+Rejected or unsupported, and not generated. A carrier member MISS (`C = { N = 0 ⏎ Lib }`, `C.M`)
+takes the ordinary fallback `M(C)`. With no visible `M`, that name is the program's own implicit
+parameter, so the run is refused before any row ("expected 1 argument, got 0") and observes no
+member route. A non-integer quotient is a known model difference, not a differential: Lean's core
+numbers are integers and its `/` truncates (`lean/KatLang.lean`, the `.div` arm). Every tick-shape
+division is therefore exact or by zero. A draft `loop/while-fault` flag `1 / (3 - t)` was `0.5 > 0`
+in C# and `0 > 0` in Lean; its Lean guard refused it, and the shape now uses `2 / (3 - t)`. A tick
+shape composed beside another tick shape would shift its numbers, so each case holds one tick
+fragment. Only the existing cache partner supplies a wait. Cancellation, concurrent demands and
+seeded tick shapes are outside this block. Planned loop TEMPS (local properties of a step) are left to the
+separately tracked planned-temp generator.
 
 Contexts wrap a row in a list, a live or dead `if` branch, a property, a cached double read, a wrapper
 call or a brace scope. `SemanticCorpus.RequiredInteractions` names the feature pairs that must have
@@ -1789,8 +1868,8 @@ where shared). The member is built only in that test: it is not a `SemanticCase.
 descriptors and replay are unchanged.
 
 The case's own transformation members are guarded too: `alpha-rename` for every valid case and
-`declaration-reorder` whenever the root has two or more declarations (264 + 150 = 414 members over
-264 cases). Each gets the same identity prelude and the same checks, plus the SEM-2B runner's
+`declaration-reorder` whenever the root has two or more declarations (287 + 161 = 448 members over
+287 cases since the tick block; 264 + 150 = 414 over 264 before it). Each gets the same identity prelude and the same checks, plus the SEM-2B runner's
 member relation exactly as `SemanticRunner.Run` applies it — SemanticEqual to the base under the
 `Normalized` error policy, which on the neutral observation is equality of the `ok raw=… n=…` or
 `err <kind>` text — and its `#guard obs` pins the BASE member's neutral text, so Lean checks the
@@ -1809,7 +1888,10 @@ member checks), host events, async suspension and cancellation, and optimizer pa
 (one run per tree on the same host; OS file cache uncontrolled). The caps in the test class cite
 both measurements. The last ten completed four-core CI Lean jobs took 6m56s–10m26s; the expected
 additional 20–45 s remains an estimate until the changed artifact runs in CI, well within the
-unchanged 30-minute budget. Regenerate with `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"` and
+unchanged 30-minute budget. The tick block (2026-11-21) brings the artifact to 735 guarded programs
+(287 cases) and 721,247 bytes, inside the unchanged caps of 300 cases, 800 programs and 800,000
+bytes. Its tick guards check evaluation order on Lean, because `tick()` values are part of each
+result. Regenerate with `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"` and
 `--filter SemanticGeneratedLeanArtifact`; the class is in `KatLang.Tests.SemanticTesting`, so the
 `KatLang.Tests.SemanticTesting.*` filter below covers it.
 
@@ -2331,10 +2413,13 @@ identity-prelude members. Automatic reduction of generated failures, its structu
 (§ Reduction), the bounded `semantic-campaign` over the seeded recipes, exhaustive sweeps of the
 finite ones with batch-only classification and sequence reduction, and their nightly job
 (§ Campaigns, § Batch-only failures, § Nightly sweeps) are implemented. Every valid generated case now has a per-case Lean guard on
-its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
-async and optimizer paths, and the two transformation members still rest on C# profile parity plus
-the independent constructed anchors. The thin optimizer loop paths now have named cases and an
-8-case floor each (§ Path evidence and coverage floors). Still unsupported and never reported as
+its identity-prelude base and transformation members (§ Per-case Lean guards). C# profile parity
+and the constructed anchors cover the host-operation programs, host events and execution paths.
+The thin optimizer loop paths now have named cases and an
+8-case floor each (§ Path evidence and coverage floors). The named tick block (§ Families and
+interactions) makes evaluation order inside callbacks, loop rows and selectors, member reads through
+transparent references and carriers, and nested owners' property lifetimes Lean-observable through
+`tick()` values. Its traced fault events stay C# evidence. Still unsupported and never reported as
 covered: asynchronous optimizer selection (the twin pins both optimizers off and the engine takes
 no optimizer switch) and asynchronous cache statistics (the async-capable cache keeps none), so no
 asynchronous profile claims optimizer or cache evidence (§ Profiles, facets and comparisons).

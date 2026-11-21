@@ -94,9 +94,8 @@ public class SemanticCampaignTests(ITestOutputHelper output)
         }
 
         // The corpus builds are untouched: the fixed-corpus digest pinned before spans existed.
-        var pathBlock = SemanticRecipe.CasePrefix + "sys/path/";
         Assert.Equal(SemanticReductionTests.FixedCorpusDigest,
-            SemanticReductionTests.CorpusDigest(SemanticCorpus.All().Where(c => !c.CaseId.StartsWith(pathBlock, StringComparison.Ordinal))));
+            SemanticReductionTests.CorpusDigest(SemanticReductionTests.DigestedFixedCorpus()));
     }
 
     /// <summary>

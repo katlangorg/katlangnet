@@ -57,11 +57,11 @@ public class SemanticGeneratedLeanArtifactTests
     /// <summary>Invalid front-end cases of the fixed corpus, excluded by kind (Lean has no surface front end).</summary>
     private const int ExpectedInvalidFrontEndCases = 9;
 
-    /// <summary>Coverage ratchet: may only be raised, or lowered in a reviewed diff that removes cases.</summary>
-    private const int MinimumIncludedCases = 264;
+    /// <summary>Coverage ratchet: may only be raised, or lowered in a reviewed diff that removes cases (287 since the tick block).</summary>
+    private const int MinimumIncludedCases = 287;
 
-    /// <summary>Transformation-member coverage ratchet (264 alpha-rename + 150 declaration-reorder); same rule.</summary>
-    private const int MinimumGuardedMembers = 414;
+    /// <summary>Transformation-member coverage ratchet (287 alpha-rename + 161 declaration-reorder); same rule.</summary>
+    private const int MinimumGuardedMembers = 448;
 
     /// <summary>
     /// Lean build-cost caps. Measurement (2026-11-10, 16-processor development host, cold

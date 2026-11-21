@@ -88,6 +88,12 @@ public abstract record MExpr
     /// <c>&lt;</c>). Compound operands render inside redundant parentheses,
     /// which the parser erases, so no precedence reasoning is needed.</summary>
     public sealed record Binary(string Operator, MExpr Left, MExpr Right) : MExpr;
+
+    /// <summary>Structural member read <c>receiver.Name</c> of a GENERATED member
+    /// declaration (SEM-2C tick block). A read through a parameter can reach different
+    /// declarations across calls. The generator records those targets, which must all
+    /// keep the name rendered at this one member occurrence.</summary>
+    public sealed record MemberRead(MExpr Receiver, Sym Target, params Sym[] OtherTargets) : MExpr;
 }
 
 /// <summary>A flat parameter: fixed, collecting (<c>*name</c>), or META
@@ -234,6 +240,7 @@ public sealed class ScopeGraph
 
     private readonly List<ScopeNode> _scopes = [];
     private readonly List<Reference> _references = [];
+    private readonly List<MExpr.MemberRead> _memberReads = [];
     private readonly List<(Sym Symbol, ScopeInfo Scope, string Kind)> _declarations = [];
 
     public IReadOnlyList<(Sym Symbol, ScopeInfo Scope, string Kind)> Declarations => _declarations;
@@ -430,6 +437,12 @@ public sealed class ScopeGraph
                 WalkExpr(bin.Left, scope);
                 WalkExpr(bin.Right, scope);
                 return;
+            case MExpr.MemberRead member:
+                // The receiver is walked like any expression; the member is selected by the
+                // receiver's structure, never by lexical lookup, so it is no Reference.
+                WalkExpr(member.Receiver, scope);
+                _memberReads.Add(member);
+                return;
 
             default:
                 throw new InvalidOperationException($"Unhandled expr kind {expr.GetType().Name}");
@@ -482,6 +495,17 @@ public sealed class ScopeGraph
                     $"Naming map invalid: a reference to {reference.Target} ('{name}') from scope "
                     + $"{reference.InScope.Info.Id} ({reference.InScope.Info.Label}) would resolve to "
                     + $"{(resolved is null ? "nothing" : resolved.ToString())} — rendering would change the binding graph.");
+            }
+        }
+
+        foreach (var read in _memberReads)
+        {
+            foreach (var target in read.OtherTargets.Prepend(read.Target))
+            {
+                if (!_declarations.Any(d => d.Symbol == target))
+                    throw new InvalidOperationException($"Naming map invalid: a member read selects {target}, which no scope declares.");
+                if (names[target] != names[read.Target])
+                    throw new InvalidOperationException($"Naming map invalid: one member read selects both {read.Target} and {target}, which now have different names.");
             }
         }
     }
@@ -778,6 +802,10 @@ public static class StructuralRenderer
                 sb.Append('.').Append(d.Member);
                 if (d.Args is { } dotArgs)
                     RenderArgs(dotArgs, names, sb, indent);
+                return;
+            case MExpr.MemberRead member:
+                RenderOperand(member.Receiver, member.Receiver is MExpr.Add or MExpr.Binary or MExpr.Spread, names, sb, indent);
+                sb.Append('.').Append(names[member.Target]);
                 return;
             case MExpr.Select sel:
                 RenderOperand(sel.Receiver, sel.Receiver is MExpr.Add or MExpr.Binary or MExpr.Spread, names, sb, indent);

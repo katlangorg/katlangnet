@@ -25,15 +25,15 @@ cancellation, and optimizer paths (all C# evidence of the SEM-2B profiles).
 
 Partition (machine-checked by the `includedCaseIds.length` and `guardedMemberIds.length`
 guards below):
-- corpus cases: 273
+- corpus cases: 296
 - excluded by kind (invalid front-end programs; Lean has no surface front end): 9
 - excluded by exact id: 0
-- included cases: 264 (187 success, 77 runtime failure)
-- guarded transformation members: 414 (264 alpha-rename, 150 declaration-reorder)
+- included cases: 287 (207 success, 80 runtime failure)
+- guarded transformation members: 448 (287 alpha-rename, 161 declaration-reorder)
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
   4 transformation members of those cases guard their published total;
-  the other 670 programs have no cache observation, which is not an empty cache
+  the other 727 programs have no cache observation, which is not an empty cache
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"
@@ -2056,6 +2056,264 @@ def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dw
   .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.call (.resolve "trace") [.num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.binary .add (.call (.resolve "wait") [.param "v3"]) (.num 1))])] [(.listLiteral [.resolve "v1", .resolve "v1"]), (.call (.resolve "repeat") [(.call (.resolve "v2") [.num 2]), .num 2]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain_reorder == "ok raw=S[L[1, 1], 4, 997] n=3"
 
+-- sem2b/v1/sys/tick/callback/map: v1 = [tick(), tick()] \n v2(v3) = (v3 * 10) + tick() \n v4 = [map(v1, v2), tick()] \n [v4, v4] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "v4" (alg [] [] [] [(.listLiteral [(.call (.resolve "map") [.resolve "v1", .resolve "v2"]), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.binary .add (.binary .mul (.param "v3") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [.resolve "v4", .resolve "v4"]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap == "ok raw=S[L[L[L[13, 24], 5], L[L[13, 24], 5]], 997] n=2"
+-- sem2b/v1/sys/tick/callback/map [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "w4" (alg [] [] [] [(.listLiteral [(.call (.resolve "map") [.resolve "w1", .resolve "w2"]), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w2" (alg ["w3"] [] [] [(.binary .add (.binary .mul (.param "w3") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [.resolve "w4", .resolve "w4"]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_alpha == "ok raw=S[L[L[L[13, 24], 5], L[L[13, 24], 5]], 997] n=2"
+-- sem2b/v1/sys/tick/callback/map [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v4" (alg [] [] [] [(.listLiteral [(.call (.resolve "map") [.resolve "v1", .resolve "v2"]), (.call (.resolve "tick") [])])]), privateProp "v1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.binary .add (.binary .mul (.param "v3") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [.resolve "v4", .resolve "v4"]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_reorder == "ok raw=S[L[L[L[13, 24], 5], L[L[13, 24], 5]], 997] n=2"
+
+-- sem2b/v1/sys/tick/callback/filter: v1 = [2, 5, 1] \n v2(v3) = v3 > tick() \n if(false, trace(666), [filter(v1, v2), tick()]) \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [.num 2, .num 5, .num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.comparison (.param "v3") [{ op := .gt, operand := (.call (.resolve "tick") []) }])])] [(.call (.resolve "if") [.boolLiteral false, (.call (.resolve "trace") [.num 666]), (.listLiteral [(.call (.resolve "filter") [.resolve "v1", .resolve "v2"]), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter == "ok raw=S[L[L[2, 5], 4], 997] n=2"
+-- sem2b/v1/sys/tick/callback/filter [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.listLiteral [.num 2, .num 5, .num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w2" (alg ["w3"] [] [] [(.comparison (.param "w3") [{ op := .gt, operand := (.call (.resolve "tick") []) }])])] [(.call (.resolve "if") [.boolLiteral false, (.call (.resolve "trace") [.num 666]), (.listLiteral [(.call (.resolve "filter") [.resolve "w1", .resolve "w2"]), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_alpha == "ok raw=S[L[L[2, 5], 4], 997] n=2"
+-- sem2b/v1/sys/tick/callback/filter [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [.num 2, .num 5, .num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.comparison (.param "v3") [{ op := .gt, operand := (.call (.resolve "tick") []) }])])] [(.call (.resolve "if") [.boolLiteral false, (.call (.resolve "trace") [.num 666]), (.listLiteral [(.call (.resolve "filter") [.resolve "v1", .resolve "v2"]), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_reorder == "ok raw=S[L[L[2, 5], 4], 997] n=2"
+
+-- sem2b/v1/sys/tick/callback/reduce: v1 = [tick(), tick()] \n v2(v3, v4) = (tick() * v3) + v4 \n v5(v6) = v6 \n v5([reduce(v1, v2, tick()), tick()]) \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3", "v4"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "v3")) (.param "v4"))]), privateProp "v5" (alg ["v6"] [] [] [.param "v6"])] [(.call (.resolve "v5") [(.listLiteral [(.call (.resolve "reduce") [.resolve "v1", .resolve "v2", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce == "ok raw=S[L[17, 6], 997] n=2"
+-- sem2b/v1/sys/tick/callback/reduce [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w2" (alg ["w3", "w4"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "w3")) (.param "w4"))]), privateProp "w5" (alg ["w6"] [] [] [.param "w6"])] [(.call (.resolve "w5") [(.listLiteral [(.call (.resolve "reduce") [.resolve "w1", .resolve "w2", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha == "ok raw=S[L[17, 6], 997] n=2"
+-- sem2b/v1/sys/tick/callback/reduce [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v5" (alg ["v6"] [] [] [.param "v6"]), privateProp "v2" (alg ["v3", "v4"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "v3")) (.param "v4"))])] [(.call (.resolve "v5") [(.listLiteral [(.call (.resolve "reduce") [.resolve "v1", .resolve "v2", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder == "ok raw=S[L[17, 6], 997] n=2"
+
+-- sem2b/v1/sys/tick/callback/map-fault: v1 = [1, 0, 2] \n v2(v3) = trace(tick()) / v3 \n [map(v1, v2), trace(tick())] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [.num 1, .num 0, .num 2])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.binary .div (.call (.resolve "trace") [(.call (.resolve "tick") [])]) (.param "v3"))])] [(.listLiteral [(.call (.resolve "map") [.resolve "v1", .resolve "v2"]), (.call (.resolve "trace") [(.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault == "err div0"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault == .matched (some { kind := "div0", names := [], counts := [] })
+-- sem2b/v1/sys/tick/callback/map-fault [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.listLiteral [.num 1, .num 0, .num 2])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w2" (alg ["w3"] [] [] [(.binary .div (.call (.resolve "trace") [(.call (.resolve "tick") [])]) (.param "w3"))])] [(.listLiteral [(.call (.resolve "map") [.resolve "w1", .resolve "w2"]), (.call (.resolve "trace") [(.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_alpha == "err div0"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_alpha == .matched (some { kind := "div0", names := [], counts := [] })
+-- sem2b/v1/sys/tick/callback/map-fault [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [.num 1, .num 0, .num 2])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.binary .div (.call (.resolve "trace") [(.call (.resolve "tick") [])]) (.param "v3"))])] [(.listLiteral [(.call (.resolve "map") [.resolve "v1", .resolve "v2"]), (.call (.resolve "trace") [(.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_reorder == "err div0"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault_reorder == .matched (some { kind := "div0", names := [], counts := [] })
+
+-- sem2b/v1/sys/tick/loop/repeat-rows: v1(v2, v3) = { \n   (v2 * 10) + tick() \n   (v3 * 10) + tick() \n } \n [v1(tick(), tick()).repeat(1), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2", "v3"] [] [] [(.binary .add (.binary .mul (.param "v2") (.num 10)) (.call (.resolve "tick") [])), (.binary .add (.binary .mul (.param "v3") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [(.dotCall (.call (.resolve "v1") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]) "repeat" (some [.num 1])), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows == "ok raw=S[L[S[12, 34], 5], 997] n=2"
+-- sem2b/v1/sys/tick/loop/repeat-rows [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2", "w3"] [] [] [(.binary .add (.binary .mul (.param "w2") (.num 10)) (.call (.resolve "tick") [])), (.binary .add (.binary .mul (.param "w3") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [(.dotCall (.call (.resolve "w1") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]) "repeat" (some [.num 1])), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_alpha == "ok raw=S[L[S[12, 34], 5], 997] n=2"
+
+-- sem2b/v1/sys/tick/loop/repeat-rows-crossed: v1(v2, v3) = { \n   (v3 * 10) + tick() \n   (v2 * 10) + tick() \n } \n [v1(tick(), tick()).repeat(1), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2", "v3"] [] [] [(.binary .add (.binary .mul (.param "v3") (.num 10)) (.call (.resolve "tick") [])), (.binary .add (.binary .mul (.param "v2") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [(.dotCall (.call (.resolve "v1") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]) "repeat" (some [.num 1])), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed == "ok raw=S[L[S[12, 34], 5], 997] n=2"
+-- sem2b/v1/sys/tick/loop/repeat-rows-crossed [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2", "w3"] [] [] [(.binary .add (.binary .mul (.param "w3") (.num 10)) (.call (.resolve "tick") [])), (.binary .add (.binary .mul (.param "w2") (.num 10)) (.call (.resolve "tick") []))])] [(.listLiteral [(.dotCall (.call (.resolve "w1") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]) "repeat" (some [.num 1])), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Frepeat_2Drows_2Dcrossed_alpha == "ok raw=S[L[S[12, 34], 5], 997] n=2"
+
+-- sem2b/v1/sys/tick/loop/while-flag-first: v1(v2) = { \n   v2 + tick() \n   tick() < 3 \n } \n [[v1(0).while, tick()]] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.call (.resolve "tick") [])), (.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.num 3) }])])] [(.listLiteral [(.listLiteral [(.dotCall (.call (.resolve "v1") [.num 0]) "while" none), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst == "ok raw=S[L[L[2, 4]], 997] n=2"
+-- sem2b/v1/sys/tick/loop/while-flag-first [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [] [(.binary .add (.param "w2") (.call (.resolve "tick") [])), (.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.num 3) }])])] [(.listLiteral [(.listLiteral [(.dotCall (.call (.resolve "w1") [.num 0]) "while" none), (.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dflag_2Dfirst_alpha == "ok raw=S[L[L[2, 4]], 997] n=2"
+
+-- sem2b/v1/sys/tick/loop/while-dead-transition: v1(meta v2) = v2 \n v3(v4) = v1(v4) \n v5(v6) = v6 \n v7 = v3(v5(trace(1))) \n v8(v9) = { \n   tick() * 100 \n   v9 < 0 \n } \n [v7.Algorithm(2), v7.Algorithm(v7.Arguments*)] \n [v8(0).while, tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v7" (alg [] [] [] [(.call (.resolve "v3") [(.call (.resolve "v5") [(.call (.resolve "trace") [.num 1])])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .metaRef }] [] [] [.param "v2"]), privateProp "v3" (alg ["v4"] [] [] [(.call (.resolve "v1") [.param "v4"])]), privateProp "v5" (alg ["v6"] [] [] [.param "v6"]), privateProp "v8" (alg ["v9"] [] [] [(.binary .mul (.call (.resolve "tick") []) (.num 100)), (.comparison (.param "v9") [{ op := .lt, operand := (.num 0) }])])] [(.listLiteral [(.dotCall (.resolve "v7") "Algorithm" (some [.num 2])), (.dotCall (.resolve "v7") "Algorithm" (some [(.sequenceSpread (.dotCall (.resolve "v7") "Arguments" none))]))]), (.listLiteral [(.dotCall (.call (.resolve "v8") [.num 0]) "while" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition == "ok raw=S[L[2, 1], L[0, 1], 997] n=3"
+-- sem2b/v1/sys/tick/loop/while-dead-transition [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w7" (alg [] [] [] [(.call (.resolve "w3") [(.call (.resolve "w5") [(.call (.resolve "trace") [.num 1])])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (algWithParameters [{ name := "w2", kind := .metaRef }] [] [] [.param "w2"]), privateProp "w3" (alg ["w4"] [] [] [(.call (.resolve "w1") [.param "w4"])]), privateProp "w5" (alg ["w6"] [] [] [.param "w6"]), privateProp "w8" (alg ["w9"] [] [] [(.binary .mul (.call (.resolve "tick") []) (.num 100)), (.comparison (.param "w9") [{ op := .lt, operand := (.num 0) }])])] [(.listLiteral [(.dotCall (.resolve "w7") "Algorithm" (some [.num 2])), (.dotCall (.resolve "w7") "Algorithm" (some [(.sequenceSpread (.dotCall (.resolve "w7") "Arguments" none))]))]), (.listLiteral [(.dotCall (.call (.resolve "w8") [.num 0]) "while" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_alpha == "ok raw=S[L[2, 1], L[0, 1], 997] n=3"
+-- sem2b/v1/sys/tick/loop/while-dead-transition [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v7" (alg [] [] [] [(.call (.resolve "v3") [(.call (.resolve "v5") [(.call (.resolve "trace") [.num 1])])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v8" (alg ["v9"] [] [] [(.binary .mul (.call (.resolve "tick") []) (.num 100)), (.comparison (.param "v9") [{ op := .lt, operand := (.num 0) }])]), privateProp "v5" (alg ["v6"] [] [] [.param "v6"]), privateProp "v3" (alg ["v4"] [] [] [(.call (.resolve "v1") [.param "v4"])]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .metaRef }] [] [] [.param "v2"])] [(.listLiteral [(.dotCall (.resolve "v7") "Algorithm" (some [.num 2])), (.dotCall (.resolve "v7") "Algorithm" (some [(.sequenceSpread (.dotCall (.resolve "v7") "Arguments" none))]))]), (.listLiteral [(.dotCall (.call (.resolve "v8") [.num 0]) "while" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Ddead_2Dtransition_reorder == "ok raw=S[L[2, 1], L[0, 1], 997] n=3"
+
+-- sem2b/v1/sys/tick/loop/while-fault: v1(v2) = { \n   v2 + trace(tick()) \n   (2 / (3 - trace(tick()))) > 0 \n } \n v1(0).while \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.call (.resolve "trace") [(.call (.resolve "tick") [])])), (.comparison (.binary .div (.num 2) (.binary .sub (.num 3) (.call (.resolve "trace") [(.call (.resolve "tick") [])]))) [{ op := .gt, operand := (.num 0) }])])] [(.dotCall (.call (.resolve "v1") [.num 0]) "while" none), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault == "err div0"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault == .matched (some { kind := "div0", names := [], counts := [] })
+-- sem2b/v1/sys/tick/loop/while-fault [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [] [(.binary .add (.param "w2") (.call (.resolve "trace") [(.call (.resolve "tick") [])])), (.comparison (.binary .div (.num 2) (.binary .sub (.num 3) (.call (.resolve "trace") [(.call (.resolve "tick") [])]))) [{ op := .gt, operand := (.num 0) }])])] [(.dotCall (.call (.resolve "w1") [.num 0]) "while" none), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault_alpha == "err div0"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Floop_2Fwhile_2Dfault_alpha == .matched (some { kind := "div0", names := [], counts := [] })
+
+-- sem2b/v1/sys/tick/select/receiver-first: v1(v2) = v2 + v2 \n v3 = [tick(), tick(), tick()] \n v1(wait(1)) \n [v3[tick() mod 3, tick() mod 3], tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.param "v2"))])] [(.call (.resolve "v1") [(.call (.resolve "wait") [.num 1])]), (.listLiteral [(.index (.resolve "v3") [(.binary .mod (.call (.resolve "tick") []) (.num 3)), (.binary .mod (.call (.resolve "tick") []) (.num 3))]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst == "ok raw=S[2, L[S[2, 3], 6], 997] n=3"
+-- sem2b/v1/sys/tick/select/receiver-first [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w3" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [] [(.binary .add (.param "w2") (.param "w2"))])] [(.call (.resolve "w1") [(.call (.resolve "wait") [.num 1])]), (.listLiteral [(.index (.resolve "w3") [(.binary .mod (.call (.resolve "tick") []) (.num 3)), (.binary .mod (.call (.resolve "tick") []) (.num 3))]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_alpha == "ok raw=S[2, L[S[2, 3], 6], 997] n=3"
+-- sem2b/v1/sys/tick/select/receiver-first [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.param "v2"))])] [(.call (.resolve "v1") [(.call (.resolve "wait") [.num 1])]), (.listLiteral [(.index (.resolve "v3") [(.binary .mod (.call (.resolve "tick") []) (.num 3)), (.binary .mod (.call (.resolve "tick") []) (.num 3))]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freceiver_2Dfirst_reorder == "ok raw=S[2, L[S[2, 3], 6], 997] n=3"
+
+-- sem2b/v1/sys/tick/select/spread-formation: v1 = 11, 12, 13, 14 \n { \n   v2 = 0 \n   [v1[tick() - 1, (tick(), tick())*], tick()] \n } \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [.num 11, .num 12, .num 13, .num 14]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.algorithmExpr (alg [] [] [privateProp "v2" (alg [] [] [] [.num 0])] [(.listLiteral [(.index (.resolve "v1") [(.binary .sub (.call (.resolve "tick") []) (.num 1)), (.sequenceSpread (.capture [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]))]), (.call (.resolve "tick") [])])])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation == "ok raw=S[L[S[13, 12, 13], 4], 997] n=2"
+-- sem2b/v1/sys/tick/select/spread-formation [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [.num 11, .num 12, .num 13, .num 14]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.algorithmExpr (alg [] [] [privateProp "w2" (alg [] [] [] [.num 0])] [(.listLiteral [(.index (.resolve "w1") [(.binary .sub (.call (.resolve "tick") []) (.num 1)), (.sequenceSpread (.capture [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]))]), (.call (.resolve "tick") [])])])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fspread_2Dformation_alpha == "ok raw=S[L[S[13, 12, 13], 4], 997] n=2"
+
+-- sem2b/v1/sys/tick/select/retained: v1(*v2) = v2[1, 1] \n [v1(tick(), tick(), tick()), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.index (.param "v2") [.num 1, .num 1])])] [(.listLiteral [(.call (.resolve "v1") [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained == "ok raw=S[L[S[1, 1], 2], 997] n=2"
+-- sem2b/v1/sys/tick/select/retained [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (algWithParameters [{ name := "w2", kind := .collecting }] [] [] [(.index (.param "w2") [.num 1, .num 1])])] [(.listLiteral [(.call (.resolve "w1") [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Fretained_alpha == "ok raw=S[L[S[1, 1], 2], 997] n=2"
+
+-- sem2b/v1/sys/tick/select/eager-result: v1(*v2) = v2 \n [v1(tick(), tick(), tick())[1, 1], tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [.param "v2"])] [(.listLiteral [(.index (.call (.resolve "v1") [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])]) [.num 1, .num 1]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult == "ok raw=S[L[S[2, 2], 4], 997] n=2"
+-- sem2b/v1/sys/tick/select/eager-result [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (algWithParameters [{ name := "w2", kind := .collecting }] [] [] [.param "w2"])] [(.listLiteral [(.index (.call (.resolve "w1") [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])]) [.num 1, .num 1]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Feager_2Dresult_alpha == "ok raw=S[L[S[2, 2], 4], 997] n=2"
+
+-- sem2b/v1/sys/tick/select/reject: v1 = 11, 12, 13 \n v1[trace(tick()) - 1, 9, trace(tick())] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.index (.resolve "v1") [(.binary .sub (.call (.resolve "trace") [(.call (.resolve "tick") [])]) (.num 1)), .num 9, (.call (.resolve "trace") [(.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject == "err index"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject == .matched (some { kind := "index", names := [], counts := [] })
+-- sem2b/v1/sys/tick/select/reject [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.index (.resolve "w1") [(.binary .sub (.call (.resolve "trace") [(.call (.resolve "tick") [])]) (.num 1)), .num 9, (.call (.resolve "trace") [(.call (.resolve "tick") [])])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject_alpha == "err index"
+#guard errorObs case_sem2b_2Fv1_2Fsys_2Ftick_2Fselect_2Freject_alpha == .matched (some { kind := "index", names := [], counts := [] })
+
+-- sem2b/v1/sys/tick/member/transparent: v1 = { \n   v2 = tick() \n   1 \n } \n v3 = v1 \n [v3.v2, v1.v2, tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "v3") "v2" none), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent == "ok raw=S[L[1, 1, 2], 997] n=2"
+-- sem2b/v1/sys/tick/member/transparent [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [privateProp "w2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "w3" (.alias none [] [] (.resolve "w1")), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "w3") "w2" none), (.dotCall (.resolve "w1") "w2" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_alpha == "ok raw=S[L[1, 1, 2], 997] n=2"
+-- sem2b/v1/sys/tick/member/transparent [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "v3") "v2" none), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_reorder == "ok raw=S[L[1, 1, 2], 997] n=2"
+
+-- sem2b/v1/sys/tick/member/carrier: v1 = { \n   v2 = tick() \n   1 \n } \n v3 = { \n   v2 = tick() \n   v1 \n } \n [v3.v2, v1.v2, tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "v3" (.alias none [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] (.resolve "v1") none false), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "v3") "v2" none), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier == "ok raw=S[L[1, 2, 3], 997] n=2"
+-- sem2b/v1/sys/tick/member/carrier [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [privateProp "w2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "w3" (.alias none [] [privateProp "w2" (alg [] [] [] [(.call (.resolve "tick") [])])] (.resolve "w1") none false), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "w3") "w2" none), (.dotCall (.resolve "w1") "w2" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_alpha == "ok raw=S[L[1, 2, 3], 997] n=2"
+-- sem2b/v1/sys/tick/member/carrier [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (.alias none [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] (.resolve "v1") none false), privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "v3") "v2" none), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fcarrier_reorder == "ok raw=S[L[1, 2, 3], 997] n=2"
+
+-- sem2b/v1/sys/tick/member/transparent-chain: v1 = { \n   v2 = tick() \n   1 \n } \n v3 = v1 \n v4 = v3 \n v5 = 11, 12, 13 \n [v4.v2, v3.v2, v1.v2, tick()] \n v5[] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v4" (.alias none [] [] (.resolve "v3")), privateProp "v5" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "v4") "v2" none), (.dotCall (.resolve "v3") "v2" none), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), (.index (.resolve "v5") []), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain == "ok raw=S[L[1, 1, 1, 2], S[], 997] n=3"
+-- sem2b/v1/sys/tick/member/transparent-chain [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [privateProp "w2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "w3" (.alias none [] [] (.resolve "w1")), privateProp "w4" (.alias none [] [] (.resolve "w3")), privateProp "w5" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "w4") "w2" none), (.dotCall (.resolve "w3") "w2" none), (.dotCall (.resolve "w1") "w2" none), (.call (.resolve "tick") [])]), (.index (.resolve "w5") []), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_alpha == "ok raw=S[L[1, 1, 1, 2], S[], 997] n=3"
+-- sem2b/v1/sys/tick/member/transparent-chain [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v5" (alg [] [] [] [.num 11, .num 12, .num 13]), privateProp "v4" (.alias none [] [] (.resolve "v3")), privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"])] [(.listLiteral [(.dotCall (.resolve "v4") "v2" none), (.dotCall (.resolve "v3") "v2" none), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), (.index (.resolve "v5") []), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Ftransparent_2Dchain_reorder == "ok raw=S[L[1, 1, 1, 2], S[], 997] n=3"
+
+-- sem2b/v1/sys/tick/member/passed: v1 = { \n   v2 = tick() \n   1 \n } \n v3 = v1 \n v4 = { \n   v2 = tick() \n   v1 \n } \n v5(v6) = v6.v2 \n if(true, [v5(v3), v5(v4), v1.v2, tick()], trace(666)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v4" (.alias none [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] (.resolve "v1") none false), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v5" (alg ["v6"] [] [] [(.dotCall (.param "v6") "v2" none)])] [(.call (.resolve "if") [.boolLiteral true, (.listLiteral [(.call (.resolve "v5") [.resolve "v3"]), (.call (.resolve "v5") [.resolve "v4"]), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), (.call (.resolve "trace") [.num 666])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed == "ok raw=S[L[1, 2, 1, 3], 997] n=2"
+-- sem2b/v1/sys/tick/member/passed [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [privateProp "w2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "w3" (.alias none [] [] (.resolve "w1")), privateProp "w4" (.alias none [] [privateProp "w2" (alg [] [] [] [(.call (.resolve "tick") [])])] (.resolve "w1") none false), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w5" (alg ["w6"] [] [] [(.dotCall (.param "w6") "w2" none)])] [(.call (.resolve "if") [.boolLiteral true, (.listLiteral [(.call (.resolve "w5") [.resolve "w3"]), (.call (.resolve "w5") [.resolve "w4"]), (.dotCall (.resolve "w1") "w2" none), (.call (.resolve "tick") [])]), (.call (.resolve "trace") [.num 666])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_alpha == "ok raw=S[L[1, 2, 1, 3], 997] n=2"
+-- sem2b/v1/sys/tick/member/passed [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v4" (.alias none [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] (.resolve "v1") none false), privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v1" (alg [] [] [privateProp "v2" (alg [] [] [] [(.call (.resolve "tick") [])])] [.num 1]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v5" (alg ["v6"] [] [] [(.dotCall (.param "v6") "v2" none)])] [(.call (.resolve "if") [.boolLiteral true, (.listLiteral [(.call (.resolve "v5") [.resolve "v3"]), (.call (.resolve "v5") [.resolve "v4"]), (.dotCall (.resolve "v1") "v2" none), (.call (.resolve "tick") [])]), (.call (.resolve "trace") [.num 666])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fmember_2Fpassed_reorder == "ok raw=S[L[1, 2, 1, 3], 997] n=2"
+
+-- sem2b/v1/sys/tick/owners/inner-local: v1(v2) = { \n   v3(v4) = { \n     v5 = tick() \n     (v5 * 100) + (v2 * 10) + v4 \n   } \n   [v3(1), v3(2)] \n } \n [v1(1), v1(2), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [{ (privateLocalProp "v3" (.localCapturedAncestorParams ["v2"]) (alg ["v4"] [] [privateProp "v5" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.binary .add (.binary .mul (.resolve "v5") (.num 100)) (.binary .mul (.param "v2") (.num 10))) (.param "v4"))])) with requiredOwnerDepths := some [("v2", some 0)] }] [(.listLiteral [(.call (.resolve "v3") [.num 1]), (.call (.resolve "v3") [.num 2])])])] [(.listLiteral [(.call (.resolve "v1") [.num 1]), (.call (.resolve "v1") [.num 2]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal == "ok raw=S[L[L[111, 212], L[321, 422], 5], 997] n=2"
+-- sem2b/v1/sys/tick/owners/inner-local [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [{ (privateLocalProp "w3" (.localCapturedAncestorParams ["w2"]) (alg ["w4"] [] [privateProp "w5" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.binary .add (.binary .mul (.resolve "w5") (.num 100)) (.binary .mul (.param "w2") (.num 10))) (.param "w4"))])) with requiredOwnerDepths := some [("w2", some 0)] }] [(.listLiteral [(.call (.resolve "w3") [.num 1]), (.call (.resolve "w3") [.num 2])])])] [(.listLiteral [(.call (.resolve "w1") [.num 1]), (.call (.resolve "w1") [.num 2]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_alpha == "ok raw=S[L[L[111, 212], L[321, 422], 5], 997] n=2"
+
+-- sem2b/v1/sys/tick/owners/outer-local: v1(v2) = { \n   v5 = tick() \n   v3(v4) = (v5 * 100) + (v2 * 10) + v4 \n   [v3(1), v3(2)] \n } \n [v1(1), v1(2), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [privateProp "v5" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "v3" (.localCapturedAncestorParams ["v2"]) (alg ["v4"] [] [] [(.binary .add (.binary .add (.binary .mul (.resolve "v5") (.num 100)) (.binary .mul (.param "v2") (.num 10))) (.param "v4"))])) with requiredOwnerDepths := some [("v2", some 0)] }] [(.listLiteral [(.call (.resolve "v3") [.num 1]), (.call (.resolve "v3") [.num 2])])])] [(.listLiteral [(.call (.resolve "v1") [.num 1]), (.call (.resolve "v1") [.num 2]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal == "ok raw=S[L[L[111, 112], L[221, 222], 3], 997] n=2"
+-- sem2b/v1/sys/tick/owners/outer-local [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [privateProp "w5" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "w3" (.localCapturedAncestorParams ["w2"]) (alg ["w4"] [] [] [(.binary .add (.binary .add (.binary .mul (.resolve "w5") (.num 100)) (.binary .mul (.param "w2") (.num 10))) (.param "w4"))])) with requiredOwnerDepths := some [("w2", some 0)] }] [(.listLiteral [(.call (.resolve "w3") [.num 1]), (.call (.resolve "w3") [.num 2])])])] [(.listLiteral [(.call (.resolve "w1") [.num 1]), (.call (.resolve "w1") [.num 2]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_alpha == "ok raw=S[L[L[111, 112], L[221, 222], 3], 997] n=2"
+
+-- sem2b/v1/sys/tick/owners/inner-local-same-args: v1(v2) = { \n   v3(v4) = { \n     v5 = tick() \n     (v5 * 100) + (v2 * 10) + v4 \n   } \n   [v3(1), v3(1)] \n } \n [v1(1), v1(1), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [{ (privateLocalProp "v3" (.localCapturedAncestorParams ["v2"]) (alg ["v4"] [] [privateProp "v5" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.binary .add (.binary .mul (.resolve "v5") (.num 100)) (.binary .mul (.param "v2") (.num 10))) (.param "v4"))])) with requiredOwnerDepths := some [("v2", some 0)] }] [(.listLiteral [(.call (.resolve "v3") [.num 1]), (.call (.resolve "v3") [.num 1])])])] [(.listLiteral [(.call (.resolve "v1") [.num 1]), (.call (.resolve "v1") [.num 1]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs == "ok raw=S[L[L[111, 211], L[311, 411], 5], 997] n=2"
+-- sem2b/v1/sys/tick/owners/inner-local-same-args [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [{ (privateLocalProp "w3" (.localCapturedAncestorParams ["w2"]) (alg ["w4"] [] [privateProp "w5" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.binary .add (.binary .mul (.resolve "w5") (.num 100)) (.binary .mul (.param "w2") (.num 10))) (.param "w4"))])) with requiredOwnerDepths := some [("w2", some 0)] }] [(.listLiteral [(.call (.resolve "w3") [.num 1]), (.call (.resolve "w3") [.num 1])])])] [(.listLiteral [(.call (.resolve "w1") [.num 1]), (.call (.resolve "w1") [.num 1]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Finner_2Dlocal_2Dsame_2Dargs_alpha == "ok raw=S[L[L[111, 211], L[311, 411], 5], 997] n=2"
+
+-- sem2b/v1/sys/tick/owners/outer-local-same-args: v1(v2) = { \n   v5 = tick() \n   v3(v4) = (v5 * 100) + (v2 * 10) + v4 \n   [v3(1), v3(1)] \n } \n [v1(1), v1(1), tick()] \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [privateProp "v5" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "v3" (.localCapturedAncestorParams ["v2"]) (alg ["v4"] [] [] [(.binary .add (.binary .add (.binary .mul (.resolve "v5") (.num 100)) (.binary .mul (.param "v2") (.num 10))) (.param "v4"))])) with requiredOwnerDepths := some [("v2", some 0)] }] [(.listLiteral [(.call (.resolve "v3") [.num 1]), (.call (.resolve "v3") [.num 1])])])] [(.listLiteral [(.call (.resolve "v1") [.num 1]), (.call (.resolve "v1") [.num 1]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs == "ok raw=S[L[L[111, 111], L[211, 211], 3], 997] n=2"
+-- sem2b/v1/sys/tick/owners/outer-local-same-args [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [privateProp "w5" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "w3" (.localCapturedAncestorParams ["w2"]) (alg ["w4"] [] [] [(.binary .add (.binary .add (.binary .mul (.resolve "w5") (.num 100)) (.binary .mul (.param "w2") (.num 10))) (.param "w4"))])) with requiredOwnerDepths := some [("w2", some 0)] }] [(.listLiteral [(.call (.resolve "w3") [.num 1]), (.call (.resolve "w3") [.num 1])])])] [(.listLiteral [(.call (.resolve "w1") [.num 1]), (.call (.resolve "w1") [.num 1]), (.call (.resolve "tick") [])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fouter_2Dlocal_2Dsame_2Dargs_alpha == "ok raw=S[L[L[111, 111], L[211, 211], 3], 997] n=2"
+
+-- sem2b/v1/sys/tick/owners/chain: v1(v2) = { \n   v3 = tick() \n   v4(v5) = { \n     v6 = (v3 * 10) + tick() \n     v6 + (v2 * v5) \n   } \n   [v4(1), v4(2)] \n } \n v7 = [v1(1), v1(2), tick()] \n v7 \n 997
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v7" (alg [] [] [] [(.listLiteral [(.call (.resolve "v1") [.num 1]), (.call (.resolve "v1") [.num 2]), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "v4" (.localCapturedAncestorParams ["v2"]) (alg ["v5"] [] [privateProp "v6" (alg [] [] [] [(.binary .add (.binary .mul (.resolve "v3") (.num 10)) (.call (.resolve "tick") []))])] [(.binary .add (.resolve "v6") (.binary .mul (.param "v2") (.param "v5")))])) with requiredOwnerDepths := some [("v2", some 0)] }] [(.listLiteral [(.call (.resolve "v4") [.num 1]), (.call (.resolve "v4") [.num 2])])])] [.resolve "v7", .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain == "ok raw=S[L[L[13, 15], L[47, 50], 7], 997] n=2"
+-- sem2b/v1/sys/tick/owners/chain [alpha-rename]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_alpha : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "w7" (alg [] [] [] [(.listLiteral [(.call (.resolve "w1") [.num 1]), (.call (.resolve "w1") [.num 2]), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w1" (alg ["w2"] [] [privateProp "w3" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "w4" (.localCapturedAncestorParams ["w2"]) (alg ["w5"] [] [privateProp "w6" (alg [] [] [] [(.binary .add (.binary .mul (.resolve "w3") (.num 10)) (.call (.resolve "tick") []))])] [(.binary .add (.resolve "w6") (.binary .mul (.param "w2") (.param "w5")))])) with requiredOwnerDepths := some [("w2", some 0)] }] [(.listLiteral [(.call (.resolve "w4") [.num 1]), (.call (.resolve "w4") [.num 2])])])] [.resolve "w7", .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_alpha == "ok raw=S[L[L[13, 15], L[47, 50], 7], 997] n=2"
+-- sem2b/v1/sys/tick/owners/chain [declaration-reorder]
+def case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_reorder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v7" (alg [] [] [] [(.listLiteral [(.call (.resolve "v1") [.num 1]), (.call (.resolve "v1") [.num 2]), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "tick") [])]), { (privateLocalProp "v4" (.localCapturedAncestorParams ["v2"]) (alg ["v5"] [] [privateProp "v6" (alg [] [] [] [(.binary .add (.binary .mul (.resolve "v3") (.num 10)) (.call (.resolve "tick") []))])] [(.binary .add (.resolve "v6") (.binary .mul (.param "v2") (.param "v5")))])) with requiredOwnerDepths := some [("v2", some 0)] }] [(.listLiteral [(.call (.resolve "v4") [.num 1]), (.call (.resolve "v4") [.num 2])])])] [.resolve "v7", .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fowners_2Fchain_reorder == "ok raw=S[L[L[13, 15], L[47, 50], 7], 997] n=2"
+
 -- sem2b/v1/seed/5EED2B000001/0: v1(v2) = v2 + v2 \n v3(v4) = v4 + 1 \n v5 = repeat(v3(2), 0) \n v6 = v5 \n [[[v1(trace(1)), v1(trace(1))]]] \n [v6, v6] \n 997
 def case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v5" (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "v3") [.num 2]), .num 0])]), privateProp "v6" (.alias none [] [] (.resolve "v5")), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.param "v2"))]), privateProp "v3" (alg ["v4"] [] [] [(.binary .add (.param "v4") (.num 1))])] [(.listLiteral [(.listLiteral [(.listLiteral [(.call (.resolve "v1") [(.call (.resolve "trace") [.num 1])]), (.call (.resolve "v1") [(.call (.resolve "trace") [.num 1])])])])]), (.listLiteral [.resolve "v6", .resolve "v6"]), .num 997])
@@ -3520,6 +3778,29 @@ def includedCaseIds : List String := [
   "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-4-plain-brace",
   "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-2-dot-then-collect",
   "sem2b/v1/sys/path/GenericInsideOptimizedLoop/cache-then-wait-2-plain",
+  "sem2b/v1/sys/tick/callback/map",
+  "sem2b/v1/sys/tick/callback/filter",
+  "sem2b/v1/sys/tick/callback/reduce",
+  "sem2b/v1/sys/tick/callback/map-fault",
+  "sem2b/v1/sys/tick/loop/repeat-rows",
+  "sem2b/v1/sys/tick/loop/repeat-rows-crossed",
+  "sem2b/v1/sys/tick/loop/while-flag-first",
+  "sem2b/v1/sys/tick/loop/while-dead-transition",
+  "sem2b/v1/sys/tick/loop/while-fault",
+  "sem2b/v1/sys/tick/select/receiver-first",
+  "sem2b/v1/sys/tick/select/spread-formation",
+  "sem2b/v1/sys/tick/select/retained",
+  "sem2b/v1/sys/tick/select/eager-result",
+  "sem2b/v1/sys/tick/select/reject",
+  "sem2b/v1/sys/tick/member/transparent",
+  "sem2b/v1/sys/tick/member/carrier",
+  "sem2b/v1/sys/tick/member/transparent-chain",
+  "sem2b/v1/sys/tick/member/passed",
+  "sem2b/v1/sys/tick/owners/inner-local",
+  "sem2b/v1/sys/tick/owners/outer-local",
+  "sem2b/v1/sys/tick/owners/inner-local-same-args",
+  "sem2b/v1/sys/tick/owners/outer-local-same-args",
+  "sem2b/v1/sys/tick/owners/chain",
   "sem2b/v1/seed/5EED2B000001/0",
   "sem2b/v1/seed/5EED2B000001/1",
   "sem2b/v1/seed/5EED2B000001/2",
@@ -3620,7 +3901,7 @@ def includedCaseIds : List String := [
   "sem2b/v1/seed-nested/5EED2B000002/2",
   "sem2b/v1/seed-nested/5EED2B000002/3"
 ]
-#guard includedCaseIds.length == 264
+#guard includedCaseIds.length == 287
 
 /--
 Machine-checked transformation-member count: one entry per guarded alpha-rename or
@@ -3863,6 +4144,40 @@ def guardedMemberIds : List String := [
   "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-2-dot-then-collect declaration-reorder",
   "sem2b/v1/sys/path/GenericInsideOptimizedLoop/cache-then-wait-2-plain alpha-rename",
   "sem2b/v1/sys/path/GenericInsideOptimizedLoop/cache-then-wait-2-plain declaration-reorder",
+  "sem2b/v1/sys/tick/callback/map alpha-rename",
+  "sem2b/v1/sys/tick/callback/map declaration-reorder",
+  "sem2b/v1/sys/tick/callback/filter alpha-rename",
+  "sem2b/v1/sys/tick/callback/filter declaration-reorder",
+  "sem2b/v1/sys/tick/callback/reduce alpha-rename",
+  "sem2b/v1/sys/tick/callback/reduce declaration-reorder",
+  "sem2b/v1/sys/tick/callback/map-fault alpha-rename",
+  "sem2b/v1/sys/tick/callback/map-fault declaration-reorder",
+  "sem2b/v1/sys/tick/loop/repeat-rows alpha-rename",
+  "sem2b/v1/sys/tick/loop/repeat-rows-crossed alpha-rename",
+  "sem2b/v1/sys/tick/loop/while-flag-first alpha-rename",
+  "sem2b/v1/sys/tick/loop/while-dead-transition alpha-rename",
+  "sem2b/v1/sys/tick/loop/while-dead-transition declaration-reorder",
+  "sem2b/v1/sys/tick/loop/while-fault alpha-rename",
+  "sem2b/v1/sys/tick/select/receiver-first alpha-rename",
+  "sem2b/v1/sys/tick/select/receiver-first declaration-reorder",
+  "sem2b/v1/sys/tick/select/spread-formation alpha-rename",
+  "sem2b/v1/sys/tick/select/retained alpha-rename",
+  "sem2b/v1/sys/tick/select/eager-result alpha-rename",
+  "sem2b/v1/sys/tick/select/reject alpha-rename",
+  "sem2b/v1/sys/tick/member/transparent alpha-rename",
+  "sem2b/v1/sys/tick/member/transparent declaration-reorder",
+  "sem2b/v1/sys/tick/member/carrier alpha-rename",
+  "sem2b/v1/sys/tick/member/carrier declaration-reorder",
+  "sem2b/v1/sys/tick/member/transparent-chain alpha-rename",
+  "sem2b/v1/sys/tick/member/transparent-chain declaration-reorder",
+  "sem2b/v1/sys/tick/member/passed alpha-rename",
+  "sem2b/v1/sys/tick/member/passed declaration-reorder",
+  "sem2b/v1/sys/tick/owners/inner-local alpha-rename",
+  "sem2b/v1/sys/tick/owners/outer-local alpha-rename",
+  "sem2b/v1/sys/tick/owners/inner-local-same-args alpha-rename",
+  "sem2b/v1/sys/tick/owners/outer-local-same-args alpha-rename",
+  "sem2b/v1/sys/tick/owners/chain alpha-rename",
+  "sem2b/v1/sys/tick/owners/chain declaration-reorder",
   "sem2b/v1/seed/5EED2B000001/0 alpha-rename",
   "sem2b/v1/seed/5EED2B000001/0 declaration-reorder",
   "sem2b/v1/seed/5EED2B000001/1 alpha-rename",
@@ -4043,7 +4358,7 @@ def guardedMemberIds : List String := [
   "sem2b/v1/seed-nested/5EED2B000002/3 alpha-rename",
   "sem2b/v1/seed-nested/5EED2B000002/3 declaration-reorder"
 ]
-#guard guardedMemberIds.length == 414
+#guard guardedMemberIds.length == 448
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards
@@ -4057,5 +4372,5 @@ def cachePilotCaseIds : List String := [
 ]
 #guard cachePilotCaseIds.length == 4
 
--- 264 differential cases, 414 transformation members.
+-- 287 differential cases, 448 transformation members.
 end SemanticGeneratedCases

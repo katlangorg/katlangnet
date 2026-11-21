@@ -70,6 +70,9 @@ internal static class SemanticCorpus
         ("ctx-wrapper", "collect"), ("ctx-brace", "select"),
         ("loop", "condition-first"),
         ("collect", "nested-pattern"),
+        // The named tick block (SemanticTickShapes): tick()-observed order, member reads and owners.
+        ("tick-order", "callback"), ("tick-order", "loop"), ("tick-order", "select"), ("tick-order", "failure"),
+        ("member-read", "transparent-reference"), ("member-read", "carrier"), ("nested-owner", "activation-state"),
     ];
 
     internal static IReadOnlyList<SemanticCase> All() => [.. Systematic(), .. Seeded()];
@@ -206,6 +209,37 @@ internal static class SemanticCorpus
                 return Assemble(id, "systematic", null, at, g, fragments, null, false);
             });
         }
+
+        // The named tick block (SEM-2C, the 2026-11-20 differential bug hunt § 7): evaluation order,
+        // member reads and owner activations observed through tick(). Appended after the path block,
+        // so every earlier recipe is unchanged.
+        for (var i = 0; i < SemanticTickShapes.Shapes.Length; i++)
+            yield return TickShapeBuilder(i, alternative: false);
+    }
+
+    /// <summary>
+    /// The builder of one named tick case (<see cref="SemanticTickShapes.Shapes"/>[<paramref name="index"/>]):
+    /// its optional partner fragment, the shape in its optional context, assembled like every
+    /// systematic case under the systematic chooser of the block index. With <paramref name="alternative"/>
+    /// it builds the SAME program with the expectation of the shape's named rejected reading — a control
+    /// for tests, never a corpus case.
+    /// </summary>
+    internal static SemanticCaseBuilder TickShapeBuilder(int index, bool alternative)
+    {
+        var shape = SemanticTickShapes.Shapes[index];
+        var id = shape.LocalId;
+        return SemanticCaseBuilder.Systematic(id, index, g =>
+        {
+            var fragments = new List<SemanticFragment>();
+            if (shape.Partner is { } before && shape.PartnerFirst)
+                fragments.Add(SemanticGrammar.Build(before, g, failing: false));
+            var fragment = SemanticTickShapes.Build(shape, g, alternative);
+            if (shape.Context != 0) SemanticGrammar.ApplyContext(g, fragment, shape.Context);
+            fragments.Add(fragment);
+            if (shape.Partner is { } after && !shape.PartnerFirst)
+                fragments.Add(SemanticGrammar.Build(after, g, failing: false));
+            return Assemble(id, "systematic", null, index, g, fragments, null, false);
+        });
     }
 
     /// <summary>

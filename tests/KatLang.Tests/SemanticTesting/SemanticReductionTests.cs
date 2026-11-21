@@ -103,18 +103,31 @@ public class SemanticReductionTests(ITestOutputHelper output)
     /// <summary>
     /// The fixed corpus is unchanged by the builder refactor: the digest of every descriptor (minus
     /// build provenance) was recorded from the pre-reducer revision 1e9ccf85. The SEM-2C named path
-    /// block (<c>sys/path/…</c>, new ids only) is excluded, so the pin still covers exactly the cases it
-    /// was recorded over; <see cref="SemanticPathCoverageTests"/> pins the block's own invariants.
+    /// and tick blocks (<c>sys/path/…</c>, <c>sys/tick/…</c>, new ids only) are excluded, so the pin still
+    /// covers exactly the cases it was recorded over; <see cref="SemanticPathCoverageTests"/> and
+    /// <see cref="SemanticTickShapeTests"/> pin the blocks' own invariants.
     /// </summary>
     [Fact]
     public void FixedCorpus_RendersByteIdentically()
     {
-        var pathBlock = SemanticRecipe.CasePrefix + "sys/path/";
-        var digest = CorpusDigest(SemanticCorpus.All().Where(c => !c.CaseId.StartsWith(pathBlock, StringComparison.Ordinal)));
+        var digest = CorpusDigest(DigestedFixedCorpus());
         Assert.True(digest == FixedCorpusDigest, $"SEM-2B fixed corpus digest changed: {digest}");
     }
 
     internal const string FixedCorpusDigest = "sha256:f685889dee9d75c1c506b6cf4ed432fa2ee08ddb26bc98eece943b2a48398369";
+
+    /// <summary>
+    /// The cases <see cref="FixedCorpusDigest"/> covers: the fixed corpus without the named path and tick
+    /// blocks, which were appended later and are pinned by their own tests
+    /// (<see cref="SemanticPathCoverageTests"/>, <see cref="SemanticTickShapeTests"/>).
+    /// </summary>
+    internal static IEnumerable<SemanticCase> DigestedFixedCorpus()
+    {
+        var pathBlock = SemanticRecipe.CasePrefix + "sys/path/";
+        var tickBlock = SemanticRecipe.CasePrefix + SemanticTickShapes.LocalPrefix;
+        return SemanticCorpus.All().Where(c => !c.CaseId.StartsWith(pathBlock, StringComparison.Ordinal)
+            && !c.CaseId.StartsWith(tickBlock, StringComparison.Ordinal));
+    }
 
     internal static string CorpusDigest(IEnumerable<SemanticCase> cases)
         => SemanticFingerprint.Of(string.Concat(cases.Select(c => string.Join("\n",

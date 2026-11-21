@@ -33,16 +33,21 @@ public class SemanticPathCoverageTests
     public void ExistingIds_KeepTheirSourcesAndExpectations_AndTheBlockAddsOnlyPathIds()
     {
         var all = SemanticGrammarCorpusTests.Cases;
-        var preexisting = all.Where(c => !LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal)).ToList();
+        // The later named tick block (SemanticTickShapeTests) is excluded like the path block: neither changes an earlier case.
+        var preexisting = all.Where(c => !LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal) && !SemanticTickShapes.IsTickBlock(LocalId(c))).ToList();
         Assert.Equal(PreexistingCaseCount, preexisting.Count);
         var digest = Digest(preexisting);
         Assert.True(digest == PreexistingDigest, $"pre-existing cases changed: digest {digest}, pinned {PreexistingDigest}");
 
-        // The block is appended after every systematic case and before the seeded tier, and ids stay unique.
-        var systematic = SemanticCorpus.Systematic();
-        var firstPath = systematic.ToList().FindIndex(c => LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal));
+        // The block is appended after every earlier systematic case and before the seeded tier, only the
+        // tick block follows it, and ids stay unique.
+        var systematic = SemanticCorpus.Systematic().ToList();
+        var firstPath = systematic.FindIndex(c => LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal));
         Assert.True(firstPath > 0, "the corpus has no sys/path/ case");
-        Assert.All(systematic.Skip(firstPath), c => Assert.StartsWith(PathPrefix, LocalId(c), StringComparison.Ordinal));
+        var firstTick = systematic.FindIndex(c => SemanticTickShapes.IsTickBlock(LocalId(c)));
+        Assert.True(firstTick > firstPath, "the tick block must follow the path block");
+        Assert.All(systematic.Take(firstTick).Skip(firstPath), c => Assert.StartsWith(PathPrefix, LocalId(c), StringComparison.Ordinal));
+        Assert.All(systematic.Skip(firstTick), c => Assert.True(SemanticTickShapes.IsTickBlock(LocalId(c)), c.CaseId));
         Assert.Equal(all.Count, all.Select(c => c.CaseId).Distinct(StringComparer.Ordinal).Count());
 
         // Every path id is reconstructible from its durable id alone, and rebuilds the same case.
@@ -97,7 +102,7 @@ public class SemanticPathCoverageTests
     public void LoopPathFloor_FailsWithoutThePathBlock_AndHoldsWithIt()
     {
         var withoutBlock = SemanticCoverage.Of(SemanticGrammarCorpusTests.Cases
-            .Where(c => !LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal))
+            .Where(c => !LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal) && !SemanticTickShapes.IsTickBlock(LocalId(c)))
             .Select(c => (c, SemanticGrammarCorpusTests.ResultOf(c))));
         var violations = withoutBlock.Floors(SemanticCorpus.RequiredInteractions);
         Assert.Contains(violations, v => v.StartsWith($"intended path {SemanticPath.LoopShortCircuit} has ", StringComparison.Ordinal)

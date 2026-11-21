@@ -224,6 +224,7 @@ internal static class ModelRewriter
             MExpr.Prim p => new MExpr.Prim(p.Name, p.Args.Select(a => MapExpr(a, exprMap, scopeMap)).ToList()),
             MExpr.Binary bin => new MExpr.Binary(
                 bin.Operator, MapExpr(bin.Left, exprMap, scopeMap), MapExpr(bin.Right, exprMap, scopeMap)),
+            MExpr.MemberRead member => member with { Receiver = MapExpr(member.Receiver, exprMap, scopeMap) },
             _ => throw new InvalidOperationException($"Unhandled expr kind {expr.GetType().Name}"),
         };
     }
@@ -279,6 +280,9 @@ internal static class ModelRewriter
                 case MExpr.Binary bin:
                     Visit(bin.Left);
                     Visit(bin.Right);
+                    return;
+                case MExpr.MemberRead member:
+                    Visit(member.Receiver);
                     return;
                 default:
                     return; // Atom, Bool, IndexErr, Brace (deliberately not entered)

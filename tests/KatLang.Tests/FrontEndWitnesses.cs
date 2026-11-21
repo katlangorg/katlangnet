@@ -18,9 +18,9 @@ internal sealed record FrontEndWitnessMember(string Id, string Role, string Sour
 /// transformations must leave every one of them standing: <c>FrontEndDecisionLeanArtifactTests</c> requires the three
 /// members to show the same decisions, name for name, and the generated artifact guards each member on its own.</para>
 ///
-/// <para>The SEM-2B corpus itself cannot serve here: none of its 683 members holds a lifted reference, a refused
-/// forward or a slot whose role the output shows (measured: 3,554 call nodes, 4,721 positions including dot receivers, none of them
-/// role-sensitive).</para>
+/// <para>The SEM-2B tick callbacks expose callable slots. The witnesses also expose value slots,
+/// lifted references and refused forwards. The front-end decision census in the formal correspondence
+/// ledger records the coverage of both corpora.</para>
 /// </summary>
 internal sealed record FrontEndWitness(string Id, string Shows, IReadOnlyList<string> Declarations, string Rows)
 {

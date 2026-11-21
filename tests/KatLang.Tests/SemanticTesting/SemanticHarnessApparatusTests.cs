@@ -202,7 +202,9 @@ public class SemanticHarnessApparatusTests
     [Fact]
     public void WhileConditionFirst_HasIndependentTransitionAndFailureAnchors()
     {
-        var guards = SemanticGrammarCorpusTests.Cases.Where(c => c.Features.Contains("condition-first")).ToList();
+        // The three named guards; the tick block's condition-first shapes are pinned by SemanticTickShapeTests.
+        var guards = SemanticGrammarCorpusTests.Cases.Where(c => c.Features.Contains("condition-first")
+            && !SemanticTickShapes.IsTickBlock(c.CaseId[SemanticRecipe.CasePrefix.Length..])).ToList();
         Assert.Equal(3, guards.Count);
         foreach (var guard in guards)
         {
