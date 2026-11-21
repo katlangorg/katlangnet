@@ -205,14 +205,15 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   `$env:KATLANG_REGENERATE_FRONT_END_DECISIONS = "1"; dotnet test .\KatLang.slnx --filter FrontEndDecisionLeanArtifact`
 - `lean/KatLangArityLaws/MayCaptureCallsCorpus.lean` (built by the canonical
   `KatLangArityLaws` target; ledger E-21) — the PLAN-RETENTION GATE
-  differential. For every Lean-comparable program of the five evaluation corpora
+  differential. For every Lean-comparable program of the six evaluation corpora
   (LanguageSpec, the semantic explorer with its internal-node cases, the SEM-2C
-  generated cases, the host-built HOST-DIFF-1 corpus and the module pilot below) one guard pins C#'s
+  generated cases, the host-built HOST-DIFF-1 corpus, the module pilot and the
+  planned-loop temp family) one guard pins C#'s
   verdict of `AstStructuralPreflight.MayCaptureCalls` (J7) against Lean's
   `Expr.mayCaptureCalls`. The file imports those corpus modules and re-emits no
   program: `MayCaptureCallsLeanArtifactTests` re-encodes each tree and requires it
   to equal the definition the corpus module holds, and every program without a
-  guard is excluded by a counted rule. Regenerate AFTER any of the five corpus
+  guard is excluded by a counted rule. Regenerate AFTER any of the six corpus
   artifacts with
   `$env:KATLANG_REGENERATE_MAY_CAPTURE_CALLS = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter MayCaptureCallsLeanArtifact`
 - `lean/CoreTests/ModuleDifferential.lean` (MODULE-DIFF-1, imported by the
@@ -223,8 +224,15 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   corpus's hand-written expectations. The channel inventory is in
   `docs/design/differential-observations.md` § Module programs. Regenerate with
   `$env:KATLANG_REGENERATE_MODULE_DIFFERENTIAL = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter ModuleDifferential`
+- `lean/CoreTests/PlannedLoopTempFamily.lean` (the KL-06 F01 temp family, imported
+  by the canonical `CoreTests` target) evaluates the 36 generated planned and
+  fallback `repeat`/`while` steps of `PlannedLoopTempFamily`, each guarded on its
+  neutral observation, per-name publications, publication total and `tick()`
+  count at the expectation the generator constructs. `PlannedLoopTempFamilyTests`
+  checks the same expectations on the C# routes. Regenerate with
+  `$env:KATLANG_REGENERATE_PLANNED_LOOP_TEMP_FAMILY = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter PlannedLoopTempFamilyTests.GeneratedLeanModule`
 
-The five evaluation artifacts above embed the same observation machinery (`neutral`,
+The six evaluation artifacts above embed the same observation machinery (`neutral`,
 `errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
 emitted from the single C# constant `LeanObsTemplate.SharedDefinitions`. When
 adding an error kind, extend `errCategory` and `sharedError` there AND
@@ -232,7 +240,7 @@ adding an error kind, extend `errCategory` and `sharedError` there AND
 `SemanticExplorerHarness.ErrorCategory` delegates to) together, record its
 reviewed policy (a constructor-projection golden in `DifferentialErrorContracts`,
 or the host-only inventory of `DifferentialObservationTests` for a C#-only
-kind), then regenerate all five evaluation artifacts with their registered flags.
+kind), then regenerate all six evaluation artifacts with their registered flags.
 The front-end decision artifact calls the model's specification functions directly.
 The gate differential imports the Lean gate and checks it on the existing corpus definitions.
 

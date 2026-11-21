@@ -4,8 +4,9 @@ namespace KatLang.Tests;
 /// The shared Lean observation machinery emitted into every generated
 /// differential artifact (<c>lean/SemanticExplorerCases.lean</c>,
 /// <c>lean/LanguageSpecCases.lean</c>, <c>lean/CoreTests/HostParentDifferential.lean</c>,
-/// <c>lean/CoreTests/SemanticGeneratedCases.lean</c> and
-/// <c>lean/CoreTests/ModuleDifferential.lean</c>). The artifacts are self-contained
+/// <c>lean/CoreTests/SemanticGeneratedCases.lean</c>,
+/// <c>lean/CoreTests/ModuleDifferential.lean</c> and
+/// <c>lean/CoreTests/PlannedLoopTempFamily.lean</c>). The artifacts are self-contained
 /// Lean files, but their observation definitions originate from these C#
 /// constants, so they can never drift apart. The category names in
 /// <c>errCategory</c> must stay aligned with
@@ -58,7 +59,8 @@ internal static class LeanObsTemplate
 
     /// <summary>
     /// KL-06 Lean definitions of the zero-argument cache observation, shared by the four generated
-    /// artifacts: <c>publicationsOf</c> (the comparable publication set of a finished run, or
+    /// corpus artifacts and the generated planned-loop temp family (the hand-maintained
+    /// <c>PlannedLoopPublications.lean</c> embeds them too): <c>publicationsOf</c> (the comparable publication set of a finished run, or
     /// <c>none</c>), <c>publications</c> (one plain run), <c>cacheEntries</c> (per property name)
     /// and <c>cacheTotal</c>. The C# counterpart is <see cref="ZeroArgPublicationObserver"/>.
     /// </summary>

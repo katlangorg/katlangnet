@@ -13,7 +13,7 @@ namespace KatLang.Tests;
 /// program of the differential corpora: <see cref="LanguageSpecCorpus"/>, <see cref="SemanticExplorerCorpus"/>
 /// (surface and internal-node cases), the SEM-2C generated cases (<see cref="SemanticGeneratedLeanArtifactTests"/>,
 /// base and transformation members), <see cref="HostParentDifferentialCorpus"/> (host-attached parent scopes),
-/// and <see cref="ModuleDifferentialCorpus"/> (loaded modules).
+/// <see cref="ModuleDifferentialCorpus"/> (loaded modules), and <see cref="PlannedLoopTempFamily"/> (loop steps).
 ///
 /// <para><b>The two sides.</b> C#'s verdict is the fact the run's own admission walk decides
 /// (<see cref="AstStructuralPreflight.CheckAdmittedProgram"/>: <c>MayCaptureCalls</c>) over the elaborated tree the
@@ -47,6 +47,7 @@ public class MayCaptureCallsLeanArtifactTests
     internal const string GeneratedCorpus = "generated";
     internal const string HostParentCorpus = "host-parent";
     internal const string ModuleCorpus = "modules";
+    private const string LoopTempCorpus = "planned-loop-temps";
 
     /// <summary>The corpora in emission order, each with the Lean namespace of its generated module.</summary>
     internal static readonly IReadOnlyList<(string Corpus, string LeanNamespace, string ListName)> Corpora =
@@ -57,6 +58,7 @@ public class MayCaptureCallsLeanArtifactTests
         (GeneratedCorpus, "SemanticGeneratedCases", "generatedPrograms"),
         (HostParentCorpus, "HostParentDifferential", "hostParentPrograms"),
         (ModuleCorpus, "ModuleDifferential", "modulePrograms"),
+        (LoopTempCorpus, "PlannedLoopTempFamily", "plannedLoopTempPrograms"),
     ];
 
     /// <summary>Why a corpus program has no guard.</summary>
@@ -146,6 +148,7 @@ public class MayCaptureCallsLeanArtifactTests
             CountOf(GeneratedCorpus));
         Assert.Equal(hostParent.Count, CountOf(HostParentCorpus));
         Assert.Equal(ModuleDifferentialCorpus.Cases.Count, CountOf(ModuleCorpus));
+        Assert.Equal(PlannedLoopTempFamily.Cases.Count, CountOf(LoopTempCorpus));
 
         Assert.Equal(spec.Count(static c => c.IsLeanRepresentable), Guarded(SpecCorpus));
         Assert.Equal(explorer.Count(static c => c.LeanProgram is not null), Guarded(ExplorerCorpus));
@@ -153,6 +156,7 @@ public class MayCaptureCallsLeanArtifactTests
         Assert.Equal(generatedIncluded.Sum(static c => c.Members.Length), Guarded(GeneratedCorpus));
         Assert.Equal(hostParent.Count, Guarded(HostParentCorpus));
         Assert.Equal(ModuleDifferentialCorpus.Cases.Count(c => c.Exclusion is null), Guarded(ModuleCorpus));
+        Assert.Equal(PlannedLoopTempFamily.Cases.Count, Guarded(LoopTempCorpus));
         Assert.All(Corpora, corpus => Assert.True(Guarded(corpus.Corpus) > 0, corpus.Corpus));
 
         // The three rules below exclude a program that HAS a Lean program. Each is counted in the artifact's
@@ -194,6 +198,8 @@ public class MayCaptureCallsLeanArtifactTests
             $"programs that cannot capture calls {guarded.Count - fired.Count} < {MinimumQuietPrograms}");
         Assert.Contains(fired, static p => p.HasMetaBinder);
         Assert.Contains(fired, static p => !p.HasMetaBinder);
+        Assert.All(guarded.Where(p => p.Corpus == LoopTempCorpus),
+            p => Assert.True(p.MayCaptureCalls && !p.HasMetaBinder, p.Id));
 
         foreach (var corpus in new[] { SpecCorpus, ExplorerCorpus, GeneratedCorpus, HostParentCorpus })
         {
@@ -202,8 +208,8 @@ public class MayCaptureCallsLeanArtifactTests
         }
     }
 
-    private const int MinimumGuardedPrograms = 3829;
-    private const int MinimumFiredPrograms = 463;
+    private const int MinimumGuardedPrograms = 3865;
+    private const int MinimumFiredPrograms = 499;
     private const int MinimumQuietPrograms = 3366;
 
     /// <summary>
@@ -233,6 +239,7 @@ public class MayCaptureCallsLeanArtifactTests
             "lean/CoreTests/SemanticGeneratedCases.lean",
             "lean/CoreTests/HostParentDifferential.lean",
             "lean/CoreTests/ModuleDifferential.lean",
+            "lean/CoreTests/PlannedLoopTempFamily.lean",
         ];
         foreach (var path in paths)
         {
@@ -351,6 +358,13 @@ public class MayCaptureCallsLeanArtifactTests
             programs.Add(Decide(ModuleCorpus, fixture.Id, "ModuleDifferential." + fixture.Id, new Expr.AlgorithmExpr(parsed.Root)));
         }
 
+        foreach (var loopCase in PlannedLoopTempFamily.Cases)
+        {
+            var root = ParseRoot(LoopTempCorpus, loopCase.Id, loopCase.Source);
+            programs.Add(Decide(LoopTempCorpus, loopCase.Id,
+                "PlannedLoopTempFamily." + loopCase.LeanName, new Expr.AlgorithmExpr(root)));
+        }
+
         return programs.AsReadOnly();
 
         GateProgram Decide(string corpus, string id, string leanReference, Expr tree)
@@ -404,6 +418,7 @@ public class MayCaptureCallsLeanArtifactTests
             import CoreTests.SemanticGeneratedCases
             import CoreTests.HostParentDifferential
             import CoreTests.ModuleDifferential
+            import CoreTests.PlannedLoopTempFamily
 
             /-!
             GENERATED FILE - DO NOT EDIT BY HAND.

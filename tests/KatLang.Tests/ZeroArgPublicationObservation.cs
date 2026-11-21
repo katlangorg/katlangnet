@@ -174,7 +174,8 @@ internal sealed record CachePilotCase(string CaseId, string LeanName, string Neu
 /// never use the synchronous cache member), with every publication owner released.
 /// Shared by the four generated differential corpora (KL-06 and its pilots): the host-parent
 /// harness compares these results with the plain and counted routes, the source corpora with their
-/// existing neutral observation.
+/// existing neutral observation. The planned-loop tables (<c>PlannedLoopPublicationTests</c>,
+/// <c>PlannedLoopTempFamilyTests</c>) use it the same way.
 /// <para>A PUBLICATION is counted when a zero-argument property first establishes a reusable
 /// value in its owning invocation (KL-06 F01, owner decision Option A, November 21 2026). The
 /// generic strategy stores it in the cache. A planned loop round stores the value of a planned
@@ -206,23 +207,34 @@ internal static class ZeroArgPublicationObserver
 
         /// <summary>The run budgets of the generic and the optimized route (their operational counters).</summary>
         public required (EvaluationBudget Generic, EvaluationBudget Optimized) Budgets { get; init; }
+
+        /// <summary>The run budget of the suspending async route (its operational counters, the <c>tick()</c> count included).</summary>
+        public required EvaluationBudget AsynchronousBudget { get; init; }
     }
 
     /// <summary>
     /// Runs the three cache-recording routes. <paramref name="corpus"/> names the corpus in the
     /// disagreement message (<c>"{corpus} route disagreement for '{caseId}': …"</c>).
     /// <paramref name="optimizedLoopDiagnostics"/> is attached to the OPTIMIZED route's run, so a
-    /// test can read which loops that very run planned.
+    /// test can read which loops that very run planned. <paramref name="recorders"/> makes the
+    /// recorder of each synchronous route; only a NEGATIVE CONTROL passes one (a perturbed
+    /// <see cref="PublicationRecorder"/>, to show that these requirements reject it). The async
+    /// route always keeps the reference cache.
     /// </summary>
-    internal static Routes Observe(string corpus, string caseId, Expr program, LoopOptimizationDiagnostics? optimizedLoopDiagnostics = null)
+    internal static Routes Observe(
+        string corpus,
+        string caseId,
+        Expr program,
+        LoopOptimizationDiagnostics? optimizedLoopDiagnostics = null,
+        Func<PublicationRecorder>? recorders = null)
     {
-        var genericCache = new PublicationRecorder();
+        var genericCache = recorders?.Invoke() ?? new PublicationRecorder();
         var (generic, genericBudget) = Evaluator.RunCountedObserved(program, enableOptimizations: false, zeroArgPropertyResultCache: genericCache);
-        var optimizedCache = new PublicationRecorder();
+        var optimizedCache = recorders?.Invoke() ?? new PublicationRecorder();
         var (optimized, optimizedBudget) = Evaluator.RunCountedObserved(
             program, enableOptimizations: true, zeroArgPropertyResultCache: optimizedCache, loopDiagnostics: optimizedLoopDiagnostics);
         var asyncCache = new SuspendingCache();
-        var (asynchronous, _) = Task.Run(async () =>
+        var (asynchronous, asynchronousBudget) = Task.Run(async () =>
             await Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: asyncCache)).GetAwaiter().GetResult();
 
         Require(corpus, caseId, genericCache.ActiveOwners == 0 && optimizedCache.ActiveOwners == 0 && asyncCache.ActiveOwners == 0,
@@ -240,6 +252,7 @@ internal static class ZeroArgPublicationObserver
             GenericOrder = genericCache.Order,
             OptimizedOrder = optimizedCache.Order,
             Budgets = (genericBudget, optimizedBudget),
+            AsynchronousBudget = asynchronousBudget,
         };
     }
 
@@ -255,12 +268,18 @@ internal static class ZeroArgPublicationObserver
 
     /// <summary>
     /// <see cref="ObserveSourceProgram"/> with the three routes' results and the optimized route's
-    /// frame-slot publications; <paramref name="optimizedLoopDiagnostics"/> as for <see cref="Observe"/>.
+    /// frame-slot publications; <paramref name="optimizedLoopDiagnostics"/> and
+    /// <paramref name="recorders"/> as for <see cref="Observe"/>.
     /// </summary>
     internal static Routes ObserveSourceRoutes(
-        string corpus, string caseId, Algorithm root, string expectedNeutral, LoopOptimizationDiagnostics? optimizedLoopDiagnostics = null)
+        string corpus,
+        string caseId,
+        Algorithm root,
+        string expectedNeutral,
+        LoopOptimizationDiagnostics? optimizedLoopDiagnostics = null,
+        Func<PublicationRecorder>? recorders = null)
     {
-        var routes = Observe(corpus, caseId, new Expr.AlgorithmExpr(root), optimizedLoopDiagnostics);
+        var routes = Observe(corpus, caseId, new Expr.AlgorithmExpr(root), optimizedLoopDiagnostics, recorders);
         foreach (var (name, result) in new[] { ("generic", routes.Generic), ("optimized", routes.Optimized), ("async", routes.Asynchronous) })
         {
             var neutral = result.IsError
@@ -341,8 +360,11 @@ internal static class ZeroArgPublicationObserver
     /// first store of a step property's frame slot is that round's publication of the property. It
     /// is counted under the binding name exactly like a cache store and, separately, as a
     /// frame-slot publication, so a test can tell which storage established an entry.</para>
+    /// <para>The three protected hooks exist for NEGATIVE CONTROLS only (a perturbed key, a reuse
+    /// counted as a publication, a mis-reported frame slot; <c>PlannedLoopTempFamilyTests</c>):
+    /// this class itself overrides none of them, so every corpus observes the law unchanged.</para>
     /// </summary>
-    private sealed class PublicationRecorder : IZeroArgPropertyResultCache, IPlannedLoopPublicationObserver
+    internal class PublicationRecorder : IZeroArgPropertyResultCache, IPlannedLoopPublicationObserver
     {
         private readonly ZeroArgPropertyPublications _publications = new();
         private readonly List<string> _order = [];
@@ -353,14 +375,24 @@ internal static class ZeroArgPublicationObserver
         internal IReadOnlyList<string> Order => _order;
         internal int ActiveOwners => _publications.ActiveOwnerCount;
 
+        /// <summary>The key a request is decided under: the run-scoped law's own key.</summary>
+        protected virtual ZeroArgPropertyCacheKey KeyOf(ZeroArgPropertyExecution execution) => ZeroArgPropertyCacheKey.FromExecution(execution);
+
+        /// <summary>Whether a read served from a published entry counts as another publication: never, under the law.</summary>
+        protected virtual bool CountsReuse => false;
+
         // DECON-CACHE-2: this is the publication law itself, so its read provenance is the law's.
         public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _publications.ReadObtainsPublishedValue(key);
 
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
         {
-            var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+            var key = KeyOf(execution);
             if (_publications.TryGetPublished(key, out var cached))
+            {
+                Record(key, CountsReuse);
                 return EvalResult<ZeroArgPropertyResult>.Ok(cached);
+            }
+
             var result = _publications.EvaluateMiss(key, evaluate, out var published);
             Record(key, published);
             return result;
@@ -368,7 +400,7 @@ internal static class ZeroArgPublicationObserver
 
         public EvalResult<ZeroArgPropertyResult> Invoke(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
         {
-            var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+            var key = KeyOf(execution);
             var result = _publications.Invoke(key, evaluate, out var published);
             Record(key, published);
             return result;
@@ -384,11 +416,14 @@ internal static class ZeroArgPublicationObserver
             Count(name);
         }
 
-        public void PlannedLoopSlotPublished(Property binding)
+        public virtual void PlannedLoopSlotPublished(Property binding) => RecordFrameSlot(binding.Name);
+
+        /// <summary>Counts one planned frame-slot publication under <paramref name="name"/>.</summary>
+        protected void RecordFrameSlot(string name)
         {
-            FrameSlotsByName[binding.Name] = FrameSlotsByName.GetValueOrDefault(binding.Name) + 1;
+            FrameSlotsByName[name] = FrameSlotsByName.GetValueOrDefault(name) + 1;
             FrameSlotTotal++;
-            Count(binding.Name);
+            Count(name);
         }
 
         private void Count(string name)

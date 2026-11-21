@@ -4,6 +4,7 @@ import SemanticExplorerCases
 import CoreTests.SemanticGeneratedCases
 import CoreTests.HostParentDifferential
 import CoreTests.ModuleDifferential
+import CoreTests.PlannedLoopTempFamily
 
 /-!
 GENERATED FILE - DO NOT EDIT BY HAND.
@@ -22,8 +23,8 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4125
-- guarded: 3987 (475 may capture calls, 3512 cannot)
+- corpus programs: 4161
+- guarded: 4023 (511 may capture calls, 3512 cannot)
 - excluded: 138
   language-spec: 654 programs, 541 guarded (49 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2564 programs, 2551 guarded (53 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
@@ -31,6 +32,7 @@ Partition (machine-checked by the `*.length` guards below; nothing is sampled):
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
   host-parent: 134 programs, 134 guarded (8 may capture calls)
   modules: 10 programs, 7 guarded (0 may capture calls), 3 excluded: C#-only by the corpus's reviewed reason
+  planned-loop-temps: 36 programs, 36 guarded (36 may capture calls)
 
 Exclusion rules that currently exclude nothing: a tree the structural preflight refuses (no
 run admits it); a tree that holds a deferred module region (C#'s first clause; Lean has no
@@ -8078,5 +8080,87 @@ def modulePrograms : List Expr := [
 #guard modulePrograms.length == 7
 #guard (modulePrograms.filter Expr.mayCaptureCalls).length == 0
 
--- 3987 gate guards over 4125 corpus programs.
+/-! ## planned-loop-temps -/
+
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD0R1K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD0R2K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD0R3K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD1R1K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD1R2K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD1R3K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD2R1K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD2R2K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatPlannedD2R3K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD0R1K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD0R2K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD0R3K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD1R1K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD1R2K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD1R3K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD2R1K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD2R2K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltRepeatFallbackD2R3K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD0R1K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD0R2K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD0R3K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD1R1K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD1R2K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD1R3K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD2R1K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD2R2K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhilePlannedD2R3K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD0R1K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD0R2K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD0R3K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD1R1K2 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD1R2K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD1R3K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD2R1K3 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD2R2K1 == true
+#guard Expr.mayCaptureCalls PlannedLoopTempFamily.pltWhileFallbackD2R3K2 == true
+
+/-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
+    expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
+def plannedLoopTempPrograms : List Expr := [
+  PlannedLoopTempFamily.pltRepeatPlannedD0R1K1,
+  PlannedLoopTempFamily.pltRepeatPlannedD0R2K2,
+  PlannedLoopTempFamily.pltRepeatPlannedD0R3K3,
+  PlannedLoopTempFamily.pltRepeatPlannedD1R1K2,
+  PlannedLoopTempFamily.pltRepeatPlannedD1R2K3,
+  PlannedLoopTempFamily.pltRepeatPlannedD1R3K1,
+  PlannedLoopTempFamily.pltRepeatPlannedD2R1K3,
+  PlannedLoopTempFamily.pltRepeatPlannedD2R2K1,
+  PlannedLoopTempFamily.pltRepeatPlannedD2R3K2,
+  PlannedLoopTempFamily.pltRepeatFallbackD0R1K1,
+  PlannedLoopTempFamily.pltRepeatFallbackD0R2K2,
+  PlannedLoopTempFamily.pltRepeatFallbackD0R3K3,
+  PlannedLoopTempFamily.pltRepeatFallbackD1R1K2,
+  PlannedLoopTempFamily.pltRepeatFallbackD1R2K3,
+  PlannedLoopTempFamily.pltRepeatFallbackD1R3K1,
+  PlannedLoopTempFamily.pltRepeatFallbackD2R1K3,
+  PlannedLoopTempFamily.pltRepeatFallbackD2R2K1,
+  PlannedLoopTempFamily.pltRepeatFallbackD2R3K2,
+  PlannedLoopTempFamily.pltWhilePlannedD0R1K1,
+  PlannedLoopTempFamily.pltWhilePlannedD0R2K2,
+  PlannedLoopTempFamily.pltWhilePlannedD0R3K3,
+  PlannedLoopTempFamily.pltWhilePlannedD1R1K2,
+  PlannedLoopTempFamily.pltWhilePlannedD1R2K3,
+  PlannedLoopTempFamily.pltWhilePlannedD1R3K1,
+  PlannedLoopTempFamily.pltWhilePlannedD2R1K3,
+  PlannedLoopTempFamily.pltWhilePlannedD2R2K1,
+  PlannedLoopTempFamily.pltWhilePlannedD2R3K2,
+  PlannedLoopTempFamily.pltWhileFallbackD0R1K1,
+  PlannedLoopTempFamily.pltWhileFallbackD0R2K2,
+  PlannedLoopTempFamily.pltWhileFallbackD0R3K3,
+  PlannedLoopTempFamily.pltWhileFallbackD1R1K2,
+  PlannedLoopTempFamily.pltWhileFallbackD1R2K3,
+  PlannedLoopTempFamily.pltWhileFallbackD1R3K1,
+  PlannedLoopTempFamily.pltWhileFallbackD2R1K3,
+  PlannedLoopTempFamily.pltWhileFallbackD2R2K1,
+  PlannedLoopTempFamily.pltWhileFallbackD2R3K2
+]
+#guard plannedLoopTempPrograms.length == 36
+#guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
+
+-- 4023 gate guards over 4161 corpus programs.
 end KatLang.MayCaptureCallsCorpus

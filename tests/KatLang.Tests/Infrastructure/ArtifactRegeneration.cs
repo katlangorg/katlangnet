@@ -65,6 +65,10 @@ internal static class RegenerationFlags
         Prefix + "MODULE_DIFFERENTIAL",
         "lean/CoreTests/ModuleDifferential.lean");
 
+    public static readonly RegenerationFlag PlannedLoopTempFamily = new(
+        Prefix + "PLANNED_LOOP_TEMP_FAMILY",
+        "lean/CoreTests/PlannedLoopTempFamily.lean");
+
     // The three flags below regenerate Lean PROOF modules whose text is generated (tests/KatLang.Tests/LeanProofModules/).
 
     public static readonly RegenerationFlag MemberRereadInstances = new(
@@ -82,7 +86,7 @@ internal static class RegenerationFlags
     public static readonly IReadOnlyList<RegenerationFlag> All =
     [
         LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated, FrontEndDecisions,
-        MayCaptureCalls, ModuleDifferential,
+        MayCaptureCalls, ModuleDifferential, PlannedLoopTempFamily,
         MemberRereadInstances, PublishedCallableInstances, EvaluatorPublications,
     ];
 }

@@ -22,13 +22,12 @@ Finite generated corpora are bounded evidence, not an evaluator refinement proof
 `MetamorphicErrorDetail`, shared as source between the tests and standalone fuzz
 target, owns the C# category and supplementary field policy. `DifferentialErrors`
 maps it to the existing Q-67 records without changing their contract.
-`LeanObsTemplate` owns the Lean projections of all five generated observation
-artifacts: `lean/LanguageSpecCases.lean` (`LanguageSpecLeanArtifactTests`),
+Five generated observation artifacts use both `LeanObsTemplate.SharedDefinitions`
+and `AppendErrorGuard`: `lean/LanguageSpecCases.lean` (`LanguageSpecLeanArtifactTests`),
 `lean/SemanticExplorerCases.lean` (`SemanticExplorerLeanArtifactTests`),
 `lean/CoreTests/HostParentDifferential.lean` (`HostParentDifferentialTests`),
 `lean/CoreTests/SemanticGeneratedCases.lean` (`SemanticGeneratedLeanArtifactTests`) and
-`lean/CoreTests/ModuleDifferential.lean` (`ModuleDifferentialTests`, § Module programs);
-each emits its `SharedDefinitions` and `AppendErrorGuard`. `obs`
+`lean/CoreTests/ModuleDifferential.lean` (`ModuleDifferentialTests`, § Module programs). `obs`
 retains its original contract; `errorObs` is separate. Only the host-parent
 artifact also emits the KL-07 `structural` guards (§ Lean `kl-struct-v1`
 exporter). On supported failures, `errorObs` runs the plain and counted Lean
@@ -38,6 +37,10 @@ evaluator once. The first four artifacts also emit the KL-06 cache observation
 case, the other three on a four-case pilot each (§ Cache publications). The
 hand-maintained `lean/CoreTests/PlannedLoopPublications.lean` embeds the same
 definitions for the F01 loop cases (`PlannedLoopPublicationTests` checks its text).
+A sixth generated artifact, `lean/CoreTests/PlannedLoopTempFamily.lean`
+(`PlannedLoopTempFamilyTests`, § Planned-loop temp family), emits the shared and
+cache definitions and adds its own tick observation; it has no failing case, so
+it emits no `errorObs` guard.
 The public engine adds one run only on failures and parse rejections where it
 was previously skipped. Q-67 changed no production evaluator code and no
 normal-run overhead. The F01 decision of 2026-11-21 added one production hook,
@@ -596,6 +599,142 @@ are not added either.
 Extending the observation to all 3,725 programs is a separate owner decision, to
 be made on the census and the cost above. Logs, the census tables and the
 scratch tools are in `artifacts/validation/kl-cache-pilots/`.
+
+## Planned-loop temp family (F01 follow-up)
+
+The follow-up of § 7 of the 2026-11-20 C#/Lean differential bug hunt, on the
+contract of F01 Option A above: a small deterministic generator family of
+`repeat` and `while` steps (`PlannedLoopTempFamily`, checked by
+`PlannedLoopTempFamilyTests`, Lean half in the generated
+`lean/CoreTests/PlannedLoopTempFamily.lean`, flag
+`KATLANG_REGENERATE_PLANNED_LOOP_TEMP_FAMILY`). It is separate from SEM-2B and
+from the hand-written F01 table. The plan-retention gate differential (E-21)
+checks all 36 programs against their encoded trees.
+
+**The family.** Every step `Step(n, acc)` declares the same four temps:
+
+- `T = n * 2`, the F01 anchor: pure, plannable and local-only, read k times in
+  every state-forming round.
+- `F = n * 10 + tick()`, the fallback temp: the planner cannot plan the
+  `tick()` call.
+- `K = 7`, exported and self-contained. A `while` step's continuation row
+  `n + K <= R + 7` reads it once more in every round, the false round included.
+- `U = n + 100`, declared and never demanded.
+
+The rows are `n + 1`, `acc + (T + K)×k` (each group with `+ F` on the fallback
+path) and, for `while`, the continuation row. Each case runs its loop in two
+activations (two root rows, initial accumulators 0 and 100) at activation depth
+0 (the step at the root), 1 (inside `Run(b)`) or 2 (inside `Outer(c)` around
+`Run(b)`). Depth, the round count R ∈ {1, 2, 3} and the reuse k ∈ {1, 2, 3}
+follow the L9 orthogonal array (each pair of levels of two factors exactly once)
+for each loop kind and path: 36 cases.
+
+- *Planned path.* F is undemanded, so every row is planned: T and K live in
+  frame slots, F's refusal is recorded and U is planned and never read.
+- *Fallback path.* The accumulator row reads F, which has no plan. The planner
+  withdraws every temp plan ("local properties require the shared generic cache
+  in a partially planned loop"), and the accumulator and continuation rows run
+  generically inside the optimized loop, through the run's cache.
+
+**Expectations.** `PlannedLoopTempFamily.Predict` simulates the arithmetic and
+the reads in evaluation order (a `while` round's continuation row first) under
+the approved reading. A round publishes each temp it demands once, later reads
+in the round reuse that value, an undemanded temp does no work, and `tick()`
+advances once per establishment of F. That gives the neutral observation, the
+four per-name counts (zeros are watched), the tick count and the optimized
+route's frame-slot split (the planned path's T and K, nothing on the fallback
+path). Nothing is copied from a run.
+
+**What the approved route policy compares.**
+
+| Observation | Routes | Compared with |
+| --- | --- | --- |
+| Neutral observation (value, root emitted count) | generic, optimized, suspending async; each ordinary and with retained invocation plans (`InvocationPlanTestSeam`) | the constructed one |
+| Value, host-call log | both engines, the engine's async twin, generic, optimized, forced twin (`SixRouteAgreement`) | the constructed value; no host call |
+| Final `tick()` output in a second run with that row appended | the same six routes | constructed tick count plus one; no host call |
+| Publications per binding name | generic and optimized, both passes | each other and the constructed counts |
+| Publication total | suspending async | generic |
+| `tick()` count (run budget) | generic, optimized, suspending async | the constructed count |
+| `obs`, `cacheEntries` for the four names, `cacheTotal`, `tickTotal` | Lean | the constructed values |
+
+Route-specific observations, never compared with Lean, are:
+
+- the storage split on the optimized route: frame slots against the constructed
+  split, and the run cache's own store count (all publications on the generic
+  route, the rest on the optimized one);
+- the planner's path, read from the observed optimized run's diagnostics in
+  both passes: one plan build and execution per activation, the plan identity,
+  every temp's and row's plan or refusal, and the number of generic row
+  evaluations;
+- the publication order and the operational counters (steps, checkpoints, peak
+  depth, materialized items), between generic and optimized and between the two
+  passes.
+
+The async cache reports only the publication total. The public engines expose
+ticks through the extra output row and have no cache observer. The supplementary
+readout run is C#-only. Lean checks the original program. The whole family is in the
+shared domain: the tick counter is modeled language state, and Lean's
+`tickTotal` reads the final `EvalState.tickCounter` under `publicationsOf`'s
+completion rule (four hand-written state guards).
+
+**Telling the readings apart** (`Readings_AreToldApartExactlyWhereTheVariedDimensionsReachThem`).
+
+| Rejected reading | Told in | Changes the value in |
+| --- | --- | --- |
+| The exported temp keeps one run entry | every case (two activations) | no case |
+| One entry per loop execution | R ≥ 2 or `while` | R ≥ 2 |
+| Keyed by the outermost invoked owner | depth ≥ 1 and (R ≥ 2 or `while`) | depth ≥ 1 and R ≥ 2 |
+| Every read evaluates and publishes | k ≥ 2 or `while` | fallback path, k ≥ 2 |
+| Demanded temps never publish | every case | no case |
+
+So each dimension is needed: without depth ≥ 1 the outermost-owner key is the
+round itself, without R ≥ 2 or a `while` a loop's memo is the round's, and
+without k ≥ 2 or the `while` row's extra read a temp is read once per round.
+Where the value does not change, only the publication guards tell the reading.
+
+**Negative controls.** `PerturbedRecorder_IsRejectedExactlyWhereTheFamilyCanTellIt`
+puts a perturbed `ZeroArgPublicationObserver.PublicationRecorder` on the two
+synchronous cache-recording routes. The async route keeps the reference cache.
+For each perturbation the test pins, case by case, the requirement of the
+policy that rejects it. It also pins where the constructed expectations alone
+reject it, with no route compared with another.
+
+| Perturbation | Rejected by the policy | Rejecting requirement | Constructed expectations alone |
+| --- | --- | --- | --- |
+| Planned slot reports dropped (the observer before F01) | the 18 planned cases | per name | the same 18 |
+| Run-wide key (one entry per binding and run) | all 36 | per name; async total on the fallback path | all 36 |
+| T's and K's slots reported under each other's names | the 18 planned cases | per name for `while`, order for `repeat` | the 9 planned `while` cases |
+| Every read evaluates afresh | the 30 with k ≥ 2 or `while` | per name; async total on the fallback path | the same 30 |
+| Every reuse counted as a publication | the same 30 | the same | the same 30 |
+
+The unperturbed recorder is rejected nowhere. On the fallback path both
+synchronous routes share the perturbation, so their per-name comparison cannot
+see it. The async reference route's total or the constructed expectations
+reject it there.
+
+**Lean model mutants (2026-11-21, scratch copies outside the tree, not in the
+suite).** Each copy holds the model and this module and was built with `lake
+build CoreTests.PlannedLoopTempFamily`. The unmutated copy passed every guard.
+
+| Mutant of `KatLang.lean` | Failing case guards (of 252) |
+| --- | --- |
+| The cache key loses its binding context and environment (one entry per binding and run) | 174: T, K and the total in all 36 cases; F and the tick count in the 18 fallback cases; `obs` in 30 (the six one-round planned cases keep their value) |
+| The key's property name is wrong (`binding.name ++ "'"`) | 90: exactly the T and K name guards of every case and the F guards of the fallback cases; `obs`, totals and tick counts pass |
+| Every read misses (`lookup []`) | 24: `obs` and `tickTotal` of the 12 fallback cases with k ≥ 2. Every cache guard passes, because Lean's `insert` keeps one entry per key, so only the tick effect shows the evaluation count |
+
+The first mutant reached Lean's 100-error limit under `lake build`, so its
+count comes from `lake env lean -DmaxErrors=5000`. Logs are in
+`artifacts/validation/plt-probe/lean-mutants/`.
+
+**Cost (2026-11-21).** The module is 80,747 bytes with 262 guards: seven per
+case (`obs`, four names, the total and the tick count), the five cache-state and
+four tick-state guards, and one count guard. `lake build CoreTests` built it in
+10 s, and the model alone builds in 14–15 s in a scratch copy. The C# class (82
+tests) runs in about 2 s.
+
+**Not covered.** The family does not cover explicit temp calls (`T()`), alias
+temps, failing temps or handovers (the F01 table covers them). It also leaves
+out host operations, cancellation and resource limits.
 
 ## Module programs (MODULE-DIFF-1 pilot)
 
