@@ -29,7 +29,7 @@ public class LoopPlannedResultIdentityParityTests
 {
     // ── Fixtures ─────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>The one-iteration repeat whose only arithmetic is <c>T = a + 1</c>.</summary>
+    /// <summary>The one-iteration repeat with a local numeric temp.</summary>
     private static string RepeatStep(string rows) => "Step(a, b) = {\n  T = a + 1\n  " + rows + "\n}\n";
 
     private static string RepeatObserver(string rows) => RepeatStep(rows) + "SamePair(repeat(Step(0, 0), 1))";
@@ -43,21 +43,49 @@ public class LoopPlannedResultIdentityParityTests
     private const string WhileObserver = "Step(a, b) = {\n  T = a + 1\n  T, T, a < 1\n}\nSamePair(while(Step(0, 0)))";
 
     /// <summary>
-    /// Rows of the one-iteration repeat: the planned additions each executes and whether both
-    /// positions must be ONE object (<c>null</c>: independent evaluations, either verdict is valid).
+    /// Rows of the one-iteration repeat: the planned operations each executes (additions, comparison
+    /// links and <c>if</c>s) and whether both positions must be ONE object (<c>null</c>: independent
+    /// evaluations, either verdict is valid), followed by the expected value of each item.
     /// </summary>
-    public static TheoryData<string, int, bool?> RepeatRows => new()
+    public static TheoryData<string, int, bool?, int> RepeatRows => new()
     {
         // Two reads of one established local entry.
-        { "T, T", 1, true },
+        { "T, T", 1, true, 1 },
         // The fresh call that first owns the empty entry establishes it; the read reuses that result.
-        { "T(), T", 1, true },
+        { "T(), T", 1, true, 1 },
         // One bound argument forwarded twice.
-        { "a, a", 0, true },
+        { "a, a", 0, true, 0 },
         // The second call is a fresh invocation of an established entry: an independent evaluation.
-        { "T(), T()", 2, null },
+        { "T(), T()", 2, null, 1 },
         // The read establishes the entry; the later call is fresh.
-        { "T, T()", 2, null },
+        { "T, T()", 2, null, 1 },
+        // A conditional output row that selects the established entry hands its stored result on.
+        { "if(a < 1, T, 0), T", 3, true, 1 },
+        // The established entry beside an arithmetic result computed from it: either verdict is valid.
+        { "T, T + 0", 2, null, 1 },
+        // The equal-value control: two independent arithmetic results over one entry, either verdict valid.
+        { "T + 0, T + 0", 3, null, 1 },
+    };
+
+    /// <summary>
+    /// The one-iteration repeat of a step nested in <c>Outer(k)</c>: the step CAPTURES <c>k</c>, a
+    /// parameter of its enclosing algorithm, which the planned loop reads from its supplied cell, and
+    /// <c>T = b + k</c> is a local temp with a different value.
+    /// </summary>
+    private static string CapturedObserver(string rows)
+        => "Outer(k) = {\n  Step(a, b) = {\n    T = b + k\n    " + rows + "\n  }\n  SamePair(repeat(Step(0, 1), 1))\n}\nOuter(5)";
+
+    /// <summary>Rows over a captured parameter, in the columns of <see cref="RepeatRows"/>.</summary>
+    public static TheoryData<string, int, bool?, int> CapturedRows => new()
+    {
+        // The captured value forwarded twice.
+        { "k, k", 0, true, 5 },
+        // A conditional output row that selects the captured value.
+        { "if(a < 1, k, 0), k", 2, true, 5 },
+        // Two reads of a local entry computed from the captured value.
+        { "T, T", 1, true, 6 },
+        // The equal-value control: two independent arithmetic results, either verdict valid.
+        { "k + 0, k + 0", 2, null, 5 },
     };
 
     /// <summary>Distinct executions of one literal site: either verdict is valid, Boolean literals included.</summary>
@@ -101,6 +129,8 @@ public class LoopPlannedResultIdentityParityTests
         { RepeatObserver("a, a"), true },
         { RepeatObserver("T(), T()"), false },
         { RepeatObserver("T, T()"), false },
+        { RepeatObserver("if(a < 1, T, 0), T"), true },
+        { CapturedObserver("if(a < 1, k, 0), k"), true },
         { WhileObserver, true },
     };
 
@@ -125,19 +155,44 @@ public class LoopPlannedResultIdentityParityTests
 
     [Theory]
     [MemberData(nameof(RepeatRows))]
-    public async Task RepeatRows_KeepOneResultForOneEntry_AndExecuteTheTempAsOften(string rows, int additions, bool? sameObject)
+    public async Task RepeatRows_KeepOneResultForOneEntry_AndExecuteTheTempAsOften(string rows, int plannedOperations, bool? sameObject, int expectedItem)
+        => await AssertRowVerdicts(RepeatObserver(rows), plannedOperations, sameObject, expectedItem);
+
+    [Theory]
+    [MemberData(nameof(CapturedRows))]
+    public async Task CapturedParameterRows_KeepOneResultForOneValue(string rows, int plannedOperations, bool? sameObject, int expectedItem)
+        => await AssertRowVerdicts(CapturedObserver(rows), plannedOperations, sameObject, expectedItem);
+
+    [Fact]
+    public async Task CapturedParameter_SelectedByLoop_IsTheEnclosingResult()
     {
-        var outcomes = await ObserveEveryRouteAsync(RepeatObserver(rows));
+        const string source = """
+            Outer(k) = {
+              Step(a) = if(a < 1, k, 0)
+              SamePair((repeat(Step(0), 1), k))
+            }
+            Outer(5)
+            """;
+        await AssertRowVerdicts(source, plannedOperations: 2, sameObject: true, expectedItem: 5);
+    }
+
+    /// <summary>
+    /// One host verdict per route, fixed where <paramref name="sameObject"/> fixes it, from a wholly
+    /// planned optimized route that executed <paramref name="plannedOperations"/> planned operations.
+    /// </summary>
+    private static async Task AssertRowVerdicts(string source, int plannedOperations, bool? sameObject, int expectedItem)
+    {
+        var outcomes = await ObserveEveryRouteAsync(source, expectedPairItem: new Result.Atom(expectedItem));
         foreach (var outcome in outcomes)
         {
             Assert.True(outcome.Ok, outcome.ToString());
             var verdict = Assert.IsType<Result.Bool>(outcome.Value).Value;
             Assert.Equal(new[] { verdict }, outcome.Verdicts);
             if (sameObject is { } expected)
-                Assert.True(expected == verdict, $"{outcome.Route}: ReferenceEquals was {verdict} for '{rows}'");
+                Assert.True(expected == verdict, $"{outcome.Route}: ReferenceEquals was {verdict} for '{source}'");
         }
 
-        AssertWhollyPlanned(Planned(outcomes).Loop!, additions);
+        AssertWhollyPlanned(Planned(outcomes).Loop!, plannedOperations);
         // The generic strategy runs no planned operation.
         Assert.Equal(0, Generic(outcomes).Loop!.PlannedBuiltinOperations);
         AssertSameAcrossRoutes(outcomes, compareValues: sameObject is not null);
@@ -287,7 +342,7 @@ public class LoopPlannedResultIdentityParityTests
     }
 
     /// <summary>The host's observation log: one verdict per <c>SamePair</c> call, in call order.</summary>
-    private sealed class SamePairLog
+    private sealed class SamePairLog(Result? expectedPairItem)
     {
         private readonly List<bool> _verdicts = [];
 
@@ -303,6 +358,11 @@ public class LoopPlannedResultIdentityParityTests
         public Result Observe(IReadOnlyList<Result> args)
         {
             var pair = (Result.SequenceValue)args[0];
+            if (expectedPairItem is not null)
+            {
+                Assert.Equal(2, pair.Items.Count);
+                Assert.All(pair.Items, item => Assert.Equal(expectedPairItem, item, Result.ValueComparer));
+            }
             var same = ReferenceEquals(pair.Items[0], pair.Items[1]);
             lock (_verdicts)
                 _verdicts.Add(same);
@@ -327,17 +387,17 @@ public class LoopPlannedResultIdentityParityTests
         return parsed.Root;
     }
 
-    private static async Task<IReadOnlyList<Outcome>> ObserveEveryRouteAsync(string source, EvaluationLimits? limits = null)
+    private static async Task<IReadOnlyList<Outcome>> ObserveEveryRouteAsync(string source, EvaluationLimits? limits = null, Result? expectedPairItem = null)
     {
         var outcomes = new List<Outcome>();
         foreach (var route in Enum.GetValues<Route>())
-            outcomes.Add(await ObserveAsync(route, source, limits));
+            outcomes.Add(await ObserveAsync(route, source, limits, expectedPairItem));
         return outcomes;
     }
 
-    private static async Task<Outcome> ObserveAsync(Route route, string source, EvaluationLimits? limits = null)
+    private static async Task<Outcome> ObserveAsync(Route route, string source, EvaluationLimits? limits = null, Result? expectedPairItem = null)
     {
-        var log = new SamePairLog();
+        var log = new SamePairLog(expectedPairItem);
         var operations = SamePairOperations(log, asynchronous: route is Route.EngineAsyncTwin or Route.ForcedTwin);
         var options = new RunOptions { HostOperations = operations, EvaluationLimits = limits };
         switch (route)

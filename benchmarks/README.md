@@ -118,6 +118,25 @@ Any other exit code is a crash, not a result: an exception that escapes Benchmar
 | Per-site count callee loop 1000 | `benchmarks/KatLang.Benchmarks/Scenarios/persite-count-callee-loop-1000.kat` | Builtin-aware transport workload: `F(xs) = count(xs)` receives the supplied `range(1, 3)` once per loop transition and hands it only to the value-only builtin `count`, so the supplied call is not a plan. | Builtin-aware per-site transport (0eed993a, 2026-11-10) |
 | Per-site count callee planned baseline 1000 | `benchmarks/KatLang.Benchmarks/Scenarios/persite-count-callee-planned-baseline-1000.kat` | Non-eligible twin of the `count` callee loop: an unread local property `Keep = Pass(xs)` transports the parameter to a user callable, so the supplied call stays a plan while the executed work is the same. | Builtin-aware per-site transport (0eed993a, 2026-11-10) |
 
+## Planned-loop numeric temporaries (KL-01)
+
+The November 21, 2026 experiment compared eager boxing at `6e99edc9` with a prototype that kept arithmetic-only local temporaries unboxed. The prototype classified reads during plan preparation and stored one Boolean per temporary. Results below are for .NET 11 Release on Windows x64. Each case runs `repeat(Step(0, 0), N)` with `T = a + 1` where used. The three-temp case adds `U = T * 2` and `V = U - T`.
+
+| Use and step output rows | Planned B/iteration, eager → prototype | Generic B/iteration, both builds | Steps/iteration | Expression checkpoints/iteration |
+| --- | ---: | ---: | ---: | ---: |
+| Arithmetic only • `T + 0, b + T` | 96 → 64 | 2,618.87 | 3 | 18 |
+| Three arithmetic temps • `T + 0, b + V` | 160 → 64 | 4,625.23 | 6.01 | 30 |
+| Inline control • `a + 1 + 0, b + (a + 1)` | 64 → 64 | 1,552.00 | 1 | 20 |
+| Escaping • `T, T` | 32 → 32 | 2,282.87 | 3 | 8 |
+| Mixed • `T, b + T` | 64 → 64 | 2,434.87 | 3 | 13 |
+| Conditional • `if(T > 0, T, 0), b + T` | 88 → 88 | 4,201.23 | 4 | 20 |
+| Equality • `T + 0, b + if(T == T, 1, 0)` | 120 → 120 | 4,385.23 | 4.01 | 25 |
+| Independent equal results • `a + 1, a + 1` | 64 → 64 | 1,456.00 | 1 | 12 |
+
+The harness parsed each program before measuring. It subtracted current-thread allocations for 1,000 iterations from allocations for 101,000, divided by 100,000 and took the median of five samples after two warmups per size. Separate observed runs verified the planned path, final values and work counters. Both strategies and builds agreed on values and charged the work shown. The `square-free-count-local-temp-loop` scenario allocated 228,099,656 bytes per run with eager boxing, 237,894,128 with a first prototype using a hash set, and 215,174,128 with the Boolean-array prototype.
+
+For timing, each round used the median of 15 runs of 200,000 iterations. Dividing each planned time by the inline control in the same build and taking the median ratio across three rounds gave **1.00 → 1.06** for one arithmetic temp and **1.70 → 1.77** for three. With tiering disabled the ratios were **0.93 → 0.90** and **1.53 → 1.47**. The prototype saved 32 bytes per arithmetic-only temporary per iteration. The timing comparisons changed direction with tiering, so the planner keeps the single boxing rule for established results.
+
 ## Cache-Sensitive Notes
 
 - The most cache-sensitive scenarios are `RepeatedZeroArgPropertyReuse`, `ScalarHelperSumCalls`, and `PropertyRichSharedSubcomputations` because they intentionally re-read the same zero-arg properties or call through helpers that close over them.

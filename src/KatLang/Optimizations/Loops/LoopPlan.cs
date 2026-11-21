@@ -216,6 +216,9 @@ internal sealed class LoopRunFrame
     /// boxes an unboxed numeric value once (<see cref="PlannedLoopValue.WithResult"/>). Without this, each
     /// output read would box its own atom, and a host comparing two reads by reference would see two
     /// objects. The numeric view stays available to the arithmetic fast paths.
+    /// <para>This also boxes arithmetic-only temps. Selective boxing saved one atom per such temp per
+    /// iteration. Its timing relative to the inline control varied with JIT tiering (KL-01 measurements
+    /// in <c>benchmarks/README.md</c>).</para>
     /// </summary>
     public PlannedLoopValue EstablishTempSlot(int index, PlannedLoopValue value)
     {
