@@ -1795,7 +1795,8 @@ completion shell of its own. So ONE cell is inserted, the link. The dispatch nam
 read through the link's receiver cell, the parameter's cell, which must hold the read VALUE
 (`hmemo`: the invocation read of a parameter bound to a supplied cell demands that cell). -/
 
-open KatLang.MemberStability (capturedId? captured_run parameterAddressIn)
+open KatLang.MemberStability (capturedId? capturedRecord captured_run parameterAddressIn
+  parameterAddressIn_available)
 
 /-- **The insertion of a planned `.Algorithm` invocation over a PARAMETER receiver**: the callee
     link alone, its receiver the parameter's own cell `cell`. -/
@@ -1888,7 +1889,8 @@ theorem establish_run_param (a : Nat) (x : EvalState) (ca : NeedCell) (shape : N
       (supplyNeed (.param name) shape.caller shape.values).runState s = (.ok b, s) := by
     intro s hs
     refine KatLang.NeedControl.Allocation.supply_param_transports name shape.caller shape.values s
-      ((capturedId? name shape.caller).bind (fun id => s.lexicalActivations[id]?)) b (captured_run name shape.caller s) ?_
+      (capturedRecord s.lexicalActivations name shape.caller) b
+      (captured_run name shape.caller s (parameterAddressIn_available hbound)) ?_
     rw [hs]
     exact hbound
   rw [receiver_param_at _ x.needs.size b _ shape.callee name fallback shape.caller shape.values hcell rfl rfl hlink

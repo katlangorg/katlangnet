@@ -573,7 +573,10 @@ def afFailsWithArity (r : Except Error Result) (expected actual : Nat) : Bool :=
 
 -- ALIAS-CELL-LIFETIME (November 2026; owner decision 2026-11-15, PROPERTY LIFETIME): the binding cell
 -- of a runtime alias lives as long as the cache entry of the same row written as a property would
--- (`aliasBindingCellKey`). EXPORTED alias: one cell per run. LOCAL-ONLY alias: one cell per declaring
+-- (`aliasBindingCellKey`). EXPORTED alias: one cell per OWNING INVOCATION — every actual call of its
+-- owner has a fresh cell, and a read from outside every call has the one run-scoped cell (the
+-- inner-property lifetime rule, November 2026; one cell per run from 2026-11-15 until then).
+-- LOCAL-ONLY alias: one cell per declaring
 -- binding context — property-style reads share it, an explicit call gets a fresh one. Each program's
 -- PROPERTY TWIN (the same row as an ordinary property) is the oracle and is guarded beside it.
 -- `Cap(meta r) = r`, `Ten(x) = x * 10`, `Hun(x) = x * 100`,
@@ -608,25 +611,36 @@ def afTwinCall : KatLang.Expr := .dotCall (resolve "P") "Algorithm" (some [num 1
 def afTwinMemberCall (owner : String) : KatLang.Expr :=
   .dotCall (.dotCall (resolve owner) "P" none) "Algorithm" (some [num 1])
 
--- e4: `Outer(k) = { A = Pick(tick()).Algorithm ⏎ A(1) }` / `Outer(0), Outer(0)`
--- (formerly `(10, 100)`: one cell per call of the owner).
+-- e4: `Outer(k) = { A = Pick(tick()).Algorithm ⏎ A(1) }` / `Outer(0), Outer(0)` — every call of the
+-- owner has a fresh cell, so the second receiver ticks again and picks `Hun` (under the run-wide
+-- exported cell of 2026-11-15: `(10, 10)`).
 #guard afLifetimeRun
     [KatLang.privateProp "Outer" (algPrivate ["k"] [] [("A", afExportedAlias)] [afCall "A" [num 1]])]
-    [afCall "Outer" [num 0], afCall "Outer" [num 0]] == some (afPair 10 10)
+    [afCall "Outer" [num 0], afCall "Outer" [num 0]] == some (afPair 10 100)
 #guard afLifetimeRun
     [KatLang.privateProp "Outer" (algPrivate ["k"] [] [("P", alg [] [] [] [afPicked])] [afTwinCall])]
-    [afCall "Outer" [num 0], afCall "Outer" [num 0]] == some (afPair 10 10)
+    [afCall "Outer" [num 0], afCall "Outer" [num 0]] == some (afPair 10 100)
 -- esc: `Outer(k) = { public A = Pick(tick()).Algorithm ⏎ A(1) }` / `Outer(0), Outer.A(1)` — the member
--- read from outside the owner after a call (formerly `(10, 100)`).
+-- read from outside the owner has the separate run-scoped cell, apart from the call's (under the
+-- run-wide exported cell: `(10, 10)`).
 #guard afLifetimeRun
     [KatLang.privateProp "Outer" (alg ["k"] [] [KatLang.publicProp "A" afExportedAlias] [afCall "A" [num 1]])]
-    [afCall "Outer" [num 0], .call (.dotCall (resolve "Outer") "A" none) [num 1]] == some (afPair 10 10)
+    [afCall "Outer" [num 0], .call (.dotCall (resolve "Outer") "A" none) [num 1]] == some (afPair 10 100)
 #guard afLifetimeRun
     [KatLang.privateProp "Outer" (alg ["k"] [] [KatLang.publicProp "P" (alg [] [] [] [afPicked])] [afTwinCall])]
-    [afCall "Outer" [num 0], afTwinMemberCall "Outer"] == some (afPair 10 10)
--- e3: `F(k) = { Outer = { U = k + 0 ⏎ A = Pick(tick()).Algorithm ⏎ A(1) } ⏎ Outer(), Outer() }` — the
--- unused local-only sibling `U` gives `Outer` an activation per explicit call and changes nothing
--- (formerly `(10, 100)`, against `(10, 10)` without `U`).
+    [afCall "Outer" [num 0], afTwinMemberCall "Outer"] == some (afPair 10 100)
+-- Two reads from outside share that one run-scoped cell.
+#guard afLifetimeRun
+    [KatLang.privateProp "Outer" (alg ["k"] [] [KatLang.publicProp "A" afExportedAlias] [afCall "A" [num 1]])]
+    [.call (.dotCall (resolve "Outer") "A" none) [num 1], .call (.dotCall (resolve "Outer") "A" none) [num 1]]
+    == some (afPair 10 10)
+#guard afLifetimeRun
+    [KatLang.privateProp "Outer" (alg ["k"] [] [KatLang.publicProp "P" (alg [] [] [] [afPicked])] [afTwinCall])]
+    [afTwinMemberCall "Outer", afTwinMemberCall "Outer"] == some (afPair 10 10)
+-- e3: `F(k) = { Outer = { U = k + 0 ⏎ A = Pick(tick()).Algorithm ⏎ A(1) } ⏎ Outer(), Outer() }` — each
+-- explicit call of `Outer` has a fresh cell, and the unused local-only sibling `U` changes nothing
+-- (before ALIAS-CELL-LIFETIME: `(10, 100)` with `U` against `(10, 10)` without it; under the
+-- run-wide exported cell: `(10, 10)` for both).
 def afSiblingOwner (sibling : Bool) (member : KatLang.PropDef) (row : KatLang.Expr) : KatLang.PropDef :=
   KatLang.privateProp "F" (alg ["k"] []
     [KatLang.privateProp "Outer" (alg [] []
@@ -638,10 +652,10 @@ def afSiblingOwner (sibling : Bool) (member : KatLang.PropDef) (row : KatLang.Ex
     [afCall "Outer" [], afCall "Outer" []])
 #guard [false, true].all fun sibling =>
   afLifetimeRun [afSiblingOwner sibling (KatLang.privateProp "A" afExportedAlias) (afCall "A" [num 1])]
-    [afCall "F" [num 0]] == some (afPair 10 10)
+    [afCall "F" [num 0]] == some (afPair 10 100)
 #guard [false, true].all fun sibling =>
   afLifetimeRun [afSiblingOwner sibling (KatLang.privateProp "P" (alg [] [] [] [afPicked])) afTwinCall]
-    [afCall "F" [num 0]] == some (afPair 10 10)
+    [afCall "F" [num 0]] == some (afPair 10 100)
 
 -- The LOCAL-ONLY row and its twin: `F(b) = { B = { public A = b.GT ⏎ A + 0 } ⏎ rows }` against
 -- `P = b.GT + 0`.

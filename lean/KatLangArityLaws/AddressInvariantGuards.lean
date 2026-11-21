@@ -259,7 +259,8 @@ def fixtures : List (Ident × Algorithm) :=
   ArgumentViewGuards.extra ++ AlgorithmProjectionGuards.extra.filter (fun p => p.1 != "Pick") ++
   RuntimeAliasGuards.extraRA ++ refR ++
   [("L", alg [] [] [] [.listLiteral [.resolve "R", ArgumentViewGuards.args (.resolve "R")]]),
-   ("Outer2", algPrivate ["k"] [] [("In", alg [] [] [] [.param "k"])]
+   -- `In` reads `k`, so it is local-only (EXPORTED-DETACHED: an exported property is evaluated detached).
+   ("Outer2", alg ["k"] [] [privateLocalProp "In" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [.param "k"])]
       [CallReferenceGuards.add (.resolve "In") (.num 1)]),
    ("AR", RuntimeAliasGuards.alias (AlgorithmProjectionGuards.algorithm (.resolve "R")))]
 

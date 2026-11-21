@@ -2910,7 +2910,7 @@ internal static class PropertyExposureResolver
     /// <para>A non-empty answer means the loaded modules made the selected branch require an enclosing binding that
     /// no declaration around the family was charged for (a member of a loaded module that formula lifting or bare
     /// forwarding hands the binding, directly or through a declaration of the branch): an enclosing property
-    /// classified <see cref="PropertyExposure.Exported"/> would be cached run-wide across activations of that binding.
+    /// classified <see cref="PropertyExposure.Exported"/> would be accessible outside the required activation.
     /// Every forwarding the modules do not decide is in the provisional contribution already, so the comparison is the
     /// whole decision: the materialization is refused
     /// (<see cref="DiagnosticCode.DeferredBranchForwardsEnclosingParameter"/>, <c>DeferredModuleRegion</c>) exactly when

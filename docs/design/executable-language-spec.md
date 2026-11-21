@@ -25,6 +25,28 @@ either the implementation drifted (fix the implementation) or the language
 intentionally changed (edit the canonical case in a reviewed diff, then
 regenerate the derived artifacts).
 
+ONE FAMILY HAS GENERATED SOURCES (EXPORTED-DETACHED, November 2026).
+`ExposureShapeSpecFamily` (same folder) builds the sources of the
+`exposure-shape-*` cases from a matrix — what holds the member, the route that
+reaches it, where the enclosing parameter is read, the access site and the row
+order — so that no cell is forgotten. Its EXPECTATIONS are hand-written like
+every other case's, one reviewed row per cell (`ExposureShapeSpecFamily.Cells`),
+and never derived from an evaluator. Both evaluators enforce the exposure
+classification, so each cell is an exposure-completeness test in C# and in
+Lean: a route the front end failed to charge would refuse the cell's inside
+program, where it formerly shared one call's value with the next.
+
+THE DEFERRED-BRANCH ROUTE of that matrix is C#-ONLY and is NOT part of this
+corpus: a clause that loads its module on demand needs a downloader and
+`KatLangEngine.RunAsync`, and Lean has no deferred-region model. Its cells
+(`ExposureShapeSpecFamily.DeferredCells`: the four containers, both capture
+positions, the container declared at the site or in the loaded module, and
+the same access sites and row orders) are generated in the same file, carry
+hand-written expectations too, and are run by
+`ExposureShapeDeferredRouteTests` with a counting in-memory downloader — a
+selected materialization, its eager twin and a never-selected zero-download
+control per cell, with their own coverage checks.
+
 Contrast with `SemanticExplorerCorpus` (same test project): the explorer is a
 generated cross-product corpus whose Lean artifact pins *observed* C#
 behavior for bounded differential validation. The explorer answers "do Lean
@@ -114,7 +136,13 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   final state (KL-06, HP-16a–c). On every successful case a `structural`
   guard also pins the C# `kl-struct-v1` identity of the value against the
   test-side Lean exporter `lean/CoreTests/StructuralIdentity.lean` (KL-07
-  pilot, HP-17a/b; `docs/design/differential-observations.md`). Every host level is encoded
+  pilot, HP-17a/b; `docs/design/differential-observations.md`). HP-18
+  (EXPORTED-DETACHED, November 2026) holds MIS-EXPOSED trees, a property declared
+  exported that reads an input of the call around it: both evaluators refuse them
+  (`unknownName` at the parameter's value read, where it is invoked and where it is
+  transported, from a detached and from a static owner; `localOnlyProperty`) and
+  publish nothing under the false key, and six correctly classified controls keep
+  their values. Every host level is encoded
   with its OBJECT's host-scope token (`PropertyIdentity.host`, one per
   original `ScopeCtx` by reference, HOST-LEAN-O6). Evaluator-owned record copies
   that replace nonempty opens/property lists also carry `sharedView`/`moduleView`
@@ -123,9 +151,9 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   provenance for cache and alias shapes. It emits exact owner positions when
   nonempty, and an explicitly empty list only where that changes access (KL-04,
   HP-05j/k; a hand-written Lean guard in `lean/CoreTests/NameOwnership.lean`
-  pins the same absent-versus-empty pair without the encoder). All 113 cases are comparable (103 with
-  pre-wired parents, 196 named cache guards, 8 of them on failing cases, 82 structural guards); the test's
-  three coverage floors (comparable 113, pre-wired 103, named cache guards on successes 188) are the current
+  pins the same absent-versus-empty pair without the encoder). All 134 cases are comparable (124 with
+  pre-wired parents, 224 named cache guards, 24 of them on failing cases, 88 structural guards); the test's
+  three coverage floors (comparable 134, pre-wired 124, named cache guards on successes 200) are the current
   counts, and a coverage-drop control per floor fails while that floor is below its count. A future reviewed model divergence would be excluded from the
   comparable partition by exact id and pinned on BOTH sides (the Lean value by
   a generated guard, the C# value by `HostParentDifferentialTests`). Regenerate with

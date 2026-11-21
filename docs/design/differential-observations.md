@@ -288,7 +288,9 @@ failure; a failed outcome over a one-entry state gives `some 1`.
 named, 8 of them on the 31 failing cases; HP-16a–c are the failed-run witnesses).
 Its three coverage floors had fallen behind the corpus (102 comparable, 96
 pre-wired, 181 named guards on successes) and are now the current counts: 113,
-103 and 188. `CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet` takes
+103 and 188. (Since EXPORTED-DETACHED, November 2026, the corpus has the HP-18
+family: 134 cases, 224 named guards, 24 of them on the 46 failing cases, and
+floors 134, 124 and 200.) `CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet` takes
 one unit of exactly one metric away in memory — HP-16a removed; HP-02f run on a
 parent-free program; HP-10g no longer watching its unpublished `Large` — and
 requires the ratchet to report that metric alone. Against the old floors all

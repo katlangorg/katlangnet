@@ -4,6 +4,7 @@ import KatLangArityLaws.EvaluatorCacheLaws
 import KatLangArityLaws.EvaluatorDiscipline
 import KatLangArityLaws.WhileRound
 import KatLangArityLaws.NeedControl
+import KatLangArityLaws.DetachedEvaluation
 
 open KatLang KatLang.EvaluatorCore KatLang.WhileRoundLaws
 open Lean.Order
@@ -51,13 +52,15 @@ ordinary row formation it passes, and the production operations themselves.
   parameter cells are the binder's addresses; a cell completed during discovery stays completed
   with the same outcome through every later production run (`ProductionDiscipline`), and its
   production demand then returns that outcome without evaluating anything.
-* **Shared caches, separately** (`cacheKey_exported_context_free`,
+* **Shared caches, separately** (`cacheKey_exported_context_free`, `cacheKey_local_invocation_free`,
   `cacheKey_retained_owner_context`, `cacheKey_same_inputs`, `property_cache_hit_production`,
-  `published_entry_survives`, `exported_publication_reused`): exported keys are run-scoped; a
-  local-only key with a retained declaring-owner context ignores the access context; equal
-  explicit inputs give equal keys; the production property access returns a published entry
-  without evaluating; Q-37 published entries survive every later production run; so an EXPORTED
-  binding published during discovery is reused by every later read in the round.
+  `published_entry_survives`, `exported_publication_reused`): an exported key is scoped by its
+  OWNING INVOCATION (the inner-property lifetime rule: the nearest actual call of its declaring
+  chain, the run where there is none) and ignores the access context; a local-only key with a
+  retained declaring-owner context ignores the access context; equal explicit inputs give equal
+  keys; the production property access returns a published entry without evaluating; Q-37
+  published entries survive every later production run; so an EXPORTED binding published during
+  discovery is reused by every later read of the SAME round (the same owning invocation).
 
 LOCAL-only reuse across rows is `local_publication_reused` here, with its owner-context premise, and
 that premise is derived from the intervening production operations in
@@ -123,27 +126,49 @@ theorem check_dichotomy (a : Algorithm) : Passes a ∨ ∃ e, Fails a e := by
         | cons e rows => exact .inl (check_user_passes p pp o pr e rows d hd hc)
       | _ => left; intro s; simp only [ActivatedBody.check, hd, hc]; rfl
 
-/-- Whether ONE body entry records a lexical activation (`enterAlgorithmBody`): a body with
-    parameters or a local-only property does; a parameterless body of exported members does not. -/
+/-- Whether a body entry that is NOT a call records a lexical activation (`enterAlgorithmBody`
+    without the invocation mark): a body with parameters or a local-only property does; a
+    parameterless body of exported members does not. -/
 def recordsActivation (a : Algorithm) : Bool :=
   !(a.params.isEmpty && a.props.all (fun p => p.exposure.isExported))
 
+/-- Whether ONE body entry made in `ctx` records a lexical activation: EVERY ACTUAL CALL does
+    (INNER-PROPERTY LIFETIME: the entry context carries the invocation mark,
+    `EvalCtx.enteringInvocation`), and any other entry exactly when `recordsActivation`. -/
+def entryRecords (a : Algorithm) (ctx : EvalCtx) : Bool :=
+  ctx.enteringInvocation || recordsActivation a
+
+theorem entryRecords_of_records {a : Algorithm} (ctx : EvalCtx) (h : recordsActivation a = true) :
+    entryRecords a ctx = true := by
+  simp [entryRecords, h]
+
+theorem entryRecords_of_invocation (a : Algorithm) {ctx : EvalCtx} (h : ctx.enteringInvocation = true) :
+    entryRecords a ctx = true := by
+  simp [entryRecords, h]
+
+/-- Outside a call the entry records exactly when `recordsActivation`. -/
+theorem entryRecords_unmarked (a : Algorithm) {ctx : EvalCtx} (h : ctx.enteringInvocation = false) :
+    entryRecords a ctx = recordsActivation a := by
+  simp [entryRecords, h]
+
 /-- The activation record ONE body entry appends: the parameters' values and CELLS from the
-    entry context (no cell is copied or allocated) and its binding context. -/
+    entry context (no cell is copied or allocated), its binding context, and whether an actual
+    call made the entry (`ParameterActivation.ownsInvocation`). -/
 def enteredActivation (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : ParameterActivation :=
   { values := env.filter (fun b => a.params.contains b.fst)
     needs := ctx.needEnv.filter (fun b => a.params.contains b.fst)
-    bindingContext := ctx.bindingContext }
+    bindingContext := ctx.bindingContext
+    ownsInvocation := ctx.enteringInvocation }
 
 /-- The context ONE body entry returns. -/
 def enteredCtx (a : Algorithm) (ctx : EvalCtx) (s : EvalState) : EvalCtx :=
-  if recordsActivation a then
+  if entryRecords a ctx then
     { ctx.push a with headScope := some (a.asScopeCtx.withActivation s.lexicalActivations.size) }
   else ctx.push a
 
 /-- The state ONE body entry leaves. -/
 def enteredState (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) : EvalState :=
-  if recordsActivation a then
+  if entryRecords a ctx then
     { s with lexicalActivations := s.lexicalActivations.push (enteredActivation a ctx env) }
   else s
 
@@ -151,13 +176,23 @@ def enteredState (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) 
     `enteredState`. -/
 theorem enter_run (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
     (enterAlgorithmBody a ctx env).runState s = (.ok (enteredCtx a ctx s), enteredState a ctx env s) := by
-  unfold enterAlgorithmBody enteredCtx enteredState recordsActivation
-  cases h : (a.params.isEmpty && a.props.all (fun p => p.exposure.isExported)) with
-  | true => simp only [ite_true, Bool.not_true]; rfl
-  | false =>
-    simp only [Bool.not_false, ite_true]
+  unfold enterAlgorithmBody enteredCtx enteredState entryRecords recordsActivation
+  cases hinv : ctx.enteringInvocation with
+  | true =>
+    simp only [Bool.not_true, Bool.false_and, Bool.false_eq_true, ite_false, Bool.true_or, ite_true]
     simp only [recordParameterActivation]
     rfl
+  | false =>
+    cases h : (a.params.isEmpty && a.props.all (fun p => p.exposure.isExported)) with
+    | true =>
+      simp only [Bool.not_false, Bool.true_and, Bool.and_assoc, h, ite_true, Bool.not_true, Bool.false_or,
+        Bool.false_eq_true, ite_false]
+      rfl
+    | false =>
+      simp only [Bool.not_false, Bool.true_and, Bool.and_assoc, h, Bool.false_eq_true, ite_false, Bool.false_or,
+        ite_true]
+      simp only [recordParameterActivation]
+      rfl
 
 /-- The entered context keeps the parameter cells and the binding context of the entry context:
     rows read the cells the binder bound, never fresh copies. -/
@@ -175,7 +210,7 @@ theorem entered_state (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalSt
     (enteredState a ctx env s).activeZeroArgProperties = s.activeZeroArgProperties ∧
     (enteredState a ctx env s).nextBindingContext = s.nextBindingContext ∧
     (enteredState a ctx env s).lexicalActivations =
-      (if recordsActivation a then s.lexicalActivations.push (enteredActivation a ctx env)
+      (if entryRecords a ctx then s.lexicalActivations.push (enteredActivation a ctx env)
        else s.lexicalActivations) := by
   unfold enteredState; split <;> exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
@@ -620,7 +655,8 @@ theorem runNeedWhileRound_unfolds (step : Algorithm) (ctx : EvalCtx) (env : ValE
 
 /-- A user step: the one binder over the state cells' addresses (a binder reads no written slot),
     ONE fresh binding context, then exactly ONE production `whileVerdictSlots` of the step body
-    with the bound context. -/
+    with the bound context, entered as an ACTUAL CALL (`EvalCtx.enteringInvocation`): the round
+    owns the bindings of the step's inner properties. -/
 theorem runNeedWhileRound_user (p : Option ScopeCtx) (pp : List ParameterPattern) (o : List Expr)
     (pr : List PropDef) (out : List Expr) (d : Option PropertyIdentity)
     (ctx : EvalCtx) (env : ValEnv) (cells : List NeedSupply.Sourced) (stepName : String) (s : EvalState)
@@ -631,7 +667,7 @@ theorem runNeedWhileRound_user (p : Option ScopeCtx) (pp : List ParameterPattern
             ((Algorithm.parameterPatterns (.mk p pp o pr out d)).map NeedPattern.ofParameter) (cells.map Prod.fst)
           | throw Error.badArity
         let next ← needBindingContext ctx bindings
-        whileVerdictSlots (.mk p pp o pr out d) next
+        whileVerdictSlots (.mk p pp o pr out d) { next with enteringInvocation := true }
           (ValEnv.shadow env (Algorithm.params (.mk p pp o pr out d))) : EvalM _).runState s := by
   rw [runNeedWhileRound_unfolds _ ctx env cells stepName s hc]; rfl
 
@@ -696,15 +732,16 @@ theorem lookupAssoc_append_left {A : Type} (x : Ident) (l r : Assoc Ident A) (v 
 
 /-- **The rows read the binder's cells.** A name the binder bound to address `addr` is found at
     `addr` in the context every row of the round is formed in (`enteredCtx` over the binding's
-    context): the SAME supplied or structurally allocated cell, never a fresh Ready copy. -/
+    context, entered as the round's actual call): the SAME supplied or structurally allocated
+    cell, never a fresh Ready copy. -/
 theorem round_parameter_cell (a : Algorithm) (ctx : EvalCtx) (bindings : NeedEnv) (s t : EvalState)
     (x : Ident) (addr : Nat) (hx : lookupAssoc x bindings = some addr)
     (hnext : (needBindingContext ctx bindings).runState s = (.ok next, t)) :
-    lookupAssoc x (enteredCtx a next t).needEnv = some addr := by
+    lookupAssoc x (enteredCtx a { next with enteringInvocation := true } t).needEnv = some addr := by
   rw [needBindingContext_run] at hnext
   injection hnext with hctx _
   injection hctx with hctx
-  rw [(entered_needEnv a next t).1, ← hctx]
+  rw [(entered_needEnv a { next with enteringInvocation := true } t).1, ← hctx]
   exact lookupAssoc_append_left x _ _ addr hx
 
 /-- A cell completed with a completed outcome is reused by the production demand: its outcome,
@@ -739,46 +776,84 @@ Context sharing and state threading (§ 1, § 4) are necessary for cache sharing
 themselves prove that a property is evaluated once. The cache claims proved here are about the
 production property access (`evalZeroArgPropertyAccessCounted`) and its key. -/
 
-/-- An EXPORTED binding's key is run-scoped: it ignores the access kind, context, environment and
-    retained owner context. -/
+/-- An EXPORTED binding's key is scoped by its OWNING INVOCATION `oi` (the inner-property lifetime
+    rule; `none` is the run-scoped binding of a declaring chain no actual call entered): it ignores
+    the access kind, context, environment and retained owner context. -/
 theorem cacheKey_exported_context_free (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (hexp : binding.exposure.isExported = true) (ctx ctx' : EvalCtx)
-    (env env' : ValEnv) (oc oc' : Option Nat) :
-    zeroArgPropertyCacheKey k owner binding ctx env oc = zeroArgPropertyCacheKey k' owner binding ctx' env' oc' := by
+    (env env' : ValEnv) (oc oc' : Option Nat) (oi : Option Nat) :
+    zeroArgPropertyCacheKey k owner binding ctx env oc oi =
+      zeroArgPropertyCacheKey k' owner binding ctx' env' oc' oi := by
   simp [zeroArgPropertyCacheKey, propertyKeyBindingContext, hexp]
 
-/-- A LOCAL-only binding with a retained declaring-owner context `n` keys on `n`: it ignores the
-    access kind, context and environment. -/
+/-- With a retained declaring-owner context `n` and one owning invocation `oi`, a key ignores the
+    access kind, context and environment: a LOCAL-only binding keys on `n`, an exported one on `oi`. -/
 theorem cacheKey_retained_owner_context (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm)
-    (binding : PropDef) (ctx ctx' : EvalCtx) (env env' : ValEnv) (n : Nat) :
-    zeroArgPropertyCacheKey k owner binding ctx env (some n) =
-      zeroArgPropertyCacheKey k' owner binding ctx' env' (some n) := by
+    (binding : PropDef) (ctx ctx' : EvalCtx) (env env' : ValEnv) (n : Nat) (oi : Option Nat) :
+    zeroArgPropertyCacheKey k owner binding ctx env (some n) oi =
+      zeroArgPropertyCacheKey k' owner binding ctx' env' (some n) oi := by
   simp [zeroArgPropertyCacheKey, propertyKeyBindingContext]
 
-/-- Without a retained owner context, equal explicit inputs — the binding context and the value
-    environment — give the same key (the relevant equality direction; no injectivity is claimed). -/
+/-- A LOCAL-only binding's key ignores the owning invocation: it keys on its declaring binding
+    context (which already separates two calls of its owner). -/
+theorem cacheKey_local_invocation_free (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+    (binding : PropDef) (hlocal : binding.exposure.isExported = false) (ctx : EvalCtx) (env : ValEnv)
+    (oc oi oi' : Option Nat) :
+    zeroArgPropertyCacheKey k owner binding ctx env oc oi = zeroArgPropertyCacheKey k owner binding ctx env oc oi' := by
+  simp [zeroArgPropertyCacheKey, propertyKeyBindingContext, hlocal]
+
+/-- Without a retained owner context, equal explicit inputs — the binding context, the value
+    environment and the owning invocation — give the same key (the relevant equality direction; no
+    injectivity is claimed). -/
 theorem cacheKey_same_inputs (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
-    (ctx ctx' : EvalCtx) (env : ValEnv) (hb : ctx.bindingContext = ctx'.bindingContext) :
-    zeroArgPropertyCacheKey k owner binding ctx env none = zeroArgPropertyCacheKey k' owner binding ctx' env none := by
+    (ctx ctx' : EvalCtx) (env : ValEnv) (hb : ctx.bindingContext = ctx'.bindingContext) (oi : Option Nat) :
+    zeroArgPropertyCacheKey k owner binding ctx env none oi =
+      zeroArgPropertyCacheKey k' owner binding ctx' env none oi := by
   simp [zeroArgPropertyCacheKey, propertyKeyBindingContext, hb]
 
-/-- **A published entry is reused by the production access**: a cacheable property-style read whose
-    key (at the read's state) holds `v` returns `v` and leaves the state unchanged — no evaluation,
-    no owner mark, no publication. -/
-theorem property_cache_hit_production (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+/-- A cacheable READ of the publication law whose key holds `v` returns `v` and changes nothing. -/
+theorem publication_read_hit (rec : EvalRec) (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (resolved : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
     (v : CountedResult) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
-      (zeroArgPropertyCacheKey k owner binding ctx env (propertyOwnerBindingContext resolved.parent s)) = some v) :
-    (evalZeroArgPropertyAccessCounted k owner binding resolved ctx env).runState s = (.ok v, s) := by
-  refine production_of_answer_free (.evalZeroArgPropertyAccessCounted k owner binding resolved ctx env .read) s _
-    (fun rec => ?_) nofun
-  show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env .read).runState s = _
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hcache, ite_true, EvalM.bind_runState]
+      (zeroArgPropertyCacheKey k owner binding ctx env (propertyOwnerBindingContext resolved.parent s) (propertyOwnerInvocation resolved.parent s)) = some v) :
+    (EvalBody.zeroArgPropertyPublication rec k owner binding resolved ctx env .read).runState s = (.ok v, s) := by
+  simp only [EvalBody.zeroArgPropertyPublication, hcache, ite_true, EvalM.bind_runState]
   show (match ZeroArgPropertyCache.lookup s.zeroArgPropertyCache _ with
     | some cached => (pure cached : EvalM CountedResult)
     | none => _).runState s = _
   rw [hhit]; rfl
+
+/-- **A published entry is reused by the production access**: a cacheable property-style read whose
+    key (at the read's state) holds `v` returns `v` and leaves the state unchanged — no evaluation,
+    no owner mark, no publication — unless it is a REFUSED detached read (`hadmitted`,
+    EXPORTED-DETACHED: a local-only read keyed on a detached activation is refused before the cache
+    is consulted; an exported binding is never refused, and its key is the reader's). -/
+theorem property_cache_hit_production (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
+    (binding : PropDef) (resolved : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
+    (v : CountedResult) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
+      (zeroArgPropertyCacheKey k owner binding ctx env (propertyOwnerBindingContext resolved.parent s) (propertyOwnerInvocation resolved.parent s)) = some v)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (evalZeroArgPropertyAccessCounted k owner binding resolved ctx env).runState s = (.ok v, s) := by
+  refine production_of_answer_free (.evalZeroArgPropertyAccessCounted k owner binding resolved ctx env .read) s _
+    (fun rec => ?_) nofun
+  show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env .read).runState s = _
+  cases hexp : binding.exposure.isExported with
+  | true =>
+    rw [KatLang.DetachedEvaluation.exported_access_is_detached rec k owner binding resolved ctx env .read s hexp]
+    refine publication_read_hit rec k owner binding resolved _ _ s v hcache ?_
+    rw [cacheKey_exported_context_free k k owner binding hexp _ ctx _ env _ _ _]
+    exact hhit
+  | false =>
+    rw [KatLang.DetachedEvaluation.local_only_access_is_attached rec k owner binding resolved ctx env .read hexp
+      (by rw [hadmitted, Bool.and_false])]
+    exact publication_read_hit rec k owner binding resolved ctx env s v hcache hhit
+
+/-- An exported binding's read is never a refused detached read. -/
+theorem exported_read_admitted (binding : PropDef) (resolved : Algorithm) (ctx : EvalCtx)
+    (hexp : binding.exposure.isExported = true) : localOnlyReadRefused binding resolved ctx = false := by
+  simp [localOnlyReadRefused, hexp]
 
 /-- Q-37: an entry published before a production computation survives it with its value — e.g.
     an entry published during discovery survives the round's transitions. -/
@@ -794,33 +869,42 @@ theorem transitions_keep_cache (ctx : EvalCtx) (env : ValEnv) (rows : List Expr)
     (fun e => KatLang.EvaluatorCacheLaws.cache_entries_survive (.formOutputRow ctx env e)) rows
 
 /-- **An EXPORTED property published during discovery is reused by every later read of the
-    round.** If the cache holds the exported binding's entry at `s₂` and `t` keeps the entries of
-    `s₂` (every production computation does), then a property-style read of that binding through
-    the production access — in ANY context and environment — returns the published value at `t`
-    without evaluating. -/
+    round.** If the cache holds the exported binding's entry for the owning invocation `oi` at `s₂`
+    and `t` keeps the entries of `s₂` (every production computation does), then a property-style
+    read of that binding through the production access — in ANY context and environment whose
+    declaring chain still has the owning invocation `oi` (`hstable`: the same round, the same call) —
+    returns the published value at `t` without evaluating. A read whose chain has ANOTHER owning
+    invocation is a different key (`InnerPropertyLifetime.exported_keys_of_distinct_invocations_differ`). -/
 theorem exported_publication_reused (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (hexp : binding.exposure.isExported = true) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
-    (ctx₀ : EvalCtx) (env₀ : ValEnv) (oc : Option Nat) (s₂ t : EvalState) (v : CountedResult)
-    (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ oc) = some v)
-    (hkept : KatLang.EvaluatorCacheLaws.CacheKept s₂ t) (ctx : EvalCtx) (env : ValEnv) :
+    (ctx₀ : EvalCtx) (env₀ : ValEnv) (oc oi : Option Nat) (s₂ t : EvalState) (v : CountedResult)
+    (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ oc oi) = some v)
+    (hkept : KatLang.EvaluatorCacheLaws.CacheKept s₂ t) (ctx : EvalCtx) (env : ValEnv)
+    (hstable : propertyOwnerInvocation resolved.parent t = oi) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) := by
-  apply property_cache_hit_production k' owner binding resolved ctx env t v hcache
-  rw [cacheKey_exported_context_free k' k owner binding hexp ctx ctx₀ env env₀ _ oc]
+  refine property_cache_hit_production k' owner binding resolved ctx env t v hcache ?_
+    (exported_read_admitted binding resolved ctx hexp)
+  rw [hstable, cacheKey_exported_context_free k' k owner binding hexp ctx ctx₀ env env₀ _ oc oi]
   exact hkept _ v hpub
 
 /-- The LOCAL-only counterpart, low level: the read's declaring-owner context must still be the
     retained `n` the entry was published under (`hstable`). A premise here; derived from the
-    intervening operations by `OwnerContextStability.local_publication_reused_after_production`. -/
+    intervening operations by `OwnerContextStability.local_publication_reused_after_production`.
+    A local-only key ignores the owning invocation (`cacheKey_local_invocation_free`), so `oi` is
+    whatever the publication recorded. -/
 theorem local_publication_reused (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (resolved : Algorithm) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
-    (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (s₂ t : EvalState) (v : CountedResult)
-    (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
+    (hlocal : binding.exposure.isExported = false)
+    (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (oi : Option Nat) (s₂ t : EvalState) (v : CountedResult)
+    (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n) oi) = some v)
     (hkept : KatLang.EvaluatorCacheLaws.CacheKept s₂ t) (ctx : EvalCtx) (env : ValEnv)
-    (hstable : propertyOwnerBindingContext resolved.parent t = some n) :
+    (hstable : propertyOwnerBindingContext resolved.parent t = some n)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) := by
-  apply property_cache_hit_production k' owner binding resolved ctx env t v hcache
-  rw [hstable, cacheKey_retained_owner_context k' k owner binding ctx ctx₀ env env₀ n]
+  refine property_cache_hit_production k' owner binding resolved ctx env t v hcache ?_ hadmitted
+  rw [hstable, cacheKey_local_invocation_free k' owner binding hlocal ctx env (some n) _ oi,
+    cacheKey_retained_owner_context k' k owner binding ctx ctx₀ env env₀ n oi]
   exact hkept _ v hpub
 
 end KatLang.WhileRoundProduction

@@ -1430,10 +1430,18 @@ theorem EvalBody.zeroArgPropertyCalculation_pubDisc (rec : EvalRec) (hrec : ∀ 
     PubDisc (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
   unfold EvalBody.zeroArgPropertyCalculation; pub_tac
 
-theorem EvalBody.evalZeroArgPropertyAccessCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
-    PubDisc (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+theorem EvalBody.zeroArgPropertyPublication_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    PubDisc (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   have hcalc : ∀ q, PubDisc (EvalBody.zeroArgPropertyCalculation rec q resolvedAlgorithm ctx env) :=
     fun q => EvalBody.zeroArgPropertyCalculation_pubDisc rec hrec hres q resolvedAlgorithm ctx env
+  unfold EvalBody.zeroArgPropertyPublication; pub_tac
+
+/-- EXPORTED-DETACHED: the access is the publication law in the context its binding's exposure
+    requires (the detached context for an exported binding), or a refusal that writes nothing. -/
+theorem EvalBody.evalZeroArgPropertyAccessCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    PubDisc (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  have hpub : ∀ c e, PubDisc (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm c e request) :=
+    fun c e => EvalBody.zeroArgPropertyPublication_pubDisc rec hrec hres accessKind owner binding resolvedAlgorithm c e request
   unfold EvalBody.evalZeroArgPropertyAccessCounted; pub_tac
 
 theorem EvalBody.evalConditionalCallbackCallCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :

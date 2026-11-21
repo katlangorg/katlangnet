@@ -230,11 +230,31 @@ public class PropertyObservationSourceMappingTests
         {
             DeclarationSpans = [SpanA],
         };
-        var exported = new Property("B", Body(new Expr.Resolve("A"))) { DeclarationSpans = [SpanB] };
-        var (result, snapshot, _) = RunHostBuilt(Root([localOnly, exported], new Expr.Resolve("B")));
+        var exported = new Property("B", Body(new Expr.Num(2))) { DeclarationSpans = [SpanB] };
+        var (result, snapshot, _) = RunHostBuilt(Root([localOnly, exported], new Expr.Resolve("A"), new Expr.Resolve("B")));
 
         Assert.False(result.IsError, result.ToString());
         Assert.Equal(["B"], snapshot.Select(o => o.Name));
+    }
+
+    [Fact]
+    public void HostBuilt_ExportedPropertyReadingLocalOnlyRootMetadata_IsRefused()
+    {
+        // EXPORTED-DETACHED: an exported property is evaluated detached from the activations that
+        // exist when it starts, and a local-only property is keyed on one of them — the root's
+        // here. A host tree that declares `B = A` exported over a local-only `A` is mis-exposed
+        // (the front end would classify `B` with `A`), and the read is refused before the cache
+        // is consulted instead of publishing a run-wide value computed from an activation.
+        var localOnly = new Property("A", Body(new Expr.Num(1)), Exposure: PropertyExposure.LocalOnlyConditionalAlgorithm)
+        {
+            DeclarationSpans = [SpanA],
+        };
+        var exported = new Property("B", Body(new Expr.Resolve("A"))) { DeclarationSpans = [SpanB] };
+        var (result, snapshot, _) = RunHostBuilt(Root([localOnly, exported], new Expr.Resolve("B")));
+
+        Assert.True(result.IsError);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, KatLangError.FromEvalError(result.Error).Code);
+        Assert.Empty(snapshot);
     }
 
     [Fact]

@@ -27,10 +27,17 @@ open KatLang
 def hostAt (token : Nat) (props : List PropDef := []) (parent : Option ScopeCtx := none) : ScopeCtx :=
   .mk parent [] [] props [] [] none (some (.host token))
 
-def pDyn : PropDef := privateProp "P" (alg [] [] [] [.param "x"])
-/-- `P = x` as ONE declaration (`shared`, its value too, as the encoder emits it), wherever it is placed. -/
+/-- `tick()`, called as the builtin itself (a host chain carries no prelude). -/
+def tick : Expr := .call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) []
+
+/-- `P = tick()`: one evaluation per OWNER, so a run's values count its owners — a cache hit is the
+    first evaluation's `1`, a second owner is `2`. (Until EXPORTED-DETACHED, November 2026, the witness
+    was `P = x`, read dynamically from whichever caller came first; an exported property is now
+    evaluated detached, where that read finds nothing.) -/
+def pDyn : PropDef := privateProp "P" (alg [] [] [] [tick])
+/-- `P = tick()` as ONE declaration (`shared`, its value too, as the encoder emits it), wherever it is placed. -/
 def pShared : PropDef :=
-  { privateProp "P" ((alg [] [] [] [.param "x"]).withDeclarationId (some (.shared 887))) with identity := some (.shared 888) }
+  { privateProp "P" ((alg [] [] [] [tick]).withDeclarationId (some (.shared 887))) with identity := some (.shared 888) }
 def gReader : PropDef := publicProp "G" (alg ["x"] [] [] [.resolve "P"])
 
 /-- Two opened blocks: `RunA = G(1)` under `a`, `RunB = G(2)` under `b`, each with its own `G(x) = P`. -/
@@ -82,8 +89,8 @@ def refusedWith (e : Expr) (message : String) : Bool :=
 --    meaning as an abstract Lean value; it is no evidence about C# objects. With provenance:
 --------------------------------------------------------------------------------
 
--- (a) ONE host object reached through two edges: one token, one declaration — ONE owner, the first
---     caller's x (C#: HP-09a).
+-- (a) ONE host object reached through two edges: one token, one declaration — ONE owner, evaluated
+--     once (C#: HP-09a).
 #guard observeP (twoOpened (hostAt 0 [pShared]) (hostAt 0 [pShared])) == some (pair 1 1, 1)
 -- (b) TWO host objects sharing one declaration: two tokens — TWO owners (C#: HP-08b..d).
 #guard observeP (twoOpened (hostAt 0 [pShared]) (hostAt 1 [pShared])) == some (pair 1 2, 2)

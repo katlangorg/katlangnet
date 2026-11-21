@@ -7,6 +7,15 @@ internal sealed class LoopOptimizationDiagnostics
 
     internal void RecordTempCallArgumentSlotExamined() => TempCallArgumentSlotsExamined++;
 
+    /// <summary>
+    /// Distinct plan nodes the exported-temp dependency walk expanded during plan construction
+    /// (<c>LoopOptimizer.ExportedTempReadsLoopOrEnclosingInput</c>): bounded by the distinct nodes of
+    /// the judged temps' plans, however many paths share them.
+    /// </summary>
+    public long ExportedTempDependencyVisits { get; private set; }
+
+    internal void RecordExportedTempDependencyVisits(int visited) => ExportedTempDependencyVisits += visited;
+
     private readonly Dictionary<string, long> _fallbackReasons = new(StringComparer.Ordinal);
     private readonly Dictionary<string, LoopPlanDiagnosticBuilder> _loopPlans = new(StringComparer.Ordinal);
 

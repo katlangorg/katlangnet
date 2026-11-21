@@ -1368,10 +1368,18 @@ theorem EvalBody.zeroArgPropertyCalculation_actDisc (rec : EvalRec) (hrec : ∀ 
     ActDisc (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
   unfold EvalBody.zeroArgPropertyCalculation; act_tac
 
-theorem EvalBody.evalZeroArgPropertyAccessCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
-    ActDisc (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+theorem EvalBody.zeroArgPropertyPublication_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    ActDisc (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   have hcalc : ∀ q, ActDisc (EvalBody.zeroArgPropertyCalculation rec q resolvedAlgorithm ctx env) :=
     fun q => EvalBody.zeroArgPropertyCalculation_actDisc rec hrec q resolvedAlgorithm ctx env
+  unfold EvalBody.zeroArgPropertyPublication; act_tac
+
+/-- EXPORTED-DETACHED: the access is the publication law in the context its binding's exposure
+    requires (the detached context for an exported binding), or a refusal that writes nothing. -/
+theorem EvalBody.evalZeroArgPropertyAccessCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    ActDisc (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  have hpub : ∀ c e, ActDisc (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm c e request) :=
+    fun c e => EvalBody.zeroArgPropertyPublication_actDisc rec hrec accessKind owner binding resolvedAlgorithm c e request
   unfold EvalBody.evalZeroArgPropertyAccessCounted; act_tac
 
 theorem EvalBody.evalConditionalCallbackCallCounted_actDisc (rec : EvalRec) (hrec : ∀ c, ActDisc (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :

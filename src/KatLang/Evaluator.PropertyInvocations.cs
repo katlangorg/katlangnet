@@ -220,6 +220,27 @@ public static partial class Evaluator
             ctx.Budget)
         { DeclaringScope = property.Parent };
 
+    /// <summary>
+    /// The context and value environment the BODY of a qualifying zero-supply invocation runs in
+    /// (CACHE-PUB-1 under EXPORTED-DETACHED, November 2026): the DETACHED ones for an
+    /// <see cref="PropertyExposure.Exported"/> binding (<see cref="DetachedEvaluation"/>) — an owning
+    /// invocation publishes the entry a later read reuses, and a fresh invocation of an established
+    /// entry is the same calculation, so every one of them runs where the read's calculation runs —
+    /// and the invoking context's own for a local-only binding. The invocation's KEY, its call frame
+    /// and its charges are the invoking context's, unchanged
+    /// (<see cref="ZeroSupplyInvocationExecution"/>); the supply is empty, so nothing the caller
+    /// supplied is lost. Lean: the <c>.invoke</c> request of
+    /// <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
+    /// </summary>
+    private static EvalCtx InvocationBodyContext(in PropertyCallBinding binding, EvalCtx ctx, ValEnv valEnv, out ValEnv values)
+    {
+        if (IsExported(binding.Binding))
+            return DetachedEvaluation(ctx, valEnv, out values);
+
+        values = valEnv;
+        return ctx;
+    }
+
     private static EvalResult<ZeroArgPropertyResult> ToPropertyResult(EvalResult<CountedResult> output)
         => output.IsError
             ? output.Error
@@ -331,8 +352,9 @@ public static partial class Evaluator
                 var cells = supply.Value;
                 // A family's own result is already its value boundary, as its property read's is.
                 var familyBoundary = property is Algorithm.Conditional;
+                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
                 return EvalPublishedZeroSupplyInvocation(binding, property, ctx, valEnv,
-                    () => ToPropertyResult(EvalNeedUserSupplyCounted(callee, cells, ctx, valEnv, name, variadicArityStyle: true,
+                    () => ToPropertyResult(EvalNeedUserSupplyCounted(callee, cells, bodyCtx, bodyValues, name, variadicArityStyle: true,
                         occurrences, valueBoundary: familyBoundary)));
             }
 
@@ -354,8 +376,9 @@ public static partial class Evaluator
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {
                 var cells = supply.Value;
+                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
                 return EvalPublishedZeroSupplyInvocation(binding, callee, ctx, valEnv,
-                    () => ToPropertyResult(EvalNeedFamilySupplyCounted(callee, cells, ctx, valEnv, name)));
+                    () => ToPropertyResult(EvalNeedFamilySupplyCounted(callee, cells, bodyCtx, bodyValues, name)));
             }
 
             return EvalNeedFamilySupplyCounted(callee, supply.Value, ctx, valEnv, name);
@@ -420,8 +443,9 @@ public static partial class Evaluator
             {
                 var cells = supply.Value;
                 var familyBoundary = property is Algorithm.Conditional;
+                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
                 return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, valEnv,
-                    async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, ctx, valEnv, name,
+                    async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, bodyCtx, bodyValues, name,
                         variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(false))).ConfigureAwait(false);
             }
 
@@ -446,8 +470,9 @@ public static partial class Evaluator
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {
                 var cells = supply.Value;
+                var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
                 return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, valEnv,
-                    async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, ctx, valEnv, name)
+                    async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, bodyCtx, bodyValues, name)
                         .ConfigureAwait(false))).ConfigureAwait(false);
             }
 

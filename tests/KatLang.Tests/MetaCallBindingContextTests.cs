@@ -190,18 +190,20 @@ public class MetaCallBindingContextTests
     }
 
     [Fact]
-    public async Task AnExportedPropertyKeepsItsRunWideEntry_AcrossActivations()
+    public async Task AnExportedProperty_IsFreshInEveryCallOfItsOwner()
     {
-        // E reads no captured parameter, so it is Exported: ONE evaluation for the whole run, while the
-        // local-only output of each activation still sees its own k.
+        // E reads no captured parameter, so it is Exported; its storage still follows the call that owns
+        // it (the inner-property lifetime rule, November 2026): every R.Algorithm() is a fresh call of
+        // B, with a fresh E — three evaluations — and the local-only output of each call sees its own k.
+        // Formerly E had ONE run-wide entry: S[103, 104, 103] with one tock.
         const string source = Capture + "F(k) = {\n    B = {\n        E = tock() * 100\n        E + k\n    }\n    Capture(B())\n}\nR1 = F(3)\nR2 = F(4)\nR1.Algorithm(), R2.Algorithm(), R1.Algorithm()";
         var root = SourceProvenance.ParseValid(source).Root;
         var b = Assert.Single(Assert.Single(root.Properties, static p => p.Name == "F").Value.Properties, static p => p.Name == "B");
         Assert.Equal(PropertyExposure.Exported, Assert.Single(b.Value.Properties, static p => p.Name == "E").Exposure);
 
         var oracle = await ObserveAsync(source);
-        Assert.Equal("S[103, 104, 103]", oracle.Value);
-        Assert.Equal(Ticks(1), oracle.HostCalls);
+        Assert.Equal("S[103, 204, 303]", oracle.Value);
+        Assert.Equal(Ticks(3), oracle.HostCalls);
     }
 
     [Fact]
@@ -317,11 +319,13 @@ public class MetaCallBindingContextTests
 
     [Theory]
     // No META: explicit root-level calls of a parameterless owner. The hoisted right-hand side reads no
-    // captured parameter, so it is an EXPORTED property evaluated once per run, however many group binds
-    // the activations perform.
-    [InlineData("F = {\n    a, b = (tock(), 1)\n    a + b\n}\nF(), F()", "S[2, 2]", 1)]
-    [InlineData("F = {\n    a, b = (tock(), 1)\n    a + b\n}\nF, F(), F", "S[2, 2, 2]", 1)]
-    public async Task AnExportedDeconstructionSource_KeepsItsRunWideEntry_AcrossRootLevelCalls(string source, string expected, int ticks)
+    // captured parameter, so it is an EXPORTED property; it belongs to the call of F that owns it (the
+    // inner-property lifetime rule, November 2026), so each explicit F() evaluates it afresh, and the
+    // bare reads of F share F's one run-scoped value (formerly one run-wide source entry: S[2, 2] and
+    // S[2, 2, 2] with one tock).
+    [InlineData("F = {\n    a, b = (tock(), 1)\n    a + b\n}\nF(), F()", "S[2, 3]", 2)]
+    [InlineData("F = {\n    a, b = (tock(), 1)\n    a + b\n}\nF, F(), F", "S[2, 3, 2]", 2)]
+    public async Task AnExportedDeconstructionSource_IsFreshInEveryRootLevelCall(string source, string expected, int ticks)
     {
         var oracle = await ObserveAsync(source);
         Assert.True(oracle.Kind == "ok", oracle.ToString());

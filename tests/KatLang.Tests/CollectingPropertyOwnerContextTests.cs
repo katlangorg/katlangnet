@@ -397,8 +397,9 @@ public class CollectingPropertyOwnerContextTests
     // ── Exported members and root owners are unchanged ───────────────────────────────────────
 
     [Theory]
-    // Only declares only an exported E: no local-only key, one evaluation for the run.
-    [InlineData("Only(*xs) = {\n    E = trace(7)\n    E + k\n}", "[0].map{ n + Only }[0] + Only.E", "F(3), F(4)", "S[17, 18]", new[] { 7 })]
+    // Only declares only an exported E: no local-only key. E belongs to the call of F around Only: one
+    // evaluation per call of F, shared by the callback's read of Only and the path Only.E.
+    [InlineData("Only(*xs) = {\n    E = trace(7)\n    E + k\n}", "[0].map{ n + Only }[0] + Only.E", "F(3), F(4)", "S[17, 18]", new[] { 7, 7 })]
     public async Task OwnersWithoutLocalOnlyProperties_AreUnchanged(string onlyRows, string fRows, string calls, string expected, int[] traces)
     {
         var oracle = await ObserveAsync(F(onlyRows, fRows, calls));

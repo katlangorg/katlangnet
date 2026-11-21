@@ -691,24 +691,37 @@ public class DeconstructionMemoEligibilityTests
     }
 
     /// <summary>
-    /// Exported sources already have one published entry across owner activations. Different calls
-    /// can first demand different targets of that entry and share its bind; local-only sources keep
-    /// the per-activation separation pinned by R10/R11. Ownership follows the source cache law.
+    /// An exported source has one published entry per OWNING CALL (the inner-property lifetime rule,
+    /// November 2026), exactly as a local-only source has (R10/R11): two calls of the owner never
+    /// share a source entry or its bind, and two consumers inside one call do. Ownership follows the
+    /// source cache law. Formerly an exported source had one entry across owner activations, so the
+    /// two calls below shared it (one trace, one bind).
     /// </summary>
     [Theory]
     [InlineData(Route.Generic)]
     [InlineData(Route.Optimized)]
     [InlineData(Route.SuspendingAsync)]
-    public async Task ExportedSource_DifferentActivationsShareItsPublishedEntry(Route route)
+    public async Task ExportedSource_HasOnePublishedEntryPerOwningCall(Route route)
     {
+        // Two calls, each demanding ONE target: nothing is shared across them.
         const string source = "F(k) = {\n a, b = trace(1), 2\n if(k == 1, [0].map{ n + a }[0], b)\n}\nF(1), F(2)";
         var program = new Expr.AlgorithmExpr(Parse(source));
         var shared = await Observe(program, route);
         var unshared = await Observe(program, route, shareBinds: false);
-        Assert.Equal("ok S[1, 2] n=2 | t(1)", shared.Comparable);
-        AssertSharingOnlyLowersAccounting(shared, unshared);
-        Assert.Equal(1, shared.Binds);
+        Assert.Equal("ok S[1, 2] n=2 | t(1),t(1)", shared.Comparable);
+        Assert.Equal(shared.Comparable, unshared.Comparable);
+        Assert.Equal(2, shared.Binds);
         Assert.Equal(2, unshared.Binds);
+
+        // One call demanding BOTH targets — one from a callback, one directly — shares the call's bind.
+        const string within = "F(k) = {\n a, b = trace(1), 2\n [0].map{ n + a }[0] + b + k\n}\nF(1), F(2)";
+        var withinProgram = new Expr.AlgorithmExpr(Parse(within));
+        var withinShared = await Observe(withinProgram, route);
+        var withinUnshared = await Observe(withinProgram, route, shareBinds: false);
+        Assert.Equal("ok S[4, 5] n=2 | t(1),t(1)", withinShared.Comparable);
+        AssertSharingOnlyLowersAccounting(withinShared, withinUnshared);
+        Assert.Equal(2, withinShared.Binds);
+        Assert.Equal(4, withinUnshared.Binds);
     }
 
     /// <summary>

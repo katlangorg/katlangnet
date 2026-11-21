@@ -482,47 +482,114 @@ theorem projectNeedCallable_memo (a : Nat) (u : EvalState) (cell : NeedCell) (r 
     exact KatLang.NeedControl.Projection.projected_sticky _ a u cell (.ok r) hc hm
   · nofun
 
-/-- The lexical activation a parameter is captured in, read from the context alone
-    (`capturedParameterActivation?` without its one state read). -/
+/-- The lexical activation a parameter is captured in, read from the context alone: the id of its
+    lexical owner's USABLE activation (`capturedParameter`, EXPORTED-DETACHED), none for an own
+    read and for an unavailable parameter. -/
 def capturedId? (name : Ident) (ctx : EvalCtx) : Option Nat :=
-  match ctx.head?, siteScope? ctx with
-  | some site, some scope =>
-      if site.params.contains name then none
-      else scope.parent >>= fun parent => (requiredParameterOwner? parent name).bind ScopeCtx.activation
-  | _, _ => none
+  match capturedParameter name ctx with
+  | .activation id => some id
+  | _ => none
 
-/-- `capturedParameterActivation?` reads ONE record of the activation array and writes nothing. -/
-theorem captured_run (name : Ident) (ctx : EvalCtx) (s : EvalState) :
+/-- The EMPTY record these laws give an UNAVAILABLE parameter (a proof device, not a model
+    definition): it binds nothing on either tier, so `parameterAddressIn` finds no cell for such a
+    parameter — whose every operation the model REFUSES (`captured_refused`). -/
+def unavailableRecord : ParameterActivation := { values := [], needs := [] }
+
+/-- The record a parameter operation uses, over an activation array (`capturedParameterActivation?`
+    without its one state read): none for an own read, else the recorded activation. An unavailable
+    parameter has no record in the model (its lookup is the refusal); here it is the EMPTY one
+    (`unavailableRecord`), so the cell lookup below is `none` for it. -/
+def capturedRecord (acts : Array ParameterActivation) (name : Ident) (ctx : EvalCtx) : Option ParameterActivation :=
+  match capturedParameter name ctx with
+  | .own => none
+  | .unavailable => some unavailableRecord
+  | .activation id => acts[id]?
+
+/-- `capturedParameterActivation?` of an AVAILABLE parameter reads ONE record of the activation array
+    and writes nothing. -/
+theorem captured_run (name : Ident) (ctx : EvalCtx) (s : EvalState)
+    (h : capturedParameter name ctx ≠ .unavailable) :
     (capturedParameterActivation? name ctx).runState s =
-      (.ok ((capturedId? name ctx).bind (fun id => s.lexicalActivations[id]?)), s) := by
-  unfold capturedParameterActivation? capturedId?
-  cases ctx.head? with
-  | none => rfl
-  | some site =>
-    cases siteScope? ctx with
-    | none => rfl
-    | some scope =>
-      dsimp only
-      cases site.params.contains name with
-      | true => rfl
-      | false =>
-        generalize (scope.parent >>= fun parent => (requiredParameterOwner? parent name).bind ScopeCtx.activation) = id
-        cases id <;> rfl
+      (.ok (capturedRecord s.lexicalActivations name ctx), s) := by
+  unfold capturedParameterActivation? capturedRecord
+  cases hc : capturedParameter name ctx with
+  | own => rfl
+  | unavailable => exact absurd hc h
+  | activation id => rfl
+
+/-- `capturedParameterActivation?` of an UNAVAILABLE parameter is the `unknownName` refusal, in the
+    state the lookup started from (EXPORTED-DETACHED: captured reads are lexical-only). -/
+theorem captured_refused (name : Ident) (ctx : EvalCtx) (s : EvalState)
+    (h : capturedParameter name ctx = .unavailable) :
+    (capturedParameterActivation? name ctx).runState s = (.error (Error.unknownName name), s) := by
+  unfold capturedParameterActivation?
+  rw [h]
+  rfl
+
+/-- A captured id is the classifier's `activation` outcome. -/
+theorem capturedParameter_of_id {name : Ident} {ctx : EvalCtx} {id : Nat}
+    (h : capturedId? name ctx = some id) : capturedParameter name ctx = .activation id := by
+  unfold capturedId? at h
+  cases hc : capturedParameter name ctx with
+  | own => rw [hc] at h; cases h
+  | unavailable => rw [hc] at h; cases h
+  | activation i => rw [hc] at h; cases h; rfl
+
+/-- Over the id of a usable activation, the record is the array's. -/
+theorem capturedRecord_of_id {acts : Array ParameterActivation} {name : Ident} {ctx : EvalCtx} {id : Nat}
+    (h : capturedId? name ctx = some id) : capturedRecord acts name ctx = acts[id]? := by
+  unfold capturedId? at h
+  unfold capturedRecord
+  cases hc : capturedParameter name ctx with
+  | own => rw [hc] at h; cases h
+  | unavailable => rw [hc] at h; cases h
+  | activation i => rw [hc] at h; cases h; rfl
+
+/-- Without a usable activation the record does not depend on the array: it is absent (an own
+    read) or the empty one these laws give an unavailable parameter. -/
+theorem capturedRecord_without_id {name : Ident} {ctx : EvalCtx} (h : capturedId? name ctx = none)
+    (acts acts' : Array ParameterActivation) : capturedRecord acts name ctx = capturedRecord acts' name ctx := by
+  unfold capturedId? at h
+  unfold capturedRecord
+  cases hc : capturedParameter name ctx with
+  | own => rfl
+  | unavailable => rfl
+  | activation i => rw [hc] at h; cases h
 
 /-- The supplied cell of a parameter over an activation array (`projectParameterWith`'s lookup). -/
 def parameterAddressIn (acts : Array ParameterActivation) (x : Ident) (ctx : EvalCtx) : Option Nat :=
-  lookupAssoc x (((capturedId? x ctx).bind (fun id => acts[id]?)).map ParameterActivation.needs |>.getD ctx.needEnv)
+  lookupAssoc x ((capturedRecord acts x ctx).map ParameterActivation.needs |>.getD ctx.needEnv)
 
+/-- A parameter that holds a supplied cell is AVAILABLE: the empty record binds nothing. -/
+theorem parameterAddressIn_available {acts : Array ParameterActivation} {x : Ident} {ctx : EvalCtx} {b : Nat}
+    (h : parameterAddressIn acts x ctx = some b) : capturedParameter x ctx ≠ .unavailable := by
+  intro hu
+  unfold parameterAddressIn capturedRecord at h
+  rw [hu] at h
+  cases h
+
+/-- The CALLABLE projection of a parameter: its supplied cell's projection, the absence of a
+    usable binding without a cell, or the REFUSAL of an unavailable parameter. -/
 theorem projectParameterWith_run (project : Nat → EvalM (Option Algorithm)) (x : Ident) (ctx : EvalCtx)
     (s : EvalState) :
     (projectParameterWith project x ctx).runState s =
       (match parameterAddressIn s.lexicalActivations x ctx with
        | some address => (project address).runState s
-       | none => (.ok none, s)) := by
-  unfold projectParameterWith parameterAddressIn
-  rw [bind_run, captured_run]
-  dsimp only
-  split <;> rename_i h <;> simp only [h] <;> rfl
+       | none =>
+         if capturedParameter x ctx = .unavailable then (.error (Error.unknownName x), s) else (.ok none, s)) := by
+  by_cases hu : capturedParameter x ctx = .unavailable
+  · have hnone : parameterAddressIn s.lexicalActivations x ctx = none := by
+      unfold parameterAddressIn capturedRecord
+      rw [hu]
+      rfl
+    rw [hnone]
+    simp only [hu, ite_true]
+    unfold projectParameterWith
+    rw [bind_run, captured_refused x ctx s hu]
+  · unfold projectParameterWith parameterAddressIn
+    rw [bind_run, captured_run x ctx s hu]
+    dsimp only
+    split <;> rename_i h <;> simp only [h, hu, ite_false] <;> rfl
 
 /-- A recorded activation keeps a parameter's supplied cell across every activation extension. -/
 theorem parameterAddressIn_stable (x : Ident) (ctx : EvalCtx) (s u : EvalState) (h : ActivationPrefix s u)
@@ -530,10 +597,9 @@ theorem parameterAddressIn_stable (x : Ident) (ctx : EvalCtx) (s u : EvalState) 
     parameterAddressIn u.lexicalActivations x ctx = parameterAddressIn s.lexicalActivations x ctx := by
   unfold parameterAddressIn
   cases hid : capturedId? x ctx with
-  | none => rfl
+  | none => rw [capturedRecord_without_id hid u.lexicalActivations s.lexicalActivations]
   | some id =>
-    simp only [Option.bind_some]
-    rw [h.lookup (hact id hid)]
+    rw [capturedRecord_of_id hid, capturedRecord_of_id hid, h.lookup (hact id hid)]
 
 theorem finite_projectParameter (x : Ident) (ctx : EvalCtx) :
     Finite (fun rec : EvalRec => projectParameterWith rec.projectNeedCallable x ctx) := by
@@ -563,7 +629,10 @@ theorem projectParameterCallable_stable (x : Ident) (ctx : EvalCtx) (s s' : Eval
     rw [hr] at this
     exact this
   cases haddr : parameterAddressIn s.lexicalActivations x ctx with
-  | none => rw [haddr] at hbody; cases hbody
+  | none =>
+    rw [haddr] at hbody
+    dsimp only at hbody
+    split at hbody <;> cases hbody
   | some address =>
     rw [haddr] at hbody
     have hproj : (projectNeedCallable address).runState s = (.ok (some owner), s') := hbody
@@ -720,15 +789,15 @@ instance : WriteFrame NavKept :=
 
 /-- The property access writes only the cache and the owner set: its own writes keep the alias
     table and the counter, its calculation is covered by the recursive answer. -/
-theorem navKept_property_step (rec : EvalRec) (hrec : ∀ c, Preserves NavKept (rec c))
+theorem navKept_publication_step (rec : EvalRec) (hrec : ∀ c, Preserves NavKept (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
     Preserves NavKept
-      (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+      (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   have hcalc := KatLang.EvaluatorCacheLaws.EvalBody.zeroArgPropertyCalculation_pres (R := NavKept) rec hrec request
     resolvedAlgorithm ctx env
   intro s
-  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  unfold EvalBody.zeroArgPropertyPublication
   split
   · simp only [EvalM.bind_runState, KatLang.EvaluatorCacheLaws.get_runState]
     split
@@ -739,11 +808,11 @@ theorem navKept_property_step (rec : EvalRec) (hrec : ∀ c, Preserves NavKept (
       · exact hcalc s
       · simp only [EvalM.bind_runState, KatLang.EvaluatorCacheLaws.set_runState]
         obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
-          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
-        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
         rw [hm] at hk
         have hstart : NavKept s
-            { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties } :=
+            { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties } :=
           NavKept.of_fields rfl rfl
         have hk' := hstart.trans hk
         rcases hc with ⟨hrun, _⟩ | ⟨hrun, _⟩
@@ -758,6 +827,22 @@ theorem navKept_property_step (rec : EvalRec) (hrec : ∀ c, Preserves NavKept (
             simp only [EvalM.bind_runState, KatLang.EvaluatorCacheLaws.set_runState, KatLang.EvaluatorCacheLaws.throw_runState]
             exact hk'.trans (NavKept.of_fields rfl rfl)
   · exact hcalc s
+
+/-- EXPORTED-DETACHED: the access is the publication law in the context its binding's exposure
+    requires (the detached context for an exported binding), or a refusal that writes nothing. -/
+theorem navKept_property_step (rec : EvalRec) (hrec : ∀ c, Preserves NavKept (rec c))
+    (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Preserves NavKept
+      (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  intro s
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · simp only [EvalM.bind_runState, KatLang.EvaluatorCacheLaws.get_runState]
+    exact navKept_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+  · split
+    · exact NavKept.refl s
+    · exact navKept_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
 
 /-- **WHOLE RUN (production).** Every production operation, from every state, whatever its outcome,
     keeps every recorded alias binding cell and never moves the runtime-declaration counter back. -/

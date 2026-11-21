@@ -218,7 +218,8 @@ public static partial class Evaluator
     private static EvalResult<PreparedAlgorithmOutput> EvalAlgOutputPreparedCore(
         Algorithm alg,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        bool invoked = false)
     {
         if (alg.DeferredRegion is { } region)
         {
@@ -248,7 +249,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return EvalOutputRowsPrepared(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv);
+        return EvalOutputRowsPrepared(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv, invoked: invoked), ctx, valEnv);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -399,9 +400,10 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalAlgOutputCountedCore(
         Algorithm alg,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        bool invoked = false)
     {
-        var preparedR = EvalAlgOutputPreparedCore(alg, ctx, valEnv);
+        var preparedR = EvalAlgOutputPreparedCore(alg, ctx, valEnv, invoked);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);

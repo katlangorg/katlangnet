@@ -133,9 +133,8 @@ public static partial class Evaluator
         public List<Result>? ListItems;
 
         /// <summary>
-        /// Index: the formed selector supply when a selector slot is an explicit spread
-        /// (<see cref="FormSelectionSupply"/>); null when every slot is an ordinary written selector,
-        /// whose supply is the slots themselves.
+        /// Index: the supply formed by <see cref="FormSelectionSupply"/> for a spread.
+        /// Available ordinary selectors can use the written slots directly.
         /// </summary>
         public List<SuppliedSelector>? Selection;
 
@@ -175,8 +174,8 @@ public static partial class Evaluator
     ///   <item><b>Index</b> (variadic postfix selection <c>R[s1, …, sn]</c>): (1) the receiver,
     ///   ONCE, as a machine child — a receiver failure gains the selection's span when it has
     ///   none and ends it, even with no selector; (2) the selector supply is formed like a call's
-    ///   (<see cref="FormSelectionSupply"/>, only when a slot is an explicit spread: every spread
-    ///   runs now, in written order); (3) each supplied selector LEFT TO RIGHT, one machine
+    ///   (spreads and the transport of a parameter can fail in written order);
+    ///   (3) each supplied selector LEFT TO RIGHT, one machine
     ///   transition each — an ordinary slot demanded as a machine child at its turn (its
     ///   suspended cell's first demand), a spread-formed cell demanded directly — validated and
     ///   selected through the ONE <see cref="SelectPosition"/>, the first failure ending the
@@ -349,8 +348,7 @@ public static partial class Evaluator
                         }
 
                         frame.Phase = 1;
-                        // (2) Supply formation: every explicit spread slot runs now.
-                        if (HasSpreadSelector(selection.Selectors))
+                        if (RequiresSelectorFormation(selection.Selectors, ctx))
                         {
                             var formed = FormSelectionSupplySync(selection, ctx, valEnv);
                             if (formed.IsError)
@@ -532,12 +530,15 @@ public static partial class Evaluator
     /// </summary>
     private readonly record struct SuppliedSelector(Expr Slot, NeedCell? Cell);
 
-    /// <summary>True when some selector slot is an explicit spread, so the supply must be formed first.</summary>
-    private static bool HasSpreadSelector(OutputBundle selectors)
+    /// <summary>Spreads and unavailable parameter transports require ordered supply formation.
+    /// In every other case the written slots already represent the complete supply.</summary>
+    private static bool RequiresSelectorFormation(OutputBundle selectors, in EvalCtx ctx)
     {
         for (var i = 0; i < selectors.Count; i++)
         {
-            if (selectors[i] is Expr.SequenceSpread)
+            var slot = selectors[i];
+            if (slot is Expr.SequenceSpread
+                || slot is Expr.Param(var name) && CapturedParameterActivation(name, ctx) is { IsUnavailable: true })
                 return true;
         }
 
@@ -826,7 +827,10 @@ public static partial class Evaluator
     ///    and random draws never repeat, and every read of the parameter in one activation
     ///    observes the same outcome.
     /// 1. ValEnv (ordinary value meaning)
-    /// 2. Otherwise the name is unbound: <see cref="EvalError.UnknownName"/> at the read.
+    /// 2. Otherwise the name is unbound: <see cref="EvalError.UnknownName"/> at the read
+    ///    (<see cref="UnboundParameter"/>). A captured parameter whose lexical owner has no usable
+    ///    activation is unbound by construction (<see cref="CapturedParameterActivation"/>): the read
+    ///    never falls back to a caller's tiers (EXPORTED-DETACHED: captured reads are lexical-only).
     /// (The legacy counted and algorithm-channel tiers that sat between them had no
     /// production writer and were retired on 2026-10-13 with their Lean counterparts.)
     /// </summary>
@@ -856,7 +860,7 @@ public static partial class Evaluator
         if (val is not null)
             return EvalResult<CountedResult>.Ok(new CountedResult(val, val.ValueCount()));
 
-        return new EvalError.UnknownName(name) { Span = span };
+        return UnboundParameter(name, span, ctx);
     }
 
     /// <summary>

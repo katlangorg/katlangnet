@@ -11,8 +11,11 @@ namespace KatLang.Tests;
 /// zero-argument property cache entry of the same row written as a property would.
 /// <list type="bullet">
 ///   <item>An alias whose own property is EXPORTED (its row uses no enclosing input) has ONE cell per
-///   declaration and structural declaring scope per RUN: explicit calls of its owner, reads of its owner
-///   and reads from outside share it.</item>
+///   declaration, structural declaring scope and OWNING INVOCATION (the inner-property lifetime rule,
+///   November 2026): every actual call of its owner has a fresh cell, the reads inside one call — a
+///   read of the owner, a callback, a helper, an open, a structural path — share that call's cell, and
+///   reads from outside every call of the owner share the one run-scoped outside cell. (From
+///   2026-11-15 until that rule it had one cell per RUN, shared by calls and outside reads alike.)</item>
 ///   <item>A LOCAL-ONLY alias has one cell per declaring BINDING IDENTITY: property-style reads inherit
 ///   their declaring activation's identity and share the cell, every explicit call mints a fresh
 ///   identity and gets a fresh cell (CACHE-OWNER-D1).</item>
@@ -48,7 +51,8 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
     /// <summary>
     /// One row of the decided table: the alias program, its property twin (null where the row has no
     /// property spelling), the expected outcome (<c>err Code</c> for a failure) and host-call log, and
-    /// the outcome before ALIAS-CELL-LIFETIME where it changed.
+    /// the earlier outcomes where a decision changed it (before ALIAS-CELL-LIFETIME, and under the
+    /// run-wide exported cell that the inner-property lifetime rule replaced).
     /// </summary>
     public sealed record Row(string Id, string Alias, string? Twin, string Expected, string[] HostCalls, string? Was = null)
     {
@@ -81,25 +85,32 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
             TraceG + "F(b) = { B = { public A = b.G\nA + 0 }\nC = { open B\nA + 0 }\nB, C }\nF(5)",
             TraceG + "F(b) = { B = { public P = b.G + 0\nP + 0 }\nC = { open B\nP + 0 }\nB, C }\nF(5)",
             "S[5, 5]", Traces(5), Was: "S[5, 5] with trace [5, 5]"),
-        // An EXPORTED alias: one cell per run, whatever calls or reads its owner.
+        // An EXPORTED alias: every explicit call of its owner has a fresh cell (the second receiver ticks
+        // again and selects Hun).
         new("e2",
             Pick + "F(k) = { Outer = { A = Pick(tick()).Algorithm\nA(1) }\nOuter(), Outer() }\nF(0)",
             Pick + "F(k) = { Outer = { P = Pick(tick())\nP.Algorithm(1) }\nOuter(), Outer() }\nF(0)",
-            "S[10, 10]", []),
-        // e2 with an unused local-only sibling, which formerly gave Outer an activation per call.
+            "S[10, 100]", [], Was: "S[10, 10] under the run-wide exported cell"),
+        // e2 with an unused local-only sibling: the same outcome, for the same reason (the sibling formerly
+        // decided whether Outer had an activation per call, and with it the cell's key).
         new("e3",
             Pick + "F(k) = { Outer = { U = k + 0\nA = Pick(tick()).Algorithm\nA(1) }\nOuter(), Outer() }\nF(0)",
             Pick + "F(k) = { Outer = { U = k + 0\nP = Pick(tick())\nP.Algorithm(1) }\nOuter(), Outer() }\nF(0)",
-            "S[10, 10]", [], Was: "S[10, 100]"),
+            "S[10, 100]", [], Was: "S[10, 10] under the run-wide exported cell; S[10, 100] before ALIAS-CELL-LIFETIME, by the activation key"),
         new("e4",
             Pick + "Outer(k) = { A = Pick(tick()).Algorithm\nA(1) }\nOuter(0), Outer(0)",
             Pick + "Outer(k) = { P = Pick(tick())\nP.Algorithm(1) }\nOuter(0), Outer(0)",
-            "S[10, 10]", [], Was: "S[10, 100]"),
-        // Read from outside after a call.
+            "S[10, 100]", [], Was: "S[10, 10] under the run-wide exported cell"),
+        // Read from outside after a call: the outside read has the separate run-scoped cell.
         new("esc",
             Pick + "Outer(k) = { public A = Pick(tick()).Algorithm\nA(1) }\nOuter(0), Outer.A(1)",
             Pick + "Outer(k) = { public P = Pick(tick())\nP.Algorithm(1) }\nOuter(0), Outer.P.Algorithm(1)",
-            "S[10, 10]", [], Was: "S[10, 100]"),
+            "S[10, 100]", [], Was: "S[10, 10] under the run-wide exported cell"),
+        // Two reads from outside share that one outside cell, and a later call of the owner does not.
+        new("esc2",
+            Pick + "Outer(k) = { public A = Pick(tick()).Algorithm\nA(1) }\nOuter.A(1), Outer.A(1), Outer(0), Outer.A(1)",
+            Pick + "Outer(k) = { public P = Pick(tick())\nP.Algorithm(1) }\nOuter.P.Algorithm(1), Outer.P.Algorithm(1), Outer(0), Outer.P.Algorithm(1)",
+            "S[10, 10, 100, 10]", []),
         new("p5d",
             Pick + "F(k) = { B = { U = k + 0\npublic A = Pick(tick()).Algorithm\nA(1) + 0 }\nB.A(1), B }\nF(0)",
             Pick + "F(k) = { B = { U = k + 0\npublic P = Pick(tick())\nP.Algorithm(1) + 0 }\nB.P.Algorithm(1), B }\nF(0)",
@@ -114,15 +125,22 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
             Pick + "F(k) = { Outer = { A = Pick(tick()).Algorithm\nA(1) }\nOuter, Outer }\nF(0)",
             Pick + "F(k) = { Outer = { P = Pick(tick())\nP.Algorithm(1) }\nOuter, Outer }\nF(0)",
             "S[10, 10]", []),
-        // The alias one level deeper: the call route and the structural route share the cell.
+        // The alias one level deeper. The explicit Outer() is an actual call of Outer and owns a fresh cell;
+        // the structural route from F's row, outside that call, reads the cell of the call of F.
         new("s0",
             Pk + "F(k) = { Outer = { C = { A = Pk(trace(1)).Algorithm\nA(7) + 0 }\nC + 0 }\nOuter(), Outer.C.A(7) }\nF(0)",
             Pk + "F(k) = { Outer = { C = { P = Pk(trace(1))\nP.Algorithm(7) + 0 }\nC + 0 }\nOuter(), Outer.C.P.Algorithm(7) }\nF(0)",
-            "S[7, 7]", Traces(1)),
+            "S[7, 7]", Traces(1, 1), Was: "S[7, 7] with trace [1] under the run-wide exported cell"),
         new("s1",
             Pk + "F(k) = { Outer = { U = k + 0\nC = { A = Pk(trace(1)).Algorithm\nA(7) + 0 }\nC + 0 }\nOuter(), Outer.C.A(7) }\nF(0)",
             Pk + "F(k) = { Outer = { U = k + 0\nC = { P = Pk(trace(1))\nP.Algorithm(7) + 0 }\nC + 0 }\nOuter(), Outer.C.P.Algorithm(7) }\nF(0)",
-            "S[7, 7]", Traces(1), Was: "S[7, 7] with trace [1, 1]"),
+            "S[7, 7]", Traces(1, 1), Was: "S[7, 7] with trace [1] under the run-wide exported cell; trace [1, 1] before ALIAS-CELL-LIFETIME"),
+        // The same alias reached twice WITHOUT a call of Outer: a read of Outer and the structural route
+        // are both inside the one call of F and share its cell.
+        new("s2",
+            Pk + "F(k) = { Outer = { C = { A = Pk(trace(1)).Algorithm\nA(7) + 0 }\nC + 0 }\nOuter, Outer.C.A(7) }\nF(0)",
+            Pk + "F(k) = { Outer = { C = { P = Pk(trace(1))\nP.Algorithm(7) + 0 }\nC + 0 }\nOuter, Outer.C.P.Algorithm(7) }\nF(0)",
+            "S[7, 7]", Traces(1)),
         // A collecting-only owner read (COLLECT-CACHE-1) and its member read from outside.
         new("d1",
             Pk + "Only(*xs) = { public A = Pk(trace(1)).Algorithm\nA(7) + 0 }\nOnly, Only.A(7)",
@@ -243,11 +261,14 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// An exported alias's cell is shared by every route to it in one run — a call of its owner, a read
-    /// of its owner, a callback, a helper and a path from outside — and establishes its receiver once.
+    /// An exported alias's cell belongs to the call of its owner that establishes it: every actual call
+    /// of <c>Outer</c> — direct, as a callback, from a helper — has a fresh cell and establishes its
+    /// receiver once, and every path from OUTSIDE a call of the owner — from a helper, a root row, a
+    /// callback — shares the one run-scoped outside cell. Four calls and one outside cell: five
+    /// establishments (formerly one run-wide cell: one).
     /// </summary>
     [Fact]
-    public async Task AnExportedAlias_IsEstablishedOncePerRun_ByEveryConsumer()
+    public async Task AnExportedAlias_IsEstablishedOncePerCallOfItsOwner_AndOnceOutside()
     {
         const string source = Pk
             + "Outer(k) = { public A = Pk(trace(1)).Algorithm\nA(k) }\n"
@@ -255,7 +276,23 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
             + "Outer(1), [2, 3].map(Outer), Help(4), Outer.A(5), [6].map{ Outer.A(n) }";
         var outcome = await OnEveryRouteAsync(source);
         Assert.Equal("S[1, L[2, 3], 8, 5, L[6]]", outcome.Value);
-        Assert.Equal(Traces(1), outcome.HostCalls);
+        Assert.Equal(Traces(1, 1, 1, 1, 1), outcome.HostCalls);
+    }
+
+    /// <summary>
+    /// Inside ONE call of the owner every consumer shares that call's cell: the owner's own row, a
+    /// callback, a helper declared in the owner and a path that names the owner from inside it.
+    /// </summary>
+    [Fact]
+    public async Task AnExportedAlias_IsEstablishedOnce_ByEveryConsumerInsideOneCall()
+    {
+        const string source = Pk
+            + "Outer(k) = { public A = Pk(trace(1)).Algorithm\nHelp(v) = A(v) + 0\n"
+            + "A(k) + [0].map{ n + A(k) }[0] + Help(k) + Outer.A(k) }\n"
+            + "Outer(1), Outer(2)";
+        var outcome = await OnEveryRouteAsync(source);
+        Assert.Equal("S[4, 8]", outcome.Value);
+        Assert.Equal(Traces(1, 1), outcome.HostCalls);
     }
 
     [Theory]
@@ -391,12 +428,36 @@ public sealed class RuntimeAliasCellLifetimeTests(ITestOutputHelper output)
         Assert.Equal(0, budget.AliasBindingCells.AddedCount);
     }
 
-    /// <summary>An exported alias in a long loop is ONE run-wide cell, however many steps call its owner.</summary>
-    [Fact]
-    public void AnExportedAliasPerLoopStep_IsOneRunWideCell()
+    /// <summary>
+    /// An exported alias in a long loop has one cell per ROUND, like a local-only one (each round is an
+    /// actual call of the step), and a finished round's cell dies with the round's binding identity: the
+    /// store counts every establishment and keeps none of them run-wide. (Until the inner-property
+    /// lifetime rule it was ONE run-wide cell for the whole loop.)
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnExportedAliasPerLoopStep_DoesNotRetainFinishedRoundsCells(bool enableOptimizations)
     {
         var (value, budget) = Run(
-            "Cap(meta r) = r\nInc(v) = v + 1\nStep(x) = { A = Cap(Inc(0)).Algorithm\nA(x) }\nStep(0).repeat(20000)", enableOptimizations: true);
+            "Cap(meta r) = r\nInc(v) = v + 1\nStep(x) = { A = Cap(Inc(0)).Algorithm\nA(x) }\nStep(0).repeat(20000)", enableOptimizations);
+        ForceFullCollection();
+        var live = budget.AliasBindingCells.LivePartitionCount();
+        output.WriteLine($"optimizations {enableOptimizations}: cells {budget.AliasBindingCells.AddedCount}, live partitions {live}");
+        Assert.Equal("20000", value);
+        Assert.Equal(Calls, budget.AliasBindingCells.AddedCount);
+        Assert.Empty(budget.AliasBindingCells.RunWideValues);
+        Assert.InRange(live, 0, MaxLivePartitions);
+        GC.KeepAlive(budget);
+    }
+
+    /// <summary>An exported alias read only from outside every call of its owner is ONE run-wide cell.</summary>
+    [Fact]
+    public void AnExportedAliasReadFromOutside_IsOneRunWideCell()
+    {
+        var (value, budget) = Run(
+            "Cap(meta r) = r\nInc(v) = v + 1\nOuter(k) = { public A = Cap(Inc(0)).Algorithm\nA(k) }\nStep(x) = Outer.A(x)\nStep(0).repeat(20000)",
+            enableOptimizations: true);
         ForceFullCollection();
         Assert.Equal("20000", value);
         Assert.Equal(1, budget.AliasBindingCells.AddedCount);

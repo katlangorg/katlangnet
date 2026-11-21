@@ -912,20 +912,24 @@ theorem EvalBody.evalCounted_sound (rec : EvalRec) (hrec : RecSound rec) (e : Ex
     SoundI (CallPre (.evalCounted e ctx env)) (EvalBody.evalCounted rec e ctx env) (CallPost (.evalCounted e ctx env)) := by
   unfold EvalBody.evalCounted; ht_tac
 
-/-- **The property-cache publication write point** (`evalZeroArgPropertyAccessCounted`): a published
-    counted result is valid in the heap at its publication; marking a key active changes no address. -/
-theorem EvalBody.evalZeroArgPropertyAccessCounted_sound (rec : EvalRec) (hrec : RecSound rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
-    SoundI (CallPre (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)) (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) (CallPost (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)) := by
-  have hcalc : SoundI (CallPre (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request))
+/-- **The property-cache publication write point** (`EvalBody.zeroArgPropertyPublication`, the law
+    `evalZeroArgPropertyAccessCounted` runs): a published counted result is valid in the heap at its
+    publication; marking a key active changes no address. The law keeps the call contract over ANY
+    precondition that validates the context and values it runs in (EXPORTED-DETACHED: the access
+    runs it in the accessing context or in the detached one). -/
+theorem EvalBody.zeroArgPropertyPublication_sound (rec : EvalRec) (hrec : RecSound rec) {P : Array NeedCell → Prop} (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest)
+    (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) (fun r h => CRV h r) := by
+  have hcalc : SoundI P
       (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) (fun r h => CRV h r) :=
-    zeroArgPropertyCalc_spec hrec (fun h ph => ph)
-  unfold EvalBody.evalZeroArgPropertyAccessCounted
+    zeroArgPropertyCalc_spec hrec hreq
+  unfold EvalBody.zeroArgPropertyPublication
   split
   · intro hp s vs ps
     rw [EvalM.bind_runState, get_run]
     dsimp only
     generalize zeroArgPropertyCacheKey accessKind owner binding ctx env
-      (propertyOwnerBindingContext resolvedAlgorithm.parent s) = key
+      (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s) = key
     cases hl : s.zeroArgPropertyCache.lookup key with
     | some cached =>
       simp only []
@@ -967,6 +971,26 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_sound (rec : EvalRec) (hrec : 
             rw [EvalM.bind_runState, set_run']
             exact ⟨inv_of_fields v2 rfl rfl rfl rfl, g2, fun _ hx => by cases hx⟩
   · exact hcalc
+
+/-- The access keeps the call contract: an exported binding runs the publication law over the detached
+    context, whose need tier and values are empty; a refused local-only read writes nothing; every other
+    request runs the law in its own context. -/
+theorem EvalBody.evalZeroArgPropertyAccessCounted_sound (rec : EvalRec) (hrec : RecSound rec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    SoundI (CallPre (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)) (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) (CallPost (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)) := by
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · -- Exported: the publication law over the detached context, whose need tier and values are empty.
+    intro hp s vs ps
+    rw [EvalM.bind_runState, get_run]
+    exact EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding resolvedAlgorithm
+      (ctx.detach s.lexicalActivations.size) [] request
+      (P := CallPre (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request))
+      (fun _ _ => ⟨fun _ hm => (by cases hm), fun _ hm => (by cases hm)⟩) hp s vs ps
+  · split
+    · exact SoundI.throw _
+    · exact EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding resolvedAlgorithm
+        ctx env request (fun _ ph => ph)
+
 /-- **THE PER-BODY OBLIGATION** (M3): every evaluator body keeps the call contract whenever its
     recursive answer does. -/
 theorem evalStep_sound : BodySound := by

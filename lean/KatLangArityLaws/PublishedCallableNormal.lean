@@ -349,8 +349,11 @@ theorem body_projectParameterCallable_res (x : Ident) (ctx : EvalCtx) (s : EvalS
   split at h'
   · rename_i address _
     exact hres (.projectNeedCallable address) s o t h'
-  · cases h'
-    exact OptAccounted.none
+  · -- No cell: the absence of a usable binding (the refusal of an unavailable parameter is no result).
+    split at h'
+    · cases h'
+    · cases h'
+      exact OptAccounted.none
 
 /-- **`resolveAlg` keeps the contract**: a parameter is its cell's projection; a capture and a dot
     result are freshly minted plain algorithms. -/

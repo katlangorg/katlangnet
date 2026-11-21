@@ -549,10 +549,12 @@ public class DeferredBranchForwardingRefusalTests
 
     private static readonly AdmittedCase[] UnchangedCases =
     [
-        // v08: self-contained. R stays exported: one evaluation for the whole run, and G.R is accessible.
-        new AdmittedCase("v08-self-contained", Family("F(0) = 0", OpenS, "Z", "trace(F(1))") + "G(1), G(2), G.R\n", [5, 5, 5], [5]),
-        // v21: the same with the run's tick counter: one tick.
-        new AdmittedCase("v21-self-contained-tick", Family("F(0) = 0", OpenS, "Z", "F(1) + tick() * 1000") + "G(1), G(2), G.R\n", [1005, 1005, 1005], []),
+        // v08: self-contained. R stays exported, so G.R is accessible. Its storage follows the owning call
+        // (the inner-property lifetime rule, November 2026): one evaluation in each call of G and one for
+        // the separate outside binding G.R (formerly one evaluation for the whole run: trace [5]).
+        new AdmittedCase("v08-self-contained", Family("F(0) = 0", OpenS, "Z", "trace(F(1))") + "G(1), G(2), G.R\n", [5, 5, 5], [5, 5, 5]),
+        // v21: the same with the run's tick counter: one tick per binding (formerly one tick: 1005 three times).
+        new AdmittedCase("v21-self-contained-tick", Family("F(0) = 0", OpenS, "Z", "F(1) + tick() * 1000") + "G(1), G(2), G.R\n", [1005, 2005, 3005], []),
         // v14: the enclosing parameter is passed explicitly.
         new AdmittedCase("v14-explicit-argument", Family("F(0) = 0", OpenM, "X(y)", "F(1)") + "G(1), G(2)\n", [10, 20], []),
         new AdmittedCase("v14-explicit-argument-counted", Family("F(0) = 0", OpenM, "X(y)", "trace(F(1))") + "G(1), G(2)\n", [10, 20], [10, 20]),
@@ -574,7 +576,7 @@ public class DeferredBranchForwardingRefusalTests
             "  R\n" +
             "}\n" +
             "G(1), G(2), G.R\n",
-            [10, 10, 10], [10]),
+            [10, 10, 10], [10, 10, 10]),
         // The branch's own binder is the member's argument.
         new AdmittedCase(
             "branch-binder-binds-the-name",
@@ -586,7 +588,7 @@ public class DeferredBranchForwardingRefusalTests
             "  R\n" +
             "}\n" +
             "G(1), G(2), G.R\n",
-            [70, 70, 70], [70]),
+            [70, 70, 70], [70, 70, 70]),
         // An enclosing property that reads the parameter was charged by the provisional body already.
         new AdmittedCase(
             "enclosing-property-reads-it",
@@ -710,12 +712,14 @@ public class DeferredBranchForwardingRefusalTests
         // Values are right.
         AssertValue(deferred, 3, 3);
         AssertValue(eager, 3, 3);
-        // THE LIMITATION, pinned so that removing it is a visible change of this test: the deferred
-        // reader is evaluated once per activation of G, the eager twin's once per run.
+        // The evaluation counts agree: each reader is evaluated once per activation of G. (Until the
+        // inner-property lifetime rule of November 2026 the eager twin's exported reader was evaluated
+        // once per run — trace [3] — and that difference was the first half of this limitation.)
         Assert.Equal(Atoms(3, 3), deferredHost.Trace);
-        Assert.Equal(Atoms(3), eagerHost.Trace);
+        Assert.Equal(Atoms(3, 3), eagerHost.Trace);
 
-        // And its escape is refused where the eager twin's is accessible. Never UnknownName.
+        // THE LIMITATION, pinned so that removing it is a visible change of this test: the deferred
+        // reader's escape is refused where the eager twin's is accessible. Never UnknownName.
         var (deferredEscape, _) = await Run(program.Deferred + "G.R\n");
         var failure = Assert.IsType<RunResult.EvalFailure>(deferredEscape);
         Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
@@ -906,8 +910,19 @@ public class DeferredBranchForwardingRefusalTests
         var (result, host) = await Run(source);
         AssertValue(result, 0, 0);
         Assert.Equal(0, host.TotalFetches);
-        // The classification is static: it reads the family, whichever clause a run selects.
-        Assert.Equal(output == "X" ? Atoms(0) : Atoms(0, 0), host.Trace);
+        // Each call of G evaluates its own reader, whatever the classification (the inner-property
+        // lifetime rule, November 2026; an exported reader was formerly evaluated once per run).
+        Assert.Equal(Atoms(0, 0), host.Trace);
+
+        // The classification is static: it reads the family, whichever clause a run selects. Its
+        // observable is the escape: the self-contained reader is accessible from outside G, the
+        // forwarding one is refused there — and neither loads anything.
+        var (escape, escapeHost) = await Run(Declarations(source) + "G.R\n");
+        if (output == "X")
+            AssertValue(escape, 0);
+        else
+            Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(Assert.IsType<RunResult.EvalFailure>(escape).Errors).Code);
+        Assert.Equal(0, escapeHost.TotalFetches);
     }
 
     [Fact]

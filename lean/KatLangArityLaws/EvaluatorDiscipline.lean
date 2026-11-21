@@ -858,10 +858,18 @@ theorem EvalBody.zeroArgPropertyCalculation_disciplined (rec : EvalRec) (hrec : 
     Disciplined (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
   unfold EvalBody.zeroArgPropertyCalculation; disc_tac
 
-theorem EvalBody.evalZeroArgPropertyAccessCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
-    Disciplined (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+theorem EvalBody.zeroArgPropertyPublication_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Disciplined (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   have hcalc : ∀ q, Disciplined (EvalBody.zeroArgPropertyCalculation rec q resolvedAlgorithm ctx env) :=
     fun q => EvalBody.zeroArgPropertyCalculation_disciplined rec hrec q resolvedAlgorithm ctx env
+  unfold EvalBody.zeroArgPropertyPublication; disc_tac
+
+/-- EXPORTED-DETACHED: the access is the publication law in the context its binding's exposure
+    requires, or a refusal; each arm is disciplined. -/
+theorem EvalBody.evalZeroArgPropertyAccessCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Disciplined (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  have hpub : ∀ c e, Disciplined (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm c e request) :=
+    fun c e => EvalBody.zeroArgPropertyPublication_disciplined rec hrec accessKind owner binding resolvedAlgorithm c e request
   unfold EvalBody.evalZeroArgPropertyAccessCounted; disc_tac
 
 theorem EvalBody.evalConditionalCallbackCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :

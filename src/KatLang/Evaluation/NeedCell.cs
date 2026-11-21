@@ -648,11 +648,44 @@ internal sealed class NeedCell : NeedNode
         _callable = EvalResult<Algorithm?>.Ok(null);
     }
 
+    // A refused transport (EXPORTED-DETACHED): no computation exists, and both channels are the one
+    // refusal from construction on. It keeps the written occurrence for blame and holds no suspension,
+    // so nothing is retained and nothing can be planned from it. No field of its own marks it: its
+    // CALLABLE computation slot, which a completed cell never consults again, holds the one shared
+    // marker (see Refusal), so the cell's size and every allocation count are what they were.
+    private NeedCell(EvalError refusal, Expr source)
+        : base(null)
+    {
+        _completed = (EvalResult<Evaluator.CountedResult>)refusal;
+        _callable = (EvalResult<Algorithm?>)refusal;
+        _projection = RefusedTransport;
+        Span = source.Span;
+        Source = source;
+    }
+
+    // The marker a refused cell holds in its CALLABLE computation slot. It is neither a projection
+    // delegate nor a projection node, and the slot is never read for a cell whose CALLABLE is known.
+    private static readonly object RefusedTransport = new();
+
     internal SourceSpan? Span { get; }
     internal Expr? Source { get; }
     internal IReadOnlyList<NeedCell>? Slice { get; }
 
+    /// <summary>
+    /// The refusal this cell was created with, or <c>null</c> for every cell that carries a computation
+    /// or a value: the cell of a written parameter that is UNAVAILABLE at the supplying site
+    /// (<see cref="Evaluator.SupplyCell"/>). Its VALUE demand and its CALLABLE projection both report
+    /// it, and a written argument supply reports it while it is formed. Derived, not stored: a refused
+    /// cell holds the shared marker in its CALLABLE computation slot, and its completed VALUE outcome
+    /// is the refusal.
+    /// </summary>
+    internal EvalError? Refusal
+        => ReferenceEquals(_projection, RefusedTransport) ? _completed!.Value.Error : null;
+
     internal static NeedCell Ready(Evaluator.CountedResult value) => new(value);
+
+    /// <summary>The cell of a refused transport (see <see cref="Refusal"/>).</summary>
+    internal static NeedCell Refused(EvalError refusal, Expr source) => new(refusal, source);
 
     // Planning may inspect an already-supplied data value. A suspended computation
     // is never run, nor treated as ready because another demand happened to complete it.

@@ -569,9 +569,11 @@ def d2Decon : PropDef :=
 def d2Exported : PropDef :=
   privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [privateProp "E" (alg [] [] [] [.num 100])] [(.binary .add (.resolve "E") (.param "k"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "Capture") [(.call (.resolve "B") [])])])
 
--- An exported property keeps ONE run-wide entry across the three activations.
+-- Every `R.Algorithm()` is an actual call of `B`, and an actual call owns its inner bindings (the
+-- inner-property lifetime rule, November 2026): three calls, three entries of the exported `E`
+-- (formerly ONE run-wide entry across the three activations).
 #guard d2Run d2Exported [] [d2Call "R1", d2Call "R2", d2Call "R1"] "E"
-  == some (.sequenceValue [.atom 103, .atom 104, .atom 103], 1)
+  == some (.sequenceValue [.atom 103, .atom 104, .atom 103], 3)
 
 end CacheOwnerD2
 

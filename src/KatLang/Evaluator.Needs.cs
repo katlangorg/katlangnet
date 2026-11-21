@@ -27,6 +27,10 @@ public static partial class Evaluator
     private static EvalResult<Algorithm> ResolveNeedParameterAlgorithm(string name, SourceSpan? span, EvalCtx ctx)
     {
         var activation = CapturedParameterActivation(name, ctx);
+        // An UNAVAILABLE parameter has no callable to project: the refusal names the parameter, never
+        // a missing callable capability (EXPORTED-DETACHED; Lean `projectParameterWith`).
+        if (activation is { IsUnavailable: true })
+            return UnboundParameter(name, span, ctx);
         if (LookupNeed(activation?.Needs ?? ctx.NeedEnv, name) is { } cell)
         {
             var projected = cell.ProjectCallable();
@@ -60,6 +64,16 @@ public static partial class Evaluator
     /// <paramref name="unobserved"/> (per-site retention, <see cref="EvaluationBudget.UsesPerSiteInvocationPlans"/>)
     /// marks a slot whose resolved callee cannot pass the cell on (<see cref="IsUnobservedSupplySlot"/>): a
     /// written invocation there keeps the ordinary suspension, exactly as in a run without plans.
+    /// <para>THE TRANSPORT OF AN UNAVAILABLE PARAMETER IS REFUSED (EXPORTED-DETACHED, November 2026):
+    /// a parameter whose lexical owner has no usable activation
+    /// (<see cref="ParameterActivation.IsUnavailable"/>) has no cell to transport, and none is
+    /// allocated for it. The supplier answers with a REFUSED cell (<see cref="NeedCell.Refusal"/>:
+    /// both channels completed with <see cref="EvalError.UnknownName"/> at the written occurrence).
+    /// A written argument supply fails with that refusal while it is formed
+    /// (<c>FormNeedSupply</c>), whether or not the receiver would ever demand the argument; a
+    /// plan's callee cell, a link's receiver cell and a parameter-row alias's binding cell are
+    /// demanded or projected by the operation that establishes them, which reports the same
+    /// refusal. Lean: <c>supplyNeed</c> over <c>capturedParameterActivation?</c>.</para>
     /// </summary>
     internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values, bool retained = false, bool unobserved = false)
     {
@@ -67,6 +81,8 @@ public static partial class Evaluator
         {
             var parameterCtx = ParameterContext(name, caller, ref values);
             if (LookupNeed(parameterCtx.NeedEnv, name) is { } existing) return existing;
+            if (UnavailableParameterRefusal(name, expression.Span, caller) is { } refusal)
+                return NeedCell.Refused(refusal, expression);
         }
         ExpressionSuspension suspension;
         var runtimeProjection = false;
@@ -317,6 +333,34 @@ public static partial class Evaluator
         return structure.IsOk || !IsLiftableError(structure.Error) ? structure : EvalResult<Algorithm?>.Ok(null);
     }
 
+    /// <summary>
+    /// Supplies ONE written argument slot into <paramref name="supply"/> (<see cref="SupplyCell"/>),
+    /// or reports that its transport is refused: the argument is a parameter that is UNAVAILABLE at
+    /// the supplying site (<see cref="NeedCell.Refusal"/>), which no supply may hold. Kept out of
+    /// <see cref="FormNeedSupply"/> so that the formation's state machine gains no local: a Debug
+    /// build hoists every local of an async method into its heap-allocated state machine, and the
+    /// formation runs once per call of every kind.
+    /// </summary>
+    private static bool TrySupplyArgument(List<NeedCell> supply, Expr argument, EvalCtx caller, ValEnv values, bool unobserved)
+    {
+        var cell = SupplyCell(argument, caller, values, unobserved: unobserved);
+        if (cell.Refusal is not null)
+            return false;
+        supply.Add(cell);
+        return true;
+    }
+
+    /// <summary>
+    /// The refusal <see cref="TrySupplyArgument"/> reported, rebuilt on the failure path only: the
+    /// structured <see cref="EvalError.UnknownName"/> of the unavailable parameter, at its written
+    /// occurrence (<see cref="UnavailableParameterRefusal"/>).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalError TransportRefusal(Expr argument, EvalCtx caller)
+        => argument is Expr.Param(var name) && UnavailableParameterRefusal(name, argument.Span, caller) is { } refusal
+            ? refusal
+            : throw new InvalidOperationException("A refused transport is the transport of an unavailable parameter.");
+
     // Sync formation has no suspending operation. Both engines execute this one ordered
     // supply algorithm; only the evaluation of an arbitrary spread has an async twin.
     // `boundCallee` is the RESOLVED, alias-normalized callee whose patterns bind this supply, when the
@@ -347,7 +391,10 @@ public static partial class Evaluator
                 {
                     var unobserved = boundCallee is not null && IsPlannableCall(argument)
                         && IsUnobservedSupplySlot(boundCallee, index, caller.Budget);
-                    supply.Add(SupplyCell(argument, caller, values, unobserved: unobserved));
+                    // The transport of an unavailable parameter fails the formation itself, before
+                    // any later slot is formed and whether or not the receiver demands this one.
+                    if (!TrySupplyArgument(supply, argument, caller, values, unobserved))
+                        return TransportRefusal(argument, caller);
                     sources?.Add(argument);
                 }
                 if (bound.Overflowed && !overflowed)
@@ -612,8 +659,8 @@ public static partial class Evaluator
     /// demanded later — left to right, after formation — as a machine child of the selection frame.
     /// Evaluating that private slot at its turn is observably its suspended cell's first demand:
     /// nothing else can reach the cell, a parameter slot reads its own transported cell through the
-    /// ordinary parameter read, and the value is the same. Called only when a spread slot exists;
-    /// a selection without one forms nothing. A formation failure is positioned at its spread slot.
+    /// ordinary parameter read. An unavailable parameter fails at transport, before selector
+    /// demand. Earlier spread failures still take precedence.
     /// </summary>
     private static async ValueTask<EvalResult<List<SuppliedSelector>>> FormSelectionSupply(
         Expr.Index selection, EvalCtx ctx, ValEnv valEnv, bool asynchronous)
@@ -627,6 +674,8 @@ public static partial class Evaluator
         {
             if (slot is not Expr.SequenceSpread spread)
             {
+                if (slot is Expr.Param(var name) && UnavailableParameterRefusal(name, slot.Span, ctx) is { } refusal)
+                    return refusal;
                 var overflowed = bound.Overflowed;
                 if (AdmitTransient(ctx.Budget, ref bound, 1, expansion: false))
                     supplied.Add(new SuppliedSelector(slot, null));
@@ -1514,7 +1563,7 @@ public static partial class Evaluator
         // A value view's zero-supply invocation reads its binding cell (L-RUN, M4★): never a rerun of the row.
         var output = ValueViewCell(callee, ctx) is { } viewCell
             ? viewCell.Demand()
-            : EvalBoundUserBodyCounted(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names);
+            : EvalBoundUserBodyCounted(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names, invoked: true);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 
@@ -1532,13 +1581,13 @@ public static partial class Evaluator
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalBoundUserBodyCounted(
-        Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names)
+        Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names, bool invoked)
     {
         if (callee is not Algorithm.User { DeferredRegion: null })
-            return EvalAlgOutputCountedCore(callee, ctx, values);
+            return EvalAlgOutputCountedCore(callee, ctx, values, invoked);
         if (OutputRowsAccessError(callee) is { } accessError)
             return accessError;
-        var prepared = EvalOutputRowsPrepared(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values);
+        var prepared = EvalOutputRowsPrepared(callee.Output, EnterAlgorithmBody(callee, ctx, values, names, invoked: invoked), ctx, values);
         return prepared.IsError
             ? prepared.Error
             : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
@@ -1546,13 +1595,13 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvalBoundUserBodyCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalBoundUserBodyCountedAsync(
-        Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names)
+        Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names, bool invoked)
     {
         if (callee is not Algorithm.User { DeferredRegion: null })
-            return await EvalAlgOutputCountedCoreAsync(callee, ctx, values).ConfigureAwait(false);
+            return await EvalAlgOutputCountedCoreAsync(callee, ctx, values, invoked).ConfigureAwait(false);
         if (OutputRowsAccessError(callee) is { } accessError)
             return accessError;
-        var prepared = await EvalOutputRowsPreparedAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values).ConfigureAwait(false);
+        var prepared = await EvalOutputRowsPreparedAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names, invoked: invoked), ctx, values).ConfigureAwait(false);
         return prepared.IsError
             ? prepared.Error
             : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
@@ -1587,7 +1636,7 @@ public static partial class Evaluator
         var names = callee.Params;
         var output = ValueViewCell(callee, ctx) is { } viewCell
             ? await viewCell.DemandAsync().ConfigureAwait(false)
-            : await EvalBoundUserBodyCountedAsync(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names).ConfigureAwait(false);
+            : await EvalBoundUserBodyCountedAsync(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names, invoked: true).ConfigureAwait(false);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 

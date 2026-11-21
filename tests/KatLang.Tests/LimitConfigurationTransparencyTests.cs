@@ -519,11 +519,13 @@ public class LimitConfigurationTransparencyTests
         // An UNBOUNDED planned loop under a configured, non-binding step budget: cancellation
         // requested while it runs stops it with the host exception (the planned iterations
         // observe the token through their step charge). The request is made from INSIDE a planned
-        // iteration — the step's exported temp `One` is read through the run cache once per
+        // iteration — the root-level property `One` is read through the run cache once per
         // iteration, and the cache cancels on its third read — never by a wall-clock timer, which
         // could fire before a starved test thread reaches the loop (cancellation is then observed
-        // at an earlier chokepoint and the loop is never entered).
-        var runaway = Program("Step(s) = {\n  One = 1\n  s + One, true\n}\nwhile(Step(0))", operations: null);
+        // at an earlier chokepoint and the loop is never entered). `One` is declared OUTSIDE the
+        // step on purpose: a temp declared inside it belongs to its round (the inner-property
+        // lifetime rule) and lives in the plan's per-iteration memo, never in the run cache.
+        var runaway = Program("One = 1\nStep(s) = {\n  s + One, true\n}\nwhile(Step(0))", operations: null);
         foreach (var limits in new EvaluationLimits?[] { null, new EvaluationLimits { MaxSteps = long.MaxValue } })
         {
             using var during = new CancellationTokenSource();

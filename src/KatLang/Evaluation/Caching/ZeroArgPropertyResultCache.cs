@@ -121,23 +121,27 @@ internal interface IZeroArgPropertyResultCache
 
 /// <summary>
 /// The cache key, and with it the cache's semantic LAW (Lean:
-/// <c>zeroArgPropertyCacheKey</c>). The scope of a stored value follows the
-/// binding's exposure classification:
+/// <c>zeroArgPropertyCacheKey</c>). A stored value belongs to the declaring binding
+/// in its owning invocation, or to the run when there is no owning call.
 /// <list type="bullet">
 ///   <item>An <see cref="PropertyExposure.Exported"/> binding is self-contained:
-///   its value depends on no input that an enclosing owner's call binds (the front
-///   end's classification, which the evaluator trusts here exactly as it does for
-///   <c>open</c> and structural access). The binding context at the access is
-///   therefore not a determinant of the value, and ONE entry per run per declaring
-///   scope (<see cref="StructuralOwnerIdentity"/> — the same identity for every
-///   activation, open-provided wiring, or rebuilt structural receiver of that scope; for an
-///   ownerless host-built declaring level, the level object by reference:
-///   <see cref="PropertyDeclaringOwner"/>; an ownerless host ancestor counts by reference too)
-///   serves every property-style access: <c>Big</c> read from two thousand calls of
-///   <c>F(x) = Big + x</c>, from each callback of a <c>map</c>, from every
-///   iteration of a loop step, or inside an explicit <c>B()</c> call is evaluated
-///   once. The environment component is the shared
-///   <see cref="RunWideEnvironmentIdentity"/> sentinel.</item>
+///   the front end classifies it as independent of enclosing call inputs.
+///   <c>Evaluator.DetachedEvaluation</c> refuses direct reads of those inputs.
+///   A retained local runtime-alias cell can still supply an earlier value (ledger R-1). ITS STORAGE
+///   FOLLOWS ITS OWNING INVOCATION (INNER-PROPERTY LIFETIME, November 2026; until then one
+///   entry per run): ONE entry per declaring scope (<see cref="StructuralOwnerIdentity"/> —
+///   the same identity for every activation, open-provided wiring, or rebuilt structural
+///   receiver of that scope; for an ownerless host-built declaring level, the level object by
+///   reference: <see cref="PropertyDeclaringOwner"/>; an ownerless host ancestor counts by
+///   reference too) and per ACTUAL CALL of the nearest enclosing owner
+///   (<c>Evaluator.DeclaringInvocationIdentity</c>): every call of
+///   <c>F(x) = { T = tick() ⏎ T + x }</c> evaluates its own <c>T</c>, and the accesses inside
+///   one call — its rows, a callback of a <c>map</c>, a helper, an opened name, the path
+///   <c>F.T</c> — share it. Where no call owns the declaring chain the environment component
+///   is the shared <see cref="RunWideEnvironmentIdentity"/> sentinel and ONE entry serves the
+///   run: <c>Big</c> read from two thousand calls of <c>F(x) = Big + x</c>, from each callback
+///   of a <c>map</c>, from every iteration of a loop step, or inside an explicit <c>B()</c>
+///   call is evaluated once.</item>
 ///   <item>A local-only binding (<see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>)
 ///   reads an input an enclosing owner's call binds, through the dynamically
 ///   threaded environments; its value is a function of the binding context, so the
@@ -168,25 +172,40 @@ internal readonly record struct ZeroArgPropertyCacheKey(
     object RunIdentity)
 {
     /// <summary>
-    /// Environment identity of every key of an exported binding: the binding context
-    /// is not a determinant of a self-contained value, so the environment component
-    /// collapses to this one process-wide sentinel (the run identity still separates runs).
+    /// Environment identity of the key of an exported binding that NO actual call owns (a root or
+    /// module property, a member read from outside its owner's call): the run-scoped binding, one
+    /// process-wide sentinel (the run identity still separates runs). An exported binding declared
+    /// under a call is keyed by that call instead (<see cref="EnvironmentIdentity"/>).
     /// </summary>
     internal static object RunWideEnvironmentIdentity { get; } = new();
 
     /// <summary>
-    /// THE ENVIRONMENT COMPONENT of a property-style key (Lean <c>propertyKeyBindingContext</c>): the
-    /// run-wide sentinel for an exported binding; for a local-only one, the binding identity of the
-    /// nearest activated level of its declaring chain (<c>Evaluator.DeclaringBindingIdentity</c>,
-    /// CACHE-OWNER-D1) or — on a chain with no activated level (a host-built scope, a planned loop's
-    /// shadowed head) — the binding identity at the access. ONE function for the property cache
-    /// (<see cref="FromExecution"/>) and for a runtime-target alias's binding cell
-    /// (<see cref="ForAliasBindingCell"/>), so the two lifetimes cannot drift (ALIAS-CELL-LIFETIME).
+    /// THE ENVIRONMENT COMPONENT of a property-style key (Lean <c>propertyKeyBindingContext</c>):
+    /// STORAGE FOLLOWS THE RESOLVED DECLARING BINDING AND ITS OWNING INVOCATION (INNER-PROPERTY
+    /// LIFETIME, November 2026, owner decision; exposure still governs accessibility and
+    /// detachment, no longer how long an inner binding lives).
+    /// <list type="bullet">
+    ///   <item>An EXPORTED binding is keyed by the OWNING INVOCATION of its declaring chain
+    ///   (<c>Evaluator.DeclaringInvocationIdentity</c>): the identity of the nearest enclosing actual
+    ///   call. Every call of an owner therefore has fresh bindings for its inner properties, reads
+    ///   in one call share them, and no consumer can give a binding another lifetime. When no call
+    ///   owns the chain — the root, a module, a host scope, a member read from outside its owner's
+    ///   call — it is the run-wide sentinel: the separate RUN-SCOPED binding, independent of every
+    ///   activation of the owner. (Until this decision every exported binding was run-wide.)</item>
+    ///   <item>A LOCAL-ONLY binding is keyed, as before, by the binding identity of the nearest
+    ///   activated level of its declaring chain (<c>Evaluator.DeclaringBindingIdentity</c>,
+    ///   CACHE-OWNER-D1) or — on a chain with no activated level (a host-built scope, a planned
+    ///   loop's shadowed head) — by the binding identity at the access.</item>
+    /// </list>
+    /// ONE function for the property cache (<see cref="FromExecution"/>) and for a runtime-target
+    /// alias's binding cell (<see cref="ForAliasBindingCell"/>), so the two lifetimes cannot drift
+    /// (ALIAS-CELL-LIFETIME). An invocation identity is an object the partitioned stores hold
+    /// weakly, so a call's inner entries are reclaimed with the call, like local-only ones.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static object EnvironmentIdentity(bool exported, ScopeCtx? declaringScope, object accessIdentity)
         => exported
-            ? RunWideEnvironmentIdentity
+            ? Evaluator.DeclaringInvocationIdentity(declaringScope) ?? RunWideEnvironmentIdentity
             : Evaluator.DeclaringBindingIdentity(declaringScope) ?? accessIdentity;
 
     public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
@@ -211,9 +230,10 @@ internal readonly record struct ZeroArgPropertyCacheKey(
     /// <see cref="Property"/>, so a cell key equals no
     /// property key) and the SAME environment component (<see cref="EnvironmentIdentity"/>):
     /// <list type="bullet">
-    ///   <item>an alias whose own property is <see cref="PropertyExposure.Exported"/> has ONE cell
-    ///   per declaration and structural declaring scope per run — explicit calls of its owner, reads
-    ///   of its owner and reads from outside share it;</item>
+    ///   <item>an alias whose own property is <see cref="PropertyExposure.Exported"/> has one cell
+    ///   per OWNING INVOCATION of its declaring chain — every call of its owner establishes its own,
+    ///   observations within that call share it — and ONE separate run-scoped cell for reads made
+    ///   where no call owns the chain (from outside the owner, at the root);</item>
     ///   <item>a local-only alias has one cell per declaring BINDING identity: property-style reads
     ///   inherit their declaring activation's identity and share the cell, every explicit call mints
     ///   a fresh identity and gets a fresh cell (CACHE-OWNER-D1).</item>

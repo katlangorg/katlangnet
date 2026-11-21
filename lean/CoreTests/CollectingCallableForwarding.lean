@@ -409,6 +409,10 @@ private def memberReference (name : Ident) (target : Expr) (owner : Ident := "xs
   member name (.alias none [] [] target) owner depth
 private def box (members : List PropDef) (output : Expr := .num 0) (name : Ident := "Box") : PropDef :=
   privateProp name (alg [] [] members [output])
+/-- A box whose OWN row reads the owner's `xs`: it captures the parameter, so it is local-only (an
+    `exported` one is evaluated detached and could not read it; EXPORTED-DETACHED, November 2026). -/
+private def capturingBox (members : List PropDef) (output : Expr) (name : Ident := "Box") : PropDef :=
+  privateLocalProp name (.localCapturedAncestorParams ["xs"]) (alg [] [] members [output])
 private def memberA : PropDef := memberReference "A" (.param "xs")
 private def boxA : PropDef := box [memberA]
 private def dot (receiver : Expr) (name : Ident) : Expr := Expr.dotCall receiver name none
@@ -424,8 +428,8 @@ private def boxDotA : Expr := dot (.resolve "Box") "A"
 -- SELECTING A MEMBER IS NOT CROSSING THE RECEIVER'S OUTPUT: the receiver's row, a failure or the
 -- collector itself, is never read, while spreading the receiver itself evaluates that row.
 #guard is (.atom 0) (program [coll, fWith [box [memberA] bad] [spreadTo "Coll" boxDotA]] (callF [.num 1]))
-#guard is (.atom 0) (program [coll, fWith [box [memberA] (.param "xs")] [spreadTo "Coll" boxDotA]] (callF [bad]))
-#guard isDiv (program [coll, fWith [box [memberA] (.param "xs")] [spreadTo "Coll" (.resolve "Box")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith [capturingBox [memberA] (.param "xs")] [spreadTo "Coll" boxDotA]] (callF [bad]))
+#guard isDiv (program [coll, fWith [capturingBox [memberA] (.param "xs")] [spreadTo "Coll" (.resolve "Box")]] (callF [bad]))
 -- Demand raises the original error, the empty slice supplies nothing, order and shape survive.
 #guard isDiv (program [collList, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [bad, .num 2]))
 #guard is (.atom 0) (program [collCount, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF []))

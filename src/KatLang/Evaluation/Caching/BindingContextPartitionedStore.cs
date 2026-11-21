@@ -12,9 +12,11 @@ namespace KatLang.Evaluation.Caching;
 /// an activation's need-cell list, a value environment, or a planned loop's per-iteration identity)
 /// keeps every entry of one identity in that identity's own partition, held weakly by a
 /// <see cref="BindingContextPartitionTable"/> keyed by the identity OBJECT (a prompt-reclaim table of
-/// dependent handles). A partition therefore lives exactly as long as its identity is reachable. Every entry
-/// of an exported binding (<see cref="ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity"/>) stays in
-/// one strong, run-wide dictionary.
+/// dependent handles). A partition therefore lives exactly as long as its identity is reachable. An
+/// exported binding's entry is keyed by its OWNING INVOCATION's identity (INNER-PROPERTY LIFETIME,
+/// November 2026) and is partitioned the same way; only the entry of an exported binding NO call owns
+/// (<see cref="ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity"/>: a root or module property, a
+/// member read from outside its owner's call) stays in one strong, run-wide dictionary.
 /// <para><b>Why dropping a partition is unobservable.</b> The key comparers compare the identity
 /// component by reference (<see cref="ZeroArgPropertyCacheKeyComparer"/>), so a key can equal a stored
 /// key only by presenting the very identity object, and every key holds its identity strongly. When an
@@ -107,7 +109,7 @@ internal sealed class PartitionedMap<TKey, TValue>
     /// </summary>
     internal int LivePartitionCount() => _partitions.LivePartitionCount(_store);
 
-    /// <summary>TEST SEAM: the values stored under the run-wide identity (an exported binding's entries).</summary>
+    /// <summary>TEST SEAM: the values stored under the run-wide identity (the entries of exported bindings no call owns).</summary>
     internal IReadOnlyCollection<TValue> RunWideValues => _runWide.Values;
 
     /// <summary>TEST SEAM: the entry capacity of this store's prompt-reclaim partition table.</summary>

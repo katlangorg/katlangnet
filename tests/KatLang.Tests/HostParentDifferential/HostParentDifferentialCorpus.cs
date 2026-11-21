@@ -103,8 +103,22 @@ public static class HostParentDifferentialCorpus
              OpenBlock(b, [], [Public("RunB", Body(rowB)), .. members?.Invoke() ?? [GReader()]])],
             [], R("RunA"), R("RunB"));
 
-    /// <summary><c>P = x</c>: reads the parameter <c>x</c> it does not bind from its caller, so a cache hit returns the FIRST caller's <c>x</c>.</summary>
-    private static Property PDyn() => Prop("P", Body(X("x")));
+    /// <summary>
+    /// <c>tick()</c>, called as the builtin itself: a raw host chain has no prelude level, so no name
+    /// reaches it. The one inline builtin <see cref="LeanAstEncoder"/> encodes.
+    /// </summary>
+    private static Expr Tick() => Call(Block(new Algorithm.Builtin(BuiltinId.tick)));
+
+    /// <summary>
+    /// <c>P = tick()</c>: THE EVALUATION WITNESS. Each evaluation of <c>P</c> returns the run's next
+    /// tick, so a cache hit returns the first evaluation's <c>1</c> and a second owner returns
+    /// <c>2</c>: the values say how many owners a run has. <c>P</c> is self-contained, as an exported
+    /// property must be. (Until EXPORTED-DETACHED, November 2026, the witness was <c>P = x</c>, read
+    /// dynamically from whichever caller came first; an exported property is now evaluated DETACHED and
+    /// that read is refused — HP-18a. The readers' arguments 1 and 2 used to BE those values, so the
+    /// reviewed observations are the same wherever the rows are <c>G(1), G(2)</c>.)
+    /// </summary>
+    private static Property PDyn() => Prop("P", Body(Tick()));
     /// <summary><c>public G(x) = P</c>.</summary>
     private static Property GReader() => Public("G", Fn(["x"], R("P")));
 
@@ -140,7 +154,7 @@ public static class HostParentDifferentialCorpus
         // HP-01: a host parent's property read through an opened inline block — one declaring binding.
         Case("HP-01a", "host parent property read through an opened block", OpenedThrough(Scope(null, Prop("P", Body(N(7)))), [R("P")]), "P");
         Case("HP-01b", "three reads of one host property share ONE entry", OpenedThrough(Scope(null, Prop("P", Body(N(7)))), [Add(Add(R("P"), R("P")), R("P"))]), "P");
-        Case("HP-01c", "a dynamically reading host property is cached once per run (first caller's x)",
+        Case("HP-01c", "an exported host property is evaluated once per run (both readers get the first evaluation)",
             OpenedThrough(Scope(null, PDyn()), [Call("G", N(1)), Call("G", N(2))], GReader()), "P");
         Case("HP-01d", "a public host property is read by the block like a private one",
             OpenedThrough(Scope(null, Public("P", Body(N(3)))), [Mul(R("P"), N(2))]), "P");
@@ -190,7 +204,7 @@ public static class HostParentDifferentialCorpus
 
         // HP-05: ScopeCtx.Parameters and a local-only captured member.
         {
-            ScopeCtx Captured() => new(null, L<Expr>(), L(Local("P", Body(X("x")), "x")), L("x"));
+            ScopeCtx Captured() => new(null, L<Expr>(), L(Local("P", Body(Tick()), "x")), L("x"));
             Case("HP-05a", "an unactivated local-only host property keys on the ACCESS context: one entry per G call",
                 OpenedThrough(Captured(), [Call("G", N(1)), Call("G", N(2))], GReader()), "P");
             Case("HP-05b", "two reads within ONE access context share the local-only entry",
@@ -242,13 +256,13 @@ public static class HostParentDifferentialCorpus
                 OpenedThrough(Scope(null, PDyn()), [Call("H", N(1)), Call("G", N(2))], Public("H", Fn(["x"], Call("P"))), GReader()), "P");
             Case("HP-06b", "an established entry is never replaced by a later fresh P()",
                 OpenedThrough(Scope(null, PDyn()), [Call("G", N(1)), Call("H", N(2)), Call("G", N(3))], Public("H", Fn(["x"], Call("P"))), GReader()), "P");
-            // Q-37 through a host binding: P = K(x); K(0) = 1; K(n) = G(n - 1) + 100; G(x) = P. G(1)'s
-            // read owns P's key, the nested G(0) read is re-entrant (1, unpublished), the owner
-            // publishes 101, which G(5) reuses.
+            // Q-37 through a host binding: P = K(tick()); K(1) = G(0) + 100; K(n) = 1; G(x) = P. G(1)'s
+            // read owns P's key (tick 1), the nested G(0) read is re-entrant (tick 2: 1, unpublished),
+            // the owner publishes 101, which G(5) reuses.
             var family = new Algorithm.Conditional(null, L<Expr>(), L(
-                new CondBranch(new Pattern.LitInt(0), Body(N(1))),
-                new CondBranch(new Pattern.Bind("n"), Body(Add(Call("G", Sub(X("n"), N(1))), N(100))))));
-            ScopeCtx Recursive() => Scope(null, Prop("P", Body(Call("K", X("x")))), Prop("K", family), GReader());
+                new CondBranch(new Pattern.LitInt(1), Body(Add(Call("G", N(0)), N(100)))),
+                new CondBranch(new Pattern.Bind("n"), Body(N(1)))));
+            ScopeCtx Recursive() => Scope(null, Prop("P", Body(Call("K", Tick()))), Prop("K", family), GReader());
             Case("HP-06c", "Q-37: the outermost read owns the entry, the re-entrant read publishes nothing",
                 OpenedThrough(Recursive(), [Call("G", N(1)), Call("G", N(5))]), "P");
             Case("HP-06d", "Q-37 with the owning access an explicit P() (CACHE-PUB-1)",
@@ -340,7 +354,7 @@ public static class HostParentDifferentialCorpus
             for (var i = 0; i < 12; i++) diamond = Add(diamond, diamond);
             Case("HP-10f", "a shared expression diamond in a host parent uses compact Lean let terms",
                 OpenedThrough(Scope(null, Prop("P", Body(diamond))), [R("P")]), "P");
-            // The large shared body activates compact printing. The SAME dynamic P body in two
+            // The large shared body activates compact printing. The SAME witness P body in two
             // scopes must still resolve/cache under each context; term sharing cannot merge owners.
             var dynamic = PDyn();
             var unused = Prop("Large", Body(diamond));
@@ -450,7 +464,7 @@ public static class HostParentDifferentialCorpus
                 Program([Block(provider with { Parent = Scope(null) }), Block(provider with { Parent = Scope(null) })], [], R("F")), "F");
 
             // O6-11x: an evaluator-owned Q nested under two record-equal host levels sharing ONE list.
-            static Property[] Nested() => [Prop("S", Body(X("x"))), Prop("P", Namespace(Public("Q", Body(R("S")))))];
+            static Property[] Nested() => [Prop("S", Body(Tick())), Prop("P", Namespace(Public("Q", Body(R("S")))))];
             static Property[] Reader() => [Public("G", Fn(["x"], R("S"), Dot(R("P"), "Q")))];
             Case("HP-14c", "control: fresh host levels with their own nested declarations keep (S, P.Q) per level",
                 OpenedTwo(Scope(null, Nested()), Call("G", N(1)), Scope(null, Nested()), Call("G", N(2)), Reader), "S", "Q");
@@ -474,7 +488,7 @@ public static class HostParentDifferentialCorpus
             Expr Cache(ScopeCtx first, ScopeCtx second)
                 => Program([Wrapper(dynamicBlock, first, Public("RunA", Body(Call("G", N(1))))),
                             Wrapper(dynamicBlock, second, Public("RunB", Body(Call("G", N(2)))))], [], R("RunA"), R("RunB"));
-            Case("HP-14e", "an owned P under two DISTINCT empty host ancestors is two cache owners (first caller's x per owner)",
+            Case("HP-14e", "an owned P under two DISTINCT empty host ancestors is two cache owners (one evaluation per owner)",
                 Cache(Scope(null), Scope(null)), "P");
             var oneEmpty = Scope(null);
             Case("HP-14f", "control: the owned P under ONE empty host ancestor object reached twice is one cache owner",
@@ -637,6 +651,101 @@ public static class HostParentDifferentialCorpus
             OpenedThrough(Scope(null, Prop("P", Body(ListOf(Str("a"), Str("b"))))), [R("P")]), "P");
         Case("HP-17b", "KL-07: a host property holding the list of the ONE host-built string a', 'b",
             OpenedThrough(Scope(null, Prop("P", Body(ListOf(Str("a', 'b"))))), [R("P")]), "P");
+
+        // HP-18: EXPORTED-DETACHED (November 2026) — MIS-EXPOSED host-built trees. The evaluator enforces
+        // the exposure flag: an exported zero-argument property is evaluated DETACHED from the
+        // activations that exist when its evaluation starts, and a captured parameter read is
+        // lexical-only. Each case hands both evaluators a tree whose `Exported` flag is FALSE — the
+        // property reads an input of the call around it — and both refuse it, where a value used to be
+        // shared across calls or read from whichever caller was live. The watched properties compare
+        // what the failed runs published: nothing under the falsely exported key.
+        {
+            // (a)/(b) The former evaluation witness: a body reading a name it does not bind, exported,
+            // on a host level and on the evaluator-owned block. Formerly S[1, 1], the first caller's x.
+            static Property Unbound() => Prop("P", Body(X("x")));
+            Case("HP-18a", "an exported host property reading a name it does not bind is refused, whoever reads it",
+                OpenedThrough(Scope(null, Unbound()), [Call("G", N(1)), Call("G", N(2))], GReader()), "P");
+            Case("HP-18b", "the same exported property declared by the evaluator-owned block is refused",
+                OpenedThrough(Scope(null), [Call("G", N(1)), Call("G", N(2))], GReader(), Unbound()), "P");
+            // (c) A host level that lists x among its Parameters is x's lexical owner, and no call
+            // activates a host level: the local-only read finds no binding. Formerly S[1, 2], each
+            // caller's own x.
+            Case("HP-18c", "a local-only host property reading a parameter its unactivated host level names is refused",
+                OpenedThrough(new ScopeCtx(null, L<Expr>(), L(Local("P", Body(X("x")), "x")), L("x")),
+                    [Call("G", N(1)), Call("G", N(2))], GReader()), "P");
+
+            // (d)–(i) F(y) declared by a host level, with ONE member falsely exported.
+            static ScopeCtx Owner(Property[] members, params Expr[] rows) => Scope(null, Public("F", FnWith(["y"], members, rows)));
+            static Property MisExposed(string name, params Expr[] rows) => Prop(name, Body(rows));
+            Case("HP-18d", "a falsely exported P = y * 10 is refused in ONE call (formerly 10)",
+                OpenedThrough(Owner([MisExposed("P", Mul(X("y"), N(10)))], R("P")), [Call("F", N(1))]), "P");
+            Case("HP-18e", "the same P is refused in TWO calls (formerly S[10, 10]: the first call's value twice)",
+                OpenedThrough(Owner([MisExposed("P", Mul(X("y"), N(10)))], R("P")), [Call("F", N(1)), Call("F", N(2))]), "P");
+            Case("HP-18f", "an explicit P() of the falsely exported P is refused (formerly it published the first call's value)",
+                OpenedThrough(Owner([MisExposed("P", Mul(X("y"), N(10)))], Add(Call("P"), R("P"))), [Call("F", N(1)), Call("F", N(2))]), "P");
+            // A falsely exported P navigating the correctly local-only Box.Q, in both row orders.
+            static Property[] Navigating() =>
+                [Prop("Box", Namespace(new Property("Q", Body(Mul(X("y"), N(10))), IsPublic: true, PropertyExposure.LocalOnlyCapturedAncestorParameters)
+                    { RequiredAncestorParameters = L("y") })),
+                 MisExposed("P", Add(Dot(R("Box"), "Q"), N(0)))];
+            Case("HP-18g", "a falsely exported P navigating a local-only member is refused when the owner's call comes first (formerly S[10, 10])",
+                OpenedThrough(Owner(Navigating(), R("P")), [Call("F", N(1)), Dot(R("F"), "P")]), "P", "Q");
+            Case("HP-18h", "the same navigation is refused when the outside read comes first",
+                OpenedThrough(Owner(Navigating(), R("P")), [Dot(R("F"), "P"), Call("F", N(1))]), "P", "Q");
+            // A falsely exported P reading the correctly local-only L, whose entry the row already
+            // established: the refusal runs before the cache is consulted, so the hit is refused too.
+            Case("HP-18i", "a falsely exported P reading an ESTABLISHED local-only entry is refused (formerly S[21, 31])",
+                OpenedThrough(Owner([Local("L", Body(Mul(X("y"), N(10))), "y"), MisExposed("P", Add(R("L"), N(1)))], Add(R("L"), R("P"))),
+                    [Call("F", N(1)), Call("F", N(2))]), "L", "P");
+            // The correctly classified twins: detachment changes nothing.
+            Case("HP-18j", "control: the same P declared local-only keeps one value per call",
+                OpenedThrough(Owner([Local("P", Body(Mul(X("y"), N(10))), "y")], R("P")), [Call("F", N(1)), Call("F", N(2))]), "P");
+            Case("HP-18k", "control: a self-contained exported member of a called owner is evaluated once in each call of the owner",
+                OpenedThrough(Owner([Prop("T", Body(Tick()))], Add(R("T"), X("y"))), [Call("F", N(1)), Call("F", N(2))]), "T");
+
+            // (l)–(q) THE OTHER EXECUTED OPERATIONS on an unavailable parameter. The VALUE read is not
+            // the only operation on a written parameter: it is refused with unknownName where it is
+            // INVOKED (its CALLABLE projection — never the missing-callable report of a usable value)
+            // and where it is TRANSPORTED as a supplied argument (while the supply is formed, although
+            // the callee never demands it). Each mutant has its correctly classified control.
+            static Property IncMember() => Public("Inc", Fn(["n"], Add(X("n"), N(1))));
+            static Property IgnoreMember() => Public("Ignore", Fn(["z"], N(42)));
+            static ScopeCtx OwnerBeside(Property helper, Property[] members, params Expr[] rows)
+                => Scope(null, helper, Public("F", FnWith(["y"], members, rows)));
+            static Expr Invoking() => Add(Call(X("y"), N(5)), N(0));
+            static Expr Transporting() => Add(Call("Ignore", X("y")), N(0));
+            Case("HP-18l", "a falsely exported P = y(5) + 0 is refused where the parameter is INVOKED (formerly notAnAlgorithm)",
+                OpenedThrough(OwnerBeside(IncMember(), [MisExposed("P", Invoking())], R("P")), [Call("F", R("Inc"))]), "P");
+            Case("HP-18m", "control: the same P declared local-only invokes the supplied callable",
+                OpenedThrough(OwnerBeside(IncMember(), [Local("P", Body(Invoking()), "y")], R("P")), [Call("F", R("Inc"))]), "P");
+            Case("HP-18n", "a falsely exported P = Ignore(y) + 0 is refused where the parameter is TRANSPORTED, although the callee ignores it (formerly 42)",
+                OpenedThrough(OwnerBeside(IgnoreMember(), [MisExposed("P", Transporting())], R("P")), [Call("F", N(7))]), "P");
+            Case("HP-18o", "control: the same P declared local-only transports the parameter and the callee ignores it",
+                OpenedThrough(OwnerBeside(IgnoreMember(), [Local("P", Body(Transporting()), "y")], R("P")), [Call("F", N(7))]), "P");
+            // A STATIC owner: G is never called, so inside the navigated member G.F the owner's `y` is
+            // lexically owned and unavailable. No exported evaluation is involved, and H's own `y` —
+            // the same name, dynamically live — never answers.
+            static ScopeCtx StaticOwner(Property helper, Expr body) => Scope(null, helper,
+                Public("G", FnWith(["y"], [Public("F", Fn(["n"], body))], N(0))),
+                Public("H", Fn(["y"], Call(Dot(R("G"), "F"), N(1)))));
+            Case("HP-18p", "a static owner's parameter is refused where a navigated member INVOKES it, never the caller's same-named callable (formerly 2)",
+                OpenedThrough(StaticOwner(IncMember(), Call(X("y"), X("n"))), [Call("H", R("Inc"))]));
+            Case("HP-18q", "a static owner's parameter is refused where a navigated member TRANSPORTS it (formerly 43)",
+                OpenedThrough(StaticOwner(IgnoreMember(), Add(Call("Ignore", X("y")), X("n"))), [Call("H", N(7))]));
+
+            // (r)–(u) The same refusal through two more routes: the dot-only `string` intrinsic's
+            // receiver read, and a SPREAD operand of a supply.
+            static Expr StringReceiver() => Dot(X("y"), "string");
+            static Expr SpreadOperand() => Add(Call("Inc", new Expr.SequenceSpread(X("y"))), N(0));
+            Case("HP-18r", "a falsely exported P = y.string is refused at the intrinsic's receiver",
+                OpenedThrough(Owner([MisExposed("P", StringReceiver())], R("P")), [Call("F", N(7))]), "P");
+            Case("HP-18s", "control: the same P declared local-only reads the receiver's text",
+                OpenedThrough(Owner([Local("P", Body(StringReceiver()), "y")], R("P")), [Call("F", N(7))]), "P");
+            Case("HP-18t", "a falsely exported P = Inc(y*) + 0 is refused at the spread operand",
+                OpenedThrough(OwnerBeside(IncMember(), [MisExposed("P", SpreadOperand())], R("P")), [Call("F", N(7))]), "P");
+            Case("HP-18u", "control: the same P declared local-only spreads the parameter",
+                OpenedThrough(OwnerBeside(IncMember(), [Local("P", Body(SpreadOperand()), "y")], R("P")), [Call("F", N(7))]), "P");
+        }
 
         return cases.AsReadOnly();
     }

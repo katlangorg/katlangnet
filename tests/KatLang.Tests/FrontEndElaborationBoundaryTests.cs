@@ -8,9 +8,13 @@ namespace KatLang.Tests;
 /// only Detect → Resolve obtained an AST whose <see cref="Property.Exposure"/>
 /// metadata was never finalized by <see cref="PropertyExposureResolver"/> — every
 /// property kept the constructor default <see cref="PropertyExposure.Exported"/> —
-/// and the evaluator trusts that stored flag, so the partial route observably
+/// and the evaluator read that stored flag as given, so the partial route observably
 /// diverged from the engine (most sharply: <c>open</c> exposed a local-only
-/// property the language hides). Since v0.8.187 the passes are internal, and
+/// property the language hides, which then read its consumer's parameter). Since
+/// November 2026 the evaluator ENFORCES the flag (exported means detached; captured
+/// reads are lexical-only), so such a tree is refused instead of producing an
+/// invented value — with a different error than the engine's, which is the
+/// divergence that remains. Since v0.8.187 the passes are internal, and
 /// since v0.8.188 the same rule covers <see cref="ModuleLoader"/> — load
 /// elaboration alone is an even more incomplete stage (section 4). This suite
 /// pins the authoritative behavior, keeps the divergences visible as the reason
@@ -123,15 +127,19 @@ public class FrontEndElaborationBoundaryTests
             PropertyExposure.Exported,
             NestedProperty(partialRoot, "F", "Lib", "Value").Exposure);
 
-        // The evaluator trusts the stored flag, so the partially elaborated tree
-        // SUCCEEDS where the authoritative engine correctly fails: the falsely exported
-        // `Value` is admitted outside `F` and reads G's own dynamic `a`, so G(41)
-        // returns 42 — exactly the invented meaning the accessibility law forbids.
+        // The falsely exported `Value` is still ADMITTED outside `F` — accessibility reads the
+        // stored flag — but the hazard this test used to pin is refused: an exported property is
+        // evaluated detached, and its read of `a` goes through `a`'s lexical owner `F`, which no
+        // call activated here. So the read finds no binding (UnknownName) instead of G's own
+        // dynamic `a`, which formerly made G(41) return 42 — the invented meaning the
+        // accessibility law forbids. The engine refuses earlier, with the dedicated error.
         var partialRun = Evaluator.Run(new Expr.AlgorithmExpr(partialRoot));
-        Assert.False(partialRun.IsError);
-        Assert.Equal(new Result.Atom(42), partialRun.Value);
+        Assert.True(partialRun.IsError);
+        var unknown = Assert.IsType<EvalError.UnknownName>(EvaluatorTestSupport.Innermost(partialRun.Error));
+        Assert.Equal("a", unknown.Name);
 
-        Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(OpenExposureProgram));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(OpenExposureProgram));
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, Assert.Single(failure.Errors).Code);
     }
 
     [Fact]

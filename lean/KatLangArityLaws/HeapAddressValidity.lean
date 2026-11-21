@@ -361,22 +361,15 @@ theorem ready_sound (value : CountedResult) :
 
 /-! ## Parameter transport: caller and captured need tiers -/
 
-/-- `capturedParameterActivation?` reads the state only, and an activation it selects is one
-    SAVED in `lexicalActivations`. (It may select none — an invalid activation identifier is an
-    absence here, not a dangling need address.) -/
+/-- `capturedParameterActivation?` reads the state only: it REFUSES an unavailable parameter with
+    `unknownName` in the state it started from (EXPORTED-DETACHED: captured reads are lexical-only),
+    or it selects no activation, or one SAVED in `lexicalActivations`. (An invalid activation
+    identifier is an absence here, not a dangling need address.) -/
 theorem captured_run (name : Ident) (ctx : EvalCtx) (s : EvalState) :
-    ∃ act?, (capturedParameterActivation? name ctx).runState s = (.ok act?, s) ∧
-      ∀ act, act? = some act → ∃ i : Nat, s.lexicalActivations[i]? = some act := by
-  unfold capturedParameterActivation?
-  split
-  · split
-    · exact ⟨none, rfl, by simp⟩
-    · dsimp only
-      split
-      · exact ⟨none, rfl, by simp⟩
-      · rename_i id _
-        exact ⟨s.lexicalActivations[id]?, rfl, fun act h => ⟨id, h⟩⟩
-  · exact ⟨none, rfl, by simp⟩
+    (capturedParameterActivation? name ctx).runState s = (.error (Error.unknownName name), s) ∨
+      ∃ act?, (capturedParameterActivation? name ctx).runState s = (.ok act?, s) ∧
+        ∀ act, act? = some act → ∃ i : Nat, s.lexicalActivations[i]? = some act :=
+  captured_outcome name ctx s
 
 /-- The need tier `supplyNeed` / `spreadCollectorSlice?` look a parameter up in — the selected
     captured activation's `needs`, else the caller's `needEnv` — is valid. -/
@@ -391,24 +384,27 @@ theorem lookup_tier_valid {s : EvalState} {ctx : EvalCtx} (vs : StateValid s)
     exact vs.activations i act hi
 
 /-- **Ordinary supply.** `supplyNeed` returns a valid address: a bound parameter TRANSPORTS its
-    cell found through the caller's or the captured tier (no allocation, no state change); any
-    other source (an unbound parameter included) allocates one expression cell whose stored
-    caller tier is the (valid) caller's. -/
+    cell found through the caller's or the captured tier (no allocation, no state change); an
+    UNAVAILABLE parameter is refused in the state the supply started from; any other source (an
+    `own` parameter that no tier binds included) allocates one expression cell whose stored caller
+    tier is the (valid) caller's. -/
 theorem supply_sound (source : Expr) (caller : EvalCtx) (values : ValEnv) :
     Sound (fun h => ValidCtx h caller) (supplyNeed source caller values)
       (fun a h => a < h.size) := by
   intro s vs ps
   by_cases hp : ∃ name, source = .param name
   · obtain ⟨name, rfl⟩ := hp
-    obtain ⟨act?, hc, hact⟩ := captured_run name caller s
-    have venv := lookup_tier_valid vs ps act? hact
-    cases hl : lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv) with
-    | some a =>
-      rw [supply_param_transports name caller values s act? a hc hl]
-      exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact venv.lookup hl⟩
-    | none =>
-      rw [supply_unbound_param name caller values s act? hc hl, ← allocate_run]
-      exact allocate_sound (.expression (.param name) caller values) s vs ps
+    rcases captured_run name caller s with hrefused | ⟨act?, hc, hact⟩
+    · rw [supply_param_refused name caller values s _ hrefused]
+      exact ⟨vs, Nat.le_refl _, fun _ h => by cases h⟩
+    · have venv := lookup_tier_valid vs ps act? hact
+      cases hl : lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv) with
+      | some a =>
+        rw [supply_param_transports name caller values s act? a hc hl]
+        exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact venv.lookup hl⟩
+      | none =>
+        rw [supply_unbound_param name caller values s act? hc hl, ← allocate_run]
+        exact allocate_sound (.expression (.param name) caller values) s vs ps
   · rw [supply_nonparameter source caller values s (fun n h => hp ⟨n, h⟩), ← allocate_run]
     exact allocate_sound (.expression source caller values) s vs ps
 
@@ -420,7 +416,9 @@ theorem slice_run (operand : Expr) (caller : EvalCtx) (s : EvalState) :
         ∃ (a : Nat) (cell : NeedCell), s.needs[a]? = some cell ∧ cell.suspension = .collector slice := by
   cases operand
   case param name =>
-    obtain ⟨act?, hc, _⟩ := captured_run name caller s
+    rcases captured_run name caller s with hrefused | ⟨act?, hc, _⟩
+    · refine ⟨.error (Error.unknownName name), ?_, fun _ h => by cases h⟩
+      simp only [spreadCollectorSlice?, bind_run, parameter_address_refused name caller s _ hrefused]
     have hp : (parameterNeedAddress? name caller).runState s =
         (.ok (lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv)), s) := by
       simp only [parameterNeedAddress?, bind_run, hc]
@@ -518,7 +516,8 @@ theorem form_append_failure (spread : NeedSupply.SpreadEval) (ctx : EvalCtx) (en
 def savedActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv) : ParameterActivation :=
   { values := env.filter (fun b => names.contains b.fst)
     needs := ctx.needEnv.filter (fun b => names.contains b.fst)
-    bindingContext := ctx.bindingContext }
+    bindingContext := ctx.bindingContext
+    ownsInvocation := ctx.enteringInvocation }
 
 /-- `recordParameterActivation` saves exactly the caller's need tier filtered to the owner's
     parameter names, and returns the previous activation count. -/
@@ -548,7 +547,11 @@ theorem parameterContext_sound (name : Ident) (ctx : EvalCtx) (env : ValEnv) :
     Sound (fun h => ValidCtx h ctx) (parameterContext name ctx env)
       (fun r h => ValidCtx h r.1) := by
   refine Sound.of_readonly (fun s vs ps => ?_)
-  obtain ⟨act?, hc, hact⟩ := captured_run name ctx s
+  rcases captured_run name ctx s with hrefused | ⟨act?, hc, hact⟩
+  · have hrun : (parameterContext name ctx env).runState s = (.error (Error.unknownName name), s) := by
+      simp only [parameterContext, bind_run, hrefused]
+    rw [hrun]
+    exact ⟨rfl, fun _ h => by cases h⟩
   have hrun : (parameterContext name ctx env).runState s =
       (.ok (match act? with
         | none => (ctx, env)

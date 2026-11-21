@@ -33,7 +33,10 @@ namespace KatLang.Tests;
 /// prelude/host wrapper bodies, never inside a source program's AST; the Lean
 /// core deliberately does not model natives), and
 /// <see cref="Algorithm.Builtin"/> (a prelude member, likewise never part of
-/// a source program). Numbers must be integer-valued AND render as plain integers
+/// a source program) — with ONE deliberate inclusion: the INLINE <c>tick</c>
+/// builtin of a host-built tree (<see cref="EncodeBuiltin"/>), the only way a body
+/// under a raw host chain, which has no prelude level, can call the run's
+/// counter. Numbers must be integer-valued AND render as plain integers
 /// (the Lean core is <c>Int</c>; the runtime keeps Decimal128 quantum, so
 /// <c>1.0</c> is refused) and strings must be control-character-free; both are
 /// validated fail-loud.
@@ -530,7 +533,25 @@ internal sealed class LeanAstEncoding
     private string EncodeBundle(OutputBundle args) => $"[{EncodeList(args, EncodeExpr)}]";
 
     public string EncodeAlgorithm(Algorithm algorithm)
-        => Term(algorithm, CurrentContext, "Algorithm", () => EncodeAlgorithmInContext(algorithm));
+        => algorithm is Algorithm.Builtin builtin
+            ? EncodeBuiltin(builtin)
+            : Term(algorithm, CurrentContext, "Algorithm", () => EncodeAlgorithmInContext(algorithm));
+
+    /// <summary>
+    /// An INLINE builtin: a host-built <c>Expr.AlgorithmExpr</c> whose algorithm is the builtin itself
+    /// (Lean <c>Algorithm.builtin</c>, which has no parent, opens, properties or declaration identity,
+    /// so it is a constant term: no scope, no sharing identity). Only <c>tick</c> is admitted — the
+    /// effect the host-built corpora use to count evaluations of a self-contained property
+    /// (EXPORTED-DETACHED, November 2026: an exported property is evaluated detached, so the former
+    /// witness, a body reading a name it does not bind from its caller, is refused). Every other
+    /// builtin stays excluded: add one deliberately, with its Lean constructor and a reviewed golden.
+    /// </summary>
+    private static string EncodeBuiltin(Algorithm.Builtin builtin)
+        => builtin.Id == BuiltinId.tick
+            ? "(Algorithm.builtin .tickBuiltin)"
+            : throw new NotSupportedException(
+                $"{nameof(LeanAstEncoder)} encodes the inline builtin 'tick' only, not '{builtin.Id}': " +
+                "a builtin is a prelude member, never part of a source program.");
 
     private string EncodeAlgorithmInContext(Algorithm algorithm)
     {

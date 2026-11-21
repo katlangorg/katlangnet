@@ -211,9 +211,18 @@ public class ParameterOwnershipTests
             Assert.IsType<Expr.Resolve>(detectedOuter.Properties.Single(p => p.Name == "Nearer").Value
                 .Properties.Single(p => p.Name == "Read").Value.Output.Single());
             Assert.IsType<Expr.Resolve>(detected.Properties.Single(p => p.Name == "Other").Value.Output.Single());
-            var result = Evaluator.Run(new Expr.AlgorithmExpr(detected));
+            // The values are those of the COMPLETED elaboration. A Detect-only tree leaves every
+            // property at the default Exported, and the evaluator enforces exposure
+            // (EXPORTED-DETACHED): Left and Right read Outer's v, so as exported properties they are
+            // evaluated detached from Outer's call and that read is refused.
+            var elaborated = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detectedInput));
+            var result = Evaluator.Run(new Expr.AlgorithmExpr(elaborated));
             Assert.False(result.IsError);
             Assert.Equal<System.Numerics.Decimal128>(parameter == "v" ? [7, 7, 5, 99] : [99, 99, 5, 99], result.Value.ToAtoms());
+            var partial = Evaluator.Run(new Expr.AlgorithmExpr(detected));
+            Assert.Equal(parameter == "v", partial.IsError);
+            if (parameter == "v")
+                Assert.Equal(KatLangErrorCode.UnknownName, KatLangError.FromEvalError(partial.Error).Code);
         }
         Assert.IsType<Expr.Resolve>(shared.Output.Single());
     }

@@ -18,8 +18,13 @@ stands for a C# object carries that object's token (`PropertyIdentity.host`), an
 what C# separates — see `CoreTests/HostScopeIdentity.lean` (guard 5b with provenance) and the generated
 `CoreTests/HostParentDifferential.lean`. C# twin: `tests/KatLang.Tests/HostScopePropertyCacheTests.cs`.
 
-Evidence technique of `CoreTests/PropertyCachePublication.lean`: `P` reads `x`, a name it does not
-bind, dynamically from its caller, so a cache hit returns the FIRST caller's `x`.
+Evidence technique (EXPORTED-DETACHED, November 2026): `P = tick()`. Each EVALUATION of `P` returns
+the next tick, so a cache hit returns the first evaluation's `1` and a second owner returns `2`: the
+value says how many times the binding was evaluated, and for which reader. `P` is self-contained, as
+an `exported` property must be: the evaluator runs an exported property DETACHED, so the former
+technique — `P = x`, reading a name it does not bind from whichever caller read it first — is now
+`unknownName` (guard 6). A host chain carries no prelude, so `tick` and `if` are the builtins
+themselves.
 -/
 
 namespace KatLangTests.HostScopePropertyCache
@@ -35,7 +40,11 @@ def openedThrough (scope : ScopeCtx) (rows : List KatLang.Expr) (own : List Prop
   .algorithmExpr (alg [] [.algorithmExpr (.mk (some scope) [] [] (publicProp "Run" (alg [] [] [] rows) :: own) [])]
     [] [resolve "Run"])
 
-def pDyn : PropDef := privateProp "P" (alg [] [] [] [param "x"])
+/-- `tick()`, called as the builtin itself (a host chain carries no prelude). -/
+def tick : KatLang.Expr := .call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) []
+
+/-- `P = tick()`: one evaluation per owner — the witness of how many owners a run has. -/
+def pDyn : PropDef := privateProp "P" (alg [] [] [] [tick])
 def gReader : PropDef := publicProp "G" (alg ["x"] [] [] [resolve "P"])
 def gRows : List KatLang.Expr := [.call (resolve "G") [num 1], .call (resolve "G") [num 2]]
 
@@ -51,7 +60,7 @@ def pair11 : Result := .sequenceValue [.atom 1, .atom 1]
 
 -- 1. An EXPORTED zero-parameter property of an ownerless host scope is cached once per run like any
 --    other binding: `G(1), G(2)` is `(1, 1)`, with ONE run-wide entry whose owner carries no
---    declaration identity (C# H6e: an exported host property is trusted as self-contained, O-4) …
+--    declaration identity (C# H6e: an exported host property is evaluated as self-contained, O-4) …
 #guard pEntries (openedThrough (hostLevel [pDyn]) gRows [gReader]) == some (pair11, [(false, none, false)])
 -- … exactly as the same P declared by the evaluator-owned opened block (an identified owner).
 #guard pEntries (openedThrough (hostLevel []) gRows [gReader, pDyn]) == some (pair11, [(true, none, false)])
@@ -63,14 +72,14 @@ def pair11 : Result := .sequenceValue [.atom 1, .atom 1]
     [publicProp "H" (alg ["x"] [] [] [.call (resolve "P") []]), gReader])
   == some (pair11, [(false, none, false)])
 
--- 3. Q-37 through a host binding: P = if(x == 0, 1, G(x - 1) + 100), G(x) = P. G(1)'s read owns P's
---    key; G(0)'s read is RE-ENTRANT (returns 1, publishes nothing); the owner publishes 101, which
---    G(5) reuses (C# H8). The same holds with the owning access an explicit `H(x) = P()`.
---    (A host chain carries no prelude, so `if` is the builtin itself.)
+-- 3. Q-37 through a host binding: P = if(tick() > 1, 1, G(0) + 100), G(x) = P. G(1)'s read owns P's
+--    key (tick 1); the read inside it is RE-ENTRANT (tick 2: returns 1, publishes nothing); the owner
+--    publishes 101, which G(5) reuses (C# H8). The same holds with the owning access an explicit
+--    `H(x) = P()`.
 def pRecursive : PropDef :=
   privateProp "P" (alg [] [] [] [.call (.algorithmExpr (Algorithm.builtin .ifBuiltin))
-    [.compare .eq (param "x") (num 0), num 1,
-     .binary .add (.call (resolve "G") [.binary .sub (param "x") (num 1)]) (num 100)]])
+    [.compare .gt tick (num 1), num 1,
+     .binary .add (.call (resolve "G") [num 0]) (num 100)]])
 def atoms (values : List Int) : Result := .sequenceValue (values.map Result.atom)
 --    (P's own body names G, so the host level declares both.)
 #guard pEntries (openedThrough (hostLevel [pRecursive, gReader]) [.call (resolve "G") [num 1], .call (resolve "G") [num 5]] [])
@@ -84,17 +93,17 @@ def atoms (values : List Int) : Result := .sequenceValue (values.map Result.atom
 
 -- 4. An unactivated LOCAL-ONLY host property. No activation binds its required input, so the key falls
 --    back to the ACCESS binding context and value environment: one entry per G call — `G(1), G(2)` is
---    `(1, 2)` (C# H6l) — …
-def pLocal : PropDef := privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [param "x"])
+--    `(1, 2)`, two evaluations (C# H6l) — …
+def pLocal : PropDef := privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [tick])
 #guard match pEntries (openedThrough (hostLevel [pLocal] ["x"]) gRows [gReader]) with
   | some (.sequenceValue [.atom 1, .atom 2], entries) =>
       entries.length == 2 && entries.all (fun (owned, context, env) => !owned && context.isSome && env)
   | _ => false
 -- … while two reads within ONE access binding context share it: P + P inside one `G2(x) = P + P` is
--- 2·x, with one entry.
+-- one evaluation read twice (1 + 1), with one entry.
 #guard (pEntries (openedThrough (hostLevel [pLocal] ["x"]) [.call (resolve "G2") [num 3]]
     [publicProp "G2" (alg ["x"] [] [] [.binary .add (resolve "P") (resolve "P")])])).map
-  (fun (value, entries) => (value == Result.atom 6, entries.length)) == some (true, 1)
+  (fun (value, entries) => (value == Result.atom 2, entries.length)) == some (true, 1)
 
 -- 5. Distinct host declaring scopes. Two host scopes, each with its own (structurally equal) P, never
 --    share an entry: each PropDef occurrence has its own `syntax` identity (C# D3-B agrees: two scope
@@ -114,5 +123,21 @@ def twoScopes (a b : PropDef) : KatLang.Expr :=
 --     C# keeps them (`HostScopePropertyCacheTests.DistinctHostScopeObjects_NeverShareAnOwner_*`, HP-08b).
 def pShared : PropDef := { pDyn with identity := some (.shared 888) }
 #guard (pEntries (twoScopes pShared pShared)).map (·.1) == some (.sequenceValue [.atom 1, .atom 1])
+
+-- 6. THE FORMER TECHNIQUE IS REFUSED (EXPORTED-DETACHED, November 2026). An exported host property is
+--    evaluated DETACHED — no inherited need cell, no inherited value — so a body that reads a name it
+--    does not bind finds nothing, whoever reads it: formerly `G(1), G(2)` was `(1, 1)`, the first
+--    caller's `x` shared run-wide. A host level that lists the name among its PARAMETERS is its
+--    lexical owner, and one no call activated: the read is unbound there too (formerly `(1, 2)`,
+--    each caller's own `x`).
+def unknownX (e : KatLang.Expr) : Bool :=
+  match KatLang.runResult e with
+  | .error err => innermostIsUnknownName "x" err
+  | .ok _ => false
+def pReadsCaller : PropDef := privateProp "P" (alg [] [] [] [param "x"])
+def pReadsOwner : PropDef := privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [param "x"])
+#guard unknownX (openedThrough (hostLevel [pReadsCaller]) gRows [gReader])
+#guard unknownX (openedThrough (hostLevel []) gRows [gReader, pReadsCaller])
+#guard unknownX (openedThrough (hostLevel [pReadsOwner] ["x"]) gRows [gReader])
 
 end KatLangTests.HostScopePropertyCache

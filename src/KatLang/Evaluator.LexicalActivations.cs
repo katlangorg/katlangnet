@@ -16,16 +16,75 @@ namespace KatLang;
 /// the activated <see cref="ScopeCtx"/> (<see cref="ScopeCtx.Activation"/>) — the head
 /// scope of the entered body (<see cref="Evaluator.EvalCtx.HeadScope"/>) or the family
 /// scope a selected branch body is wired under — and is runtime-only: it takes no part in
-/// record equality and is not a determinant of the exported property cache key.</para>
+/// record equality. The owning invocation supplies the binding identity for its exported inner properties.</para>
 /// </summary>
 internal sealed class ParameterActivation
 {
-    private ParameterActivation(ValEnv values, NeedEnv needs, object valueEnvironmentIdentity)
+    private ParameterActivation(ValEnv values, NeedEnv needs, object valueEnvironmentIdentity, long serial, bool ownsInvocation = false)
     {
         Values = values;
         Needs = needs;
         ValueEnvironmentIdentity = valueEnvironmentIdentity;
+        _serialAndInvocation = (serial << 1) | (ownsInvocation ? 1L : 0L);
     }
+
+    // The activation's serial in the upper bits and whether an actual call recorded it in the lowest
+    // one. One field, so marking an invocation costs no byte per activation (activations are
+    // allocated on every parameterized call, and their size is pinned by the allocation tests).
+    private readonly long _serialAndInvocation;
+
+    /// <summary>
+    /// The activation's position in the run's recording order (<see cref="EvaluationBudget.NextActivationSerial"/>):
+    /// what an exported evaluation's watermark is compared with (<see cref="Evaluator.IsDetached"/>). An
+    /// activation recorded before an exported evaluation started is DETACHED inside it: still this
+    /// identity for cache keys, alias memos, anchoring and declaring-context inheritance, but no
+    /// source of inputs. Runtime-only, like the activation. Lean: the activation's index in
+    /// <c>EvalState.lexicalActivations</c>.
+    /// </summary>
+    internal long Serial => _serialAndInvocation >> 1;
+
+    /// <summary>
+    /// Whether an ACTUAL CALL recorded this activation (INNER-PROPERTY LIFETIME, November 2026): a
+    /// binding boundary bound a supply for the owner and entered its body
+    /// (<see cref="Evaluator.EnterAlgorithmBody"/> with <c>invoked</c>, a selected clause of a family).
+    /// Such an activation OWNS the bindings of the properties declared under it, whatever their
+    /// exposure: its <see cref="ValueEnvironmentIdentity"/> — the fresh identity its call minted — is
+    /// their owning invocation (<see cref="Evaluator.DeclaringInvocationIdentity"/>). An activation
+    /// a property-style READ recorded (a parameterless or collecting-only owner with a local-only
+    /// member, CACHE-OWNER-D1 / COLLECT-CACHE-1) owns none: a read gives a binding no new lifetime,
+    /// so the search continues above it. Lean: <c>ParameterActivation.ownsInvocation</c>.
+    /// </summary>
+    internal bool OwnsInvocation => (_serialAndInvocation & 1) != 0;
+
+    /// <summary>
+    /// THE MARKER OF AN UNAVAILABLE PARAMETER (EXPORTED-DETACHED, November 2026: captured reads are
+    /// LEXICAL-ONLY). <see cref="Evaluator.CapturedParameterActivation"/> answers with it when the
+    /// level that lexically owns the read name has no activation — a static owner, reached by
+    /// navigation from outside its call. The name is lexically OWNED and UNAVAILABLE at the site:
+    /// every executed operation on the written occurrence — its VALUE read, its CALLABLE projection
+    /// and callee resolution, and its direct transport as a supplied argument, callee, link receiver
+    /// or alias row — is refused with <see cref="EvalError.UnknownName"/>
+    /// (<see cref="Evaluator.UnboundParameter"/>), and none consults the context's inherited tiers,
+    /// which hold whatever a dynamically live caller bound under the same name. It holds no binding
+    /// on either tier, so a reader that only LOOKS a cell up (a planner, a retained-slice
+    /// classification) finds none. Never a scope's activation: it owns no memo and has no serial
+    /// (<see cref="IsUnavailable"/>). Lean: <c>CapturedParameter.unavailable</c>, whose lookup
+    /// <c>capturedParameterActivation?</c> is the <c>unknownName</c> refusal.
+    /// </summary>
+    internal static ParameterActivation Unbound { get; } = new([], [], new object(), serial: 0);
+
+    /// <summary>
+    /// <see cref="Unbound"/> for an owner whose activation is DETACHED in the reading context
+    /// (<see cref="Evaluator.IsDetached"/>): the same marker, told apart only so the refusal can say
+    /// that the name is an input of the enclosing call (<see cref="Evaluator.UnboundParameter"/>).
+    /// </summary>
+    internal static ParameterActivation UnboundDetached { get; } = new([], [], new object(), serial: 0);
+
+    /// <summary>
+    /// Whether this is one of the two markers of an unavailable parameter (<see cref="Unbound"/>,
+    /// <see cref="UnboundDetached"/>): the only activations without a serial.
+    /// </summary>
+    internal bool IsUnavailable => _serialAndInvocation == 0;
 
     public ValEnv Values { get; }
 
@@ -80,8 +139,11 @@ internal sealed class ParameterActivation
     // The activation's memos hang off ONE lazily created holder (published first-wins, so racing chases meet
     // in one dictionary): an activation that never meets an alias or consults its level's opens pays one null
     // field.
+    // The two unbound stand-ins (serial 0) are process-wide and must never own a memo.
     private ActivationMemo Memos
-        => Volatile.Read(ref _memos)
+        => _serialAndInvocation == 0
+            ? throw new InvalidOperationException("An unbound parameter's stand-in activation owns no memo.")
+            : Volatile.Read(ref _memos)
            ?? Interlocked.CompareExchange(ref _memos, new ActivationMemo(), null)
            ?? _memos!;
 
@@ -126,17 +188,22 @@ internal sealed class ParameterActivation
     /// nothing (<see cref="Evaluator.BindingContextIdentity"/>) — unless a property-style read
     /// supplies the identity its owner inherits from the declaring activation
     /// (<paramref name="inheritedBindingIdentity"/>, CACHE-OWNER-D1; Lean
-    /// <c>enterPropertyOwnerBody</c>).
+    /// <c>enterPropertyOwnerBody</c>). <paramref name="invoked"/> marks the activation of an
+    /// actual call (<see cref="OwnsInvocation"/>; Lean: <c>ownsInvocation := ctx.enteringInvocation</c>);
+    /// a read never passes it.
     /// </summary>
     internal static ParameterActivation Capture(
         IReadOnlyList<string> names,
         Evaluator.EvalCtx ctx,
         ValEnv values,
-        object? inheritedBindingIdentity = null)
+        object? inheritedBindingIdentity = null,
+        bool invoked = false)
         => new(
             FilterOwned(values, names, static binding => binding.Name),
             FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
-            inheritedBindingIdentity ?? Evaluator.BindingContextIdentity(ctx, values));
+            inheritedBindingIdentity ?? Evaluator.BindingContextIdentity(ctx, values),
+            ctx.Budget.NextActivationSerial(),
+            invoked);
 
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.
@@ -193,7 +260,17 @@ internal sealed class ParameterActivation
 public static partial class Evaluator
 {
     /// <summary>
-    /// Enters an algorithm body for one call. A parameterized body gets a fresh
+    /// Enters an algorithm body. EVERY ACTUAL CALL RECORDS AN ACTIVATION (INNER-PROPERTY LIFETIME,
+    /// November 2026): with <paramref name="invoked"/> — a binding boundary bound a supply for the
+    /// callee and enters its body here (a user call, a callback, a loop round) — the entry always
+    /// captures an activation, marked as owning its invocation
+    /// (<see cref="ParameterActivation.OwnsInvocation"/>), because that activation is the identity
+    /// that owns the bindings of the properties declared under it, self-contained ones included: two
+    /// calls of one owner never share an inner binding. Every other entry is NOT a call and keeps
+    /// the former rule below — a property-style read, a block in value position, the zero-argument
+    /// demand funnel, a row supply, an alias cell's row. Lean: the invocation mark
+    /// <c>EvalCtx.enteringInvocation</c> read by <c>enterAlgorithmBody</c>.
+    /// <para>A parameterized body gets a fresh
     /// <see cref="ParameterActivation"/> and the entered context carries the activated head
     /// scope (<see cref="EvalCtx.HeadScope"/>): the scope the body's own declaring level
     /// resolves to, the level captured-parameter reads and the accessibility law find its
@@ -204,7 +281,7 @@ public static partial class Evaluator
     /// <see cref="EvalPropertyOwnerBodyCounted"/>; a collecting-only owner's read passes the same
     /// identity after binding its empty supply, COLLECT-CACHE-1). Other parameterless bodies need no activated head
     /// scope. Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>)
-    /// and, with an inherited identity, <c>enterPropertyOwnerBody</c>.
+    /// and, with an inherited identity, <c>enterPropertyOwnerBody</c>.</para>
     /// <para>THE STATIC HEAD LEVEL (implementation-only, November 2026): a body that needs no activation but
     /// declares <c>open</c>s — and has no parameter pattern at all — is entered with its plain declaring scope
     /// (<see cref="AsScopeCtx"/>, no activation) as its head scope, built ONCE for this entry. That is exactly
@@ -220,10 +297,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv values,
         IReadOnlyList<string>? parameterNames = null,
-        object? inheritedBindingIdentity = null)
+        object? inheritedBindingIdentity = null,
+        bool invoked = false)
     {
         var names = parameterNames ?? algorithm.Params;
-        if (names.Count == 0 && !HasLocalOnlyProperty(algorithm))
+        if (!invoked && names.Count == 0 && !HasLocalOnlyProperty(algorithm))
         {
             return algorithm.Opens.Count > 0 && algorithm.ParameterPatterns.Count == 0
                 ? ctx.Push(algorithm, AsScopeCtx(algorithm))
@@ -233,9 +311,36 @@ public static partial class Evaluator
         var headScope = new ScopeCtx(algorithm.Parent, algorithm.Opens, algorithm.Properties, names)
         {
             Owner = algorithm,
-            Activation = ParameterActivation.Capture(names, ctx, values, inheritedBindingIdentity),
+            Activation = ParameterActivation.Capture(names, ctx, values, inheritedBindingIdentity, invoked),
         };
         return ctx.Push(algorithm, headScope);
+    }
+
+    /// <summary>
+    /// THE OWNING INVOCATION of a declaring chain (INNER-PROPERTY LIFETIME, November 2026; owner
+    /// decision): the binding identity of the nearest level of <paramref name="declaringScope"/>'s
+    /// chain that an ACTUAL CALL activated (<see cref="ParameterActivation.OwnsInvocation"/>) — the
+    /// fresh identity that call minted — or null when no call owns the chain: the root, a module, a
+    /// host scope, a static owner reached by navigation from outside its call. It is the storage
+    /// component of every EXPORTED property-style key declared under the chain
+    /// (<c>ZeroArgPropertyCacheKey.EnvironmentIdentity</c>): each call of an owner has its own
+    /// bindings for the owner's inner properties and runtime-alias cells, reads in the same call
+    /// share them — the lexical spelling and a qualified one alike, since a static level is anchored
+    /// to its activation on the reader's chain (<see cref="AnchorParents"/>) — and, the chain being
+    /// the DECLARING one, no callback, helper, open or referring caller can give a binding another
+    /// lifetime. An activation a property-style read recorded is skipped: a read inherits
+    /// (CACHE-OWNER-D1), it owns nothing. Null selects the RUN-SCOPED binding, independent of every
+    /// activation of the owner before or after. Lean: <c>propertyOwnerInvocation</c>.
+    /// </summary>
+    internal static object? DeclaringInvocationIdentity(ScopeCtx? declaringScope)
+    {
+        for (var scope = declaringScope; scope is not null; scope = scope.Parent)
+        {
+            if (scope.Activation is { OwnsInvocation: true } activation)
+                return activation.ValueEnvironmentIdentity;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -450,10 +555,32 @@ public static partial class Evaluator
         => WithParent(child, ScopeInContext(parent, ctx));
 
     /// <summary>
-    /// The activation that owns <paramref name="name"/> as read from the head's body — the
-    /// nearest enclosing level binding the name, found on the head's lexical chain — or null
-    /// when the head binds the name itself or no enclosing activation owns it.
-    /// Lean: <c>capturedParameterActivation?</c>.
+    /// HOW A PARAMETER READ FINDS ITS BINDING (EXPORTED-DETACHED, November 2026: captured reads are
+    /// LEXICAL-ONLY). Three outcomes, decided by the context alone:
+    /// <list type="bullet">
+    ///   <item><c>null</c> — the head binds <paramref name="name"/> itself, or NO level of its
+    ///   lexical chain binds it (a builtin wrapper's argument, a host-built free parameter): the
+    ///   read uses the context's own tiers;</item>
+    ///   <item>an activation — the nearest enclosing level binding the name is activated and not
+    ///   detached: the read uses that activation's snapshot;</item>
+    ///   <item><see cref="ParameterActivation.Unbound"/> / <see cref="ParameterActivation.UnboundDetached"/>
+    ///   (<see cref="ParameterActivation.IsUnavailable"/>) — that level is found, but it has no
+    ///   activation (a static owner, reached by navigation from outside its call) or its activation
+    ///   is DETACHED (<see cref="IsDetached"/>): the name is lexically OWNED and UNAVAILABLE at this
+    ///   site. Every executed operation on the written occurrence is REFUSED with
+    ///   <see cref="EvalError.UnknownName"/> (<see cref="UnboundParameter"/>): the VALUE read
+    ///   (<c>EvalParamCounted</c> and its twin), the CALLABLE projection and callee resolution
+    ///   (<c>ResolveNeedParameterAlgorithm</c>) and the direct TRANSPORT of the parameter as a
+    ///   supplied argument, callee, link receiver or alias row (<see cref="SupplyCell"/>, whose
+    ///   refusal <c>FormNeedSupply</c> reports while the supply is formed, whether or not the
+    ///   receiving parameter is ever demanded). None of them consults the context's inherited
+    ///   tiers, which hold whatever a dynamically live caller bound under the same name (formerly
+    ///   they did: <c>H(y) = G.F(1)</c> read <c>H</c>'s <c>y</c> from inside <c>G</c>). The markers
+    ///   hold no binding, so a reader that only looks a cell up — the loop planner, a
+    ///   retained-slice classification, a publication origin — finds none and leaves the report to
+    ///   the operation that executes.</item>
+    /// </list>
+    /// Lean: <c>capturedParameter</c> / <c>capturedParameterActivation?</c>.
     /// </summary>
     private static ParameterActivation? CapturedParameterActivation(string name, EvalCtx ctx)
     {
@@ -467,9 +594,46 @@ public static partial class Evaluator
         if (ContainsOrdinal(ownNames, name))
             return null;
 
-        var owner = site.Parent is { } parent ? RequiredParameterOwner(parent, name) : null;
-        return owner?.Activation;
+        if (site.Parent is not { } parent || RequiredParameterOwner(parent, name) is not { } owner)
+            return null;
+        if (owner.Activation is not { } activation)
+            return ParameterActivation.Unbound;
+        return IsDetached(activation, ctx) ? ParameterActivation.UnboundDetached : activation;
     }
+
+    /// <summary>
+    /// The failure of an operation on a parameter that no tier binds, or that is UNAVAILABLE at the
+    /// site: <see cref="EvalError.UnknownName"/> at the written occurrence. When the name is
+    /// unavailable because its lexical owner's activation is DETACHED
+    /// (<see cref="ParameterActivation.UnboundDetached"/>), the report says so: the reading property is
+    /// classified self-contained, and the name is an input of the call around it. Decided again here,
+    /// on the failure path only, from the same context the operation used (only its need tier was
+    /// replaced, which the lookup does not read). Never inlined: the operation's frame carries no
+    /// error construction (frame-size discipline).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static EvalError UnboundParameter(string name, SourceSpan? span, EvalCtx ctx)
+    {
+        var unknown = new EvalError.UnknownName(name) { Span = span };
+        return ReferenceEquals(CapturedParameterActivation(name, ctx), ParameterActivation.UnboundDetached)
+            ? new EvalError.WithContext(new TextErrorContext(DetachedParameterMessage(name)), unknown) { Span = span }
+            : unknown;
+    }
+
+    /// <summary>The context of a parameter read refused because its owner's activation is detached.</summary>
+    internal static string DetachedParameterMessage(string name)
+        => $"parameter '{name}' is an input of the enclosing call, not of an exported (self-contained) property";
+
+    /// <summary>
+    /// THE REFUSAL of an executed operation on the written parameter occurrence <paramref name="name"/>
+    /// when the name is UNAVAILABLE in <paramref name="ctx"/> (<see cref="CapturedParameterActivation"/>),
+    /// or <c>null</c> when the operation may proceed: the head's own name, a name no lexical level
+    /// binds (the context's own tiers answer, as before), or an owner whose activation is usable.
+    /// Lean: the <c>.unavailable</c> arm of <c>capturedParameterActivation?</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static EvalError? UnavailableParameterRefusal(string name, SourceSpan? span, EvalCtx ctx)
+        => CapturedParameterActivation(name, ctx) is { IsUnavailable: true } ? UnboundParameter(name, span, ctx) : null;
 
     private static EvalCtx ParameterContext(string name, EvalCtx ctx, ref ValEnv values)
     {

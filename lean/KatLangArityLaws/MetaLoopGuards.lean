@@ -219,7 +219,8 @@ def unit : Result := .sequenceValue []
     [callN "While" [callN "Step" [.num 0]]]) (.atom 3)
 -- Through a runtime alias of the projection: a name callee, captured.
 def aliasWrapper : List (Ident × Algorithm) :=
-  [("While", algWithParameters [metaParam "step"] [] (propsPrivate [("S", aliasOf (algorithmOf (.param "step")))])
+  [("While", algWithParameters [metaParam "step"] []
+      [privateLocalProp "S" (.localCapturedAncestorParams ["step"]) (aliasOf (algorithmOf (.param "step")))]
       [callN "while" [callN "S" [.sequenceSpread (argumentsOf (.param "step"))]]])]
 #guard valueIs (run aliasWrapper [dot (callN "Step" [.num 0]) "While" none]) (.atom 3)
 -- Plain forwarding transports the original cell: `W(step) = while(step)`.

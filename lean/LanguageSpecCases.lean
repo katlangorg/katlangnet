@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 588
-- excluded parse-level cases (Lean has no surface parser): 87
+- specification surface cases: 654
+- excluded parse-level cases (Lean has no surface parser): 89
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 477
-- probe observations (C#-only by design): 1570
+- Lean-guarded cases: 541
+- probe observations (C#-only by design): 1615
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 473 programs have no cache observation, which is not an empty cache;
+  the other 537 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -2384,20 +2384,40 @@ def case_runtime_alias_cell_explicit_call_is_fresh : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "x") (.num 0)))]), privateProp "F" (alg ["b"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["b"]) (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] ((.dotCall (.param "b") "G" none)))) with requiredOwnerDepths := some [("b", some 1)] }] [(.binary .add (.resolve "A") (.num 0))])) with requiredOwnerDepths := some [("b", some 0)] }] [.resolve "B", .resolve "B", (.dotCall (.resolve "B") "A" none), (.dotCall (.resolve "B") "A" none), (.call (.resolve "B") []), (.dotCall (.resolve "B") "A" none)])] [(.call (.resolve "F") [.num 5])])
 #guard obs case_runtime_alias_cell_explicit_call_is_fresh == "ok raw=S[1, 1, 1, 1, 2, 1] n=1"
 
--- runtime-alias-cell-one-per-run-across-calls [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer(0)
-def case_runtime_alias_cell_one_per_run_across_calls : Expr :=
+-- runtime-alias-cell-fresh-in-every-call [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer(0)
+def case_runtime_alias_cell_fresh_in_every_call : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Ten" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "Hun" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 100))]), privateProp "Pick" (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Cap") [(.call (.resolve "Ten") [.num 0])]), (.call (.resolve "Cap") [(.call (.resolve "Hun") [.num 0])])])]), privateProp "Outer" (alg ["k"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.num 1])])] [(.call (.resolve "Outer") [.num 0]), (.call (.resolve "Outer") [.num 0])])
-#guard obs case_runtime_alias_cell_one_per_run_across_calls == "ok raw=S[10, 10] n=2"
+#guard obs case_runtime_alias_cell_fresh_in_every_call == "ok raw=S[10, 100] n=2"
 
 -- runtime-alias-cell-unused-sibling-changes-nothing [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n F(k) = { \n     Outer = { \n         U = k + 0 \n         A = Pick(tick()).Algorithm \n         A(1) \n     } \n     Outer(), Outer() \n } \n  \n F(0)
 def case_runtime_alias_cell_unused_sibling_changes_nothing : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Ten" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "Hun" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 100))]), privateProp "Pick" (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Cap") [(.call (.resolve "Ten") [.num 0])]), (.call (.resolve "Cap") [(.call (.resolve "Hun") [.num 0])])])]), privateProp "F" (alg ["k"] [] [privateProp "Outer" (alg [] [] [{ (privateLocalProp "U" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .add (.param "k") (.num 0))])) with requiredOwnerDepths := some [("k", some 1)] }, privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.num 1])])] [(.call (.resolve "Outer") []), (.call (.resolve "Outer") [])])] [(.call (.resolve "F") [.num 0])])
-#guard obs case_runtime_alias_cell_unused_sibling_changes_nothing == "ok raw=S[10, 10] n=1"
+#guard obs case_runtime_alias_cell_unused_sibling_changes_nothing == "ok raw=S[10, 100] n=1"
 
 -- runtime-alias-cell-read-from-outside-after-a-call [name-resolution]: Cap(meta r) = r \n Ten(x) = x * 10 \n Hun(x) = x * 100 \n Pick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0))) \n Outer(k) = { \n     public A = Pick(tick()).Algorithm \n     A(1) \n } \n  \n Outer(0) \n Outer.A(1)
 def case_runtime_alias_cell_read_from_outside_after_a_call : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Ten" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "Hun" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 100))]), privateProp "Pick" (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), (.call (.resolve "Cap") [(.call (.resolve "Ten") [.num 0])]), (.call (.resolve "Cap") [(.call (.resolve "Hun") [.num 0])])])]), privateProp "Outer" (alg ["k"] [] [publicProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.num 1])])] [(.call (.resolve "Outer") [.num 0]), (.dotCall (.resolve "Outer") "A" (some [.num 1]))])
-#guard obs case_runtime_alias_cell_read_from_outside_after_a_call == "ok raw=S[10, 10] n=2"
+#guard obs case_runtime_alias_cell_read_from_outside_after_a_call == "ok raw=S[10, 100] n=2"
+
+-- inner-property-lifetime-every-call-is-fresh [name-resolution]: F(x) = { \n     T = tick() \n     T + x \n } \n  \n F(1), F(2)
+def case_inner_property_lifetime_every_call_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.resolve "T") (.param "x"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_inner_property_lifetime_every_call_is_fresh == "ok raw=S[2, 4] n=2"
+
+-- inner-property-lifetime-inside-and-outside-a-call [name-resolution]: F(y) = { \n     public A = tick() \n     A, F.A \n } \n B = F.A + 0 \n C = F.A + 0 \n  \n B, F(10), F(20), C, tick()
+def case_inner_property_lifetime_inside_and_outside_a_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [] [(.binary .add (.dotCall (.resolve "F") "A" none) (.num 0))]), privateProp "C" (alg [] [] [] [(.binary .add (.dotCall (.resolve "F") "A" none) (.num 0))]), privateProp "F" (alg ["y"] [] [publicProp "A" (alg [] [] [] [(.call (.resolve "tick") [])])] [.resolve "A", (.dotCall (.resolve "F") "A" none)])] [.resolve "B", (.call (.resolve "F") [.num 10]), (.call (.resolve "F") [.num 20]), .resolve "C", (.call (.resolve "tick") [])])
+#guard obs case_inner_property_lifetime_inside_and_outside_a_call == "ok raw=S[1, S[2, 2], S[3, 3], 1, 4] n=5"
+
+-- inner-property-lifetime-explicit-call-from-outside [name-resolution]: F(y) = { \n     public A = tick() \n     A \n } \n  \n F.A(), F.A, F.A(), F.A
+def case_inner_property_lifetime_explicit_call_from_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [publicProp "A" (alg [] [] [] [(.call (.resolve "tick") [])])] [.resolve "A"])] [(.dotCall (.resolve "F") "A" (some [])), (.dotCall (.resolve "F") "A" none), (.dotCall (.resolve "F") "A" (some [])), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_inner_property_lifetime_explicit_call_from_outside == "ok raw=S[1, 1, 2, 1] n=4"
+
+-- inner-property-lifetime-alias-in-every-call [name-resolution]: Cap(meta r) = if(tick() > 0, r, r) \n Inc(x) = x + 1 \n F(y) = { \n     A = Cap(Inc(5)).Algorithm \n     P = A(1) + 0 \n     P + y, A(1), tick() \n } \n  \n F(1), F(2)
+def case_inner_property_lifetime_alias_in_every_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [(.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .gt, operand := (.num 0) }]), .param "r", .param "r"])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["y"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "Inc") [.num 5])]) "Algorithm" none))), privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "A") [.num 1]) (.num 0))])] [(.binary .add (.resolve "P") (.param "y")), (.call (.resolve "A") [.num 1]), (.call (.resolve "tick") [])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_inner_property_lifetime_alias_in_every_call == "ok raw=S[S[3, 2, 2], S[4, 2, 4]] n=2"
 
 -- runtime-alias-self-link-is-a-demand-cycle [errors]: A = A.Algorithm \n  \n A
 def case_runtime_alias_self_link_is_a_demand_cycle : Expr :=
@@ -2643,7 +2663,307 @@ def case_output_spread_reference_certainly_read : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "P" (alg [] [] [] [(.index (.resolve "Q") [.num 0])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "reduce") [.resolve "P", .resolve "Add", (.call (.resolve "Inc") [.param "x"])])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "H") [(.unary .minus (.num 3))])])
 #guard obs case_output_spread_reference_certainly_read == "ok raw=1 n=1"
 
--- 477 canonical Lean-guarded specification cases.
+-- exposure-shape-member-dot-path-row-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = Lib.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_dot_path_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_dot_path_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-member-dot-path-row-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = Lib.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_dot_path_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_dot_path_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-dot-path-member-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   A = Lib.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_dot_path_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_dot_path_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-member-dot-path-member-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   A = Lib.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_dot_path_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_dot_path_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-dotted-open-row-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = { \n     open Lib.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_dotted_open_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Lib") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_dotted_open_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-member-dotted-open-row-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = { \n     open Lib.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_dotted_open_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Lib") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_dotted_open_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-dotted-open-member-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   A = { \n     open Lib.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_dotted_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Lib") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_dotted_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-member-dotted-open-member-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   A = { \n     open Lib.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_dotted_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Lib") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_dotted_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-open-of-reference-row-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   L = Lib.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_open_of_reference_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_open_of_reference_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-member-open-of-reference-row-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   L = Lib.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_open_of_reference_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_open_of_reference_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-open-of-reference-member-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   L = Lib.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_open_of_reference_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_open_of_reference_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-member-open-of-reference-member-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   L = Lib.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_open_of_reference_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_open_of_reference_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-enclosing-open-row-capture-inside [access-boundaries]: F(y) = { \n   open Lib.Sub \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_enclosing_open_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_enclosing_open_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-member-enclosing-open-row-capture-outside [access-boundaries]: F(y) = { \n   open Lib.Sub \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_enclosing_open_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_enclosing_open_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-member-enclosing-open-member-capture-inside [access-boundaries]: F(y) = { \n   open Lib.Sub \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_member_enclosing_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_member_enclosing_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-member-enclosing-open-member-capture-outside [access-boundaries]: F(y) = { \n   open Lib.Sub \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_member_enclosing_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_member_enclosing_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-dot-path-row-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   A = Ref.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_dot_path_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Ref") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_dot_path_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-reference-dot-path-row-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   A = Ref.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_dot_path_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Ref") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_dot_path_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-dot-path-member-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   A = Ref.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_dot_path_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Ref") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_dot_path_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-reference-dot-path-member-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   A = Ref.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_dot_path_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Ref") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_dot_path_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-dotted-open-row-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   A = { \n     open Ref.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_dotted_open_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Ref") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_dotted_open_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-reference-dotted-open-row-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   A = { \n     open Ref.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_dotted_open_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Ref") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_dotted_open_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-dotted-open-member-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   A = { \n     open Ref.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_dotted_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Ref") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_dotted_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-reference-dotted-open-member-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   A = { \n     open Ref.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_dotted_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Ref") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_dotted_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-open-of-reference-row-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   L = Ref.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_open_of_reference_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Ref") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_open_of_reference_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-reference-open-of-reference-row-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   L = Ref.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_open_of_reference_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Ref") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_open_of_reference_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-open-of-reference-member-capture-inside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   L = Ref.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_open_of_reference_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Ref") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_open_of_reference_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-reference-open-of-reference-member-capture-outside [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   L = Ref.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_open_of_reference_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Ref") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_open_of_reference_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-enclosing-open-row-capture-inside [access-boundaries]: F(y) = { \n   open Ref.Sub \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_enclosing_open_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Ref") "Sub" none)] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_enclosing_open_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-reference-enclosing-open-row-capture-outside [access-boundaries]: F(y) = { \n   open Ref.Sub \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   Ref = Lib \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_enclosing_open_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Ref") "Sub" none)] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_enclosing_open_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-reference-enclosing-open-member-capture-inside [access-boundaries]: F(y) = { \n   open Ref.Sub \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_reference_enclosing_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Ref") "Sub" none)] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_reference_enclosing_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-reference-enclosing-open-member-capture-outside [access-boundaries]: F(y) = { \n   open Ref.Sub \n   Lib = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     0 \n   } \n   Ref = Lib \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_reference_enclosing_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Ref") "Sub" none)] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] [.num 0]), privateProp "Ref" (.alias none [] [] (.resolve "Lib")), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_reference_enclosing_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-dot-path-row-capture-inside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   A = Car.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_dot_path_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Car") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_dot_path_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-carrier-dot-path-row-capture-outside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   A = Car.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_dot_path_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Car") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_dot_path_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-dot-path-member-capture-inside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   A = Car.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_dot_path_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Car") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_dot_path_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-carrier-dot-path-member-capture-outside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   A = Car.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_dot_path_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Car") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_dot_path_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-dotted-open-row-capture-inside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   A = { \n     open Car.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_dotted_open_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Car") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_dotted_open_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-carrier-dotted-open-row-capture-outside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   A = { \n     open Car.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_dotted_open_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Car") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_dotted_open_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-dotted-open-member-capture-inside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   A = { \n     open Car.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_dotted_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Car") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_dotted_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-carrier-dotted-open-member-capture-outside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   A = { \n     open Car.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_dotted_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.resolve "Car") "Sub" none)] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_dotted_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-open-of-reference-row-capture-inside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   L = Car.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_open_of_reference_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Car") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_open_of_reference_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-carrier-open-of-reference-row-capture-outside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   L = Car.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_open_of_reference_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Car") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_open_of_reference_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-open-of-reference-member-capture-inside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   L = Car.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_open_of_reference_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Car") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_open_of_reference_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-carrier-open-of-reference-member-capture-outside [access-boundaries]: F(y) = { \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   L = Car.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_open_of_reference_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Car") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_open_of_reference_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-enclosing-open-row-capture-inside [access-boundaries]: F(y) = { \n   open Car.Sub \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_enclosing_open_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Car") "Sub" none)] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_enclosing_open_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-carrier-enclosing-open-row-capture-outside [access-boundaries]: F(y) = { \n   open Car.Sub \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     Base \n   } \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_enclosing_open_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Car") "Sub" none)] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_enclosing_open_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-carrier-enclosing-open-member-capture-inside [access-boundaries]: F(y) = { \n   open Car.Sub \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_carrier_enclosing_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Car") "Sub" none)] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_carrier_enclosing_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-carrier-enclosing-open-member-capture-outside [access-boundaries]: F(y) = { \n   open Car.Sub \n   Base = { \n     0 \n   } \n   Car = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n     Base \n   } \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_carrier_enclosing_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Car") "Sub" none)] [privateProp "Base" (alg [] [] [] [.num 0]), privateProp "Car" (.alias none [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 0])] (.resolve "Base") none false), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_carrier_enclosing_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-inline-head-dot-path-row-capture-inside [access-boundaries]: F(y) = { \n   A = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n   }.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_inline_head_dot_path_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_inline_head_dot_path_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-inline-head-dot-path-row-capture-outside [access-boundaries]: F(y) = { \n   A = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n   }.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_inline_head_dot_path_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_inline_head_dot_path_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-inline-head-dot-path-member-capture-inside [access-boundaries]: F(y) = { \n   A = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub.Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_inline_head_dot_path_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_inline_head_dot_path_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-inline-head-dot-path-member-capture-outside [access-boundaries]: F(y) = { \n   A = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_inline_head_dot_path_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_inline_head_dot_path_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-inline-head-dotted-open-member-capture-inside [access-boundaries]: F(y) = { \n   A = { \n     open { \n       public Sub = { \n         public Q = y \n         0 \n       } \n     }.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_inline_head_dotted_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg ["y"] [] [] [.param "y"])] [.num 0])] [])) "Sub" none)] [] [(.binary .add (.call (.resolve "Q") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_inline_head_dotted_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-inline-head-dotted-open-member-capture-outside [access-boundaries]: F(y) = { \n   A = { \n     open { \n       public Sub = { \n         public Q = y \n         0 \n       } \n     }.Sub \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_inline_head_dotted_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg ["y"] [] [] [.param "y"])] [.num 0])] [])) "Sub" none)] [] [(.binary .add (.call (.resolve "Q") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_inline_head_dotted_open_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-inline-head-open-of-reference-row-capture-inside [access-boundaries]: F(y) = { \n   L = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n   }.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_inline_head_open_of_reference_row_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_inline_head_open_of_reference_row_capture_inside == "ok raw=S[1, 1] n=2"
+
+-- exposure-shape-inline-head-open-of-reference-row-capture-outside [access-boundaries]: F(y) = { \n   L = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n   }.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_inline_head_open_of_reference_row_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_inline_head_open_of_reference_row_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-inline-head-open-of-reference-member-capture-inside [access-boundaries]: F(y) = { \n   L = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F(7)
+def case_exposure_shape_inline_head_open_of_reference_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "L" (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_inline_head_open_of_reference_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-inline-head-open-of-reference-member-capture-outside [access-boundaries]: F(y) = { \n   L = { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_exposure_shape_inline_head_open_of_reference_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "L" (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [.num 0])] [])) "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_inline_head_open_of_reference_member_capture_outside == "err localOnlyProperty"
+
+-- exposure-shape-inline-head-enclosing-open-member-capture-inside [access-boundaries]: F(y) = { \n   open { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub \n   A = Q + 0 \n   A \n } \n F(5), F(7)
+def case_exposure_shape_inline_head_enclosing_open_member_capture_inside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg ["y"] [] [] [.param "y"])] [.num 0])] [])) "Sub" none)] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "Q") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 7])])
+#guard obs case_exposure_shape_inline_head_enclosing_open_member_capture_inside == "ok raw=S[5, 7] n=2"
+
+-- exposure-shape-inline-head-enclosing-open-member-capture-outside [access-boundaries]: F(y) = { \n   open { \n     public Sub = { \n       public Q = y \n       0 \n     } \n   }.Sub \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_exposure_shape_inline_head_enclosing_open_member_capture_outside : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg ["y"] [] [] [.param "y"])] [.num 0])] [])) "Sub" none)] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "Q") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_exposure_shape_inline_head_enclosing_open_member_capture_outside == "err localOnlyProperty"
+
+-- 541 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3077,9 +3397,13 @@ def specCaseIds : List String := [
   "runtime-alias-cycle",
   "runtime-alias-cell-read-and-path-share-one-call",
   "runtime-alias-cell-explicit-call-is-fresh",
-  "runtime-alias-cell-one-per-run-across-calls",
+  "runtime-alias-cell-fresh-in-every-call",
   "runtime-alias-cell-unused-sibling-changes-nothing",
   "runtime-alias-cell-read-from-outside-after-a-call",
+  "inner-property-lifetime-every-call-is-fresh",
+  "inner-property-lifetime-inside-and-outside-a-call",
+  "inner-property-lifetime-explicit-call-from-outside",
+  "inner-property-lifetime-alias-in-every-call",
   "runtime-alias-self-link-is-a-demand-cycle",
   "reference-head-resolves-in-its-own-scope",
   "reference-receiver-is-its-target-structure",
@@ -3127,9 +3451,69 @@ def specCaseIds : List String := [
   "output-spread-opens-one-level",
   "output-spread-receiver-edge-is-the-lowered-call",
   "output-spread-lifted-call-ends-known-positions",
-  "output-spread-reference-certainly-read"
+  "output-spread-reference-certainly-read",
+  "exposure-shape-member-dot-path-row-capture-inside",
+  "exposure-shape-member-dot-path-row-capture-outside",
+  "exposure-shape-member-dot-path-member-capture-inside",
+  "exposure-shape-member-dot-path-member-capture-outside",
+  "exposure-shape-member-dotted-open-row-capture-inside",
+  "exposure-shape-member-dotted-open-row-capture-outside",
+  "exposure-shape-member-dotted-open-member-capture-inside",
+  "exposure-shape-member-dotted-open-member-capture-outside",
+  "exposure-shape-member-open-of-reference-row-capture-inside",
+  "exposure-shape-member-open-of-reference-row-capture-outside",
+  "exposure-shape-member-open-of-reference-member-capture-inside",
+  "exposure-shape-member-open-of-reference-member-capture-outside",
+  "exposure-shape-member-enclosing-open-row-capture-inside",
+  "exposure-shape-member-enclosing-open-row-capture-outside",
+  "exposure-shape-member-enclosing-open-member-capture-inside",
+  "exposure-shape-member-enclosing-open-member-capture-outside",
+  "exposure-shape-reference-dot-path-row-capture-inside",
+  "exposure-shape-reference-dot-path-row-capture-outside",
+  "exposure-shape-reference-dot-path-member-capture-inside",
+  "exposure-shape-reference-dot-path-member-capture-outside",
+  "exposure-shape-reference-dotted-open-row-capture-inside",
+  "exposure-shape-reference-dotted-open-row-capture-outside",
+  "exposure-shape-reference-dotted-open-member-capture-inside",
+  "exposure-shape-reference-dotted-open-member-capture-outside",
+  "exposure-shape-reference-open-of-reference-row-capture-inside",
+  "exposure-shape-reference-open-of-reference-row-capture-outside",
+  "exposure-shape-reference-open-of-reference-member-capture-inside",
+  "exposure-shape-reference-open-of-reference-member-capture-outside",
+  "exposure-shape-reference-enclosing-open-row-capture-inside",
+  "exposure-shape-reference-enclosing-open-row-capture-outside",
+  "exposure-shape-reference-enclosing-open-member-capture-inside",
+  "exposure-shape-reference-enclosing-open-member-capture-outside",
+  "exposure-shape-carrier-dot-path-row-capture-inside",
+  "exposure-shape-carrier-dot-path-row-capture-outside",
+  "exposure-shape-carrier-dot-path-member-capture-inside",
+  "exposure-shape-carrier-dot-path-member-capture-outside",
+  "exposure-shape-carrier-dotted-open-row-capture-inside",
+  "exposure-shape-carrier-dotted-open-row-capture-outside",
+  "exposure-shape-carrier-dotted-open-member-capture-inside",
+  "exposure-shape-carrier-dotted-open-member-capture-outside",
+  "exposure-shape-carrier-open-of-reference-row-capture-inside",
+  "exposure-shape-carrier-open-of-reference-row-capture-outside",
+  "exposure-shape-carrier-open-of-reference-member-capture-inside",
+  "exposure-shape-carrier-open-of-reference-member-capture-outside",
+  "exposure-shape-carrier-enclosing-open-row-capture-inside",
+  "exposure-shape-carrier-enclosing-open-row-capture-outside",
+  "exposure-shape-carrier-enclosing-open-member-capture-inside",
+  "exposure-shape-carrier-enclosing-open-member-capture-outside",
+  "exposure-shape-inline-head-dot-path-row-capture-inside",
+  "exposure-shape-inline-head-dot-path-row-capture-outside",
+  "exposure-shape-inline-head-dot-path-member-capture-inside",
+  "exposure-shape-inline-head-dot-path-member-capture-outside",
+  "exposure-shape-inline-head-dotted-open-member-capture-inside",
+  "exposure-shape-inline-head-dotted-open-member-capture-outside",
+  "exposure-shape-inline-head-open-of-reference-row-capture-inside",
+  "exposure-shape-inline-head-open-of-reference-row-capture-outside",
+  "exposure-shape-inline-head-open-of-reference-member-capture-inside",
+  "exposure-shape-inline-head-open-of-reference-member-capture-outside",
+  "exposure-shape-inline-head-enclosing-open-member-capture-inside",
+  "exposure-shape-inline-head-enclosing-open-member-capture-outside"
 ]
-#guard specCaseIds.length == 477
+#guard specCaseIds.length == 541
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

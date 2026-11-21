@@ -17,8 +17,10 @@ namespace KatLang;
 /// front-end pipeline (<see cref="FrontEndPipeline"/>), not a host-composable API.
 /// A host that ran only detection (and implicit-argument resolution) obtained an AST
 /// whose <see cref="Property.Exposure"/> metadata was never finalized by
-/// <see cref="PropertyExposureResolver"/>, and the evaluator trusts that stored flag —
-/// so the partial composition observably diverged from engine-parsed source
+/// <see cref="PropertyExposureResolver"/>, and the evaluator reads that stored flag —
+/// since November 2026 it enforces it, so a falsely exported capture is refused rather
+/// than evaluated with a caller's bindings, but with a different error than the
+/// engine's — so the partial composition observably diverges from engine-parsed source
 /// (see <c>FrontEndElaborationBoundaryTests</c>). Hosts elaborate through
 /// <see cref="Parser.Parse(string)"/> / <see cref="Parser.ParseAsync"/> or run through
 /// <see cref="KatLangEngine"/>, which always execute the complete pass sequence.</para>

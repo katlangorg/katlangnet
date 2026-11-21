@@ -21,14 +21,14 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 3971
-- guarded: 3838 (463 may capture calls, 3375 cannot)
-- excluded: 133
-  language-spec: 588 programs, 477 guarded (48 may capture calls), 87 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+- corpus programs: 4058
+- guarded: 3923 (464 may capture calls, 3459 cannot)
+- excluded: 135
+  language-spec: 654 programs, 541 guarded (49 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2564 programs, 2551 guarded (53 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 687 programs, 678 guarded (354 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
-  host-parent: 113 programs, 113 guarded (8 may capture calls)
+  host-parent: 134 programs, 134 guarded (8 may capture calls)
 
 Exclusion rules that currently exclude nothing: a tree the structural preflight refuses (no
 run admits it); a tree that holds a deferred module region (C#'s first clause; Lean has no
@@ -470,9 +470,13 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cycle == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cell_read_and_path_share_one_call == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cell_explicit_call_is_fresh == false
-#guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cell_one_per_run_across_calls == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cell_fresh_in_every_call == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cell_unused_sibling_changes_nothing == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_cell_read_from_outside_after_a_call == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_inner_property_lifetime_every_call_is_fresh == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_inner_property_lifetime_inside_and_outside_a_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_inner_property_lifetime_explicit_call_from_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_inner_property_lifetime_alias_in_every_call == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_runtime_alias_self_link_is_a_demand_cycle == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_reference_head_resolves_in_its_own_scope == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_reference_receiver_is_its_target_structure == false
@@ -521,6 +525,66 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_output_spread_receiver_edge_is_the_lowered_call == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_output_spread_lifted_call_ends_known_positions == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_output_spread_reference_certainly_read == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dot_path_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dot_path_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dot_path_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dot_path_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dotted_open_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dotted_open_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dotted_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_dotted_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_open_of_reference_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_open_of_reference_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_open_of_reference_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_open_of_reference_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_enclosing_open_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_enclosing_open_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_enclosing_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_member_enclosing_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dot_path_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dot_path_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dot_path_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dot_path_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dotted_open_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dotted_open_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dotted_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_dotted_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_open_of_reference_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_open_of_reference_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_open_of_reference_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_open_of_reference_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_enclosing_open_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_enclosing_open_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_enclosing_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_reference_enclosing_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dot_path_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dot_path_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dot_path_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dot_path_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dotted_open_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dotted_open_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dotted_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_dotted_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_dot_path_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_dot_path_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_dot_path_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_dot_path_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_dotted_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_dotted_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_row_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_row_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_inside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_outside == false
 
 /-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
     expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
@@ -951,9 +1015,13 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_runtime_alias_cycle,
   LanguageSpecCases.case_runtime_alias_cell_read_and_path_share_one_call,
   LanguageSpecCases.case_runtime_alias_cell_explicit_call_is_fresh,
-  LanguageSpecCases.case_runtime_alias_cell_one_per_run_across_calls,
+  LanguageSpecCases.case_runtime_alias_cell_fresh_in_every_call,
   LanguageSpecCases.case_runtime_alias_cell_unused_sibling_changes_nothing,
   LanguageSpecCases.case_runtime_alias_cell_read_from_outside_after_a_call,
+  LanguageSpecCases.case_inner_property_lifetime_every_call_is_fresh,
+  LanguageSpecCases.case_inner_property_lifetime_inside_and_outside_a_call,
+  LanguageSpecCases.case_inner_property_lifetime_explicit_call_from_outside,
+  LanguageSpecCases.case_inner_property_lifetime_alias_in_every_call,
   LanguageSpecCases.case_runtime_alias_self_link_is_a_demand_cycle,
   LanguageSpecCases.case_reference_head_resolves_in_its_own_scope,
   LanguageSpecCases.case_reference_receiver_is_its_target_structure,
@@ -1001,10 +1069,70 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_output_spread_opens_one_level,
   LanguageSpecCases.case_output_spread_receiver_edge_is_the_lowered_call,
   LanguageSpecCases.case_output_spread_lifted_call_ends_known_positions,
-  LanguageSpecCases.case_output_spread_reference_certainly_read
+  LanguageSpecCases.case_output_spread_reference_certainly_read,
+  LanguageSpecCases.case_exposure_shape_member_dot_path_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_dot_path_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_dot_path_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_dot_path_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_dotted_open_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_dotted_open_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_dotted_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_dotted_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_open_of_reference_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_open_of_reference_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_open_of_reference_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_open_of_reference_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_enclosing_open_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_enclosing_open_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_member_enclosing_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_member_enclosing_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_dot_path_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_dot_path_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_dot_path_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_dot_path_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_dotted_open_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_dotted_open_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_dotted_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_dotted_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_open_of_reference_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_open_of_reference_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_open_of_reference_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_open_of_reference_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_enclosing_open_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_enclosing_open_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_reference_enclosing_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_reference_enclosing_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_dot_path_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_dot_path_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_dot_path_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_dot_path_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_dotted_open_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_dotted_open_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_dotted_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_dotted_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_open_of_reference_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_carrier_enclosing_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_inline_head_dot_path_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_inline_head_dot_path_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_inline_head_dot_path_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_inline_head_dot_path_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_inline_head_dotted_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_inline_head_dotted_open_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_row_capture_inside,
+  LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_row_capture_outside,
+  LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_outside,
+  LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_inside,
+  LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_outside
 ]
-#guard languageSpecPrograms.length == 477
-#guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 48
+#guard languageSpecPrograms.length == 541
+#guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 49
 
 /-! ## explorer -/
 
@@ -7647,6 +7775,27 @@ def generatedPrograms : List Expr := [
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_16c == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_17a == false
 #guard Expr.mayCaptureCalls HostParentDifferential.hp_17b == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18a == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18b == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18c == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18d == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18e == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18f == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18g == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18h == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18i == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18j == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18k == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18l == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18m == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18n == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18o == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18p == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18q == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18r == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18s == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18t == false
+#guard Expr.mayCaptureCalls HostParentDifferential.hp_18u == false
 
 /-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
     expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
@@ -7763,10 +7912,31 @@ def hostParentPrograms : List Expr := [
   HostParentDifferential.hp_16b,
   HostParentDifferential.hp_16c,
   HostParentDifferential.hp_17a,
-  HostParentDifferential.hp_17b
+  HostParentDifferential.hp_17b,
+  HostParentDifferential.hp_18a,
+  HostParentDifferential.hp_18b,
+  HostParentDifferential.hp_18c,
+  HostParentDifferential.hp_18d,
+  HostParentDifferential.hp_18e,
+  HostParentDifferential.hp_18f,
+  HostParentDifferential.hp_18g,
+  HostParentDifferential.hp_18h,
+  HostParentDifferential.hp_18i,
+  HostParentDifferential.hp_18j,
+  HostParentDifferential.hp_18k,
+  HostParentDifferential.hp_18l,
+  HostParentDifferential.hp_18m,
+  HostParentDifferential.hp_18n,
+  HostParentDifferential.hp_18o,
+  HostParentDifferential.hp_18p,
+  HostParentDifferential.hp_18q,
+  HostParentDifferential.hp_18r,
+  HostParentDifferential.hp_18s,
+  HostParentDifferential.hp_18t,
+  HostParentDifferential.hp_18u
 ]
-#guard hostParentPrograms.length == 113
+#guard hostParentPrograms.length == 134
 #guard (hostParentPrograms.filter Expr.mayCaptureCalls).length == 8
 
--- 3838 gate guards over 3971 corpus programs.
+-- 3923 gate guards over 4058 corpus programs.
 end KatLang.MayCaptureCallsCorpus

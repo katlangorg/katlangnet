@@ -377,10 +377,12 @@ public class ParameterlessOwnerEntryContextTests
     // ── 5. Owners that record no activation, and exported properties ─────────────────────────
 
     [Theory]
-    // B reads nothing of F: B and E are exported, one evaluation for the run.
-    [InlineData("B = {\n    E = trace(7)\n    E + 0\n}", "[0].map{ n + B }[0] + B.E + k", "F(3), F(4)", "S[17, 18]", new[] { 7 })]
-    // B is local-only but declares only an exported E: no activation, no inheritance needed.
-    [InlineData("B = {\n    E = trace(7)\n    E + k\n}", "[0].map{ n + B }[0] + B.E", "F(3), F(4)", "S[17, 18]", new[] { 7 })]
+    // B reads nothing of F: B and E are exported. They belong to the call of F around them: one
+    // evaluation per call of F, shared by the callback's read of B and the path B.E.
+    [InlineData("B = {\n    E = trace(7)\n    E + 0\n}", "[0].map{ n + B }[0] + B.E + k", "F(3), F(4)", "S[17, 18]", new[] { 7, 7 })]
+    // B is local-only but declares only an exported E: no inheritance needed, and E is again one
+    // evaluation per call of F.
+    [InlineData("B = {\n    E = trace(7)\n    E + k\n}", "[0].map{ n + B }[0] + B.E", "F(3), F(4)", "S[17, 18]", new[] { 7, 7 })]
     public async Task OwnersWithoutLocalOnlyProperties_AreUnchanged(string bRows, string fRows, string calls, string expected, int[] traces)
     {
         var oracle = await ObserveAsync(F(bRows, fRows, calls));

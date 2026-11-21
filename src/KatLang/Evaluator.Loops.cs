@@ -72,7 +72,9 @@ public static partial class Evaluator
         var slots = new List<Result>();
         TransientSupply bound = default;
         SourceSpan? overflowAt = null;
-        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
+        // A loop round is an actual call of the step (the one caller is the step invocation): its
+        // activation owns the round's inner bindings.
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames, invoked: true);
         foreach (var expr in alg.Output)
         {
             var countedR = EvalCounted(expr, pushedCtx, valEnv);
@@ -116,7 +118,7 @@ public static partial class Evaluator
 
         var rows = alg.Output;
         var slots = new List<Result>(rows.Count);
-        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames, invoked: true);
         // Discovery: every row right of the flag row supplied nothing, so `slots` holds exactly
         // the flag row's items once one is found.
         var flagRow = rows.Count - 1;

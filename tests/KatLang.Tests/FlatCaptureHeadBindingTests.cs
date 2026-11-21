@@ -36,10 +36,10 @@ public class FlatCaptureHeadBindingTests(ITestOutputHelper output)
         bool asynchronous, bool family, IReadOnlyList<Expr?>? occurrences);
 
     private delegate EvalResult<Evaluator.CountedResult> BoundBody(
-        Algorithm callee, Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> values, IReadOnlyList<string> names);
+        Algorithm callee, Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> values, IReadOnlyList<string> names, bool invoked);
 
     private delegate EvalResult<Evaluator.CountedResult> SharedBody(
-        Algorithm alg, Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> valEnv);
+        Algorithm alg, Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> valEnv, bool invoked);
 
     private static T Private<T>(string name) where T : Delegate
         => typeof(Evaluator).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.CreateDelegate<T>();
@@ -598,8 +598,9 @@ public class FlatCaptureHeadBindingTests(ITestOutputHelper output)
     public void BoundBodyEntry_ProjectsTheParameterNamesOncePerCall_GcIsolatedChild()
     {
         // The shared core enters a body with a FRESH Params projection; the bound entry enters with the
-        // names its binding boundary already projected. Everything else the two do is the same, so
-        // the shared core allocates exactly one names array more.
+        // names its binding boundary already projected. Everything else the two do is the same — both
+        // are entered as the actual call the bound entry always is — so the shared core allocates
+        // exactly one names array more.
         if (!GcIsolatedAllocation.EnterChild())
             return;
 
@@ -613,14 +614,14 @@ public class FlatCaptureHeadBindingTests(ITestOutputHelper output)
             IReadOnlyList<string> names = callee.Params;
             for (var warm = 0; warm < 3; warm++)
             {
-                Assert.True(bound(callee, ctx, values, names).IsOk);
-                Assert.True(shared(callee, ctx, values).IsOk);
+                Assert.True(bound(callee, ctx, values, names, true).IsOk);
+                Assert.True(shared(callee, ctx, values, true).IsOk);
             }
 
             var projection = Bytes(() => names = callee.Params);
             Assert.True(projection > 0);
-            var boundBytes = Bytes(() => _ = bound(callee, ctx, values, names));
-            var sharedBytes = Bytes(() => _ = shared(callee, ctx, values));
+            var boundBytes = Bytes(() => _ = bound(callee, ctx, values, names, true));
+            var sharedBytes = Bytes(() => _ = shared(callee, ctx, values, true));
             Assert.Equal(sharedBytes, boundBytes + projection);
         }
         GcIsolatedAllocation.Complete();

@@ -250,8 +250,9 @@ public class TickBuiltinTests
     [InlineData("Step(n) = n + tick()\nStep(0).repeat(3), tick()", "S[6, 4]")]
     // Condition first (LOOP-CF1): the flag row ticks before the state row in every round.
     [InlineData("Step(n) = { n + tick(), tick() < 6 }\nStep(0).while, tick()", "S[12, 8]")]
-    // `M` reads no parameter of the step, so it is ONE exported entry for the run, not one per iteration.
-    [InlineData("Step(n) = { M = tick()\n    n + M + M }\nStep(0).repeat(2)", "4")]
+    // `M` reads no parameter of the step; it still belongs to the round that declares it (each round is a
+    // call of the step): one tick per round, shared by the round's two reads (1 + 1, then 2 + 2 + 2).
+    [InlineData("Step(n) = { M = tick()\n    n + M + M }\nStep(0).repeat(2)", "6")]
     // A local helper that reads the step parameter is per activation: it ticks once per iteration.
     [InlineData("Step(n) = { M = n + tick()\n    M + M }\nStep(0).repeat(2)", "8")]
     public async Task PlannedLoops_AgreeWithTheGenericEvaluator(string source, string expected)

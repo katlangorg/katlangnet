@@ -88,7 +88,9 @@ public static partial class Evaluator
         var plan = reference.Plan;
         // META-S3-4: the view established the plan's route (and refused an intrinsic route), so the step is
         // the route's canonical callee cell — a member path, the `.Algorithm` link or an extension's fallback.
-        var step = new ResolvedArgumentAlgorithm(null) { Cell = plan.CalleeCell, Source = plan.CalleeExpression };
+        var callee = plan.SupplyCalleeCell();
+        if (callee.IsError) return callee.Error;
+        var step = new ResolvedArgumentAlgorithm(null) { Cell = callee.Value, Source = plan.CalleeExpression };
 
         var remaining = long.MaxValue;
         if (builtin == BuiltinId.@repeat)

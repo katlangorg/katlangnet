@@ -412,6 +412,11 @@ public class LanguageSpecRunnerTests
             // D2: a bare reference to a marked declaration whose lift only parameter inference decides, where a later
             // builtin slot's role depends on it, is a front-end rejection too.
             "output-spread-reference-needs-call",
+            // EXPORTED-DETACHED exposure-shape family (November 2026): an inline block written directly as an open
+            // target whose `Sub` reads `y` in its output row is a provider that takes a parameter — a front-end
+            // rejection (IllegalInOpen), parse-level by construction.
+            "exposure-shape-inline-head-dotted-open-row-capture-refused-open",
+            "exposure-shape-inline-head-enclosing-open-row-capture-refused-open",
         ];
         string[] expectedModelDivergences =
         [

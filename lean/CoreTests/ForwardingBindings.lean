@@ -193,16 +193,19 @@ def fwdReportSuperseded : Expr :=
 /-- `v = 99` / `Need(v) = v` / `Outer = { Inner = v ⏎ Inner + Need }` / `Outer(7)`:
     Inner's `v` keeps the root property (106); the superseded rebinding read Outer's
     forwarded `v` (14). -/
-def fwdPropertyReference (inner : KatLang.Algorithm) : Expr :=
-  let outer := alg ["v"] [] [privateProp "Inner" inner]
+def fwdPropertyReference (inner : KatLang.PropDef) : Expr :=
+  let outer := alg ["v"] [] [inner]
     [.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"])]
   .algorithmExpr (algPrivate [] []
     [("v", alg [] [] [] [.num 99]), ("Need", alg ["v"] [] [] [.param "v"]), ("Outer", outer)]
     [.call (.resolve "Outer") [.num 7]])
 
-#guard match runResult (fwdPropertyReference (alg [] [] [] [.resolve "v"])) with
+#guard match runResult (fwdPropertyReference (privateProp "Inner" (alg [] [] [] [.resolve "v"]))) with
   | .ok (Result.atom 106) => true | _ => false
-#guard match runResult (fwdPropertyReference (alg [] [] [] [.param "v"])) with
+-- The superseded rebinding makes `Inner` capture Outer's `v`: a LOCAL-ONLY property (an `exported`
+-- one is evaluated detached and could not read it; EXPORTED-DETACHED, November 2026).
+#guard match runResult (fwdPropertyReference
+    (privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [] [] [.param "v"]))) with
   | .ok (Result.atom 14) => true | _ => false
 
 /-- `v = 99` / `Need(v) = v` / `Outer = Need + 1` / `Outer(7)`: the root property is

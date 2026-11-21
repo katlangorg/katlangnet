@@ -30,7 +30,10 @@ def extraRA : List (Ident × Algorithm) :=
    ("UseA", algPrivate ["f"] [] [("A", alias (.param "f"))] [callN "A" [.num 9]]),
    ("G", alg ["o"] [] [] [add (.param "o") (.num 100)]),
    ("Box10", algPrivate [] [] [("G", alg ["x"] [] [] [mul (.param "x") (.num 10)])] []),
-   ("UseB", algPrivate ["b"] [] [("A", alias (.dotCall (.param "b") "G" none))] [callN "A" [.num 3]]),
+   -- `A` reads `b`, so it is local-only (EXPORTED-DETACHED: an exported alias's row is supplied detached).
+   ("UseB", alg ["b"] []
+      [privateLocalProp "A" (.localCapturedAncestorParams ["b"]) (alias (.dotCall (.param "b") "G" none))]
+      [callN "A" [.num 3]]),
    ("LibK", algWithParameters [{ name := "xs", kind := .collecting }] []
       [publicProp "K" (alg [] [] [] [.num 99])] [.num 0]),
    ("K", alg ["v"] [] [] [.num 7]),
@@ -283,7 +286,10 @@ def entries4 (state : EvalState) (name : Ident) : List CountedResult :=
 
 Owner decision 2026-11-15 (adversarial audit of 2026-11-14, §1.7 and SPECS §9/§10): a runtime alias's
 binding cell lives exactly as long as the zero-argument cache entry of the same row written as a
-property would (`aliasBindingCellKey`). An alias whose own property is EXPORTED has ONE cell per run;
+property would (`aliasBindingCellKey`). An alias whose own property is EXPORTED has ONE cell per
+OWNING INVOCATION (the inner-property lifetime rule, November 2026: every actual call of its owner
+has a fresh cell, and the reads from outside every call share the one run-scoped cell; from
+2026-11-15 until that rule it had one cell per run);
 a LOCAL-ONLY one has one cell per declaring binding context, which property-style reads inherit and
 explicit calls replace. The exposure is the front end's classification — an INPUT, written on each
 `PropDef` here exactly as the encoder emits it. Formerly the key carried the declaring chain's
@@ -340,8 +346,9 @@ def memberA : Expr := .dotCall (.resolve "B") "A" none
 def exportedLink : Algorithm := alias (algorithm (callN "Mk4" [.num 5]))
 
 /-- `OuterE(k) = { A = Mk4(5).Algorithm ⏎ A() }` (e4), `OuterP(k) = { public A = Mk4(5).Algorithm ⏎ A() }`
-    (esc), `FE2(k) = { Outer = { A = Mk4(5).Algorithm ⏎ A() } ⏎ Outer(), Outer() }` (e2) and `FE3`, which is
-    `FE2` with the unused local-only sibling `U = k + 0` as `Outer`'s first declaration (e3). -/
+    (esc), `FE2(k) = { Outer = { A = Mk4(5).Algorithm ⏎ A() } ⏎ Outer(), Outer() }` (e2), `FE3`, which is
+    `FE2` with the unused local-only sibling `U = k + 0` as `Outer`'s first declaration (e3), and `FE9`,
+    which is `FE2` with the two explicit calls replaced by two READS of `Outer` (e9). -/
 def exportedDecls : List (Ident × Algorithm) :=
   [("Z4", alg [] [] [] [.num 42]),
    ("Mk4", alg ["t"] [] [] [callN "Id" [terminalCapture]]),
@@ -355,7 +362,10 @@ def exportedDecls : List (Ident × Algorithm) :=
         [privateLocalProp "U" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [add (.param "k") (.num 0)]),
          privateProp "A" exportedLink]
         [callN "A" []])]
-      [callN "Outer" [], callN "Outer" []])]
+      [callN "Outer" [], callN "Outer" []]),
+   ("FE9", alg ["k"] []
+      [privateProp "Outer" (algPrivate [] [] [("A", exportedLink)] [callN "A" []])]
+      [.resolve "Outer", .resolve "Outer"])]
 
 /-- The value, the receiver executions and the recorded binding cells of an exported-alias program. -/
 def exportedObservation (rows : List Expr) : Option (Result × Nat × Nat) :=
@@ -365,22 +375,36 @@ def exportedObservation (rows : List Expr) : Option (Result × Nat × Nat) :=
 
 def twice42 : Result := .sequenceValue [.atom 42, .atom 42]
 
--- e4: two explicit calls of the owner share the run's ONE cell (formerly two cells, two receiver runs).
-#guard exportedObservation [callN "OuterE" [.num 0], callN "OuterE" [.num 0]] == some (twice42, 1, 1)
--- esc: a call of the owner, then the member read from OUTSIDE the owner — the same cell.
+-- e4: two explicit calls of the owner have two cells and run the receiver twice — every actual call has
+-- fresh bindings (under the run-wide exported cell of 2026-11-15 they shared ONE: `(twice42, 1, 1)`).
+#guard exportedObservation [callN "OuterE" [.num 0], callN "OuterE" [.num 0]] == some (twice42, 2, 2)
+-- esc: a call of the owner, then the member read from OUTSIDE the owner — the call's cell and the
+-- separate run-scoped outside cell, in either order.
 #guard exportedObservation [callN "OuterP" [.num 0], .call (.dotCall (.resolve "OuterP") "A" none) []]
-  == some (twice42, 1, 1)
+  == some (twice42, 2, 2)
 #guard exportedObservation [.call (.dotCall (.resolve "OuterP") "A" none) [], callN "OuterP" [.num 0]]
+  == some (twice42, 2, 2)
+-- Two reads from outside share the ONE run-scoped cell, and a later call of the owner adds its own.
+#guard exportedObservation [.call (.dotCall (.resolve "OuterP") "A" none) [], .call (.dotCall (.resolve "OuterP") "A" none) []]
   == some (twice42, 1, 1)
--- e2 and e3: the unused local-only sibling `U` gives `Outer` an activation per explicit call; it no
--- longer changes anything of the alias (formerly e3 had two cells where e2 had one).
-#guard exportedObservation [callN "FE2" [.num 0]] == some (twice42, 1, 1)
-#guard exportedObservation [callN "FE3" [.num 0]] == some (twice42, 1, 1)
+#guard exportedObservation [.call (.dotCall (.resolve "OuterP") "A" none) [], callN "OuterP" [.num 0],
+    .call (.dotCall (.resolve "OuterP") "A" none) []]
+  == some (.sequenceValue [.atom 42, .atom 42, .atom 42], 2, 2)
+-- e2 and e3: each explicit call of `Outer` has its own cell; the unused local-only sibling `U` changes
+-- nothing of the alias (before ALIAS-CELL-LIFETIME e3 had two cells where e2 had one).
+#guard exportedObservation [callN "FE2" [.num 0]] == some (twice42, 2, 2)
+#guard exportedObservation [callN "FE3" [.num 0]] == some (twice42, 2, 2)
 #guard exportedObservation [callN "FE3" [.num 0], callN "FE2" [.num 1], callN "FE3" [.num 2]]
-  == some (.sequenceValue [twice42, twice42, twice42], 2, 2)
+  == some (.sequenceValue [twice42, twice42, twice42], 6, 6)
+-- e9: two READS of `Outer` inside one call of its owner are one evaluation and one cell; a second call
+-- of the owner has its own.
+#guard exportedObservation [callN "FE9" [.num 0]] == some (twice42, 1, 1)
+#guard exportedObservation [callN "FE9" [.num 0], callN "FE9" [.num 1]]
+  == some (.sequenceValue [twice42, twice42], 2, 2)
 
--- THE KEY ITSELF: an exported alias's key ignores the context, the state and every activation of its
--- declaring chain; a local-only one reads the declaring chain's owner context, and without an
+-- THE KEY ITSELF: an exported alias's key ignores the access context and reads its declaring chain only
+-- for the OWNING INVOCATION — the binding context of the nearest level an actual call entered, nothing
+-- where there is none; a local-only one reads the declaring chain's owner context, and without an
 -- activated level the access context (the property cache's own fallback).
 def keyedProp (exposure : PropExposure) : PropDef :=
   privateLocalProp "A" exposure ((alias (algorithm R)).withDeclarationId (some (.shared 7)))
@@ -402,6 +426,22 @@ def accessCtx (context : Nat) : EvalCtx := { callStack := [], bindingContext := 
   == aliasBindingCellKey (keyedAlias .exported (some 1)) (accessCtx 2) EvalState.empty
 #guard aliasBindingCellKey (keyedAlias .exported none) (accessCtx 1) twoContexts
   == aliasBindingCellKey (keyedAlias .exported (some 1)) (accessCtx 2) twoContexts
+-- The two guards above are over levels that READS activated (`ownsInvocation = false`, the default): a
+-- read gives the alias no lifetime of its own, so those keys are the run-scoped one. A level an ACTUAL
+-- CALL entered owns the alias's cell: two calls have two keys, the access context takes no part, a
+-- read-activated level over no call is still run-scoped, and a call's key is never the run-scoped one.
+def twoCalls : EvalState :=
+  { lexicalActivations := #[{ values := [], bindingContext := 10, ownsInvocation := true },
+      { values := [], bindingContext := 20, ownsInvocation := true },
+      { values := [], bindingContext := 10 }] }
+#guard aliasBindingCellKey (keyedAlias .exported (some 0)) (accessCtx 1) twoCalls
+  != aliasBindingCellKey (keyedAlias .exported (some 1)) (accessCtx 1) twoCalls
+#guard aliasBindingCellKey (keyedAlias .exported (some 0)) (accessCtx 1) twoCalls
+  == aliasBindingCellKey (keyedAlias .exported (some 0)) (accessCtx 2) twoCalls
+#guard aliasBindingCellKey (keyedAlias .exported (some 2)) (accessCtx 1) twoCalls
+  == aliasBindingCellKey (keyedAlias .exported none) (accessCtx 2) EvalState.empty
+#guard aliasBindingCellKey (keyedAlias .exported (some 0)) (accessCtx 1) twoCalls
+  != aliasBindingCellKey (keyedAlias .exported none) (accessCtx 1) twoCalls
 -- Local-only: two activations with ONE binding context (a call and a read of it) share the key; another
 -- binding context does not; the activation-qualified chase key still separates all three.
 #guard aliasBindingCellKey (keyedAlias (.localCapturedAncestorParams ["p"]) (some 0)) (accessCtx 1) twoContexts

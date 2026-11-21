@@ -332,9 +332,10 @@ theorem family_callback_installs (rec : EvalRec) (callee : Algorithm) (args : Li
       rec.evalNeedFamilySupply callee cells ctx env calleeName) : EvalM CountedResult) := rfl
 
 /-- **The user supplied-call arm binds through the ONE binder at the evaluator's channels**, checks
-    the output, enters a fresh binding context and evaluates the body (or demands a value view's
-    binding cell); the ordinary driver turns the binder's unexpected `none` into `badArity`
-    itself. -/
+    the output, enters a fresh binding context and evaluates the body AS AN ACTUAL CALL (the
+    invocation mark `EvalCtx.enteringInvocation`: the body's entry records the activation that owns
+    the call's inner bindings — or demands a value view's binding cell); the ordinary driver turns
+    the binder's unexpected `none` into `badArity` itself. -/
 theorem user_supply_binds (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx)
     (env : ValEnv) :
     EvalBody.evalNeedUserSupplyOutput rec callee cells ctx env = ((do
@@ -345,7 +346,8 @@ theorem user_supply_binds (rec : EvalRec) (callee : Algorithm) (cells : List Nat
       let next <- needBindingContext ctx bindings
       if let some address ← valueViewCell? callee ctx then
         return (← rec.demandNeedRecursive address)
-      rec.evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))) :
+      rec.evalAlgOutputCounted callee { next with enteringInvocation := true }
+        (ValEnv.shadow env (Algorithm.params callee))) :
         EvalM CountedResult) := rfl
 
 /-- The user supplied-call arm's result is the call's VALUE BOUNDARY (`reCountValueBoundary`). -/
@@ -365,7 +367,8 @@ theorem family_supply_selects (rec : EvalRec) (callee : Algorithm) (cells : List
       let result <- rec.evalAlgOutputCounted body next values
       pure (reCountValueBoundary result)) : EvalM CountedResult) := rfl
 
-/-- A user LOOP STEP binds its state cells through the same binder at the same channels. -/
+/-- A user LOOP STEP binds its state cells through the same binder at the same channels and reads
+    its body as the actual call a round is (the invocation mark). -/
 theorem user_step_binds {α : Type} (rec : EvalRec) (read : Algorithm → EvalCtx → ValEnv → EvalM α)
     (atomic : CountedResult → EvalM α) (again : Algorithm → EvalM α)
     (p : Option ScopeCtx) (pp : List ParameterPattern) (op : List Expr) (pr : List PropDef)
@@ -376,7 +379,8 @@ theorem user_step_binds {α : Type} (rec : EvalRec) (read : Algorithm → EvalCt
           ((Algorithm.parameterPatterns (.mk p pp op pr o d)).map NeedPattern.ofParameter) (cells.map Prod.fst)
         | throw Error.badArity
       let next <- needBindingContext ctx bindings
-      read (.mk p pp op pr o d) next (ValEnv.shadow env (Algorithm.params (.mk p pp op pr o d)))) :
+      read (.mk p pp op pr o d) { next with enteringInvocation := true }
+        (ValEnv.shadow env (Algorithm.params (.mk p pp op pr o d)))) :
         EvalM α) := rfl
 
 /-- A clause-family LOOP STEP selects through the same dispatcher at the same channels, under its

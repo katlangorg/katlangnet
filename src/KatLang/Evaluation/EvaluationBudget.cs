@@ -204,6 +204,37 @@ internal sealed class EvaluationBudget
     /// <summary>The number of <c>tick()</c> executions this run has performed (test observation).</summary>
     internal long TickCount => Interlocked.Read(ref _tickCount);
 
+    // The run's ACTIVATION SERIAL (EXPORTED-DETACHED, November 2026): the number of lexical activations
+    // this run has recorded. Runtime identity only: it is no budget, charges nothing and is never
+    // reported. Lean: `EvalState.lexicalActivations.size`.
+    private long _activationSerial;
+
+    /// <summary>
+    /// The serial of a newly recorded lexical activation (<c>ParameterActivation.Capture</c>, the one
+    /// factory) or of a planned loop frame's context-binding head scope: 1, 2, 3 … in recording order,
+    /// never reused within the run. Interlocked, because an asynchronous run can record activations of
+    /// independent demands from more than one thread. Lean: the activation's index in
+    /// <c>EvalState.lexicalActivations</c>.
+    /// </summary>
+    internal long NextActivationSerial() => Interlocked.Increment(ref _activationSerial);
+
+    /// <summary>
+    /// THE WATERMARK of an exported evaluation that starts now (<c>Evaluator.DetachedEvaluation</c>):
+    /// one above every serial recorded so far, so every activation that exists at this moment is
+    /// DETACHED under it (<c>Evaluator.IsDetached</c>: <c>serial &lt; watermark</c>) and every activation
+    /// recorded later is not. Never zero, which is the mark of a context no exported evaluation
+    /// entered. Lean: <c>EvalCtx.detach</c> at <c>lexicalActivations.size</c> (Lean's ids start at 0,
+    /// these serials at 1).
+    /// </summary>
+    internal long ActivationWatermark => Interlocked.Read(ref _activationSerial) + 1;
+
+    /// <summary>
+    /// Whether this run evaluates exported zero-argument properties DETACHED
+    /// (<c>Evaluator.DetachedEvaluation</c>): true for every production run. False only for a run
+    /// created under the mutation-guard seam (<see cref="DetachedEvaluationTestSeam"/>), read once here.
+    /// </summary>
+    internal bool DetachesExportedEvaluations { get; } = DetachedEvaluationTestSeam.Current is null;
+
     /// <summary>
     /// ONE execution of the <c>tick()</c> primitive: increments the run's counter and returns the new
     /// value, or — when the counter already holds <see cref="MaxTickCount"/> — returns <c>false</c> and

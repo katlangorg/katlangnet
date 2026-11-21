@@ -957,10 +957,18 @@ theorem EvalBody.zeroArgPropertyCalculation_mono (request : ZeroArgPropertyReque
   have := EvalBody.evalPropertyDemandCounted_mono resolvedAlgorithm ctx env
   unfold EvalBody.zeroArgPropertyCalculation; mono_tac
 
+theorem EvalBody.zeroArgPropertyPublication_mono (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    monotone (fun rec : EvalRec => EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  have := EvalBody.zeroArgPropertyCalculation_mono request resolvedAlgorithm ctx env
+  unfold EvalBody.zeroArgPropertyPublication; mono_tac
+
+/-- The access is the publication law in the context its binding's exposure requires
+    (EXPORTED-DETACHED): the detached context for an exported binding, a refusal or the accessing
+    context for a local-only one. Every arm is the publication law or a constant. -/
 theorem EvalBody.evalZeroArgPropertyAccessCounted_mono (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
     monotone (fun rec : EvalRec => EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
-  have := EvalBody.zeroArgPropertyCalculation_mono request resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; mono_tac
+  all_goals exact EvalBody.zeroArgPropertyPublication_mono _ _ _ _ _ _ _
 
 theorem EvalBody.evalConditionalCallbackCallCounted_mono (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName) := by

@@ -1,5 +1,6 @@
 import KatLangArityLaws.NavigationSourceDomain
 import KatLangArityLaws.NavigationWiring
+import KatLangArityLaws.DetachedEvaluation
 
 open KatLang KatLang.NavigationContract KatLang.NavigationSourceDomain
 
@@ -111,7 +112,8 @@ theorem gate_names {ctx : EvalCtx} {container : Algorithm} {p : PropDef} {requir
     have hall := List.all_eq_true.mp hacc y hy
     split at hall
     · rename_i owner hown
-      exact ⟨owner, hown, (Bool.and_eq_true _ _ ▸ hall).1⟩
+      exact ⟨owner, hown,
+        KatLang.DetachedEvaluation.usableActivation_isSome ctx _ (Bool.and_eq_true _ _ ▸ hall).1⟩
     · cases hall
 
 /-- What the owner-activated gate checks of one required POSITION. -/
@@ -133,7 +135,7 @@ theorem gate_positions {ctx : EvalCtx} {container : Algorithm} {p : PropDef} {re
     split at hall
     · rename_i owner hown
       simp only [Bool.and_eq_true] at hall
-      exact ⟨owner, hown, hall.1.1, hall.1.2⟩
+      exact ⟨owner, hown, hall.1.1, KatLang.DetachedEvaluation.usableActivation_isSome ctx _ hall.1.2⟩
     · cases hall
 
 /-- **THE GATE GIVES THE CELL CLAUSE, names-only metadata.** -/

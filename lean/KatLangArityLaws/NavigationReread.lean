@@ -44,8 +44,9 @@ nothing, repeats from every navigation extension of its exit; `RR m` at every st
   That premise is observable and necessary (`MemberStabilityGuards.memberOriginRemintsRuntimeIdentity`).
 * `aliasBindingCellRecorded` records under a key its own lookup did not find; from the exit state on
   the record is read (`NavExt.aliasCell`). Its key (`aliasBindingCellKey`, ALIAS-CELL-LIFETIME) reads
-  the state through the owner search of the alias's declaring chain, so it is the same key at every
-  navigation extension where that search is RECORDED (`ownerSearchRecorded`, the third read below).
+  the state through the owner-context and owning-invocation searches of the alias's declaring chain,
+  so it is the same key at every navigation extension where the chain is RECORDED
+  (`ownerSearchRecorded`, the third read below).
 * `projectNeedCallable a` runs ARBITRARY code inside its flight (a link's receiver VALUE, body
   entries, mints) and publishes; from the exit state on the sticky outcome is read
   (`projection_reread`). No premise on the flight: it is memoized, not re-run.
@@ -201,14 +202,18 @@ theorem rr_identifyRuntime (a : Algorithm) : RR (identifyRuntimeAlgorithm a) := 
     ⟨fun _ _ h => h, Nat.le_succ _⟩⟩, fun hc => ?_⟩
   exact absurd hc (Nat.succ_ne_self _)
 
-/-- The decidable `OwnerContextStability.OwnerSearchValid`: the nearest ACTIVATED level of the chain
-    names a RECORDED activation, so the owner search of `propertyOwnerBindingContext` — which keys an
-    alias's binding cell (`aliasBindingCellKey`) — stops inside the array. -/
+/-- The decidable validity of the two searches that key an alias's binding cell
+    (`aliasBindingCellKey`): EVERY activated level of the chain names a RECORDED activation. The
+    owner-context search (`propertyOwnerBindingContext`) stops at the nearest activated level
+    (`OwnerContextStability.OwnerSearchValid`); the owning-invocation search
+    (`propertyOwnerInvocation`, the inner-property lifetime rule) walks on past a level a
+    property-style read activated (`InnerPropertyLifetime.InvocationSearchValid`), so the whole chain
+    is checked. Both searches then stay inside the array. -/
 def ownerSearchRecorded : Option ScopeCtx → EvalState → Bool
   | none, _ => true
   | some (.mk parent _ _ _ _ _ activation _), s =>
       match activation with
-      | some id => decide (id < s.lexicalActivations.size)
+      | some id => decide (id < s.lexicalActivations.size) && ownerSearchRecorded parent s
       | none => ownerSearchRecorded parent s
 
 theorem ownerSearchRecorded_spec : ∀ {chain : Option ScopeCtx} {s : EvalState},
@@ -217,13 +222,29 @@ theorem ownerSearchRecorded_spec : ∀ {chain : Option ScopeCtx} {s : EvalState}
   | some (.mk parent _ _ _ _ _ activation _), s, h => by
       cases activation with
       | some id =>
-        simp only [ownerSearchRecorded] at h
+        simp only [ownerSearchRecorded, Bool.and_eq_true] at h
         simp only [KatLang.OwnerContextStability.OwnerSearchValid]
-        exact of_decide_eq_true h
+        exact of_decide_eq_true h.1
       | none =>
         simp only [ownerSearchRecorded] at h
         simp only [KatLang.OwnerContextStability.OwnerSearchValid]
         exact ownerSearchRecorded_spec (chain := parent) h
+
+/-- A recorded chain's owning-invocation search is valid. -/
+theorem ownerSearchRecorded_invocation : ∀ {chain : Option ScopeCtx} {s : EvalState},
+    ownerSearchRecorded chain s = true → KatLang.InnerPropertyLifetime.InvocationSearchValid chain s
+  | none, _, _ => by simp only [KatLang.InnerPropertyLifetime.InvocationSearchValid]
+  | some (.mk parent _ _ _ _ _ activation _), s, h => by
+      cases activation with
+      | some id =>
+        simp only [ownerSearchRecorded, Bool.and_eq_true] at h
+        simp only [KatLang.InnerPropertyLifetime.InvocationSearchValid]
+        exact ⟨_, Array.getElem?_eq_getElem (of_decide_eq_true h.1),
+          Or.inr (ownerSearchRecorded_invocation (chain := parent) h.2)⟩
+      | none =>
+        simp only [ownerSearchRecorded] at h
+        simp only [KatLang.InnerPropertyLifetime.InvocationSearchValid]
+        exact ownerSearchRecorded_invocation (chain := parent) h
 
 theorem ownerSearchRecorded_mono {s u : EvalState} (hp : KatLang.OwnerContextStability.ActivationPrefix s u) :
     ∀ {chain : Option ScopeCtx}, ownerSearchRecorded chain s = true → ownerSearchRecorded chain u = true
@@ -231,8 +252,9 @@ theorem ownerSearchRecorded_mono {s u : EvalState} (hp : KatLang.OwnerContextSta
   | some (.mk parent _ _ _ _ _ activation _), h => by
       cases activation with
       | some id =>
-        simp only [ownerSearchRecorded] at h ⊢
-        exact decide_eq_true (Nat.lt_of_lt_of_le (of_decide_eq_true h) hp.size_le)
+        simp only [ownerSearchRecorded, Bool.and_eq_true] at h ⊢
+        exact ⟨decide_eq_true (Nat.lt_of_lt_of_le (of_decide_eq_true h.1) hp.size_le),
+          ownerSearchRecorded_mono hp (chain := parent) h.2⟩
       | none =>
         simp only [ownerSearchRecorded] at h ⊢
         exact ownerSearchRecorded_mono hp (chain := parent) h
@@ -245,12 +267,13 @@ theorem rrat_aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx
     (s : EvalState) (hs : ownerSearchRecorded wired.parent s = true) :
     RRat s (aliasBindingCell wired target ctx) := by
   have hvalid := ownerSearchRecorded_spec hs
+  have hinvocation := ownerSearchRecorded_invocation hs
   cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
   | some a0 =>
     exact RRat.of_run (KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx s a0 hnp hl)
       (NavExt.refl s)
       (fun _ u hu => KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx u a0 hnp (by
-        rw [KatLang.RuntimeAliasLaws.aliasBindingCellKey_stable wired ctx hu.memo.activations hvalid]
+        rw [KatLang.RuntimeAliasLaws.aliasBindingCellKey_stable wired ctx hu.memo.activations hvalid hinvocation]
         exact hu.aliasCell hl))
   | none =>
     obtain ⟨c, u, _, hneeds, _, _, hrun⟩ :=
@@ -265,7 +288,7 @@ theorem rrat_aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx
     · show LinkHeapKept s.needs (u.needs.push _)
       rw [hneeds]; exact LinkHeapKept.push _ _
     · exact KatLang.RuntimeAliasLaws.aliasBindingCell_recorded wired target ctx v _ hnp (by
-        rw [KatLang.RuntimeAliasLaws.aliasBindingCellKey_stable wired ctx (hact.trans hv.memo.activations) hvalid]
+        rw [KatLang.RuntimeAliasLaws.aliasBindingCellKey_stable wired ctx (hact.trans hv.memo.activations) hvalid hinvocation]
         exact hv.aliasCell (by simp [lookupAssoc]))
 
 /-! ### The memoized projection -/
@@ -377,8 +400,17 @@ theorem rrat_projectParameterWith (project : Nat → EvalM (Option Algorithm)) (
   rw [projectParameterWith_run] at hdone ⊢
   cases haddr : parameterAddressIn s.lexicalActivations x ctx with
   | none =>
-    refine ⟨NavExt.refl s, fun _ u hu => ?_⟩
-    rw [projectParameterWith_run, parameterAddressIn_stable x ctx s u hu.memo.activations hact, haddr]
+    -- No cell: the absence of a usable binding, or the refusal of an unavailable parameter. Both are
+    -- decided by the context alone and leave the state as it was.
+    by_cases hu : capturedParameter x ctx = .unavailable
+    · simp only [hu, ite_true]
+      refine ⟨NavExt.refl s, fun _ u hext => ?_⟩
+      rw [projectParameterWith_run, parameterAddressIn_stable x ctx s u hext.memo.activations hact, haddr]
+      simp only [hu, ite_true]
+    · simp only [hu, ite_false]
+      refine ⟨NavExt.refl s, fun _ u hext => ?_⟩
+      rw [projectParameterWith_run, parameterAddressIn_stable x ctx s u hext.memo.activations hact, haddr]
+      simp only [hu, ite_false]
   | some address =>
     rw [haddr] at hdone
     have h := hp address s hdone
@@ -655,8 +687,9 @@ def paramRowAdmits (a : Algorithm) (ctx : EvalCtx) (s : EvalState) : Bool :=
   | _ => true
 
 /-- A chase step of an alias reads (or establishes) its binding cell under `aliasBindingCellKey`,
-    which reads the state through the owner search of the alias's declaring chain: the step is
-    admitted where that search is recorded (`ownerSearchRecorded`). A non-alias takes no step. -/
+    which reads the state through the owner-context and owning-invocation searches of the alias's
+    declaring chain: the step is admitted where every activated level of that chain is recorded
+    (`ownerSearchRecorded`). A non-alias takes no step. -/
 def cellKeyAdmits (a : Algorithm) (s : EvalState) : Bool :=
   match a with
   | .alias parent _ _ _ _ _ => ownerSearchRecorded parent s
@@ -818,7 +851,7 @@ theorem rron_paramRow_cell (parent : Option ScopeCtx) (opens : List Expr) (props
         (ctx.push (.alias parent opens props (.param y) id reference)) = some p →
         (aliasBindingCell (.alias parent opens props (.param y) id reference) (.param y) ctx).runState u = (.ok p, u) :=
       fun u hu => KatLang.RuntimeAliasLaws.aliasBindingCell_parameter_transport _ y ctx u _ p
-        (captured_run y _ u) hu
+        (captured_run y _ u (parameterAddressIn_available hu)) hu
     exact RRat.of_run (hrun s haddr) (NavExt.refl s)
       (fun _ u hu => hrun u (by rw [parameterAddress_kept hu hanch]; exact haddr))
 

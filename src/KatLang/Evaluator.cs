@@ -40,15 +40,32 @@ namespace KatLang;
 /// validity preflight; they do not perform front-end elaboration. Hosts may build
 /// ASTs through the public records, but must supply correct name ownership and
 /// <see cref="Property.Exposure"/> metadata and keep executable metadata unchanged
-/// during evaluation. Exported properties must not capture caller bindings: the
-/// evaluator trusts this for open/structural visibility and for reuse of the first
-/// successful zero-argument property result across the run. A falsely exported
-/// capture can therefore expose an inaccessible member or reuse another call's
-/// value. This holds for properties declared in a host-built <see cref="ScopeCtx"/>
-/// too: such a scope (kept as the parent of an opened inline block) is the declaring
+/// during evaluation. Exported properties must not capture caller bindings, and the
+/// evaluator ENFORCES this (since November 2026; formerly it trusted the flag). An
+/// exported zero-argument property is evaluated DETACHED from the calls that are
+/// active when its evaluation starts: it inherits no parameter binding, and the
+/// activations that exist at that moment stay identities but supply no input. A
+/// captured parameter is used through the activation of the scope that lexically
+/// owns it, never from a caller's environment. On the paths the evaluator checks, a
+/// falsely exported capture is therefore REFUSED —
+/// <see cref="KatLangErrorCode.UnknownName"/> at every executed operation on the
+/// parameter (its value read, a call through it, its transport as an argument),
+/// <see cref="KatLangErrorCode.LocalOnlyProperty"/> at a navigation or at a
+/// local-only read — instead of exposing an inaccessible member's value or reusing
+/// another call's value for the rest of the run. THE GUARANTEE IS NOT
+/// UNCONDITIONAL: the binding cell a local runtime-target alias retains is not
+/// checked, so a falsely exported property that reads such an alias after another
+/// read of the same call established its cell reuses that call's value (the open
+/// row R-1 of <c>docs/design/formal-correspondence-ledger.md</c>). Supplying correct
+/// exposure metadata remains the host's obligation. The flag governs accessibility
+/// and detachment. Each call owns its inner bindings. An accessible binding with
+/// no owning call uses the run-scoped entry. A host-built <see cref="ScopeCtx"/>
+/// (kept as the parent of an opened inline block) is the declaring
 /// owner of its properties for caching, identified by the scope OBJECT — two
 /// independently constructed scopes never share cached values, even when they are
-/// structurally equal. Use <see cref="Parser.Parse(string)"/> or <see cref="KatLangEngine"/> for
+/// structurally equal — and it is never activated, so a name it lists among its
+/// <see cref="ScopeCtx.Parameters"/> has no binding to read. Use
+/// <see cref="Parser.Parse(string)"/> or <see cref="KatLangEngine"/> for
 /// source programs and the complete front-end invariants.
 /// </remarks>
 public static partial class Evaluator
@@ -95,6 +112,30 @@ public static partial class Evaluator
     {
         internal NeedEnv NeedEnv { get; init; } = [];
         internal EvalCtx WithNeedEnv(NeedEnv env) => this with { NeedEnv = env };
+
+        /// <summary>
+        /// THE ACTIVATION WATERMARK of this context (EXPORTED-DETACHED, November 2026), or zero when no
+        /// exported evaluation entered it: every <see cref="ParameterActivation"/> whose
+        /// <see cref="ParameterActivation.Serial"/> is below it is DETACHED here
+        /// (<see cref="IsDetached"/>) — still an identity, never a source of inputs. It rides on the
+        /// call-stack node (<see cref="DetachedReadOnlyList{T}"/>), so this struct keeps its size and
+        /// every derived context — a pushed head, a bound callee, a suspended cell's caller — carries
+        /// it: a closure or plan created inside an exported evaluation stays detached wherever it is
+        /// demanded later. Lean: <c>EvalCtx.detachedBefore</c>.
+        /// </summary>
+        internal long DetachedBefore
+            => CallStack is DetachedReadOnlyList<Algorithm> detached ? detached.DetachedBefore : 0;
+
+        /// <summary>
+        /// THE DETACHED CONTEXT of an exported evaluation that starts under <paramref name="watermark"/>
+        /// (<see cref="EvaluationBudget.ActivationWatermark"/>): the same call stack, head scope, services
+        /// and budget, NO inherited need cell, and the watermark raised to at least
+        /// <paramref name="watermark"/> (a nested detachment never lowers it). The caller supplies the
+        /// empty value environment beside it (<see cref="DetachedEvaluation"/>). Lean:
+        /// <c>EvalCtx.detach</c>.
+        /// </summary>
+        internal EvalCtx Detach(long watermark)
+            => this with { CallStack = DetachedReadOnlyList<Algorithm>.Mark(CallStack, watermark), NeedEnv = [] };
         /// <summary>
         /// A fresh empty context. This is a PROPERTY, not a shared static instance:
         /// every use must get its own budget — and with it its own UNSEEDED random
@@ -388,7 +429,9 @@ public static partial class Evaluator
         var scope = new ScopeCtx(callee.Parent, callee.Opens, callee.Properties, binderNames)
         {
             Owner = callee,
-            Activation = ParameterActivation.Capture(binderNames, ctx, values),
+            // A selected clause is an actual call of its family: the family scope's activation owns
+            // the invocation (Lean: `wireSelectedBranchBody` records it under the invocation mark).
+            Activation = ParameterActivation.Capture(binderNames, ctx, values, invoked: true),
         };
         return WithParent(body, scope);
     }
@@ -455,6 +498,12 @@ public static partial class Evaluator
     /// activation on the site chain, and each must be ACTIVATED there: a static owner anchoring
     /// cannot reach (one above an activated level of the container's chain) refuses the access. So
     /// an accepted member reads its owner's bindings.
+    /// A DETACHED owner activation refuses the access too (EXPORTED-DETACHED, November 2026,
+    /// <see cref="IsDetached"/>): inside an exported evaluation the activations that existed when it
+    /// started are identities, never inputs, so a local-only member one of them owns is inaccessible
+    /// — the same <see cref="EvalError.LocalOnlyProperty"/>. <see cref="LexicalChainContains"/> needs
+    /// no watermark of its own: the level it accepts carries the owner's own activation
+    /// (<see cref="CompatibleActivations"/>), which this test has already found usable.
     /// Direct lexical hits already select on that chain. Lean: memberAccessible?.
     /// </summary>
     private static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx)
@@ -474,7 +523,8 @@ public static partial class Evaluator
                     owner = owner.Parent;
                 if (requirement.OwnerDepth < 0 || owner is null
                     || !owner.Parameters.Contains(requirement.Name, StringComparer.Ordinal)
-                    || owner.Activation is null
+                    || owner.Activation is not { } activation
+                    || IsDetached(activation, ctx)
                     || !LexicalChainContains(ctx, owner))
                     return false;
             }
@@ -483,7 +533,8 @@ public static partial class Evaluator
         foreach (var name in member.RequiredAncestorParameters)
         {
             if (RequiredParameterOwner(declaringScope, name) is not { } owner
-                || owner.Activation is null
+                || owner.Activation is not { } activation
+                || IsDetached(activation, ctx)
                 || !LexicalChainContains(ctx, owner))
                 return false;
         }
@@ -1546,12 +1597,46 @@ public static partial class Evaluator
         private MemberIndex? _index;
         private int _reads;
 
-        internal ResolvedOpenLevel(ScopeCtx? level, Evaluation.EvaluationBudget run, IReadOnlyList<ResolvedOpen> providers)
+        // The highest watermark these providers are known to stand under (AnswersWatermark).
+        private long _resolvedUnder;
+
+        internal ResolvedOpenLevel(ScopeCtx? level, Evaluation.EvaluationBudget run, IReadOnlyList<ResolvedOpen> providers,
+            long resolvedUnder = 0)
         {
             Level = level;
             Run = run;
             _providers = providers;
             _bindings = run.PropertyBindings;
+            _resolvedUnder = resolvedUnder;
+        }
+
+        /// <summary>
+        /// Whether these providers answer a reader whose activation watermark is <paramref name="reader"/>
+        /// (EXPORTED-DETACHED, November 2026; <see cref="EvalCtx.DetachedBefore"/>). Resolving a level's
+        /// opens passes access checks that read the activations of the level's chain, and a watermark
+        /// only ever REMOVES usable activations (<see cref="IsDetached"/>). So a successful resolution
+        /// answers every reader at or below the watermark it ran under — the same checks pass with
+        /// more usable activations, and the providers are the same — and a reader ABOVE it exactly
+        /// when no activation of the chain lies between the two watermarks; the known bound then
+        /// rises, so the walk is paid once. Otherwise the reader resolves again in its own context
+        /// (and a refused dotted target is its ordinary failure, memoized nowhere). A reader outside
+        /// every exported evaluation (watermark zero) is always answered.
+        /// </summary>
+        internal bool AnswersWatermark(long reader)
+        {
+            var resolvedUnder = Volatile.Read(ref _resolvedUnder);
+            if (reader <= resolvedUnder)
+                return true;
+
+            for (var scope = Level; scope is not null; scope = scope.Parent)
+            {
+                if (scope.Activation is { } activation && activation.Serial >= resolvedUnder && activation.Serial < reader)
+                    return false;
+            }
+
+            // Racing readers each verified their own bound; whichever write lands is a verified one.
+            Volatile.Write(ref _resolvedUnder, reader);
+            return true;
         }
 
         /// <summary>The level state these providers were resolved for, or null for an unmemoized level.</summary>
@@ -1933,7 +2018,8 @@ public static partial class Evaluator
     private static ResolvedOpenLevel? MemoizedOpenLevel(ScopeCtx level, EvalCtx ctx)
     {
         var memo = level.Activation is { } activation ? activation.OpenLevel : level.StaticOpenLevel;
-        if (memo is null || !ReferenceEquals(memo.Level, level) || !ReferenceEquals(memo.Run, ctx.Budget))
+        if (memo is null || !ReferenceEquals(memo.Level, level) || !ReferenceEquals(memo.Run, ctx.Budget)
+            || !memo.AnswersWatermark(ctx.DetachedBefore))
             return null;
 
         ctx.Observations?.RecordOpenLevelConsultation(reused: true);
@@ -1958,7 +2044,7 @@ public static partial class Evaluator
         var resolvedResult = ResolveAllOpens(opener, innerCtx);
         if (resolvedResult.IsError) return resolvedResult.Error;
 
-        var resolved = new ResolvedOpenLevel(level, ctx.Budget, resolvedResult.Value);
+        var resolved = new ResolvedOpenLevel(level, ctx.Budget, resolvedResult.Value, ctx.DetachedBefore);
         if (level is not null)
         {
             if (level.Activation is { } activation)
@@ -2828,7 +2914,11 @@ public static partial class Evaluator
     /// exposure metadata. Hosts that need authoritative source elaboration use
     /// <see cref="Parser.Parse(string)"/> / <see cref="Parser.ParseAsync"/> or
     /// <see cref="KatLangEngine"/>; a host that constructs an AST owns the correctness
-    /// of its elaboration metadata.</para>
+    /// of its elaboration metadata. Exposure metadata is ENFORCED, not trusted
+    /// (EXPORTED-DETACHED): a property left <see cref="PropertyExposure.Exported"/> that
+    /// reads an input of an enclosing call is refused where it reads it
+    /// (<c>UnknownName</c>, <c>LocalOnlyProperty</c>), never given a value shared across
+    /// calls.</para>
     /// <para><b>Host-AST contract:</b> the expression may be a preconstructed
     /// (host-built) AST. Every entry point first runs a non-recursive structural safety
     /// preflight: a tree whose weighted structural depth exceeds
@@ -4088,8 +4178,171 @@ public static partial class Evaluator
         return result;
     }
 
+    // A call-stack node of a DETACHED context is a detached node carrying the same watermark, so every
+    // context derived by a push inherits it; every other push builds the node it always built.
     private static IReadOnlyList<T> Prepend<T>(T item, IReadOnlyList<T> list)
-        => new PrependedReadOnlyList<T>(item, list);
+        => list is DetachedReadOnlyList<T> detached
+            ? new DetachedPrependedReadOnlyList<T>(item, list, detached.DetachedBefore)
+            : new PrependedReadOnlyList<T>(item, list);
+
+    /// <summary>
+    /// A call stack that carries an ACTIVATION WATERMARK (EXPORTED-DETACHED, November 2026;
+    /// <see cref="EvalCtx.DetachedBefore"/>): the stack of a context inside an exported evaluation.
+    /// The watermark lives on the call-stack node instead of <see cref="EvalCtx"/>, which is copied
+    /// by value through calibrated frames, so no evaluator frame grows; and only detached contexts
+    /// build these nodes, so a context outside every exported evaluation allocates exactly the
+    /// <see cref="PrependedReadOnlyList{T}"/> it always did. Two shapes: the marker an exported
+    /// evaluation starts with (<see cref="WatermarkedReadOnlyList{T}"/>, element-free) and a head
+    /// pushed above a detached stack (<see cref="DetachedPrependedReadOnlyList{T}"/>).
+    /// </summary>
+    private abstract class DetachedReadOnlyList<T>(long detachedBefore) : IReadOnlyList<T>
+    {
+        /// <summary>Activations with a serial below this are detached in the context (never zero).</summary>
+        internal readonly long DetachedBefore = detachedBefore;
+
+        public abstract int Count { get; }
+
+        public abstract T this[int index] { get; }
+
+        public abstract IEnumerator<T> GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => GetEnumerator();
+
+        /// <summary>
+        /// <paramref name="stack"/> under at least <paramref name="watermark"/>: the same elements, and a
+        /// watermark that a nested detachment never lowers. A marker is never wrapped in a marker, so a
+        /// re-marked stack reads its elements in one hop however many exported evaluations nest
+        /// without an intervening push.
+        /// </summary>
+        internal static DetachedReadOnlyList<T> Mark(IReadOnlyList<T> stack, long watermark)
+        {
+            if (stack is not DetachedReadOnlyList<T> detached)
+                return new WatermarkedReadOnlyList<T>(stack, watermark);
+
+            watermark = Math.Max(watermark, detached.DetachedBefore);
+            return new WatermarkedReadOnlyList<T>(
+                detached is WatermarkedReadOnlyList<T> marker ? marker.Inner : stack, watermark);
+        }
+    }
+
+    // The marker an exported evaluation's context starts with: the reader's stack, unchanged, under the watermark.
+    private sealed class WatermarkedReadOnlyList<T>(IReadOnlyList<T> inner, long detachedBefore)
+        : DetachedReadOnlyList<T>(detachedBefore)
+    {
+        internal IReadOnlyList<T> Inner => inner;
+
+        public override int Count => inner.Count;
+
+        public override T this[int index] => inner[index];
+
+        public override IEnumerator<T> GetEnumerator() => inner.GetEnumerator();
+    }
+
+    // PrependedReadOnlyList over a detached stack: the same list, carrying its tail's watermark.
+    private sealed class DetachedPrependedReadOnlyList<T> : DetachedReadOnlyList<T>
+    {
+        private readonly T _head;
+        private readonly IReadOnlyList<T> _tail;
+
+        public DetachedPrependedReadOnlyList(T head, IReadOnlyList<T> tail, long detachedBefore)
+            : base(detachedBefore)
+        {
+            _head = head;
+            _tail = tail;
+            Count = tail.Count + 1;
+        }
+
+        public override int Count { get; }
+
+        public override T this[int index]
+            => index switch
+            {
+                0 => _head,
+                > 0 when index <= _tail.Count => _tail[index - 1],
+                _ => throw new ArgumentOutOfRangeException(nameof(index)),
+            };
+
+        public override IEnumerator<T> GetEnumerator()
+        {
+            yield return _head;
+            foreach (var item in _tail)
+                yield return item;
+        }
+    }
+
+    /// <summary>
+    /// The value environment of a DETACHED evaluation: no binding at all, under the READER's
+    /// binding-context identity (<see cref="BindingContextIdentity"/>). The empty need tier beside it
+    /// is no binding boundary, so the detached context's identity is this environment's — the one the
+    /// reader had. Detachment therefore removes the reader's INPUTS and nothing else: a key computed
+    /// below the boundary before any call binds (a local-only property on a chain with no activated
+    /// level, the identity a parameterless or collecting-only owner inherits when its declaring chain
+    /// has none — CACHE-OWNER-D1) is the key the reader's own context computes. Lean:
+    /// <c>EvalCtx.detach</c> keeps <c>bindingContext</c>.
+    /// </summary>
+    private sealed class DetachedValueEnvironment(object cacheIdentity)
+        : ValEnv, IValueEnvironmentCacheIdentityProvider
+    {
+        public object CacheIdentity => cacheIdentity;
+
+        public int Count => 0;
+
+        public (string Name, Result Value) this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
+
+        public IEnumerator<(string Name, Result Value)> GetEnumerator()
+            => Enumerable.Empty<(string Name, Result Value)>().GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => GetEnumerator();
+    }
+
+    /// <summary>
+    /// EXPORTED MEANS DETACHED (EXPORTED-DETACHED, November 2026): the context and the value
+    /// environment every evaluation that can create or own an <see cref="PropertyExposure.Exported"/>
+    /// zero-argument key runs in — the read's miss and re-entrant calculation
+    /// (<see cref="GetOrEvaluateZeroArgPropertyResultCore"/>), the qualifying zero-supply invocation
+    /// (CACHE-PUB-1), their async twins, and the row of an exported runtime alias's binding cell.
+    /// The reader's context under the run's current watermark (<see cref="EvalCtx.Detach"/>,
+    /// <see cref="EvaluationBudget.ActivationWatermark"/>) and an empty value environment that keeps
+    /// the reader's binding identity (<see cref="DetachedValueEnvironment"/>). Every activation that
+    /// exists now stays an IDENTITY — cache keys, alias memos, anchoring and CACHE-OWNER-D1
+    /// inheritance are unchanged — and, on the checked paths, supplies no INPUT: every executed
+    /// operation on a captured parameter through one is refused
+    /// (<see cref="CapturedParameterActivation"/>, <see cref="UnboundParameter"/>), a local-only member
+    /// one of them owns is inaccessible (<see cref="IsAccessibleFrom"/>) and a local-only property
+    /// keyed on one is refused (<see cref="DetachedLocalOnlyRead"/>). So on those paths a wrong
+    /// <c>Exported</c> flag is a refusal instead of a value shared across calls. Not unconditionally:
+    /// a retained local runtime-alias binding cell that an earlier attached read established is
+    /// still reused (ledger R-1, open). One helper, never inlined: its locals stay out of the
+    /// property and call seams' calibrated frames. Lean: <c>EvalCtx.detach</c> in
+    /// <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static EvalCtx DetachedEvaluation(EvalCtx ctx, ValEnv readerValues, out ValEnv values)
+    {
+        if (!ctx.Budget.DetachesExportedEvaluations)
+        {
+            values = readerValues;
+            return ctx;
+        }
+
+        values = new DetachedValueEnvironment(BindingContextIdentity(ctx, readerValues));
+        return ctx.Detach(ctx.Budget.ActivationWatermark);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="activation"/> is DETACHED in <paramref name="ctx"/>: recorded before the
+    /// exported evaluation the context is inside started (<see cref="EvalCtx.DetachedBefore"/>). False
+    /// in every context no exported evaluation entered. THE one predicate of the watermark. Lean:
+    /// <c>EvalCtx.isDetached</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    internal static bool IsDetached(ParameterActivation activation, in EvalCtx ctx)
+    {
+        var watermark = ctx.DetachedBefore;
+        return watermark != 0 && activation.Serial < watermark;
+    }
 
     private sealed class PrependedReadOnlyList<T> : IReadOnlyList<T>
     {

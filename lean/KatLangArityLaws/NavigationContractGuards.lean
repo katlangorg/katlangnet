@@ -12,7 +12,7 @@ open KatLang.NavigationContract
 per-body obligation of a call contract that gives the navigation facts (`NavFacts`). This module
 bounds that reduction from both sides.
 
-## 1. The cell clause needs a STATIC premise the evaluator does not check (`MisExposed`)
+## 1. A mis-exposed parameter-row member is refused by the evaluator (`MisExposed`)
 
 `ParamRowOwned` — a parameter-row alias lives under its owner's activation — holds of a source
 program because a member that captures an ancestor parameter is LOCAL-ONLY, so the accessibility law
@@ -23,14 +23,19 @@ marked exported:
 
     F(y) = { public A = y ⏎ y }      -- `A` marked `exported`, although its row is the parameter `y`
 
-From the EMPTY state, in the root's own context, production's own operations — the structural
-projection of the written path `F.A`, then the structure chase of the member it returns, i.e. the
-two steps of the CALLABLE projection of an argument `F.A` (`projectNeedWritten`) — complete, mint
-nothing, and are NOT re-read: every chase allocates a binding cell (`mis_exposed_is_not_reread`).
-The tree is a legal evaluator input, so the admitted domain of the reachability theorem must carry
-the static premise; the SAME tree with the member marked local-only is refused by accessibility
-before any chase (`well_exposed_is_refused`). Classification: host-built, not a front-end output,
-and no production semantic defect — the evaluator does what the metadata says.
+From the EMPTY state, in the root's own context, the structural projection of the written path
+`F.A` succeeds (an exported member is accessible everywhere). The structure chase of the member it
+returns — the second step of the CALLABLE projection of an argument `F.A` (`projectNeedWritten`) —
+is REFUSED: the row `y` is lexically owned by `F`, which no call activated, so its transport is
+`unknownName` in the state the chase started from, and nothing is allocated
+(`mis_exposed_is_refused`; EXPORTED-DETACHED follow-up, November 2026: captured reads are
+lexical-only on every executed parameter operation). UNTIL THAT REFUSAL this chase completed with a
+fresh binding cell per run and was not re-read, which made the tree the witness that the cell
+clause needs its static premise. It no longer witnesses that: the contract still excludes the tree
+at its entry (`outside_navigationContract`, `navFacts_fail`), and this module does not claim that
+the static premise is necessary for a COMPLETED chase. The SAME tree with the member marked
+local-only is refused by accessibility before any chase (`well_exposed_is_refused`).
+Classification: host-built, not a front-end output.
 
 ## 2. The hypotheses of B1 are jointly satisfiable (`ProjectionOnly`)
 
@@ -97,19 +102,14 @@ def wired : Algorithm :=
   | .ok (some a) => a
   | _ => preludeAlg
 
-/-- The exit states of the member's structure chase from the empty state, and of a second chase. -/
-def once : EvalState := ((resolveAliasStructure wired (ctx .exported)).runState EvalState.empty).2
-def twice : EvalState := ((resolveAliasStructure wired (ctx .exported)).runState once).2
-
 theorem facts :
     ((projectNeedStructuralMember path (ctx .exported)).runState EvalState.empty =
       (.ok (some wired), EvalState.empty)) ∧
-    ((resolveAliasStructure wired (ctx .exported)).runState EvalState.empty = (.ok none, once)) ∧
-    (once.needs.size = 1) ∧ (once.nextRuntimeDeclaration = 0) ∧
-    ((resolveAliasStructure wired (ctx .exported)).runState once = (.ok none, twice)) ∧
-    (twice.needs.size = 2) ∧
+    ((resolveAliasStructure wired (ctx .exported)).runState EvalState.empty =
+      (.error (Error.unknownName "y"), EvalState.empty)) ∧
     (paramRowAdmits wired (ctx .exported) EvalState.empty = false) ∧
-    ((projectNeedWritten path (ctx .exported)).runState EvalState.empty = (.ok none, once)) := by
+    ((projectNeedWritten path (ctx .exported)).runState EvalState.empty =
+      (.error (Error.unknownName "y"), EvalState.empty)) := by
   cbv
   all_goals (repeat' (first | rfl | constructor))
 
@@ -117,9 +117,10 @@ theorem facts :
 theorem projected : (projectNeedStructuralMember path (ctx .exported)).runState EvalState.empty =
     (.ok (some wired), EvalState.empty) := facts.1
 
-/-- The CALLABLE projection of the written argument `F.A` is those two steps, and allocates. -/
+/-- The CALLABLE projection of the written argument `F.A` is those two steps: it is the chase's
+    refusal, in the state it started from. -/
 theorem written_projection : (projectNeedWritten path (ctx .exported)).runState EvalState.empty =
-    (.ok none, once) := facts.2.2.2.2.2.2.2
+    (.error (Error.unknownName "y"), EvalState.empty) := facts.2.2.2
 
 /-- The navigation facts FAIL of that chase: the alias is not under its owner's activation. -/
 theorem navFacts_fail :
@@ -130,7 +131,7 @@ theorem navFacts_fail :
     navFacts_admits (.resolveAliasChase false true wired (ctx .exported) [] none) EvalState.empty rfl h
   simp only [Bool.and_eq_true] at hadm'
   have hadm := hadm'.1
-  rw [facts.2.2.2.2.2.2.1] at hadm
+  rw [facts.2.2.1] at hadm
   cases hadm
 
 /-- The specialized B1 contract excludes this HOST-BUILT counterexample at its entry, whatever
@@ -143,33 +144,23 @@ theorem outside_navigationContract (extraPre : EvalCall → EvalState → Prop)
   exact navFacts_fail (navigationContract_admits extraPre extraPost _ _ rfl
     (navigationContract_empty extraPre extraPost) hp)
 
-/-- **NEGATIVE CONTROL: the static premise of the cell clause is necessary.** In a host-built tree
-    whose parameter-row member is marked EXPORTED, production reaches — from the empty state, by its
-    own operations on the program's own written path — a completed, non-minting structure chase that
-    is NOT re-read (every run allocates a binding cell) and is no navigation run. Host-built: the
+/-- **THE MIS-EXPOSED PARAMETER ROW IS REFUSED** (EXPORTED-DETACHED follow-up, November 2026). In a
+    host-built tree whose parameter-row member is marked EXPORTED, the structural projection of the
+    program's own written path succeeds, and the structure chase of the member it returns is the
+    `unknownName` refusal of its row — lexically owned by an owner no call activated — in the state
+    the chase started from: nothing is allocated, minted or written, so the same chase from the same
+    state refuses again. (Formerly this chase COMPLETED with a fresh binding cell per run and was not
+    re-read: the witness that the cell clause needs its static premise. The model now refuses the
+    tree; `outside_navigationContract` still excludes it at the contract's entry.) Host-built: the
     evaluator's pre-evaluation checks do not read `PropDef.exposure`. -/
-theorem mis_exposed_is_not_reread :
+theorem mis_exposed_is_refused :
     (projectNeedStructuralMember path (ctx .exported)).runState EvalState.empty =
       (.ok (some wired), EvalState.empty) ∧
-    (resolveAliasStructure wired (ctx .exported)).runState EvalState.empty = (.ok none, once) ∧
-    once.nextRuntimeDeclaration = EvalState.empty.nextRuntimeDeclaration ∧
-    (resolveAliasStructure wired (ctx .exported)).runState once ≠ (.ok none, once) ∧
-    ¬ NavRuns (.resolveAliasStructure wired (ctx .exported)) EvalState.empty (.ok none, once) := by
-  have hne : once ≠ twice := by
-    intro h
-    have h1 := facts.2.2.1
-    have h2 := facts.2.2.2.2.2.1
-    rw [← h] at h2
-    omega
-  refine ⟨facts.1, facts.2.1, facts.2.2.2.1, ?_, ?_⟩
-  · rw [facts.2.2.2.2.1]
-    intro h
-    exact hne (Prod.mk.inj h).2.symm
-  · intro hnav
-    have h := ((navigation_reread _ EvalState.empty once _ hnav facts.2.2.2.1).2 once (NavExt.refl once)).1
-    have h1 : (resolveAliasStructure wired (ctx .exported)).runState once = (.ok none, once) := h
-    rw [facts.2.2.2.2.1] at h1
-    exact hne (Prod.mk.inj h1).2.symm
+    (resolveAliasStructure wired (ctx .exported)).runState EvalState.empty =
+      (.error (Error.unknownName "y"), EvalState.empty) ∧
+    (projectNeedWritten path (ctx .exported)).runState EvalState.empty =
+      (.error (Error.unknownName "y"), EvalState.empty) :=
+  ⟨facts.1, facts.2.1, facts.2.2.2⟩
 
 /-- The exposure a front end gives the member: it captures the ancestor parameter `y`. -/
 def localOnly : PropExposure := .localCapturedAncestorParams ["y"]

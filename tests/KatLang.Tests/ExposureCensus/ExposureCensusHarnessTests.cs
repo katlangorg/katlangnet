@@ -804,8 +804,10 @@ public sealed class ExposureCensusHarnessTests
     /// shows the arm). A reader whose only charge is its fallback's read of <c>y</c> is exported by the host: its escaped
     /// read then fails with <c>UnknownName: y</c>, no access refusal. With parameters of its own the reader is not cached
     /// across activations, so U1 sees consistent values and no existing check reports anything; the arm records the read
-    /// (<c>unknown-name-alone</c>). A parameterless reader is cached, U1 reports the wrong value, and the arm records the
-    /// same reader beside it (<c>unknown-name-with-wrong-value</c>). Neither observation is a gap.
+    /// (<c>unknown-name-alone</c>). A parameterless reader is a zero-argument property: exported, it is evaluated DETACHED
+    /// from the call around it (EXPORTED-DETACHED, November 2026), so its read of <c>y</c> is refused INSIDE the owner as
+    /// well, and the arm records the reader as <c>unknown-name-inside-too</c>. (Formerly its first value was cached across
+    /// activations: U1 reported the wrong value and the arm recorded <c>unknown-name-with-wrong-value</c> beside it.)
     /// </summary>
     [Fact]
     public async Task UnknownRequiredNameArm_SeesTheReadTheOtherChecksMiss()
@@ -833,11 +835,12 @@ public sealed class ExposureCensusHarnessTests
         var plain = CensusGrid.Build(["rt-capture", "value", "none", "plain", "outside", "mid-fallback", "fallback"]);
         var cached = await CensusRunner.Run(plain, collectLean: false, hostBuilt: Exported(ReaderA));
         Assert.Equal("exported", cached.Metadata["A"]);
-        var wrong = Assert.Single(cached.Gaps);
-        Assert.Equal(("U", "under-charge-wrong-value"), (wrong.Check, wrong.Class));
+        Assert.Equal(("err unknownName:y", "err unknownName:y", "err unknownName:y", "err unknownName:y"), Probes(cached.Outcomes));
+        Assert.False(cached.InsideWorks);
+        Assert.Empty(cached.Gaps);
         var seen = Assert.Single(cached.UnknownName);
-        Assert.Equal(("U", "unknown-name-with-wrong-value", "A"), (seen.Check, seen.Class, seen.Reader));
-        Assert.EndsWith("case verdicts=U/under-charge-wrong-value", seen.Detail, StringComparison.Ordinal);
+        Assert.Equal(("U", "unknown-name-inside-too", "A"), (seen.Check, seen.Class, seen.Reader));
+        Assert.Equal("err unknownName:y; requires y of F; inside=err unknownName:y / err unknownName:y / err unknownName:y", seen.Detail);
 
         // The same exported parameterized reader on the .Algorithm route disagrees with its source twin in R.
         // Its escaped unknown name is additional evidence, while the case already has a verdict.

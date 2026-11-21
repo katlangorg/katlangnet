@@ -171,11 +171,13 @@ internal sealed class LoopRunFrame
         if (Template.RequiresPerIterationCacheIdentity)
         {
             _valueEnvironment.BeginIteration();
+            // A round is an actual call of the step: its activation owns the round's inner bindings.
             IterationCtx = Evaluator.EnterAlgorithmBody(
                 Template.Step,
                 Evaluator.LoopNeedBindingContext(Template.ParentCtx, Template.StateNames, CurrentCells()),
                 _valueEnvironment,
-                Template.StateNames);
+                Template.StateNames,
+                invoked: true);
         }
     }
 

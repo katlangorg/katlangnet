@@ -13,7 +13,10 @@ open KatLang.PropertyOwnerContext KatLang.WhileRoundLaws KatLang.BinderTrace
 A LOCAL-only property's cache key carries the binding context `propertyOwnerBindingContext` finds on
 the property's declaring chain. `WhileRoundProduction.local_publication_reused` took "that context
 is still `n` at the later read" as its premise `hstable`. This module derives it, for one fixed
-resolved binding and its fixed chain, from the operations between publication and read.
+resolved binding and its fixed chain, from the operations between publication and read. Every reuse
+theorem here is about a LOCAL-only binding (`hlocal`): since the inner-property lifetime rule
+(November 2026) an EXPORTED binding's key carries its OWNING INVOCATION instead
+(`propertyOwnerInvocation`), whose stability and reuse laws are `InnerPropertyLifetime.lean`.
 
 * **Whole-evaluator preservation** (`ActivationPrefix`, `activations_kept_core`, `activations_kept`):
   the array only grows, keeping every earlier record whole at its index. The one writer is
@@ -107,14 +110,14 @@ instance : WriteFrame ActivationPrefix :=
 
 /-- The property access writes only the cache and the owner set: its own writes keep the array,
     its calculation extends it. -/
-theorem activation_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActivationPrefix (rec c))
+theorem activation_publication_step (rec : EvalRec) (hrec : ∀ c, Preserves ActivationPrefix (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
     Preserves ActivationPrefix
-      (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+      (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   have hcalc := EvalBody.zeroArgPropertyCalculation_pres (R := ActivationPrefix) rec hrec request resolvedAlgorithm ctx env
   intro s
-  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  unfold EvalBody.zeroArgPropertyPublication
   split
   · simp only [EvalM.bind_runState, get_runState]
     split
@@ -125,11 +128,11 @@ theorem activation_property_step (rec : EvalRec) (hrec : ∀ c, Preserves Activa
       · exact hcalc s
       · simp only [EvalM.bind_runState, set_runState]
         obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
-          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
-        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
         rw [hm] at hk
         have hstart : ActivationPrefix s
-            { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties } :=
+            { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties } :=
           ActivationPrefix.of_eq rfl
         have hk' := hstart.trans hk
         rcases hc with ⟨hrun, _⟩ | ⟨hrun, _⟩
@@ -144,6 +147,22 @@ theorem activation_property_step (rec : EvalRec) (hrec : ∀ c, Preserves Activa
             simp only [EvalM.bind_runState, set_runState, throw_runState]
             exact hk'.trans (ActivationPrefix.of_eq rfl)
   · exact hcalc s
+
+/-- EXPORTED-DETACHED: the access is the publication law in the context its binding's exposure
+    requires (the detached context for an exported binding), or a refusal that writes nothing. -/
+theorem activation_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActivationPrefix (rec c))
+    (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Preserves ActivationPrefix
+      (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  intro s
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · simp only [EvalM.bind_runState, get_runState]
+    exact activation_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+  · split
+    · exact ActivationPrefix.refl s
+    · exact activation_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
 
 /-- **Whole run (core):** every completed run of the total core, at every fuel, from every state —
     success and ordinary failure alike — keeps the activation array as a prefix. An INCOMPLETE core
@@ -278,7 +297,8 @@ theorem recordParameterActivation_run (names : List Ident) (ctx : EvalCtx) (env 
          lexicalActivations := s.lexicalActivations.push
            { values := env.filter (fun b => names.contains b.fst)
              needs := ctx.needEnv.filter (fun b => names.contains b.fst)
-             bindingContext := ctx.bindingContext } }) := rfl
+             bindingContext := ctx.bindingContext
+             ownsInvocation := ctx.enteringInvocation } }) := rfl
 
 /-- The returned index exists in the resulting array and holds the appended record. -/
 theorem pushed_record {s t : EvalState} {a : ParameterActivation}
@@ -290,13 +310,14 @@ theorem pushed_record {s t : EvalState} {a : ParameterActivation}
 def enteredScope (a : Algorithm) (s : EvalState) : ScopeCtx :=
   a.asScopeCtx.withActivation s.lexicalActivations.size
 
-/-- The scope a body's rows are formed in: the activated head when the entry records an activation,
+/-- The scope a body's rows are formed in: the activated head when the entry made in `ctx` records
+    an activation (`entryRecords`: an actual call always, any other entry by `recordsActivation`),
     the body's own unactivated level otherwise. -/
-def enteredSite (a : Algorithm) (s : EvalState) : ScopeCtx :=
-  if recordsActivation a then enteredScope a s else a.asScopeCtx
+def enteredSite (a : Algorithm) (ctx : EvalCtx) (s : EvalState) : ScopeCtx :=
+  if entryRecords a ctx then enteredScope a s else a.asScopeCtx
 
 theorem entered_siteScope (a : Algorithm) (ctx : EvalCtx) (s : EvalState) :
-    siteScope? (enteredCtx a ctx s) = some (enteredSite a s) := by
+    siteScope? (enteredCtx a ctx s) = some (enteredSite a ctx s) := by
   unfold enteredCtx enteredSite siteScope? EvalCtx.head? EvalCtx.push
   split <;> rfl
 
@@ -308,7 +329,7 @@ theorem entered_prefix (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalS
   · exact ActivationPrefix.refl s
 
 theorem entered_record (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
-    (hrec : recordsActivation a = true) :
+    (hrec : entryRecords a ctx = true) :
     (enteredState a ctx env s).lexicalActivations[s.lexicalActivations.size]? =
       some (enteredActivation a ctx env) := by
   unfold enteredState
@@ -319,7 +340,7 @@ theorem entered_record (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalS
     in the entered state, with NO premise on the incoming chain, and retains the entry context —
     `enteredActivation` stores `ctx.bindingContext`, whatever index it landed at. -/
 theorem entered_scope_retained (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
-    (hrec : recordsActivation a = true) :
+    (hrec : entryRecords a ctx = true) :
     RetainedAt (some (enteredScope a s)) (enteredState a ctx env s) ctx.bindingContext :=
   RetainedAt.activated_level _ _ _ _ _ _ _ _ _ _ (entered_record a ctx env s hrec)
 
@@ -332,8 +353,8 @@ theorem entered_keeps_chain (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : 
 /-- A body entered without a record has no level of its own in the search: its site retains what
     its declaring chain retains. -/
 theorem entered_site_of_parent (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) {n : Nat}
-    (hrec : recordsActivation a = false) (hr : RetainedAt a.parent s n) :
-    RetainedAt (some (enteredSite a s)) (enteredState a ctx env s) n := by
+    (hrec : entryRecords a ctx = false) (hr : RetainedAt a.parent s n) :
+    RetainedAt (some (enteredSite a ctx s)) (enteredState a ctx env s) n := by
   have hs : enteredState a ctx env s = s := by simp [enteredState, hrec]
   rw [hs]
   simp only [enteredSite, hrec, Bool.false_eq_true, ite_false]
@@ -343,8 +364,8 @@ theorem entered_site_of_parent (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s
     body — has a retained site, recording or not. -/
 theorem entered_site_retained (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) {n : Nat}
     (hn : ctx.bindingContext = n) (hr : RetainedAt a.parent s n) :
-    RetainedAt (some (enteredSite a s)) (enteredState a ctx env s) n := by
-  cases hrec : recordsActivation a with
+    RetainedAt (some (enteredSite a ctx s)) (enteredState a ctx env s) n := by
+  cases hrec : entryRecords a ctx with
   | false => exact entered_site_of_parent a ctx env s hrec hr
   | true =>
     simp only [enteredSite, hrec, ite_true]
@@ -357,8 +378,8 @@ theorem entered_site_retained (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s 
     whatever the reader's and the binder's fresh contexts. The premise is on the incoming chain. -/
 theorem property_entry_retains_declaring_context (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv)
     (s : EvalState) {m : Nat} (hr : RetainedAt a.parent s m) :
-    RetainedAt (some (enteredSite a s))
-      (enteredState a { boundCtx with bindingContext := inheritedContext a ctx s } env s) m :=
+    RetainedAt (some (enteredSite a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } s))
+      (enteredState a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env s) m :=
   entered_site_retained a _ env s (by simp only [inheritedContext, hr.context, Option.getD_some]) hr
 
 /-- **Lexical and structural levels agree after a read-owned entry**: the recording entry's level
@@ -370,12 +391,12 @@ theorem read_entry_levels_agree (a : Algorithm) (boundCtx ctx : EvalCtx) (env : 
     (params : List Ident) (opens : List Expr) (props : List PropDef) (output : List Expr)
     (branches : List CondBranch) (decl : Option PropertyIdentity) :
     propertyOwnerBindingContext (some (enteredScope a s))
-        (enteredState a { boundCtx with bindingContext := inheritedContext a ctx s } env s) =
+        (enteredState a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env s) =
       propertyOwnerBindingContext (some (.mk a.parent params opens props output branches none decl))
-        (enteredState a { boundCtx with bindingContext := inheritedContext a ctx s } env s) := by
+        (enteredState a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env s) := by
   have hin : inheritedContext a ctx s = m := by simp only [inheritedContext, hr.context, Option.getD_some]
   exact lexical_and_structural_levels_agree a.parent _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ m
-    (entered_record a _ env s hrec) (entered_keeps_chain a _ env s hr).context hin
+    (entered_record a _ env s (entryRecords_of_records _ hrec)) (entered_keeps_chain a _ env s hr).context hin
 
 /-! The writers themselves, each over its production equation: every one extends the array, so every
 chain retained before it stays retained (`RetainedAt.mono`). -/
@@ -444,7 +465,7 @@ theorem family_activation_retained (callee : Algorithm) (ctx : EvalCtx) (env : V
   refine ⟨ActivationPrefix.of_push rfl, ?_⟩
   unfold familyScope
   exact RetainedAt.activated_level _ _ _ _ _ _ _ _ _
-    { values := _, needs := _, bindingContext := s.nextBindingContext } (pushed_record (s := s) rfl)
+    { values := _, needs := _, bindingContext := s.nextBindingContext, ownsInvocation := _ } (pushed_record (s := s) rfl)
 
 /-- The wired body's own entry, in the activated context, has a site retaining that fresh context:
     recording, its head stores it; not recording, the family level answers it. -/
@@ -452,6 +473,7 @@ theorem family_body_retained (callee : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (bindings : NeedEnv) (s : EvalState) (hwired : WiresDirectly branch.body) :
     RetainedAt
       (some (enteredSite (KatLang.FamilyDispatch.activatedBody callee branch bindings s.lexicalActivations.size)
+        (KatLang.FamilyDispatch.activatedContext callee ctx bindings s.nextBindingContext)
         (runEval (needActivateBranch callee ctx env branch bindings) s).2))
       (enteredState (KatLang.FamilyDispatch.activatedBody callee branch bindings s.lexicalActivations.size)
         (KatLang.FamilyDispatch.activatedContext callee ctx bindings s.nextBindingContext)
@@ -477,7 +499,7 @@ theorem dispatched_body_retained (c : NeedChannels) (callee : Algorithm) (cells 
     (hwired : WiresDirectly branch.body)
     (body : Algorithm) (next : EvalCtx) (values : ValEnv) (t : EvalState)
     (hrun : runEval (selectNeedFamilyBranch c callee cells ctx env name) s = (.ok (body, next, values), t)) :
-    RetainedAt (some (enteredSite body t)) (enteredState body next values t) s''.nextBindingContext := by
+    RetainedAt (some (enteredSite body next t)) (enteredState body next values t) s''.nextBindingContext := by
   have h := (KatLang.FamilyDispatch.production_dispatch_activates_the_first_match c callee cells ctx env name
     before after branch s s' s'' bindings hdup hbranches hrej hmatch).symm.trans hrun
   simp only [Prod.mk.injEq, Except.ok.injEq] at h
@@ -510,70 +532,80 @@ theorem core_retained (n : Nat) (c : EvalCall) (s : EvalState) (hc : Completes (
   ⟨activations_kept_core n c s hc, cache_entries_survive_core n c s hc⟩
 
 /-- The step shared by every reuse theorem below: `local_publication_reused` with its `hstable`
-    premise DERIVED from the chain retained at the earlier state. -/
+    premise DERIVED from the chain retained at the earlier state. The binding is LOCAL-only
+    (`hlocal`): its key ignores the owning invocation, so the entry may be stated at any `oi`. -/
 theorem local_entry_read (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolved : Algorithm) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) {n : Nat} {s t : EvalState} {v : CountedResult}
     (hret : RetainedAt resolved.parent s n)
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (hkept : Retained s t) (ctx : EvalCtx) (env : ValEnv) :
+    (hkept : Retained s t) (ctx : EvalCtx) (env : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) :=
-  local_publication_reused k k' owner binding resolved hcache ctx₀ env₀ n s t v hentry hkept.2 ctx env
-    (hret.mono hkept.1).context
+  local_publication_reused k k' owner binding resolved hcache hlocal ctx₀ env₀ n none s t v hentry hkept.2 ctx env
+    (hret.mono hkept.1).context hadmitted
 
 /-- **THE PRODUCTION THEOREM (FG-K2).** Let the fixed declaring chain of `resolved` have a valid
-    owner search at `s`, answering `n`, and let the cache hold `v` for this owner and binding under
-    retained context `n`. After ANY production operation from `s` — its actual exit state, whatever
-    its outcome, whatever nested calls, activations and publications it made — a cacheable READ of
-    that binding, in ANY consumer context and environment, returns `v` and leaves the state
-    unchanged. Cache survival and the former `hstable` premise are both derived from the operation.
-    Reads only: an explicit invocation stays fresh. -/
+    owner search at `s`, answering `n`, and let the cache hold `v` for this owner and LOCAL-only
+    binding under retained context `n`. After ANY production operation from `s` — its actual exit
+    state, whatever its outcome, whatever nested calls, activations and publications it made — a
+    cacheable READ of that binding, in ANY consumer context and environment, returns `v` and leaves
+    the state unchanged. Cache survival and the former `hstable` premise are both derived from the
+    operation. Reads only: an explicit invocation stays fresh. An EXPORTED binding's key is its
+    owning invocation's (`InnerPropertyLifetime.exported_entry_reused_after_production`). -/
 theorem local_publication_reused_after_production (c : EvalCall) (k k' : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (s : EvalState) (v : CountedResult)
     (hvalid : OwnerSearchValid resolved.parent s)
     (howner : propertyOwnerBindingContext resolved.parent s = some n)
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (ctx : EvalCtx) (env : ValEnv) :
+    (ctx : EvalCtx) (env : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) :=
-  local_entry_read k k' owner binding resolved hcache ctx₀ env₀ ⟨hvalid, howner⟩ hentry
-    (production_retained c s) ctx env
+  local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ ⟨hvalid, howner⟩ hentry
+    (production_retained c s) ctx env hadmitted
 
 /-- The same over a completed run of the total core (an incomplete core run forgets its state). -/
 theorem local_publication_reused_after_core (m : Nat) (c : EvalCall) (k k' : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (s : EvalState) (v : CountedResult)
     (hc : Completes (evalFuel m c) s) (hret : RetainedAt resolved.parent s n)
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (ctx : EvalCtx) (env : ValEnv) :
+    (ctx : EvalCtx) (env : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalFuel m c).runState s).2 =
       (.ok v, ((evalFuel m c).runState s).2) :=
-  local_entry_read k k' owner binding resolved hcache ctx₀ env₀ hret hentry
-    (core_retained m c s hc) ctx env
+  local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret hentry
+    (core_retained m c s hc) ctx env hadmitted
 
 /-- An operation that FAILS ordinarily still kept the records and the entries: a post-state query.
     It does not say the containing language run continues past the failure. -/
 theorem failed_operation_keeps_local_entry (c : EvalCall) (e : Error) (t : EvalState)
     (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (s : EvalState) (v : CountedResult)
     (hrun : (evalUnbounded c).runState s = (.error e, t))
     (hret : RetainedAt resolved.parent s n)
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (ctx : EvalCtx) (env : ValEnv) :
+    (ctx : EvalCtx) (env : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) := by
   have h := production_retained c s
   rw [hrun] at h
-  exact local_entry_read k k' owner binding resolved hcache ctx₀ env₀ hret hentry h ctx env
+  exact local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret hentry h ctx env hadmitted
 
 /-- **The host fallback keeps its input conditions.** With no retained context (`none` on a valid
     chain, which stays `none`), a surviving entry is reused only by a read with the SAME environment
@@ -581,18 +613,22 @@ theorem failed_operation_keeps_local_entry (c : EvalCall) (e : Error) (t : EvalS
 theorem fallback_publication_reused_after_production (c : EvalCall) (k k' : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ ctx : EvalCtx) (env : ValEnv) (s : EvalState) (v : CountedResult)
     (hvalid : OwnerSearchValid resolved.parent s)
     (hnone : propertyOwnerBindingContext resolved.parent s = none)
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env none) = some v)
-    (hctx : ctx.bindingContext = ctx₀.bindingContext) :
+    (hctx : ctx.bindingContext = ctx₀.bindingContext)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) := by
   have hr := production_retained c s
-  apply property_cache_hit_production k' owner binding resolved ctx env _ v hcache
-  rw [owner_context_stable hr.1 hvalid, hnone, cacheKey_same_inputs k' k owner binding ctx ctx₀ env hctx]
+  refine property_cache_hit_production k' owner binding resolved ctx env _ v hcache ?_ hadmitted
+  rw [owner_context_stable hr.1 hvalid, hnone,
+    cacheKey_local_invocation_free k' owner binding hlocal ctx env none _ none,
+    cacheKey_same_inputs k' k owner binding ctx ctx₀ env hctx none]
   exact hr.2 _ v hentry
 
 /-! ## 5. Lexical and structural reads -/
@@ -626,6 +662,7 @@ theorem structural_read_reuses_lexical_entry (c : EvalCall) (k k' : ZeroArgPrope
     (owner owner' : Algorithm) (binding binding' : PropDef) (resolved resolved' : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
     (hcache' : isCacheableZeroArgPropertyAlgorithm resolved' = true)
+    (hlocal : binding.exposure.isExported = false)
     (hfields : SameKeyFields owner binding owner' binding')
     (parent : Option ScopeCtx) (params params' : List Ident) (opens opens' : List Expr)
     (props props' : List PropDef) (output output' : List Expr) (branches branches' : List CondBranch)
@@ -637,7 +674,9 @@ theorem structural_read_reuses_lexical_entry (c : EvalCall) (k k' : ZeroArgPrope
     (hrecorded : act.bindingContext = n)
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (ctx : EvalCtx) (env : ValEnv) :
+    (ctx : EvalCtx) (env : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false)
+    (hadmitted' : localOnlyReadRefused binding' resolved' ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) ∧
@@ -654,8 +693,10 @@ theorem structural_read_reuses_lexical_entry (c : EvalCall) (k k' : ZeroArgPrope
   have hret₀ : RetainedAt resolved.parent s n := by
     rw [hlex, ← hrecorded]
     exact RetainedAt.activated_level parent params opens props output branches id decl s act hrecord
-  refine ⟨local_entry_read k k' owner binding resolved hcache ctx₀ env₀ hret₀ hentry (production_retained c s) ctx env,
-    local_entry_read k k' owner' binding' resolved' hcache' ctx₀ env₀ hret ?_ (production_retained c s) ctx env⟩
+  refine ⟨local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret₀ hentry (production_retained c s) ctx env
+      hadmitted,
+    local_entry_read k k' owner' binding' resolved' hcache' (hfields.exported ▸ hlocal) ctx₀ env₀ hret ?_
+      (production_retained c s) ctx env hadmitted'⟩
   rw [cacheKey_of_same_fields hfields k k ctx₀ ctx₀ env₀ env₀ n]
   exact hentry
 
@@ -722,33 +763,38 @@ theorem conditionFirst_retained (rowCtx : EvalCtx) (rowEnv : ValEnv) (rows : Lis
     those rows evaluate, returns the entry, in any consumer context. -/
 theorem transitions_read_discovery_entry (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (resolved : Algorithm) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (v : CountedResult)
     (hret : RetainedAt resolved.parent (enteredState a ctx env s) n)
     (hpub : ZeroArgPropertyCache.lookup (discovered a ctx env s).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv) :
+    (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2 =
       (.ok v, ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2) :=
-  local_entry_read k k' owner binding resolved hcache ctx₀ env₀
+  local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀
     (hret.mono (discover_retained _ env a.output.reverse _).1) hpub (rows_retained _ env earlier _)
-    readCtx readEnv
+    readCtx readEnv hadmitted
 
 /-- The ordinary instance, with NO validity premise: a property wired under the head scope ONE
-    recording entry installs keeps the entry context, so `RetainedAt` comes from the entry. -/
-theorem entered_body_shares_local_entry (hrec : recordsActivation a = true)
+    recording entry installs (an actual call's entry always records, `entryRecords_of_invocation`)
+    keeps the entry context, so `RetainedAt` comes from the entry. -/
+theorem entered_body_shares_local_entry (hrec : entryRecords a ctx = true)
     (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (hparent : resolved.parent = some (enteredScope a s))
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (v : CountedResult)
     (hpub : ZeroArgPropertyCache.lookup (discovered a ctx env s).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some ctx.bindingContext)) = some v)
-    (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv) :
+    (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2 =
       (.ok v, ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2) :=
-  transitions_read_discovery_entry a ctx env s k k' owner binding resolved hcache ctx₀ env₀ _ v
-    (hparent ▸ entered_scope_retained a ctx env s hrec) hpub earlier readCtx readEnv
+  transitions_read_discovery_entry a ctx env s k k' owner binding resolved hcache hlocal ctx₀ env₀ _ v
+    (hparent ▸ entered_scope_retained a ctx env s hrec) hpub earlier readCtx readEnv hadmitted
 
 /-- **The production round's exit reads discovery's entry**: for a checked, non-builtin step whose
     round completes, the actual exit state of `whileVerdictSlots` — `true`, `false` or a failure —
@@ -758,19 +804,21 @@ theorem round_exit_reads_discovery_entry (ha : NotBuiltin a) (hp : Passes a)
       (enteredState a ctx env s)).1 ≠ .error .fuelExhausted)
     (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (v : CountedResult)
     (hret : RetainedAt resolved.parent (enteredState a ctx env s) n)
     (hpub : ZeroArgPropertyCache.lookup (discovered a ctx env s).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (readCtx : EvalCtx) (readEnv : ValEnv) :
+    (readCtx : EvalCtx) (readEnv : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((whileVerdictSlots a ctx env).runState s).2 =
       (.ok v, ((whileVerdictSlots a ctx env).runState s).2) := by
   rw [whileVerdictSlots_entered a ha hp ctx env s hc]
-  exact local_entry_read k k' owner binding resolved hcache ctx₀ env₀
+  exact local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀
     (hret.mono (discover_retained _ env a.output.reverse _).1) hpub
     (after_discovery_retained _ (fun e => production_retained (.formOutputRow _ env e)) a.output _)
-    readCtx readEnv
+    readCtx readEnv hadmitted
 
 /-- **A false continuation forms no transition and still keeps the entry**: under the CF-1 premises
     the round stops in the state discovery reached (`production_cf1_false_skips_earlier_rows`); no
@@ -783,11 +831,13 @@ theorem false_continuation_keeps_local_entry (ha : NotBuiltin a) (hp : Passes a)
     (hlast : (x :: xs).getLast? = some f) (hf : Result.asBool? f = some false)
     (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
+    (hlocal : binding.exposure.isExported = false)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (v : CountedResult)
     (hret : RetainedAt resolved.parent (enteredState a ctx env s) n)
     (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
-    (readCtx : EvalCtx) (readEnv : ValEnv) :
+    (readCtx : EvalCtx) (readEnv : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
     (whileVerdictSlots a ctx env).runState s = (.ok none, s₂) ∧
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState s₂ = (.ok v, s₂) := by
   refine ⟨production_cf1_false_skips_earlier_rows a ha hp ctx env s pre r trail hrows s₁ s₂ x xs f htrail hr hlast hf, ?_⟩
@@ -797,8 +847,9 @@ theorem false_continuation_keeps_local_entry (ha : NotBuiltin a) (hp : Passes a)
   rw [show (WhileRound.conditionFirst (formOutputRow (enteredCtx a ctx s) env) a.output).runState
     (enteredState a ctx env s) = (.ok none, s₂) from h] at hk
   exact property_cache_hit_production k' owner binding resolved readCtx readEnv s₂ v hcache (by
-    rw [(hret.mono hk.1).context, cacheKey_retained_owner_context k' k owner binding readCtx ctx₀ readEnv env₀ n]
-    exact hpub)
+    rw [(hret.mono hk.1).context, cacheKey_local_invocation_free k' owner binding hlocal readCtx readEnv (some n) _ none,
+      cacheKey_retained_owner_context k' k owner binding readCtx ctx₀ readEnv env₀ n none]
+    exact hpub) hadmitted
 
 end Rows
 
@@ -818,16 +869,18 @@ theorem dispatched_body_shares_local_entry (c : NeedChannels) (callee : Algorith
     (hrun : runEval (selectNeedFamilyBranch c callee cells ctx env name) s = (.ok (body, next, values), t))
     (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolved : Algorithm)
     (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
-    (hparent : resolved.parent = some (enteredSite body t))
+    (hlocal : binding.exposure.isExported = false)
+    (hparent : resolved.parent = some (enteredSite body next t))
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (v : CountedResult)
     (hpub : ZeroArgPropertyCache.lookup (discovered body next values t).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some s''.nextBindingContext)) = some v)
-    (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv) :
+    (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv)
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((OutputRows.formLeftToRight (bodyRows body next values t) earlier).runState (discovered body next values t)).2 =
       (.ok v, ((OutputRows.formLeftToRight (bodyRows body next values t) earlier).runState (discovered body next values t)).2) :=
-  transitions_read_discovery_entry body next values t k k' owner binding resolved hcache ctx₀ env₀ _ v
+  transitions_read_discovery_entry body next values t k k' owner binding resolved hcache hlocal ctx₀ env₀ _ v
     (hparent ▸ dispatched_body_retained c callee cells ctx env name before after branch s s' s'' bindings
-      hdup hbranches hrej hmatch hwired body next values t hrun) hpub earlier readCtx readEnv
+      hdup hbranches hrej hmatch hwired body next values t hrun) hpub earlier readCtx readEnv hadmitted
 
 end KatLang.OwnerContextStability

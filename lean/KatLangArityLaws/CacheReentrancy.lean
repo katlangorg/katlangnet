@@ -153,14 +153,14 @@ theorem protected_mark (key : ZeroArgPropertyCacheKey) (s : EvalState) :
       its exit state. A completed one restores the entry owner set, on success after publishing
       under a key that differs from every protected key (`ne_of_mem_of_not_contains`), on ordinary
       failure publishing nothing. -/
-theorem protected_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveProtected (rec c))
+theorem protected_publication_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveProtected (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
     Preserves ActiveProtected
-      (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+      (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   have hcalc := EvalBody.zeroArgPropertyCalculation_pres (R := ActiveProtected) rec hrec request resolvedAlgorithm ctx env
   intro s
-  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  unfold EvalBody.zeroArgPropertyPublication
   split
   · simp only [EvalM.bind_runState, get_runState]
     split
@@ -173,7 +173,7 @@ theorem protected_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveP
         simp only [EvalM.bind_runState, set_runState]
         have hnot' := Bool.eq_false_iff.2 hnot
         generalize hkey : zeroArgPropertyCacheKey accessKind owner binding ctx env
-          (propertyOwnerBindingContext resolvedAlgorithm.parent s) = key at hnot' ⊢
+          (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s) = key at hnot' ⊢
         obtain ⟨o, t, hm, hc⟩ := evalAttempt_cases
           (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) (markedAt key s)
         have hk := (protected_mark key s).trans (by simpa only [hm] using hcalc (markedAt key s))
@@ -195,6 +195,22 @@ theorem protected_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveP
             simp only [EvalM.bind_runState, set_runState, throw_runState]
             exact fun p hp => ⟨hp, (hk p hp).2⟩
   · exact hcalc s
+
+/-- EXPORTED-DETACHED: the access is the publication law in the context its binding's exposure
+    requires (the detached context for an exported binding), or a refusal that writes nothing. -/
+theorem protected_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveProtected (rec c))
+    (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Preserves ActiveProtected
+      (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  intro s
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · simp only [EvalM.bind_runState, get_runState]
+    exact protected_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+  · split
+    · exact ActiveProtected.refl s
+    · exact protected_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
 
 /-- One evaluator step over a preserving answer, for every `EvalCall` constructor. -/
 theorem protected_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveProtected (rec c)) :
@@ -252,6 +268,34 @@ theorem request_unfolds (hc : ProductionCompletes (evalUnbounded (requestCall k 
       (evalUnbounded (requestCall k owner binding a ctx env request)).runState s :=
   production_unfolds _ s hc
 
+/-- THE REQUEST RUNS THE PUBLICATION LAW IN ITS OWN CONTEXT (EXPORTED-DETACHED, November 2026). The
+    access is the publication law (`EvalBody.zeroArgPropertyPublication`) entered the way the
+    binding's exposure requires, so the request laws below speak of the context `ctx`, `env` only
+    for a request whose law runs THERE:
+    * every LOCAL-ONLY request that is not a refused detached read (`local_only_runs_in_own_context`);
+    * an EXPORTED request issued from a context that is already detached at the entry state
+      (`detached_exported_runs_in_own_context`). Any other exported request runs the same law over
+      `ctx.detach s.lexicalActivations.size` and no values
+      (`DetachedEvaluation.exported_access_is_detached`), under the SAME key
+      (`WhileRoundProduction.cacheKey_exported_context_free`): apply the laws at that context. -/
+def RunsInOwnContext (request : ZeroArgPropertyRequest) : Prop :=
+  (EvalBody.evalZeroArgPropertyAccessCounted evalUnbounded k owner binding a ctx env request).runState s =
+    (EvalBody.zeroArgPropertyPublication evalUnbounded k owner binding a ctx env request).runState s
+
+theorem local_only_runs_in_own_context (hlocal : binding.exposure.isExported = false)
+    (hadmitted : (request.isRead && localOnlyReadRefused binding a ctx) = false) :
+    RunsInOwnContext k owner binding a ctx env s request := by
+  unfold RunsInOwnContext
+  rw [KatLang.DetachedEvaluation.local_only_access_is_attached evalUnbounded k owner binding a ctx env request
+    hlocal hadmitted]
+
+theorem detached_exported_runs_in_own_context (hexported : binding.exposure.isExported = true)
+    (hctx : ctx.detach s.lexicalActivations.size = ctx) (henv : env = []) :
+    RunsInOwnContext k owner binding a ctx env s request := by
+  unfold RunsInOwnContext
+  rw [KatLang.DetachedEvaluation.exported_access_is_detached evalUnbounded k owner binding a ctx env request s
+    hexported, hctx, henv]
+
 /-- **Reentrant requests keep the key absent**: a read or an invocation of an active, absent key
     leaves that key absent. It says nothing of the rest of the state: other keys may publish. -/
 theorem reentrant_request_stays_absent
@@ -267,10 +311,11 @@ theorem reentrant_request_returns_its_calculation
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hact : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = true)
     (hmiss : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none)
-    (hdone : ProductionCompletes (evalUnbounded (requestCall k owner binding a ctx env request)) s) :
+    (hdone : ProductionCompletes (evalUnbounded (requestCall k owner binding a ctx env request)) s)
+    (hown : RunsInOwnContext k owner binding a ctx env s request) :
     (evalUnbounded (requestCall k owner binding a ctx env request)).runState s =
       (EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env).runState s := by
-  rw [← request_unfolds k owner binding a ctx env s request hdone]
+  rw [← request_unfolds k owner binding a ctx env s request hdone, hown]
   exact reentrant_request_is_its_calculation evalUnbounded k owner binding a ctx env s request hc hmiss hact
 
 /-- **The owner's calculation keeps its key absent, and active**: from an absent, inactive key, the
@@ -292,7 +337,8 @@ private theorem owner_cases
     (hnot : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = false)
     (o : Except Error CountedResult) (t : EvalState)
     (hrun : (evalUnbounded (requestCall k owner binding a ctx env request)).runState s = (o, t))
-    (hdone : o.isIncomplete = false) :
+    (hdone : o.isIncomplete = false)
+    (hown : RunsInOwnContext k owner binding a ctx env s request) :
     ∃ t', (EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env).runState
         (markedAt (keyAt k owner binding a ctx env s) s) = (o, t') ∧
       ((∃ counted, o = .ok counted ∧ t = { t' with
@@ -307,7 +353,7 @@ private theorem owner_cases
     cases h
     simp [Except.isIncomplete] at hdone
   have hbody := request_unfolds k owner binding a ctx env s request hprod
-  rw [hrun] at hbody
+  rw [hrun, hown] at hbody
   rcases hcalc : (EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env).runState
     (markedAt (keyAt k owner binding a ctx env s) s) with ⟨o', t'⟩
   cases o' with
@@ -320,7 +366,7 @@ private theorem owner_cases
     · have he := Except.isIncomplete_eq_true hinc
       cases he
       have hraw := evalAttempt_runState_of_incomplete _ _ t' hcalc
-      simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState] at hbody
+      simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState] at hbody
       rw [hmiss] at hbody
       simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState] at hbody
       rw [show (evalAttempt (EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env)).runState _ = _ from hraw] at hbody
@@ -340,13 +386,14 @@ theorem owner_success_establishes (counted : CountedResult) (t : EvalState)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hmiss : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none)
     (hnot : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = false)
-    (hrun : (evalUnbounded (requestCall k owner binding a ctx env request)).runState s = (.ok counted, t)) :
+    (hrun : (evalUnbounded (requestCall k owner binding a ctx env request)).runState s = (.ok counted, t))
+    (hown : RunsInOwnContext k owner binding a ctx env s request) :
     ZeroArgPropertyCache.lookup t.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some counted ∧
     t.activeZeroArgProperties = s.activeZeroArgProperties ∧
     ∃ t', (EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env).runState
         (markedAt (keyAt k owner binding a ctx env s) s) = (.ok counted, t') ∧
       ZeroArgPropertyCache.lookup t'.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none := by
-  obtain ⟨t', hcalc, hexit⟩ := owner_cases k owner binding a ctx env s request hc hmiss hnot _ t hrun rfl
+  obtain ⟨t', hcalc, hexit⟩ := owner_cases k owner binding a ctx env s request hc hmiss hnot _ t hrun rfl hown
   have habsent := (owner_calculation_keeps_key_absent k owner binding a ctx env s request hmiss).2
   simp only [hcalc] at habsent
   rcases hexit with ⟨counted', heq, rfl⟩ | ⟨_, heq, _⟩
@@ -363,14 +410,15 @@ theorem owner_failure_leaves_no_entry (e : Error) (t : EvalState)
     (hmiss : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none)
     (hnot : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = false)
     (hcomplete : (Except.error e : Except Error CountedResult).isIncomplete = false)
-    (hrun : (evalUnbounded (requestCall k owner binding a ctx env request)).runState s = (.error e, t)) :
+    (hrun : (evalUnbounded (requestCall k owner binding a ctx env request)).runState s = (.error e, t))
+    (hown : RunsInOwnContext k owner binding a ctx env s request) :
     ZeroArgPropertyCache.lookup t.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none ∧
     t.activeZeroArgProperties = s.activeZeroArgProperties ∧
     t.zeroArgPropertyCache =
       ((EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env).runState
         (markedAt (keyAt k owner binding a ctx env s) s)).2.zeroArgPropertyCache ∧
     CacheKept s t := by
-  obtain ⟨t', hcalc, hexit⟩ := owner_cases k owner binding a ctx env s request hc hmiss hnot _ t hrun hcomplete
+  obtain ⟨t', hcalc, hexit⟩ := owner_cases k owner binding a ctx env s request hc hmiss hnot _ t hrun hcomplete hown
   have habsent := (owner_calculation_keeps_key_absent k owner binding a ctx env s request hmiss).2
   simp only [hcalc] at habsent ⊢
   have hkept : CacheKept s t := by
@@ -384,7 +432,8 @@ theorem owner_failure_leaves_no_entry (e : Error) (t : EvalState)
     calculation when it completes, and on every outcome the entry keeps its value. -/
 theorem established_entry_stays (calleeName : String) (v : CountedResult)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
-    (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some v) :
+    (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some v)
+    (hown : RunsInOwnContext k owner binding a ctx env s (.invoke calleeName)) :
     ZeroArgPropertyCache.lookup
         ((evalUnbounded (requestCall k owner binding a ctx env (.invoke calleeName))).runState s).2.zeroArgPropertyCache
         (keyAt k owner binding a ctx env s) = some v ∧
@@ -392,7 +441,7 @@ theorem established_entry_stays (calleeName : String) (v : CountedResult)
       (evalUnbounded (requestCall k owner binding a ctx env (.invoke calleeName))).runState s =
         (EvalBody.zeroArgPropertyCalculation evalUnbounded (.invoke calleeName) a ctx env).runState s) :=
   ⟨cache_entries_survive _ s _ _ hhit, fun hdone => by
-    rw [← request_unfolds k owner binding a ctx env s _ hdone]
+    rw [← request_unfolds k owner binding a ctx env s _ hdone, hown]
     exact invocation_with_entry_is_fresh evalUnbounded k owner binding a ctx env s calleeName v hc hhit⟩
 
 /-- **…and later bare reads reuse it**: after ANY production operation, a read whose computed key
@@ -401,12 +450,14 @@ theorem established_entry_stays (calleeName : String) (v : CountedResult)
 theorem established_entry_read_after (c : EvalCall) (key : ZeroArgPropertyCacheKey) (v : CountedResult)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache key = some v)
-    (hsame : keyAt k owner binding a ctx env ((evalUnbounded c).runState s).2 = key) :
+    (hsame : keyAt k owner binding a ctx env ((evalUnbounded c).runState s).2 = key)
+    (hadmitted : localOnlyReadRefused binding a ctx = false) :
     (evalZeroArgPropertyAccessCounted k owner binding a ctx env).runState ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) := by
-  apply WhileRoundProduction.property_cache_hit_production k owner binding a ctx env _ v hc
+  refine WhileRoundProduction.property_cache_hit_production k owner binding a ctx env _ v hc ?_ hadmitted
   rw [show zeroArgPropertyCacheKey k owner binding ctx env
-      (propertyOwnerBindingContext a.parent ((evalUnbounded c).runState s).2) = key from hsame]
+      (propertyOwnerBindingContext a.parent ((evalUnbounded c).runState s).2)
+      (propertyOwnerInvocation a.parent ((evalUnbounded c).runState s).2) = key from hsame]
   exact cache_entries_survive c s key v hhit
 
 /-! ## 4. The incomplete boundary -/
@@ -421,7 +472,7 @@ theorem owner_incomplete_keeps_mark (rec : EvalRec) (hrec : ∀ c, Preserves Act
     (hnot : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = false)
     (hrun : (EvalBody.zeroArgPropertyCalculation rec request a ctx env).runState
       (markedAt (keyAt k owner binding a ctx env s) s) = (.error .fuelExhausted, t)) :
-    (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env request).runState s =
+    (EvalBody.zeroArgPropertyPublication rec k owner binding a ctx env request).runState s =
       (.error .fuelExhausted, t) ∧
     keyAt k owner binding a ctx env s ∈ t.activeZeroArgProperties ∧
     ZeroArgPropertyCache.lookup t.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none := by
@@ -429,7 +480,7 @@ theorem owner_incomplete_keeps_mark (rec : EvalRec) (hrec : ∀ c, Preserves Act
     (markedAt (keyAt k owner binding a ctx env s) s) (keyAt k owner binding a ctx env s) List.mem_cons_self
   rw [hrun] at hp
   refine ⟨?_, hp.1, hp.2.trans hmiss⟩
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
   simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState]
   rw [show (evalAttempt (EvalBody.zeroArgPropertyCalculation rec request a ctx env)).runState _ = _ from

@@ -59,8 +59,13 @@ def extra : List (Ident × Algorithm) :=
    ("Zero", alg [] [] [] [.binary .div (.num 1) (.num 0)]),
    -- `CapP(b) = { W = Id(b.V()) ⏎ W }`, `CapO(b) = { W = b.V() ⏎ W }`: the member call over a parameter
    -- read from a CAPTURED activation, as a plan and as the ordinary row.
-   ("CapP", algPrivate ["b"] [] [("W", alg [] [] [] [inId (dot (.param "b") "V" (some []))])] [.resolve "W"]),
-   ("CapO", algPrivate ["b"] [] [("W", alg [] [] [] [dot (.param "b") "V" (some [])])] [.resolve "W"])]
+   -- `W` reads `b`, so it is local-only (EXPORTED-DETACHED: an exported property is evaluated detached).
+   ("CapP", alg ["b"] []
+      [privateLocalProp "W" (.localCapturedAncestorParams ["b"]) (alg [] [] [] [inId (dot (.param "b") "V" (some []))])]
+      [.resolve "W"]),
+   ("CapO", alg ["b"] []
+      [privateLocalProp "W" (.localCapturedAncestorParams ["b"]) (alg [] [] [] [dot (.param "b") "V" (some [])])]
+      [.resolve "W"])]
 
 def openedLib : Algorithm := alg [] [] [publicProp "OBox" boxBlock] []
 

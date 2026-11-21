@@ -433,7 +433,7 @@ public static partial class Evaluator
         var names = algorithm.Params;
         var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
         var boundValues = ShadowValEnv(valEnv, names);
-        return EvalBoundUserBodyCounted(algorithm, boundCtx, boundValues, names);
+        return EvalBoundUserBodyCounted(algorithm, boundCtx, boundValues, names, invoked: false);
     }
 
     /// <summary>
@@ -466,6 +466,59 @@ public static partial class Evaluator
         return EvalResult<ZeroArgPropertyResult>.Ok(
             new ZeroArgPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
     }
+
+    /// <summary>
+    /// <see cref="EvaluateZeroArgPropertyResult"/> of an EXPORTED binding: the same calculation over the
+    /// DETACHED context (<see cref="DetachedEvaluation"/>, "exported means detached"). It serves the
+    /// miss and a re-entrant calculation alike, since both run the read's one calculation. Inlined
+    /// into the calculation's delegate, so an exported miss adds no frame. Lean: the exported arm of
+    /// <c>EvalBody.evalZeroArgPropertyAccessCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static EvalResult<ZeroArgPropertyResult> EvaluateDetachedZeroArgPropertyResult(
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => EvaluateZeroArgPropertyResult(resolvedAlgorithm, DetachedEvaluation(ctx, valEnv, out var values), values);
+
+    /// <summary>
+    /// THE LOCAL-ONLY READ REFUSAL (EXPORTED-DETACHED, November 2026): a property-style read of a
+    /// local-only <paramref name="binding"/> whose key names a DETACHED activation — the nearest
+    /// activated level of its declaring chain was recorded before the exported evaluation this
+    /// context is inside started (<see cref="IsDetached"/>) — is refused with the existing
+    /// <see cref="EvalError.LocalOnlyProperty"/>, or <c>null</c> when the read may proceed. Its entry
+    /// is a value of an enclosing call, which the exported evaluation must not depend on; the check
+    /// runs BEFORE the cache is consulted, so a HIT is refused exactly like a miss, which no
+    /// evaluation would expose. An exported binding is never refused, and neither is a local-only
+    /// one whose keying activation the exported evaluation itself recorded. Out of line: only a read
+    /// inside an exported evaluation comes here (<see cref="EvalCtx.DetachedBefore"/> is nonzero).
+    /// Lean: <c>localOnlyReadRefused</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalError? DetachedLocalOnlyRead(
+        PropertyDeclaringOwner owner,
+        Property binding,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx)
+    {
+        if (IsExported(binding))
+            return null;
+
+        for (var scope = resolvedAlgorithm.Parent; scope is not null; scope = scope.Parent)
+        {
+            if (scope.Activation is not { } activation)
+                continue;
+            return IsDetached(activation, ctx)
+                ? LocalOnlyPropertyError(DeclaringOwnerDescription(owner), binding)
+                : null;
+        }
+
+        return null;
+    }
+
+    // How a refused detached read names the declaring owner: its path when it has one. Presentation only.
+    private static string DeclaringOwnerDescription(PropertyDeclaringOwner owner)
+        => owner.Algorithm is { } algorithm && TryGetAlgorithmPath(algorithm) is { } path ? path : "its declaring scope";
 
     /// <summary>
     /// Whether a property-style read of <paramref name="algorithm"/> enters a body that records an
@@ -600,6 +653,14 @@ public static partial class Evaluator
     /// Every zero-argument property read consults the cache, whoever declares the binding: an
     /// ownerless host-built level is its own declaring owner (CACHE-OWNER-D3; formerly such reads
     /// bypassed the cache and re-evaluated on every read, a C#-only divergence from Lean).
+    /// <para>THE EVALUATOR ENFORCES THE EXPOSURE CLASSIFICATION HERE (EXPORTED-DETACHED, November
+    /// 2026). An <see cref="PropertyExposure.Exported"/> binding's calculation runs DETACHED
+    /// (<see cref="EvaluateDetachedZeroArgPropertyResult"/>), so the run-wide entry it publishes cannot
+    /// depend on the call that read it first; its KEY is still computed from the reader's context
+    /// (<see cref="ZeroArgPropertyReadExecution"/>) and is the key it always was. A local-only
+    /// binding is read in the reader's context, except that a read keyed on a detached activation is
+    /// refused before the cache is consulted (<see cref="DetachedLocalOnlyRead"/>). Lean:
+    /// <c>EvalBody.evalZeroArgPropertyAccessCounted</c> over <c>zeroArgPropertyPublication</c>.</para>
     /// </summary>
     private static EvalResult<ZeroArgPropertyResult> GetOrEvaluateZeroArgPropertyResultCore(
         PropertyDeclaringOwner owner,
@@ -609,9 +670,14 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (ctx.DetachedBefore != 0 && DetachedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
+            return refused;
+
         return ctx.ZeroArgPropertyResultCache.GetOrEvaluate(
             ZeroArgPropertyReadExecution(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv),
-            () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
+            IsExported(binding)
+                ? () => EvaluateDetachedZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv)
+                : () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
     }
 
     /// <summary>

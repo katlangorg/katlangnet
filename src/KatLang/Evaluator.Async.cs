@@ -1266,7 +1266,7 @@ public static partial class Evaluator
                 case Expr.Index selection:
                     {
                         // MIRROR of the sync Index case: the receiver once, the supply formed
-                        // (spreads only), the supplied selectors left to right through the ONE
+                        // in written order, the supplied selectors left to right through the ONE
                         // AdvanceSelection step, then the capture.
                         if (frames[top].Phase == 0)
                         {
@@ -1292,7 +1292,7 @@ public static partial class Evaluator
                             }
 
                             frames[top].Phase = 1;
-                            if (HasSpreadSelector(selection.Selectors))
+                            if (RequiresSelectorFormation(selection.Selectors, ctx))
                             {
                                 var formed = await FormSelectionSupply(selection, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
                                 if (formed.IsError)
@@ -1459,7 +1459,8 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<PreparedAlgorithmOutput>> EvalAlgOutputPreparedCoreAsync(
         Algorithm alg,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        bool invoked = false)
     {
         if (alg.DeferredRegion is { } region)
         {
@@ -1491,7 +1492,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return await EvalOutputRowsPreparedAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), ctx, valEnv).ConfigureAwait(false);
+        return await EvalOutputRowsPreparedAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv, invoked: invoked), ctx, valEnv).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalOutputRowsPrepared"/>.</summary>
@@ -1603,9 +1604,10 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalAlgOutputCountedCoreAsync(
         Algorithm alg,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        bool invoked = false)
     {
-        var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv).ConfigureAwait(false);
+        var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv, invoked).ConfigureAwait(false);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -1649,7 +1651,7 @@ public static partial class Evaluator
         var slots = new List<Result>();
         TransientSupply bound = default;
         SourceSpan? overflowAt = null;
-        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames, invoked: true);
         foreach (var expr in alg.Output)
         {
             var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
@@ -1680,7 +1682,7 @@ public static partial class Evaluator
 
         var rows = alg.Output;
         var slots = new List<Result>(rows.Count);
-        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames, invoked: true);
         var flagRow = rows.Count - 1;
         CountedResult flagRowValue = default;
         TransientSupply discovery = default;
@@ -1880,7 +1882,7 @@ public static partial class Evaluator
         var names = algorithm.Params;
         var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
         var boundValues = ShadowValEnv(valEnv, names);
-        return await EvalBoundUserBodyCountedAsync(algorithm, boundCtx, boundValues, names)
+        return await EvalBoundUserBodyCountedAsync(algorithm, boundCtx, boundValues, names, invoked: false)
             .ConfigureAwait(false);
     }
 
@@ -1908,6 +1910,14 @@ public static partial class Evaluator
         return EvalResult<ZeroArgPropertyResult>.Ok(
             new ZeroArgPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
     }
+
+    /// <summary>MIRROR OF <see cref="EvaluateDetachedZeroArgPropertyResult"/> — keep in lock-step.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static ValueTask<EvalResult<ZeroArgPropertyResult>> EvaluateDetachedZeroArgPropertyResultAsync(
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, DetachedEvaluation(ctx, valEnv, out var values), values);
 
     /// <summary>MIRROR OF <see cref="EvalPropertyOwnerBodyCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalPropertyOwnerBodyCountedAsync(
@@ -2003,9 +2013,14 @@ public static partial class Evaluator
                 "Async evaluation requires an async-capable zero-argument property result cache on the run context.");
         }
 
+        if (ctx.DetachedBefore != 0 && DetachedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
+            return refused;
+
         return await asyncCache.GetOrEvaluateAsync(
             ZeroArgPropertyReadExecution(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv),
-            () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(false);
+            IsExported(binding)
+                ? () => EvaluateDetachedZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)
+                : () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalZeroArgPropertyAccessCounted(PropertyDeclaringOwner, Property, ZeroArgPropertyAccessKind, Algorithm, EvalCtx, IReadOnlyList{ValueTuple{string, Result}})"/> — keep in lock-step.</summary>

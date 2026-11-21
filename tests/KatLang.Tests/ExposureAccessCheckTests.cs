@@ -188,10 +188,11 @@ public sealed class ExposureAccessCheckTests
         { "l4-in-call", OnlyInsideF + "G(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\n", "G(200)", "refused at A" },
         { "l5-nested", OnlyInsideF + "M = {\n  public G(x) = {\n    R = if(x > 100, F.A, x)\n    R\n  }\n}\n", "M.G(1)", "1" },
         { "l5-nested", OnlyInsideF + "M = {\n  public G(x) = {\n    R = if(x > 100, F.A, x)\n    R\n  }\n}\n", "M.G(200)", "refused at A" },
-        // ... and for caching: the reader is cached once per run, as an untaken `1 / 0` is.
-        { "t1-untaken-impossible", OnlyInsideF + "G(x) = {\n  R = if(false, F.A, tick())\n  R\n}\n", "G(1), G(2)", "1, 1" },
-        { "t2-plain-control", "G(x) = {\n  R = tick()\n  R\n}\n", "G(1), G(2)", "1, 1" },
-        { "t3-div-control", "G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\n", "G(1), G(2)", "1, 1" },
+        // ... and for caching: the reader has the lifetime its plain and `1 / 0` controls have — one value
+        // per call of G (the inner-property lifetime rule, November 2026; formerly one per run: "1, 1").
+        { "t1-untaken-impossible", OnlyInsideF + "G(x) = {\n  R = if(false, F.A, tick())\n  R\n}\n", "G(1), G(2)", "1, 2" },
+        { "t2-plain-control", "G(x) = {\n  R = tick()\n  R\n}\n", "G(1), G(2)", "1, 2" },
+        { "t3-div-control", "G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\n", "G(1), G(2)", "1, 2" },
         // More readers of an impossible path that does not run: selected by a path, nested, read by name.
         { "untaken-selected-g8", "F(y) = {\n  L = Lib.Mid.Sub\n" + LibMid + "      0\n    }\n    0\n  }\n  Box = {\n    public A = if(false, L.Q + 0, 7)\n  }\n  Box.A\n}\n", "F(5)", "7" },
         { "untaken-nested-g8", "M = {\n  public F(y) = {\n    L = Lib.Mid.Sub\n  " + LibMid.Replace("\n", "\n  ") + "    0\n      }\n      0\n    }\n    A = if(false, L.Q + 0, 7)\n    A\n  }\n}\n", "M.F(5)", "7" },
@@ -199,8 +200,10 @@ public sealed class ExposureAccessCheckTests
         { "untaken-nested-g9", "M = {\n  public F(y) = {\n    open " + LiteralMid + "\n    A = if(false, Q + 0, 7)\n    A\n  }\n}\n", "M.F(5)", "7" },
         { "untaken-lexical-g9", "F(y) = {\n  open " + LiteralMid + "\n  A = if(false, Q + 0, 7)\n  A\n}\n", "F(5)", "7" },
         { "untaken-lexical-g9", "F(y) = {\n  open " + LiteralMid + "\n  A = if(false, Q + 0, 7)\n  A\n}\n", "F.A", "7" },
-        // The accepted consequence: under `tick`, the reader of an impossible path is cached once, like an untaken `1 / 0`.
-        { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(5), F(7)", "0, 0" },
+        // Under `tick`, the reader of an impossible path is evaluated once per call of F, like any inner property:
+        // the second call's tick is 2, its impossible path runs and fails at the check (formerly the reader was
+        // cached once per run, so the second call never evaluated it: "0, 0").
+        { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(5), F(7)", "refused at Sub" },
         { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(5)", "0" },
         { "d01-impossible-tick", "F(y) = {\n  open " + LiteralMid + "\n  A = if(tick() > 1, Q + 0, 0)\n  A\n}\n", "F(7)", "0" },
         { "d02-live-tick", "F(y) = {\n  A = if(tick() > 1, y, 0)\n  A\n}\n", "F(5), F(7)", "0, 7" },

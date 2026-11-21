@@ -515,11 +515,23 @@ theorem SoundI.modify_tickCounter {P : Array NeedCell → Prop} :
 
 attribute [ht_spec] SoundI.modify_tickCounter
 
+/-- The context a binding cell's row is supplied in (`aliasCellContext`, EXPORTED-DETACHED) is valid
+    wherever the using context is: it is that context, or its detached form, whose need tier is
+    empty. -/
+theorem validCtx_aliasCellContext {h : Array NeedCell} {wired : Algorithm} {ctx : EvalCtx} {s : EvalState}
+    (vc : ValidCtx h ctx) : ValidCtx h (aliasCellContext wired ctx s) := by
+  unfold aliasCellContext
+  split
+  · show ValidNeedEnv h []
+    exact fun _ hm => (by cases hm)
+  · exact vc
+
 /-- **The `aliasCells` write point.** -/
 theorem aliasBindingCellRecorded_spec {P : Array NeedCell → Prop} {wired : Algorithm} {target : Expr}
     {ctx : EvalCtx} (hreq : ∀ h, P h → ValidCtx h ctx) :
     SoundI P (aliasBindingCellRecorded wired target ctx) (fun a h => a < h.size) := by
   unfold aliasBindingCellRecorded; ht_tac
+  exact fun h hp => ⟨validCtx_aliasCellContext (hreq h hp.1), VEV.nil⟩
 
 theorem aliasBindingCell_spec {P : Array NeedCell → Prop} {wired : Algorithm} {target : Expr}
     {ctx : EvalCtx} (hreq : ∀ h, P h → ValidCtx h ctx) :

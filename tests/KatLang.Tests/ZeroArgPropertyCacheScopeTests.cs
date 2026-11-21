@@ -193,21 +193,31 @@ public class ZeroArgPropertyCacheScopeTests
     }
 
     [Fact]
-    public void NestedCapture_OfAGrandparentParameter_IsPerActivation_WhileANestedConstantIsPerRun()
+    public void NestedCapture_OfAGrandparentParameter_AndANestedConstant_AreBothPerOwningCall()
     {
         var (captured, capturedResult) = Run(
             "Outer(x) = {\n    Mid = {\n        P = x + 1\n        P + P\n    }\n    Mid\n}\nOuter(1), Outer(2)");
         Assert.Equal([4m, 6m], Atoms(capturedResult));
         Assert.Equal(2, captured.EvaluationsOf("P"));
 
-        // The same nested block with a self-contained constant: every activation of Outer
-        // mints a fresh Mid record, but the declaring scope — its declaration lists and
-        // their parent chain — is one and the same, so the constant has one value per run.
+        // The same nested block with a self-contained constant. Since the inner-property
+        // lifetime rule (November 2026) the constant's storage follows its OWNING INVOCATION —
+        // the call of Outer around Mid — exactly as the captured property's does: each call of
+        // Outer has a fresh binding (formerly one value per run, keyed by the declaring scope
+        // alone: one evaluation).
         var (constant, constantResult) = Run(
             "Outer(x) = {\n    Mid = {\n        K = 1 + 2\n        K + x\n    }\n    Mid\n}\nOuter(1), Outer(2)");
         Assert.Equal([4m, 5m], Atoms(constantResult));
         Assert.Equal(2, constant.RequestsOf("K"));
-        Assert.Equal(1, constant.EvaluationsOf("K"));
+        Assert.Equal(2, constant.EvaluationsOf("K"));
+
+        // Read from outside every call of Outer (through a Mid that reads no input of Outer, so the
+        // path is accessible), the constant is the one run-scoped binding.
+        var (outside, outsideResult) = Run(
+            "Outer(x) = {\n    Mid = {\n        K = 1 + 2\n        K + 1\n    }\n    Mid + x\n}\nOuter.Mid.K, Outer.Mid.K");
+        Assert.Equal([3m, 3m], Atoms(outsideResult));
+        Assert.Equal(2, outside.RequestsOf("K"));
+        Assert.Equal(1, outside.EvaluationsOf("K"));
     }
 
     // ── 4. Unrelated caller bindings ────────────────────────────────────────
@@ -595,9 +605,20 @@ public class ZeroArgPropertyCacheScopeTests
 
     [Fact]
     public Task IdenticalBodies_InDistinctDeclarations_HaveDistinctResults()
+        // Read from outside every call, each declaration's P is its own run-scoped binding: two
+        // host calls, each value read twice.
+        => AssertHostCounterPaths(
+            "F(x) = {\n P = Data()\n P + x\n}\nG(x) = {\n P = Data()\n P + x\n}\nF.P, G.P, F.P, G.P",
+            "100,200,100,200", 2);
+
+    [Fact]
+    public Task IdenticalBodies_InDistinctDeclarations_AreFreshInEveryCallOfTheirOwner()
+        // The inner-property lifetime rule: every actual call of F or G has a fresh P, whether or
+        // not its definition uses the call's argument (formerly one exported entry per
+        // declaration for the run: 101,201,101,201 with two host calls).
         => AssertHostCounterPaths(
             "F(x) = {\n P = Data()\n P + x\n}\nG(x) = {\n P = Data()\n P + x\n}\nF(1), G(1), F(1), G(1)",
-            "101,201,101,201", 2);
+            "101,201,301,401", 4);
 
     private static async Task AssertHostCounterPaths(string source, string expected, int calls)
     {
@@ -732,12 +753,17 @@ public class ZeroArgPropertyCacheScopeTests
     }
 
     [Fact]
-    public void OptimizedLoop_ExportedStepLocalTemp_SharesTheRunEntryWithGenericExecution()
+    public void OptimizedLoop_ExportedStepLocalTemp_HasOneValuePerRoundLikeGenericExecution()
     {
-        // The step-local string temp is exported: one materialization per run on both
-        // strategies (it was one per iteration plus one per temp call — 600 chars for
-        // twenty iterations — because each iteration and each call ran in fresh
-        // environments). `n` still walks 0, 1, 3, 7, ... (2^20 - 1).
+        // The step-local string temp is exported and belongs to the ROUND that declares it (the
+        // inner-property lifetime rule: each round is an actual call of the step): one
+        // materialization per round on both strategies — 200 chars for twenty rounds — shared by
+        // the round's bare reads and by the reads inside its two temp calls, which start no new
+        // lifetime (one per iteration plus one per temp call would be 600; one run-wide entry,
+        // the rule until November 2026, was 10). The generic strategy keeps the round's value in
+        // the property cache under the round's identity; the planned strategy keeps it in the
+        // per-iteration memo and never asks the cache, as it always did for a local-only temp.
+        // `n` still walks 0, 1, 3, 7, ... (2^20 - 1).
         const string source =
             "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + if(T == T, 1, 0)\n    if(T == T, 1, 0) + A + A - 2 + if(T == T, 1, 0) - 1\n}\nStep(0).repeat(20)";
         var expr = Program(source);
@@ -753,12 +779,11 @@ public class ZeroArgPropertyCacheScopeTests
         Assert.False(optimized.Result.IsError);
         Assert.Equal([1_048_575m], generic.Result.Value.Value.ToAtoms());
         Assert.Equal([1_048_575m], optimized.Result.Value.Value.ToAtoms());
-        Assert.Equal(10, generic.Budget.MaterializedStringChars);
-        Assert.Equal(10, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(200, generic.Budget.MaterializedStringChars);
+        Assert.Equal(200, optimized.Budget.MaterializedStringChars);
         Assert.Equal(generic.Budget.PeakDepth, optimized.Budget.PeakDepth);
-        Assert.Equal(1, genericCache.EvaluationsOf("T"));
-        Assert.Equal(1, optimizedCache.EvaluationsOf("T"));
-        Assert.Equal(genericCache.RequestsOf("T"), optimizedCache.RequestsOf("T"));
+        Assert.Equal(20, genericCache.EvaluationsOf("T"));
+        Assert.Equal(0, optimizedCache.RequestsOf("T"));
         Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
         Assert.Equal(0, diagnostics.GetSnapshot().OptimizedLoopFallbacks);
     }
@@ -917,12 +942,14 @@ public class ZeroArgPropertyCacheScopeTests
     }
 
     [Fact]
-    public void HostBuiltTree_IsCachedByTheExposureItDeclares()
+    public void HostBuiltTree_IsHeldToTheExposureItDeclares()
     {
-        // The evaluator trusts a host-built tree's exposure exactly as it does for open
-        // and structural access: a parameter-reading property left at the default
-        // Exported gets one value per run, while the honest classification gets one per
-        // activation. Pipeline-elaborated trees always carry the honest classification.
+        // The evaluator ENFORCES a host-built tree's exposure (EXPORTED-DETACHED): a
+        // parameter-reading property left at the default Exported is evaluated detached
+        // from the call that reads it, so its read of `x` finds no binding and the run is
+        // refused. It used to publish the first call's value for the whole run (2, 2). The
+        // honest classification gets one value per activation. Pipeline-elaborated trees
+        // always carry the honest classification.
         static Expr Tree(PropertyExposure exposure)
         {
             var outer = new Algorithm.User(
@@ -950,7 +977,9 @@ public class ZeroArgPropertyCacheScopeTests
             return new Expr.AlgorithmExpr(root);
         }
 
-        Assert.Equal([2m, 2m], Atoms(Evaluator.Run(Tree(PropertyExposure.Exported), new CountingCache())));
+        var misExposed = Evaluator.Run(Tree(PropertyExposure.Exported), new CountingCache());
+        Assert.True(misExposed.IsError);
+        Assert.Equal("x", Assert.IsType<EvalError.UnknownName>(Innermost(misExposed.Error)).Name);
         Assert.Equal([2m, 10m], Atoms(Evaluator.Run(Tree(PropertyExposure.LocalOnlyCapturedAncestorParameters), new CountingCache())));
     }
 

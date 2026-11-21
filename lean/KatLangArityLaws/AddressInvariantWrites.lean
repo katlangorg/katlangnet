@@ -230,12 +230,15 @@ theorem ready_spec {P : Array NeedCell → Prop} {v : CountedResult}
     (hreq : ∀ h, P h → CRV h v) : SoundI P (readyNeed v) (fun a h => a < h.size) :=
   allocate_spec (susp := .ready v) hreq
 
-/-- `capturedParameterActivation?` reads only; a selected activation is a saved one. -/
+/-- `capturedParameterActivation?` reads only; it refuses an unavailable parameter in the state it
+    started from, and a selected activation is a saved one. -/
 theorem captured_spec {P : Array NeedCell → Prop} {name : Ident} {ctx : EvalCtx} :
     SoundI P (capturedParameterActivation? name ctx)
       (fun act? h => OptActV h act?) := by
   refine SoundI.of_readonly (fun s vs _ => ?_)
-  obtain ⟨act?, hc, hact⟩ := captured_run name ctx s
+  rcases captured_run name ctx s with hrefused | ⟨act?, hc, hact⟩
+  · rw [hrefused]
+    exact ⟨rfl, fun _ h => by cases h⟩
   rw [hc]
   refine ⟨rfl, fun x hx act he => ?_⟩
   cases hx
@@ -255,7 +258,9 @@ theorem supply_spec {P : Array NeedCell → Prop} {source : Expr} {caller : Eval
   intro hp s vs ps
   by_cases hpar : ∃ name, source = .param name
   · obtain ⟨name, rfl⟩ := hpar
-    obtain ⟨act?, hc, hact⟩ := captured_run name caller s
+    rcases captured_run name caller s with hrefused | ⟨act?, hc, hact⟩
+    · rw [supply_param_refused name caller values s _ hrefused]
+      exact ⟨vs, Nat.le_refl _, fun _ h => by cases h⟩
     have venv : ValidNeedEnv s.needs (act?.map ParameterActivation.needs |>.getD caller.needEnv) :=
       tier_valid (hreq _ ps).1 (fun act e => by
         obtain ⟨i, hi⟩ := hact act e
@@ -302,7 +307,7 @@ theorem enterPropertyOwnerBody_spec {P : Array NeedCell → Prop} {a : Algorithm
     SoundI P (enterPropertyOwnerBody a ctx env bc) (fun c h => ValidCtx h c) := by
   intro hp
   unfold enterPropertyOwnerBody
-  refine SoundI.bind (enterAlgorithmBody_spec (ctx := { ctx with bindingContext := bc }) hreq)
+  refine SoundI.bind (enterAlgorithmBody_spec (ctx := { ctx with bindingContext := bc, enteringInvocation := false }) hreq)
     (fun _ _ _ g v => ValidCtx.mono g v) ?_ hp
   intro entered
   exact SoundI.pure _ (fun h ph => ph.2)

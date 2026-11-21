@@ -547,18 +547,19 @@ public class ZeroArgumentReferenceLiftingTests
     }
 
     /// <summary>
-    /// Nested scopes follow the ordinary cache scope: a self-contained nested callable is one
-    /// value per run, one that reads an enclosing owner's input one value per activation — and
-    /// every read inside one activation shares it, whether the reference is a root row or a
-    /// nested formula.
+    /// Nested scopes follow the ordinary cache scope: a nested callable — self-contained or
+    /// reading an enclosing owner's input — is one value per call of that owner (the
+    /// inner-property lifetime rule, November 2026; a self-contained one was formerly one value
+    /// per run), and every read inside one call shares it, whether the reference is a root row
+    /// or a nested formula.
     /// </summary>
     [Fact]
     public async Task NestedScopes_FollowTheOrdinaryCacheScope()
     {
         AssertOk(
             await OnEveryRouteAsync("F(v) = {\n  Inner(*xs) = tock()\n  Inner + Inner + v\n}\nF(0), F(10)"),
-            "S[2, 12]",
-            "tock#1");
+            "S[2, 14]",
+            "tock#1", "tock#2");
         AssertOk(
             await OnEveryRouteAsync("F(v) = {\n  Inner(*xs) = tock() + v\n  Inner + Inner\n}\nF(0), F(10)"),
             "S[2, 24]",

@@ -218,13 +218,14 @@ public sealed class ExposureFallbackEdgeTests(Xunit.Abstractions.ITestOutputHelp
         AssertExported(Member(F(selected + "F(1)\n"), "A"));
         await AssertValue(selected + "F(1), F.A\n", "S[5, 5]");
 
-        // o04: that exported reader is evaluated once for both calls.
+        // o04: that exported reader is evaluated once in each call of F (the inner-property lifetime rule,
+        // November 2026; formerly once for both calls).
         const string traced = "F(y) = {\n  A = { public Q = 5\n    y }.Q + trace(1)\n  A\n}\nF(1), F(2)\n";
         var calls = 0;
         var trace = HostOperation.Create("trace", (arguments, _) => { Interlocked.Increment(ref calls); return arguments[0]; }, "x");
         foreach (var result in await Routes(traced, trace))
             Assert.Equal("S[6, 6]", SemanticExplorerHarness.Neutral(Assert.IsType<RunResult.Success>(result).Value));
-        Assert.Equal(3, calls); // once per route
+        Assert.Equal(6, calls); // twice per route: once per call of F
     }
 
     // ── A block written in a deconstruction right-hand side ───────────────────────────────────────

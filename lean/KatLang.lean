@@ -2195,8 +2195,10 @@ inductive ZeroArgPropertyAccessKind where
 /-- Key of the per-run zero-parameter property cache — and with it the cache's
     semantic LAW (C#: `ZeroArgPropertyCacheKey`).
 
-    THE RULE: a zero-parameter property is evaluated once per run for each
-    resolved property binding; repeated VALUE access to that same binding reuses
+    THE RULE: a zero-parameter property is evaluated once for each resolved
+    property binding IN ITS OWNING INVOCATION (INNER-PROPERTY LIFETIME, November
+    2026: once in each actual call of the owner it is declared under, once per
+    run where no call owns it); repeated VALUE access to that same binding reuses
     the result, a shadowing property is a different binding with its own entry,
     and an explicit call `A()` evaluates afresh, neither reading nor replacing
     the entry. CACHE IDENTITY FOLLOWS SEMANTIC BINDING IDENTITY, never the
@@ -2208,14 +2210,21 @@ inductive ZeroArgPropertyAccessKind where
     call argument, a builtin VALUE slot (`sum(A)`, `A.sum`, `if(c, A, B)`, a
     loop's initial state, `reduce`'s initial accumulator), the `.string`
     intrinsic's receiver, a callback body — receives the value that access
-    produced (`supplyNeed`, `evalDotStringReceiverValue`). The scope of a
-    stored value follows the binding's exposure classification:
+    produced (`supplyNeed`, `evalDotStringReceiverValue`). STORAGE FOLLOWS THE
+    RESOLVED DECLARING BINDING AND ITS OWNING INVOCATION; the exposure
+    classification decides accessibility and detachment, and which component
+    names the invocation:
 
     * an EXPORTED binding is self-contained — its value depends on no input that
       an enclosing owner's call binds — so the binding context at the access is
-      not a determinant of the value: ONE entry per run per declaring scope
-      serves every property-style access, from any call, callback, loop
-      iteration, or explicit outer call. Its environment components are `none`.
+      not a determinant of the value. Its key carries the OWNING INVOCATION of
+      its declaring chain (`propertyOwnerInvocation`): every actual call of the
+      owner it is declared under has its own entry, every property-style access
+      inside that call — from a callback, a helper, an open, a structural path —
+      reads it, and where no call owns the chain (a root or module property, a
+      member read from outside its owner's call) ONE entry per declaring scope
+      serves the run. Its value-environment component is `none`. (Until
+      November 2026 an exported binding had one entry per run.)
     * a LOCAL-ONLY binding reads an input an enclosing owner's call binds
       through the dynamically threaded environments, so its value is a
       function of its DECLARING owner's binding context, retained by the existing
@@ -2284,6 +2293,29 @@ structure EvalCtx where
   needEnv : Assoc Ident Nat := []
   bindingContext : Nat := 0
   headScope : Option ScopeCtx := none
+  /-- THE ACTIVATION WATERMARK (EXPORTED-DETACHED, November 2026): every lexical activation whose
+      id (its index in `EvalState.lexicalActivations`) is below this number is DETACHED in this
+      context. It stays an IDENTITY — cache keys, alias memos, anchoring and declaring-context
+      inheritance read it exactly as before — but it supplies no INPUT: a captured parameter read
+      through it finds no binding (`capturedParameter`), a local-only member whose required owner it
+      is is inaccessible (`memberAccessible?`), and a local-only property keyed on it is refused
+      (`localOnlyReadRefusal?`). Zero in every context that no exported evaluation has entered, where
+      nothing is detached. Set only by `EvalCtx.detach`, never lowered, and inherited by every
+      derived context — a pushed head, a bound callee, a suspended cell's caller — so a closure or
+      plan created inside an exported evaluation stays detached wherever it is demanded later.
+      C#: the watermark carried by the call-stack node (`Evaluator.EvalCtx.DetachedBefore`). -/
+  detachedBefore : Nat := 0
+  /-- THE INVOCATION MARK (INNER-PROPERTY LIFETIME, November 2026): the NEXT body entry made in this
+      context is the body of an ACTUAL CALL — a binding boundary bound a supply for the callee and is
+      about to enter it. Set only by the three call sites that do so
+      (`EvalBody.evalNeedUserSupplyOutput`, the user-step arm of `EvalBody.runNeedStepWith`, and the
+      family activation `wireSelectedBranchBody`), read by `recordParameterActivation` and
+      `enterAlgorithmBody`, and CONSUMED by that entry: `EvalCtx.push` clears it, so nothing below
+      the entered head — a row, a nested block, a property read — inherits it. Every other body
+      entry is NOT a call: a property-style read (`enterPropertyOwnerBody`, which clears the mark
+      itself), a block evaluated in value position, the zero-argument demand funnel, a row
+      supply, the alias cell's row. C#: the `ownsInvocation` argument of `Evaluator.EnterAlgorithmBody`. -/
+  enteringInvocation : Bool := false
   deriving Repr
 
 
@@ -2392,6 +2424,15 @@ structure ParameterActivation where
   values : ValEnv
   needs : NeedEnv := []
   bindingContext : Nat := 0
+  /-- Whether an ACTUAL CALL recorded this activation (INNER-PROPERTY LIFETIME, November 2026):
+      the entry context carried the invocation mark (`EvalCtx.enteringInvocation`). An invoked
+      activation OWNS the bindings of the properties declared under it, whatever their exposure:
+      its `bindingContext` — the fresh context its call minted — is their owning invocation
+      (`propertyOwnerInvocation`). An activation a property-style READ recorded (a parameterless
+      or collecting-only owner with a local-only member, CACHE-OWNER-D1 / COLLECT-CACHE-1) owns
+      none: a read gives a binding no new lifetime, so the search continues above it.
+      C#: `ParameterActivation.OwnsInvocation`. -/
+  ownsInvocation : Bool := false
   deriving Repr
 
 /-- Per-run evaluator state. The zero-parameter property cache is part of the
@@ -2412,8 +2453,8 @@ structure EvalState where
   lexicalActivations : Array ParameterActivation := #[]
   nextRuntimeDeclaration : Nat := 0
   /-- META-S3-2: the BINDING CELL of each runtime-target alias under its property-lifetime key
-      (`aliasBindingCellKey`: per run when its own property is exported, per declaring binding
-      context when it is local-only), established on first use by `aliasBindingCell` and never
+      (`aliasBindingCellKey`: per owning invocation when its own property is exported, per
+      declaring binding context when it is local-only), established on first use by `aliasBindingCell` and never
       changed. -/
   aliasCells : List (String × Nat) := []
   /-- The run's `tick()` counter: the number of `tick` executions so far — zero when the run
@@ -2537,8 +2578,38 @@ def runEvalM (m : EvalM A) : Except Error A :=
 namespace EvalCtx
   def empty : EvalCtx := { callStack := [] }
   def push (a : Algorithm) (ctx : EvalCtx) : EvalCtx :=
-    { ctx with callStack := a :: ctx.callStack, headScope := none }
+    { ctx with callStack := a :: ctx.callStack, headScope := none, enteringInvocation := false }
   def head? (ctx : EvalCtx) : Option Algorithm := ctx.callStack.head?
+
+  /-- Whether the lexical activation `id` is DETACHED in `ctx`: recorded before the context's
+      watermark (`EvalCtx.detachedBefore`). Nothing is detached at the default watermark `0`.
+      C#: `Evaluator.IsDetached`. -/
+  def isDetached (ctx : EvalCtx) (id : Nat) : Bool := decide (id < ctx.detachedBefore)
+
+  /-- Whether an owner level's activation can supply an INPUT in `ctx`: the level is activated and
+      its activation is not detached. At the default watermark this is `Option.isSome`
+      (`usableActivation_attached`). -/
+  def usableActivation (ctx : EvalCtx) : Option Nat → Bool
+    | some id => !ctx.isDetached id
+    | none => false
+
+  /-- THE DETACHED CONTEXT of an exported evaluation that starts when `activations` lexical
+      activations have been recorded (EXPORTED-DETACHED, "exported means detached"): the inherited
+      need tier is empty and the watermark rises to `activations`, so every activation that exists
+      at that moment is detached — and stays detached under a nested detachment (`max`). The call
+      stack, the head scope and the binding context are the reader's: activations remain
+      identities, and a key computed in the detached context is the key the reader computes. The
+      caller supplies the empty value environment beside it. C#: `Evaluator.EvalCtx.Detach`. -/
+  def detach (ctx : EvalCtx) (activations : Nat) : EvalCtx :=
+    { ctx with needEnv := [], detachedBefore := max ctx.detachedBefore activations }
+
+  /-- The context a zero-argument calculation of a binding with the given exposure runs in, with its
+      value environment: the DETACHED context and no values for an `exported` binding, the reader's
+      own for a local-only one. `activations` is the number of activations recorded when the
+      calculation starts. -/
+  def forExposure (ctx : EvalCtx) (env : ValEnv) (exported : Bool) (activations : Nat) :
+      EvalCtx × ValEnv :=
+    if exported then (ctx.detach activations, []) else (ctx, env)
 
   /-- The callee-side context of a parameter binding: a fresh binding context
       with the bound parameter names removed from the inherited need-cell tier
@@ -3927,13 +3998,23 @@ def recordParameterActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv
   let activation : ParameterActivation := {
     values := env.filter (fun b => names.contains b.fst)
     needs := ctx.needEnv.filter (fun b => names.contains b.fst)
-    bindingContext := ctx.bindingContext }
+    bindingContext := ctx.bindingContext
+    ownsInvocation := ctx.enteringInvocation }
   set { state with
     lexicalActivations := state.lexicalActivations.push activation }
   pure id
 
+/-- Enter an algorithm body. EVERY ACTUAL CALL RECORDS AN ACTIVATION (INNER-PROPERTY LIFETIME,
+    November 2026): a body entered under the invocation mark (`EvalCtx.enteringInvocation`) is the
+    body of a call, and its activation — recorded `ownsInvocation` — is the identity that owns the
+    bindings of the properties declared under it, self-contained ones included, so two calls of one
+    owner never share an inner binding. Without the mark the former rule stands: a parameterless
+    body whose properties are all exported needs no activation (a block in value position, a
+    property-style read), and any other body records one. The mark is consumed by the push.
+    C#: `Evaluator.EnterAlgorithmBody` (`ownsInvocation`). -/
 def enterAlgorithmBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM EvalCtx := do
-  if a.params.isEmpty && a.props.all (fun p => p.exposure.isExported) then pure (ctx.push a)
+  if !ctx.enteringInvocation && a.params.isEmpty && a.props.all (fun p => p.exposure.isExported) then
+    pure (ctx.push a)
   else
     let id <- recordParameterActivation a.params ctx env
     pure { ctx.push a with headScope := some (a.asScopeCtx.withActivation id) }
@@ -3947,20 +4028,68 @@ def enterAlgorithmBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Ev
     never enters through here; it binds a fresh context (`EvalCtx.bindParameters`). C#:
     `Evaluator.EnterAlgorithmBody` with an inherited binding identity. -/
 def enterPropertyOwnerBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (bindingContext : Nat) : EvalM EvalCtx := do
-  let entered <- enterAlgorithmBody a { ctx with bindingContext := bindingContext } env
+  -- A READ is never a call: it carries no invocation mark, so an activation it records owns no
+  -- binding lifetime (`ParameterActivation.ownsInvocation = false`).
+  let entered <- enterAlgorithmBody a { ctx with bindingContext := bindingContext, enteringInvocation := false } env
   pure { entered with bindingContext := ctx.bindingContext }
 
-def capturedParameterActivation? (name : Ident) (ctx : EvalCtx) : EvalM (Option ParameterActivation) := do
+/-- HOW A PARAMETER READ FINDS ITS BINDING (EXPORTED-DETACHED, November 2026: captured reads are
+    LEXICAL-ONLY). Three ways, decided by the context alone:
+    * `own` — the head binds the name itself, or NO level of its lexical chain binds it (a
+      builtin wrapper's argument, a host-built free parameter): the read uses the context's own
+      tiers;
+    * `activation id` — the nearest enclosing level binding the name is activated and not
+      detached: the read uses that activation's snapshot;
+    * `unavailable` — that level is found, but it has no activation (a static owner, reached by
+      navigation from outside its call) or its activation is DETACHED (`EvalCtx.isDetached`): the
+      name is lexically OWNED and UNAVAILABLE at this site. Every operation on the written
+      occurrence is refused with `unknownName` (`capturedParameterActivation?`), and none falls
+      back to the context's inherited tiers, which hold whatever a dynamically live caller bound
+      under the same name (formerly the read did: `H(y) = G.F(1)` read `H`'s `y` from inside `G`).
+    The three are kept apart: an `own` name that no tier binds is `unknownName` at its VALUE read
+    only (its callable projection is absence, its supply a fresh suspended cell), and a usable
+    binding without callable capability is `notAnAlgorithm`.
+    C#: `Evaluator.CapturedParameterActivation` (`ParameterActivation.IsUnavailable`). -/
+inductive CapturedParameter where
+  | own
+  | activation (id : Nat)
+  | unavailable
+  deriving Repr, BEq, DecidableEq
+
+def capturedParameter (name : Ident) (ctx : EvalCtx) : CapturedParameter :=
   match ctx.head?, siteScope? ctx with
   | some site, some scope =>
-      if site.params.contains name then pure none
+      if site.params.contains name then .own
       else
-        let id := scope.parent >>= fun parent =>
-          (requiredParameterOwner? parent name).bind ScopeCtx.activation
-        match id with
-        | none => pure none
-        | some id => pure ((<- get).lexicalActivations[id]?)
-  | _, _ => pure none
+        match scope.parent >>= fun parent => requiredParameterOwner? parent name with
+        | none => .own
+        | some owner =>
+            match owner.activation with
+            | some id => if ctx.isDetached id then .unavailable else .activation id
+            | none => .unavailable
+  | _, _ => .own
+
+/-- The activation a parameter operation on `name` uses instead of the context's own tiers
+    (`capturedParameter`): none for an `own` name, the recorded activation of the lexical owner —
+    and for an UNAVAILABLE name the REFUSAL `unknownName`, in the state the operation started from.
+    It is THE one lookup of every operation on a written parameter occurrence, so the refusal
+    reaches each of them at the occurrence itself, before anything is demanded, projected,
+    transported or allocated:
+    * the VALUE read (`parameterContext`, the `param` arm of `evalCounted`);
+    * the CALLABLE projection, and so the invocation of a parameter callee
+      (`projectParameterWith`): never the absence a usable valueless binding reports;
+    * the lookup of the cell the parameter holds (`parameterNeedAddress?`, `hasSuppliedParameterCell`,
+      the written-callee arm of `EvalBody.originBinding?`);
+    * the DIRECT TRANSPORT of the parameter as a supplied argument, callee, link receiver or alias
+      row (`supplyNeed`): the supply fails while it is formed, whether or not the receiving
+      parameter is ever demanded. Any other supplied computation stays a suspended cell (call by
+      need): `F(y + 1)` refuses only when the callee demands that argument.
+    Reads the state only, and never changes it. -/
+def capturedParameterActivation? (name : Ident) (ctx : EvalCtx) : EvalM (Option ParameterActivation) := do
+  match capturedParameter name ctx with
+  | .own => pure none
+  | .unavailable => throw (Error.unknownName name)
+  | .activation id => pure ((<- get).lexicalActivations[id]?)
 
 def parameterContext (name : Ident) (ctx : EvalCtx) (env : ValEnv) : EvalM (EvalCtx × ValEnv) := do
   match <- capturedParameterActivation? name ctx with
@@ -4002,8 +4131,9 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
   allocateNeed (.expression source caller values)
 
 /-- The address of the cell parameter `name` holds, found exactly as `supplyNeed` finds it: its
-    captured activation first, else the context's own environment. Reads only.
-    C#: `Evaluator.ParameterNeedCell`. -/
+    captured activation first, else the context's own environment. Reads only; an UNAVAILABLE
+    parameter is the lookup's `unknownName` refusal (`capturedParameterActivation?`).
+    C#: `Evaluator.ParameterNeedCell`, with the refusal at its written-occurrence callers. -/
 def parameterNeedAddress? (name : Ident) (caller : EvalCtx) : EvalM (Option Nat) := do
   let activation <- capturedParameterActivation? name caller
   pure (lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv))
@@ -4045,6 +4175,12 @@ def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (L
     reach (one above an activated level of the container's chain) refuses the access. So an
     accepted member's reads use its owner's snapshot, never a shadowing dynamic binding. An absent
     owner refuses the access.
+    A DETACHED owner activation refuses it too (EXPORTED-DETACHED, November 2026,
+    `EvalCtx.usableActivation`): inside an exported evaluation the activations that existed when it
+    started are identities, never inputs, so a local-only member one of them owns is inaccessible —
+    the same `localOnlyProperty` report. `lexicalChainContains` needs no watermark of its own: the
+    level it accepts carries the owner's own activation (`compatibleActivations`), which this test
+    has already found usable.
     `.localConditional` is never assigned to a `PropDef`; declared by a host, it is
     inaccessible. C#: `Evaluator.IsAccessibleFrom`. -/
 def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bool :=
@@ -4060,11 +4196,11 @@ def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bo
           | some requirements => requirements.all fun (name, depth) =>
               match depth >>= declaringScope.ancestor? with
               | some owner =>
-                  owner.params.contains name && owner.activation.isSome && lexicalChainContains ctx owner
+                  owner.params.contains name && ctx.usableActivation owner.activation && lexicalChainContains ctx owner
               | none => false
           | none => required.all fun name =>
               match requiredParameterOwner? declaringScope name with
-              | some owner => owner.activation.isSome && lexicalChainContains ctx owner
+              | some owner => ctx.usableActivation owner.activation && lexicalChainContains ctx owner
               | none => false
 
 
@@ -4080,7 +4216,8 @@ def wireToCaller (ctx : EvalCtx) (a : Algorithm) : Algorithm :=
     C#: `Evaluator.ChildOfConditionalCall`. -/
 def wireSelectedBranchBody (callee : Algorithm) (body : Algorithm) (binderNames : List Ident)
     (ctx : EvalCtx) (env : ValEnv) : EvalM Algorithm := do
-  let id <- recordParameterActivation binderNames ctx env
+  -- A selected clause is an actual call of its family: the family scope's activation is invoked.
+  let id <- recordParameterActivation binderNames { ctx with enteringInvocation := true } env
   pure (body.withParent (some (.mk callee.parent binderNames callee.opens callee.props
     callee.output callee.branches (some id) callee.declarationId)))
 
@@ -5480,6 +5617,11 @@ inductive ZeroArgPropertyRequest where
   | invoke (calleeName : String)
   deriving Repr
 
+/-- Whether the request is a property-style READ (which may be served from an entry). -/
+def ZeroArgPropertyRequest.isRead : ZeroArgPropertyRequest → Bool
+  | .read => true
+  | .invoke _ => false
+
 /-- Where the callee of an ordinary call came from (CACHE-PUB-1): the authoritative provenance a
     zero-supply invocation needs to name the property BINDING it invokes, decided only after the
     supply is formed (`EvalBody.evalSuppliedCallCounted`) and read without evaluating anything
@@ -5894,9 +6036,9 @@ def isCacheableZeroArgPropertyAlgorithm (a : Algorithm) : Bool :=
     and for a runtime-target alias's binding cell (`aliasBindingCellKey`), so an alias's cell and
     the entry of the same row written as a property have one lifetime by construction
     (ALIAS-CELL-LIFETIME, November 2026). C#: `ZeroArgPropertyCacheKey.EnvironmentIdentity`. -/
-def propertyKeyBindingContext (exported : Bool) (ownerBindingContext : Option Nat) (ctx : EvalCtx) :
-    Option Nat :=
-  if exported then none else some (ownerBindingContext.getD ctx.bindingContext)
+def propertyKeyBindingContext (exported : Bool) (ownerBindingContext : Option Nat) (ctx : EvalCtx)
+    (ownerInvocation : Option Nat := none) : Option Nat :=
+  if exported then ownerInvocation else some (ownerBindingContext.getD ctx.bindingContext)
 
 /-- The declaring OWNER component of a property-style key: the owner's declaration and structural
     scope. Shared property lists do not identify distinct owners. Shared by the property cache and
@@ -5904,14 +6046,14 @@ def propertyKeyBindingContext (exported : Bool) (ownerBindingContext : Option Na
 def propertyKeyOwner (owner : ScopeCtx) : String :=
   reprStr owner.declarationId ++ reprStr (cacheScopeShape owner)
 
-/-- The cache key of one property-style access (see `ZeroArgPropertyCacheKey`
-    for the law it encodes): an exported binding's key carries no environment
-    components; a local-only binding uses its declaring owner's retained binding
+/-- The cache key of one property-style access. An exported binding carries its owning
+    invocation, when one exists, and omits the value environment.
+    A local-only binding uses its declaring owner's retained binding
     context, falling back to the access environments only for unactivated host scopes
     (`propertyKeyBindingContext`, shared with `aliasBindingCellKey`). -/
 def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (ctx : EvalCtx) (env : ValEnv)
-    (ownerBindingContext : Option Nat := none)
+    (ownerBindingContext : Option Nat := none) (ownerInvocation : Option Nat := none)
     : ZeroArgPropertyCacheKey :=
   let bindingContextFree := binding.exposure.isExported
   {
@@ -5922,7 +6064,7 @@ def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
     propertyName := binding.name,
     propertyAlgorithm := reprStr (cacheAlgorithmShape binding.alg),
     valEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr env),
-    bindingContext := propertyKeyBindingContext bindingContextFree ownerBindingContext ctx
+    bindingContext := propertyKeyBindingContext bindingContextFree ownerBindingContext ctx ownerInvocation
   }
 
 /-- The binding context of the nearest ACTIVATED level of a declaring chain: the context its
@@ -5937,6 +6079,72 @@ def propertyOwnerBindingContext : Option ScopeCtx → EvalState → Option Nat
       match activation.bind (fun id => state.lexicalActivations[id]?) with
       | some found => some found.bindingContext
       | none => propertyOwnerBindingContext parent state
+
+/-- The owning invocation of a scope level and the chain above it (`propertyOwnerInvocation`, below,
+    states the rule), read from the ACTIVATION ARRAY alone: no other component of the state takes
+    part. STRUCTURALLY recursive over the scope — not by a size measure, as the other chain
+    searches are — so that it is an equation of the kernel. This search is a component of every
+    EXPORTED cache key, and the concrete states the law library evaluates in the kernel
+    (`PlanAlgorithmBridgeInstances`) must be able to compute it, or at least to compare two of its
+    applications by their activation arrays. -/
+def ScopeCtx.owningInvocation : ScopeCtx → Array ParameterActivation → Option Nat
+  | .mk parent _ _ _ _ _ activation _, activations =>
+      match activation.bind (fun id => activations[id]?) with
+      | some found =>
+          if found.ownsInvocation then some found.bindingContext
+          else match parent with
+            | some above => ScopeCtx.owningInvocation above activations
+            | none => none
+      | none =>
+          match parent with
+          | some above => ScopeCtx.owningInvocation above activations
+          | none => none
+termination_by structural scope => scope
+
+/-- THE OWNING INVOCATION of a declaring chain (INNER-PROPERTY LIFETIME, November 2026; owner
+    decision): the binding context of the nearest level of the chain that an ACTUAL CALL activated
+    (`ParameterActivation.ownsInvocation`) — the fresh context that call minted. It is the storage
+    component of every EXPORTED property-style key declared under the chain
+    (`propertyKeyBindingContext`), so each call of an owner has its own bindings for the owner's
+    inner properties and runtime-alias cells, reads in the same call share them, and — the chain
+    being the DECLARING one, read from the state — no callback, helper, open or referring caller
+    can give a binding another lifetime. An activation a property-style read recorded is skipped: a
+    read inherits (CACHE-OWNER-D1), it owns nothing. `none` when no call owns the chain — the root,
+    a module, a host scope, a static owner reached by navigation from outside its call: the
+    RUN-SCOPED binding, independent of every activation of the owner before or after.
+    C#: `Evaluator.DeclaringInvocationIdentity`. -/
+def propertyOwnerInvocation (chain : Option ScopeCtx) (state : EvalState) : Option Nat :=
+  match chain with
+  | none => none
+  | some scope => scope.owningInvocation state.lexicalActivations
+
+/-- The id of the nearest ACTIVATED level of a declaring chain: the activation whose retained
+    binding context keys a local-only property declared there (`propertyOwnerBindingContext`
+    reads that context from the state). Structural over the finite parent chain. -/
+def nearestActivation? : Option ScopeCtx → Option Nat
+  | none => none
+  | some (.mk parent _ _ _ _ _ activation _) =>
+      match activation with
+      | some id => some id
+      | none => nearestActivation? parent
+
+/-- THE LOCAL-ONLY READ REFUSAL (EXPORTED-DETACHED, November 2026): whether a property-style read
+    of the local-only `binding`, wired as `resolvedAlgorithm`, is keyed on a DETACHED activation
+    in `ctx` — the nearest activated level of its declaring chain was recorded before the
+    context's watermark. Its entry is then a value of an enclosing call that the running exported
+    evaluation must not depend on, so the read is refused BEFORE the cache is consulted: a HIT is
+    refused exactly like a miss, which no evaluation would expose. An exported binding is never
+    refused, and neither is a local-only one whose keying activation the exported evaluation
+    itself recorded. C#: the check that opens `Evaluator.GetOrEvaluateZeroArgPropertyResultCore`. -/
+def localOnlyReadRefused (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) : Bool :=
+  !binding.exposure.isExported &&
+    match nearestActivation? resolvedAlgorithm.parent with
+    | some id => ctx.isDetached id
+    | none => false
+
+/-- The object description of a refused detached read's `localOnlyProperty` report: the read names
+    no receiver, so it names the situation. Presentation only. -/
+def detachedReadDescription : String := "an enclosing call"
 
 def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMetadata)
     (collected : CollectedSequenceBuiltinInput) : EvalM CollectedSequenceBuiltinInput :=
@@ -6874,7 +7082,8 @@ def aliasOwnProperty? (wired : Algorithm) : Option PropDef :=
       props.find? (fun p => PropertyIdentity.callableDeclaration p.alg.declarationId == some declaration)
   | _, _ => none
 
-/-- Whether the alias's binding cell is RUN-WIDE: its own property is `exported` (the front end's
+/-- Whether the alias's binding cell is keyed like an EXPORTED property's entry — by the owning
+    invocation of its declaring chain, the run where there is none: its own property is `exported` (the front end's
     classification of its row, an INPUT here exactly as it is for the property cache). An alias
     with no property of its own (`aliasOwnProperty?`) is treated as local-only: its cell is keyed
     by its declaring binding context. -/
@@ -6890,6 +7099,7 @@ def aliasCellIsExported (wired : Algorithm) : Bool :=
     or the access context on an unactivated chain. -/
 def aliasCellBindingContext (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) : Option Nat :=
   propertyKeyBindingContext (aliasCellIsExported wired) (propertyOwnerBindingContext wired.parent state) ctx
+    (propertyOwnerInvocation wired.parent state)
 
 /-- A property alias uses the property cache's declaring-owner component. A property-less literal
     has no property entry to identify and keeps its existing structural wiring identity; changing
@@ -6913,15 +7123,17 @@ def aliasBindingCellScopeKey (wired : Algorithm) : String :=
 /-- THE KEY OF A RUNTIME-TARGET ALIAS'S BINDING CELL (ALIAS-CELL-LIFETIME, owner decision
     2026-11-15: PROPERTY LIFETIME). The cell lives exactly as long as the zero-argument property
     cache entry of the same row written as a property would:
-    * an alias whose own property is `exported` has ONE cell per declaration and structural
-      declaring scope per RUN — explicit calls of its owner, reads of its owner and reads from
-      outside all share it (`aliasBindingCellKey_exported`);
+    * an alias whose own property is `exported` has ONE cell per declaration, structural
+      declaring scope and OWNING INVOCATION (INNER-PROPERTY LIFETIME, November 2026): every
+      actual call of its owner has a fresh cell, the uses inside one call share it, and reads from
+      outside every call share the one run-scoped cell (`aliasBindingCellKey_exported`,
+      `aliasBindingCellKey_exported_same_invocation`, `aliasBindingCellKey_exported_run_scoped`);
     * a local-only alias has one cell per declaration, structural declaring scope and DECLARING
       BINDING CONTEXT (`propertyOwnerBindingContext`, the context a local-only property key
       carries): property-style reads inherit their declaring activation's context
       (`enterPropertyOwnerBody`) and share the cell, an explicit call binds a fresh context and
       gets a fresh cell (CACHE-OWNER-D1; `aliasBindingCellKey_agree`).
-    The key has NO activation component, so neither an activation a property-style read mints nor
+    The key has NO activation INDEX, so neither an activation a property-style read mints nor
     one an unrelated local-only sibling forces can split or merge cells. The structural part is
     `aliasBindingCellScopeKey` (host and component marks included: HOST-ALIAS-R14, HOST-NESTED-1,
     HOST-LEAN-O6); the binding-context part is `aliasCellBindingContext`, the property key's own
@@ -6929,16 +7141,28 @@ def aliasBindingCellScopeKey (wired : Algorithm) : String :=
 def aliasBindingCellKey (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) : String :=
   aliasBindingCellScopeKey wired ++ "@" ++ reprStr (aliasCellBindingContext wired ctx state)
 
+/-- THE CONTEXT A BINDING CELL'S ROW IS SUPPLIED IN (EXPORTED-DETACHED, November 2026): the DETACHED
+    context for an alias whose own property is `exported` (`aliasCellIsExported`) — its cell is
+    (`aliasBindingCellKey_exported`) the alias's counterpart of an exported property
+    entry, so its row is supplied where an exported property is evaluated: every activation recorded
+    in `state` is an identity and no input, and the cell's later VALUE demand and CALLABLE
+    projection run under that watermark wherever they happen. A local-only alias's cell — one per
+    declaring binding context — is supplied in the using context, as before.
+    C#: the context `Evaluator.AliasBindingCell` supplies the row in. -/
+def aliasCellContext (wired : Algorithm) (ctx : EvalCtx) (state : EvalState) : EvalCtx :=
+  if aliasCellIsExported wired then ctx.detach state.lexicalActivations.size else ctx
+
 /-- The RECORDED binding cell of a non-parameter row (`aliasBindingCell`): the recorded address, or
-    the row supplied in the alias's entered body context and recorded under `aliasBindingCellKey`,
-    read in the state the use starts from (before the alias's own body entry). -/
+    the row supplied in the alias's entered body context (`aliasCellContext`: detached for an
+    exported alias) and recorded under `aliasBindingCellKey`, read in the state the use starts from
+    (before the alias's own body entry). -/
 def aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat := do
   let state ← get
   let key := aliasBindingCellKey wired ctx state
   match lookupAssoc key state.aliasCells with
   | some address => pure address
   | none =>
-    let declaringCtx ← enterAlgorithmBody wired ctx []
+    let declaringCtx ← enterAlgorithmBody wired (aliasCellContext wired ctx state) []
     let address ← supplyNeed target declaringCtx []
     modify fun s => { s with aliasCells := (key, address) :: s.aliasCells }
     pure address
@@ -6949,8 +7173,8 @@ def aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx)
     callee cell uses). A parameter row IS that parameter's own cell (NEED-01 transport, nothing
     allocated, `aliasBindingCell_parameter_transport`); every other row has the LIFETIME OF ITS
     PROPERTY's cache entry (ALIAS-CELL-LIFETIME, `aliasBindingCellKey`): established once per
-    declaration and structural declaring scope per run when the alias's own property is exported,
-    once per declaring binding context when it is local-only, and recorded in
+    declaration, structural declaring scope and owning invocation when the alias's own property is
+    exported, once per declaring binding context when it is local-only, and recorded in
     `EvalState.aliasCells`, so every later use under that key reads the record
     (`aliasBindingCell_canonical`, `aliasBindingCell_shared`). Establishing it evaluates
     nothing: it may enter the alias's body scope, allocate one suspended cell and record its address
@@ -10395,7 +10619,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let next <- needBindingContext ctx bindings
     if let some address ← valueViewCell? callee ctx then
       return (← rec.demandNeedRecursive address)
-    rec.evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
+    -- THE CALL: its body entry is an invocation (`EvalCtx.enteringInvocation`).
+    rec.evalAlgOutputCounted callee { next with enteringInvocation := true } (ValEnv.shadow env (Algorithm.params callee))
 
   /-- A user algorithm invoked over an already formed cell supply. Its result is the
       call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
@@ -10477,7 +10702,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) (cells.map Prod.fst)
           | throw Error.badArity
         let next <- needBindingContext ctx bindings
-        read step next (ValEnv.shadow env (Algorithm.params step))
+        -- Each round is an actual call of the step: its body entry is an invocation.
+        read step { next with enteringInvocation := true } (ValEnv.shadow env (Algorithm.params step))
 
   /-- A `repeat` round: the step's row supply, left to right (`evalAlgOutputSlots`); a builtin's
       one result is one row (`loopStepBuiltinRows`). -/
@@ -10763,12 +10989,16 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       (`zeroArgPropertyCalculation`) and in what an ESTABLISHED entry means: a read returns it,
       an invocation never does — it always executes freshly and leaves the entry unchanged. The
       result is the property-level counted result; an invocation's caller applies the call's
-      value boundary. C#: `ZeroArgPropertyPublications` (`EvaluateMiss` / `Invoke`). -/
-  def EvalBody.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) : EvalM CountedResult := do
+      value boundary. The context and values are the ones the calculation runs in: the accessing
+      context's own for a local-only binding, the DETACHED context for an exported one
+      (`evalZeroArgPropertyAccessCounted`, which is the one caller).
+      C#: `ZeroArgPropertyPublications` (`EvaluateMiss` / `Invoke`). -/
+  def EvalBody.zeroArgPropertyPublication (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) : EvalM CountedResult := do
     if isCacheableZeroArgPropertyAlgorithm resolvedAlgorithm then
       let state <- get
       let key := zeroArgPropertyCacheKey accessKind owner binding ctx env
         (propertyOwnerBindingContext resolvedAlgorithm.parent state)
+        (propertyOwnerInvocation resolvedAlgorithm.parent state)
       match ZeroArgPropertyCache.lookup state.zeroArgPropertyCache key with
       | some cached =>
           match request with
@@ -10797,6 +11027,38 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                 throw err
     else
       EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env
+
+  /-- THE ZERO-ARGUMENT PROPERTY ACCESS: the publication law (`zeroArgPropertyPublication`) entered
+      the way the binding's EXPOSURE requires (EXPORTED-DETACHED, November 2026: the evaluator
+      ENFORCES the classification it formerly trusted).
+
+      EXPORTED MEANS DETACHED. Every request of an `exported` binding — a property-style read and
+      a qualifying zero-supply invocation alike, so the miss, a re-entrant calculation and a fresh
+      invocation of an established entry — runs over the DETACHED context (`EvalCtx.detach` at the
+      number of activations recorded when the request starts) and NO inherited values. The
+      activations that exist at that moment stay identities and supply no input: a captured
+      parameter read through one finds nothing (`capturedParameter`, `unknownName`), a local-only
+      member one of them owns is inaccessible (`memberAccessible?`, `localOnlyProperty`) and a
+      local-only property keyed on one is refused (below). These checks do not track inputs
+      already retained in a local runtime-alias cell (ledger R-1). The reader's declaring
+      chain still supplies its owning invocation to `zeroArgPropertyCacheKey`.
+
+      A LOCAL-ONLY binding is requested in the accessing context, as before, except that a READ
+      keyed on a detached activation is refused before the cache is consulted
+      (`localOnlyReadRefused`): a hit would hand an enclosing call's value to the exported
+      evaluation, and no evaluation would expose it. An explicit invocation is its own fresh
+      calculation, which the two read rules above already confine.
+      C#: `Evaluator.GetOrEvaluateZeroArgPropertyResultCore` and the zero-supply invocation
+      builders (`DetachedEvaluation`). -/
+  def EvalBody.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) : EvalM CountedResult := do
+    if binding.exposure.isExported then
+      let state <- get
+      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm
+        (ctx.detach state.lexicalActivations.size) [] request
+    else if request.isRead && localOnlyReadRefused binding resolvedAlgorithm ctx then
+      throw (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure)
+    else
+      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request
 
   /-- A clause-family callback invocation: the ordinary family dispatch over Ready
       cells, whose result is the ordinary call result (HO-03, PAT-11). -/
@@ -10951,7 +11213,13 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       match <- evalAttempt (EvalBody.staticReferenceTerminal rec owner reference ctx) with
       | .ok terminal =>
         match terminal.transparentParameterRow? with
-        | some (alias, .param row) => parameterNeedAddress? row (ctx.push alias)
+        | some (alias, .param row) =>
+          -- A row whose lexical owner has no usable activation holds no cell this probe can read:
+          -- no parameter occurrence is written at the site, so the probe answers `none` like every
+          -- other miss and the reference's ordinary evaluation reports the refusal.
+          match capturedParameter row (ctx.push alias) with
+          | .unavailable => pure none
+          | _ => parameterNeedAddress? row (ctx.push alias)
         | _ => pure none
       | .error _ => pure none
     | _, _ => pure none
@@ -12796,7 +13064,8 @@ def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM 
     - `Expr.param name` (implicit parameter) if name does not resolve lexically
     - `Expr.resolve name` (lexical reference) if name resolves in scope
 
-    This uses the ownership-first lexical lookup order already encoded in `lookupLexical`:
+    This uses the ownership-first lexical SELECTION already encoded in `lookupLexicalPropertyRaw`
+    (the binding a name selects, returned raw — an alias as the alias):
     1. Local properties of the current algorithm
     2. Structural properties in parent chain
     3. Opens as fallback
@@ -12827,9 +13096,19 @@ def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM 
     still stops at any visible property or opened name, while ownership
     decides between an already-established parameter and a property by owning
     scope. The caller must exclude already-established parameter bindings BEFORE
-    invoking this probe. The probe itself only calls `lookupLexical`, the
-    projection of `lookupLexicalProperty`: it does not inspect the owner's
-    parameter declarations or the value/algorithm binding environments.
+    invoking this probe. The probe itself only SELECTS the binding
+    (`lookupLexicalPropertyRaw`): it does not inspect the owner's
+    parameter declarations or the value/algorithm binding environments, and it
+    never normalizes what it selected. Promotion asks whether the name RESOLVES,
+    not whether the selected binding is callable: an alias is a declared name
+    whatever its target, so the probe must not chase it. (Until November 2026 it
+    read the callable projection `lookupLexical`. Since a captured parameter
+    operation is lexical-only — EXPORTED-DETACHED — chasing a parameter-row alias
+    at a static site is the `unknownName` refusal of the ROW's parameter, which
+    this probe would have misread as "the probed name does not resolve".) The
+    selection's own "nothing provides it" is the one bare `unknownName` the
+    lookup raises; a failed open-target resolution is context-wrapped and
+    propagates.
     A captured parameter therefore bypasses this probe; ownership selection
     below keeps it from losing to a farther property.
 
@@ -12858,7 +13137,7 @@ def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM 
     rewritten to `Expr.param` by the surface layer directly, without using this
     function. -/
 def shouldTreatAsImplicitParam (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Bool := do
-  match <- evalAttempt (lookupLexical a name ctx) with
+  match <- evalAttempt (lookupLexicalPropertyRaw a name ctx) with
   | .ok _ => .ok false                      -- Name resolves → NOT a param
   | .error (Error.unknownName _) => .ok true  -- Name doesn't resolve → IS a param
   | .error e => .error e                    -- Propagate other errors (ambiguousOpen, etc.)

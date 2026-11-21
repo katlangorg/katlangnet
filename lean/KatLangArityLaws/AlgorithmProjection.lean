@@ -135,42 +135,42 @@ theorem HeapCore.memo (h : Array NeedCell) (a : Nat) (f : NeedCell → NeedCell)
 
 /-! ## Reading a parameter's activation and supplying a cell -/
 
-/-- `capturedParameterActivation?` is a pure read of the state. -/
+/-- `capturedParameterActivation?` is a pure read of the state: the `unknownName` refusal of an
+    UNAVAILABLE parameter (EXPORTED-DETACHED: captured reads are lexical-only), or the activation
+    the operation uses, each in the state the lookup started from. -/
 theorem activation_read (name : Ident) (ctx : EvalCtx) (s : EvalState) :
-    ∃ activation, (capturedParameterActivation? name ctx).runState s = (.ok activation, s) := by
-  unfold capturedParameterActivation?
-  split
-  · split
-    · exact ⟨none, rfl⟩
-    · dsimp only
-      split
-      · exact ⟨none, rfl⟩
-      · rename_i id _
-        exact ⟨s.lexicalActivations[id]?, rfl⟩
-  · exact ⟨none, rfl⟩
+    (capturedParameterActivation? name ctx).runState s = (.error (Error.unknownName name), s) ∨
+      ∃ activation, (capturedParameterActivation? name ctx).runState s = (.ok activation, s) := by
+  rcases KatLang.NeedControl.Allocation.captured_outcome name ctx s with h | ⟨activation, h, _⟩
+  · exact .inl h
+  · exact .inr ⟨activation, h⟩
 
-/-- ONE supply: a transported parameter changes nothing; every other source pushes one cell. -/
+/-- ONE supply: an unavailable parameter is REFUSED in the state the supply started from; a
+    transported parameter changes nothing; every other source pushes one cell. -/
 theorem supply_shape (source : Expr) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
+    (∃ e, (supplyNeed source ctx env).runState s = (.error e, s)) ∨
     ∃ r, (supplyNeed source ctx env).runState s = (.ok r, s)
       ∨ ((supplyNeed source ctx env).runState s =
           (.ok s.needs.size, { s with needs := s.needs.push { suspension := .expression source ctx env } })
          ∧ r = s.needs.size) := by
   cases source with
   | param name =>
-    obtain ⟨activation, hc⟩ := activation_read name ctx s
+    rcases activation_read name ctx s with hrefused | ⟨activation, hc⟩
+    · exact .inl ⟨_, KatLang.NeedControl.Allocation.supply_param_refused name ctx env s _ hrefused⟩
     cases hl : lookupAssoc name (activation.map ParameterActivation.needs |>.getD ctx.needEnv) with
     | some a =>
-      exact ⟨a, Or.inl (KatLang.NeedControl.Allocation.supply_param_transports name ctx env s activation a hc hl)⟩
+      exact .inr ⟨a, Or.inl (KatLang.NeedControl.Allocation.supply_param_transports name ctx env s activation a hc hl)⟩
     | none =>
-      exact ⟨s.needs.size, Or.inr ⟨KatLang.NeedControl.Allocation.supply_unbound_param name ctx env s activation hc hl, rfl⟩⟩
+      exact .inr ⟨s.needs.size, Or.inr ⟨KatLang.NeedControl.Allocation.supply_unbound_param name ctx env s activation hc hl, rfl⟩⟩
   | _ =>
-    exact ⟨s.needs.size, Or.inr ⟨KatLang.NeedControl.Allocation.supply_nonparameter _ ctx env s (by intro n h; cases h), rfl⟩⟩
+    exact .inr ⟨s.needs.size, Or.inr ⟨KatLang.NeedControl.Allocation.supply_nonparameter _ ctx env s (by intro n h; cases h), rfl⟩⟩
 
 /-- A supply keeps the core of every existing cell, and every existing address. -/
 theorem supply_heap_core (source : Expr) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
     (r : Nat) (t : EvalState) (h : (supplyNeed source ctx env).runState s = (.ok r, t)) :
     HeapCore s.needs t.needs ∧ (∀ (b : Nat) (c : NeedCell), s.needs[b]? = some c → t.needs[b]? = some c) := by
-  obtain ⟨r', hr⟩ := supply_shape source ctx env s
+  rcases supply_shape source ctx env s with ⟨e, he⟩ | ⟨r', hr⟩
+  · rw [he] at h; cases h
   rcases hr with hr | ⟨hr, _⟩
   · rw [hr] at h; cases h
     exact ⟨HeapCore.refl _, fun _ _ hc => hc⟩
@@ -190,8 +190,10 @@ theorem supply_heap_core (source : Expr) (ctx : EvalCtx) (env : ValEnv) (s : Eva
 The two suppliers of the E-18 receiver-read correction (November 11 2026): `NeedPlan.supplyCallee`
 marks the `.Algorithm` route's fresh link cell, `NeedLink.supplyReceiver` gives that link ONE
 receiver cell that keeps the invocation receiver evaluator. Both are the ONE supply plus an
-`invocation`-field write on a cell they have just allocated: they never fail, keep the core of
-every existing cell, and leave every existing cell where it is. -/
+`invocation`-field write on a cell they have just allocated: they fail only as that supply's
+refusal of an UNAVAILABLE parameter (a parameter callee or receiver whose lexical owner has no
+usable activation), in the state they started from; otherwise they keep the core of every existing
+cell, and leave every existing cell where it is. -/
 
 /-- A cell kept except for its `invocation` field keeps its core. -/
 theorem CoreKept.invocation (c : NeedCell) (role : NeedInvocationRole) :
@@ -238,16 +240,20 @@ theorem supplyCallee_run (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalSta
     · simp only [markLink, NeedPlan.markCalleeLink, hb]
       rfl
 
-/-- The callee supplier never fails and keeps the core of every existing cell. -/
+/-- The callee supplier fails only as the supply's refusal, in the state it started from; a
+    successful one keeps the core of every existing cell. -/
 theorem supplyCallee_heap_core (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalState) :
+    (∃ e, (NeedPlan.supplyCallee eff r).runState s = (.error e, s)) ∨
     ∃ c t, (NeedPlan.supplyCallee eff r).runState s = (.ok c, t) ∧ HeapCore s.needs t.needs := by
   rw [supplyCallee_run]
-  obtain ⟨c, hc⟩ := supply_shape eff.callee eff.caller eff.values s
+  rcases supply_shape eff.callee eff.caller eff.values s with ⟨e, he⟩ | ⟨c, hc⟩
+  · rw [he]
+    exact .inl ⟨e, rfl⟩
   rcases hc with hc | ⟨hc, _⟩
   · rw [hc]
-    exact ⟨c, _, rfl, markLink_core eff r c s⟩
+    exact .inr ⟨c, _, rfl, markLink_core eff r c s⟩
   · rw [hc]
-    exact ⟨s.needs.size, markLink eff r s.needs.size
+    exact .inr ⟨s.needs.size, markLink eff r s.needs.size
         { s with needs := s.needs.push { suspension := .expression eff.callee eff.caller eff.values } }, rfl,
       (HeapCore.push s.needs _).trans (markLink_core eff r s.needs.size
         { s with needs := s.needs.push { suspension := .expression eff.callee eff.caller eff.values } })⟩
@@ -298,24 +304,27 @@ theorem supplyReceiver_invocation (role : NeedInvocationRole) (source receiver :
   rw [← push_then_mark]
   rfl
 
-/-- The receiver supplier never fails, keeps the core of every existing cell, and leaves every
-    existing cell at its address. -/
+/-- The receiver supplier fails only as the supply's refusal, in the state it started from; a
+    successful one keeps the core of every existing cell, and leaves every existing cell at its
+    address. -/
 theorem supplyReceiver_heap_core (role : NeedInvocationRole) (source receiver : Expr) (caller : EvalCtx)
     (values : ValEnv) (s : EvalState) :
+    (∃ e, (NeedLink.supplyReceiver role source receiver caller values).runState s = (.error e, s)) ∨
     ∃ r t, (NeedLink.supplyReceiver role source receiver caller values).runState s = (.ok r, t) ∧
       HeapCore s.needs t.needs ∧
       (∀ (b : Nat) (c : NeedCell), s.needs[b]? = some c → t.needs[b]? = some c) := by
   cases hk : NeedLink.keepsInvocationReceiver role receiver with
   | false =>
     rw [supplyReceiver_ordinary role source receiver caller values hk]
-    obtain ⟨r, hr⟩ := supply_shape receiver caller values s
+    rcases supply_shape receiver caller values s with ⟨e, he⟩ | ⟨r, hr⟩
+    · exact .inl ⟨e, he⟩
     rcases hr with hr | ⟨hr, _⟩
-    · exact ⟨r, s, hr, HeapCore.refl _, fun _ _ hc => hc⟩
-    · exact ⟨_, _, hr, (supply_heap_core receiver caller values s _ _ hr).1,
+    · exact .inr ⟨r, s, hr, HeapCore.refl _, fun _ _ hc => hc⟩
+    · exact .inr ⟨_, _, hr, (supply_heap_core receiver caller values s _ _ hr).1,
         (supply_heap_core receiver caller values s _ _ hr).2⟩
   | true =>
     rw [supplyReceiver_invocation role source receiver caller values s hk]
-    refine ⟨_, _, rfl, HeapCore.push _ _, ?_⟩
+    refine .inr ⟨_, _, rfl, HeapCore.push _ _, ?_⟩
     intro b c hc
     have hlt : b < s.needs.size := by
       rcases Nat.lt_or_ge b s.needs.size with hl | hl
@@ -492,7 +501,9 @@ theorem calleeCell_inert (classify : NeedPlan.CallShape → EvalM PlanRoute) (a 
           rw [calleeCell_intrinsic classify a s cell shape hc hcal hshape hr]
           exact HeapCore.refl _
         · rw [calleeCell_establishes classify a s cell shape r hc hcal hshape hr hi]
-          obtain ⟨c1, u, hsup, hcore⟩ := supplyCallee_heap_core (NeedPlan.effective shape r) r s
+          rcases supplyCallee_heap_core (NeedPlan.effective shape r) r s with ⟨e, he⟩ | ⟨c1, u, hsup, hcore⟩
+          · rw [he]
+            exact HeapCore.refl _
           rw [hsup]
           show HeapCore s.needs (u.needs.modify a _)
           exact hcore.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
@@ -595,8 +606,10 @@ theorem receiverCell_canonical (a r : Nat) (s t : EvalState)
         | some pair =>
           obtain ⟨receiver, fallback⟩ := pair
           rw [receiverCell_establishes a s cell source receiver fallback caller values hc hrec hsusp hlink] at h
-          obtain ⟨r1, u, hsup, _, hkeepAll⟩ :=
-            supplyReceiver_heap_core cell.invocation source receiver caller values s
+          rcases supplyReceiver_heap_core cell.invocation source receiver caller values s with
+            ⟨e, he⟩ | ⟨r1, u, hsup, _, hkeepAll⟩
+          · rw [he] at h
+            cases h
           rw [hsup] at h
           cases h
           have hkeep := hkeepAll a cell hc
@@ -633,8 +646,10 @@ theorem receiverCell_inert (a : Nat) (s : EvalState) :
         | some pair =>
           obtain ⟨receiver, fallback⟩ := pair
           rw [receiverCell_establishes a s cell source receiver fallback caller values hc hrec hsusp hlink]
-          obtain ⟨r1, u, hsup, hcore, _⟩ :=
-            supplyReceiver_heap_core cell.invocation source receiver caller values s
+          rcases supplyReceiver_heap_core cell.invocation source receiver caller values s with
+            ⟨e, he⟩ | ⟨r1, u, hsup, hcore, _⟩
+          · rw [he]
+            exact HeapCore.refl _
           rw [hsup]
           show HeapCore s.needs (u.needs.modify a _)
           exact hcore.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))

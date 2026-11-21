@@ -112,11 +112,14 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Theory]
-    // Every temp of the template is EXPORTED (self-contained), so a bare `W` read hits
-    // the run-wide entry after the first one — inside `A()`/`B()` calls, on the `if`
-    // argument channel, and across iterations alike — and the four-unit string is
-    // materialized ONCE per run wherever `W` is reached at all (the third column is the
-    // run total, not a per-iteration amount). A bare temp passed DIRECTLY as an `if`
+    // Every temp of the template is EXPORTED (self-contained) and belongs to the ROUND that
+    // declares it (the inner-property lifetime rule, November 2026: each round is an actual
+    // call of the step, with fresh bindings for its inner properties). A bare `W` read hits
+    // the round's entry after the first one — inside `A()`/`B()` calls and on the `if`
+    // argument channel alike, neither of which starts a new lifetime — so the four-unit
+    // string is materialized ONCE PER ROUND wherever `W` is reached at all: the third column
+    // is the run total over the three rounds (formerly one run-wide entry: 4). A bare temp
+    // passed DIRECTLY as an `if`
     // argument (`if(true, A, ...)`, `if(false, 1 / 0, C)`) is the ordinary property read —
     // how a property value is consumed does not affect caching — so it sits one dynamic
     // invocation below the argument level on both strategies (the last column).
@@ -129,19 +132,19 @@ public class LoopPlannedChokepointParityTests
     // no invocation level (formerly D's own read sat one level above C's: peak 2).
     [InlineData("if(D == 1, 1, 2)", 1, 0, 1)]
     [InlineData("if(D() == 1, 1, 2)", 1, 0, 1)]
-    [InlineData("if(A == 1, 1, 2)", 1, 4, 2)]
-    [InlineData("if(A() == 1, 1, 2)", 1, 4, 2)]
-    [InlineData("if(true, A, A())", 1, 4, 2)]
-    [InlineData("if(false, A, A())", 1, 4, 2)]
-    [InlineData("if(false, A(), A)", 1, 4, 2)]
-    [InlineData("if(true, if(false, A(), A), B())", 1, 4, 2)]
-    [InlineData("if(W == W, 1, 0) + if(true, A, 0) + if(W == W, 1, 0)", 3, 4, 2)]
-    [InlineData("if(W == W, 1, 0) + if(true, A(), 0) + if(W == W, 1, 0)", 3, 4, 2)]
-    [InlineData("A + A() + A", 3, 4, 2)]
-    [InlineData("A() + A + A()", 3, 4, 2)]
-    [InlineData("A + if(true, B, 0)", 3, 4, 3)]
-    [InlineData("B() + B()", 4, 4, 3)]
-    [InlineData("B + B", 4, 4, 3)]
+    [InlineData("if(A == 1, 1, 2)", 1, 12, 2)]
+    [InlineData("if(A() == 1, 1, 2)", 1, 12, 2)]
+    [InlineData("if(true, A, A())", 1, 12, 2)]
+    [InlineData("if(false, A, A())", 1, 12, 2)]
+    [InlineData("if(false, A(), A)", 1, 12, 2)]
+    [InlineData("if(true, if(false, A(), A), B())", 1, 12, 2)]
+    [InlineData("if(W == W, 1, 0) + if(true, A, 0) + if(W == W, 1, 0)", 3, 12, 2)]
+    [InlineData("if(W == W, 1, 0) + if(true, A(), 0) + if(W == W, 1, 0)", 3, 12, 2)]
+    [InlineData("A + A() + A", 3, 12, 2)]
+    [InlineData("A() + A + A()", 3, 12, 2)]
+    [InlineData("A + if(true, B, 0)", 3, 12, 3)]
+    [InlineData("B() + B()", 4, 12, 3)]
+    [InlineData("B + B", 4, 12, 3)]
     [InlineData("if(false, 1 / 0, C)", 1, 0, 1)]
     [InlineData("if(true, C, B() / 0)", 1, 0, 1)]
     public async Task PlannedArgumentAndMemoMatrix_MatchesAllBoundariesAndAsyncTwin(
@@ -292,12 +295,13 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Fact]
-    public void BareTempRead_OfAnExportedTemp_IsServedFromTheRunEntryLikeThePropertyCache()
+    public void BareTempRead_OfAnExportedTemp_IsMemoizedPerRoundLikeThePropertyCache()
     {
-        // `W` is exported (self-contained), so the generic property cache serves every
-        // bare read after the first from ONE run-wide entry — across the two reads of an
-        // iteration and across iterations alike — and the four-unit string is
-        // materialized once per run; the planned strategy reads the same run entry.
+        // `W` is exported (self-contained) and belongs to the round that declares it: each
+        // round is an actual call of the step, so the generic property cache serves the
+        // second bare read of a round from the first and the next round evaluates afresh.
+        // The four-unit string is materialized once per round (40 rounds: 160 units;
+        // formerly one run-wide entry: 4); the planned per-iteration memo does the same.
         const string source = "Step = {\n    W = if(true, 'aaaa', 'bb')\n    n + if(W == W, 1, 0)\n}\nStep(0).repeat(40)";
 
         var generic = Observe(source, optimized: false);
@@ -305,8 +309,8 @@ public class LoopPlannedChokepointParityTests
 
         Assert.Equal(40m, Atom(generic.Result));
         Assert.Equal(40m, Atom(optimized.Result));
-        Assert.Equal(4, generic.Budget.MaterializedStringChars);
-        Assert.Equal(4, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(160, generic.Budget.MaterializedStringChars);
+        Assert.Equal(160, optimized.Budget.MaterializedStringChars);
         Assert.Equal(generic.Budget.PeakDepth, optimized.Budget.PeakDepth);
         AssertWhollyPlanned(optimized.Loop);
     }
@@ -337,11 +341,11 @@ public class LoopPlannedChokepointParityTests
     {
         // HOW A PROPERTY VALUE IS CONSUMED DOES NOT AFFECT CACHING: a bare property reference
         // passed DIRECTLY as an `if` argument resolves on its value channel to the ordinary
-        // property read, so the generic `if` reads the exported `W`'s ONE run-wide entry exactly
-        // like the bare reads elsewhere, and the planned `if` reads the same entry through the
-        // planned temp access. The four-unit string is materialized ONCE per run on both
-        // strategies (it used to be re-materialized by the direct branch on every iteration:
-        // 164 units). The read is the property access's own dynamic invocation beneath the
+        // property read, so the generic `if` reads the exported `W`'s ONE entry for the round
+        // exactly like the bare reads elsewhere, and the planned `if` reads the same binding
+        // through the planned temp access. The four-unit string is materialized ONCE PER ROUND
+        // on both strategies (40 rounds: 160 units; a direct branch that re-materialized it
+        // beside the bare reads would give more). The read is the property access's own dynamic invocation beneath the
         // argument level, so the first (missing) read of `W` peaks one level deeper than the
         // body evaluation the direct branch used to perform.
         const string source = "Step = {\n    W = if(true, 'aaaa', 'bb')\n    n + if(if(true, W, 0) == W, 1, 0) + if(W == W, 1, 0)\n}\nStep(0).repeat(40)";
@@ -351,8 +355,8 @@ public class LoopPlannedChokepointParityTests
 
         Assert.Equal(80m, Atom(generic.Result));
         Assert.Equal(80m, Atom(optimized.Result));
-        Assert.Equal(4, generic.Budget.MaterializedStringChars);
-        Assert.Equal(4, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(160, generic.Budget.MaterializedStringChars);
+        Assert.Equal(160, optimized.Budget.MaterializedStringChars);
         Assert.Equal(1, generic.Budget.PeakDepth);
         Assert.Equal(1, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);
@@ -513,9 +517,10 @@ public class LoopPlannedChokepointParityTests
         Assert.False(generic.Result.IsError);
         Assert.False(optimized.Result.IsError);
         Assert.True(Result.ValueComparer.Equals(generic.Result.Value.Value, optimized.Result.Value.Value));
-        // `T` is exported: the planned row and the generic fallback row read the SAME
-        // run-wide entry, so the four-unit string is materialized once for the whole run.
-        Assert.Equal(4, generic.Budget.MaterializedStringChars);
+        // `T` is exported and belongs to the round: the planned row and the generic fallback
+        // row read the SAME binding of that round, so the four-unit string is materialized
+        // once per round (three rounds: 12), never once per row.
+        Assert.Equal(12, generic.Budget.MaterializedStringChars);
         Assert.Equal(generic.Budget.MaterializedStringChars, optimized.Budget.MaterializedStringChars);
         Assert.Equal(1, optimized.Loop.OptimizedLoopHits);
         Assert.True(optimized.Loop.GenericExpressionEvaluationsInsideOptimizedLoops > 0);
@@ -524,6 +529,8 @@ public class LoopPlannedChokepointParityTests
         Assert.True(Assert.Single(plan.Expressions, expression => expression.Index == 2).Planned);
         await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 3 }, whollyPlanned: false);
         await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 4 }, whollyPlanned: false);
+        await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 11 }, whollyPlanned: false);
+        await AssertThreeWayParity(source, new EvaluationLimits { MaxMaterializedStringChars = 12 }, whollyPlanned: false);
     }
 
     [Fact]
@@ -754,14 +761,15 @@ public class LoopPlannedChokepointParityTests
     }
 
     [Fact]
-    public void TempCall_ExportedTempReadInsideTheCall_SharesTheRunEntry()
+    public void TempCall_ExportedTempReadInsideTheCall_SharesTheRoundsEntry()
     {
-        // `T` is an EXPORTED step-local temp: the run's zero-argument property cache keys it
-        // by its declaring scope alone, so the caller's first read materializes it ONCE
-        // for the whole run, and every later read — inside the two `A(x)` calls (each a
-        // fresh generic environment), in later iterations, after the calls return — is
-        // served from that entry on both strategies: 10 units total. A LOCAL-ONLY temp
-        // instead shares one entry per declaring step activation; see
+        // `T` is an EXPORTED step-local temp: it belongs to the round that declares it (each
+        // round is an actual call of the step), so the round's first read materializes it
+        // ONCE, and every later read of that round — inside the two `A(x)` calls (a call
+        // of `A` starts no new lifetime for `T`, which `A` does not declare) and after the
+        // calls return — is served from that binding on both strategies: 10 units per
+        // round, 200 for 20 rounds (formerly one run-wide entry: 10). A LOCAL-ONLY temp has
+        // the same lifetime; see
         // TempCall_LocalOnlyTempReadInsideTheCall_SharesTheDeclaringStepBinding.
         // `n` walks 0, 1, 3, 7, ... (2^20 - 1).
         const string source =
@@ -772,8 +780,8 @@ public class LoopPlannedChokepointParityTests
 
         Assert.Equal(1_048_575m, Atom(generic.Result));
         Assert.Equal(1_048_575m, Atom(optimized.Result));
-        Assert.Equal(10, generic.Budget.MaterializedStringChars);
-        Assert.Equal(10, optimized.Budget.MaterializedStringChars);
+        Assert.Equal(200, generic.Budget.MaterializedStringChars);
+        Assert.Equal(200, optimized.Budget.MaterializedStringChars);
         Assert.Equal(2, generic.Budget.PeakDepth);
         Assert.Equal(2, optimized.Budget.PeakDepth);
         var plan = AssertWhollyPlanned(optimized.Loop);

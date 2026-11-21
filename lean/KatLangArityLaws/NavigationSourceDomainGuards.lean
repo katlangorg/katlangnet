@@ -1343,6 +1343,15 @@ def ambiguousX (program : Expr) : Bool :=
   | .error e => (match innermost e with | .ambiguousOpen "X" _ => true | _ => false)
   | .ok _ => false
 
+/-- Production refuses the open target `Lib.Sub`: its member `Sub` needs an activation the reading
+    context cannot use. Since EXPORTED-DETACHED (November 2026) that is the outcome of every witness
+    below whose reader `R` is marked exported: `R` is evaluated detached from the call around it, and
+    the open walk that looks `X` up checks `Lib.Sub`, which needs that call's `y`. -/
+def refusesSub (program : Expr) : Bool :=
+  match runResult program with
+  | .error e => (match innermost e with | .localOnlyProperty "Lib" "Sub" _ => true | _ => false)
+  | .ok _ => false
+
 /-- `LeanAstEncoder`'s encoding of the front end's tree of `open A, B` / `A = load('x.kat')` /
     `B = load('x.kat')` / `X`, the module `public X = 5`: two holders of one module. -/
 def twoHolders : Expr :=
@@ -1656,12 +1665,14 @@ theorem captureTwoModules_hostBuilt_sourceDomain : SourceDomain captureTwoModule
   | .error e => (match innermost e with | .localOnlyProperty _ "R" _ => true | _ => false)
   | .ok _ => false)
 
--- … while the copy without the requirement reads `R` from the call's cache entry.
-#guard (match runResult captureWitnessHostBuiltEscaped with
-  | .ok (.sequenceValue [.atom 5, .atom 5]) => true
-  | _ => false)
+-- … while the copy without the requirement is refused INSIDE the call: production now refuses what
+-- the model refuses. Formerly the call succeeded and `F.R` read its cache entry, `(5, 5)`.
+#guard refusesSub captureWitnessHostBuiltEscaped
 
-#guard ambiguousX captureTwoModulesHostBuilt
+-- The admitted control fails either way. The model charges an ambiguous lookup nothing; production
+-- formerly reached the ambiguity (`ambiguousOpen X`) and now refuses the walk's check of `Lib.Sub`
+-- before it.
+#guard refusesSub captureTwoModulesHostBuilt
 
 /-! A module level on the reader's stack carries its declaration id too (`levelOf`). No source
 reaches a module inside itself — the loader refuses a load cycle — so the tree below is host-built:
@@ -1706,10 +1717,10 @@ theorem selfNested_twoModules_sourceDomain : SourceDomain (selfNested 1 false ne
 #guard (match runResult (selfNested 0 true nestedCallThenRead) with
   | .error e => (match innermost e with | .localOnlyProperty _ "R" _ => true | _ => false)
   | .ok _ => false)
-#guard (match runResult (selfNested 0 false nestedCallThenRead) with
-  | .ok (.sequenceValue [.atom 5, .atom 5]) => true
-  | _ => false)
-#guard ambiguousX (selfNested 1 false nestedCall)
+-- The copy without the requirement is refused inside the call (formerly `(5, 5)`), and so is the
+-- admitted two-provider control (formerly `ambiguousOpen X`): `refusesSub`.
+#guard refusesSub (selfNested 0 false nestedCallThenRead)
+#guard refusesSub (selfNested 1 false nestedCall)
 
 end ModuleProviders
 
@@ -1863,10 +1874,13 @@ theorem carrierRow_ordinary_refused : ¬ SourceDomain carrierRowOrdinary :=
 theorem carrierMember_exported_refused : ¬ SourceDomain carrierMemberExported :=
   fun h => by have := h.exposed; rw [show exposureFull carrierMemberExported = false by cbv] at this; cases this
 
--- Production: the module reads its own opened member; the ordinary carrier reads its holder's.
+-- Production: the module reads its own opened member. The ordinary carrier's ROW is its holder's `W`,
+-- a reference that owns no cache entry and is chased where it is read. Its MEMBER reader `A` is a
+-- property the model refuses as exported, and production refuses it too (EXPORTED-DETACHED): evaluated
+-- detached from `F`'s call, its read of the holder's `y` finds no binding (formerly 7).
 #guard answers 5 carrierMember
 #guard answers 5 carrierRow
-#guard answers 7 carrierMemberOrdinary
+#guard unknownName "y" carrierMemberOrdinary
 #guard answers 7 carrierRowOrdinary
 
 /-! ### Open route -/
@@ -2035,11 +2049,14 @@ def paramRowBlock (id : Option PropertyIdentity) : Expr :=
        with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [.call (.resolve "F") [.num 7]])
 
 -- Production: the ordinary alias reads its holder's `Q`; a module, whatever its root, does not.
+-- `G` and `P` are PROPERTIES marked exported: since EXPORTED-DETACHED they are evaluated detached from
+-- `F`'s call, so the `y` their route reaches has no binding (formerly 7). The reference `A` of
+-- `rowReadsHolder` owns no cache entry and is chased where it is read.
 #guard answers 7 (rowReadsHolder ordinary)
 #guard unknownName "Q" (rowReadsHolder moduleRoot)
-#guard answers 7 (inlineRowReadsWriter ordinary)
+#guard unknownName "y" (inlineRowReadsWriter ordinary)
 #guard unknownName "Q" (inlineRowReadsWriter moduleRoot)
-#guard answers 7 (memberReadsHolder ordinary)
+#guard unknownName "y" (memberReadsHolder ordinary)
 #guard unknownName "Q" (memberReadsHolder moduleRoot)
 #guard unknownName "Q" (memberReadsHolderBlock moduleRoot)
 
@@ -2118,7 +2135,7 @@ beside the model's.
 
 namespace SharedProviders
 
-open ModuleProviders (Selection rootSelection ambiguousX)
+open ModuleProviders (Selection rootSelection ambiguousX refusesSub)
 open ReferenceRootCut (answers)
 
 /-- `{ public X = n }` with the declaration identity `id`. -/
@@ -2252,10 +2269,10 @@ theorem capture_twoDeclarations_sourceDomain :
 #guard (match runResult (capture one one true callThenRead) with
   | .error e => (match innermost e with | .localOnlyProperty _ "R" _ => true | _ => false)
   | .ok _ => false)
-#guard (match runResult (capture one one false callThenRead) with
-  | .ok (.sequenceValue [.atom 5, .atom 5]) => true
-  | _ => false)
-#guard ambiguousX (capture one (xBlock (some (.shared 8))) false call)
+-- The copy without the requirement is refused inside the call (formerly `(5, 5)`), and so is the
+-- admitted two-declaration control (formerly `ambiguousOpen X`): `refusesSub`.
+#guard refusesSub (capture one one false callThenRead)
+#guard refusesSub (capture one (xBlock (some (.shared 8))) false call)
 
 end SharedProviders
 

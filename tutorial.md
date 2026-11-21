@@ -2179,7 +2179,7 @@ a, a(), a(), tick()
 2
 ```
 
-Inside an algorithm the sharing holds once per call: each call has its own calculation. A deconstruction that reads nothing from the call has one value for the whole run.
+Inside an algorithm the sharing holds once per call: each call has its own calculation, whether or not the right-hand side uses anything of the call.
 
 ---
 
@@ -2594,16 +2594,16 @@ Loan.MonthlyRate
 
 **Result:** error — `MonthlyRate` depends on the parameter `rate` of `Loan`, so it can be used only inside `Loan`.
 
-A local property that reads nothing from the call is different: like any property, it has one value for the whole run, however many calls reach it. Call it to calculate it afresh:
+Every call of an algorithm works out its local properties afresh, whether or not their definitions use the call's parameters. Inside one call a local property has one value, however often that call reads it; call it to calculate it again:
 
 ```
 Fixed(i) = {
     T = tick()
-    T
+    T + T
 }
 Fresh(i) = {
     T = tick()
-    T()
+    T() + T()
 }
 
 [1, 2].map(Fixed)
@@ -2612,11 +2612,33 @@ Fresh(i) = {
 
 **Results:**
 ```
-[1, 1]
-[2, 3]
+[2, 4]
+[7, 11]
 ```
 
-This matters most for random numbers: a helper `Roll = randomInt(1, 7)` inside `Trial(i)` gives every call of `Trial` the same roll. Write `Roll()`, or `randomInt(1, 7)` itself, to roll again in each call.
+Each call of `Fixed` runs `tick()` once and reads that one `T` twice. Each call of `Fresh` runs it twice. This matters most for random numbers: a helper `Roll = randomInt(1, 7)` inside `Trial(i)` gives every call of `Trial` a roll of its own, and every use of `Roll` inside one call that same roll. Write `Roll()`, or `randomInt(1, 7)` itself, to roll again within a call.
+
+A local property that uses none of the parameters can also be read from outside, by its path. Read that way it belongs to no call: it has one value for the whole run, apart from the value of every call.
+
+```
+Counter(i) = {
+    T = tick()
+    T
+}
+
+Counter(0)
+Counter(0)
+Counter.T
+Counter.T
+```
+
+**Results:**
+```
+1
+2
+3
+3
+```
 
 ### How Names Are Found
 
@@ -3250,7 +3272,7 @@ A few more rules complete the picture:
 - Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error.
 - `R.Algorithm()` calls it with no arguments, which is an error too: it never repeats the captured `5` (that is `R.Invoke()`).
 - A property such as `A = R.Algorithm` is a new name for the captured algorithm, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value.
-- When the call reference itself comes from a calculation, as in `A = F(3).Algorithm` where `F(3)` returns a captured call, `F(3)` is worked out once, when `A` is first needed, and every call of `A` then calls the captured algorithm afresh. "Once" means what it means for an ordinary property written on that line: once for the whole run when the line uses nothing an enclosing call supplies, and once per call of the enclosing algorithm when it does.
+- When the call reference itself comes from a calculation, as in `A = F(3).Algorithm` where `F(3)` returns a captured call, `F(3)` is worked out once, when `A` is first needed, and every call of `A` then calls the captured algorithm afresh. "Once" means what it means for an ordinary property written on that line: once in each call of the algorithm the line is written in, and once for the whole run where no call is involved.
 
 Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
 
@@ -3463,7 +3485,7 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.
 - **Text is written in single quotes only.** `"text"` is an error, and so is `"Total: {x}"`: there are no double-quoted strings and no interpolation. Write `'text'`, and return a value as itself instead of wrapping it in a message.
 - **Nothing inside a string is special.** In `'{x}'` and `'C:\temp'` the braces and the backslash are plain text; a string has no escapes.
-- **A local helper that reads nothing from the call has one value.** Write `Roll()` or `randomInt(1, 7)` to roll again in each call ([Local Definitions](#local-definitions)).
+- **A local helper has one value per call.** Each call of the algorithm around it works it out afresh, and every use inside that call reads the same value. Write `Roll()` or `randomInt(1, 7)` to roll again within a call ([Local Definitions](#local-definitions)).
 - **Clauses cannot collect.** `*name` works only in a single definition without literal patterns. Walk through a list with `xs[0]` and `xs.skip(1)`, or use `reduce` ([Rules for Clauses](#rules-for-clauses)).
 - **A conditional algorithm treats its arguments as values.** Put the name of a formula that needs inputs in braces: `Times(3, {Inc}, 0)` ([Rules for Clauses](#rules-for-clauses)).
 - **Deep recursion stops with an error.** Use `repeat`, `while`, or `reduce` for long iterations.

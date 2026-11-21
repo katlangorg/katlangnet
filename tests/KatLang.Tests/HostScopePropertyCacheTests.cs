@@ -213,6 +213,35 @@ public partial class HostScopePropertyCacheTests
         return generic;
     }
 
+    /// <summary>
+    /// The refusal a program gets on the three execution routes, which must agree on its code.
+    /// </summary>
+    private static async Task<KatLangErrorCode> RefusedOnEveryRouteAsync(Func<ScopeCtx, Expr> build)
+    {
+        var codes = new List<KatLangErrorCode>();
+        foreach (var optimized in new[] { false, true })
+        {
+            var ops = Ops(new Log());
+            var cache = new RunScopedZeroArgPropertyResultCache();
+            var result = Evaluator.RunCountedObserved(build(Prelude(ops)), enableOptimizations: optimized,
+                zeroArgPropertyResultCache: cache, hostOperations: ops).Result;
+            Assert.True(result.IsError, optimized ? "optimized" : "generic");
+            Assert.Equal(0, cache.ActiveOwnerCount);
+            codes.Add(KatLangError.FromEvalError(result.Error).Code);
+        }
+
+        var asyncOps = Ops(new Log(), withAsync: true);
+        var asyncCache = new SuspendingRecordingCache();
+        var twin = (await Evaluator.RunCountedObservedAsync(build(Prelude(asyncOps)),
+            zeroArgPropertyResultCache: asyncCache, hostOperations: asyncOps)).Result;
+        Assert.True(twin.IsError, "async");
+        Assert.Equal(0, asyncCache.ActiveOwnerCount);
+        codes.Add(KatLangError.FromEvalError(twin.Error).Code);
+
+        Assert.Single(codes.Distinct());
+        return codes[0];
+    }
+
     // ── 1. H1–H12: host scopes cache like evaluator-owned properties ─────────────────────────
 
     /// <summary>
@@ -333,42 +362,66 @@ public partial class HostScopePropertyCacheTests
     [Fact]
     public async Task H6e_AnExportedHostProperty_IsRunCached_AsAnOwnedExportedPropertyIs()
     {
-        // O-4: the evaluator trusts host exposure metadata. P reads the caller's x but is marked
-        // Exported, so — exactly as for the owned control — its first value is reused: G(1) + G(2)
-        // is 1 + 1. (The former bypass printed 3.)
+        // An exported host property is one value per run, exactly as the owned control: P = tock()
+        // is evaluated once for the readers G(1) and G(2), so G(1) + G(2) is 1 + 1. (The former
+        // bypass evaluated it per reader: 3.)
         Expr Build(ScopeCtx scope, params Property[] block)
             => OpenedThrough(scope, Add(Call("G", N(1)), Call("G", N(2))),
                 [Prop("G", Fn("x", R("P")), isPublic: true), .. block]);
-        var host = await OnEveryRouteAsync(pre => Build(new ScopeCtx(pre, [], [Prop("P", Body(X("x")))])));
-        var owned = await OnEveryRouteAsync(pre => Build(new ScopeCtx(pre, [], []), Prop("P", Body(X("x")))));
-        Assert.Equal("2", host.Value);
+        var host = await OnEveryRouteAsync(pre => Build(new ScopeCtx(pre, [], [Prop("P", Body(Tick()))])));
+        var owned = await OnEveryRouteAsync(pre => Build(new ScopeCtx(pre, [], []), Prop("P", Body(Tick()))));
+        Assert.Equal(("2", "tock1"), (host.Value, host.Effects));
         Assert.Equal(owned.Value, host.Value);
+    }
+
+    [Fact]
+    public async Task H6e_AnExportedHostPropertyReadingItsReadersParameter_IsRefused_AsTheOwnedOneIs()
+    {
+        // O-4 since EXPORTED-DETACHED (November 2026): the evaluator ENFORCES host exposure metadata.
+        // P reads x, which it does not bind, and is marked Exported, so it is evaluated detached
+        // from the G call that reads it and finds no binding — host and owned control alike.
+        // (Formerly the first reader's x was reused for the run: G(1) + G(2) was 1 + 1.)
+        Expr Build(ScopeCtx scope, params Property[] block)
+            => OpenedThrough(scope, Add(Call("G", N(1)), Call("G", N(2))),
+                [Prop("G", Fn("x", R("P")), isPublic: true), .. block]);
+        Assert.Equal(KatLangErrorCode.UnknownName,
+            await RefusedOnEveryRouteAsync(pre => Build(new ScopeCtx(pre, [], [Prop("P", Body(X("x")))]))));
+        Assert.Equal(KatLangErrorCode.UnknownName,
+            await RefusedOnEveryRouteAsync(pre => Build(new ScopeCtx(pre, [], []), Prop("P", Body(X("x"))))));
     }
 
     [Fact]
     public async Task H6l_ALocalOnlyHostProperty_KeepsTheAccessEnvironmentFallback()
     {
         // A local-only host property has no declaring activation (host levels never carry one), so
-        // its key keeps the access binding context: each G activation evaluates its own P.
-        var outcome = await OnEveryRouteAsync(pre => OpenedThrough(
-            new ScopeCtx(pre, [], [Prop("P", Body(X("x")), exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters, required: ["x"])], ["x"]),
+        // its key keeps the access binding context: each G activation evaluates its own P = tock().
+        Expr Build(ScopeCtx pre, Expr body) => OpenedThrough(
+            new ScopeCtx(pre, [], [Prop("P", Body(body), exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters, required: ["x"])], ["x"]),
             Add(Call("G", N(1)), Call("G", N(2))),
-            Prop("G", Fn("x", R("P")), isPublic: true)));
-        Assert.Equal("3", outcome.Value);
+            Prop("G", Fn("x", R("P")), isPublic: true));
+        var outcome = await OnEveryRouteAsync(pre => Build(pre, Tick()));
+        Assert.Equal(("3", "tock1,tock2"), (outcome.Value, outcome.Effects));
         // Run once, and P once per G activation.
         Assert.Equal(3, outcome.Published);
+
+        // The key is a context, never an input (EXPORTED-DETACHED): the host level names x among its
+        // Parameters, so it is the lexical owner of x, and no call ever activates a host level.
+        // P = x therefore finds no binding; it never reads the x of the G call that reads it
+        // (formerly each G activation supplied its own x: 1 + 2).
+        Assert.Equal(KatLangErrorCode.UnknownName, await RefusedOnEveryRouteAsync(pre => Build(pre, X("x"))));
     }
 
     [Fact]
     public async Task LocalOnlyHostProperty_IsSharedWithinOneActivation_AndSeparateAcrossActivations()
     {
-        // F(x) = Q + Q with local-only host Q = x + tock() * 0: one evaluation per F activation.
+        // F(x) = Q + Q with local-only host Q = tock(): one evaluation per F activation, shared by
+        // the two reads of that activation.
         var outcome = await OnEveryRouteAsync(pre => OpenedThrough(
-            new ScopeCtx(pre, [], [Prop("Q", Body(Add(X("x"), new Expr.Binary(BinaryOp.Mul, Tick(), N(0)))),
+            new ScopeCtx(pre, [], [Prop("Q", Body(Tick()),
                 exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters, required: ["x"])], ["x"]),
             Seq(Call("F", N(1)), Call("F", N(2)), Call("F", N(1))),
             Prop("F", Fn("x", Add(R("Q"), R("Q"))), isPublic: true)));
-        Assert.Equal(("(2, 4, 2)", "tock1,tock2,tock3"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("(2, 4, 6)", "tock1,tock2,tock3"), (outcome.Value, outcome.Effects));
     }
 
     [Fact]
@@ -376,7 +429,7 @@ public partial class HostScopePropertyCacheTests
     {
         Expr Build(ScopeCtx pre, bool host)
         {
-            var p = Prop("P", Body(Add(X("x"), Tick())),
+            var p = Prop("P", Body(Tick()),
                 exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters, required: ["x"]);
             var g = Prop("G", Fn("x", Seq(Call("P"), R("P"), Call("P"), R("P"))), isPublic: true);
             return OpenedThrough(new ScopeCtx(pre, [], host ? [p] : [], ["x"]),
@@ -385,7 +438,7 @@ public partial class HostScopePropertyCacheTests
 
         var host = await OnEveryRouteAsync(pre => Build(pre, host: true));
         var owned = await OnEveryRouteAsync(pre => Build(pre, host: false));
-        Assert.Equal("((11, 11, 12, 11), (23, 23, 24, 23))", host.Value);
+        Assert.Equal("((1, 1, 2, 1), (3, 3, 4, 3))", host.Value);
         Assert.Equal("tock1,tock2,tock3,tock4", host.Effects);
         Assert.Equal(owned, host);
     }

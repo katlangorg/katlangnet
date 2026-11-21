@@ -821,13 +821,15 @@ theorem shared_agreement (A : EvalRec → EvalM Activation) (hA : monotone A) (s
 abbrev calleePatterns (a : Algorithm) : List NeedPattern :=
   (Algorithm.parameterPatterns a).map NeedPattern.ofParameter
 
-/-- A user activation over a supply: the one binder, one fresh binding context. -/
+/-- A user activation over a supply: the one binder, one fresh binding context, marked as the
+    ACTUAL CALL it is (`EvalCtx.enteringInvocation`: the body's entry records the activation that
+    owns the call's inner bindings — the loop round and the ordinary call alike). -/
 def userActivation (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (rec : EvalRec) :
     EvalM Activation :=
   bindNeedPatterns rec.bindingChannels (calleePatterns a) cells >>= fun o =>
     match o with
     | some bindings => needBindingContext ctx bindings >>= fun next =>
-        pure (a, next, ValEnv.shadow env (Algorithm.params a))
+        pure (a, { next with enteringInvocation := true }, ValEnv.shadow env (Algorithm.params a))
     | none => throw Error.badArity
 
 theorem monotone_binder (patterns : List NeedPattern) (cells : List Nat) (family : Bool) :
@@ -893,12 +895,13 @@ theorem user_ordinary_body (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) (env
 
 
 /-- The rows of a user step are at value boundaries on this run: for each completed binding from
-    `s`, its body, entered in that binding's context, satisfies `BoundedRows`. -/
+    `s`, its body, entered in that binding's context as an actual call, satisfies `BoundedRows`. -/
 def UserRowsBounded (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (s : EvalState) : Prop :=
   ∀ b t next u, (bindNeedPatterns bindingChannels (calleePatterns a) cells).runState s = (.ok (some b), t) →
     (needBindingContext ctx b).runState t = (.ok next, u) →
-    BoundedRows (enteredCtx a next u) (ValEnv.shadow env (Algorithm.params a)) a.output
-      (enteredState a next (ValEnv.shadow env (Algorithm.params a)) u)
+    BoundedRows (enteredCtx a { next with enteringInvocation := true } u)
+      (ValEnv.shadow env (Algorithm.params a)) a.output
+      (enteredState a { next with enteringInvocation := true } (ValEnv.shadow env (Algorithm.params a)) u)
 
 theorem user_activation_domain (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) (env : ValEnv)
     (cells : List Nat) (s : EvalState) (hrows : UserRowsBounded a ctx env cells s) (p : Activation)
@@ -910,7 +913,7 @@ theorem user_activation_domain (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) 
   rcases completedAt_bind_inv (B := fun rec => bindNeedPatterns rec.bindingChannels (calleePatterns a) cells)
     (K := fun _ o => match o with
       | some bindings => needBindingContext ctx bindings >>= fun next =>
-          pure (a, next, ValEnv.shadow env (Algorithm.params a))
+          pure (a, { next with enteringInvocation := true }, ValEnv.shadow env (Algorithm.params a))
       | none => throw Error.badArity) hp with ⟨o, t₁, hb, hrest⟩ | ⟨_, _, he, _⟩
   · have hbp := hb.production (monotone_binder _ _ _)
     cases o with
@@ -921,7 +924,7 @@ theorem user_activation_domain (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) 
     | some b =>
       obtain ⟨_, k, hk⟩ := hrest
       change (needBindingContext ctx b >>= fun next =>
-        (pure (a, next, ValEnv.shadow env (Algorithm.params a)) : EvalM Activation)).runState t₁ = _ at hk
+        (pure (a, { next with enteringInvocation := true }, ValEnv.shadow env (Algorithm.params a)) : EvalM Activation)).runState t₁ = _ at hk
       rw [EvalM.bind_runState] at hk
       rcases hnb : (needBindingContext ctx b).runState t₁ with ⟨_ | next, u⟩
       · rw [hnb] at hk; cases hk

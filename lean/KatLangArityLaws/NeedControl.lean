@@ -46,9 +46,34 @@ theorem supply_literal_one (n : Int) (ctx : EvalCtx) (env : ValEnv) (st : EvalSt
       (.ok st.needs.size,
         {st with needs := st.needs.push {suspension := .expression (.num n) ctx env}}) := rfl
 
+/-- THE LOOKUP'S OUTCOMES (EXPORTED-DETACHED, November 2026: captured reads are lexical-only).
+    `capturedParameterActivation?` never writes the state. It either REFUSES — the name is lexically
+    owned and unavailable at the site (`capturedParameter = .unavailable`), reported as `unknownName`
+    in the state the lookup started from — or it succeeds with no activation (an `own` name) or with
+    one SAVED in `lexicalActivations`. (An invalid activation identifier is an absence here.) -/
+theorem captured_outcome (name : Ident) (ctx : EvalCtx) (st : EvalState) :
+    (capturedParameterActivation? name ctx).runState st = (.error (Error.unknownName name), st) ∨
+      ∃ activation, (capturedParameterActivation? name ctx).runState st = (.ok activation, st) ∧
+        ∀ act, activation = some act → ∃ i : Nat, st.lexicalActivations[i]? = some act := by
+  unfold capturedParameterActivation?
+  split
+  · exact .inr ⟨none, rfl, by simp⟩
+  · exact .inl rfl
+  · rename_i id _
+    exact .inr ⟨st.lexicalActivations[id]?, rfl, fun act h => ⟨id, h⟩⟩
 
+/-- A refused lookup refuses the DIRECT TRANSPORT of the parameter: nothing is allocated and the
+    state is the one the supply started from, whether or not the receiver would ever demand it. -/
+theorem supply_param_refused (name : Ident) (ctx : EvalCtx) (env : ValEnv) (st : EvalState) (e : Error)
+    (hc : (capturedParameterActivation? name ctx).runState st = (.error e, st)) :
+    (supplyNeed (.param name) ctx env).runState st = (.error e, st) := by
+  simp only [supplyNeed, bind_run, hc]
 
-
+/-- A refused lookup refuses the lookup of the cell the parameter holds. -/
+theorem parameter_address_refused (name : Ident) (ctx : EvalCtx) (st : EvalState) (e : Error)
+    (hc : (capturedParameterActivation? name ctx).runState st = (.error e, st)) :
+    (parameterNeedAddress? name ctx).runState st = (.error e, st) := by
+  simp only [parameterNeedAddress?, bind_run, hc]
 
 theorem supply_unbound_param (name : Ident) (ctx : EvalCtx) (env : ValEnv)
     (st : EvalState) (activation : Option ParameterActivation)

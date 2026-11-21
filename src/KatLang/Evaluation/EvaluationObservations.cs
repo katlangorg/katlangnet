@@ -56,8 +56,8 @@ internal sealed class EvaluationObservations
     /// each target's projection does not increment. A target whose bind may not be shared (its source
     /// read would be a re-entrant intermediate, the run's property cache publishes nothing, or a bind of
     /// its group is already running) increments it on every such read. Demanding no target performs no
-    /// bind (zero); two independent groups, or one local-only source in two distinct declaring activations
-    /// (two calls, two loop rounds), perform two. An exported source keeps one entry across activations.
+    /// bind. Two independent groups, or one source in two distinct owning invocations
+    /// (two calls, two loop rounds), perform two.
     /// A fresh run starts at zero, so demanding every target of one group any number
     /// of times within one activation observes exactly one.
     /// </summary>

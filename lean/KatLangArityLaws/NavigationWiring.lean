@@ -680,7 +680,8 @@ theorem recorded_binds (names : List Ident) (ctx : EvalCtx) (env : ValEnv) (s : 
         (lookupAssoc y act.needs).isSome = true :=
   ⟨{ values := env.filter (fun b => names.contains b.fst),
      needs := ctx.needEnv.filter (fun b => names.contains b.fst),
-     bindingContext := ctx.bindingContext }, rfl,
+     bindingContext := ctx.bindingContext,
+     ownsInvocation := ctx.enteringInvocation }, rfl,
     fun y hy hb => lookupAssoc_filter_of names y hy ctx.needEnv hb⟩
 
 theorem backed_push {acts : Array ParameterActivation} (act : ParameterActivation) {chain : Option ScopeCtx}
@@ -725,7 +726,7 @@ theorem wireSelectedBranchBody_backed (callee body : Algorithm) (binderNames : L
     (hcover : ∀ y, binderNames.contains y = true → (lookupAssoc y ctx.needEnv).isSome = true) :
     ∃ wired t, (wireSelectedBranchBody callee body binderNames ctx env).runState s = (.ok wired, t) ∧
       ActivationPrefix s t ∧ Backed t.lexicalActivations wired.parent := by
-  obtain ⟨act, hrun, hbinds⟩ := recorded_binds binderNames ctx env s
+  obtain ⟨act, hrun, hbinds⟩ := recorded_binds binderNames { ctx with enteringInvocation := true } env s
   refine ⟨body.withParent (some (.mk callee.parent binderNames callee.opens callee.props callee.output
       callee.branches (some s.lexicalActivations.size) callee.declarationId)),
     { s with lexicalActivations := s.lexicalActivations.push act }, ?_, ActivationPrefix.push s act, ?_⟩

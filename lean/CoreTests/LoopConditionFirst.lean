@@ -59,7 +59,8 @@ def cfFlagDividesAlg : Algorithm :=
 
 -- Sh(x) = { Q = 10 / (x - 1) ⏎ Q, Q > 0 }        (a shared failing local)
 def cfSharedFailingAlg : Algorithm :=
-  alg ["x"] [] [KatLang.privateProp "Q" (alg [] [] [] [cfDiv (.num 10) (cfSub (.param "x") 1)])]
+  alg ["x"] []
+    [KatLang.privateLocalProp "Q" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [cfDiv (.num 10) (cfSub (.param "x") 1)])]
     [resolve "Q", cfCmp (resolve "Q") .gt (.num 0)]
 
 -- Pack(x) = 10 / (x - 1), x > 1 ;  Wrapped(x) = Pack(x)*

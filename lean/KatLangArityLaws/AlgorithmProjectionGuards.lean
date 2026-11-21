@@ -92,7 +92,7 @@ def R : Expr := .resolve "R"
     [.dotCall (callN "SA" [.sequenceSpread (arguments (.resolve "S"))]) "while" none]) (.atom 3)
 -- A user META wrapper: `Loop(meta operation) = { A = operation.Algorithm; A(operation.Arguments*).while }`.
 #guard valueIs (run [("Loop", algWithParameters [metaParam "operation"] []
-      (propsPrivate [("A", .alias none [] [] (algorithm (.param "operation")))])
+      [privateLocalProp "A" (.localCapturedAncestorParams ["operation"]) (.alias none [] [] (algorithm (.param "operation")))]
       [.dotCall (callN "A" [.sequenceSpread (arguments (.param "operation"))]) "while" none])]
     [callN "Loop" [callN "Step" [.num 0]]]) (.atom 3)
 -- `repeat`, the captured arguments as the state: `SA(S.Arguments*).repeat(5)` over `Inc(0)`.

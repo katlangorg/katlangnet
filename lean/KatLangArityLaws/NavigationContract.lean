@@ -405,26 +405,54 @@ def ParamRowOwned : Algorithm → Prop
       ∃ p owner id, parent = some p ∧ requiredParameterOwner? p y = some owner ∧ owner.activation = some id
   | _ => True
 
+/-- **THE OWNER'S ACTIVATION IS USABLE IN THE CHASING CONTEXT** (EXPORTED-DETACHED, November 2026):
+    the activation of the nearest binder of a parameter row is not DETACHED in `ctx`
+    (`EvalCtx.detachedBefore`). Captured reads are lexical-only, so inside an exported evaluation a
+    row whose owner was activated before that evaluation started reads NO binding: the chase is
+    then a refusal, not a transport, and the navigation core does not admit it. Every other
+    algorithm satisfies it, and so does every alias in a context no exported evaluation entered
+    (`paramRowUsable_attached`). -/
+def ParamRowUsable : Algorithm → EvalCtx → Prop
+  | .alias parent _ _ (.param y) _ _, ctx =>
+      ∀ p owner id, parent = some p → requiredParameterOwner? p y = some owner → owner.activation = some id →
+        ctx.detachedBefore ≤ id
+  | _, _ => True
+
+theorem paramRowUsable_attached (a : Algorithm) (ctx : EvalCtx) (h : ctx.detachedBefore = 0) :
+    ParamRowUsable a ctx := by
+  unfold ParamRowUsable
+  split
+  · intro _ _ _ _ _ _; omega
+  · trivial
+
 /-- The captured activation of a parameter row, read in the alias's own pushed context: its owner's,
-    on the alias's OWN chain — the reading context takes no part. -/
+    on the alias's OWN chain, when that activation is usable in the reading context — the reading
+    context's tiers take no part. -/
 theorem capturedId?_paramRow (p : ScopeCtx) (opens : List Expr) (props : List PropDef) (y : Ident)
-    (id : Option PropertyIdentity) (reference : Bool) (ctx : EvalCtx) :
-    capturedId? y (ctx.push (.alias (some p) opens props (.param y) id reference)) =
-      (requiredParameterOwner? p y).bind ScopeCtx.activation := rfl
+    (id : Option PropertyIdentity) (reference : Bool) (ctx : EvalCtx) (owner : ScopeCtx) (i : Nat)
+    (hown : requiredParameterOwner? p y = some owner) (hid : owner.activation = some i)
+    (husable : ctx.detachedBefore ≤ i) :
+    capturedId? y (ctx.push (.alias (some p) opens props (.param y) id reference)) = some i := by
+  have h := KatLang.DetachedEvaluation.captured_activation y
+    (ctx.push (.alias (some p) opens props (.param y) id reference))
+    (.alias (some p) opens props (.param y) id reference) _ owner i rfl rfl rfl hown hid husable
+  unfold capturedId?
+  rw [h]
 
 /-- **THE ACTIVATION AND CELL CLAUSES of a chase step.** An alias whose chain is backed and whose
-    parameter row, if it has one, is owned: the navigation core admits its chase in EVERY context. -/
+    parameter row, if it has one, is owned by an activation usable in the chasing context: the
+    navigation core admits its chase. -/
 theorem paramRowAdmits_of_owned (a : Algorithm) (ctx : EvalCtx) (s : EvalState)
-    (hb : Backed s.lexicalActivations a.parent) (ho : ParamRowOwned a) : paramRowAdmits a ctx s = true := by
+    (hb : Backed s.lexicalActivations a.parent) (ho : ParamRowOwned a) (hu : ParamRowUsable a ctx) :
+    paramRowAdmits a ctx s = true := by
   unfold paramRowAdmits
   split
   · rename_i parent opens props y id reference
     obtain ⟨p, owner, i, hp, hown, hid⟩ := ho
     subst hp
     obtain ⟨act, hact, hy⟩ := owner_backed y (chain := some p) hb p rfl owner hown i hid
-    have hcap : capturedId? y (ctx.push (.alias (some p) opens props (.param y) id reference)) = some i := by
-      rw [capturedId?_paramRow, hown]
-      exact hid
+    have hcap : capturedId? y (ctx.push (.alias (some p) opens props (.param y) id reference)) = some i :=
+      capturedId?_paramRow p opens props y id reference ctx owner i hown hid (hu p owner i rfl hown hid)
     have hanch : anchored y (ctx.push (.alias (some p) opens props (.param y) id reference)) s = true := by
       unfold anchored
       rw [hcap]
@@ -432,15 +460,13 @@ theorem paramRowAdmits_of_owned (a : Algorithm) (ctx : EvalCtx) (s : EvalState)
     have haddr : parameterAddressIn s.lexicalActivations y
         (ctx.push (.alias (some p) opens props (.param y) id reference)) = lookupAssoc y act.needs := by
       unfold parameterAddressIn
-      rw [hcap]
-      show lookupAssoc y ((s.lexicalActivations[i]?.map ParameterActivation.needs).getD _) = _
-      rw [hact]
+      rw [KatLang.MemberStability.capturedRecord_of_id hcap, hact]
       rfl
     rw [hanch, haddr, hy]
     rfl
   · rfl
 
-/-- A backed chain's owner search is recorded: its nearest activated level names a record. -/
+/-- A backed chain's searches are recorded: every activated level names a record. -/
 theorem ownerSearchRecorded_of_backed {s : EvalState} :
     ∀ {chain : Option ScopeCtx}, Backed s.lexicalActivations chain → ownerSearchRecorded chain s = true
   | none, _ => by simp only [ownerSearchRecorded]
@@ -449,8 +475,8 @@ theorem ownerSearchRecorded_of_backed {s : EvalState} :
       cases activation with
       | some id =>
         obtain ⟨act, ha, -⟩ := hv.1 id rfl
-        simp only [ownerSearchRecorded]
-        exact decide_eq_true (lt_of_getElem?_some ha)
+        simp only [ownerSearchRecorded, Bool.and_eq_true]
+        exact ⟨decide_eq_true (lt_of_getElem?_some ha), ownerSearchRecorded_of_backed (chain := parent) hv.2⟩
       | none =>
         simp only [ownerSearchRecorded]
         exact ownerSearchRecorded_of_backed (chain := parent) hv.2
@@ -469,7 +495,8 @@ theorem cellKeyAdmits_of_backed (a : Algorithm) (s : EvalState)
     contract has to give at a navigation call for the navigation core to admit it. Every other
     navigation call is admitted outright. -/
 def NavFacts : EvalCall → EvalState → Prop
-  | .resolveAliasChase _ _ a _ _ _, s => Backed s.lexicalActivations a.parent ∧ ParamRowOwned a
+  | .resolveAliasChase _ _ a ctx _ _, s =>
+      Backed s.lexicalActivations a.parent ∧ ParamRowOwned a ∧ ParamRowUsable a ctx
   | .projectParameterCallable _ ctx, s => Backed s.lexicalActivations (siteScope? ctx)
   | .projectNeedCallable a, s => a < s.needs.size
   | _, _ => True
@@ -480,7 +507,7 @@ theorem navFacts_admits (c : EvalCall) (s : EvalState) (hc : navStatic c = true)
   cases c
   case resolveAliasChase fc pr a ctx vis last =>
     show (paramRowAdmits a ctx s && cellKeyAdmits a s) = true
-    rw [paramRowAdmits_of_owned a ctx s h.1 h.2, cellKeyAdmits_of_backed a s h.1]
+    rw [paramRowAdmits_of_owned a ctx s h.1 h.2.1 h.2.2, cellKeyAdmits_of_backed a s h.1]
     rfl
   case projectParameterCallable x ctx => exact anchored_of_chainRecorded x ctx s (Backed.chainRecorded h)
   case projectNeedCallable a => exact (admits_projection_iff a s).2 h
@@ -525,23 +552,29 @@ theorem parameter_address_valid (x : Ident) (ctx : EvalCtx) (s : EvalState) (vs 
   unfold parameterAddressIn at h
   cases hid : capturedId? x ctx with
   | none =>
-    rw [hid] at h
-    exact ValidNeedEnv.lookup vc h
+    -- no usable activation: an own read looks in the context's tier, an unavailable one finds nothing
+    unfold KatLang.MemberStability.capturedRecord at h
+    cases hc : capturedParameter x ctx with
+    | own =>
+      rw [hc] at h
+      exact ValidNeedEnv.lookup vc h
+    | unavailable =>
+      rw [hc] at h
+      cases h
+    | activation i =>
+      exfalso
+      unfold KatLang.MemberStability.capturedId? at hid
+      rw [hc] at hid
+      cases hid
   | some id =>
-    rw [hid] at h
+    rw [KatLang.MemberStability.capturedRecord_of_id hid] at h
     cases hact : s.lexicalActivations[id]? with
     | none =>
-      have h' : lookupAssoc x ctx.needEnv = some a := by
-        have : (Option.bind (some id) fun id => s.lexicalActivations[id]?) = none := hact
-        rw [this] at h
-        exact h
-      exact ValidNeedEnv.lookup vc h'
+      rw [hact] at h
+      exact ValidNeedEnv.lookup vc h
     | some act =>
-      have h' : lookupAssoc x act.needs = some a := by
-        have : (Option.bind (some id) fun id => s.lexicalActivations[id]?) = some act := hact
-        rw [this] at h
-        exact h
-      exact ValidNeedEnv.lookup (vs.activations id act hact).1 h'
+      rw [hact] at h
+      exact ValidNeedEnv.lookup (vs.activations id act hact).1 h
 
 /-- **A chase step's binding cell is inside the heap it leaves**, and the address invariant is kept:
     the recorded cell (`Inv.aliasCells`), a transported parameter cell, or a fresh one. -/
@@ -679,8 +712,8 @@ theorem CtxOK.ext {s t : EvalState} (h : ActivationPrefix s t) {ctx : EvalCtx}
 /-- The navigation facts of a chase from a usable algorithm, of a parameter read in a usable context,
     and of a projection of a valid address. -/
 theorem navFacts_chase {s : EvalState} {a : Algorithm} (ha : AlgOK s.lexicalActivations a) (fc pr : Bool)
-    (ctx : EvalCtx) (vis : List String) (last : Option (Algorithm × PropDef)) :
-    NavFacts (.resolveAliasChase fc pr a ctx vis last) s := ha
+    (ctx : EvalCtx) (hu : ParamRowUsable a ctx) (vis : List String) (last : Option (Algorithm × PropDef)) :
+    NavFacts (.resolveAliasChase fc pr a ctx vis last) s := ⟨ha.1, ha.2, hu⟩
 
 theorem navFacts_parameter {s : EvalState} {ctx : EvalCtx} (hc : CtxOK s.lexicalActivations ctx) (x : Ident) :
     NavFacts (.projectParameterCallable x ctx) s := hc.2.1
@@ -692,7 +725,7 @@ theorem navFacts_parameter {s : EvalState} {ctx : EvalCtx} (hc : CtxOK s.lexical
     to the additional input/result predicates of `navigationContract`; they are NOT discharged here.
     These facts concern the entry arguments, not a run of either evaluator core. -/
 def NavigationInputs : EvalCall → EvalState → Prop
-  | .resolveAliasChase _ _ a _ _ _, s => AlgOK s.lexicalActivations a
+  | .resolveAliasChase _ _ a ctx _ _, s => AlgOK s.lexicalActivations a ∧ ParamRowUsable a ctx
   | .projectParameterCallable _ ctx, s => CtxOK s.lexicalActivations ctx
   | .projectNeedCallable a, s => a < s.needs.size
   | _, _ => True
@@ -719,7 +752,7 @@ theorem navigationContract_admits (extraPre : EvalCall → EvalState → Prop)
   intro c s _ _ hp
   have inputs : NavigationInputs c s := hp.2.1
   cases c with
-  | resolveAliasChase fc pr a ctx vis last => exact inputs
+  | resolveAliasChase fc pr a ctx vis last => exact ⟨inputs.1.1, inputs.1.2, inputs.2⟩
   | projectParameterCallable x ctx => exact inputs.2.1
   | projectNeedCallable a => exact inputs
   | _ => trivial

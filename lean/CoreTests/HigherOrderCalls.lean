@@ -601,10 +601,13 @@ def collectingParameterForwardingCallbackBody : Bool :=
 
 #guard collectingParameterForwardingCallbackBody
 
+-- `Freqs` reads the owner's `values` and `MaxFreq` reads `Freqs`, so both are LOCAL-ONLY, as the
+-- front end classifies them. (EXPORTED-DETACHED, November 2026: the evaluator enforces the flag — a
+-- capturing property left `exported` is evaluated detached and its read of `values` is refused.)
 def collectingParameterForwardingModeAlg : Algorithm :=
   algWithParameters [{ name := "values", kind := .collecting }] [] [
-    privateProp "Freqs" (alg [] [] [] [collectingParameterForwardingModeFreqsExpr]),
-    privateProp "MaxFreq" (alg [] [] [] [.dotCall (resolve "Freqs") "max" none])
+    privateLocalProp "Freqs" (.localCapturedAncestorParams ["values"]) (alg [] [] [] [collectingParameterForwardingModeFreqsExpr]),
+    privateLocalProp "MaxFreq" (.localCapturedAncestorParams ["values"]) (alg [] [] [] [.dotCall (resolve "Freqs") "max" none])
   ] [
     .dotCall
       (.dotCall (.param "values") "distinct" none)
@@ -1986,12 +1989,14 @@ def testAlgChannelParamShadowsCallerValueCollecting : Bool :=
 #eval runFlat (.algorithmExpr shadowedCollectingRoot)
 
 -- Positive control 1: shadowing removes ONLY the callee's own parameter names.
--- `Outer(v)`'s nested property still reads the ancestor-owned `v` through the
--- inherited value environment, because `Inner` declares no parameter named `v`.
+-- `Outer(v)`'s nested property still reads the ancestor-owned `v` — through `Outer`'s
+-- ACTIVATION, its lexical owner's (captured reads are lexical-only) — because `Inner`
+-- declares no parameter named `v`. `Inner` captures `v`, so it is local-only.
 def ancestorParameterReaderRoot : Algorithm :=
   algPrivate [] [] [
     ("Outer",
-      algPrivate ["v"] [] [("Inner", alg [] [] [] [.binary .add (.param "v") (.num 1)])]
+      alg ["v"] []
+        [privateLocalProp "Inner" (.localCapturedAncestorParams ["v"]) (alg [] [] [] [.binary .add (.param "v") (.num 1)])]
         [resolve "Inner"])
   ] [
     .call (resolve "Outer") [.num 7]

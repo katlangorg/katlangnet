@@ -588,7 +588,7 @@ public static partial class Evaluator
         /// </summary>
         private bool? SettledRoute(Algorithm.Alias step, EvalCtx ctx)
         {
-            if (step.Declaration is null)
+            if (step.Declaration is null || AliasMemoDetached(step, ctx))
                 return null;
             var memo = AliasMemoOwner(step) is { } activation ? activation.AliasRouteDecisions : ctx.Budget.AliasRouteDecisions;
             AliasRouteDecision settled;
@@ -611,7 +611,7 @@ public static partial class Evaluator
         private void SettleRoute(ChaseFrame frame, bool isRuntime)
         {
             var step = frame.Step!;
-            if (frame.RouteTaints != _taints || step.Declaration is null)
+            if (frame.RouteTaints != _taints || step.Declaration is null || AliasMemoDetached(step, frame.Ctx))
                 return;
             var memo = AliasMemoOwner(step) is { } activation ? activation.AliasRouteDecisions : frame.Ctx.Budget.AliasRouteDecisions;
             var decision = new AliasRouteDecision(isRuntime, ReadProjections: frame.RouteProjections != _projections);
@@ -921,6 +921,9 @@ public static partial class Evaluator
     // The remembered static end of an alias binding, without queueing a miss.
     private static AliasStaticEnd? PeekAliasTargetMemo(Property binding, Algorithm.Alias wired, EvalCtx ctx, bool followCarriers)
     {
+        if (AliasMemoDetached(wired, ctx))
+            return null;
+
         var memo = AliasMemoOwner(wired) is { } activation ? activation.AliasTargets : ctx.Budget.AliasTargets;
         return memo.TryGetValue(new AliasTargetKey(binding, StructuralOwnerIdentity.FromScope(wired.Parent), followCarriers), out var end)
             ? end
@@ -1018,9 +1021,11 @@ public static partial class Evaluator
     /// nothing allocated); an <c>.Algorithm</c> row is a link with its one receiver (CR-15); a
     /// parameter-rooted path is a runtime-projection reference cell. Every other row has the LIFETIME OF
     /// ITS PROPERTY's cache entry (ALIAS-CELL-LIFETIME, owner decision 2026-11-15;
-    /// <see cref="AliasBindingCellKey"/>): established ONCE per declaration and structural declaring
-    /// scope per run when the alias's own property is exported, once per declaring binding identity
-    /// when it is local-only — never per activation — first-wins, and retained (retry-stable, Guard B);
+    /// <see cref="AliasBindingCellKey"/>): established ONCE per declaration, structural declaring
+    /// scope and OWNING INVOCATION when the alias's own property is exported (every actual call of
+    /// its owner has a fresh cell; one run-scoped cell where no call owns the declaring chain —
+    /// INNER-PROPERTY LIFETIME, November 2026), once per declaring binding identity when it is
+    /// local-only — never per activation index — first-wins, and retained (retry-stable, Guard B);
     /// establishing it evaluates nothing. Its VALUE is the alias's bare read and its value view's
     /// zero-supply invocation (<see cref="ValueViewCell"/>), its CALLABLE the alias's runtime identity —
     /// so every observation shares its receiver work and the supplied computation never reruns. A need
@@ -1037,13 +1042,60 @@ public static partial class Evaluator
         var key = AliasBindingCellKey(wired, ctx);
         lock (cells)
             if (cells.TryGetValue(key, out var known)) return known;
-        var created = SupplyCell(wired.Target, EnterAlgorithmBody(wired, ctx, []), [], retained: true);
+        var rowCtx = AliasCellContext(wired, ctx, out var rowValues);
+        var created = SupplyCell(wired.Target, EnterAlgorithmBody(wired, rowCtx, rowValues), rowValues, retained: true);
         lock (cells)
         {
             if (cells.TryGetValue(key, out var raced)) return raced;
             cells.TryAdd(key, created);
             return created;
         }
+    }
+
+    /// <summary>
+    /// THE CONTEXT A BINDING CELL'S ROW IS SUPPLIED IN (EXPORTED-DETACHED, November 2026; Lean
+    /// <c>aliasCellContext</c>): the DETACHED context for an alias whose own property is
+    /// <see cref="PropertyExposure.Exported"/> (<see cref="DetachedEvaluation"/>). Its cell is
+    /// (<see cref="AliasBindingCellKey"/>) the alias's counterpart of an exported property entry, so
+    /// its row is supplied where an exported property is evaluated: every activation that exists now
+    /// is an identity and no input, and the cell's later VALUE demand and CALLABLE projection run
+    /// under that watermark wherever they happen — a row that reads an enclosing call's input is a
+    /// refusal, never a callable shared across calls. A local-only alias's cell (one per declaring
+    /// binding identity) and a property-less alias's are supplied in the using context with no
+    /// values, as before.
+    /// </summary>
+    private static EvalCtx AliasCellContext(Algorithm.Alias wired, EvalCtx ctx, out ValEnv values)
+    {
+        if (AliasOwnProperty(wired, ctx.Budget) is { Exposure: PropertyExposure.Exported })
+            return DetachedEvaluation(ctx, NoBindingCellValues, out values);
+
+        values = NoBindingCellValues;
+        return ctx;
+    }
+
+    /// <summary>
+    /// Whether the PURE memos of the alias wired as <paramref name="wired"/> — its static end and its
+    /// settled route decision — are out of reach of <paramref name="ctx"/> (EXPORTED-DETACHED, November
+    /// 2026): the context is inside an exported evaluation and an activation of the alias's declaring
+    /// chain is DETACHED in it. Such a memo records the outcome of the member selections and access
+    /// checks of a chase that ran while that activation could still own a local-only member; inside
+    /// the exported evaluation the same selection is refused (<see cref="IsAccessibleFrom"/>), so the
+    /// chase runs again there, with the reading context's checks, and records nothing. Every other
+    /// reader — and every alias whose chain holds no detached activation — uses the memos as before:
+    /// their checks read only the chain's own activations, which the watermark leaves usable.
+    /// </summary>
+    private static bool AliasMemoDetached(Algorithm wired, in EvalCtx ctx)
+    {
+        if (ctx.DetachedBefore == 0)
+            return false;
+
+        for (var level = wired.Parent; level is not null; level = level.Parent)
+        {
+            if (level.Activation is { } activation && IsDetached(activation, ctx))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1180,6 +1232,9 @@ public static partial class Evaluator
         bool followCarriers,
         ref List<(Dictionary<AliasTargetKey, AliasStaticEnd> Memo, AliasTargetKey Key)>? pending)
     {
+        if (AliasMemoDetached(wired, ctx))
+            return null;
+
         var memo = AliasMemoOwner(wired) is { } activation ? activation.AliasTargets : ctx.Budget.AliasTargets;
         var key = new AliasTargetKey(binding, StructuralOwnerIdentity.FromScope(wired.Parent), followCarriers);
         if (memo.TryGetValue(key, out var end))

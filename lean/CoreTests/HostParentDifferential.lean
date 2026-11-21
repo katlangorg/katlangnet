@@ -15,8 +15,8 @@ Lean exporter's text (KL-07 pilot; `CoreTests/StructuralIdentity.lean`). A faili
 a Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- corpus cases: 113
-- comparable cases: 113
+- corpus cases: 134
+- comparable cases: 134
 - known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 0
 
 Regenerate from the repo root with:
@@ -285,9 +285,9 @@ def hp_01b : Expr :=
 #guard cacheEntries hp_01b "Run" == some 1
 #guard cacheTotal hp_01b == some 2
 
--- HP-01c: a dynamically reading host property is cached once per run (first caller's x)
+-- HP-01c: an exported host property is evaluated once per run (both readers get the first evaluation)
 def hp_01c : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
 #guard obs hp_01c == "ok raw=S[1, 1] n=1"
 #guard structural hp_01c == some "kl-struct-v1:2:n3:1e0s2:0,0,;"
 #guard cacheEntries hp_01c "P" == some 1
@@ -428,7 +428,7 @@ def hp_04c : Expr :=
 
 -- HP-05a: an unactivated local-only host property keys on the ACCESS context: one entry per G call
 def hp_05a : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none ["x"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none ["x"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
 #guard obs hp_05a == "ok raw=S[1, 2] n=1"
 #guard structural hp_05a == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_05a "P" == some 2
@@ -437,9 +437,9 @@ def hp_05a : Expr :=
 
 -- HP-05b: two reads within ONE access context share the local-only entry
 def hp_05b : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none ["x"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G2") [.num 3])]), publicProp "G2" (alg ["x"] [] [] [(.binary .add (.resolve "P") (.resolve "P"))])] [])))] [] [.resolve "Run"]))
-#guard obs hp_05b == "ok raw=6 n=1"
-#guard structural hp_05b == some "kl-struct-v1:1:n3:6e0"
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none ["x"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G2") [.num 3])]), publicProp "G2" (alg ["x"] [] [] [(.binary .add (.resolve "P") (.resolve "P"))])] [])))] [] [.resolve "Run"]))
+#guard obs hp_05b == "ok raw=2 n=1"
+#guard structural hp_05b == some "kl-struct-v1:1:n3:2e0"
 #guard cacheEntries hp_05b "P" == some 1
 #guard cacheEntries hp_05b "Run" == some 1
 #guard cacheTotal hp_05b == some 2
@@ -510,7 +510,7 @@ def hp_05k : Expr :=
 
 -- HP-06a: CACHE-PUB-1: H(x) = P() establishes the empty entry; the later read reuses it
 def hp_06a : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "H") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "H" (alg ["x"] [] [] [(.call (.resolve "P") [])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "H") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "H" (alg ["x"] [] [] [(.call (.resolve "P") [])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
 #guard obs hp_06a == "ok raw=S[1, 1] n=1"
 #guard structural hp_06a == some "kl-struct-v1:2:n3:1e0s2:0,0,;"
 #guard cacheEntries hp_06a "P" == some 1
@@ -519,7 +519,7 @@ def hp_06a : Expr :=
 
 -- HP-06b: an established entry is never replaced by a later fresh P()
 def hp_06b : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "H") [.num 2]), (.call (.resolve "G") [.num 3])]), publicProp "H" (alg ["x"] [] [] [(.call (.resolve "P") [])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "H") [.num 2]), (.call (.resolve "G") [.num 3])]), publicProp "H" (alg ["x"] [] [] [(.call (.resolve "P") [])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
 #guard obs hp_06b == "ok raw=S[1, 2, 1] n=1"
 #guard structural hp_06b == some "kl-struct-v1:3:n3:1e0n3:2e0s3:0,1,0,;"
 #guard cacheEntries hp_06b "P" == some 1
@@ -528,7 +528,7 @@ def hp_06b : Expr :=
 
 -- HP-06c: Q-37: the outermost read owns the entry, the re-entrant read publishes nothing
 def hp_06c : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "K") [.param "x"])]), privateProp "K" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .add (.call (.resolve "G") [(.binary .sub (.param "n") (.num 1))]) (.num 100))])⟩]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 5])])] [])))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "K") [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])]), privateProp "K" (.conditional none [] [⟨.litInt 1, (alg [] [] [] [(.binary .add (.call (.resolve "G") [.num 0]) (.num 100))])⟩, ⟨.bind "n", (alg [] [] [] [.num 1])⟩]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 5])])] [])))] [] [.resolve "Run"]))
 #guard obs hp_06c == "ok raw=S[101, 101] n=1"
 #guard structural hp_06c == some "kl-struct-v1:2:n5:101e0s2:0,0,;"
 #guard cacheEntries hp_06c "P" == some 1
@@ -537,7 +537,7 @@ def hp_06c : Expr :=
 
 -- HP-06d: Q-37 with the owning access an explicit P() (CACHE-PUB-1)
 def hp_06d : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "K") [.param "x"])]), privateProp "K" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .add (.call (.resolve "G") [(.binary .sub (.param "n") (.num 1))]) (.num 100))])⟩]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "H") [.num 1]), (.call (.resolve "G") [.num 5])]), publicProp "H" (alg ["x"] [] [] [(.call (.resolve "P") [])])] [])))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "K") [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])]), privateProp "K" (.conditional none [] [⟨.litInt 1, (alg [] [] [] [(.binary .add (.call (.resolve "G") [.num 0]) (.num 100))])⟩, ⟨.bind "n", (alg [] [] [] [.num 1])⟩]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "H") [.num 1]), (.call (.resolve "G") [.num 5])]), publicProp "H" (alg ["x"] [] [] [(.call (.resolve "P") [])])] [])))] [] [.resolve "Run"]))
 #guard obs hp_06d == "ok raw=S[101, 101] n=1"
 #guard structural hp_06d == some "kl-struct-v1:2:n5:101e0s2:0,0,;"
 #guard cacheEntries hp_06d "P" == some 1
@@ -566,7 +566,7 @@ def hp_07b : Expr :=
 
 -- HP-08a: two fresh equal host levels, each with its own P: two owners
 def hp_08a : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [.param "x"])] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_08a == "ok raw=S[1, 2] n=2"
 #guard structural hp_08a == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_08a "P" == some 2
@@ -576,7 +576,7 @@ def hp_08a : Expr :=
 
 -- HP-08b: ONE Property object declared by two distinct host levels: two owners (former 5b shape)
 def hp_08b : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_08b == "ok raw=S[1, 2] n=2"
 #guard structural hp_08b == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_08b "P" == some 2
@@ -586,7 +586,7 @@ def hp_08b : Expr :=
 
 -- HP-08c: two distinct host levels sharing ONE property list: two owners
 def hp_08c : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_08c == "ok raw=S[1, 2] n=2"
 #guard structural hp_08c == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_08c "P" == some 2
@@ -596,7 +596,7 @@ def hp_08c : Expr :=
 
 -- HP-08d: a record `with` copy of a host level is another owner
 def hp_08d : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_08d == "ok raw=S[1, 2] n=2"
 #guard structural hp_08d == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_08d "P" == some 2
@@ -606,7 +606,7 @@ def hp_08d : Expr :=
 
 -- HP-08e: distinct parent objects over record-equal grandparents (copies) keep two owners
 def hp_08e : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) [] [] [] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 2)))) [] [] [] [] [] none (some (.host 3)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) [] [] [] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 2)))) [] [] [] [] [] none (some (.host 3)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_08e == "ok raw=S[1, 2] n=2"
 #guard structural hp_08e == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_08e "P" == some 2
@@ -650,7 +650,7 @@ def hp_08j : Expr :=
 
 -- HP-08k: a host level and an evaluator-owned block declaring ONE property list are two owners
 def hp_08k : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])])] []))), (.algorithmExpr (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 2) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 3) }] []))] [] [.resolve "RunA", (.call (.resolve "G") [.num 2])]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])])] []))), (.algorithmExpr (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 2) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 3) }] []))] [] [.resolve "RunA", (.call (.resolve "G") [.num 2])]))
 #guard obs hp_08k == "ok raw=S[1, 2] n=2"
 #guard structural hp_08k == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_08k "P" == some 2
@@ -659,7 +659,7 @@ def hp_08k : Expr :=
 
 -- HP-09a: one host level object opened by two blocks: one owner, one entry
 def hp_09a : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_09a == "ok raw=S[1, 1] n=2"
 #guard structural hp_09a == some "kl-struct-v1:2:n3:1e0s2:0,0,;"
 #guard cacheEntries hp_09a "P" == some 1
@@ -669,7 +669,7 @@ def hp_09a : Expr :=
 
 -- HP-09b: one grandparent object reached through two distinct children: one owner
 def hp_09b : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) [] [] [privateProp "W" (alg [] [] [] [.num 1])] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) [] [] [privateProp "W" (alg [] [] [] [.num 2])] [] [] none (some (.host 2)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) [] [] [privateProp "W" (alg [] [] [] [.num 1])] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }] [] [] none (some (.host 0)))) [] [] [privateProp "W" (alg [] [] [] [.num 2])] [] [] none (some (.host 2)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_09b == "ok raw=S[1, 1] n=2"
 #guard structural hp_09b == some "kl-struct-v1:2:n3:1e0s2:0,0,;"
 #guard cacheEntries hp_09b "P" == some 1
@@ -679,7 +679,7 @@ def hp_09b : Expr :=
 
 -- HP-09c: one opened block object listed twice in one open list is one provider
 def hp_09c : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 3)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 2) }] [] [] none (some (.host 0)))) (alg [] [] [{ (publicProp "Run" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] [])))), (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 3)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 2) }] [] [] none (some (.host 0)))) (alg [] [] [{ (publicProp "Run" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [] [.resolve "Run"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 3)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 2) }] [] [] none (some (.host 0)))) (alg [] [] [{ (publicProp "Run" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] [])))), (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 3)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 2) }] [] [] none (some (.host 0)))) (alg [] [] [{ (publicProp "Run" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [] [.resolve "Run"]))
 #guard obs hp_09c == "ok raw=S[1, 1] n=1"
 #guard structural hp_09c == some "kl-struct-v1:2:n3:1e0s2:0,0,;"
 #guard cacheEntries hp_09c "P" == some 1
@@ -753,7 +753,7 @@ def hp_10f : Expr :=
 
 -- HP-10g: compact terms keep the declaring contexts of shared host properties distinct
 def hp_10g : Expr :=
-  (let hd0 : Expr := .resolve "G"; let hd1 : Expr := .num 1; let hd2 : Expr := (.call (hd0) [hd1]); let hd3 : Algorithm := (alg [] [] [] [hd2]); let hd4 : Expr := .resolve "P"; let hd5 : Algorithm := (alg ["x"] [] [] [hd4]); let hd6 : Expr := .param "x"; let hd7 : Algorithm := (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [hd6])); let hd8 : Expr := .num 1; let hd9 : Expr := (.binary .add (hd8) (hd8)); let hd10 : Expr := (.binary .add (hd9) (hd9)); let hd11 : Expr := (.binary .add (hd10) (hd10)); let hd12 : Expr := (.binary .add (hd11) (hd11)); let hd13 : Expr := (.binary .add (hd12) (hd12)); let hd14 : Expr := (.binary .add (hd13) (hd13)); let hd15 : Expr := (.binary .add (hd14) (hd14)); let hd16 : Expr := (.binary .add (hd15) (hd15)); let hd17 : Expr := (.binary .add (hd16) (hd16)); let hd18 : Expr := (.binary .add (hd17) (hd17)); let hd19 : Expr := (.binary .add (hd18) (hd18)); let hd20 : Expr := (.binary .add (hd19) (hd19)); let hd21 : Algorithm := (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [hd20])); let hd22 : ScopeCtx := (ScopeCtx.mk none [] [] [{ (privateProp "P" hd7) with identity := some (.shared 0) }, { (privateProp "Large" hd21) with identity := some (.shared 1) }] [] [] none (some (.host 0))); let hd23 : Algorithm := (Algorithm.withParent (some hd22) (alg [] [] [publicProp "RunA" hd3, publicProp "G" hd5] [])); let hd24 : Expr := (.algorithmExpr hd23); let hd25 : Expr := .resolve "G"; let hd26 : Expr := .num 2; let hd27 : Expr := (.call (hd25) [hd26]); let hd28 : Algorithm := (alg [] [] [] [hd27]); let hd29 : Expr := .resolve "P"; let hd30 : Algorithm := (alg ["x"] [] [] [hd29]); let hd31 : Expr := .param "x"; let hd32 : Algorithm := (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [hd31])); let hd33 : Expr := .num 1; let hd34 : Expr := (.binary .add (hd33) (hd33)); let hd35 : Expr := (.binary .add (hd34) (hd34)); let hd36 : Expr := (.binary .add (hd35) (hd35)); let hd37 : Expr := (.binary .add (hd36) (hd36)); let hd38 : Expr := (.binary .add (hd37) (hd37)); let hd39 : Expr := (.binary .add (hd38) (hd38)); let hd40 : Expr := (.binary .add (hd39) (hd39)); let hd41 : Expr := (.binary .add (hd40) (hd40)); let hd42 : Expr := (.binary .add (hd41) (hd41)); let hd43 : Expr := (.binary .add (hd42) (hd42)); let hd44 : Expr := (.binary .add (hd43) (hd43)); let hd45 : Expr := (.binary .add (hd44) (hd44)); let hd46 : Algorithm := (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [hd45])); let hd47 : ScopeCtx := (ScopeCtx.mk none [] [] [{ (privateProp "P" hd32) with identity := some (.shared 0) }, { (privateProp "Large" hd46) with identity := some (.shared 1) }] [] [] none (some (.host 1))); let hd48 : Algorithm := (Algorithm.withParent (some hd47) (alg [] [] [publicProp "RunB" hd28, publicProp "G" hd30] [])); let hd49 : Expr := (.algorithmExpr hd48); let hd50 : Expr := .resolve "RunA"; let hd51 : Expr := .resolve "RunB"; let hd52 : Algorithm := (alg [] [hd24, hd49] [] [hd50, hd51]); let hd53 : Expr := (.algorithmExpr hd52); hd53)
+  (let hd0 : Expr := .resolve "G"; let hd1 : Expr := .num 1; let hd2 : Expr := (.call (hd0) [hd1]); let hd3 : Algorithm := (alg [] [] [] [hd2]); let hd4 : Expr := .resolve "P"; let hd5 : Algorithm := (alg ["x"] [] [] [hd4]); let hd6 : Expr := (.algorithmExpr (Algorithm.builtin .tickBuiltin)); let hd7 : Expr := (.call (hd6) []); let hd8 : Algorithm := (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [hd7])); let hd9 : Expr := .num 1; let hd10 : Expr := (.binary .add (hd9) (hd9)); let hd11 : Expr := (.binary .add (hd10) (hd10)); let hd12 : Expr := (.binary .add (hd11) (hd11)); let hd13 : Expr := (.binary .add (hd12) (hd12)); let hd14 : Expr := (.binary .add (hd13) (hd13)); let hd15 : Expr := (.binary .add (hd14) (hd14)); let hd16 : Expr := (.binary .add (hd15) (hd15)); let hd17 : Expr := (.binary .add (hd16) (hd16)); let hd18 : Expr := (.binary .add (hd17) (hd17)); let hd19 : Expr := (.binary .add (hd18) (hd18)); let hd20 : Expr := (.binary .add (hd19) (hd19)); let hd21 : Expr := (.binary .add (hd20) (hd20)); let hd22 : Algorithm := (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [hd21])); let hd23 : ScopeCtx := (ScopeCtx.mk none [] [] [{ (privateProp "P" hd8) with identity := some (.shared 0) }, { (privateProp "Large" hd22) with identity := some (.shared 1) }] [] [] none (some (.host 0))); let hd24 : Algorithm := (Algorithm.withParent (some hd23) (alg [] [] [publicProp "RunA" hd3, publicProp "G" hd5] [])); let hd25 : Expr := (.algorithmExpr hd24); let hd26 : Expr := .resolve "G"; let hd27 : Expr := .num 2; let hd28 : Expr := (.call (hd26) [hd27]); let hd29 : Algorithm := (alg [] [] [] [hd28]); let hd30 : Expr := .resolve "P"; let hd31 : Algorithm := (alg ["x"] [] [] [hd30]); let hd32 : Expr := (.algorithmExpr (Algorithm.builtin .tickBuiltin)); let hd33 : Expr := (.call (hd32) []); let hd34 : Algorithm := (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [hd33])); let hd35 : Expr := .num 1; let hd36 : Expr := (.binary .add (hd35) (hd35)); let hd37 : Expr := (.binary .add (hd36) (hd36)); let hd38 : Expr := (.binary .add (hd37) (hd37)); let hd39 : Expr := (.binary .add (hd38) (hd38)); let hd40 : Expr := (.binary .add (hd39) (hd39)); let hd41 : Expr := (.binary .add (hd40) (hd40)); let hd42 : Expr := (.binary .add (hd41) (hd41)); let hd43 : Expr := (.binary .add (hd42) (hd42)); let hd44 : Expr := (.binary .add (hd43) (hd43)); let hd45 : Expr := (.binary .add (hd44) (hd44)); let hd46 : Expr := (.binary .add (hd45) (hd45)); let hd47 : Expr := (.binary .add (hd46) (hd46)); let hd48 : Algorithm := (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [hd47])); let hd49 : ScopeCtx := (ScopeCtx.mk none [] [] [{ (privateProp "P" hd34) with identity := some (.shared 0) }, { (privateProp "Large" hd48) with identity := some (.shared 1) }] [] [] none (some (.host 1))); let hd50 : Algorithm := (Algorithm.withParent (some hd49) (alg [] [] [publicProp "RunB" hd29, publicProp "G" hd31] [])); let hd51 : Expr := (.algorithmExpr hd50); let hd52 : Expr := .resolve "RunA"; let hd53 : Expr := .resolve "RunB"; let hd54 : Algorithm := (alg [] [hd25, hd51] [] [hd52, hd53]); let hd55 : Expr := (.algorithmExpr hd54); hd55)
 #guard obs hp_10g == "ok raw=S[1, 2] n=2"
 #guard structural hp_10g == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_10g "Large" == some 0
@@ -991,7 +991,7 @@ def hp_14b : Expr :=
 
 -- HP-14c: control: fresh host levels with their own nested declarations keep (S, P.Q) per level
 def hp_14c : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "S" (alg [] [] [] [.param "x"]), privateProp "P" (alg [] [] [publicProp "Q" (alg [] [] [] [.resolve "S"])] [])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "S" (alg [] [] [] [.param "x"]), privateProp "P" (alg [] [] [publicProp "Q" (alg [] [] [] [.resolve "S"])] [])] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "S" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]), privateProp "P" (alg [] [] [publicProp "Q" (alg [] [] [] [.resolve "S"])] [])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "S" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]), privateProp "P" (alg [] [] [publicProp "Q" (alg [] [] [] [.resolve "S"])] [])] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_14c == "ok raw=S[S[1, 1], S[2, 2]] n=2"
 #guard structural hp_14c == some "kl-struct-v1:5:n3:1e0s2:0,0,;n3:2e0s2:2,2,;s2:1,3,;"
 #guard cacheEntries hp_14c "Q" == some 2
@@ -1002,7 +1002,7 @@ def hp_14c : Expr :=
 
 -- HP-14d: an owned Q nested under two record-equal host levels that share ONE property list keeps (S, P.Q) per level
 def hp_14d : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 2) }] []))) with identity := some (.shared 1) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 3) }] []))) with identity := some (.shared 1) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 2) }] []))) with identity := some (.shared 1) }] [] [] none (some (.host 0)))) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 3) }] []))) with identity := some (.shared 1) }] [] [] none (some (.host 1)))) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_14d == "ok raw=S[S[1, 1], S[2, 2]] n=2"
 #guard structural hp_14d == some "kl-struct-v1:5:n3:1e0s2:0,0,;n3:2e0s2:2,2,;s2:1,3,;"
 #guard cacheEntries hp_14d "Q" == some 2
@@ -1011,9 +1011,9 @@ def hp_14d : Expr :=
 #guard cacheEntries hp_14d "S" == some 2
 #guard cacheTotal hp_14d == some 6
 
--- HP-14e: an owned P under two DISTINCT empty host ancestors is two cache owners (first caller's x per owner)
+-- HP-14e: an owned P under two DISTINCT empty host ancestors is two cache owners (one evaluation per owner)
 def hp_14e : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])])] [])), (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 1)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 2) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 3) }] []))))] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])])] []))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])])] [])), (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 1)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 2) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 3) }] []))))] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])])] []))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_14e == "ok raw=S[1, 2] n=2"
 #guard structural hp_14e == some "kl-struct-v1:3:n3:1e0n3:2e0s2:0,1,;"
 #guard cacheEntries hp_14e "P" == some 2
@@ -1023,7 +1023,7 @@ def hp_14e : Expr :=
 
 -- HP-14f: control: the owned P under ONE empty host ancestor object reached twice is one cache owner
 def hp_14f : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])])] [])), (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])])] []))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])])] [])), (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 2)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (privateProp "P" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])]))) with identity := some (.shared 0) }, { (publicProp "G" (Algorithm.withDeclarationId (some (.shared 1)) (alg ["x"] [] [] [.resolve "P"]))) with identity := some (.shared 1) }] []))))] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])])] []))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_14f == "ok raw=S[1, 1] n=2"
 #guard structural hp_14f == some "kl-struct-v1:2:n3:1e0s2:0,0,;"
 #guard cacheEntries hp_14f "P" == some 1
@@ -1242,6 +1242,181 @@ def hp_17b : Expr :=
 #guard cacheEntries hp_17b "Run" == some 1
 #guard cacheTotal hp_17b == some 2
 
+-- HP-18a: an exported host property reading a name it does not bind is refused, whoever reads it
+def hp_18a : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "P" (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18a == "err unknownName"
+#guard errorObs hp_18a == .matched (some { kind := "unknownName", names := ["x"], counts := [] })
+#guard cacheEntries hp_18a "P" == some 0
+#guard cacheTotal hp_18a == some 0
+
+-- HP-18b: the same exported property declared by the evaluator-owned block is refused
+def hp_18b : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"]), privateProp "P" (alg [] [] [] [.param "x"])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18b == "err unknownName"
+#guard errorObs hp_18b == .matched (some { kind := "unknownName", names := ["x"], counts := [] })
+#guard cacheEntries hp_18b "P" == some 0
+#guard cacheTotal hp_18b == some 0
+
+-- HP-18c: a local-only host property reading a parameter its unactivated host level names is refused
+def hp_18c : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none ["x"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (alg [] [] [] [.param "x"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "P"])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18c == "err unknownName"
+#guard errorObs hp_18c == .matched (some { kind := "unknownName", names := ["x"], counts := [] })
+#guard cacheEntries hp_18c "P" == some 0
+#guard cacheTotal hp_18c == some 0
+
+-- HP-18d: a falsely exported P = y * 10 is refused in ONE call (formerly 10)
+def hp_18d : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18d == "err unknownName"
+#guard errorObs hp_18d == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18d "P" == some 0
+#guard cacheTotal hp_18d == some 0
+
+-- HP-18e: the same P is refused in TWO calls (formerly S[10, 10]: the first call's value twice)
+def hp_18e : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18e == "err unknownName"
+#guard errorObs hp_18e == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18e "P" == some 0
+#guard cacheTotal hp_18e == some 0
+
+-- HP-18f: an explicit P() of the falsely exported P is refused (formerly it published the first call's value)
+def hp_18f : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])] [(.binary .add (.call (.resolve "P") []) (.resolve "P"))])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18f == "err unknownName"
+#guard errorObs hp_18f == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18f "P" == some 0
+#guard cacheTotal hp_18f == some 0
+
+-- HP-18g: a falsely exported P navigating a local-only member is refused when the owner's call comes first (formerly S[10, 10])
+def hp_18g : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "Box" (alg [] [] [publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])] []), privateProp "P" (alg [] [] [] [(.binary .add (.dotCall (.resolve "Box") "Q" none) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1]), (.dotCall (.resolve "F") "P" none)])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18g == "err localOnlyProperty"
+#guard errorObs hp_18g == .matched (some { kind := "localOnlyProperty", names := ["Q", "captured"], counts := [] })
+#guard cacheEntries hp_18g "P" == some 0
+#guard cacheEntries hp_18g "Q" == some 0
+#guard cacheTotal hp_18g == some 0
+
+-- HP-18h: the same navigation is refused when the outside read comes first
+def hp_18h : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "Box" (alg [] [] [publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])] []), privateProp "P" (alg [] [] [] [(.binary .add (.dotCall (.resolve "Box") "Q" none) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.dotCall (.resolve "F") "P" none), (.call (.resolve "F") [.num 1])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18h == "err localOnlyProperty"
+#guard errorObs hp_18h == .matched (some { kind := "localOnlyProperty", names := ["Q", "captured"], counts := [] })
+#guard cacheEntries hp_18h "P" == some 0
+#guard cacheEntries hp_18h "Q" == some 0
+#guard cacheTotal hp_18h == some 0
+
+-- HP-18i: a falsely exported P reading an ESTABLISHED local-only entry is refused (formerly S[21, 31])
+def hp_18i : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))]), privateProp "P" (alg [] [] [] [(.binary .add (.resolve "L") (.num 1))])] [(.binary .add (.resolve "L") (.resolve "P"))])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18i == "err localOnlyProperty"
+#guard errorObs hp_18i == .matched (some { kind := "localOnlyProperty", names := ["L", "captured"], counts := [] })
+#guard cacheEntries hp_18i "L" == some 1
+#guard cacheEntries hp_18i "P" == some 0
+#guard cacheTotal hp_18i == some 1
+
+-- HP-18j: control: the same P declared local-only keeps one value per call
+def hp_18j : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18j == "ok raw=S[10, 20] n=1"
+#guard structural hp_18j == some "kl-struct-v1:3:n3:1e1n3:2e1s2:0,1,;"
+#guard cacheEntries hp_18j "P" == some 2
+#guard cacheEntries hp_18j "Run" == some 1
+#guard cacheTotal hp_18j == some 3
+
+-- HP-18k: control: a self-contained exported member of a called owner is evaluated once in each call of the owner
+def hp_18k : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "T" (alg [] [] [] [(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])])] [(.binary .add (.resolve "T") (.param "y"))])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18k == "ok raw=S[2, 4] n=1"
+#guard structural hp_18k == some "kl-struct-v1:3:n3:2e0n3:4e0s2:0,1,;"
+#guard cacheEntries hp_18k "Run" == some 1
+#guard cacheEntries hp_18k "T" == some 2
+#guard cacheTotal hp_18k == some 3
+
+-- HP-18l: a falsely exported P = y(5) + 0 is refused where the parameter is INVOKED (formerly notAnAlgorithm)
+def hp_18l : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Inc" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.binary .add (.call (.param "y") [.num 5]) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.resolve "Inc"])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18l == "err unknownName"
+#guard errorObs hp_18l == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18l "P" == some 0
+#guard cacheTotal hp_18l == some 0
+
+-- HP-18m: control: the same P declared local-only invokes the supplied callable
+def hp_18m : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Inc" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), publicProp "F" (alg ["y"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.param "y") [.num 5]) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.resolve "Inc"])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18m == "ok raw=6 n=1"
+#guard structural hp_18m == some "kl-struct-v1:1:n3:6e0"
+#guard cacheEntries hp_18m "P" == some 1
+#guard cacheEntries hp_18m "Run" == some 1
+#guard cacheTotal hp_18m == some 2
+
+-- HP-18n: a falsely exported P = Ignore(y) + 0 is refused where the parameter is TRANSPORTED, although the callee ignores it (formerly 42)
+def hp_18n : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Ignore" (alg ["z"] [] [] [.num 42]), publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "Ignore") [.param "y"]) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18n == "err unknownName"
+#guard errorObs hp_18n == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18n "P" == some 0
+#guard cacheTotal hp_18n == some 0
+
+-- HP-18o: control: the same P declared local-only transports the parameter and the callee ignores it
+def hp_18o : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Ignore" (alg ["z"] [] [] [.num 42]), publicProp "F" (alg ["y"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "Ignore") [.param "y"]) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18o == "ok raw=42 n=1"
+#guard structural hp_18o == some "kl-struct-v1:1:n4:42e0"
+#guard cacheEntries hp_18o "P" == some 1
+#guard cacheEntries hp_18o "Run" == some 1
+#guard cacheTotal hp_18o == some 2
+
+-- HP-18p: a static owner's parameter is refused where a navigated member INVOKES it, never the caller's same-named callable (formerly 2)
+def hp_18p : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Inc" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), publicProp "G" (alg ["y"] [] [publicProp "F" (alg ["n"] [] [] [(.call (.param "y") [.param "n"])])] [.num 0]), publicProp "H" (alg ["y"] [] [] [(.call (.dotCall (.resolve "G") "F" none) [.num 1])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "H") [.resolve "Inc"])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18p == "err unknownName"
+#guard errorObs hp_18p == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheTotal hp_18p == some 0
+
+-- HP-18q: a static owner's parameter is refused where a navigated member TRANSPORTS it (formerly 43)
+def hp_18q : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Ignore" (alg ["z"] [] [] [.num 42]), publicProp "G" (alg ["y"] [] [publicProp "F" (alg ["n"] [] [] [(.binary .add (.call (.resolve "Ignore") [.param "y"]) (.param "n"))])] [.num 0]), publicProp "H" (alg ["y"] [] [] [(.call (.dotCall (.resolve "G") "F" none) [.num 1])])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "H") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18q == "err unknownName"
+#guard errorObs hp_18q == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheTotal hp_18q == some 0
+
+-- HP-18r: a falsely exported P = y.string is refused at the intrinsic's receiver
+def hp_18r : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.dotCall (.param "y") "string" none)])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18r == "err unknownName"
+#guard errorObs hp_18r == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18r "P" == some 0
+#guard cacheTotal hp_18r == some 0
+
+-- HP-18s: control: the same P declared local-only reads the receiver's text
+def hp_18s : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "F" (alg ["y"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.dotCall (.param "y") "string" none)])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18s == "ok raw='7' n=1"
+#guard structural hp_18s == some "kl-struct-v1:1:t1:7"
+#guard cacheEntries hp_18s "P" == some 1
+#guard cacheEntries hp_18s "Run" == some 1
+#guard cacheTotal hp_18s == some 2
+
+-- HP-18t: a falsely exported P = Inc(y*) + 0 is refused at the spread operand
+def hp_18t : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Inc" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), publicProp "F" (alg ["y"] [] [privateProp "P" (alg [] [] [] [(.binary .add (.call (.resolve "Inc") [(.sequenceSpread (.param "y"))]) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18t == "err unknownName"
+#guard errorObs hp_18t == .matched (some { kind := "unknownName", names := ["y"], counts := [] })
+#guard cacheEntries hp_18t "P" == some 0
+#guard cacheTotal hp_18t == some 0
+
+-- HP-18u: control: the same P declared local-only spreads the parameter
+def hp_18u : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [publicProp "Inc" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), publicProp "F" (alg ["y"] [] [privateLocalProp "P" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "Inc") [(.sequenceSpread (.param "y"))]) (.num 0))])] [.resolve "P"])] [] [] none (some (.host 0)))) (alg [] [] [publicProp "Run" (alg [] [] [] [(.call (.resolve "F") [.num 7])])] [])))] [] [.resolve "Run"]))
+#guard obs hp_18u == "ok raw=8 n=1"
+#guard structural hp_18u == some "kl-struct-v1:1:n3:8e0"
+#guard cacheEntries hp_18u "P" == some 1
+#guard cacheEntries hp_18u "Run" == some 1
+#guard cacheTotal hp_18u == some 2
+
 -- KL-07 acceptance (HP-17a / HP-17b): both values have the neutral text ok raw=L['a', 'b'] n=1,
 -- pinned above, but different kl-struct-v1 identities: neither Lean value has the other's.
 #guard structural hp_17a != some "kl-struct-v1:2:t6:a', 'bl1:0,;"
@@ -1364,9 +1539,30 @@ def comparableCaseIds : List String := [
   "HP-16b",
   "HP-16c",
   "HP-17a",
-  "HP-17b"
+  "HP-17b",
+  "HP-18a",
+  "HP-18b",
+  "HP-18c",
+  "HP-18d",
+  "HP-18e",
+  "HP-18f",
+  "HP-18g",
+  "HP-18h",
+  "HP-18i",
+  "HP-18j",
+  "HP-18k",
+  "HP-18l",
+  "HP-18m",
+  "HP-18n",
+  "HP-18o",
+  "HP-18p",
+  "HP-18q",
+  "HP-18r",
+  "HP-18s",
+  "HP-18t",
+  "HP-18u"
 ]
-#guard comparableCaseIds.length == 113
+#guard comparableCaseIds.length == 134
 
 /--
 Machine-checked known-divergence partition count (HOST-LEAN-O6 shapes pinned on both sides).
@@ -1376,5 +1572,5 @@ def divergentCaseIds : List String := [
 ]
 #guard divergentCaseIds.length == 0
 
--- 113 comparable cases, 0 known divergences.
+-- 134 comparable cases, 0 known divergences.
 end HostParentDifferential

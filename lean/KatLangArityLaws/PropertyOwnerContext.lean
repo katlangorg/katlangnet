@@ -29,9 +29,11 @@ What is proved here, over the production definitions:
   activated by a property-demand entry and the unactivated level a structural `B.V` or an opened
   `V` rebuilds over the same parent chain select the same context.
 * **Body entry** (`enterPropertyOwnerBody_run`, `enterPropertyOwnerBody_self`): the entry returns
-  exactly `enterAlgorithmBody`'s context — the reader's need tier, binding context, call stack
-  and head scope — and appends exactly `enterAlgorithmBody`'s activation record but for its binding
-  context; inheriting the reader's own context IS `enterAlgorithmBody`.
+  exactly the unmarked `enterAlgorithmBody`'s context — the reader's need tier, binding context,
+  call stack and head scope — and appends exactly its activation record but for its binding
+  context; inheriting the reader's own context IS the unmarked `enterAlgorithmBody`. A read is
+  never a call: it enters without the invocation mark, so its record owns no invocation
+  (`enteredActivation_inherited`; the lifetime laws are `InnerPropertyLifetime.lean`).
 * **The read route** (`read_calculation_is_the_property_demand`, `property_demand_run`,
   `property_demand_*_is_the_ordinary_demand`): a read's calculation is the property demand; for a
   parameterless user owner it is the checks, ONE entry recording the declaring context, and the
@@ -104,27 +106,35 @@ theorem lexical_and_structural_levels_agree (parent : Option ScopeCtx) (params p
 /-! ## 2. The property-demand body entry -/
 
 /-- **Body entry of a property-style read**: it never fails; it returns exactly the context the
-    ordinary entry returns (`enteredCtx`: the reader's need tier, binding context and call stack,
-    the activated head scope at the same index) and leaves the ordinary entered state for the
-    context carrying the INHERITED binding context — the only difference is the record's
-    `bindingContext`. -/
+    ordinary UNMARKED entry returns (`enteredCtx`: the reader's need tier, binding context and call
+    stack, the activated head scope at the same index) and leaves the ordinary entered state for
+    the unmarked context carrying the INHERITED binding context. A read is never a call: it enters
+    without the invocation mark (`EvalCtx.enteringInvocation`), so the only difference from an
+    ordinary unmarked entry is the record's `bindingContext`. -/
 theorem enterPropertyOwnerBody_run (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (n : Nat) (s : EvalState) :
     (enterPropertyOwnerBody a ctx env n).runState s =
-      (.ok (enteredCtx a ctx s), enteredState a { ctx with bindingContext := n } env s) := by
+      (.ok (enteredCtx a { ctx with enteringInvocation := false } s),
+       enteredState a { ctx with bindingContext := n, enteringInvocation := false } env s) := by
   unfold enterPropertyOwnerBody
   rw [EvalM.bind_runState, enter_run]
   simp only [pure_runState]
-  unfold enteredCtx EvalCtx.push
+  unfold enteredCtx EvalCtx.push entryRecords
+  simp only [Bool.false_or]
   split <;> rfl
 
-/-- The record a property-demand entry appends is the ordinary one but for its binding context. -/
+/-- The record a property-demand entry appends is the ordinary one but for its binding context,
+    and it owns no invocation. -/
 theorem enteredActivation_inherited (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (n : Nat) :
-    enteredActivation a { ctx with bindingContext := n } env =
-      { enteredActivation a ctx env with bindingContext := n } := rfl
+    enteredActivation a { ctx with bindingContext := n, enteringInvocation := false } env =
+      { enteredActivation a ctx env with bindingContext := n, ownsInvocation := false } := rfl
 
-/-- **Inheriting the reader's own context IS the ordinary entry**: nothing else differs. -/
-theorem enterPropertyOwnerBody_self (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
+/-- **Inheriting the reader's own context IS the ordinary unmarked entry**: nothing else differs. -/
+theorem enterPropertyOwnerBody_self (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
+    (h : ctx.enteringInvocation = false) :
     (enterPropertyOwnerBody a ctx env ctx.bindingContext).runState s = (enterAlgorithmBody a ctx env).runState s := by
+  cases ctx
+  simp only at h
+  subst h
   rw [enterPropertyOwnerBody_run, enter_run]
 
 /-! ## 3. The read route -/
@@ -144,10 +154,12 @@ theorem property_demand_run (rec : EvalRec) (p : Option ScopeCtx) (o : List Expr
     (out : List Expr) (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
     (hp : Passes (Algorithm.mk p [] o pr out d)) :
     (EvalBody.evalPropertyDemandCounted rec (Algorithm.mk p [] o pr out d) ctx env).runState s =
-      (do let prepared ← rec.evalOutputRowsPreparedCore out (enteredCtx (Algorithm.mk p [] o pr out d) ctx s) env
+      (do let prepared ← rec.evalOutputRowsPreparedCore out
+            (enteredCtx (Algorithm.mk p [] o pr out d) { ctx with enteringInvocation := false } s) env
           pure prepared.counted).runState
         (enteredState (Algorithm.mk p [] o pr out d)
-          { ctx with bindingContext := inheritedContext (Algorithm.mk p [] o pr out d) ctx s } env s) := by
+          { ctx with bindingContext := inheritedContext (Algorithm.mk p [] o pr out d) ctx s,
+                     enteringInvocation := false } env s) := by
   simp only [EvalBody.evalPropertyDemandCounted]
   rw [EvalM.bind_runState, hp s]
   simp only
@@ -162,7 +174,7 @@ theorem property_demand_run (rec : EvalRec) (p : Option ScopeCtx) (o : List Expr
     the owner's local-only entries. -/
 theorem property_demand_records_the_declaring_context (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (s : EvalState) (m : Nat) (h : propertyOwnerBindingContext a.parent s = some m) :
-    (enteredActivation a { ctx with bindingContext := inheritedContext a ctx s } env).bindingContext = m := by
+    (enteredActivation a { ctx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env).bindingContext = m := by
   simp only [enteredActivation, inheritedContext, h, Option.getD_some]
 
 /-- …and with no activated level (the root, an unactivated host scope) it is the reader's own:
@@ -256,11 +268,12 @@ theorem collecting_read_run (rec : EvalRec) (p : Option ScopeCtx)
     (hp : Passes (Algorithm.mk p (pattern :: patterns) o pr out d)) :
     (EvalBody.evalPropertyDemandCounted rec (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env).runState s =
       (do let prepared ← rec.evalOutputRowsPreparedCore out
-            (enteredCtx (Algorithm.mk p (pattern :: patterns) o pr out d) boundCtx s2)
+            (enteredCtx (Algorithm.mk p (pattern :: patterns) o pr out d) { boundCtx with enteringInvocation := false } s2)
             (ValEnv.shadow env (Algorithm.params (Algorithm.mk p (pattern :: patterns) o pr out d)))
           pure prepared.counted).runState
         (enteredState (Algorithm.mk p (pattern :: patterns) o pr out d)
-          { boundCtx with bindingContext := inheritedContext (Algorithm.mk p (pattern :: patterns) o pr out d) ctx s2 }
+          { boundCtx with bindingContext := inheritedContext (Algorithm.mk p (pattern :: patterns) o pr out d) ctx s2,
+                          enteringInvocation := false }
           (ValEnv.shadow env (Algorithm.params (Algorithm.mk p (pattern :: patterns) o pr out d))) s2) := by
   simp only [emptySupplyPatterns] at hbind
   simp only [EvalBody.evalPropertyDemandCounted, Algorithm.parameterPatterns]
@@ -277,24 +290,25 @@ theorem collecting_read_run (rec : EvalRec) (p : Option ScopeCtx)
 
 /-- **The binding is the binder's**: the record a collecting READ appends holds exactly the cells and
     values the ordinary entry over the bound context records — the collector's EMPTY binding and the
-    shadowed values — and differs ONLY in its binding context. -/
+    shadowed values — and differs ONLY in its binding context and in owning no invocation (a READ
+    is never a call). -/
 theorem collecting_read_record_keeps_the_binding (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
-    enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s } env =
-      { enteredActivation a boundCtx env with bindingContext := inheritedContext a ctx s } := rfl
+    enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env =
+      { enteredActivation a boundCtx env with bindingContext := inheritedContext a ctx s, ownsInvocation := false } := rfl
 
 /-- **Consumer independence for a collecting READ**: when the declaring chain has an activated level
     with context `m`, the record carries `m` — whatever the reader's context and whatever fresh context
     the binder minted for the bound tier. -/
 theorem collecting_read_records_the_declaring_context (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv)
     (s : EvalState) (m : Nat) (h : propertyOwnerBindingContext a.parent s = some m) :
-    (enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s } env).bindingContext = m := by
+    (enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env).bindingContext = m := by
   simp only [enteredActivation, inheritedContext, h, Option.getD_some]
 
 /-- …and with no activated level it is the READER's context (`ctx`), never the binder's fresh one —
     the D1 fallback. -/
 theorem collecting_read_falls_back_to_the_reader (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv)
     (s : EvalState) (h : propertyOwnerBindingContext a.parent s = none) :
-    (enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s } env).bindingContext =
+    (enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s, enteringInvocation := false } env).bindingContext =
       ctx.bindingContext := by
   simp only [enteredActivation, inheritedContext, h, Option.getD_none]
 

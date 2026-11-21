@@ -61,7 +61,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16 and KL-07's HP-17.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17 and EXPORTED-DETACHED's HP-18.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -70,7 +70,7 @@ public class HostParentDifferentialTests
         Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(cases.Count, cases.Select(c => c.LeanName).Distinct(StringComparer.Ordinal).Count());
         var families = cases.Select(c => c.Id[..5]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(Enumerable.Range(1, 17).Select(n => $"HP-{n:00}"), families);
+        Assert.Equal(Enumerable.Range(1, 18).Select(n => $"HP-{n:00}"), families);
         Assert.All(cases, c => Assert.False(string.IsNullOrWhiteSpace(c.Description), c.Id));
     }
 
@@ -99,9 +99,9 @@ public class HostParentDifferentialTests
     /// (<see cref="CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet"/>) fail while a floor
     /// is below its current count, so a floor cannot go stale after cases are added.
     /// </summary>
-    private const int MinimumComparableCases = 113;
-    private const int MinimumComparableCasesWithPreWiredParents = 103;
-    private const int MinimumSuccessCacheGuards = 188;
+    private const int MinimumComparableCases = 134;
+    private const int MinimumComparableCasesWithPreWiredParents = 124;
+    private const int MinimumSuccessCacheGuards = 200;
 
     private const string ComparableMetric = "comparable";
     private const string PreWiredMetric = "pre-wired";
@@ -242,6 +242,12 @@ public class HostParentDifferentialTests
         ("HP-14b", ["F"]), ("HP-14g", []), ("HP-14i", ["R"]), ("HP-14k", []), ("HP-14l", []), ("HP-14o", []),
         ("HP-14s", []), ("HP-14t", []), ("HP-14u", []),
         ("HP-16a", ["X"]), ("HP-16b", ["P", "Run"]), ("HP-16c", ["P", "Run"]),
+        // EXPORTED-DETACHED: the mis-exposed trees are refused, and publish nothing under the false key.
+        ("HP-18a", ["P"]), ("HP-18b", ["P"]), ("HP-18c", ["P"]), ("HP-18d", ["P"]), ("HP-18e", ["P"]), ("HP-18f", ["P"]),
+        ("HP-18g", ["P", "Q"]), ("HP-18h", ["P", "Q"]), ("HP-18i", ["L", "P"]),
+        // The other executed parameter operations: invoked and transported, detached and static.
+        ("HP-18l", ["P"]), ("HP-18n", ["P"]), ("HP-18p", []), ("HP-18q", []),
+        ("HP-18r", ["P"]), ("HP-18t", ["P"]),
     ];
 
     /// <summary>
@@ -323,7 +329,7 @@ public class HostParentDifferentialTests
     [Fact]
     public void FidelityRatchet_EverySuccessfulCaseKeepsItsStructuralGuard()
     {
-        const int MinimumStructuralGuards = 82;
+        const int MinimumStructuralGuards = 84;
 
         var cases = HostParentDifferentialCorpus.AllCases();
         var lines = GenerateArtifact(cases).Split('\n');

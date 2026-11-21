@@ -103,6 +103,8 @@ theorem run_before : (projectParameterCallable "x" dctx).runState before = (.ok 
     rw [projectParameterWith_run]
     have : parameterAddressIn before.lexicalActivations "x" dctx = none := by cbv
     rw [this]
+    -- The owner IS activated (index 0), so the parameter is available: absence, not the refusal.
+    simp only [capturedParameter_of_id captured, reduceCtorEq, ↓reduceIte]
   have hc : ProductionCompletes ((fun rec : EvalRec => projectParameterWith rec.projectNeedCallable "x" dctx) evalUnbounded) before := by
     unfold ProductionCompletes; rw [hb]; nofun
   exact (KatLang.WhileRoundProduction.production_eq_of_finite (.projectParameterCallable "x" dctx)
@@ -277,32 +279,16 @@ theorem anchored_of_chainRecorded (x : Ident) (ctx : EvalCtx) (s : EvalState)
   | none => rfl
   | some id =>
     refine decide_eq_true ?_
-    unfold capturedId? at hid
-    cases hh : ctx.head? with
-    | none => rw [hh] at hid; cases hid
-    | some st =>
-      cases hs : siteScope? ctx with
-      | none => rw [hh, hs] at hid; cases hid
-      | some scope =>
-        rw [hh, hs] at hid
-        dsimp only at hid
-        split at hid
-        · cases hid
-        · rw [hs] at h
-          cases hpar : scope.parent with
-          | none => rw [hpar] at hid; cases hid
-          | some par =>
-            rw [hpar] at hid
-            have hid' : (requiredParameterOwner? par x).bind ScopeCtx.activation = some id := hid
-            cases ho : requiredParameterOwner? par x with
-            | none => rw [ho] at hid'; cases hid'
-            | some owner =>
-              rw [ho] at hid'
-              have hpc : ChainRecorded s.lexicalActivations.size (some par) := by
-                have := h.parent
-                rw [hpar] at this
-                exact this
-              exact owner_recorded x hpc par rfl owner ho id hid'
+    -- a usable captured id names the activation of the nearest binder on the site scope's parent chain
+    obtain ⟨_, scope, par, owner, _, hs, _, hpar, ho, hact, _⟩ :=
+      KatLang.DetachedEvaluation.captured_activation_inv x ctx id
+        (KatLang.MemberStability.capturedParameter_of_id hid)
+    rw [hs] at h
+    have hpc : ChainRecorded s.lexicalActivations.size (some par) := by
+      have := h.parent
+      rw [hpar] at this
+      exact this
+    exact owner_recorded x hpc par rfl owner ho id hact
 
 /-- The navigation core admits a parameter projection in a context with a recorded site chain. -/
 theorem admits_parameter_read (x : Ident) (ctx : EvalCtx) (s : EvalState)

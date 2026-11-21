@@ -170,12 +170,14 @@ def embedNeeds (ι : Insertion) (h : Array NeedCell) : Array NeedCell :=
 /-- **The plan-side state of a production-side state**: the heap with the cells inserted
     (`embedNeeds`), and every other address-bearing component shifted — the property cache's values,
     the recorded parameter activations and the recorded alias binding cells. Cache keys, the active
-    owner set and the three counters are kept. -/
+    owner set and the three counters are kept. The activation array is mapped through its list, as
+    the heap is, so that a concrete state with recorded activations stays kernel-evaluable (every
+    actual call records one since the inner-property lifetime rule, November 2026). -/
 def embed (ι : Insertion) (s : EvalState) : EvalState :=
   { s with
     needs := embedNeeds ι s.needs
     zeroArgPropertyCache := s.zeroArgPropertyCache.map (fun p => (p.1, shiftCounted ι.site p.2))
-    lexicalActivations := s.lexicalActivations.map (shiftActivation ι.site)
+    lexicalActivations := (s.lexicalActivations.toList.map (shiftActivation ι.site)).toArray
     aliasCells := s.aliasCells.map (fun p => (p.1, ι.site.addr p.2)) }
 
 /-- What the relation asks of the production side: the plan cell lies below the insertion, the heap
@@ -515,15 +517,17 @@ theorem embed_of_valid (ι : Insertion) (s : EvalState) (v : Inv s) (hb : ι.bas
     intro p hp
     show (p.1, shiftCounted ι.site p.2) = p
     rw [shiftCounted_valid hσ (v.cache p hp)]
-  have hacts : s.lexicalActivations.map (shiftActivation ι.site) = s.lexicalActivations := by
-    apply Array.ext_getElem?
-    intro i
-    rw [Array.getElem?_map]
-    cases hi : s.lexicalActivations[i]? with
-    | none => rfl
-    | some act =>
-      simp only [Option.map_some]
-      rw [shiftActivation_valid hσ (v.activations i act hi)]
+  have hacts : (s.lexicalActivations.toList.map (shiftActivation ι.site)).toArray = s.lexicalActivations := by
+    have hlist : s.lexicalActivations.toList.map (shiftActivation ι.site) = s.lexicalActivations.toList := by
+      conv => rhs; rw [← List.map_id s.lexicalActivations.toList]
+      apply List.map_congr_left
+      intro act hact
+      obtain ⟨i, hi, hget⟩ := List.mem_iff_getElem.mp hact
+      have hsome : s.lexicalActivations[i]? = some act := by
+        rw [← Array.getElem?_toList, List.getElem?_eq_getElem hi, hget]
+      show shiftActivation ι.site act = act
+      exact shiftActivation_valid hσ (v.activations i act hsome)
+    rw [hlist]
   have halias : s.aliasCells.map (fun p => (p.1, ι.site.addr p.2)) = s.aliasCells := by
     conv => rhs; rw [← List.map_id s.aliasCells]
     apply List.map_congr_left

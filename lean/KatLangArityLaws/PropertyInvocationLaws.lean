@@ -52,6 +52,7 @@ namespace KatLang.PropertyInvocationLaws
 abbrev keyAt (k : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState) : ZeroArgPropertyCacheKey :=
   zeroArgPropertyCacheKey k owner binding ctx env (propertyOwnerBindingContext a.parent s)
+    (propertyOwnerInvocation a.parent s)
 
 /-- The state an owning request runs its calculation in: its key marked active. -/
 abbrev markedAt (key : ZeroArgPropertyCacheKey) (s : EvalState) : EvalState :=
@@ -66,8 +67,8 @@ variable (rec : EvalRec) (k : ZeroArgPropertyAccessKind) (owner : Algorithm) (bi
 theorem read_with_entry_is_hit (v : CountedResult)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some v) :
-    (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env .read).runState s = (.ok v, s) := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
+    (EvalBody.zeroArgPropertyPublication rec k owner binding a ctx env .read).runState s = (.ok v, s) := by
+  simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hhit]; rfl
 
 /-- **Explicit invocations remain fresh**: an invocation whose key holds an established entry is
@@ -76,9 +77,9 @@ theorem read_with_entry_is_hit (v : CountedResult)
 theorem invocation_with_entry_is_fresh (calleeName : String) (v : CountedResult)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some v) :
-    (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env (.invoke calleeName)).runState s =
+    (EvalBody.zeroArgPropertyPublication rec k owner binding a ctx env (.invoke calleeName)).runState s =
       (EvalBody.zeroArgPropertyCalculation rec (.invoke calleeName) a ctx env).runState s := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hhit]
 
 /-- **Re-entrant requests publish nothing of their own**: a request — read or invocation — on an
@@ -89,9 +90,9 @@ theorem reentrant_request_is_its_calculation (request : ZeroArgPropertyRequest)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hmiss : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none)
     (hact : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = true) :
-    (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env request).runState s =
+    (EvalBody.zeroArgPropertyPublication rec k owner binding a ctx env request).runState s =
       (EvalBody.zeroArgPropertyCalculation rec request a ctx env).runState s := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
   simp only [hact, ite_true]
 
@@ -106,12 +107,12 @@ theorem owner_success_publishes (request : ZeroArgPropertyRequest) (counted : Co
     (hnot : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = false)
     (hrun : (EvalBody.zeroArgPropertyCalculation rec request a ctx env).runState
       (markedAt (keyAt k owner binding a ctx env s) s) = (.ok counted, t)) :
-    (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env request).runState s =
+    (EvalBody.zeroArgPropertyPublication rec k owner binding a ctx env request).runState s =
       (.ok counted, { t with
         activeZeroArgProperties := s.activeZeroArgProperties,
         zeroArgPropertyCache :=
           ZeroArgPropertyCache.insert t.zeroArgPropertyCache (keyAt k owner binding a ctx env s) counted }) := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
   simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState]
   rw [evalAttempt_runState_of_complete _ _ t (.ok counted) hrun rfl]
@@ -128,9 +129,9 @@ theorem owner_failure_publishes_nothing (request : ZeroArgPropertyRequest) (e : 
     (hcomplete : (Except.error e : Except Error CountedResult).isIncomplete = false)
     (hrun : (EvalBody.zeroArgPropertyCalculation rec request a ctx env).runState
       (markedAt (keyAt k owner binding a ctx env s) s) = (.error e, t)) :
-    (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env request).runState s =
+    (EvalBody.zeroArgPropertyPublication rec k owner binding a ctx env request).runState s =
       (.error e, { t with activeZeroArgProperties := s.activeZeroArgProperties }) := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.zeroArgPropertyPublication, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
   simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState]
   rw [evalAttempt_runState_of_complete _ _ t (.error e) hrun hcomplete]

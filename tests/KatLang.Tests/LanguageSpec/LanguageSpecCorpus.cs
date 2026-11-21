@@ -4192,9 +4192,9 @@ public static class LanguageSpecCorpus
                 // The same read in a branch that runs is refused, at the member the evaluator checks.
                 new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\nG(1)", "ok raw=1 n=1"),
                 new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  Box = {\n    public R = if(x > 100, F.A, x)\n  }\n  Box.R\n}\nG(200)", "err localOnlyProperty"),
-                // The reader requires nothing, so its value is kept once per run, like any untaken error.
-                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  R = if(false, F.A, tick())\n  R\n}\nG(1), G(2)", "ok raw=S[1, 1] n=2"),
-                new SpecProbe("G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\nG(1), G(2)", "ok raw=S[1, 1] n=2"),
+                // The reader requires nothing; like any reader of an untaken error it is worked out once in each call of `G`.
+                new SpecProbe("F(y) = {\n  A = y + 1\n  A\n}\nG(x) = {\n  R = if(false, F.A, tick())\n  R\n}\nG(1), G(2)", "ok raw=S[1, 2] n=2"),
+                new SpecProbe("G(x) = {\n  R = if(false, 1 / 0, tick())\n  R\n}\nG(1), G(2)", "ok raw=S[1, 2] n=2"),
             ],
             Notes = "E-18 owner decisions of 2026-11-14 (Q1: a check that can never pass where the evaluator makes it charges nothing; Q2: every check is charged at the evaluator's own site; Q3: a block-headed reference resolves like a named one). Formerly `R` carried a requirement no call could supply, so selecting it was refused although the branch never ran.",
             Explanation = "`F.A` outside `F` can never be read: `A` needs `F`'s `y`, and no activation of `F` exists where `Box.R` is written. A read that can never succeed where it is written is an ordinary error of the branch that makes it, never a requirement of the algorithm around it: `R = if(false, F.A, 0)` requires nothing, `Box.R` is `0`, and the refusal appears only when that branch runs (`G(200)`), naming `A`.",
@@ -9090,7 +9090,9 @@ public static class LanguageSpecCorpus
 
         // ==================== ALIAS-CELL-LIFETIME (November 2026) ====================
         // Owner decision 2026-11-15: a runtime alias is worked out exactly as often as the same line
-        // written as an ordinary property would be. Each case's property twin is a probe.
+        // written as an ordinary property would be. Each case's property twin is a probe. How often
+        // that is follows the inner-property lifetime rule (the block after this one): once in each
+        // call of the owner around it, and once for the run where it is reached from outside every call.
         new()
         {
             Id = "runtime-alias-cell-read-and-path-share-one-call",
@@ -9134,22 +9136,24 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "runtime-alias-cell-one-per-run-across-calls",
+            Id = "runtime-alias-cell-fresh-in-every-call",
             Category = "name-resolution",
             Source = "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick()).Algorithm\n    A(1)\n}\n\nOuter(0)\nOuter(0)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "10\n10",
-            ExpectedRaw = "S[10, 10]",
+            ExpectedDisplay = "10\n100",
+            ExpectedRaw = "S[10, 100]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 10] n=2"),
-                // A line that reads the owner's input belongs to one call of the owner.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 100] n=2"),
+                // Inside one call it is worked out once, however often it is used.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick()).Algorithm\n    A(1), A(2), A(3)\n}\nOuter(0)", "ok raw=S[10, 20, 30] n=1"),
+                // A line that reads the owner's input behaves the same way.
                 new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    A = Pick(tick() + k).Algorithm\n    A(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 100] n=2"),
                 new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    P = Pick(tick() + k)\n    P.Algorithm(1)\n}\nOuter(0)\nOuter(0)", "ok raw=S[10, 100] n=2"),
             ],
-            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (10, 100) — one cell per call of `Outer`, although `A`'s line reads nothing of the call.",
-            Explanation = "`A = Pick(tick()).Algorithm` reads nothing that a call of `Outer` supplies, so it is worked out once for the whole run — both calls of `Outer` call the same `Ten` — exactly as the property `P = Pick(tick())` is evaluated once. If the line read `k`, each call of `Outer` would work out its own.",
+            Notes = "INNER-PROPERTY LIFETIME (November 2026): every call of the owner has a fresh alias, whether or not its line uses the call's input. Under ALIAS-CELL-LIFETIME alone (from 2026-11-15) this was (10, 10) — one cell for the run, because `A`'s line reads nothing of the call; before that (10, 100), by an activation key that an unused neighbour could change (the next case).",
+            Explanation = "`A = Pick(tick()).Algorithm` is declared inside `Outer`, so every call of `Outer` works out its own `A`: the first call's `tick()` is 1 and picks `Ten`, the second call's is 2 and picks `Hun`. It makes no difference that the line uses nothing the call supplies. Inside one call `A` is worked out once, however often it is used — exactly as the property `P = Pick(tick())` is.",
         },
         new()
         {
@@ -9157,18 +9161,21 @@ public static class LanguageSpecCorpus
             Category = "name-resolution",
             Source = "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\n\nF(0)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(10, 10)",
-            ExpectedRaw = "S[10, 10]",
+            ExpectedDisplay = "(10, 100)",
+            ExpectedRaw = "S[10, 100]",
             ExpectedEmittedCount = 1,
             Probes =
             [
                 // Without the unused `U`.
-                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\nF(0)", "ok raw=S[10, 10] n=1"),
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer(), Outer()\n}\nF(0)", "ok raw=S[10, 100] n=1"),
                 // The property twin.
-                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        P = Pick(tick())\n        P.Algorithm(1)\n    }\n    Outer(), Outer()\n}\nF(0)", "ok raw=S[10, 10] n=1"),
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        P = Pick(tick())\n        P.Algorithm(1)\n    }\n    Outer(), Outer()\n}\nF(0)", "ok raw=S[10, 100] n=1"),
+                // Two READS of `Outer` are not calls of it: they share the `A` of the call of `F`, again with or without `U`.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        U = k + 0\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer, Outer\n}\nF(0)", "ok raw=S[10, 10] n=1"),
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nF(k) = {\n    Outer = {\n        A = Pick(tick()).Algorithm\n        A(1)\n    }\n    Outer, Outer\n}\nF(0)", "ok raw=S[10, 10] n=1"),
             ],
-            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (10, 100), while the same program without the unused `U` gave (10, 10).",
-            Explanation = "An unused neighbour never changes what a program gives. `U = k + 0` reads `F`'s input and is never used; `A`'s own line reads nothing of a call, so `A` is worked out once for the run and both calls of `Outer` call the same `Ten`, with or without `U`.",
+            Notes = "ALIAS-CELL-LIFETIME (November 2026) made this program and its twin without `U` agree (formerly (10, 100) with `U` and (10, 10) without it); they agreed on (10, 10) until INNER-PROPERTY LIFETIME (November 2026), under which each explicit call of `Outer` has its own `A`: (10, 100) for both.",
+            Explanation = "An unused neighbour never changes what a program gives. `U = k + 0` reads `F`'s input and is never used. Each explicit call `Outer()` is a call of `Outer` and works out its own `A` — the first picks `Ten`, the second `Hun` — with or without `U`.",
         },
         new()
         {
@@ -9176,17 +9183,108 @@ public static class LanguageSpecCorpus
             Category = "name-resolution",
             Source = "Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\n\nOuter(0)\nOuter.A(1)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "10\n10",
-            ExpectedRaw = "S[10, 10]",
+            ExpectedDisplay = "10\n100",
+            ExpectedRaw = "S[10, 100]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter.P.Algorithm(1)", "ok raw=S[10, 10] n=2"),
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public P = Pick(tick())\n    P.Algorithm(1)\n}\nOuter(0)\nOuter.P.Algorithm(1)", "ok raw=S[10, 100] n=2"),
                 // The other order.
-                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\nOuter.A(1)\nOuter(0)", "ok raw=S[10, 10] n=2"),
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\nOuter.A(1)\nOuter(0)", "ok raw=S[10, 100] n=2"),
+                // Two reads from outside use the same one, and a call between them does not touch it.
+                new SpecProbe("Cap(meta r) = r\nTen(x) = x * 10\nHun(x) = x * 100\nPick(n) = if(n == 1, Cap(Ten(0)), Cap(Hun(0)))\nOuter(k) = {\n    public A = Pick(tick()).Algorithm\n    A(1)\n}\nOuter.A(1)\nOuter(0)\nOuter.A(1)", "ok raw=S[10, 100, 10] n=3"),
             ],
-            Notes = "ALIAS-CELL-LIFETIME (November 2026): formerly (10, 100).",
-            Explanation = "A public alias reached from outside its owner is the alias the owner's own body uses: `Outer(0)` and `Outer.A(1)` call the same `Ten`, because `A`'s line reads nothing of a call and is worked out once for the run.",
+            Notes = "INNER-PROPERTY LIFETIME (November 2026): the read from outside every call of the owner has its own alias, apart from every call's. Under ALIAS-CELL-LIFETIME alone (from 2026-11-15) this was (10, 10) — one cell for the run, shared by the call and the outside read.",
+            Explanation = "`Outer(0)` works out the `A` of that call (`tick()` is 1: `Ten`). `Outer.A(1)` is written outside every call of `Outer`, so it uses the `A` that belongs to the run, worked out separately (`tick()` is 2: `Hun`). The order does not matter, and every read from outside uses that same one: a call of `Outer` never supplies it and never replaces it.",
+        },
+
+        // ==================== INNER-PROPERTY LIFETIME (November 2026) ====================
+        // Owner decision of the EXPORTED-DETACHED follow-up: where a property's value lives is chosen by
+        // the declaration that is read and the call that owns it — never by whether its definition
+        // happens to use the call's input. Every call of an owner works out the owner's inner
+        // properties afresh; reads inside one call share; a read from outside every call of the owner
+        // uses the one value that belongs to the run. The acceptance witnesses, written by hand.
+        new()
+        {
+            Id = "inner-property-lifetime-every-call-is-fresh",
+            Category = "name-resolution",
+            Source = "F(x) = {\n    T = tick()\n    T + x\n}\n\nF(1), F(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2\n4",
+            ExpectedRaw = "S[2, 4]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // Reads inside one call share the call's value.
+                new SpecProbe("F(x) = {\n    T = tick()\n    T + T + x\n}\nF(1), F(2)", "ok raw=S[3, 6] n=2"),
+                // Each call and the read from outside have their own `T`, and with it their own `P`.
+                new SpecProbe("F(y) = {\n    T = tick()\n    P = T + 1\n    P + y\n}\nF(1), F(2), F.P", "ok raw=S[3, 5, 4] n=3"),
+                // A property nobody reads does no work.
+                new SpecProbe("F(y) = {\n    public A = tick()\n    y\n}\nF(10), F(20), tick()", "ok raw=S[10, 20, 1] n=3"),
+                // A loop round is a call of its step.
+                new SpecProbe("Step(s) = {\n    T = tick()\n    s + T + T\n}\nStep(0).repeat(3)", "ok raw=12 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "INNER-PROPERTY LIFETIME (November 2026). Formerly (2, 3), and (3, 4, 2) for the second probe: `T` uses nothing of the call, so it was worked out once for the whole run and every later call reused it.",
+            Explanation = "`T = tick()` is declared inside `F`, so every call of `F` works it out afresh: the first call's `T` is 1, the second call's is 2. It makes no difference that `T`'s definition does not use `x`. Inside one call `T` is worked out once, however often the call reads it.",
+        },
+        new()
+        {
+            Id = "inner-property-lifetime-inside-and-outside-a-call",
+            Category = "name-resolution",
+            Source = "F(y) = {\n    public A = tick()\n    A, F.A\n}\nB = F.A + 0\nC = F.A + 0\n\nB, F(10), F(20), C, tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n(2, 2)\n(3, 3)\n1\n4",
+            ExpectedRaw = "S[1, S[2, 2], S[3, 3], 1, 4]",
+            ExpectedEmittedCount = 5,
+            Probes =
+            [
+                // The outside value is its own whether the calls come before or after it.
+                new SpecProbe("F(y) = {\n    public A = tick()\n    A, F.A\n}\nF(10), F(20), F.A, F.A, tick()", "ok raw=S[S[1, 1], S[2, 2], 3, 3, 4] n=5"),
+                new SpecProbe("F(y) = {\n    public A = tick()\n    A, F.A\n}\nF.A, F(10), F.A, tick()", "ok raw=S[1, S[2, 2], 1, 3] n=4"),
+                // A sibling, a helper, a callback and an opened name all read the call's value: none of them starts a new one.
+                new SpecProbe("F(y) = {\n    open Lib\n    Lib = { public U = tick() }\n    T = tick()\n    H = T + 0\n    G(k) = T + k\n    T, H, G(0), [0, 0].map(G), U, Lib.U\n}\nF(1), F(2)", "ok raw=S[S[1, 1, 1, L[1, 1], 2, 2], S[3, 3, 3, L[3, 3], 4, 4]] n=2"),
+            ],
+            Notes = "INNER-PROPERTY LIFETIME (November 2026). Formerly (1, (1, 1), (1, 1), 1, 2): one `A` for the whole run.",
+            Explanation = "Inside a call of `F`, the plain name `A` and the path `F.A` mean the same `A` — the one of that call — so each call gives a pair of equal numbers, and each call works out its own (2, then 3). `B` and `C` read `F.A` from outside every call of `F`: they share the one `A` that belongs to the run (1), which no call supplies and no call replaces. `y` is never used, and that changes nothing.",
+        },
+        new()
+        {
+            Id = "inner-property-lifetime-explicit-call-from-outside",
+            Category = "name-resolution",
+            Source = "F(y) = {\n    public A = tick()\n    A\n}\n\nF.A(), F.A, F.A(), F.A",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n1\n2\n1",
+            ExpectedRaw = "S[1, 1, 2, 1]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // The read first: it establishes the value, and the call never replaces it.
+                new SpecProbe("F(y) = {\n    public A = tick()\n    A\n}\nF.A, F.A(), F.A", "ok raw=S[1, 2, 1] n=3"),
+                // The same law inside a call, once per call.
+                new SpecProbe("F(y) = {\n    A = tick()\n    A(), A, A(), A\n}\nF(1), F(2)", "ok raw=S[S[1, 1, 2, 1], S[3, 3, 4, 3]] n=2"),
+                // An explicit call of a parameterless owner works out its inner properties afresh; a read of it does not.
+                new SpecProbe("B = {\n    T = tick()\n    T + T\n}\nB, B(), B(), B", "ok raw=S[2, 4, 6, 2] n=4"),
+            ],
+            Notes = "INNER-PROPERTY LIFETIME (November 2026) keeps CACHE-PUB-1 for the run's outside value: an explicit call runs afresh, establishes the value only where none is established, and never reads or replaces an established one.",
+            Explanation = "Outside every call of `F`, `F.A()` runs `A` afresh each time (1, then 2). The first one finds no value established for the run and establishes its own, so the bare `F.A` after it reads 1; the second call runs afresh, gives 2, and replaces nothing, so the last `F.A` still reads 1.",
+        },
+        new()
+        {
+            Id = "inner-property-lifetime-alias-in-every-call",
+            Category = "name-resolution",
+            Source = "Cap(meta r) = if(tick() > 0, r, r)\nInc(x) = x + 1\nF(y) = {\n    A = Cap(Inc(5)).Algorithm\n    P = A(1) + 0\n    P + y, A(1), tick()\n}\n\nF(1), F(2)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(3, 2, 2)\n(4, 2, 4)",
+            ExpectedRaw = "S[S[3, 2, 2], S[4, 2, 4]]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // Read from outside its owner, the alias is the run's own, apart from every call's.
+                new SpecProbe("Cap(meta r) = if(tick() > 0, r, r)\nInc(x) = x + 1\nF(y) = {\n    public A = Cap(Inc(5)).Algorithm\n    A(1), tick()\n}\nF.A(1), F(1), F.A(1), tick()", "ok raw=S[2, S[2, 3], 2, 4] n=4"),
+            ],
+            Notes = "INNER-PROPERTY LIFETIME (November 2026). Under ALIAS-CELL-LIFETIME alone (from 2026-11-15) this was ((3, 2, 2), (4, 2, 3)): one `A` for the whole run, so the second call's `Cap(Inc(5))` did not run again.",
+            Explanation = "`A = Cap(Inc(5)).Algorithm` names what `Cap(Inc(5))` gives, and working that out runs `tick()` once. In the first call `P` and the row's `A(1)` use the same `A`, so the row's own `tick()` is the second one. The second call works out its own `A` — the third `tick()` — so its row's `tick()` is the fourth. An alias and a property declared inside an owner follow the same rule: one per call of the owner.",
         },
 
         // ==================== ALIAS-UNIFY-1 review regressions (M4★) ====================
@@ -9945,5 +10043,9 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Explanation = "`Q` takes no argument and holds nothing that could lift one, so `P` can never gain a parameter: the bare `P` is certainly a read, one value, and its marker changes nothing here. `Inc` stays `reduce`'s initial value, so `H` is `H(x)` and `H(-3)` is `Inc(-3) + 1 + 2`.",
         },
+
+        // EXPORTED-DETACHED (November 2026): the generated exposure-shape family, with hand-written
+        // expectations per cell (containers x routes x capture position x access site x row order).
+        .. ExposureShapeSpecFamily.Cases(),
     ];
 }

@@ -433,6 +433,27 @@ public class LeanAstEncoderTests
     }
 
     [Fact]
+    public void InlineTickBuiltin_IsTheLeanBuiltinItself_AndEveryOtherBuiltinIsRefused()
+    {
+        // The ONE builtin the encoder admits (EXPORTED-DETACHED, November 2026): a host-built tree under a
+        // raw host chain calls `tick()` as the builtin itself, the effect that counts evaluations of a
+        // self-contained property. Manually reviewed golden: Lean `Algorithm.builtin .tickBuiltin`.
+        var tick = new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.tick)), new OutputBundle([]));
+        Assert.Equal("(.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) [])", LeanAstEncoder.EncodeExpr(tick));
+
+        // One builtin OBJECT reached twice is still the constant term: a builtin carries no identity to share.
+        var shared = new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.tick));
+        var twice = new Expr.Binary(BinaryOp.Add, new Expr.Call(shared, new OutputBundle([])), new Expr.Call(shared, new OutputBundle([])));
+        Assert.Equal(
+            "(.binary .add (.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) []) (.call (.algorithmExpr (Algorithm.builtin .tickBuiltin)) []))",
+            LeanAstEncoder.EncodeExpr(twice));
+
+        var other = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeExpr(
+            new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@if))));
+        Assert.Contains("'tick' only", other.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NonIntegerNonFiniteAndNegativeZeroNumbers_AreRefusedNotApproximated()
     {
         // The Lean core models Int; a fractional literal must not silently
@@ -684,7 +705,7 @@ public class LeanAstEncoderTests
         var native = new ScopeCtx(null, [], [new Property("N", new Algorithm.User(null, [], [], [], [new Expr.NativeCall("host:x", [])]))]);
         Assert.Contains("NativeCall", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(native))).Message);
         var builtin = new ScopeCtx(null, [], [new Property("B", new Algorithm.Builtin(BuiltinId.@count))]);
-        Assert.Contains("not Builtin", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(builtin))).Message);
+        Assert.Contains("encodes the inline builtin 'tick' only, not 'count'", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(builtin))).Message);
     }
 
     /// <summary>

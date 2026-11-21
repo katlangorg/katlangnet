@@ -180,9 +180,13 @@ public class OutermostPropertyCachePublicationTests
         // owner is re-entrant (returns 0, publishes nothing); B's owner publishes 1.
         { "A = if(tock() < 3, B + 1, 0)\nB = A()\nA, A, B", "S[2, 2, 1]", Ticks(3) },
 
-        // Loop steps: an exported step property is one run-wide key, owned at the first
-        // iteration (2 + 2 + 2); a local-only one reads the step's state (A * 10 + A over 7).
-        { "Step(n) = {\n    A = if(tock() < 3, A + 1, 0)\n    n + A\n}\nStep(0).repeat(3)", "6", Ticks(3) },
+        // Loop steps: each round is a call of the step, so an exported step property is one key
+        // per round with its own owner. Round one's owner publishes 2 (two re-entrant reads
+        // below it); rounds two and three evaluate afresh, and tock is by then no longer below 3:
+        // 0 + 2, then + 0, + 0 with five tocks (formerly one run-wide key owned at the first
+        // iteration: 2 + 2 + 2 with three). A local-only one reads the step's state
+        // (A * 10 + A over 7).
+        { "Step(n) = {\n    A = if(tock() < 3, A + 1, 0)\n    n + A\n}\nStep(0).repeat(3)", "2", Ticks(5) },
         { "Step(n) = {\n    A = if(tock() < 3, A + 1, n)\n    A * 10 + A\n}\nStep(5).repeat(1)", "77", Ticks(3) },
 
         // Assignment deconstruction: the targets are ordinary properties over the hoisted source, so a
@@ -334,9 +338,12 @@ public class OutermostPropertyCachePublicationTests
 
     // Lean has no host operations or randomness, so `CoreTests/PropertyCachePublication.lean`
     // makes a same-key re-entrant read terminate with a host-built tree: P is a parameterless
-    // EXPORTED property whose body reads `x` dynamically from its caller, so every read of P has
-    // ONE key while successive re-entrant reads see different `x`. The same trees here must give
-    // the same values and the same published entries on the C# routes.
+    // EXPORTED property, so every read of P has ONE key, and its body is self-contained, as an
+    // exported property must be: successive evaluations differ through the run's `tick()` counter
+    // alone. The same trees here must give the same values and the same published entries on the
+    // C# routes. (Until EXPORTED-DETACHED, November 2026, P read `x` dynamically from whichever
+    // caller evaluated it. An exported property is evaluated detached now, so that read finds no
+    // binding: `pubDynamicReadIsRefused`.)
 
     public static TheoryData<string, string, string[]> LeanGuardTrees => new()
     {
@@ -350,7 +357,8 @@ public class OutermostPropertyCachePublicationTests
         { "pubFailedExplicitOwnerPublishesNothing", "DivisionByZero", [] },
         { "pubFailedExplicitOwnerKeepsOtherEntries", "DivisionByZero", ["Seven"] },
         { "pubIndirectRecursion", "S[101, 101, 1]", ["IB", "IA"] },
-        { "pubSiblingReentrantReadsEachEvaluate", "S[29, 29]", ["PB"] },
+        { "pubSiblingReentrantReadsEachEvaluate", "S[80, 80]", ["PB"] },
+        { "pubDynamicReadIsRefused", "UnknownName", [] },
         { "pubFailedOwnerPublishesNothing", "DivisionByZero", [] },
         { "pubFailedOwnerKeepsOtherEntries", "DivisionByZero", ["Seven"] },
     };
@@ -386,13 +394,14 @@ public class OutermostPropertyCachePublicationTests
     }
 
     /// <summary>
-    /// The tree of the named Lean guard (<c>pubRoot</c> with that guard's output rows):
-    /// <c>P = if(x == 0, 1, G(x - 1) + 100)</c>, <c>G(x) = P</c>, <c>H(x) = P()</c>, the explicit-call
+    /// The tree of the named Lean guard (<c>pubRoot</c> with that guard's output rows and depth):
+    /// <c>P = if(tick() &gt; depth, 1, G(0) + 100)</c>, <c>G(x) = P</c>, <c>H(x) = P()</c>, the explicit-call
     /// relay <c>R</c>/<c>L</c>/<c>M</c>/<c>LR</c>, the indirect pair <c>IA</c>/<c>IB</c>/<c>IG</c>/<c>IGB</c>,
     /// the failing <c>PF</c>/<c>GF</c> and <c>PS</c>/<c>GS</c> over <c>Seven = 3 + 4</c>, the sibling shape
-    /// <c>PB = if(x &lt;= 0, x + 10, GB(x - 1) + GB(x - 2))</c>, <c>GB(x) = PB</c>, and the CACHE-PUB-1
+    /// <c>PB = if(tick() &gt; 1, tick() * 10, GB(0) + GB(0))</c>, <c>GB(x) = PB</c>, the CACHE-PUB-1
     /// explicit-call shapes <c>PC</c>/<c>HC</c>/<c>GC</c>, <c>PR</c>/<c>HR</c>/<c>GR</c>, <c>PFC</c>/<c>HFC</c> and
-    /// <c>PSC</c>/<c>HSC</c> (each <c>Hn(x) = Pn()</c>).
+    /// <c>PSC</c>/<c>HSC</c> (each <c>Hn(x) = Pn()</c>), and the former technique <c>PX = x</c>,
+    /// <c>GX(x) = PX</c>. A reader's argument is never read: it only tells the rows apart.
     /// </summary>
     private static Expr LeanGuardTree(string guard)
     {
@@ -401,10 +410,12 @@ public class OutermostPropertyCachePublicationTests
         static Expr Read(string name) => new Expr.Resolve(name);
         static Expr Add(Expr left, Expr right) => new Expr.Binary(BinaryOp.Add, left, right);
         static Expr CallX(string name, int value) => new Expr.Call(new Expr.Resolve(name), [N(value)]);
-        static Expr CallPrevious(string name) => new Expr.Call(new Expr.Resolve(name), [new Expr.Binary(BinaryOp.Sub, X(), N(1))]);
+        static Expr CallPrevious(string name) => CallX(name, 0);
         static Expr Invoke(string name) => new Expr.Call(new Expr.Resolve(name), OutputBundle.Empty);
-        static Expr If(Expr whenZero, Expr otherwise) => new Expr.Call(new Expr.Resolve("if"),
-            [new Expr.Comparison(X(), [new ComparisonLink(ComparisonOp.Eq, N(0))]), whenZero, otherwise]);
+        static Expr Tick() => new Expr.Call(new Expr.Resolve("tick"), OutputBundle.Empty);
+        // if(tick() > depth, whenDone, otherwise): the first `depth` evaluations of the run recurse.
+        static Expr If(Expr whenDone, Expr otherwise, int depth = 1) => new Expr.Call(new Expr.Resolve("if"),
+            [new Expr.Comparison(Tick(), [new ComparisonLink(ComparisonOp.Gt, N(depth))]), whenDone, otherwise]);
         static Algorithm.User Alg(bool takesX, params Expr[] output)
             => new(Parent: null, ParameterPatterns: takesX ? [new CaptureParameterPattern("x")] : [], Opens: [],
                 Properties: [], Output: [.. output]);
@@ -413,7 +424,7 @@ public class OutermostPropertyCachePublicationTests
         var oneOverZero = new Expr.Binary(BinaryOp.Div, N(1), N(0));
         IReadOnlyList<Property> properties =
         [
-            Prop("P", Alg(false, If(N(1), Add(CallPrevious("G"), N(100))))),
+            Prop("P", Alg(false, If(N(1), Add(CallPrevious("G"), N(100)), guard == "pubDeeperRecursion" ? 3 : 1))),
             Prop("G", Alg(true, Read("P"))),
             Prop("H", Alg(true, new Expr.Call(new Expr.Resolve("P"), OutputBundle.Empty))),
             Prop("R", Alg(false, If(N(1), Add(CallPrevious("L"), N(100))))),
@@ -429,11 +440,10 @@ public class OutermostPropertyCachePublicationTests
             Prop("Seven", Alg(false, Add(N(3), N(4)))),
             Prop("PS", Alg(false, If(N(1), Add(Add(Read("Seven"), CallPrevious("GS")), oneOverZero)))),
             Prop("GS", Alg(true, Read("PS"))),
-            Prop("PB", Alg(false, new Expr.Call(new Expr.Resolve("if"),
-                [new Expr.Comparison(X(), [new ComparisonLink(ComparisonOp.Le, N(0))]),
-                 Add(X(), N(10)),
-                 Add(CallPrevious("GB"), new Expr.Call(new Expr.Resolve("GB"), [new Expr.Binary(BinaryOp.Sub, X(), N(2))]))]))),
+            Prop("PB", Alg(false, If(new Expr.Binary(BinaryOp.Mul, Tick(), N(10)), Add(CallPrevious("GB"), CallPrevious("GB"))))),
             Prop("GB", Alg(true, Read("PB"))),
+            Prop("PX", Alg(false, X())),
+            Prop("GX", Alg(true, Read("PX"))),
             Prop("PC", Alg(false, If(N(1), Add(CallPrevious("HC"), N(100))))),
             Prop("HC", Alg(true, Invoke("PC"))),
             Prop("GC", Alg(true, Read("PC"))),
@@ -461,6 +471,7 @@ public class OutermostPropertyCachePublicationTests
             "pubFailedOwnerPublishesNothing" => [CallX("GF", 1)],
             "pubFailedOwnerKeepsOtherEntries" => [CallX("GS", 1)],
             "pubSiblingReentrantReadsEachEvaluate" => [CallX("GB", 2), CallX("GB", 7)],
+            "pubDynamicReadIsRefused" => [CallX("GX", 1), CallX("GX", 5)],
             _ => throw new ArgumentOutOfRangeException(nameof(guard), guard, null),
         };
 

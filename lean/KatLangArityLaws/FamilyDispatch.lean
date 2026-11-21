@@ -272,7 +272,8 @@ theorem activation_run (callee : Algorithm) (ctx : EvalCtx) (env : ValEnv) (bran
                   (fun entry => (bindings.map Prod.fst).contains entry.fst)
                 needs := (activatedContext callee ctx bindings s.nextBindingContext).needEnv.filter
                   (fun entry => (bindings.map Prod.fst).contains entry.fst)
-                bindingContext := s.nextBindingContext } }) := rfl
+                bindingContext := s.nextBindingContext
+                ownsInvocation := true } }) := rfl
 
 /-- The activated context keeps the incoming call stack under the family and starts with no head
     scope, whatever the incoming context was. -/
@@ -354,7 +355,8 @@ theorem production_dispatch_activates_the_first_match (c : NeedChannels) (callee
                   (fun entry => (bindings.map Prod.fst).contains entry.fst)
                 needs := (activatedContext callee ctx bindings s''.nextBindingContext).needEnv.filter
                   (fun entry => (bindings.map Prod.fst).contains entry.fst)
-                bindingContext := s''.nextBindingContext } }) := by
+                bindingContext := s''.nextBindingContext
+                ownsInvocation := true } }) := by
   have hsome : (Algorithm.branches callee).any
       (fun branch => needAcceptsCardinality (needClauseHead branch.pattern) cells.length) = true := by
     rw [List.any_eq_true]

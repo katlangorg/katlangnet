@@ -479,8 +479,8 @@ theorem pres_supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) :
 theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) :
     Preserves R (aliasBindingCellRecorded wired target ctx) := by
   intro s
-  have hpre : Preserves R (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []) :=
-    pres_bind (pres_enterAlgorithmBody wired ctx []) (fun declaringCtx => pres_supplyNeed target declaringCtx [])
+  have hpre : Preserves R (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx => supplyNeed target declaringCtx []) :=
+    pres_bind (pres_enterAlgorithmBody wired (aliasCellContext wired ctx s) []) (fun declaringCtx => pres_supplyNeed target declaringCtx [])
   have k := hpre s
   have hget : (get : EvalM EvalState).runState s = (.ok s, s) := rfl
   cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
@@ -492,16 +492,16 @@ theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx :
     exact StateRel.refl s
   | none =>
     have hrun : ((aliasBindingCellRecorded wired target ctx).runState s).2 =
-        (match (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s with
+        (match (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s with
          | (.ok address, t) => { t with aliasCells := (aliasBindingCellKey wired ctx s, address) :: t.aliasCells }
          | (.error _, t) => t) := by
       simp only [aliasBindingCellRecorded, EvalM.bind_runState, hget, hl]
-      rcases (enterAlgorithmBody wired ctx []).runState s with ⟨_ | declaringCtx, t₁⟩
+      rcases (enterAlgorithmBody wired (aliasCellContext wired ctx s) []).runState s with ⟨_ | declaringCtx, t₁⟩
       · rfl
       · dsimp only
         rcases (supplyNeed target declaringCtx []).runState t₁ with ⟨_ | address, t₂⟩ <;> rfl
     rw [hrun]
-    rcases hr : (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s
+    rcases hr : (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s
       with ⟨_ | address, t⟩
     · rw [hr] at k; exact k
     · rw [hr] at k; exact WriteFrame.aliasAfter s t _ _ k hl
@@ -1485,16 +1485,16 @@ theorem evalAttempt_cases {α : Type} (m : EvalM α) (t : EvalState) :
   · exact .inr ⟨evalAttempt_runState_of_complete m t t' o hm hi, rfl⟩
   · exact .inl ⟨by rw [Except.isIncomplete_eq_true hi] at hm; exact evalAttempt_runState_of_incomplete m t t' hm, rfl⟩
 
-theorem cache_property_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (rec c))
+theorem cache_publication_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
-    Preserves CacheKept (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+    Preserves CacheKept (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   -- Both requests' calculations keep every entry (`zeroArgPropertyCalculation_pres`): a read
   -- returns an established entry, an invocation executes freshly beside it, and the owner's
   -- publication never replaces one (`lookup_insert_keep`).
   have hcalc := EvalBody.zeroArgPropertyCalculation_pres (R := CacheKept) rec hrec request resolvedAlgorithm ctx env
   intro s
-  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  unfold EvalBody.zeroArgPropertyPublication
   split
   · simp only [EvalM.bind_runState, get_runState]
     split
@@ -1505,8 +1505,8 @@ theorem cache_property_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (
       · exact hcalc s
       · simp only [EvalM.bind_runState, set_runState]
         obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
-          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
-        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
         rw [hm] at hk
         rcases hc with ⟨hrun, _⟩ | ⟨hrun, _⟩
         · rw [hrun]; exact fun k v h => hk k v h
@@ -1520,6 +1520,32 @@ theorem cache_property_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (
             simp only [EvalM.bind_runState, set_runState, throw_runState]
             exact fun k v h => hk k v h
   · exact hcalc s
+
+/-- EXPORTED-DETACHED (November 2026): the access is the publication law in the context its binding's
+    exposure requires — the detached context for an exported binding, a refusal (which writes nothing)
+    or the accessing context for a local-only one — so it keeps every relation the publication law
+    keeps in EVERY context. -/
+theorem access_pres_of_publication {R : EvalState → EvalState → Prop} [StateRel R] (rec : EvalRec)
+    (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest)
+    (h : ∀ ctx' env', Preserves R
+      (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx' env' request)) :
+    Preserves R (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  intro s
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · simp only [EvalM.bind_runState, get_runState]
+    exact h _ _ s
+  · split
+    · exact StateRel.refl s
+    · exact h ctx env s
+
+theorem cache_property_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (rec c))
+    (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Preserves CacheKept (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) :=
+  access_pres_of_publication rec accessKind owner binding resolvedAlgorithm ctx env request
+    (fun ctx' env' => cache_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx' env' request)
 
 /-- **Q-37, whole run (core):** every completed run of the total core, at every fuel and from
     every state, keeps every property-cache entry it found, with its value — success and ordinary
@@ -1575,17 +1601,17 @@ instance : StateRel ActiveKept := ⟨fun _ => rfl, fun h1 h2 => h2.trans h1⟩
 instance : FieldFrame ActiveKept := ⟨fun _ _ _ ha => ha⟩
 
 
-theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c))
+theorem active_publication_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) (s : EvalState)
-    (hne : ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).1
+    (hne : ((EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).1
       ≠ .error .fuelExhausted) :
-    ActiveKept s ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).2 := by
+    ActiveKept s ((EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).2 := by
   -- Both requests share the one owner discipline: their calculation (a read's demand or an
   -- invocation's fresh call) keeps the owner set, and an owner restores the set it found.
   have hcalc := EvalBody.zeroArgPropertyCalculation_pres (R := ActiveKept) rec hrec request resolvedAlgorithm ctx env
   revert hne
-  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  unfold EvalBody.zeroArgPropertyPublication
   split
   · simp only [EvalM.bind_runState, get_runState]
     split
@@ -1597,8 +1623,8 @@ theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept
       · simp only [EvalM.bind_runState, set_runState]
         generalize hz : (evalAttempt (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)).runState _ = r
         obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
-          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
-        have ha := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+        have ha := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s) (propertyOwnerInvocation resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
         rw [hm] at ha
         rcases hc with ⟨hrun, _⟩ | ⟨hrun, _⟩
         · rw [hrun] at hz; subst hz
@@ -1613,6 +1639,23 @@ theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept
             simp only [EvalM.bind_runState, set_runState, throw_runState]
             intro _; rfl
   · intro _; exact hcalc s
+
+/-- The access restores the owner set like its publication law: an exported request is that law
+    over the detached context, a refused local-only read writes nothing (EXPORTED-DETACHED). -/
+theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c))
+    (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) (s : EvalState)
+    (hne : ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).1
+      ≠ .error .fuelExhausted) :
+    ActiveKept s ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).2 := by
+  revert hne
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · simp only [EvalM.bind_runState, get_runState]
+    exact active_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+  · split
+    · intro _; rfl
+    · exact active_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
 
 
 theorem active_body_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c)) (c : EvalCall)
