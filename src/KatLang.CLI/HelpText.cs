@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 
 namespace KatLang.CLI;
@@ -8,10 +9,10 @@ internal static class HelpText
     // The transport bounds quoted under --allow-loading are HttpSourceDownloader's
     // MaxResponseBodyBytes and DownloadTimeout, the range quoted under
     // --min-decimal-places and --max-decimal-places is KatLang's
-    // RunOptions.DecimalPlacesLimit, and the limits quoted under --code-link are
-    // CodeLink.MaxSourceLength and CodeLink.MaxPayloadLength; the help tests pin them
-    // to those constants.
-    public const string Usage = """
+    // RunOptions.DecimalPlacesLimit, and the limits quoted under --code-link are the
+    // KatLang package's CodeLink.MaxSourceLength and CodeLink.MaxPayloadLength; the
+    // help tests pin them to those constants.
+    public static string Usage { get; } = string.Create(CultureInfo.InvariantCulture, $"""
         Usage:
           katlang run <file> [--allow-loading] [--random-seed <integer>]
                              [--min-decimal-places <integer>]
@@ -20,6 +21,7 @@ internal static class HelpText
                                 [--min-decimal-places <integer>]
                                 [--max-decimal-places <integer>] [--code-link]
           katlang check <file> [--allow-loading] [--code-link]
+          katlang source <link>
 
         Options:
           --allow-loading    Allow the program to download and run KatLang
@@ -77,10 +79,10 @@ internal static class HelpText
                              one last line to stderr with a link that opens
                              this exact program in the KatLang Playground on
                              katlang.org and runs it:
-                               katlang-link: https://katlang.org/#code/<payload>
-                             A program that is empty, longer than 50,000 UTF-16
+                               katlang-link: https://katlang.org/#1/<payload>
+                             A program that is empty, longer than {CodeLink.MaxSourceLength:N0} UTF-16
                              code units, or whose payload would be longer than
-                             8,192 characters has no link, and the line says
+                             {CodeLink.MaxPayloadLength:N0} characters has no link, and the line says
                              why instead:
                                katlang-link: none: <reason>
                              The line is written whatever the program does,
@@ -91,10 +93,27 @@ internal static class HelpText
           --version          Show the KatLang version.
           --help             Show help.
 
-          --                 End of options: every later argument is a file or
-                             source, even one that begins with two dashes
-                             (katlang eval -- "--1").
-        """;
+          --                 End of options: every later argument is a file,
+                             source or link, even one that begins with two
+                             dashes (katlang eval -- "--1").
+
+        Reading a code link:
+          source <link>      Write the program that a KatLang code link
+                             (https://katlang.org/#<format>/<payload>) carries to
+                             stdout, and run nothing. The program is written
+                             exactly as the link carries it: no line break is
+                             added and control characters are written raw, so
+                             redirecting stdout reproduces the program byte for
+                             byte as UTF-8 (katlang source "<link>" > program.kat).
+                             A link that carries no program (it is not a code
+                             link, or it is damaged, cut short, changed or over
+                             a limit) fails with exit status 1 and one line on
+                             stderr:
+                               katlang: invalid code link: <reason>
+                             If the program contains an unpaired surrogate,
+                             source reports that UTF-8 cannot represent it and
+                             exits with status 1. source takes no options.
+        """);
 
     public const string UsageHint = $"Run '{CommandLine.ProgramName} {CommandLine.HelpOption}' for usage.";
 

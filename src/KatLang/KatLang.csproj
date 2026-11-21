@@ -11,7 +11,8 @@
 
 		<!--
 		  KatLang's finite variant hierarchies (`Expr`, `RunResult`, `EvalError`, `Result`,
-		  `Algorithm`, `Pattern`, `ParameterPattern`, `CallableBindingNode`, `ErrorContext`)
+		  `Algorithm`, `Pattern`, `ParameterPattern`, `CallableBindingNode`, `ErrorContext`,
+		  and the code-link results `CodeLinkEncoding` and `CodeLinkDecoding`)
 		  are C# `closed` records: a switch expression over one of them that names every variant is
 		  compiler-exhaustive without a catch-all arm. The compiler reports a MISSING
 		  variant only as warning CS8509 (and an unhandled `null` input as CS8655), so
@@ -78,6 +79,12 @@
 		<!-- SEC-07: CLI presentation uses KatLangError.RenderDiagnostic so only the
 		     owning renderer can authorize structural diagnostic line separators. -->
 		<InternalsVisibleTo Include="KatLang.CLI" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- The frozen primer of code-link format 1 (CodeLinkModel): every format-1 link depends on
+		     these exact bytes, so the file is never edited. A new primer is a new format. -->
+		<EmbeddedResource Include="CodeLinks\code-link-primer-1.txt" LogicalName="KatLang.CodeLinks.code-link-primer-1.txt" />
 	</ItemGroup>
 
 	<ItemGroup>

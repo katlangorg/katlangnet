@@ -40,6 +40,15 @@
   </ItemGroup>
 
   <!--
+    The code-link encoder fixtures belong to the KatLang package's tests
+    (tests/KatLang.Tests/CodeLinks/Fixtures). The CLI tests read the same cases through the same
+    loader, shared as source, to check what the CLI writes for them.
+  -->
+  <ItemGroup>
+    <Compile Include="..\KatLang.Tests\CodeLinks\CodeLinkFixtures.cs" Link="CodeLinks\CodeLinkFixtures.cs" />
+  </ItemGroup>
+
+  <!--
     Only the CLI is referenced. KatLang arrives transitively, which keeps the
     tests honest about the integration boundary: they exercise the CLI against
     exactly the API surface the CLI itself consumes, with no direct handle on

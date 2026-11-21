@@ -204,6 +204,130 @@ public sealed record KatLang.CaptureParameterPattern : KatLang.ParameterPattern,
   operator public static bool op_Equality(KatLang.CaptureParameterPattern? left, KatLang.CaptureParameterPattern? right)
   operator public static bool op_Inequality(KatLang.CaptureParameterPattern? left, KatLang.CaptureParameterPattern? right)
 
+public static class KatLang.CodeLink
+  const    public const string CanonicalBaseUrl = "https://katlang.org/"
+  const    public const int CurrentFormat = 1
+  const    public const int MaxPayloadLength = 1970
+  const    public const int MaxSourceLength = 20000
+  method   public static KatLang.CodeLinkDecoding Decode(int format, string payload)
+  method   public static KatLang.CodeLinkDecoding DecodeLink(string link)
+  method   public static KatLang.CodeLinkEncoding Encode(string source)
+  method   public static bool TryGetPayload(string link, out int format, [NotNullWhen(true)] out string? payload)
+
+public closed record KatLang.CodeLinkDecoding : System.IEquatable<KatLang.CodeLinkDecoding>
+  ctor     protected CodeLinkDecoding(KatLang.CodeLinkDecoding original)
+  property protected virtual System.Type EqualityContract { get; }
+  method   public abstract KatLang.CodeLinkDecoding <Clone>$()
+  method   public override bool Equals(object? obj)
+  method   public virtual bool Equals(KatLang.CodeLinkDecoding? other)
+  method   public override int GetHashCode()
+  method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkDecoding? left, KatLang.CodeLinkDecoding? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkDecoding? left, KatLang.CodeLinkDecoding? right)
+
+public sealed record KatLang.CodeLinkDecoding.Program : KatLang.CodeLinkDecoding, System.IEquatable<KatLang.CodeLinkDecoding.Program>
+  property protected override System.Type EqualityContract { get; }
+  property public string Source { get; }
+  method   public virtual KatLang.CodeLinkDecoding.Program <Clone>$()
+  method   public bool Equals(KatLang.CodeLinkDecoding.Program? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.CodeLinkDecoding? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkDecoding.Program? left, KatLang.CodeLinkDecoding.Program? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkDecoding.Program? left, KatLang.CodeLinkDecoding.Program? right)
+
+public sealed record KatLang.CodeLinkDecoding.Refused : KatLang.CodeLinkDecoding, System.IEquatable<KatLang.CodeLinkDecoding.Refused>
+  property protected override System.Type EqualityContract { get; }
+  property public KatLang.CodeLinkRefusal Reason { get; }
+  method   public virtual KatLang.CodeLinkDecoding.Refused <Clone>$()
+  method   public bool Equals(KatLang.CodeLinkDecoding.Refused? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.CodeLinkDecoding? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkDecoding.Refused? left, KatLang.CodeLinkDecoding.Refused? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkDecoding.Refused? left, KatLang.CodeLinkDecoding.Refused? right)
+
+public closed record KatLang.CodeLinkEncoding : System.IEquatable<KatLang.CodeLinkEncoding>
+  ctor     protected CodeLinkEncoding(KatLang.CodeLinkEncoding original)
+  property protected virtual System.Type EqualityContract { get; }
+  method   public abstract KatLang.CodeLinkEncoding <Clone>$()
+  method   public override bool Equals(object? obj)
+  method   public virtual bool Equals(KatLang.CodeLinkEncoding? other)
+  method   public override int GetHashCode()
+  method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkEncoding? left, KatLang.CodeLinkEncoding? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkEncoding? left, KatLang.CodeLinkEncoding? right)
+
+public sealed record KatLang.CodeLinkEncoding.EmptyProgram : KatLang.CodeLinkEncoding, System.IEquatable<KatLang.CodeLinkEncoding.EmptyProgram>
+  property protected override System.Type EqualityContract { get; }
+  method   public virtual KatLang.CodeLinkEncoding.EmptyProgram <Clone>$()
+  method   public bool Equals(KatLang.CodeLinkEncoding.EmptyProgram? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.CodeLinkEncoding? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkEncoding.EmptyProgram? left, KatLang.CodeLinkEncoding.EmptyProgram? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkEncoding.EmptyProgram? left, KatLang.CodeLinkEncoding.EmptyProgram? right)
+
+public sealed record KatLang.CodeLinkEncoding.Link : KatLang.CodeLinkEncoding, System.IEquatable<KatLang.CodeLinkEncoding.Link>
+  property protected override System.Type EqualityContract { get; }
+  property public int Format { get; }
+  property public string Fragment { get; }
+  property public string Payload { get; }
+  property public string Url { get; }
+  method   public virtual KatLang.CodeLinkEncoding.Link <Clone>$()
+  method   public bool Equals(KatLang.CodeLinkEncoding.Link? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.CodeLinkEncoding? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkEncoding.Link? left, KatLang.CodeLinkEncoding.Link? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkEncoding.Link? left, KatLang.CodeLinkEncoding.Link? right)
+
+public sealed record KatLang.CodeLinkEncoding.PayloadTooLong : KatLang.CodeLinkEncoding, System.IEquatable<KatLang.CodeLinkEncoding.PayloadTooLong>
+  property protected override System.Type EqualityContract { get; }
+  property public int PayloadLength { get; }
+  method   public virtual KatLang.CodeLinkEncoding.PayloadTooLong <Clone>$()
+  method   public bool Equals(KatLang.CodeLinkEncoding.PayloadTooLong? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.CodeLinkEncoding? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkEncoding.PayloadTooLong? left, KatLang.CodeLinkEncoding.PayloadTooLong? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkEncoding.PayloadTooLong? left, KatLang.CodeLinkEncoding.PayloadTooLong? right)
+
+public sealed record KatLang.CodeLinkEncoding.SourceTooLong : KatLang.CodeLinkEncoding, System.IEquatable<KatLang.CodeLinkEncoding.SourceTooLong>
+  property protected override System.Type EqualityContract { get; }
+  property public int SourceLength { get; }
+  method   public virtual KatLang.CodeLinkEncoding.SourceTooLong <Clone>$()
+  method   public bool Equals(KatLang.CodeLinkEncoding.SourceTooLong? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.CodeLinkEncoding? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.CodeLinkEncoding.SourceTooLong? left, KatLang.CodeLinkEncoding.SourceTooLong? right)
+  operator public static bool op_Inequality(KatLang.CodeLinkEncoding.SourceTooLong? left, KatLang.CodeLinkEncoding.SourceTooLong? right)
+
+public enum KatLang.CodeLinkRefusal : int
+  NotACodeLink = 0
+  UnsupportedVersion = 1
+  EmptyPayload = 2
+  PayloadTooLong = 3
+  InvalidCharacter = 4
+  Damaged = 5
+  SourceTooLong = 6
+  NotCanonical = 7
+
 public sealed record KatLang.ComparisonLink : System.IEquatable<KatLang.ComparisonLink>
   ctor     public ComparisonLink(KatLang.ComparisonOp Op, KatLang.Expr Operand)
   property public KatLang.ComparisonOp Op { get; init; }

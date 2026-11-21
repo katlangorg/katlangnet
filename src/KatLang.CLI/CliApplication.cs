@@ -11,7 +11,10 @@ namespace KatLang.CLI;
 /// <c>--code-link</c> write the program's code link last, exit. No KatLang
 /// language semantics live here: parsing, elaboration, module loading,
 /// evaluation, diagnostics, and result formatting all belong to the KatLang
-/// package.</para>
+/// package, and so does the code-link format (<see cref="CodeLink"/>): the CLI
+/// words its results (<see cref="CodeLinkText"/>). <c>source</c> is the one
+/// command with no program to process: it writes the program a code link
+/// carries and stops.</para>
 /// </summary>
 public static class CliApplication
 {
@@ -75,6 +78,9 @@ public static class CliApplication
                 case CliCommandKind.Version:
                     output.WriteLine(HelpText.VersionLine());
                     return SuccessExitCode;
+
+                case CliCommandKind.Source:
+                    return WriteLinkedProgram(invocation.Argument, output, diagnostics);
             }
 
             string source;
@@ -256,7 +262,7 @@ public static class CliApplication
 
     /// <summary>
     /// <c>--code-link</c>: after everything else the command wrote, the program's code link
-    /// (<see cref="CodeLink.Line"/>) as the last line of stderr. Program output is flushed first,
+    /// (<see cref="CodeLinkText.Line"/>) as the last line of stderr. Program output is flushed first,
     /// so a reader of both streams sees the rows before the link. The link is presentation only:
     /// stdout and the exit code stay what the command made them, unless stdout itself fails
     /// here, which is reported like any other output failure.
@@ -273,8 +279,68 @@ public static class CliApplication
             exitCode = FailureExitCode;
         }
 
-        error.WriteLine(CodeLink.Line(source));
+        error.WriteLine(CodeLinkText.Line(source));
         return exitCode;
+    }
+
+    /// <summary>
+    /// <c>source</c>: the program the code link <paramref name="link"/> carries, written to
+    /// stdout EXACTLY — every code unit as the link carries it, control characters included,
+    /// and no line break added — so that redirecting stdout to a file reproduces the program
+    /// byte for byte as UTF-8. Nothing is parsed or run. The link is read exactly as given
+    /// (<see cref="CodeLink.DecodeLink"/>), with nothing trimmed.
+    ///
+    /// <para>A link that carries no program is not a usage error (the command line was valid):
+    /// one line on stderr says why, nothing is written to stdout, and the command fails. So
+    /// does a program with an unpaired surrogate, which a code link can carry and UTF-8 cannot:
+    /// an encoder would write U+FFFD in its place, and the file would not be the program.</para>
+    /// </summary>
+    private static int WriteLinkedProgram(string link, TextWriter output, DiagnosticWriter error)
+    {
+        switch (CodeLink.DecodeLink(link))
+        {
+            case CodeLinkDecoding.Program program:
+                if (HasUnpairedSurrogate(program.Source))
+                {
+                    error.WriteLine(
+                        $"{CommandLine.ProgramName}: cannot print the program: " +
+                        "it contains an unpaired surrogate, which UTF-8 cannot represent.");
+                    return FailureExitCode;
+                }
+
+                // The program itself, outside the stderr diagnostic policy like all program
+                // output, and unlike it not a line: nothing is appended.
+                output.Write(program.Source);
+                return SuccessExitCode;
+
+            case CodeLinkDecoding.Refused refused:
+                error.WriteLine(
+                    $"{CommandLine.ProgramName}: invalid code link: {CodeLinkText.RefusalReason(refused.Reason)}");
+                return FailureExitCode;
+
+            default:
+                throw new InvalidOperationException("Unknown KatLang CodeLinkDecoding variant.");
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="text"/> has a surrogate code unit that is not half of a pair: a
+    /// high one not followed by a low one, or a low one not preceded by a high one.
+    /// </summary>
+    private static bool HasUnpairedSurrogate(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (!char.IsSurrogate(text[i]))
+                continue;
+
+            if (!char.IsHighSurrogate(text[i]) || i + 1 == text.Length || !char.IsLowSurrogate(text[i + 1]))
+                return true;
+
+            i++;
+        }
+
+        return false;
     }
 
     private static async Task<(bool Success, string Source)> TryReadSourceFileAsync(

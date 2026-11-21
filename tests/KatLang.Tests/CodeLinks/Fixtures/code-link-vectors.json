@@ -1,0 +1,17 @@
+{
+ "format": "KatLang code link format 1 (katlangnet docs/design/code-link-format.md)",
+ "generatedBy": "C:/Temp/codelink-v1/generate.js over codelink.js and code-link-primer-1.txt (sha256 71cf25503940d337838bc2e4d58c21880eb27e22e8a14335bb95b165fa489fdf), 2026-11-21",
+ "vectors": [
+  {"name":"documented-example","source":"100 - 3 * 5 ^ 2","format":1,"payload":"4MWjDBlNE4PH","url":"https://katlang.org/#1/4MWjDBlNE4PH"},
+  {"name":"arithmetic","source":"100 - 3 * 5 ^ 2","format":1,"payload":"4MWjDBlNE4PH","url":"https://katlang.org/#1/4MWjDBlNE4PH"},
+  {"name":"comments-and-blank-lines","source":"# One resistor is connected to a 4V power supply.\n\nU = 4\nI = 0.5\nU / I\n","format":1,"payload":"_cNbIecaKh_JZHh11cpnx_LxQDEhixebQoJhewkz40JmmWfbxt6_Zt6jn42xeH","url":"https://katlang.org/#1/_cNbIecaKh_JZHh11cpnx_LxQDEhixebQoJhewkz40JmmWfbxt6_Zt6jn42xeH"},
+  {"name":"latvian","source":"# Latviski: āčēģīķļņšūž ĀČĒĢĪĶĻŅŠŪŽ\n'Sveika, pasaule!'","format":1,"payload":"_ZtbNNBRDFBp0XNdkXFhYCcMFcSoKtr2V2RQ0WSqtYr9sEtKq15vGA6u46YpzmtIKn1ZMox0qXLhYEOcUqSbZMgQ-K","url":"https://katlang.org/#1/_ZtbNNBRDFBp0XNdkXFhYCcMFcSoKtr2V2RQ0WSqtYr9sEtKq15vGA6u46YpzmtIKn1ZMox0qXLhYEOcUqSbZMgQ-K"},
+  {"name":"quotes-and-special-characters","source":"'She said \"hi\" {braces} \\ `ticks` $ + - % & ? = / : ;'","format":1,"payload":"-S1mD9A8grV0oSNBqvRAM7lGUAqKEiUWBIX8I8MTlYJAl_8qrrNNgpcXqrqxM","url":"https://katlang.org/#1/-S1mD9A8grV0oSNBqvRAM7lGUAqKEiUWBIX8I8MTlYJAl_8qrrNNgpcXqrqxM"},
+  {"name":"crlf-line-endings","source":"A = 1\r\nB = 2\r\nA + B\r\n","format":1,"payload":"9Sj55xXYp6jJZ2-pb","url":"https://katlang.org/#1/9Sj55xXYp6jJZ2-pb"},
+  {"name":"tabs-and-trailing-spaces","source":"\tX = 1   \n\tX\t\n","format":1,"payload":"4_-JBHxV677kx","url":"https://katlang.org/#1/4_-JBHxV677kx"},
+  {"name":"supplementary-characters","source":"'😀 𝄞 𝔸' # emoji, G clef, double-struck A","format":1,"payload":"-c1il1E4QJG4AGdZOeaocLW1Dz7XwIv2yxDvM5jcgbt0Q8aoNdp-XwWo","url":"https://katlang.org/#1/-c1il1E4QJG4AGdZOeaocLW1Dz7XwIv2yxDvM5jcgbt0Q8aoNdp-XwWo"},
+  {"name":"script-like-text","source":"'<script>alert(1)</script>' # <img src=x onerror=alert(2)>","format":1,"payload":"-K1n6KDUk9u4cdn1knfYjByPcOOIVqqf2qkmu9uQRPQt-uqQV4ckfH9-5Q","url":"https://katlang.org/#1/-K1n6KDUk9u4cdn1knfYjByPcOOIVqqf2qkmu9uQRPQt-uqQV4ckfH9-5Q"},
+  {"name":"single-character","source":"1","format":1,"payload":"ML4","url":"https://katlang.org/#1/ML4"},
+  {"name":"payload-with-plus-and-minus","source":"Values = 22, 66, 154\n# {braces} and ~tildes~ | pipes\nValues.sum","format":1,"payload":"-AN8dipS4HIHzGaLEtew0MgQojoBh7ERxKHgv3a9aUy51EL4F","url":"https://katlang.org/#1/-AN8dipS4HIHzGaLEtew0MgQojoBh7ERxKHgv3a9aUy51EL4F"}
+ ]
+}

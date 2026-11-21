@@ -98,6 +98,12 @@ public class HostApiContractTests
         "KatLang.SequenceValueBindingNode",
         "KatLang.UnpackingBindingNode",
         "KatLang.Semantics.SyntaxWalker",
+        // Code links: the public face is CodeLink and its results; the format's coder, its
+        // model and the WTF-8 conversion behind them are implementation.
+        "KatLang.CodeLinkFormat",
+        "KatLang.CodeLinkModel",
+        "KatLang.Wtf8",
+        "KatLang.Wtf8+Reader",
     ];
 
     [Fact]
@@ -230,6 +236,45 @@ public class HostApiContractTests
         AssertNullArgument("source", () => Lexer.Tokenize(null!));
         AssertNullArgument("text", () => Lexer.IsValidIdentifier(null!));
         AssertNullArgument("result", () => OutputFormatters.Exact.Format(null!));
+        AssertNullArgument("source", () => CodeLink.Encode(null!));
+        AssertNullArgument("payload", () => CodeLink.Decode(1, null!));
+        AssertNullArgument("link", () => CodeLink.TryGetPayload(null!, out _, out _));
+        AssertNullArgument("link", () => CodeLink.DecodeLink(null!));
+    }
+
+    // ── Code links are library-produced results over a small static API ──────
+
+    [Fact]
+    public void CodeLinkResults_AreProducedByTheLibrary_NeverConstructedByAHost()
+    {
+        // Like RunResult: no public or protected ordinary constructor on the roots or their
+        // variants, and no settable payload, so a host cannot build a Link without a payload
+        // or a Program the checks did not accept.
+        Type[] roots = [typeof(CodeLinkEncoding), typeof(CodeLinkDecoding)];
+        var types = roots.Concat(roots.SelectMany(root => root.GetNestedTypes())).ToList();
+        Assert.Equal(8, types.Count);
+
+        foreach (var type in types)
+        {
+            var reachable = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Where(constructor => constructor.IsPublic || constructor.IsFamily || constructor.IsFamilyOrAssembly)
+                .Where(constructor => !IsCopyConstructor(constructor, type))
+                .ToList();
+            Assert.True(reachable.Count == 0, $"{type.FullName} has a constructor a consumer can reach.");
+            Assert.All(
+                type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly),
+                property => Assert.True(property.SetMethod is null, $"{type.FullName}.{property.Name} has a setter."));
+        }
+
+        var link = Assert.IsType<CodeLinkEncoding.Link>(CodeLink.Encode("100 - 3 * 5 ^ 2"));
+        Assert.Equal(1, link.Format);
+        Assert.Equal("4MWjDBlNE4PH", link.Payload);
+        Assert.Equal("https://katlang.org/#1/4MWjDBlNE4PH", link.Url);
+        Assert.Equal("100 - 3 * 5 ^ 2", Assert.IsType<CodeLinkDecoding.Program>(CodeLink.DecodeLink(link.Url)).Source);
+        Assert.Equal(CodeLinkRefusal.NotACodeLink, Assert.IsType<CodeLinkDecoding.Refused>(CodeLink.DecodeLink("https://katlang.org/")).Reason);
+
+        static bool IsCopyConstructor(ConstructorInfo constructor, Type type)
+            => constructor.GetParameters() is [var parameter] && parameter.ParameterType == type;
     }
 
     [Fact]

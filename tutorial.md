@@ -45,7 +45,7 @@ Each example below is followed by its result: **Result** for one output, **Resul
 
 If any part of a program fails, the program shows only the error, not the results of the other rows. The command-line tool writes the error to stderr.
 
-To share a program, add the option `--code-link` to either command: after the results or the error, the tool writes one more line to stderr, `katlang-link: https://katlang.org/#code/...`, a link that opens that program in the playground and runs it.
+To share a program, add the option `--code-link` to either command: after the results or the error, the tool writes one more line to stderr, `katlang-link: https://katlang.org/#1/...`, a link that opens that program in the playground and runs it. To get a program back from such a link, use `katlang source "<link>"`: it writes the program's text and runs nothing.
 
 ### Your First Program
 

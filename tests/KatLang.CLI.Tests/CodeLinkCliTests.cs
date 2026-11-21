@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using KatLang.Tests.CodeLinks;
 
 namespace KatLang.CLI.Tests;
 
@@ -15,7 +16,7 @@ public sealed class CodeLinkCliTests
     private const int Success = 0;
     private const int Failure = 1;
     private const string CodeLinkOption = "--code-link";
-    private const string LinkLinePrefix = "katlang-link: https://katlang.org/#code/";
+    private const string LinkLinePrefix = "katlang-link: https://katlang.org/#1/";
 
     /// <summary>The line for "1 + 2", whose payload the reference encoder made (fixture case <c>cli-sum</c>).</summary>
     private static string SumLink => LinkLinePrefix + CodeLinkFixtures.Generated("cli-sum").Payload;
@@ -64,19 +65,19 @@ public sealed class CodeLinkCliTests
         // stdout byte for byte, the exit status, and stderr up to one more line: the link.
         Assert.Equal(without.ExitCode, with.ExitCode);
         Assert.Equal(without.Output, with.Output);
-        Assert.Equal(without.Error + CodeLink.Line(source) + Environment.NewLine, with.Error);
+        Assert.Equal(without.Error + CodeLinkText.Line(source) + Environment.NewLine, with.Error);
     }
 
     [Fact]
     public async Task CodeLink_OfTheDocumentedExample_IsTheDocumentedLink()
     {
-        // docs/code-links.md: https://katlang.org/#code/IwBhAIFpwZnAqcBWcA9cAmIA opens
+        // The documented example: https://katlang.org/#1/4MWjDBlNE4PH opens
         // 100 - 3 * 5 ^ 2 and shows 25.
         var result = await Cli.InvokeAsync("eval", CodeLinkOption, "100 - 3 * 5 ^ 2");
 
         Assert.Equal(Success, result.ExitCode);
         Assert.Equal("25" + Environment.NewLine, result.Output);
-        Assert.Equal("katlang-link: https://katlang.org/#code/IwBhAIFpwZnAqcBWcA9cAmIA" + Environment.NewLine, result.Error);
+        Assert.Equal("katlang-link: https://katlang.org/#1/4MWjDBlNE4PH" + Environment.NewLine, result.Error);
     }
 
     [Theory]
@@ -106,7 +107,7 @@ public sealed class CodeLinkCliTests
     [InlineData("check")]
     public async Task CodeLink_OfACrlfFile_KeepsItsLineBreaks(string command)
     {
-        var vector = CodeLinkFixtures.PlaygroundVector("crlf-line-endings");
+        var vector = CodeLinkFixtures.Vector("crlf-line-endings");
         Assert.Equal("A = 1\r\nB = 2\r\nA + B\r\n", vector.Source);
         using var file = new TempSourceFile(vector.Source);
 
@@ -114,7 +115,7 @@ public sealed class CodeLinkCliTests
 
         Assert.Equal(Success, result.ExitCode);
         Assert.Equal(command == "run" ? "3" + Environment.NewLine : "", result.Output);
-        Assert.Equal("katlang-link: https://katlang.org/#code/IIAgvCCMCwBQBC4QCY6gNQnnIA" + Environment.NewLine, result.Error);
+        Assert.Equal("katlang-link: https://katlang.org/#1/9Sj55xXYp6jJZ2-pb" + Environment.NewLine, result.Error);
     }
 
     [Theory]
@@ -167,9 +168,9 @@ public sealed class CodeLinkCliTests
     [InlineData("check")]
     public async Task CodeLink_AtTheSourceLimit(string command)
     {
-        // A comment line of 50,000 code units, and the same line one code unit longer.
-        var atLimit = CodeLinkFixtures.Generated("comment-50000");
-        var overLimit = CodeLinkFixtures.Generated("comment-50001");
+        // A comment line of 20,000 code units, and the same line one code unit longer.
+        var atLimit = CodeLinkFixtures.Generated("comment-20000");
+        var overLimit = CodeLinkFixtures.Generated("comment-20001");
 
         var linked = await InvokeWithCodeLinkAsync(command, atLimit.Source);
         var refused = await InvokeWithCodeLinkAsync(command, overLimit.Source);
@@ -181,7 +182,7 @@ public sealed class CodeLinkCliTests
         Assert.Equal(Success, refused.ExitCode);
         Assert.Equal("", refused.Output);
         Assert.Equal(
-            "katlang-link: none: the program is 50,001 UTF-16 code units long, more than the 50,000 a code link can carry."
+            "katlang-link: none: the program is 20,001 UTF-16 code units long, more than the 20,000 a code link can carry."
             + Environment.NewLine,
             refused.Error);
     }
@@ -192,9 +193,9 @@ public sealed class CodeLinkCliTests
     [InlineData("check")]
     public async Task CodeLink_AtThePayloadLimit(string command)
     {
-        // Comment lines whose payloads are 8,192 and 8,193 characters long.
-        var atLimit = CodeLinkFixtures.Generated("comment-payload-8192");
-        var overLimit = CodeLinkFixtures.Generated("comment-payload-8193");
+        // Comment lines whose payloads are 1,970 and 1,971 characters long.
+        var atLimit = CodeLinkFixtures.Generated("comment-payload-1970");
+        var overLimit = CodeLinkFixtures.Generated("comment-payload-1971");
 
         var linked = await InvokeWithCodeLinkAsync(command, atLimit.Source);
         var refused = await InvokeWithCodeLinkAsync(command, overLimit.Source);
@@ -206,7 +207,7 @@ public sealed class CodeLinkCliTests
         Assert.Equal(Success, refused.ExitCode);
         Assert.Equal("", refused.Output);
         Assert.Equal(
-            "katlang-link: none: the program's link payload would be 8,193 characters long, more than the 8,192 a code link can carry."
+            "katlang-link: none: the program's link payload would be 1,971 characters long, more than the 1,970 a code link can carry."
             + Environment.NewLine,
             refused.Error);
     }
@@ -364,7 +365,7 @@ public sealed class CodeLinkCliTests
 
         // What it writes, where, when, and the limits, which are the encoder's own.
         Assert.Contains("\n  --code-link        After the command's output and diagnostics, write\n", help);
-        Assert.Contains("\n                       katlang-link: https://katlang.org/#code/<payload>\n", help);
+        Assert.Contains("\n                       katlang-link: https://katlang.org/#1/<payload>\n", help);
         Assert.Contains("\n                       katlang-link: none: <reason>\n", help);
         Assert.Contains(
             string.Create(

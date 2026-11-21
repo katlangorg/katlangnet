@@ -56,6 +56,10 @@ public class ClosedHierarchyContractTests
         // than values: hosts still construct every built-in context, and attach
         // free-form text through TextErrorContext / EvalError.WithContext(string, inner).
         new(typeof(ErrorContext), "new KatLang.TextErrorContext(\"text\")"),
+        // The two code-link results are library-produced like RunResult: a consumer obtains
+        // one from CodeLink and switches over it.
+        new(typeof(CodeLinkEncoding), "KatLang.CodeLink.Encode(\"1 + 2\")"),
+        new(typeof(CodeLinkDecoding), "KatLang.CodeLink.DecodeLink(\"https://katlang.org/#1/4MWjDBlNE4PH\")"),
     ];
 
     public static TheoryData<Type> ClosedRoots

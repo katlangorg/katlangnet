@@ -1,33 +1,36 @@
 using System.Text.Json;
 
-namespace KatLang.CLI.Tests;
+namespace KatLang.Tests.CodeLinks;
 
 /// <summary>
-/// One source and what katlang.org's encoder made of it. <see cref="Status"/> is the reference
-/// encoder's verdict (<c>ok</c>, <c>empty</c> or <c>tooLong</c>), and <see cref="Payload"/> is
-/// <c>LZString.compressToEncodedURIComponent(source)</c> whatever the verdict.
-/// <see cref="Url"/> is the link a Playground vector states, and <c>null</c> for a generated case.
+/// One source and what the format's reference encoder made of it. <see cref="Status"/> is its
+/// verdict (<c>ok</c>, <c>empty</c>, <c>sourceTooLong</c> or <c>payloadTooLong</c>), and
+/// <see cref="Payload"/> the payload, also for <c>payloadTooLong</c>; it is empty for a
+/// program that is never encoded (<c>empty</c> and <c>sourceTooLong</c>). <see cref="Url"/> is
+/// the link a vector states, and <c>null</c> for a generated case.
 /// </summary>
 internal sealed record CodeLinkCase(string Name, string Source, string Status, string Payload, string? Url);
 
 /// <summary>
-/// The committed code-link fixtures in <c>Fixtures/</c> (see the README there):
-/// <c>code-link-vectors.json</c>, a byte-for-byte copy of the vectors katlangweb tests the
-/// Playground's codec with (<c>KatLangWeb.Tests/Fixtures/code-link-vectors.json</c>, katlangweb
-/// commit <c>9d9bce7</c>), and <c>code-link-cases.json</c>, sources encoded once by katlangweb's
-/// reference encoder. Both are read from the repository, as the CLI tests read the README, and
-/// both are expectations made outside this repository: no test regenerates them.
+/// The committed code-link encoder fixtures in <c>tests/KatLang.Tests/CodeLinks/Fixtures/</c>
+/// (see the README there): <c>code-link-vectors.json</c>, documented programs with their links,
+/// and <c>code-link-cases.json</c>, 707 sources with the reference encoder's verdicts. Both were
+/// made with the reference implementation of code-link format 1, outside this repository; they
+/// are expectations, not observations of this repository's code, and no test regenerates them.
+///
+/// <para>This file is shared as source: the KatLang tests own it, and the CLI tests link it
+/// (<c>KatLang.CLI.Tests.csproj</c>), so both read the same cases.</para>
 /// </summary>
 internal static class CodeLinkFixtures
 {
-    private static readonly Lazy<IReadOnlyList<CodeLinkCase>> s_playgroundVectors = new(LoadPlaygroundVectors);
+    private static readonly Lazy<IReadOnlyList<CodeLinkCase>> s_vectors = new(LoadVectors);
     private static readonly Lazy<IReadOnlyList<CodeLinkCase>> s_generatedCases = new(LoadGeneratedCases);
 
-    public static IReadOnlyList<CodeLinkCase> PlaygroundVectors => s_playgroundVectors.Value;
+    public static IReadOnlyList<CodeLinkCase> Vectors => s_vectors.Value;
 
     public static IReadOnlyList<CodeLinkCase> GeneratedCases => s_generatedCases.Value;
 
-    public static CodeLinkCase PlaygroundVector(string name) => PlaygroundVectors.Single(vector => vector.Name == name);
+    public static CodeLinkCase Vector(string name) => Vectors.Single(vector => vector.Name == name);
 
     public static CodeLinkCase Generated(string name) => GeneratedCases.Single(@case => @case.Name == name);
 
@@ -40,7 +43,7 @@ internal static class CodeLinkFixtures
         return data;
     }
 
-    private static IReadOnlyList<CodeLinkCase> LoadPlaygroundVectors()
+    private static IReadOnlyList<CodeLinkCase> LoadVectors()
     {
         using var document = JsonDocument.Parse(File.ReadAllText(FixturePath("code-link-vectors.json")));
         return document.RootElement.GetProperty("vectors").EnumerateArray()
@@ -74,7 +77,7 @@ internal static class CodeLinkFixtures
                 name,
                 source,
                 element.GetProperty("status").GetString()!,
-                element.GetProperty("payload").GetString()!,
+                element.TryGetProperty("payload", out var payload) ? payload.GetString()! : "",
                 Url: null));
         }
 
@@ -82,24 +85,18 @@ internal static class CodeLinkFixtures
     }
 
     /// <summary>
-    /// The source a generated case gives, in one of three forms: <c>source</c>, the text;
+    /// The source a fixture element gives, in one of three forms: <c>source</c>, the text;
     /// <c>codeUnits</c>, its UTF-16 code units (for an unpaired surrogate, which a JSON string
     /// read by System.Text.Json cannot carry); or <c>repeat</c>, a text repeated a number of
     /// times and followed by an optional suffix (for the long sources at the source limit).
     /// </summary>
-    private static string SourceOf(JsonElement element)
+    internal static string SourceOf(JsonElement element)
     {
         if (element.TryGetProperty("source", out var source))
             return source.GetString()!;
 
         if (element.TryGetProperty("codeUnits", out var codeUnits))
-        {
-            var units = new char[codeUnits.GetArrayLength()];
-            var index = 0;
-            foreach (var unit in codeUnits.EnumerateArray())
-                units[index++] = checked((char)unit.GetInt32());
-            return new string(units);
-        }
+            return CodeUnitsOf(codeUnits);
 
         var repeat = element.GetProperty("repeat");
         var text = repeat.GetProperty("text").GetString()!;
@@ -108,7 +105,18 @@ internal static class CodeLinkFixtures
         return string.Concat(Enumerable.Repeat(text, count)) + suffix;
     }
 
-    private static string FixturePath(string fileName)
+    /// <summary>The string of the UTF-16 code units the JSON array <paramref name="codeUnits"/> lists.</summary>
+    internal static string CodeUnitsOf(JsonElement codeUnits)
+    {
+        var units = new char[codeUnits.GetArrayLength()];
+        var index = 0;
+        foreach (var unit in codeUnits.EnumerateArray())
+            units[index++] = checked((char)unit.GetInt32());
+        return new string(units);
+    }
+
+    /// <summary>The path of a file in the fixtures directory of the repository this test assembly was built from.</summary>
+    public static string FixturePath(string fileName)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "KatLang.slnx")))
@@ -117,6 +125,6 @@ internal static class CodeLinkFixtures
         if (directory is null)
             throw new DirectoryNotFoundException("The repository root (KatLang.slnx) was not found above the test assembly.");
 
-        return Path.Combine(directory.FullName, "tests", "KatLang.CLI.Tests", "Fixtures", fileName);
+        return Path.Combine(directory.FullName, "tests", "KatLang.Tests", "CodeLinks", "Fixtures", fileName);
     }
 }

@@ -8,6 +8,7 @@ internal enum CliCommandKind
     Run,
     Eval,
     Check,
+    Source,
     Help,
     Version,
 }
@@ -21,7 +22,8 @@ internal enum CliCommandKind
 /// <see cref="MaxDecimalPlaces"/> (<c>--max-decimal-places</c>) configure evaluation and its
 /// display, and are present only for the evaluating commands (<c>run</c> and <c>eval</c>).
 /// <see cref="CodeLink"/> (<c>--code-link</c>) asks every command that has a source for the
-/// program's code link as the last line of stderr (<see cref="KatLang.CLI.CodeLink"/>).
+/// program's code link as the last line of stderr (<see cref="CodeLinkText.Line"/>).
+/// <c>source</c> reads a link and runs nothing, so it takes none of them.
 /// </summary>
 internal readonly record struct CliOptions(
     bool AllowLoading,
@@ -33,8 +35,9 @@ internal readonly record struct CliOptions(
 /// <summary>
 /// A fully parsed command line. <see cref="Argument"/> is the single positional
 /// argument of the command — a file path for <c>run</c>/<c>check</c>, KatLang
-/// source text for <c>eval</c> — and is empty for <c>--help</c>/<c>--version</c>,
-/// whose <see cref="Options"/> are always <c>default</c>.
+/// source text for <c>eval</c>, a code link for <c>source</c> — and is empty for
+/// <c>--help</c>/<c>--version</c>, whose <see cref="Options"/> are always <c>default</c>, as
+/// <c>source</c>'s are.
 /// </summary>
 internal sealed record CliInvocation(CliCommandKind Kind, string Argument, CliOptions Options);
 
@@ -53,6 +56,7 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// The whole v1 grammar:
 /// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--min-decimal-places &lt;integer&gt;] [--max-decimal-places &lt;integer&gt;] [--code-link]</c>,
 /// <c>katlang check &lt;file&gt; [--allow-loading] [--code-link]</c>,
+/// <c>katlang source &lt;link&gt;</c>,
 /// plus the standalone <c>--help</c> and <c>--version</c> flags. It is small
 /// enough that a hand-written parser is clearer — and dependency-free — compared
 /// with a command-line framework.
@@ -83,6 +87,12 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// supplies a value for the other. Written together for <c>run</c> or <c>eval</c> with the minimum
 /// above the maximum they are a usage error here — decided last, after <c>check</c>'s refusal of
 /// the options — and never clamped, swapped, or dropped.</para>
+///
+/// <para><c>source</c> takes its one operand and no command option: it reads a code link and
+/// runs nothing, so every command option is refused for it rather than ignored, in the order
+/// of <see cref="CliOptions"/>'s fields when several were written. The option rules above are
+/// unchanged for it: a value is still validated where it appears, and <c>--</c> still ends the
+/// options, so a link is taken exactly as written.</para>
 /// </summary>
 internal static class CommandLine
 {
@@ -214,13 +224,21 @@ internal static class CommandLine
             case "check":
                 kind = CliCommandKind.Check;
                 break;
+            case "source":
+                kind = CliCommandKind.Source;
+                break;
             default:
                 return CommandLineParseResult.Fail($"unknown command '{commandName}'.");
         }
 
         if (positionals.Count == 1)
         {
-            var missing = kind == CliCommandKind.Eval ? "<source>" : "<file>";
+            var missing = kind switch
+            {
+                CliCommandKind.Eval => "<source>",
+                CliCommandKind.Source => "<link>",
+                _ => "<file>",
+            };
             return CommandLineParseResult.Fail($"'{commandName}' requires a {missing} argument.");
         }
 
@@ -243,10 +261,31 @@ internal static class CommandLine
                 return NotValidForCheck(MaxDecimalPlacesOption);
         }
 
+        // `source` reads a code link and runs nothing: there is no program to load modules
+        // for, evaluate, display or link, so every command option is refused rather than
+        // ignored — in the order of CliOptions' fields when several were written.
+        if (kind == CliCommandKind.Source)
+        {
+            if (allowLoading)
+                return NotValidForSource(AllowLoadingOption);
+
+            if (randomSeed is not null)
+                return NotValidForSource(RandomSeedOption);
+
+            if (minDecimalPlaces is not null)
+                return NotValidForSource(MinDecimalPlacesOption);
+
+            if (maxDecimalPlaces is not null)
+                return NotValidForSource(MaxDecimalPlacesOption);
+
+            if (codeLink)
+                return NotValidForSource(CodeLinkOption);
+        }
+
         // The pair is checked only when BOTH were written: neither option supplies a value
         // for the other. A minimum above the maximum is a usage error here, before any
-        // source is read — never clamped, swapped, or dropped. (`check` has already refused
-        // either option above.)
+        // source is read — never clamped, swapped, or dropped. (`check` and `source` have
+        // already refused either option above.)
         if (minDecimalPlaces > maxDecimalPlaces)
         {
             return CommandLineParseResult.Fail(
@@ -321,4 +360,7 @@ internal static class CommandLine
 
     private static CommandLineParseResult NotValidForCheck(string option)
         => CommandLineParseResult.Fail($"option '{option}' is not valid for 'check': check does not evaluate.");
+
+    private static CommandLineParseResult NotValidForSource(string option)
+        => CommandLineParseResult.Fail($"option '{option}' is not valid for 'source': source reads a link and runs nothing.");
 }

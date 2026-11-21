@@ -1,0 +1,1452 @@
+# KatLang code link primer, format 1. Frozen: every format-1 link depends on these exact bytes.
+open Math
+Square(x) = x * x
+Add(a, b) = a + b
+Half = x / 2
+Average(*values) = values.sum / values.count
+Values = range(1, 10)
+Values.map{x * x}.sum
+Values.filter{x mod 2 == 0}.count
+reduce(Values, {a + b}, 0)
+count(Values), sum(Values), avg(Values), min(Values), max(Values)
+first(Values), last(Values), take(Values, 3), skip(Values, 2)
+order(Values), orderDesc(Values), distinct(Values), contains(Values, 5), atoms(Values)
+if(x > 0, x, -x)
+Step(n) = n + 1, n < 10
+Step(0).while
+Inc(0).repeat(5)
+Math.Abs(x), Math.Sqrt(x), Math.Pow(x, 2), Math.Round(x, 2), Math.Floor(x), Math.Exp(x)
+Math.Sin(x), Math.Cos(x), Math.Tan(x), Math.Asin(x), Math.Acos(x), Math.Atan(x), Math.Atan2(y, x)
+Math.Ln(x), Math.Lg(x), Math.Log(x, 2), Math.Sign(x), Math.Pi
+Math.Random(), Math.RandomInt(1, 6)
+abs(x), sqrt(x), pi, random(), randomInt(1, 6), tick()
+true, false, a and b, a or b, a xor b, not a, a div b, a mod b
+a <= b, a >= b, a != b, a == b, a < b, a > b
+public Total = 0
+MinDecimalPlaces = 2
+MaxDecimalPlaces = 2
+List = [1, 2, 3]
+Pair = (1, 2)
+List[0]
+Name = 'text'
+Lib = load('https://katlang.org/libraries/lib.kat')
+open 'https://katlang.org/libraries/lib.kat'
+F(0) = 1
+F(n) = n * F(n - 1)
+Price.string
+
+2 + 3 * 4
+
+10, 20, 30
+
+10
+20
+30
+
+1 + 1
+2 + 2, 3 + 3
+
+2
+4
+6
+
+# Floor area of a 4 m by 3 m room
+4 * 3  # square metres
+
+7 + 2
+7 - 2
+7 * 2
+7 / 2
+7 div 2
+7 mod 2
+7 ^ 2
+
+9
+5
+14
+3.5
+3
+1
+49
+
+2 + 3 * 4
+(2 + 3) * 4
+2 * 3 ^ 2
+
+14
+20
+18
+
+-2 ^ 2
+(-2) ^ 2
+2 ^ 3 ^ 2
+
+-4
+4
+512
+
+0.1 + 0.2
+19.99 * 3
+1 / 3
+
+0.3
+59.97
+0.3333333333333333333333333333333333
+
+1 / 0
+
+sqrt(2)
+round(pi, 4)
+sin(pi / 2)
+abs(-7)
+lg(1000)
+exp(1)
+
+1.414213562373095048801688724209698
+3.1416
+1
+7
+3
+2.718281828459045235360287471352662
+
+randomInt(1, 7)
+random(0, 1)
+
+Width = 4
+Height = 3
+Area = Width * Height
+
+Area
+
+A = 3
+A + B
+B = 2
+
+Rate = 5
+Rate = 6  # error: Property 'Rate' is already defined.
+
+# Define a property:
+Answer = 42
+
+# Property-style access:
+Answer
+
+# Explicit zero-parameter call:
+Answer()
+
+42
+42
+
+tick(), tick(), tick()
+
+1
+2
+3
+
+A = tick()
+A, A, A(), A
+
+1
+1
+2
+1
+
+MinDecimalPlaces = 2
+MaxDecimalPlaces = 4
+
+pi
+1 / 7
+2.5
+5 * 2
+
+3.1416
+0.1429
+2.50
+10.00
+
+MinDecimalPlaces = 2
+MaxDecimalPlaces = 2
+
+Price = 19.99
+
+Price * 3
+Price * 3 / 7
+1200
+
+59.97
+8.57
+1200.00
+
+Tax = price * 0.2
+Tax(50)
+
+Sub = a - b
+Speed = distance / time
+
+Sub(10, 3)
+Speed(100, 8)
+
+7
+12.5
+
+Hypotenuse(a, b) = sqrt(a ^ 2 + b ^ 2)
+Hypotenuse(3, 4)
+
+KeepFirst(a, b) = a
+KeepFirst(42, 999)
+
+Total = 5
+Totl + 1
+
+Double(x) = x + x
+Double(randomInt(1, 7)) mod 2
+
+Keep(x) = 42
+Keep(1 / 0)
+
+Ignore(x) = 7
+Twice(x) = x + x
+Ignore(tick()), Twice(tick()), tick()
+
+7
+2
+2
+
+Speed = distance / time
+KineticEnergy = mass * Speed ^ 2 / 2
+
+KineticEnergy(2, 10, 5)
+
+F(x) = x + 1
+G(x) = x * 2
+H = F + G
+
+H(3)
+
+Double(x) = x * 2
+Other(y) = y * 2
+
+Alias = Double
+Forward(x) = Double
+Explicit(x) = Other(x)
+Formula = Double + 1
+
+Alias(5)
+Forward(5)
+Explicit(5)
+Formula(5)
+
+10
+10
+10
+11
+
+Divide = y / ~x
+Divide(2, 10)
+
+Double = ~x * 2
+Double(4)
+
+3 > 1
+3 < 1
+5 == 5
+5 != 4
+3 >= 3
+
+true
+false
+true
+true
+true
+
+IsTeen = 13 <= age <= 19
+
+IsTeen(15)
+IsTeen(21)
+
+true
+false
+
+CanVote = age >= 18 and registered
+
+CanVote(20, true)
+CanVote(20, false)
+CanVote(16, true)
+
+true
+false
+false
+
+Abs = if(x < 0, -x, x)
+
+Abs(-5)
+Abs(3)
+
+5
+3
+
+SafeDivide(n, d) = if(d == 0, 0, n / d)
+
+SafeDivide(10, 4)
+SafeDivide(1, 0)
+
+2.5
+0
+
+if(1, 2, 3)
+
+Greeting = 'hello'
+
+Greeting
+Greeting == 'hello'
+'Hello' == 'hello'
+
+hello
+true
+false
+
+Verdict = if(score >= 50, 'pass', 'fail')
+
+Verdict(72)
+Verdict(35)
+
+pass
+fail
+
+Grade(score) = if(score >= 90, 'A', if(score >= 50, 'B', 'C'))
+
+Grade(95)
+Grade(60)
+Grade(10)
+
+A
+B
+C
+
+'{x}'
+'C:\temp'
+'say "hi"'
+
+{x}
+C:\temp
+say "hi"
+
+Price = 19.99
+Quantity = 3
+
+Price * Quantity
+
+Score = 72
+
+Score, if(Score >= 50, 'pass', 'fail')
+
+72
+pass
+
+Square = n * n
+
+Square(5)
+5.Square
+
+25
+25
+
+Add(a, b) = a + b
+
+Add(10, 5)
+10.Add(5)
+
+15
+15
+
+16.sqrt
+pi.round(2)
+2.pow(10)
+
+4
+3.14
+1024
+
+Double = n * 2
+Increment = n + 1
+
+3.Double.Increment
+Increment(Double(3))
+3.Increment.Double
+
+7
+7
+8
+
+Math.Sqrt(16)
+(Math.Sqrt)(16)
+
+4
+4
+
+42.string
+42.string == '42'
+
+42
+true
+
+Rectangle(width, height) = width * height, 2 * (width + height)
+
+Rectangle(3, 4)
+
+Point = 3, 4
+
+Point
+10, 20
+
+(3, 4)
+10
+20
+
+(1 + 1, 2 + 2, 3 + 3)
+
+(7)
+((1, 2))
+(1, (2, 3))
+
+7
+(1, 2)
+(1, (2, 3))
+
+Nums = 10, 20, 30, 40, 50
+
+# Select the third value (index 2):
+Nums[2]
+
+Pairs = (1, 2), (3, 4)
+
+Pairs.count
+Pairs[1]
+Pairs[1][0]
+
+2
+(3, 4)
+3
+
+Data = 10, 20, 30
+
+Data[2, 0, 2]
+Data[0]
+Data[]
+
+(30, 10, 30)
+10
+()
+
+Pair = 10, 20
+Add(x, y) = x + y
+
+Add(Pair)
+
+Coordinates = 10, 20
+Coordinates
+Coordinates*, 997
+
+(10, 20)
+10
+20
+997
+
+Pair = 10, 20
+Add(x, y) = x + y
+
+Add(Pair*)
+Pair*.Add
+
+30
+30
+
+A = 1, 2
+B = 3, 4
+
+(A*, B*)
+(A, B)
+
+(1, 2, 3, 4)
+((1, 2), (3, 4))
+
+Distance(x1, y1, x2, y2) = sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+P = 0, 0
+Q = 3, 4
+
+Distance(P*, Q*)
+
+Add(x, y) = x + y
+Bad = 1 / 0
+
+Add(Bad*)
+
+Data = 10, 20, 30
+Order = 2, 0
+
+Data[Order*]
+
+Point(x, y)* = x, y
+Add(x, y) = x + y
+
+Point(1, 2)
+Add(Point(3, 4))
+[Point(5, 6), Point(7, 8)]
+
+1
+2
+7
+[5, 6, 7, 8]
+
+Point(x, y)* = x, y
+
+Point(1, 2)[0]
+count({ Point(1, 2) })
+count([Point(1, 2)])
+
+1
+2
+2
+
+Point(x, y)* = x, y
+Apply(f) = [f(1, 2)]
+Also = Point
+
+Apply(Point)
+[Also(3, 4)]
+
+[(1, 2)]
+[3, 4]
+
+Fib(a, b)* = b, a + b
+Step(a, b) = Fib(a, b)
+
+Fib(0, 1)
+Step(0, 1).repeat(10)
+
+1
+1
+(55, 89)
+
+Length((x, y)) = sqrt(x ^ 2 + y ^ 2)
+Point = 3, 4
+
+Length(Point)
+Length((6, 8))
+
+5
+10
+
+FirstPair((x, y)) = x
+
+FirstPair((10, 20))
+
+()
+().count
+
+()
+0
+
+(1, 2) == (1, 2)
+(1, 2) == (2, 1)
+(1, (2, 3)) == (1, (2, 3))
+
+true
+false
+true
+
+[1, 2, 3]
+
+[7] == 7
+[[1, 2]] == [1, 2]
+[[]] == []
+
+false
+false
+false
+
+[] == ()
+[1, 2] == (1, 2)
+
+false
+false
+
+Primes = [2, 3, 5, 7]
+
+Primes.count
+Primes[0]
+[0, Primes*, 11]
+[Primes, 11]
+
+4
+2
+[0, 2, 3, 5, 7, 11]
+[[2, 3, 5, 7], 11]
+
+Grid = [[1, 2], [3, 4]]
+
+Grid[1]
+Grid[1][0]
+
+[3, 4]
+3
+
+Only([x]) = x
+PairSum([x, y]) = x + y
+
+Only([10])
+PairSum([10, 20])
+
+10
+30
+
+F(([x, y], z)) = x + y + z
+
+F(([10, 20], 30))
+
+Apply(f, x) = f(x)
+Square = n * n
+
+Apply(Square, 4)
+Apply(sqrt, 16)
+
+16
+4
+
+Twice = f(f(x))
+Square = n * n
+
+Twice(Square, 3)
+
+T = tick
+Apply(f) = f()
+T(), Apply(tick), tick()
+
+Apply(f, x) = f(x)
+
+Apply({n + 1}, 4)
+Apply({n * n}, 4)
+
+5
+16
+
+Twice(x, f) = f(f(x))
+
+Twice(5, {n * 2})
+5.Twice{n * 2}
+
+20
+20
+
+Circle(r) = {
+    Area = pi * r ^ 2
+    Area.round(2)
+}
+
+Circle(1)
+
+Square(x) = x * x
+Apply(f, x) = f(x)
+Use(f) = {
+    A = f
+    A(9), 2.A, Apply(A, 4)
+}
+
+Use(Square)
+
+range(1, 5)
+
+range(1, 10).filter{n mod 2 == 0}.map{n * n}.sum
+
+(1, 2, 3)
+.map { n * 2 }
+.sum
+
+IsEven = x mod 2 == 0
+filter((1, 2, 3, 4, 5, 6), IsEven)
+
+Scores = [72, 95, 58, 88, 64]
+
+Scores.count
+Scores.sum
+Scores.avg
+Scores.max
+Scores.order
+Scores.filter{s >= 60}
+Scores.map{s + 5}
+Scores.contains(88)
+Scores.orderDesc.take(3)
+
+5
+377
+75.4
+95
+[58, 64, 72, 88, 95]
+[72, 95, 88, 64]
+[77, 100, 63, 93, 69]
+true
+[95, 88, 72]
+
+sum([1, 2, 3])
+sum((1, 2, 3))
+(1, 2, 3).sum
+
+6
+6
+6
+
+sum(1, 2, 3)
+
+Scores = [72, 95, 58, 88, 64]
+
+Scores.take(1)
+Scores.filter{s > 100}
+Scores.first
+
+[72]
+[]
+72
+
+[3, 1, 2].order*, 997
+
+1
+2
+3
+997
+
+Pairs = [(2, 3), (4, 5)]
+
+Pairs.map{p[0] * p[1]}
+
+Swap((a, b)) = (b, a)
+map(((1, 2), (3, 4)), Swap)
+
+Broken = 1 / 0
+
+map([], Broken)
+
+Twice(x) = x, x
+
+[1, 2].map(Twice)
+
+Id(x) = x
+map([(), 1, [], 2], Id)
+
+Half(n) = if(n mod 2 == 0, n / 2, ())
+
+[4, 5, 6].map(Half)
+[4, 5, 6].filter{n mod 2 == 0}.map(Half)
+
+[2, (), 3]
+[2, 3]
+
+Total(price) = {
+    Tax = price div 5
+    Tax
+    price + Tax
+}
+
+[100, 50].map(Total)
+
+Numbers = [1, 2, 3, 4]
+
+Numbers.reduce({x + total}, 0)
+range(1, 5).reduce({x * product}, 1)
+
+10
+120
+
+Pair(x, acc) = x, acc
+Clear(x, acc) = ()
+
+[1, 2].reduce(Pair, 0)
+[1, 2].reduce(Clear, 0)
+
+(2, (1, 0))
+()
+
+[].reduce({x + total}, 1 / 0)
+
+atoms(((1, 2), (3, 4)))
+
+Data = [2, 4, 4, 4, 5, 5, 7, 9]
+
+Mean = Data.avg
+Variance = Data.map{(x - Mean) ^ 2}.avg
+Deviation = Variance.sqrt
+
+Mean, Variance, Deviation
+
+5
+4
+2
+
+Mean(*values) = values.sum / values.count
+
+Mean(1, 2, 3, 4)
+Mean(10)
+
+2.5
+10
+
+Collect(*items) = items
+
+Collect(1, 2, 3)
+Collect()
+Collect((1, 2), 3)
+Collect([1, 2])
+
+[1, 2, 3]
+[]
+[(1, 2), 3]
+[[1, 2]]
+
+Roll(*bonus) = randomInt(1, 7) + bonus.sum
+Roll == Roll
+
+Count(*items) = items.count
+Size = Count
+Twice = Count + Count
+
+Size, Twice, Count(7, 8, 9), Size(7, 8)
+
+0
+0
+3
+2
+
+Mean(*values) = values.sum / values.count
+Data = [2, 4, 6]
+
+Mean(2, 4, 6)
+Mean(Data*)
+Data*.Mean
+
+4
+4
+4
+
+Scale(*values, factor) = values.map{n * factor}
+Head(first, *rest) = first
+Tail(first, *rest) = rest
+
+Scale(1, 2, 3, 10)
+Head(5, 6, 7)
+Tail(5, 6, 7)
+
+[10, 20, 30]
+5
+[6, 7]
+
+Rest((x, *others)) = others
+Items([*xs]) = xs.count
+
+Rest((1, 2, 3))
+Items([5, 6])
+Items([])
+
+[2, 3]
+2
+0
+
+Target(*items) = items
+Forward(*items) = Target(items*)
+
+Forward(1, 2)
+Forward([1, 2])
+
+[1, 2]
+[[1, 2]]
+
+x, y = 1, 2
+x
+y
+
+1
+2
+
+q, r = 17 div 5, 17 mod 5
+q, r
+
+3
+2
+
+A = 1, 2, 3, 4, 5
+
+x, *y, z = A
+x
+y
+z
+
+1
+[2, 3, 4]
+5
+
+x, *rest = [1, 2, 3]
+
+x
+rest
+
+1
+[2, 3]
+
+a, b = tick(), 20
+a, a(), a(), tick()
+
+1
+1
+1
+2
+
+Describe(0) = 'zero'
+Describe(n) = if(n > 0, 'positive', 'negative')
+
+Describe(0)
+Describe(-4)
+Describe(7)
+
+zero
+negative
+positive
+
+Factorial(0) = 1
+Factorial(n) = n * Factorial(n - 1)
+
+Factorial(5)
+
+Gcd(a, 0) = a
+Gcd(a, b) = Gcd(b, a mod b)
+
+Gcd(48, 18)
+
+Fact = if(n <= 1, 1, n * Fact(n - 1))
+
+Fact(5)
+
+Price('tomatoes') = 1.20
+Price('apples') = 0.80
+Price(item) = 0
+
+Expense = Price(item) * quantity
+
+Price('apples')
+Price('bananas')
+Expense('apples', 3)
+
+0.80
+0
+2.40
+
+Area(('circle', r)) = pi * r ^ 2
+Area(('rect', w, h)) = w * h
+
+Area(('rect', 3, 4))
+Area(('circle', 1)).round(4)
+
+12
+3.1416
+
+Kind([]) = 0
+Kind([x]) = 1
+Kind(xs) = 2
+
+Kind([])
+Kind([5])
+Kind([5, 6])
+
+0
+1
+2
+
+Same(x, x) = true
+Same(x, y) = false
+
+Same(3, 3)
+Same(3, 4)
+
+A = 7
+D = 7
+Same(x, x) = true
+Same(x, y) = false
+
+Same(A, A)
+Same(A, D)
+Same(A, 7)
+
+Inc(y) = y + 1
+Same(x, x) = true
+Same(x, y) = false
+
+Check(n) = Same(Inc, n)
+Check(1)
+
+Grade(1) = 'excellent'
+Grade(2) = 'good'
+
+Grade(3)
+
+F(0) = 1
+F(x, y) = 2
+
+F(0)
+
+Sum(xs) = if(xs.count == 0, 0, xs[0] + Sum(xs.skip(1)))
+
+Sum([1, 2, 3])
+
+Times(0, f, x) = x
+Times(n, f, x) = Times(n - 1, f, f(x))
+
+Times(3, {y + 1}, 0)
+
+Apply(f) = f(1, 10)
+F(0) = Apply({ y - ~x })
+F(0)
+
+Increment = x + 1
+Increment(0).repeat(5)
+
+Fibonacci(a, b) = b, a + b
+Final = Fibonacci(0, 1).repeat(10)
+
+Final
+Final[0]
+
+(55, 89)
+55
+
+Power(base, n) = {
+    Step(x) = x * base
+    Step(1).repeat(n)
+}
+
+Power(2, 10)
+
+Countdown = x - 1, x > 1
+Countdown(5).while
+
+Step(x) = 10 / (x - 1), x > 1
+Step(1).while
+
+Grow(years, balance) = years + 1, balance * 1.05, balance < 2000
+Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1
+
+Grow(0, 1000).while[0]
+Collatz(27, 0).while[1]
+
+15
+111
+
+Countdown = x - 1, x > 1
+Loop(s) = s.while
+
+Loop(Countdown(5))
+
+Add = { x + 10 }
+
+Add(0).repeat(3)
+
+Countdown(0) = 0, false
+Countdown(n) = n - 1, true
+Countdown(3).while
+
+Loan(principal, rate, years) = {
+    MonthlyRate = rate / 12
+    Months = years * 12
+    principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months)
+}
+
+Loan(200000, 0.06, 30).round(2)
+
+Loan(principal, rate, years) = {
+    MonthlyRate = rate / 12
+    Months = years * 12
+    principal * MonthlyRate / (1 - (1 + MonthlyRate) ^ -Months)
+}
+
+Loan.MonthlyRate
+
+Fixed(i) = {
+    T = tick()
+    T + T
+}
+Fresh(i) = {
+    T = tick()
+    T() + T()
+}
+
+[1, 2].map(Fixed)
+[1, 2].map(Fresh)
+
+[2, 4]
+[7, 11]
+
+Counter(i) = {
+    T = tick()
+    T
+}
+
+Counter(0)
+Counter(0)
+Counter.T
+Counter.T
+
+1
+2
+3
+3
+
+X = 10
+Inner = {
+    X = 99
+    X
+}
+
+Inner
+X
+
+99
+10
+
+v = 99
+Outer(v) = {
+    Inner = v + 1
+    Inner
+}
+Outer(7)
+
+Area = width * height
+Report(width, height) = {
+    Doubled = Area * 2
+    Doubled + 1
+}
+Report(3, 4)
+
+[1, 2].map{
+    Sq = n * n
+    Sq + Sq
+}
+
+Physics = {
+    public G = 9.81
+    public FallTime(h) = sqrt(2 * h / G)
+}
+
+Physics.G
+Physics.FallTime(20).round(3)
+
+9.81
+2.019
+
+B(a, c) = a * 100 + c
+Obj = {
+    public B(c) = c + 1
+}
+
+Obj.B(5)
+3.B(5)
+
+6
+305
+
+open Physics
+Physics = {
+    public G = 9.81
+    public FallTime(h) = sqrt(2 * h / G)
+}
+
+FallTime(20).round(3)
+
+Lib = {
+    public Area = 4
+    Helper = Area / 2
+}
+
+Lib.Area
+Lib.Helper
+
+4
+2
+
+open A, B
+A = {
+    public X = 1
+    public P = 10
+}
+B = {
+    public X = 2
+    public Q = 20
+}
+
+P + Q + A.X + B.X
+
+# Load and bind to property 'Lib':
+Lib = load('https://katlang.org/algorithm.kat')
+
+# Access a public property 'X' from the loaded algorithm:
+Lib.X + 3
+
+# Use the second output value of the loaded algorithm (index 1):
+Lib[1] + 10
+
+23
+16
+
+open 'https://katlang.org/algorithm.kat'
+
+# X is now directly accessible:
+X + 3
+
+F(x) = x + 1
+G(x) = x * 2
+H = F + G
+
+Common(x, x) = x
+Twice = Common * 2
+
+H(3)
+Twice(7)
+
+10
+14
+
+Lib = {
+    public Inc(x) = x + 1
+}
+E(0) = 100
+E(n) = n
+Total = count + 0
+Next = Lib.Inc + 0
+Fam = E + 1
+
+Total((1, 2, 3))
+Next(4)
+Fam(0)
+
+3
+5
+101
+
+Inc(x) = x + 1
+Apply(f) = f(10)
+
+Values = [Inc, Inc * 2]
+Kept = Apply(Inc)
+Branch = if(true, Inc, 0)
+
+Values(4)
+Kept
+Branch(4)
+
+[5, 10]
+11
+5
+
+Single([x]) = x
+
+Alias = Single
+SameShape([x]) = Single
+Explicit(x) = Single(x)
+Construct = Single([x])
+
+Alias([7])
+SameShape([7])
+Explicit([7])
+Construct(7)
+
+7
+7
+7
+7
+
+C = count
+I = if
+M = map
+Bad(x) = x / 0
+
+C([1, 2, 3])
+I(true, 1, 1 / 0)
+M([], Bad)
+
+3
+1
+[]
+
+Box = {
+    public Q = 99
+    F(x) = x * x
+    F
+}
+A = Box
+B = { Box }
+GetQ(f) = f.Q
+
+A.Q
+GetQ(A)
+A(3)
+B(3)
+
+99
+99
+9
+9
+
+Box = {
+    public G = {
+        public K = 7
+        n * 2
+    }
+}
+Use(b) = {
+    A = b.G
+    A(9), A.K
+}
+
+Use(Box)
+
+Count = if(tick() > 3, start, Count + 1)
+
+Count(10)
+
+A = if(tick() < 3, A + 1, 0)
+
+A, A
+
+2
+2
+
+Prefixed = s * 100 + ~x * 10 + ~y
+Prefixed(1, 2, 3)
+
+Postfixed = s~ * 100 + x~ * 10 + y
+Postfixed(1, 2, 3)
+
+K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d
+K(1, 2, 3, 4)
+
+Square(x) = x * x
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+R.Invoke()
+
+Square(x) = x * x
+Capture(meta operation) = operation
+Twice(r) = r.Invoke() + r.Invoke()
+
+Twice(Capture(Square(3)))
+
+Square(x) = x * x
+Capture(meta operation) = operation
+
+Capture(Square(5))
+
+Add(x, y) = x + y
+Capture(meta operation) = operation
+
+R = Capture(Add(10, 20))
+R.Arguments.count, R.Arguments[0], R.Arguments[1]
+
+2
+10
+20
+
+Add(x, y) = x + y
+First(x, y) = x
+Capture(meta operation) = operation
+
+R = Capture(Add(5, 1 / 0))
+R.Arguments.count, First(R.Arguments*)
+
+2
+5
+
+Square(x) = x * x
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+R.Algorithm(8), R.Invoke()
+
+64
+25
+
+Square(x) = x * x
+Apply(f, x) = f(x)
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
+
+49
+[1, 4, 9]
+25
+
+Step(x) = x + 1, x < 3
+Loop(meta operation) = operation.Algorithm(operation.Arguments*).while
+
+Step(0).Loop
+
+Ignore(*xs) = 10
+Ignore(1 / 0, 2)
+
+F(*xs) = xs[1, 0, 1]
+F(10, 20, 1 / 0)
+
+First(0, a, b) = a
+First(n, a, b) = b
+
+First(0, 10, 1 / 0)
+
+Show(x, x) = x.string
+
+Show(1.5, 1.50)
+Show(1.50, 1.5)
+
+1.5
+1.50
+
+Inc(x) = x + 1
+Safe(z) = if(false, abs(Inc), z)
+
+Safe(7)
+
+1 2 3
+
+Total = 1 +
+    2
+Values = [
+    10
+    20
+]
+
+Total, Values.sum
+
+3
+30
+
+A = 1, 2, 3
+B = 2
+
+A*
+B *
+3
+
+1
+2
+3
+6
+
+A = 2
+B = 3
+
+A*, B
+A* B
+
+2
+3
+6
+
+A = (1, 2)
+X = (A*)
+
+X

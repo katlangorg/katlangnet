@@ -223,22 +223,80 @@ The `katlang` CLI's `--allow-loading` flag is off by default: without it, source
 
 These bounds apply per download. KatLang's `SourceProcessingLimits` (decoded per-module source length, aggregate source, module count, import depth) still apply separately to the text the transport returns. A refused or timed-out download is reported as an ordinary `load: failed to fetch` diagnostic with exit code 1.
 
+## Code links
+
+A code link carries a KatLang program in a katlang.org URL, `https://katlang.org/#<format>/<payload>`: opening it shows the program in the KatLang Playground and runs it there. The link holds the source itself, compressed, in the URL fragment, so nothing is stored on a server or sent to one, and anyone who has the link can read the program. `KatLang.CodeLink` makes and reads these links in .NET, with no JavaScript and no dependency:
+
+```c#
+using KatLang;
+
+// Making a link.
+var text = CodeLink.Encode("100 - 3 * 5 ^ 2") switch
+{
+    CodeLinkEncoding.Link link => link.Url,   // https://katlang.org/#1/4MWjDBlNE4PH
+    CodeLinkEncoding.EmptyProgram => "There is no program to link.",
+    CodeLinkEncoding.SourceTooLong tooLong => $"The program is {tooLong.SourceLength} code units long.",
+    CodeLinkEncoding.PayloadTooLong tooLong => $"The link's payload would be {tooLong.PayloadLength} characters long.",
+};
+Console.WriteLine(text);
+
+// Reading one, with every check a reader makes before it opens a link.
+switch (CodeLink.DecodeLink("https://katlang.org/#1/4MWjDBlNE4PH"))
+{
+    case CodeLinkDecoding.Program program:
+        Console.WriteLine(program.Source);    // 100 - 3 * 5 ^ 2
+        break;
+    case CodeLinkDecoding.Refused refused:
+        Console.Error.WriteLine($"Not a usable code link: {refused.Reason}.");
+        break;
+}
+```
+
+- **`CodeLink.Encode(source)`** returns a `CodeLinkEncoding`: a `Link` with its `Format` (`CodeLink.CurrentFormat`, 1), `Payload`, `Fragment` and `Url`, or the reason the program has no link. That is `EmptyProgram`, `SourceTooLong` (over `CodeLink.MaxSourceLength`, 20,000 UTF-16 code units; such a program is not encoded) or `PayloadTooLong` (over `CodeLink.MaxPayloadLength`, 1,970 characters, which keeps a link under 2,000 characters). The source is encoded exactly as given, as UTF-16 code units, with nothing normalized: line breaks, tabs, trailing spaces and unpaired surrogates are part of the program. `Url` is the link on `CodeLink.CanonicalBaseUrl`; a site on another origin appends `#` and the `Fragment` (`1/<payload>`) to its own base URL.
+- **`CodeLink.DecodeLink(link)`** and **`CodeLink.Decode(format, payload)`** return a `CodeLinkDecoding`: a `Program` with its `Source`, exactly as the link carries it, or `Refused` with a `CodeLinkRefusal`, the first check that failed. The link's fragment must be a format number, `/` and the payload (`NotACodeLink` otherwise, as for links in the earlier `#code/` format); the format must be one this KatLang reads (`UnsupportedVersion`: a link from a newer KatLang, or a changed one); the payload must not be empty or longer than the limit (`EmptyPayload`, `PayloadTooLong`); it may hold only the characters a payload uses, and nothing is percent-decoded or trimmed, because no payload character ever needs it (`InvalidCharacter`); it must decode to a program within the source limit whose check value matches (`Damaged`, `SourceTooLong`); and that program must encode back to the same payload in that format (`NotCanonical`).
+- **`CodeLink.TryGetPayload(link, out format, out payload)`** reads a link's format number and payload without decoding it, and is `false` for a link that is not a code link. It reads only the fragment: which origins, paths and queries may carry a code link is the host's own route policy.
+
+The payload is KatLang's own code-link format, specified in [`docs/design/code-link-format.md`](docs/design/code-link-format.md). The number before it names the format (`1`); the payload carries the compressed program and a 12-bit checksum in the URL-safe alphabet `A–Z a–z 0–9 - _`. The compression model starts with KatLang's vocabulary and tutorial examples. The checksum and canonical encoding detect many copying errors, although an edit can produce a valid link to a different program. For `100 - 3 * 5 ^ 2`, the payload takes 12 characters, down from 24 with lz-string. A new format is introduced only by the owner's decision. It gets the next number, `Encode` writes it, and readers keep opening links in every earlier format.
+
+Decoding is bounded whatever the payload: the work is linear in the program length the stream announces, which may not exceed 60,000 bytes, and reading stops at the first byte that cannot belong to a link. Both results are C# `closed` hierarchies produced only by the library, like `RunResult`. A code link is a host and tooling format, not KatLang syntax: nothing here parses or runs a program, and a decoded program is input like any other, to be run with the limits you would give any program you did not write.
+
 ## Command-line code links
 
 With `--code-link`, `run`, `eval` and `check` end with a link to the program they read. After the command's usual output (rows on stdout, diagnostics on stderr), the CLI flushes stdout and writes one last line to stderr:
 
 ```
-katlang-link: https://katlang.org/#code/<payload>
+katlang-link: https://katlang.org/#1/<payload>
 ```
 
-Opening the link shows the program in the KatLang Playground on katlang.org and runs it there. The payload is `LZString.compressToEncodedURIComponent(source)` from lz-string 1.5.0, the format of katlang.org's code links, computed by the CLI itself in the same process as the run. The source is the program text exactly as the command evaluates it — the `eval` argument, or the file's text after the one leading byte order mark the CLI drops — as UTF-16 code units, with line breaks, tabs, trailing spaces and a final line break kept as written; the payload is not percent-encoded.
+Opening the link shows the program in the KatLang Playground on katlang.org and runs it there. The payload is KatLang's code-link format (above), computed by the KatLang library (`CodeLink.Encode`) in the same process as the run. The source is the program text exactly as the command evaluates it — the `eval` argument, or the file's text after the one leading byte order mark the CLI drops — as UTF-16 code units, with line breaks, tabs, trailing spaces and a final line break kept as written; the payload is never percent-encoded.
 
 - The line is written whatever the program does once the CLI has its source: success, a KatLang error at any stage, output over the display limit, even a cancellation. A usage or file error that stops the command before it has the source writes no link line.
-- A program that cannot be a code link gets `katlang-link: none: <reason>` instead: an empty program, one longer than 50,000 UTF-16 code units, or one whose payload would be longer than 8,192 characters.
+- A program that cannot be a code link gets `katlang-link: none: <reason>` instead: an empty program, one longer than 20,000 UTF-16 code units, or one whose payload would be longer than 1,970 characters.
 - The option changes neither stdout nor the exit status; without it the CLI computes and writes nothing extra. Like every option, it may be written once, anywhere before a bare `--`.
 - The link carries the program's source and nothing else (no results, settings or identity), so anyone who has it can read the program.
 
-For example, `katlang eval --code-link "100 - 3 * 5 ^ 2"` prints `25` on stdout and `katlang-link: https://katlang.org/#code/IwBhAIFpwZnAqcBWcA9cAmIA` on stderr.
+For example, `katlang eval --code-link "100 - 3 * 5 ^ 2"` prints `25` on stdout and `katlang-link: https://katlang.org/#1/4MWjDBlNE4PH` on stderr.
+
+`katlang source <link>` goes the other way: it writes the program that a code link carries to stdout, and runs nothing.
+
+```
+katlang source "https://katlang.org/#1/4MWjDBlNE4PH"
+katlang source "<link>" > program.kat
+```
+
+- stdout receives the program exactly as the link carries it. No line break is added, and control characters are written raw, as `cat` writes a file, so redirecting stdout reproduces the program byte for byte as UTF-8. (Windows PowerShell 5.1 re-encodes what any native program writes to a redirected stdout, as UTF-16; use PowerShell 7.4 or later, `cmd` or a POSIX shell.) Look at a program from a link you do not trust in a file or an editor rather than on a terminal.
+- The link is read exactly as given, with nothing trimmed or decoded, and by its fragment alone: any origin, path and query may come before the `#`. It gets the checks above (`CodeLink.DecodeLink`).
+- A link that carries no program is refused: exit status 1, nothing on stdout, and one line on stderr, `katlang: invalid code link: <reason>`. The reason is one of these sentences:
+  - `it has no #<format>/<payload> fragment.`
+  - `its format is not one this KatLang reads; a newer KatLang may read it.`
+  - `its payload is empty.`
+  - `its payload is longer than 1,970 characters.`
+  - `its payload has a character that code links do not use.`
+  - `its payload is damaged or cut short.`
+  - `its program is longer than 20,000 UTF-16 code units.`
+  - `its payload does not re-encode to itself, so it was changed.`
+- A link can carry an unpaired surrogate, which UTF-8 cannot represent. Such a program is refused in the same way, with `katlang: cannot print the program: it contains an unpaired surrogate, which UTF-8 cannot represent.`
+- `source` takes exactly one argument and no option: it has no program to load modules for, evaluate, display or link, so each command option is a usage error for it (`option '--code-link' is not valid for 'source': source reads a link and runs nothing.`).
 
 ## Reproducible randomness
 

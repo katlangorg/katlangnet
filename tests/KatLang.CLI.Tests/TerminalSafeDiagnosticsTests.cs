@@ -699,8 +699,8 @@ public sealed class TerminalSafeDiagnosticsTests
         }
 
         // RunAsync's error writer is wrapped on entry; WriteUnexpectedError's TextWriter overload
-        // wraps it immediately; `output` is stdout (program output, help, version, and the flush
-        // before --code-link's line).
+        // wraps it immediately; `output` is stdout (program output, help, version, the flush
+        // before --code-link's line, and the program `source` writes).
         Assert.Equal(
             [
                 "CliApplication.ExecuteAsync(output)",
@@ -708,6 +708,7 @@ public sealed class TerminalSafeDiagnosticsTests
                 "CliApplication.RunAsync(output)",
                 "CliApplication.RunCommandAsync(output)",
                 "CliApplication.WriteCodeLink(output)",
+                "CliApplication.WriteLinkedProgram(output)",
                 "CliApplication.WriteUnexpectedError(error)",
             ],
             rawWriterUses.Order(StringComparer.Ordinal));
