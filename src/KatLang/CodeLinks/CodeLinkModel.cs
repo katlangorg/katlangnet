@@ -41,6 +41,19 @@ internal sealed class CodeLinkModel
     private const int Bias = 256;
 
     private static readonly int[] s_rates = CreateRates();
+
+    // The points of SquashPoints. Squash reads them once per coded bit, so they are an array: in
+    // debuggable (Debug-build) code the JIT calls RuntimeHelpers.CreateSpan instead of expanding
+    // it, and a ReadOnlySpan property over constant data then allocates on every read, 72 bytes
+    // per bit. Initialized before s_stretch, which squashes every stretch value.
+    private static readonly short[] s_squashPoints =
+    [
+        1, 2, 2, 3, 4, 5, 6, 8, 10, 13, 17, 21, 27, 35, 45, 58, 74, 94, 120, 153, 194, 246, 311, 391,
+        488, 606, 747, 912, 1102, 1314, 1546, 1793, 2048, 2303, 2550, 2782, 2994, 3184, 3349, 3490,
+        3608, 3705, 3785, 3850, 3902, 3943, 3976, 4002, 4022, 4038, 4051, 4061, 4069, 4075, 4079,
+        4083, 4086, 4088, 4090, 4091, 4092, 4093, 4094, 4094, 4095,
+    ];
+
     private static readonly short[] s_stretch = CreateStretch();
     private static readonly Lazy<byte[]> s_primer = new(ReadPrimer);
     private static readonly Lazy<CodeLinkModel> s_primed = new(CreatePrimed);
@@ -198,7 +211,7 @@ internal sealed class CodeLinkModel
     internal static int Squash(int stretch)
     {
         var d = Math.Clamp(stretch, -2047, 2047) + 2048;
-        var points = SquashPoints;
+        var points = s_squashPoints;
         var p = (points[d >> 6] * (64 - (d & 63)) + points[(d >> 6) + 1] * (d & 63) + 32) >> 6;
         return Math.Clamp(p, 1, 4095);
     }
@@ -211,13 +224,7 @@ internal sealed class CodeLinkModel
     /// logistic function at stretch 64 (i − 32). Written out, not computed, because a
     /// platform's <c>exp</c> may round differently.
     /// </summary>
-    internal static ReadOnlySpan<short> SquashPoints =>
-    [
-        1, 2, 2, 3, 4, 5, 6, 8, 10, 13, 17, 21, 27, 35, 45, 58, 74, 94, 120, 153, 194, 246, 311, 391,
-        488, 606, 747, 912, 1102, 1314, 1546, 1793, 2048, 2303, 2550, 2782, 2994, 3184, 3349, 3490,
-        3608, 3705, 3785, 3850, 3902, 3943, 3976, 4002, 4022, 4038, 4051, 4061, 4069, 4075, 4079,
-        4083, 4086, 4088, 4090, 4091, 4092, 4093, 4094, 4094, 4095,
-    ];
+    internal static ReadOnlySpan<short> SquashPoints => s_squashPoints;
 
     private void EndByte(byte value)
     {
