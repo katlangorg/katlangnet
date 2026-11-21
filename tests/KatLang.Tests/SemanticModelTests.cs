@@ -3108,6 +3108,58 @@ public class SemanticModelTests
         Assert.Same(n, bareN.ResolvedDeclaration);
     }
 
+    [Theory]
+    [InlineData("[{0}]")]
+    [InlineData("({0} + 0)")]
+    [InlineData("-{0}")]
+    [InlineData("Pick({0})")]
+    public void RejectedOpenTarget_IsModeledInThePreludeRootedRegion_LikeACaptureRow(string shape)
+    {
+        // Everything written in an open target belongs to a region rooted at the prelude: parameter detection,
+        // implicit-argument resolution and open-provider validation elaborate every shape there, and static admission
+        // declares the blocks written in it there. The model visited a capture row (`open (…, 0)`) in that region but
+        // every other shape the parser rejects under the OPENER: a name the opener's chain declares resolved to that
+        // declaration, and a block had no completed context, so the member read from it stayed unresolved (and a lookup
+        // through the block's own `open` threw; RejectedOpenTargetBlockTests). Each shape is now modeled exactly like
+        // the capture row holding the same item.
+        foreach (var item in new[] { "L", "{ public X = Y }.X" })
+        {
+            var rejected = SitesOf(shape.Replace("{0}", item, StringComparison.Ordinal), item);
+            Assert.Equal(SitesOf("(" + item + ", 0)", item), rejected);
+            // The root's `L` is not visible in that region; the block's `Y` is its own `X`'s implicit parameter there.
+            List<(string, OccurrenceKind, IdentifierClassification, int, SourcePosition?)> expected = item == "L"
+                ? [("L", OccurrenceKind.ResolveReference, IdentifierClassification.Unresolved, 0, null)]
+                : [
+                    ("X", OccurrenceKind.PropertyDefinition, IdentifierClassification.PropertyDefinition, 9, new SourcePosition(5, 9)),
+                    ("Y", OccurrenceKind.ParameterReference, IdentifierClassification.ImplicitParameterReference, 13, null),
+                    ("X", OccurrenceKind.DotMemberReference, IdentifierClassification.PropertyReference, 17, new SourcePosition(5, 9)),
+                ];
+            Assert.Equal(expected, rejected);
+        }
+
+        // The sites of the item inside `open <target>` on line 5, at columns relative to the item; a declaration on
+        // that line is relative too.
+        static List<(string, OccurrenceKind, IdentifierClassification, int, SourcePosition?)> SitesOf(string target, string item)
+        {
+            var source = "L = { public X = 1 }\nPick(v) = v\nY = 2\nA = {\n    open " + target + "\n    1\n}\nA";
+            var parsed = SourceProvenance.ParseAllowingDiagnostics(source);
+            Assert.Equal(DiagnosticCode.BadOpenForm, Assert.Single(parsed.Diagnostics).Code);
+            var start = 10 + target.IndexOf(item, StringComparison.Ordinal);
+            var model = SemanticModelBuilder.Build(parsed.Parsed);
+            Assert.DoesNotContain(model.GetVisibleSymbolsAt(new SourcePosition(5, start)), symbol => symbol.Name == "L");
+            Assert.Contains(model.GetVisibleSymbolsAt(new SourcePosition(6, 5)), symbol => symbol.Name == "L");
+            return model.IdentifierResolutions
+                .Where(r => r.Occurrence.Span.Start.Line == 5 && r.Occurrence.Span.Start.Column >= start
+                    && r.Occurrence.Span.End.Column <= start + item.Length)
+                .OrderBy(static r => r.Occurrence.Span.Start.Column)
+                .Select(r => (r.Occurrence.Name, r.Occurrence.Kind, r.Classification, r.Occurrence.Span.Start.Column - start,
+                    r.ResolvedDeclaration?.Span.Start is { } at
+                        ? (SourcePosition?)(at.Line == 5 ? new SourcePosition(5, at.Column - start) : at)
+                        : null))
+                .ToList();
+        }
+    }
+
     [Fact]
     public void ModuleProvenance_LocalContentAfterImportedOpenKeepsItsSites()
     {

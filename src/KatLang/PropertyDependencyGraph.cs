@@ -1048,6 +1048,9 @@ internal static class PropertyDependencyGraphBuilder
         /// stays in its region (<see cref="SummaryWalkMemos.ArgumentBundleSeeds"/>).
         /// </summary>
         internal Dictionary<OutputBundle, SummarySeed>? IndependentArgumentBundles;
+        // In open-target recovery a block contributes no requirements. Even a context-independent
+        // bundle computed there can differ from that bundle's seed in an ordinary row.
+        internal Dictionary<OutputBundle, SummarySeed>? OpenTargetArgumentBundles;
         internal long ContextUses;
         internal void UseContext() => ContextUses++;
 
@@ -1505,9 +1508,17 @@ internal static class PropertyDependencyGraphBuilder
     /// expansion or settlement runs without one.
     /// </summary>
     internal sealed class SummaryWalkMemos(SummaryMemo sharedMemo, FrontEndTraversalObservations? observations,
-        CompletedStructureContext completedContext)
+        CompletedStructureContext completedContext, bool openTargetRegion = false)
     {
         public readonly CompletedStructureContext CompletedContext = completedContext;
+
+        /// <summary>
+        /// This region walks the open targets of its level that are neither name paths nor inline-headed
+        /// (<see cref="CollectOpenTargetSeeds"/>). An algorithm written in such a target is declared at the prelude, not in
+        /// <see cref="CompletedContext"/>, so the walk neither summarizes it nor navigates a path from it: it charges
+        /// nothing.
+        /// </summary>
+        public readonly bool OpenTargetRegion = openTargetRegion;
         public Dictionary<Expr, SummarySeed>? TransparentSeeds;
         public Dictionary<OutputBundle, SummarySeed>? ArgumentBundleSeeds;
         public Dictionary<Expr, SummarySeed>? PrimarySeeds;
@@ -1973,29 +1984,37 @@ internal static class PropertyDependencyGraphBuilder
     /// VALUE only when the first step selects nothing, so the path is charged like a name-headed one
     /// (<see cref="PendingSelection.BlockHead"/>). A recognized block must have published body facts in this context;
     /// their absence is an invariant failure, never permission to charge the block's output instead. False for a
-    /// loaded module's root, which is rooted at the prelude. The path's
+    /// loaded module's root. In an open-target recovery walk a block path contributes an empty seed:
+    /// its block is declared at the prelude and has no requirements on the opener. Its intermediate edges
+    /// still participate in the recovery walk's usual fallback accounting. The path's
     /// <paramref name="intermediates"/> are those of <see cref="MemberPathSpine"/>, as for a name-headed path.
     /// <para>A block written in a hoisted deconstruction right-hand side is found here too: the source's rows are
     /// walked with the memos of the level that declares the deconstruction, and that level's completed context is
     /// the one the static facts declare the block in (the source's own context holds no written expression).</para>
     /// </summary>
-    private static bool TryGetBlockMemberPath(Expr.DotCall dotCall, SummaryWalkMemos memos,
-        out CompletedStructureContext block, out string[] members, out IReadOnlyList<Expr.DotCall> intermediates)
+    private static bool TryGetBlockMemberPathSeed(Expr.DotCall dotCall, SummaryWalkMemos memos,
+        out SummarySeed seed, out IReadOnlyList<Expr.DotCall> intermediates)
     {
-        block = null!;
-        members = [];
+        seed = null!;
         intermediates = [];
         if (MemberPathSpine(dotCall, out var reversed, out var edges) is not Expr.AlgorithmExpr(var body)
             || body.IsModuleRoot || body is not (Algorithm.User or Algorithm.Alias))
             return false;
+        intermediates = edges;
+        if (memos.OpenTargetRegion)
+        {
+            seed = new SummarySeed();
+            return true;
+        }
         var context = memos.SharedMemo.RequirementContext(ChildContext(memos.CompletedContext, body), body);
         if (context.Facts.Facts(context.Key) is not { Body: not null })
             throw new InvalidOperationException("A completed block-head requirement body is unavailable.");
         memos.SharedMemo.UseContext();
+        var firstMember = reversed[^1];
+        reversed.RemoveAt(reversed.Count - 1);
         reversed.Reverse();
-        block = context;
-        members = [.. reversed];
-        intermediates = edges;
+        seed = new SummarySeed(pendingReferences: [new PendingReference(firstMember, reversed,
+            origin: context, selection: PendingSelection.BlockHead)]);
         return true;
     }
 
@@ -2004,8 +2023,17 @@ internal static class PropertyDependencyGraphBuilder
     /// (<c>open A</c> needs only A's identity; <c>open A.B</c> charges the
     /// requirements of the navigated member <c>B</c>), an inline-headed target charges
     /// nothing (its block is wired to the prelude), and
-    /// any other (illegal, recovery) shape walks as an ordinary expression. An open target is
-    /// not a call, so no lexical fallback is ever charged for it.
+    /// other shapes retain ordinary expression accounting for the names, parameters and fallbacks they contain.
+    /// <para>That ordinary walk runs in an OPEN-TARGET REGION (<see cref="SummaryWalkMemos.OpenTargetRegion"/>): what it
+    /// charges for the names and parameters such a shape writes is unchanged, but an ALGORITHM written in it charges
+    /// nothing and is never resolved structurally. Every algorithm written in an open target is declared at the
+    /// prelude — static admission keys it there, and parameter detection, implicit-argument resolution, open-provider
+    /// validation and the exposure rewrite elaborate it there — so, as for the inline head above, nothing reached from
+    /// it can require the opener's chain; and none of these shapes is ever evaluated as a value. Walked as an expression
+    /// of this level, a block-headed path inside such a shape (<c>open [{ … }.X]</c>, <c>open F({ … }.X)</c>,
+    /// <c>open load({ … }.X)</c>) looked for its block under the opener, where no key exists, and failed
+    /// <see cref="TryGetBlockMemberPathSeed"/>'s completed-body invariant, which keeps holding for every block an admitted
+    /// row reads.</para>
     /// </summary>
     private static SummarySeed CollectOpenTargetSeeds(
         IReadOnlyList<Expr> opens,
@@ -2014,6 +2042,7 @@ internal static class PropertyDependencyGraphBuilder
         SummaryWalkMemos memos)
     {
         var seed = new SummarySeed();
+        SummaryWalkMemos? openTargetRegion = null;
         foreach (var target in opens)
         {
             switch (target.OpenTargetHead(out var steps))
@@ -2030,8 +2059,11 @@ internal static class PropertyDependencyGraphBuilder
                 case Expr.AlgorithmExpr:
                     break;
 
+                // A parameter-owned head, a load directive no module replaced, or a shape the parser rejects.
                 default:
-                    seed.UnionWith(CollectSummarySeed(target, localPropertySummaries, ownedHere, memos, inTransparentContext: false));
+                    openTargetRegion ??= new SummaryWalkMemos(memos.SharedMemo, memos.Observations, memos.CompletedContext,
+                        openTargetRegion: true);
+                    seed.UnionWith(CollectSummarySeed(target, localPropertySummaries, ownedHere, openTargetRegion, inTransparentContext: false));
                     break;
             }
         }
@@ -2239,7 +2271,9 @@ internal static class PropertyDependencyGraphBuilder
             Expr.ListLiteral(var listItems) => CollectSummarySeed(
                 listItems, localPropertySummaries, ownedHere, memos, inTransparentContext),
 
-            Expr.AlgorithmExpr(var algorithm) => CollectSharedAlgorithmSummarySeed(algorithm, memos),
+            Expr.AlgorithmExpr(var algorithm) => memos.OpenTargetRegion
+                ? new SummarySeed()
+                : CollectSharedAlgorithmSummarySeed(algorithm, memos),
 
             // A capture owns no names: its rows walk with an empty
             // owned-here set and an empty local-summary map — exactly what
@@ -2296,7 +2330,9 @@ internal static class PropertyDependencyGraphBuilder
     private static SummarySeed CompletedArgumentBundleSeed(OutputBundle bundle, SummaryWalkMemos memos)
     {
         FrontEndStack.Ensure();
-        var independent = memos.SharedMemo.IndependentArgumentBundles ??= new(ReferenceEqualityComparer.Instance);
+        var independent = memos.OpenTargetRegion
+            ? memos.SharedMemo.OpenTargetArgumentBundles ??= new(ReferenceEqualityComparer.Instance)
+            : memos.SharedMemo.IndependentArgumentBundles ??= new(ReferenceEqualityComparer.Instance);
         if (independent.TryGetValue(bundle, out var shared)) return shared;
         var bundleSeeds = memos.ArgumentBundleSeeds ??= new(ReferenceEqualityComparer.Instance);
         if (!bundleSeeds.TryGetValue(bundle, out var seed))
@@ -2321,7 +2357,7 @@ internal static class PropertyDependencyGraphBuilder
     /// <c>Inner.X</c> is itself local-only — and a receiver the walk stops at (the member
     /// is absent: the edge falls back) charges its output exactly as the bare target seed
     /// did. An inline-block head is navigated the same way, from the block itself
-    /// (<see cref="TryGetBlockMemberPath"/>). A receiver of any other shape (a parameter, a
+    /// (<see cref="TryGetBlockMemberPathSeed"/>). A receiver of any other shape (a parameter, a
     /// capture, a call, the <c>string</c> intrinsic) is a value and keeps charging its own seed.
     /// <para>EVERY edge of a recognized path is charged its lexical fallback, not only the
     /// final one: the path is one pending reference over all its steps, and navigation
@@ -2359,10 +2395,7 @@ internal static class PropertyDependencyGraphBuilder
         IReadOnlyList<Expr.DotCall> intermediates;
         if (TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers, out intermediates))
             seed = new SummarySeed(pendingReferences: [new SummaryReference(pathHead, pathMembers)]);
-        else if (TryGetBlockMemberPath(dotCall, memos, out var block, out var blockMembers, out intermediates))
-            seed = new SummarySeed(pendingReferences: [new PendingReference(blockMembers[0], blockMembers[1..],
-                origin: block, selection: PendingSelection.BlockHead)]);
-        else
+        else if (!TryGetBlockMemberPathSeed(dotCall, memos, out seed, out intermediates))
             // Not a path: the target is walked as an expression, so every inner edge is charged by its own visit.
             seed = CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
 

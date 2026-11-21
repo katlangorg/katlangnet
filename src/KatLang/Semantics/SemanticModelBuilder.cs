@@ -1203,16 +1203,12 @@ public static class SemanticModelBuilder
                     VisitAlgorithm(algorithm, _preludeScope, extraParameters: null, expr.Span);
                     break;
 
-                case Expr.Capture(var captureBody):
-                    // A capture target owns no scope: rows classify against the
-                    // open-target prelude scope, matching the pre-split
-                    // transparent wrapper (which added only an empty frame).
-                    foreach (var row in captureBody)
-                        VisitExpr(row, _preludeScope);
-                    break;
-
                 default:
-                    VisitExpr(expr, scope);
+                    // Admission roots blocks inside a recovery expression at the prelude. Its
+                    // identifier sites and positional completion use that same existing frame.
+                    var region = OpenScopeRegion(_preludeAlgorithm, expr.Span);
+                    VisitExpr(expr, _preludeScope);
+                    CloseScopeRegion(region, _preludeScope);
                     break;
             }
         }

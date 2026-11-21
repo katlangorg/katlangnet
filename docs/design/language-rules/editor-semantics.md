@@ -28,6 +28,10 @@ Two consumers read it. A declared structural slot of a pattern-display signature
 
 String TEXT produces nothing: a `StringLiteral` token is never an identifier site, whatever its text holds (`'{x}'` names no `x`). The recovery token of a rejected double-quoted run (`syntax.md` § Strings) is a `StringLiteral` token too, so the model builds over it without throwing and fabricates no site, declaration or reference inside the run — the `x` of `"Total: {x}"` is text — while the code around the run keeps its ordinary sites. Pinned by `UnsupportedDoubleQuotedStringTests` and the editor fuzz surface (`EditorSurfaces.CheckCommentsAndStringsAreNotIdentifiers`).
 
+## Rejected open targets (November 2026)
+
+A named open target resolves its head in the opener’s lexical chain. An inline block is declared at the prelude, including a block nested inside a rejected list, call, operator, or capture. The model visits the recovery expression with the prelude’s completed lookup facts. Its identifier sites and positional completion use the same scope. For example, in `open [L]` a property `L` of the opener is unavailable at the written `L`. In `open F({ public X = 1 }.X)` the member reference reaches the block’s own `X`. Code following the target resumes the opener’s scope. See `SemanticModelTests.RejectedOpenTarget_IsModeledInThePreludeRootedRegion_LikeACaptureRow` and `RejectedOpenTargetBlockTests`.
+
 ## Failed structural receivers (Q-17 S-C and Q-75 F-A)
 
 A receiver classified `KnownFailure` has failed before the next dot edge can select a member or its miss route. The editor therefore leaves that edge `Unresolved`, without a declaration target or property hover. This applies to `.string` too: `F.Sub.string` cannot select the intrinsic when `Sub` exists only in a clause branch. A branch-only member named `string` follows the same rule. `DotSemanticsDecisionTests.Q17_Editor_AFailedStructuralReceiverDoesNotSelectTheIntrinsic` pins both spellings against the evaluator's `LocalOnlyProperty` error.
