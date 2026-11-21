@@ -2269,25 +2269,40 @@ alone, then program 6 is reduced in that context).
 ### Nightly sweeps
 
 `.github/workflows/semantic-nightly.yml` runs `scripts/run-semantic-sweeps.ps1` every night (02:23
-UTC) and on manual dispatch, never on a pull request or a push; it is separate from `validate.yml`,
-whose standalone-tool job stays build-only, needs no secret and runs on a GitHub-hosted
-`ubuntu-24.04` runner. The script builds this project once (Debug, so the evaluator's DEBUG invariant
-checks run) and runs `semantic-campaign --exhaustive` over every finite recipe (`seed-nested`,
-`seed-nested-wide`, `seed-nested-wider`; batches of 128, failures persisted and reduced, each sweep
-bounded by `--max-seconds 2400`), writing every log, summary and reproducer to a fresh git-ignored
-`artifacts/validation/semantic-sweeps-*` directory and a table to the job summary (per recipe: exit
-code, completeness, planned and failed cases, batch-only, batch-dependent, unclassified, elapsed seconds). It fails when a
-sweep finds a failure or does not complete; the job then uploads that directory as
-`semantic-sweep-reproducers` (also when it times out or is cancelled). The three sweeps took 913 s
-(83 + 620 + 210 s) on a developer machine on 2026-11-17, plus about a minute of build. The first
-two completed hosted runs took 1,106 s and 1,190 s for the whole job (runs 44284579331 on 2026-11-18
-and 44506161617 on 2026-11-19; the sweep step took 1,078 s and 1,173 s), so the job allows 70
-minutes: a run 50% slower than the slower one plus one sweep that spends its whole budget
-(1.5 × 1,190 + 2,400 = 4,185 s), about 3.5 times that job. Each sweep keeps its 40-minute budget:
-the hosted per-recipe times are in those runs' step summaries and logs, which an unauthenticated
-reader cannot open, so it has not been re-sized. `ContinuousIntegrationPolicyTests`
-pins the triggers, the runner, the recipe list and the upload, and holds the workflow to the shared
-action-pinning, secret, checkout and cache policies.
+UTC) and on manual dispatch. The GitHub-hosted `ubuntu-24.04` job needs no secret and builds this project once in Debug
+so the evaluator's invariant checks run. It runs `semantic-campaign --exhaustive` over every finite
+recipe in batches of 128. Pull requests and pushes to `main` use the separate build-only standalone-tool job.
+
+The following scheduled jobs all completed every recipe with zero failures. Recipe times come from
+the final `semantic-sweeps.log` rows printed in the linked job logs. The sweep step also includes the
+Debug build. All durations are in seconds.
+
+| Run | Date | Commit | Job (s) | Sweep step (s) | `seed-nested` (s) | `seed-nested-wide` (s) | `seed-nested-wider` (s) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [44284579331](https://github.com/katlangorg/katlangnet/actions/runs/44284579331/job/134733811268) | 2026-11-18 | `15a16307` | 1,106 | 1,078 | 94 | 706 | 243 |
+| [44506161617](https://github.com/katlangorg/katlangnet/actions/runs/44506161617/job/135498246938) | 2026-11-19 | `a29edacb` | 1,190 | 1,173 | 103 | 766 | 260 |
+| [44716956509](https://github.com/katlangorg/katlangnet/actions/runs/44716956509/job/136222680893) | 2026-11-20 | `c9723a33` | 1,681 | 1,669 | 151 | 1,092 | 371 |
+
+`seed-nested-wide` was the longest recipe in all three jobs. Its 1,092-s maximum leaves 1,308 s
+in the script's 40-minute default (`-MaxSecondsPerRecipe 2400`, passed to `--max-seconds`).
+That allows about 2.2 times the longest observed recipe for slower execution, standalone reruns
+and reductions. For comparison, local Debug sweeps took 83 / 620 / 210 s on 2026-11-17 and
+84 / 663 / 220 s at `cba4accf` on 2026-11-21.
+
+The 90-minute job timeout allows 50% over the longest whole job plus a full slow recipe
+(1.5 × 1,681 + 2,400 = 4,921.5 s). Counting the whole job includes build and setup as well as
+each recipe's ordinary runtime. This leaves 478.5 s of the 5,400 s for work already in progress
+at the recipe deadline, writing diagnostics and uploading reproducers. `ContinuousIntegrationPolicyTests`
+checks the workflow timeout against the script default and reserves at least five minutes for that work.
+
+The campaign checks the time budget before each batch. A recipe that runs out of time with cases
+left reports `time-budget` and is incomplete. Any failure or incomplete recipe fails the script.
+The script records each finished recipe in `artifacts/validation/semantic-sweeps-*/semantic-sweeps.log`.
+After the last recipe it writes the exit code, completeness, planned and failed counts, batch-only,
+batch-dependent and unclassified counts, and elapsed seconds to the job summary. An unclassified
+failure is a batch failure recorded after the standalone reruns were spent. On failure or cancellation,
+the upload step attempts to preserve the output directory as `semantic-sweep-reproducers`. If the
+hard job timeout interrupts the script or the upload, the summary or artifact can be missing.
 
 ### Extending it
 

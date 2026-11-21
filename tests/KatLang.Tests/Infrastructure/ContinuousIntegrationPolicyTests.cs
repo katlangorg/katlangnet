@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text.Json;
@@ -998,6 +999,34 @@ public class ContinuousIntegrationPolicyTests
         Assert.Contains("| $batchOnly | $batchDependent | $unclassified |", script, StringComparison.Ordinal);
         Assert.Contains("& git check-ignore -q -- \"$relative/semantic-sweeps.log\"", script, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"(?m)^[^#\n]*\bdotnet\s+(?:test|publish)\b", script);
+    }
+
+    /// <summary>
+    /// A run 50% slower than the longest measured job, one full additional recipe budget, and five
+    /// minutes for finishing a batch and uploading diagnostics must fit inside the nightly job.
+    /// The hosted measurements are in fuzz/README.md § Nightly sweeps.
+    /// </summary>
+    [Fact]
+    public void SemanticNightly_JobTimeout_LeavesRoomForOneSweepAtItsWholeBudget()
+    {
+        // From the hosted runs through 44716956509 (2026-11-20).
+        const int SlowestCompletedJobSeconds = 1_681;
+        const int OvershootAndUploadSeconds = 300;
+
+        var job = JobSection(Text(SemanticNightlyPath), "semantic-sweeps");
+        Assert.Matches(@"(?m)^        run: pwsh -NoProfile -File \./" + Regex.Escape(SemanticSweepScriptPath) + "$", job);
+        var script = Text(SemanticSweepScriptPath);
+        var budget = Regex.Match(script, @"(?m)^ *\[int\]\$MaxSecondsPerRecipe *= *(?<seconds>[0-9]+)$");
+        Assert.True(budget.Success, "the script must declare its per-recipe budget");
+        Assert.Matches(@"(?m)^ *& dotnet \$assembly semantic-campaign [^#\n]*--max-seconds \$MaxSecondsPerRecipe\b", script);
+        var timeout = Regex.Match(job, @"(?m)^    timeout-minutes: (?<minutes>[0-9]+)$");
+        Assert.True(timeout.Success, "the job must declare its timeout");
+
+        var perRecipe = int.Parse(budget.Groups["seconds"].Value, CultureInfo.InvariantCulture);
+        var allowance = 60 * int.Parse(timeout.Groups["minutes"].Value, CultureInfo.InvariantCulture);
+        var needed = SlowestCompletedJobSeconds * 1.5 + perRecipe + OvershootAndUploadSeconds;
+        Assert.True(allowance >= needed,
+            $"The job allows {allowance} s. The measured baseline, a full {perRecipe}-s recipe budget and reporting reserve require {needed} s.");
     }
 
     [Fact]

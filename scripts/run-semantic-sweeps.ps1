@@ -7,7 +7,9 @@ param(
     [ValidateRange(1, 4096)]
     [int]$BatchSize = 128,
 
-    # Each sweep's own time budget; a sweep it stops is incomplete, which fails the script.
+    # The longest hosted recipe took 706, 766 and 1,092 s across three successful runs
+    # (seed-nested-wide each time). 2,400 s allows 2.2 times that maximum for a slower run
+    # or failure triage. A sweep stopped short of its plan fails the script (fuzz/README.md § Nightly sweeps).
     [ValidateRange(60, 21600)]
     [int]$MaxSecondsPerRecipe = 2400
 )
