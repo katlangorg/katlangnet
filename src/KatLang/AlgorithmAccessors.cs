@@ -186,10 +186,12 @@ internal static class AlgorithmAccessors
     /// The name of the first property, in declaration order, whose name an EARLIER property of the
     /// list already has (ordinal comparison), or <c>null</c> when every name is unique. Lean:
     /// <c>Algorithm.findDuplicatePropName</c>.
-    /// <para>The evaluator asks this on every body evaluation, where the list is usually empty or
-    /// short, so up to <see cref="LinearDuplicatePropertyScanLimit"/> properties are compared
-    /// pairwise without allocating (2026-11 allocation attribution: the former per-call set was one
-    /// heap object per call even for an empty list). A longer list uses a set sized for it. Both
+    /// <para>The evaluator asks for this verdict on every body evaluation
+    /// (<see cref="Evaluator.DuplicatePropertyName"/>), where the list is usually empty or short, so up
+    /// to <see cref="LinearDuplicatePropertyScanLimit"/> properties are compared pairwise without
+    /// allocating (2026-11 allocation attribution: the former per-call set was one heap object per call
+    /// even for an empty list). A longer list uses a set sized for it, and the evaluator decides such a
+    /// list once per run (<see cref="Evaluation.PropertyBindingIndexCache.FirstDuplicateName"/>). Both
     /// forms meet the properties in declaration order and stop at the same one.</para>
     /// </summary>
     internal static string? FirstDuplicatePropertyName(IReadOnlyList<Property> properties)

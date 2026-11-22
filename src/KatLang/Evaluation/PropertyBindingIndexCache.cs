@@ -154,4 +154,81 @@ internal sealed class PropertyBindingIndexCache
             return index.GetValueOrDefault(declaration);
         }
     }
+
+    // The duplicate-name verdicts of this run's WIDE property lists (FirstDuplicateName), keyed by the list
+    // itself like every index above, in ONE table created by the first wide list, so a run without one pays a
+    // single null field. Guarded by the declaration indexes' gate: unlike the sequential name lookups, the
+    // table must stay sound if two flows of one run ever meet in it. The verdict served last is read outside it.
+    private DuplicateVerdictTable? _duplicateVerdicts;
+
+    private sealed record DuplicateVerdict(IReadOnlyList<Property> Properties, string? FirstDuplicate);
+
+    private sealed class DuplicateVerdictTable() : Dictionary<IReadOnlyList<Property>, DuplicateVerdict>(ReferenceEqualityComparer.Instance)
+    {
+        // The verdict served last: a body evaluated again and again over one list (a call in a loop, recursion)
+        // finds it without the lock. Verdicts are immutable, so a racing reader sees a complete one.
+        internal DuplicateVerdict? Last;
+    }
+
+    /// <summary>
+    /// The runtime duplicate-property check of a body (Lean <c>Algorithm.findDuplicatePropName</c>): the name of
+    /// the first property of <paramref name="properties"/>, in declaration order, whose name an earlier property
+    /// already has, or null — exactly <see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>, which decides
+    /// it. The evaluator asks on every evaluation of a body, so the verdict of a list longer than
+    /// <see cref="AlgorithmAccessors.LinearDuplicatePropertyScanLimit"/> — the one that builds a name set — is
+    /// retained once per run per list and reused by later evaluations of a body over that list (2026-11-22,
+    /// finding <c>evaluator-runtime-duplicate-check-hashset-per-body-evaluation</c>: a wide body evaluated K
+    /// times built K sets). A shorter list keeps the allocation-free pairwise scan on every evaluation. Like
+    /// every index of this run-local cache, the verdict is keyed by the list REFERENCE, never by an algorithm's
+    /// record equality: wired views share their list, while a <c>with</c> copy that replaces it gets its own
+    /// verdict; host-owned lists are stable during a run, and a new run decides again, so an edit between runs
+    /// is observed. The verdict is a pure function of the list, computed outside the lock: a racing reader
+    /// computes the same value, and the first stored one is served.
+    /// </summary>
+    internal string? FirstDuplicateName(IReadOnlyList<Property> properties)
+    {
+        if (properties.Count <= AlgorithmAccessors.LinearDuplicatePropertyScanLimit)
+            return AlgorithmAccessors.FirstDuplicatePropertyName(properties);
+        return WideFirstDuplicateName(properties);
+    }
+
+    // The memo path of FirstDuplicateName, out of line: a wide list's first evaluation in the run decides it.
+    private string? WideFirstDuplicateName(IReadOnlyList<Property> properties)
+    {
+        var table = Volatile.Read(ref _duplicateVerdicts);
+        if (table is not null && Volatile.Read(ref table.Last) is { } last && ReferenceEquals(last.Properties, properties))
+            return last.FirstDuplicate;
+
+        DuplicateVerdict? verdict = null;
+        if (table is not null)
+        {
+            lock (_declarationIndexGate)
+                table.TryGetValue(properties, out verdict);
+        }
+
+        if (verdict is null)
+        {
+            var decided = new DuplicateVerdict(properties, AlgorithmAccessors.FirstDuplicatePropertyName(properties));
+            lock (_declarationIndexGate)
+            {
+                if ((table = _duplicateVerdicts) is null)
+                    Volatile.Write(ref _duplicateVerdicts, table = new DuplicateVerdictTable());
+                if (!table.TryGetValue(properties, out verdict))
+                    table.Add(properties, verdict = decided);
+            }
+        }
+
+        Volatile.Write(ref table!.Last, verdict);
+        return verdict.FirstDuplicate;
+    }
+
+    /// <summary>The number of wide property lists with a stored duplicate verdict in this run (<see cref="FirstDuplicateName"/>); a test observation.</summary>
+    internal int DuplicateVerdictCount
+    {
+        get
+        {
+            lock (_declarationIndexGate)
+                return _duplicateVerdicts?.Count ?? 0;
+        }
+    }
 }

@@ -239,8 +239,7 @@ public static partial class Evaluator
                     CountedTopLevelValues(countedR.Value)));
         }
 
-        var dupProp = alg.FindDuplicatePropName();
-        if (dupProp is not null)
+        if (DuplicatePropertyName(alg, ctx.Budget) is { } dupProp)
             return new EvalError.DuplicateProperty(dupProp);
 
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)

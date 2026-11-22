@@ -289,7 +289,7 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
         }
 
-        if (alg.FindDuplicatePropName() is { } duplicateName)
+        if (DuplicatePropertyName(alg, ctx.Budget) is { } duplicateName)
             return new EvalError.DuplicateProperty(duplicateName);
 
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)

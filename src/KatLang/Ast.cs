@@ -3774,8 +3774,9 @@ public closed record Algorithm
         /// Returns the first duplicate name found, or null if all names are unique.
         /// Lean: Algorithm.findDuplicatePropName (the <c>.mk</c> case; the other
         /// constructors have no properties). Allocation-free for a short property list
-        /// (<see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>): the evaluator asks on
-        /// every body evaluation.
+        /// (<see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>). The evaluator asks on
+        /// every body evaluation through its run-local verdict of a long list
+        /// (<see cref="Evaluator.DuplicatePropertyName"/>), which answers exactly this.
         /// </summary>
         public string? FindDuplicatePropName()
             => AlgorithmAccessors.FirstDuplicatePropertyName(Properties);

@@ -5,7 +5,10 @@
 // first match wins, a callee's own bindings prepended to the caller's), not a
 // new type. The evaluator's lookup, shadowing, concatenation, loop-environment
 // implementations, and cache-identity checks all keep operating on the plain
-// list.
+// list. A WIDE need tier the evaluator itself makes (a minted boundary tier, a
+// wide activation's captured cells: Evaluator.MinimumIndexedParameterCount) is
+// still that list, carrying its activation's owned-name index, which answers
+// what the ordered scan would.
 //
 // A parameter's VALUE and its CALLABLE identity both live on its supplied cell
 // (NeedEnv): since Model C there is no separate algorithm-channel tier and no counted

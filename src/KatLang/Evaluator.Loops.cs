@@ -66,7 +66,7 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
         }
 
-        if (OutputRowsAccessError(alg) is { } accessError)
+        if (OutputRowsAccessError(alg, ctx) is { } accessError)
             return accessError;
 
         var slots = new List<Result>();
@@ -113,7 +113,7 @@ public static partial class Evaluator
             return countedR.IsError ? countedR.Error : WhileVerdictOfSupply([countedR.Value.Value]);
         }
 
-        if (OutputRowsAccessError(alg) is { } accessError)
+        if (OutputRowsAccessError(alg, ctx) is { } accessError)
             return accessError;
 
         var rows = alg.Output;
@@ -168,15 +168,34 @@ public static partial class Evaluator
     /// <summary>
     /// The access failures of an algorithm read as output rows (both row readers and their
     /// async mirrors): a duplicate property, a conditional read without call arguments, and a
-    /// user algorithm without written output.
+    /// user algorithm without written output. The context is passed by reference, so the body-entry frames
+    /// that ask (recursion spines) hold no copy of its budget.
     /// </summary>
-    private static EvalError? OutputRowsAccessError(Algorithm alg)
+    private static EvalError? OutputRowsAccessError(Algorithm alg, in EvalCtx ctx)
     {
-        if (alg.FindDuplicatePropName() is { } duplicateName)
+        if (DuplicatePropertyName(alg, ctx.Budget) is { } duplicateName)
             return new EvalError.DuplicateProperty(duplicateName);
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
             return conditionalError;
         return alg is Algorithm.User { Output.Count: 0 } ? new EvalError.MissingOutput() : null;
+    }
+
+    /// <summary>
+    /// The runtime duplicate-property check of a body evaluation (Lean <c>Algorithm.findDuplicatePropName</c>,
+    /// total: <c>none</c> for a builtin or a family, whose property list is empty): host-API defense, since the
+    /// front end rejects a duplicate property before evaluation. Every evaluator site that enters a body asks
+    /// it here. A short list keeps the allocation-free pairwise scan
+    /// (<see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>); a wide one is decided once per run per
+    /// list (<see cref="PropertyBindingIndexCache.FirstDuplicateName"/>), so repeated evaluation of a wide body
+    /// builds no name set per evaluation. Out of line, so the body-entry frames that ask it keep no scan state.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static string? DuplicatePropertyName(Algorithm alg, EvaluationBudget budget)
+    {
+        var properties = alg.Properties;
+        return properties.Count <= AlgorithmAccessors.LinearDuplicatePropertyScanLimit
+            ? AlgorithmAccessors.FirstDuplicatePropertyName(properties)
+            : budget.PropertyBindings.FirstDuplicateName(properties);
     }
 
     /// <summary>

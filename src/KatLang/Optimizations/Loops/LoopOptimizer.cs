@@ -461,7 +461,7 @@ internal static partial class LoopOptimizer
         // exactly that (Evaluator.IsOptimizedLoopShapeEligible); a snapshot that is not exactly that is
         // refused here too, so the planner never binds a head it cannot represent.
         var admittedHead = userStep.ParameterPatterns.ToArray();
-        if (userStep.FindDuplicatePropName() is not null || AdmittedStateNames(admittedHead, stateArity) is not { } stateNames)
+        if (Evaluator.DuplicatePropertyName(userStep, ctx.Budget) is not null || AdmittedStateNames(admittedHead, stateArity) is not { } stateNames)
         {
             RecordLoopPlanFallbackDiagnostic(kind, step, stateArity, ctx, "loop plan parameter/property shape mismatch");
             return null;

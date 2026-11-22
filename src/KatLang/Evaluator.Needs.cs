@@ -7,9 +7,34 @@ public static partial class Evaluator
 {
     // Indexed, not `foreach`: enumerating the interface boxes an enumerator on every lookup unless
     // the JIT happens to devirtualize and stack-allocate it (PERF-ORD-1). Every environment list has
-    // an O(1) indexer; the scan order and first-match rule are unchanged.
+    // an O(1) indexer; the scan order and first-match rule are unchanged. A WIDE tier the evaluator
+    // made — a minted boundary tier or a wide activation's captured cells — answers its owned names
+    // through the activation's owned-name index (LookupWideNeed), which gives the scan's first match.
     private static NeedCell? LookupNeed(NeedEnv env, string name)
     {
+        var count = env.Count;
+        if (count >= MinimumIndexedParameterCount)
+            return LookupWideNeed(env, name);
+        for (var i = 0; i < count; i++)
+        {
+            var binding = env[i];
+            if (binding.Name == name) return binding.Cell;
+        }
+        return null;
+    }
+
+    // LookupNeed of a tier of at least MinimumIndexedParameterCount bindings, out of line. Any other wide
+    // list (an inherited tier with the callee's names shadowed out, a host-built one) is scanned as before.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static NeedCell? LookupWideNeed(NeedEnv env, string name)
+    {
+        switch (env)
+        {
+            case WideBoundNeedEnv minted:
+                return minted.Find(name);
+            case OwnedNeedBindings owned:
+                return owned.Find(name);
+        }
         for (var i = 0; i < env.Count; i++)
         {
             var binding = env[i];
@@ -1585,7 +1610,7 @@ public static partial class Evaluator
     {
         if (callee is not Algorithm.User { DeferredRegion: null })
             return EvalAlgOutputCountedCore(callee, ctx, values, invoked);
-        if (OutputRowsAccessError(callee) is { } accessError)
+        if (OutputRowsAccessError(callee, ctx) is { } accessError)
             return accessError;
         var prepared = EvalOutputRowsPrepared(callee.Output, EnterAlgorithmBody(callee, ctx, values, names, invoked: invoked), ctx, values);
         return prepared.IsError
@@ -1599,7 +1624,7 @@ public static partial class Evaluator
     {
         if (callee is not Algorithm.User { DeferredRegion: null })
             return await EvalAlgOutputCountedCoreAsync(callee, ctx, values, invoked).ConfigureAwait(false);
-        if (OutputRowsAccessError(callee) is { } accessError)
+        if (OutputRowsAccessError(callee, ctx) is { } accessError)
             return accessError;
         var prepared = await EvalOutputRowsPreparedAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names, invoked: invoked), ctx, values).ConfigureAwait(false);
         return prepared.IsError

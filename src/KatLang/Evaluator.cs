@@ -277,6 +277,8 @@ public static partial class Evaluator
     // (three heap objects per binding site; 2026-11 allocation attribution).
     private static NeedEnv UnshadowedBindings(NeedEnv inherited, IReadOnlyList<string> parameterNames)
     {
+        if (parameterNames.Count >= MinimumIndexedParameterCount && inherited.Count > LinearShadowNameScanLimit)
+            return UnshadowedWideBindings(inherited, parameterNames);
         var kept = 0;
         for (var i = 0; i < inherited.Count; i++)
             if (!ContainsOrdinal(parameterNames, inherited[i].Name)) kept++;
@@ -286,6 +288,27 @@ public static partial class Evaluator
         var next = 0;
         for (var i = 0; i < inherited.Count && next < kept; i++)
             if (!ContainsOrdinal(parameterNames, inherited[i].Name))
+                bindings[next++] = inherited[i];
+        return bindings;
+    }
+
+    // UnshadowedBindings when the callee's names are wide and so is the inherited tier — a wide head called from
+    // a wide activation, its own recursion included: membership goes through ONE ordinal set of the names
+    // (null included, as in ShadowValEnv) instead of a scan of them per inherited binding, which cost
+    // inherited × names comparisons per call. The kept bindings and their order are the scan's.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static NeedEnv UnshadowedWideBindings(NeedEnv inherited, IReadOnlyList<string> parameterNames)
+    {
+        var shadowed = new HashSet<string>(parameterNames, StringComparer.Ordinal);
+        var kept = 0;
+        for (var i = 0; i < inherited.Count; i++)
+            if (!shadowed.Contains(inherited[i].Name)) kept++;
+        if (kept == 0)
+            return Array.Empty<(string Name, NeedCell Cell)>();
+        var bindings = new (string Name, NeedCell Cell)[kept];
+        var next = 0;
+        for (var i = 0; i < inherited.Count && next < kept; i++)
+            if (!shadowed.Contains(inherited[i].Name))
                 bindings[next++] = inherited[i];
         return bindings;
     }
@@ -356,6 +379,21 @@ public static partial class Evaluator
     /// linear membership scan to a hash set.
     /// </summary>
     internal const int LinearShadowNameScanLimit = 8;
+
+    /// <summary>
+    /// The smallest WIDE parameter frame (implementation-only, 2026-11-22, finding
+    /// <c>evaluator-runtime-quadratic-parameter-width</c>): an activation captured over at least this many names
+    /// keeps its owned-name index (<see cref="ParameterActivation.Capture"/>, <see cref="ScopeBindsParameter"/>),
+    /// the tier a call minted with at least this many cells of its own looks the callee's names up through that
+    /// index (<see cref="WideBoundNeedEnv"/>, <see cref="LookupNeed"/>), and a callee with at least this many names
+    /// called from a tier of more than <see cref="LinearShadowNameScanLimit"/> bindings shadows it through a set
+    /// (<see cref="UnshadowedBindings"/>).
+    /// Before, every parameter read of a frame of N names scanned the head's names and the bindings (O(N) per
+    /// read, O(N²) per body that reads them all), as did every forwarded parameter and every inherited binding a
+    /// call shadowed. Every narrower frame keeps the scans, which are cheaper than an index at that size: the same
+    /// threshold as <see cref="PropertyBindingIndexCache.MinimumIndexedPropertyCount"/>.
+    /// </summary>
+    internal const int MinimumIndexedParameterCount = 32;
 
     internal static bool ContainsOrdinal(IReadOnlyList<string> names, string name)
     {
@@ -522,7 +560,7 @@ public static partial class Evaluator
                 for (var depth = 0; depth < requirement.OwnerDepth && owner is not null; depth++)
                     owner = owner.Parent;
                 if (requirement.OwnerDepth < 0 || owner is null
-                    || !owner.Parameters.Contains(requirement.Name, StringComparer.Ordinal)
+                    || !ScopeBindsParameter(owner, requirement.Name)
                     || owner.Activation is not { } activation
                     || IsDetached(activation, ctx)
                     || !LexicalChainContains(ctx, owner))
@@ -544,18 +582,16 @@ public static partial class Evaluator
 
     /// <summary>
     /// The scope owning parameter <paramref name="name"/> as seen from <paramref name="scope"/>:
-    /// the nearest level, that scope itself first, whose parameters bind the name.
+    /// the nearest level, that scope itself first, whose parameters bind the name
+    /// (<see cref="ScopeBindsParameter"/>: indexed on a wide activated level, scanned otherwise).
     /// Lean: <c>requiredParameterOwner?</c>.
     /// </summary>
     private static ScopeCtx? RequiredParameterOwner(ScopeCtx scope, string name)
     {
         for (var level = scope; level is not null; level = level.Parent)
         {
-            foreach (var parameter in level.Parameters)
-            {
-                if (string.Equals(parameter, name, StringComparison.Ordinal))
-                    return level;
-            }
+            if (ScopeBindsParameter(level, name))
+                return level;
         }
 
         return null;
@@ -4620,10 +4656,12 @@ public static partial class Evaluator
     /// The need tier's <see cref="Concat{T}"/>: the same fresh list, typed as a
     /// <see cref="BoundNeedEnv"/> so that the binding context it mints stays recognizable when
     /// it binds no cell and inherits none (<see cref="BindingContextIdentity"/>). No extra
-    /// allocation: the boundary already allocated this list.
+    /// allocation: the boundary already allocated this list. A tier whose own part <paramref name="a"/> holds
+    /// at least <see cref="MinimumIndexedParameterCount"/> bindings is a <see cref="WideBoundNeedEnv"/>, the same
+    /// list, which the activation entered over it lends its owned-name index.
     /// </summary>
     internal static NeedEnv Concat(NeedEnv a, NeedEnv b)
-        => new BoundNeedEnv(a, b);
+        => a.Count >= MinimumIndexedParameterCount ? new WideBoundNeedEnv(a, b) : new BoundNeedEnv(a, b);
 
     /// <summary>
     /// The need tier of a binding context that a binding boundary minted
@@ -4634,7 +4672,7 @@ public static partial class Evaluator
     /// binds nothing is still a new activation (CACHE-OWNER-D2). Every other tier (the root's, a
     /// shadowed view, an activation's captured cells) is no boundary when empty.
     /// </summary>
-    internal sealed class BoundNeedEnv : List<(string Name, NeedCell Cell)>
+    internal class BoundNeedEnv : List<(string Name, NeedCell Cell)>
     {
         internal BoundNeedEnv(NeedEnv own, NeedEnv inherited)
             : base(own.Count + inherited.Count)
@@ -4642,5 +4680,63 @@ public static partial class Evaluator
             AddRange(own);
             AddRange(inherited);
         }
+    }
+
+    /// <summary>
+    /// A minted need tier whose callee binds at least <see cref="MinimumIndexedParameterCount"/> cells of its own
+    /// (<see cref="Concat(NeedEnv, NeedEnv)"/>): the same <see cref="BoundNeedEnv"/> — the same bindings in the same
+    /// order, the same binding-context identity — whose lookups of the callee's own names (<see cref="LookupNeed"/>:
+    /// every read of the head's own parameters, every parameter it forwards) do not scan it (implementation-only,
+    /// 2026-11-22). The activation captured from it LENDS it the owned-name index its capture built
+    /// (<see cref="Lend"/>, <see cref="OwnedNeedBindings.Filter"/>), which holds the first binding of each name it owns
+    /// in this very list. Any other name — a free host-built parameter, read through no lexical owner — is scanned as
+    /// before. The list is never changed after it is minted, so the lent index is exact for its whole life; it is
+    /// published once (compare-and-set), so concurrent readers need no lock.
+    /// </summary>
+    internal sealed class WideBoundNeedEnv : BoundNeedEnv
+    {
+        private OwnedNeedBindings? _owned;
+        private int _scanned;
+
+        internal WideBoundNeedEnv(NeedEnv own, NeedEnv inherited)
+            : base(own, inherited)
+        {
+        }
+
+        /// <summary>
+        /// Lends this tier the owned-name index of an activation captured FROM it (<see cref="OwnedNeedBindings.Filter"/>):
+        /// the first binding of each name the activation owns, found by that scan of this very list. A lookup of such
+        /// a name is then answered from it, so a wide frame builds one name index, not one per tier. The first lender
+        /// is kept; any lender is exact for the names it owns.
+        /// </summary>
+        internal void Lend(OwnedNeedBindings owned)
+            => Interlocked.CompareExchange(ref _owned, owned, null);
+
+        /// <summary>The cell of the first binding named <paramref name="name"/>, or null: the ordered scan's answer.</summary>
+        internal NeedCell? Find(string name)
+        {
+            if (Volatile.Read(ref _owned) is { } owned && owned.Owned.SlotOf(name) is var slot and >= 0)
+                return owned.CellAt(slot);
+
+            var count = Count;
+            for (var i = 0; i < count; i++)
+            {
+                var binding = this[i];
+                if (binding.Name == name)
+                {
+                    _scanned += i + 1;
+                    return binding.Cell;
+                }
+            }
+
+            _scanned += count;
+            return null;
+        }
+
+        /// <summary>Whether an activation has lent this tier its owned-name index; a test observation.</summary>
+        internal bool IsLent => Volatile.Read(ref _owned) is not null;
+
+        /// <summary>The bindings this tier's lookups have compared by scanning it so far (advisory under races); a test observation.</summary>
+        internal int ScannedBindings => _scanned;
     }
 }

@@ -1482,8 +1482,7 @@ public static partial class Evaluator
                     CountedTopLevelValues(countedR.Value)));
         }
 
-        var dupProp = alg.FindDuplicatePropName();
-        if (dupProp is not null)
+        if (DuplicatePropertyName(alg, ctx.Budget) is { } dupProp)
             return new EvalError.DuplicateProperty(dupProp);
 
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
@@ -1645,7 +1644,7 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
         }
 
-        if (OutputRowsAccessError(alg) is { } accessError)
+        if (OutputRowsAccessError(alg, ctx) is { } accessError)
             return accessError;
 
         var slots = new List<Result>();
@@ -1677,7 +1676,7 @@ public static partial class Evaluator
             return countedR.IsError ? countedR.Error : WhileVerdictOfSupply([countedR.Value.Value]);
         }
 
-        if (OutputRowsAccessError(alg) is { } accessError)
+        if (OutputRowsAccessError(alg, ctx) is { } accessError)
             return accessError;
 
         var rows = alg.Output;
@@ -1742,7 +1741,7 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
         }
 
-        if (alg.FindDuplicatePropName() is { } duplicateName)
+        if (DuplicatePropertyName(alg, ctx.Budget) is { } duplicateName)
             return new EvalError.DuplicateProperty(duplicateName);
 
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
@@ -1928,7 +1927,7 @@ public static partial class Evaluator
         if (algorithm.ParameterPatterns.Count != 0)
             return await EvalCollectingPropertyOwnerBodyCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
 
-        if (OutputRowsAccessError(algorithm) is { } accessError)
+        if (OutputRowsAccessError(algorithm, ctx) is { } accessError)
             return accessError;
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
@@ -1950,7 +1949,7 @@ public static partial class Evaluator
         var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
         if (bindingsR.IsError) return bindingsR.Error;
 
-        if (OutputRowsAccessError(algorithm) is { } accessError)
+        if (OutputRowsAccessError(algorithm, ctx) is { } accessError)
             return accessError;
 
         var names = algorithm.Params;

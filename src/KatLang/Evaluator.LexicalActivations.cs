@@ -191,6 +191,13 @@ internal sealed class ParameterActivation
     /// <c>enterPropertyOwnerBody</c>). <paramref name="invoked"/> marks the activation of an
     /// actual call (<see cref="OwnsInvocation"/>; Lean: <c>ownsInvocation := ctx.enteringInvocation</c>);
     /// a read never passes it.
+    /// <para>A WIDE owned-name list (at least <see cref="Evaluator.MinimumIndexedParameterCount"/> names)
+    /// is filtered through ONE ordinal index of the names (<see cref="OwnedParameterNames"/>), built in place of
+    /// the name set the filter used before, and the need tier keeps it (<see cref="OwnedNeedBindings"/>): the
+    /// activation's later reads — whether the head binds a name, a captured read of one of its parameters —
+    /// are then one hash lookup instead of a scan of the head's names and bindings. The kept bindings, their
+    /// order and the first binding per name are the filter's own, on both tiers (implementation-only,
+    /// 2026-11-22, finding <c>evaluator-runtime-quadratic-parameter-width</c>).</para>
     /// </summary>
     internal static ParameterActivation Capture(
         IReadOnlyList<string> names,
@@ -198,9 +205,28 @@ internal sealed class ParameterActivation
         ValEnv values,
         object? inheritedBindingIdentity = null,
         bool invoked = false)
-        => new(
+    {
+        if (names.Count >= Evaluator.MinimumIndexedParameterCount)
+            return CaptureIndexed(new OwnedParameterNames(names), ctx, values, inheritedBindingIdentity, invoked);
+
+        return new(
             FilterOwned(values, names, static binding => binding.Name),
             FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
+            inheritedBindingIdentity ?? Evaluator.BindingContextIdentity(ctx, values),
+            ctx.Budget.NextActivationSerial(),
+            invoked);
+    }
+
+    // The wide arm of Capture, out of line: the same two filters, in the same order, over the owned-name index.
+    private static ParameterActivation CaptureIndexed(
+        OwnedParameterNames owned,
+        Evaluator.EvalCtx ctx,
+        ValEnv values,
+        object? inheritedBindingIdentity,
+        bool invoked)
+        => new(
+            owned.FilterValues(values),
+            OwnedNeedBindings.Filter(ctx.NeedEnv, owned),
             inheritedBindingIdentity ?? Evaluator.BindingContextIdentity(ctx, values),
             ctx.Budget.NextActivationSerial(),
             invoked);
@@ -208,7 +234,8 @@ internal sealed class ParameterActivation
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.
     /// Parameter lists are short in every ordinary program, so a linear membership scan
-    /// avoids allocating a set; a wide deconstruction signature crosses over to one.
+    /// avoids allocating a set; a wider signature crosses over to one, and a wide one is
+    /// filtered through its owned-name index instead (<see cref="Capture"/>).
     /// </summary>
     private static TBinding[] FilterOwned<TBinding>(
         IReadOnlyList<TBinding> env,
@@ -254,6 +281,135 @@ internal sealed class ParameterActivation
         }
 
         return false;
+    }
+}
+
+/// <summary>
+/// The owned parameter names of ONE wide activation (<see cref="ParameterActivation.Capture"/>, at least
+/// <see cref="Evaluator.MinimumIndexedParameterCount"/> names): <see cref="Names"/> is the very list the
+/// activation was captured for — the head scope's <see cref="ScopeCtx.Parameters"/> — and each distinct name's
+/// SLOT is its first position in it, found by one ordinal hash lookup. Membership is exactly the ordinal scan's
+/// (<see cref="Evaluator.ContainsOrdinal"/>), a null name included (a host-built pattern can carry one). Built
+/// once, at the activation's capture, and never changed: an evaluator-made projection, not an AST list.
+/// </summary>
+internal sealed class OwnedParameterNames
+{
+    private readonly Dictionary<string, int> _slots;
+    private readonly int _nullSlot = -1;
+
+    internal OwnedParameterNames(IReadOnlyList<string> names)
+    {
+        Names = names;
+        _slots = new Dictionary<string, int>(names.Count, StringComparer.Ordinal);
+        for (var index = 0; index < names.Count; index++)
+        {
+            var name = names[index];
+            if (name is null)
+            {
+                if (_nullSlot < 0)
+                    _nullSlot = index;
+            }
+            else
+            {
+                _slots.TryAdd(name, index);
+            }
+        }
+    }
+
+    /// <summary>The owned names, in their written order, duplicates included.</summary>
+    internal IReadOnlyList<string> Names { get; }
+
+    /// <summary>The first position of <paramref name="name"/> in <see cref="Names"/>, or -1 when it is not owned.</summary>
+    internal int SlotOf(string name)
+        => name is null ? _nullSlot : _slots.TryGetValue(name, out var slot) ? slot : -1;
+
+    /// <summary>Whether <see cref="Names"/> contains <paramref name="name"/> (ordinal).</summary>
+    internal bool Owns(string name) => SlotOf(name) >= 0;
+
+    /// <summary>
+    /// The value tier's filter (<see cref="ParameterActivation.Capture"/>): the bindings of <paramref name="env"/>
+    /// whose names are owned, first binding per name, in environment order — the narrow filter's result.
+    /// </summary>
+    internal (string Name, Result Value)[] FilterValues(ValEnv env)
+    {
+        if (env.Count == 0)
+            return [];
+
+        var seen = new bool[Names.Count];
+        List<(string Name, Result Value)>? kept = null;
+        for (var index = 0; index < env.Count; index++)
+        {
+            var binding = env[index];
+            var slot = SlotOf(binding.Name);
+            if (slot < 0 || seen[slot])
+                continue;
+            seen[slot] = true;
+            (kept ??= new List<(string Name, Result Value)>(Names.Count)).Add(binding);
+        }
+
+        return kept is null ? [] : kept.ToArray();
+    }
+}
+
+/// <summary>
+/// The need tier of ONE wide activation (<see cref="ParameterActivation.Needs"/>, captured over at least
+/// <see cref="Evaluator.MinimumIndexedParameterCount"/> owned names): the first binding of each owned name, in
+/// environment order — exactly the narrow filter's list — together with the owned-name index it was filtered
+/// through (<see cref="Owned"/>) and, per slot, where that name's binding is. So a lookup in it
+/// (<see cref="Find"/>, <c>Evaluator.LookupNeed</c>) is one hash lookup and agrees with the ordered scan, and
+/// <see cref="Owned"/> answers whether the activated head binds a name without scanning its parameter list
+/// (<c>Evaluator.ScopeBindsParameter</c>). Immutable once filtered, so concurrent readers need no lock.
+/// </summary>
+internal sealed class OwnedNeedBindings : List<(string Name, NeedCell Cell)>
+{
+    // Per slot of Owned: 1 + the position of that name's binding in this list, or 0 when the name has none.
+    private readonly int[] _positions;
+
+    private OwnedNeedBindings(OwnedParameterNames owned, int capacity)
+        : base(capacity)
+    {
+        Owned = owned;
+        _positions = new int[owned.Names.Count];
+    }
+
+    /// <summary>The owned-name index this tier was filtered through.</summary>
+    internal OwnedParameterNames Owned { get; }
+
+    /// <summary>
+    /// The bindings of <paramref name="env"/> whose names <paramref name="owned"/> owns, first binding per name, in
+    /// environment order. A minted wide tier (<see cref="Evaluator.WideBoundNeedEnv"/>) borrows the result for its
+    /// lookups of those names: they are exactly the first bindings of those names in it.
+    /// </summary>
+    internal static OwnedNeedBindings Filter(NeedEnv env, OwnedParameterNames owned)
+    {
+        var bindings = new OwnedNeedBindings(owned, Math.Min(env.Count, owned.Names.Count));
+        for (var index = 0; index < env.Count; index++)
+        {
+            var binding = env[index];
+            var slot = owned.SlotOf(binding.Name);
+            if (slot < 0 || bindings._positions[slot] != 0)
+                continue;
+            bindings.Add(binding);
+            bindings._positions[slot] = bindings.Count;
+        }
+
+        if (env is Evaluator.WideBoundNeedEnv minted)
+            minted.Lend(bindings);
+        return bindings;
+    }
+
+    /// <summary>The cell of the first binding named <paramref name="name"/>, or null: the ordered scan's answer.</summary>
+    internal NeedCell? Find(string name)
+    {
+        var slot = Owned.SlotOf(name);
+        return slot < 0 ? null : CellAt(slot);
+    }
+
+    /// <summary>The cell bound to the owned name of <paramref name="slot"/> (<see cref="OwnedParameterNames.SlotOf"/>), or null when it has none.</summary>
+    internal NeedCell? CellAt(int slot)
+    {
+        var position = _positions[slot];
+        return position == 0 ? null : this[position - 1].Cell;
     }
 }
 
@@ -590,8 +746,7 @@ public static partial class Evaluator
         // The head scope publishes the head's own parameter names (computed once at entry);
         // a head pushed without one — a loop step, a clause family, a builtin — reads them
         // from the algorithm.
-        var ownNames = ctx.HeadScope is { } headScope ? headScope.Parameters : site.Params;
-        if (ContainsOrdinal(ownNames, name))
+        if (ctx.HeadScope is { } headScope ? ScopeBindsParameter(headScope, name) : ContainsOrdinal(site.Params, name))
             return null;
 
         if (site.Parent is not { } parent || RequiredParameterOwner(parent, name) is not { } owner)
@@ -599,6 +754,24 @@ public static partial class Evaluator
         if (owner.Activation is not { } activation)
             return ParameterActivation.Unbound;
         return IsDetached(activation, ctx) ? ParameterActivation.UnboundDetached : activation;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="scope"/>'s parameter list binds <paramref name="name"/>: ordinal membership in
+    /// <see cref="ScopeCtx.Parameters"/> (Lean: <c>x ∈ scope.params</c>), the test behind the head's own names
+    /// (<see cref="CapturedParameterActivation"/>) and the nearest-owner walk
+    /// (<see cref="RequiredParameterOwner"/>). A wide ACTIVATED level answers through the owned-name index its
+    /// activation was captured with (<see cref="OwnedNeedBindings.Owned"/>), when that index was built for this
+    /// very list; every other level is scanned. Both give the scan's answer.
+    /// </summary>
+    internal static bool ScopeBindsParameter(ScopeCtx scope, string name)
+    {
+        var parameters = scope.Parameters;
+        return parameters.Count >= MinimumIndexedParameterCount
+            && scope.Activation?.Needs is OwnedNeedBindings { Owned: var owned }
+            && ReferenceEquals(owned.Names, parameters)
+                ? owned.Owns(name)
+                : ContainsOrdinal(parameters, name);
     }
 
     /// <summary>

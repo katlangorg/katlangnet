@@ -572,7 +572,7 @@ public static partial class Evaluator
         if (algorithm.ParameterPatterns.Count != 0)
             return EvalCollectingPropertyOwnerBodyCounted(algorithm, ctx, valEnv);
 
-        if (OutputRowsAccessError(algorithm) is { } accessError)
+        if (OutputRowsAccessError(algorithm, ctx) is { } accessError)
             return accessError;
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
@@ -607,7 +607,7 @@ public static partial class Evaluator
         var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
         if (bindingsR.IsError) return bindingsR.Error;
 
-        if (OutputRowsAccessError(algorithm) is { } accessError)
+        if (OutputRowsAccessError(algorithm, ctx) is { } accessError)
             return accessError;
 
         // ONE projection of the names: it shadows both inherited tiers and enters the body.
