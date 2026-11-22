@@ -24,14 +24,16 @@ public sealed class CliApplicationTests
         Assert.Equal(Success, result.ExitCode);
         Assert.Equal("", result.Error);
         Assert.Contains("Usage:", result.TrimmedOutput);
-        Assert.Contains("katlang run <file> [--allow-loading]", result.TrimmedOutput);
+        Assert.Contains("katlang run <file|link> [--allow-loading]", result.TrimmedOutput);
         Assert.Contains("katlang eval <source> [--allow-loading]", result.TrimmedOutput);
-        Assert.Contains("katlang check <file> [--allow-loading]", result.TrimmedOutput);
+        Assert.Contains("katlang check <file|link> [--allow-loading]", result.TrimmedOutput);
         Assert.Contains("--allow-loading", result.TrimmedOutput);
         Assert.Contains("Disabled by default.", result.TrimmedOutput);
-        // The help names the hosts KatLang's default allow-list actually admits (the CLI
-        // configures none of its own).
-        Assert.Contains("katlang.org and its subdomains only", result.TrimmedOutput);
+        // The help says where modules may come from: any host, at a public address only.
+        Assert.Contains("HTTPS from any public address: an address on this", result.TrimmedOutput);
+        Assert.Contains("machine or on a private network is refused, and", result.TrimmedOutput);
+        Assert.Contains("program contacts no host it names.", result.TrimmedOutput);
+        Assert.DoesNotContain("its subdomains only", result.TrimmedOutput);
         // The transport bounds the help quotes must be the ones actually enforced.
         Assert.Contains($"{HttpSourceDownloader.DownloadTimeout.TotalSeconds:0} seconds", result.TrimmedOutput);
         Assert.Contains($"1 MiB ({HttpSourceDownloader.MaxResponseBodyBytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} content", result.TrimmedOutput);
@@ -676,9 +678,9 @@ public sealed class CliApplicationTests
 
     [Theory]
     [InlineData(new string[0], "no command specified")]
-    [InlineData(new[] { "run" }, "'run' requires a <file> argument")]
+    [InlineData(new[] { "run" }, "'run' requires a <file|link> argument")]
     [InlineData(new[] { "eval" }, "'eval' requires a <source> argument")]
-    [InlineData(new[] { "check" }, "'check' requires a <file> argument")]
+    [InlineData(new[] { "check" }, "'check' requires a <file|link> argument")]
     [InlineData(new[] { "unknown" }, "unknown command 'unknown'")]
     [InlineData(new[] { "run", "a.kat", "unexpected" }, "unexpected argument 'unexpected'")]
     [InlineData(new[] { "run", "a.kat", "--nope" }, "unknown option '--nope'")]
@@ -827,18 +829,18 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task AllowLoading_KeepsKatLangsHostPolicy()
+    public async Task AllowLoading_AdmitsAModuleOnAnyHost()
     {
-        // Host allow-listing belongs to KatLang, not to the CLI: a downloader is
-        // configured, yet a disallowed origin is still refused — untouched.
-        var downloader = new RecordingDownloader();
+        // With the flag the CLI sets no allow-list (RunOptions.AllowAnyHost): KatLang hands
+        // every valid HTTPS target to the CLI's downloader, whose address rule decides the rest.
+        const string url = "https://example.com/x.kat";
+        var downloader = new RecordingDownloader(new Dictionary<string, string> { [url] = "public Val = 7" });
 
         var result = await Cli.InvokeWithDownloaderAsync(
-            downloader.DownloadAsync, "eval", "open 'https://example.com/x.kat'\n1", "--allow-loading");
+            downloader.DownloadAsync, "eval", $"open '{url}'\nVal", "--allow-loading");
 
-        Assert.Equal(Failure, result.ExitCode);
-        Assert.Empty(downloader.RequestedUrls);
-        Assert.Contains("domain not allowed", result.TrimmedError);
+        Assert.Equal((Success, "7", ""), (result.ExitCode, result.TrimmedOutput, result.Error));
+        Assert.Equal(url, Assert.Single(downloader.RequestedUrls));
     }
 
     [Fact]
@@ -862,15 +864,16 @@ public sealed class CliApplicationTests
 
     [Theory]
     [InlineData("http://katlang.org/x.kat", "only HTTPS URLs are allowed")]
-    [InlineData("https://127.0.0.1/x.kat", "domain not allowed")]
-    [InlineData("https://katlang.org.example.net/x.kat", "domain not allowed")]
+    [InlineData("http://example.net/x.kat", "only HTTPS URLs are allowed")]
     [InlineData("https://katlang.org:8443@example.net/x.kat", "must not contain user information")]
     [InlineData("https://alice:s3cret@katlang.org/x.kat", "must not contain user information")]
     [InlineData("https://example.net\uFF0F.katlang.org/x.kat", "its host is not a valid DNS name or IP address")]
+    [InlineData("https://exa mple.net/x.kat", "invalid URL")]
     public async Task AllowLoading_RefusesForbiddenSchemesAndHosts_BeforeAnyRequest(string url, string expected)
     {
-        // KatLang's scheme and allowed-host checks run before the CLI transport is ever
-        // consulted, with or without the flag's transport bounds.
+        // Admitting every host lifts only KatLang's host list: its scheme, user-information
+        // and host-name checks still run before the CLI transport is ever consulted. (Which
+        // ADDRESS a host may be at is the transport's rule: DownloadGuardrailTests.)
         var downloader = new RecordingDownloader();
 
         var result = await Cli.InvokeWithDownloaderAsync(
@@ -889,9 +892,18 @@ public sealed class CliApplicationTests
         await using var origin = new LoopbackHttpServer(
             () => LoopbackHttpServer.Redirect(destination.Url("localhost")));
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(async () =>
-            await HttpSourceDownloader.Shared.DownloadAsync(origin.Url("127.0.0.1"), CancellationToken.None));
+        // The shipped instance refuses a loopback server outright, so the redirect rule is
+        // shown on an instance whose seam lets loopback stand in for a public host.
+        using var transport = new HttpSourceDownloader(
+            HttpSourceDownloader.MaxResponseBodyBytes,
+            HttpSourceDownloader.DownloadTimeout,
+            handler: null,
+            DownloadSeam.LoopbackStandsInForPublic);
 
+        var exception = await Assert.ThrowsAsync<DownloadException>(async () =>
+            await transport.DownloadAsync(origin.Url("127.0.0.1"), CancellationToken.None));
+
+        Assert.Equal(DownloadFailure.Redirect, exception.Failure);
         Assert.Contains("redirects are not allowed", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, origin.RequestCount);
         Assert.Equal(0, destination.RequestCount);
@@ -1210,10 +1222,10 @@ public sealed class CliApplicationTests
         var help = result.TrimmedOutput;
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Contains("katlang run <file> [--allow-loading] [--random-seed <integer>]", help);
+        Assert.Contains("katlang run <file|link> [--allow-loading] [--random-seed <integer>]", help);
         Assert.Contains("katlang eval <source> [--allow-loading] [--random-seed <integer>]", help);
-        Assert.Contains("katlang check <file> [--allow-loading] [--code-link]\n", help + "\n");
-        Assert.DoesNotContain("check <file> [--allow-loading] [--random-seed", help);
+        Assert.Contains("katlang check <file|link> [--allow-loading] [--code-link]\n", help + "\n");
+        Assert.DoesNotContain("check <file|link> [--allow-loading] [--random-seed", help);
         Assert.Contains("\n  --random-seed <integer>\n                     Seed KatLang's random operations (Math.Random,\n", help);
         Assert.Contains("Not valid for check", help);
         Assert.Contains("random values may differ", help);
@@ -1503,7 +1515,7 @@ public sealed class CliApplicationTests
     [InlineData(new[] { "--help", "--max-decimal-places", "2" }, "option '--help' cannot be combined with other arguments.")]
     [InlineData(new[] { "--max-decimal-places", "2", "--version" }, "option '--version' cannot be combined with other arguments.")]
     [InlineData(new[] { "eval", "--max-decimal-places", "2" }, "'eval' requires a <source> argument.")]
-    [InlineData(new[] { "run", "--max-decimal-places", "2" }, "'run' requires a <file> argument.")]
+    [InlineData(new[] { "run", "--max-decimal-places", "2" }, "'run' requires a <file|link> argument.")]
     public async Task MaxDecimalPlaces_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
     {
         var result = await Cli.InvokeAsync(args);
@@ -1802,7 +1814,7 @@ public sealed class CliApplicationTests
     [InlineData(new[] { "--help", "--min-decimal-places", "2" }, "option '--help' cannot be combined with other arguments.")]
     [InlineData(new[] { "--min-decimal-places", "2", "--version" }, "option '--version' cannot be combined with other arguments.")]
     [InlineData(new[] { "eval", "--min-decimal-places", "2" }, "'eval' requires a <source> argument.")]
-    [InlineData(new[] { "run", "--min-decimal-places", "2" }, "'run' requires a <file> argument.")]
+    [InlineData(new[] { "run", "--min-decimal-places", "2" }, "'run' requires a <file|link> argument.")]
     public async Task MinDecimalPlaces_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
     {
         var result = await Cli.InvokeAsync(args);
@@ -1968,15 +1980,15 @@ public sealed class CliApplicationTests
 
         Assert.Equal(Success, result.ExitCode);
         Assert.Contains(
-            "katlang run <file> [--allow-loading] [--random-seed <integer>]\n"
-            + "                     [--min-decimal-places <integer>]\n"
-            + "                     [--max-decimal-places <integer>] [--code-link]\n", help);
+            "katlang run <file|link> [--allow-loading] [--random-seed <integer>]\n"
+            + "                          [--min-decimal-places <integer>]\n"
+            + "                          [--max-decimal-places <integer>] [--code-link]\n", help);
         Assert.Contains(
             "katlang eval <source> [--allow-loading] [--random-seed <integer>]\n"
             + "                        [--min-decimal-places <integer>]\n"
             + "                        [--max-decimal-places <integer>] [--code-link]\n", help);
-        Assert.Contains("katlang check <file> [--allow-loading] [--code-link]\n", help + "\n");
-        Assert.DoesNotContain("check <file> [--allow-loading] [--m", help);
+        Assert.Contains("katlang check <file|link> [--allow-loading] [--code-link]\n", help + "\n");
+        Assert.DoesNotContain("check <file|link> [--allow-loading] [--m", help);
 
         // The quoted range is KatLang's own, once per option, and the text says what each
         // option is — a minimum that pads and never rounds, a maximum that rounds and never

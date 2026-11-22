@@ -353,6 +353,22 @@ internal sealed partial class ModuleLoader
     /// </summary>
     internal PatternComparisonObservations? ComparisonObservations { get; set; }
 
+    /// <summary>
+    /// <see cref="RunOptions.AllowAnyHost"/> for this loader: when set, the allow-list the
+    /// constructor built is replaced by <see cref="ModuleLoadTarget.AllowedHosts.Any"/>, so every
+    /// host that passes the other load-target checks is admitted. The options boundary
+    /// (<see cref="FrontEndPipeline.NormalizeHostAdmission"/>) has already refused the option
+    /// together with a list.
+    /// </summary>
+    internal bool AdmitsAnyHost
+    {
+        init
+        {
+            if (value)
+                _allowedHosts = ModuleLoadTarget.AllowedHosts.Any;
+        }
+    }
+
     // Run-scoped host-runtime budget: import depth, distinct-module count, per-module and aggregate
     // source length. Its immutable SourceProcessingLimits carry the effective ceilings; the mutable
     // counters are private to this run. The per-module source ceiling here (EffectiveMaxSourceLength)

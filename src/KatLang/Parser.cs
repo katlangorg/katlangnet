@@ -713,7 +713,7 @@ public sealed class Parser
     /// would be. The source-processing members apply
     /// (<see cref="RunOptions.SourceProcessingLimits"/>,
     /// <see cref="RunOptions.SourceProcessingCancellationToken"/>, and
-    /// <see cref="RunOptions.AllowedHosts"/>), and <see cref="RunOptions.HostOperations"/>
+    /// <see cref="RunOptions.AllowedHosts"/> with <see cref="RunOptions.AllowAnyHost"/>), and <see cref="RunOptions.HostOperations"/>
     /// makes operation names resolve as they will during evaluation; the evaluation-only
     /// members (<see cref="RunOptions.EvaluationLimits"/>,
     /// <see cref="RunOptions.EvaluationCancellationToken"/>, <see cref="RunOptions.RandomSeed"/>,
@@ -725,7 +725,8 @@ public sealed class Parser
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.AllowAnyHost"/> is set together with <see cref="RunOptions.AllowedHosts"/>.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled.
@@ -754,7 +755,8 @@ public sealed class Parser
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.AllowAnyHost"/> is set together with <see cref="RunOptions.AllowedHosts"/>.
     /// </exception>
     /// <remarks>
     /// Options apply exactly as for <see cref="Parse(string, RunOptions?)"/>, plus

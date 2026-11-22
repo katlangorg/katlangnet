@@ -26,7 +26,8 @@ internal static class Cli
         => InvokeWithDownloaderAsync(null, args);
 
     /// <param name="downloader">
-    /// Substitute for the CLI's HTTP transport. It reaches KatLang only when
+    /// Substitute for the CLI's HTTP transport: address to text, with no rule of its own. It
+    /// serves a program URL operand, and it reaches KatLang only when
     /// <c>--allow-loading</c> is supplied, so a test can also assert that it was
     /// never consulted.
     /// </param>
@@ -38,6 +39,89 @@ internal static class Cli
         var error = new StringWriter();
         var exitCode = await CliApplication.RunAsync(args, output, error, downloader);
         return new CliResult(exitCode, output.ToString(), error.ToString());
+    }
+
+    /// <param name="transport">
+    /// The real downloader, as a test built it — usually over a <see cref="StubHttpHandler"/>,
+    /// so its rules (the address checks, the status, the content type, the size, the deadline)
+    /// run in the test and no connection is ever opened.
+    /// </param>
+    public static async Task<CliResult> InvokeWithTransportAsync(
+        HttpSourceDownloader transport,
+        params string[] args)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var exitCode = await CliApplication.RunAsync(args, output, error, transport);
+        return new CliResult(exitCode, output.ToString(), error.ToString());
+    }
+}
+
+/// <summary>
+/// The "network" of a transport under test: every request the real
+/// <see cref="HttpSourceDownloader"/> sends is answered here, in memory, and recorded. A
+/// request reaches it only after the downloader's own address checks, so an empty
+/// <see cref="RequestedUrls"/> shows that a refusal came before any request.
+/// </summary>
+internal sealed class StubHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+{
+    private readonly List<string> _requestedUrls = [];
+
+    /// <summary>Serves one fixed response for every address.</summary>
+    public StubHttpHandler(Func<HttpResponseMessage> respond)
+        : this(_ => respond())
+    {
+    }
+
+    /// <summary>Serves text per exact address; any other address is a 404.</summary>
+    public StubHttpHandler(IReadOnlyDictionary<string, string> pages)
+        : this(request => pages.TryGetValue(request.RequestUri!.AbsoluteUri, out var text)
+            ? Text(text)
+            : Status(System.Net.HttpStatusCode.NotFound))
+    {
+    }
+
+    /// <summary>The absolute address of every request, in order.</summary>
+    public IReadOnlyList<string> RequestedUrls => _requestedUrls;
+
+    /// <summary>A transport with the SHIPPED guardrails and bounds over this handler.</summary>
+    public HttpSourceDownloader Transport(TimeSpan? deadline = null)
+        => new(HttpSourceDownloader.MaxResponseBodyBytes, deadline ?? HttpSourceDownloader.DownloadTimeout, this);
+
+    /// <summary>A 200 response with <paramref name="body"/> as UTF-8.</summary>
+    public static HttpResponseMessage Text(string body, string? contentType = "text/plain; charset=utf-8")
+        => Bytes(System.Text.Encoding.UTF8.GetBytes(body), contentType);
+
+    /// <summary>
+    /// A 200 response with exactly these body bytes. The Content-Type is set as RAW header
+    /// text, as a server sends it, valid or not; null sends none.
+    /// </summary>
+    public static HttpResponseMessage Bytes(byte[] body, string? contentType)
+    {
+        var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+        if (contentType is not null)
+            Assert.True(response.Content.Headers.TryAddWithoutValidation("Content-Type", contentType));
+        return response;
+    }
+
+    /// <summary>A response with <paramref name="status"/> and a small HTML error body.</summary>
+    public static HttpResponseMessage Status(System.Net.HttpStatusCode status, string? location = null)
+    {
+        var response = new HttpResponseMessage(status)
+        {
+            Content = new StringContent("<html>error page</html>", System.Text.Encoding.UTF8, "text/html"),
+        };
+        if (location is not null)
+            response.Headers.Location = new Uri(location);
+        return response;
+    }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_requestedUrls)
+            _requestedUrls.Add(request.RequestUri!.AbsoluteUri);
+        return Task.FromResult(respond(request));
     }
 }
 

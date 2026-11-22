@@ -360,6 +360,55 @@ public class HostApiContractTests
         Assert.IsType<RunResult.Success>(KatLangEngine.Run("1", options));
     }
 
+    /// <summary>
+    /// Admitting every host is one typed, off-by-default option of the public surface — never a
+    /// magic entry of <see cref="RunOptions.AllowedHosts"/> — and it only lifts the host list:
+    /// a consumer reaches it, and its contradiction with a list, through the public API alone.
+    /// </summary>
+    [Fact]
+    public async Task AllowAnyHost_IsATypedOptIn_ThatAdmitsAnyHttpsHost_AndNothingElse()
+    {
+        var property = typeof(RunOptions).GetProperty(nameof(RunOptions.AllowAnyHost))!;
+        Assert.Equal(typeof(bool), property.PropertyType);
+        Assert.False(new RunOptions().AllowAnyHost);
+        Assert.Null(new RunOptions { AllowAnyHost = true }.AllowedHosts);
+
+        var requested = new List<string>();
+        ValueTask<string> Download(string url, CancellationToken cancellationToken)
+        {
+            requested.Add(url);
+            return ValueTask.FromResult("public V = 42");
+        }
+
+        const string program = "M = load('https://modules.example.net/lib.kat')\nM.V";
+
+        // Default: the list (katlang.org) refuses the host, and the downloader is not asked.
+        var refused = await KatLangEngine.RunAsync(program, new RunOptions { DownloadCode = Download });
+        Assert.Equal(KatLangErrorCode.InvalidLoadUrl, Assert.Single(Assert.IsType<RunResult.ParseFailure>(refused).Errors).Code);
+        Assert.Empty(requested);
+
+        // A wildcard entry is not the option: it admits nothing.
+        var wildcard = await KatLangEngine.RunAsync(program, new RunOptions { DownloadCode = Download, AllowedHosts = ["*"] });
+        Assert.IsType<RunResult.ParseFailure>(wildcard);
+        Assert.Empty(requested);
+
+        // The option admits the host, in the canonical form the downloader always receives.
+        var admitted = await KatLangEngine.RunAsync(program, new RunOptions { DownloadCode = Download, AllowAnyHost = true });
+        Assert.Equal("42", Assert.IsType<RunResult.Success>(admitted).ToDisplayString());
+        Assert.Equal(["https://modules.example.net/lib.kat"], requested);
+
+        // It lifts the host list only: plain HTTP is still refused before the downloader.
+        var plainHttp = await KatLangEngine.RunAsync(
+            "M = load('http://modules.example.net/lib.kat')\nM.V", new RunOptions { DownloadCode = Download, AllowAnyHost = true });
+        Assert.IsType<RunResult.ParseFailure>(plainHttp);
+        Assert.Single(requested);
+
+        // And it cannot be combined with a list.
+        var contradiction = new RunOptions { AllowAnyHost = true, AllowedHosts = ["katlang.org"] };
+        Assert.Equal(nameof(RunOptions.AllowAnyHost), Assert.Throws<ArgumentException>(() => KatLangEngine.Run("1", contradiction)).ParamName);
+        Assert.Equal(nameof(RunOptions.AllowAnyHost), Assert.Throws<ArgumentException>(() => Parser.Parse("1", contradiction)).ParamName);
+    }
+
     [Fact]
     public void ReusedOptions_CarryNoStateFromEarlierRuns()
     {
@@ -526,6 +575,7 @@ public class HostApiContractTests
             "P:KatLang.RunOptions.EvaluationCancellationToken",
             "P:KatLang.RunOptions.SourceProcessingCancellationToken",
             "P:KatLang.RunOptions.AllowedHosts",
+            "P:KatLang.RunOptions.AllowAnyHost",
             "T:KatLang.RunResult",
             "T:KatLang.Result",
             "T:KatLang.HostOperation",

@@ -34,8 +34,9 @@ internal readonly record struct CliOptions(
 
 /// <summary>
 /// A fully parsed command line. <see cref="Argument"/> is the single positional
-/// argument of the command — a file path for <c>run</c>/<c>check</c>, KatLang
-/// source text for <c>eval</c>, a code link for <c>source</c> — and is empty for
+/// argument of the command — a file path or a program link for <c>run</c>/<c>check</c>
+/// (<see cref="ProgramOperand"/> tells which), KatLang source text for <c>eval</c>, a program
+/// link for <c>source</c> — and is empty for
 /// <c>--help</c>/<c>--version</c>, whose <see cref="Options"/> are always <c>default</c>, as
 /// <c>source</c>'s are.
 /// </summary>
@@ -54,8 +55,8 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 
 /// <summary>
 /// The whole v1 grammar:
-/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--min-decimal-places &lt;integer&gt;] [--max-decimal-places &lt;integer&gt;] [--code-link]</c>,
-/// <c>katlang check &lt;file&gt; [--allow-loading] [--code-link]</c>,
+/// <c>katlang (run &lt;file|link&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--min-decimal-places &lt;integer&gt;] [--max-decimal-places &lt;integer&gt;] [--code-link]</c>,
+/// <c>katlang check &lt;file|link&gt; [--allow-loading] [--code-link]</c>,
 /// <c>katlang source &lt;link&gt;</c>,
 /// plus the standalone <c>--help</c> and <c>--version</c> flags. It is small
 /// enough that a hand-written parser is clearer — and dependency-free — compared
@@ -88,7 +89,12 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// above the maximum they are a usage error here — decided last, after <c>check</c>'s refusal of
 /// the options — and never clamped, swapped, or dropped.</para>
 ///
-/// <para><c>source</c> takes its one operand and no command option: it reads a code link and
+/// <para>The parser never looks inside an operand: whether a <c>run</c> or <c>check</c> operand
+/// is a file or a link is decided where the source is obtained (<see cref="ProgramOperand"/>),
+/// so a link is an operand like any other here — taken exactly as written, before or after
+/// the options, and after a bare <c>--</c>.</para>
+///
+/// <para><c>source</c> takes its one operand and no command option: it reads a link and
 /// runs nothing, so every command option is refused for it rather than ignored, in the order
 /// of <see cref="CliOptions"/>'s fields when several were written. The option rules above are
 /// unchanged for it: a value is still validated where it appears, and <c>--</c> still ends the
@@ -237,7 +243,7 @@ internal static class CommandLine
             {
                 CliCommandKind.Eval => "<source>",
                 CliCommandKind.Source => "<link>",
-                _ => "<file>",
+                _ => "<file|link>",
             };
             return CommandLineParseResult.Fail($"'{commandName}' requires a {missing} argument.");
         }
@@ -261,7 +267,7 @@ internal static class CommandLine
                 return NotValidForCheck(MaxDecimalPlacesOption);
         }
 
-        // `source` reads a code link and runs nothing: there is no program to load modules
+        // `source` reads a link and runs nothing: there is no program to load modules
         // for, evaluate, display or link, so every command option is refused rather than
         // ignored — in the order of CliOptions' fields when several were written.
         if (kind == CliCommandKind.Source)

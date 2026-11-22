@@ -347,6 +347,245 @@ public sealed class ModuleLoadingSecurityTests
         Assert.Equal("load: domain not allowed: 'katlang.org.evil.test'.", SingleError(refused).Message);
     }
 
+    // ── 4b. Any host: the typed option, never an entry ───────────────────────
+
+    private static async Task<(ParseResult Parsed, RecordingDownloader Downloader)> ParseLoadingFromAnyHost(
+        string source,
+        Func<string, string>? respond = null)
+    {
+        var downloader = new RecordingDownloader(respond);
+        var parsed = await Parser.ParseAsync(source, new RunOptions
+        {
+            DownloadCode = downloader.Download,
+            AllowAnyHost = true,
+        });
+        return (parsed, downloader);
+    }
+
+    [Theory]
+    [InlineData("*")]
+    [InlineData("*.*")]
+    [InlineData("*.example")]
+    [InlineData("*.trusted.example")]
+    [InlineData("https://*")]
+    [InlineData("0.0.0.0/0")]
+    [InlineData("::/0")]
+    [InlineData(".")]
+    [InlineData("%")]
+    public async Task WildcardEntry_AdmitsNothing(string entry)
+    {
+        // No ENTRY means "every host": an entry is a bare host, and whatever a wildcard spelling
+        // parses as, it admits no real host — neither the name it decorates, nor a subdomain of
+        // it, nor an address. Admitting every host is RunOptions.AllowAnyHost and nothing else.
+        var source = $"A = load('https://{Trusted}/m.kat')\nB = load('https://sub.{Trusted}/m.kat')\n"
+            + "C = load('https://katlang.org/m.kat')\nD = load('https://127.0.0.1/m.kat')\n1";
+
+        var (parsed, downloader) = await ParseLoading(source, [entry]);
+
+        Assert.Empty(downloader.Requests);
+        var errors = parsed.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).ToList();
+        Assert.Equal(4, errors.Count);
+        Assert.All(errors, error => Assert.StartsWith("load: domain not allowed: '", error.Message, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AllowAnyHost_IsOffByDefault_AndFalseIsTheDefault()
+    {
+        Assert.False(new RunOptions().AllowAnyHost);
+
+        // Spelled out as false it is the default: katlang.org and its subdomains, nothing else.
+        var downloader = new RecordingDownloader();
+        var options = new RunOptions { DownloadCode = downloader.Download, AllowAnyHost = false };
+
+        AssertNoDiagnostics(await Parser.ParseAsync("A = load('https://cdn.katlang.org/a.kat')\n1", options));
+        var refused = await Parser.ParseAsync("B = load('https://example.com/b.kat')\n1", options);
+
+        Assert.Equal(["https://cdn.katlang.org/a.kat"], downloader.Requests);
+        Assert.Equal("load: domain not allowed: 'example.com'.", SingleError(refused).Message);
+    }
+
+    [Theory]
+    [InlineData("https://katlang.org/m.kat", "https://katlang.org/m.kat")]
+    [InlineData("https://example.com/m.kat", "https://example.com/m.kat")]
+    [InlineData("https://katlang.org.evil.test/m.kat", "https://katlang.org.evil.test/m.kat")]
+    [InlineData("HTTPS://Raw.Example.NET:8443/a/b.kat?x=1#fragment", "https://raw.example.net:8443/a/b.kat?x=1")]
+    [InlineData("https://example.com:443/m.kat", "https://example.com/m.kat")]
+    [InlineData("https://example.com./m.kat", "https://example.com./m.kat")]
+    [InlineData("https://intranet/m.kat", "https://intranet/m.kat")]
+    [InlineData("https://localhost/m.kat", "https://localhost/m.kat")]
+    [InlineData("https://xn--bcher-kva.example/m.kat", "https://xn--bcher-kva.example/m.kat")]
+    // An IP literal is a host too, in its canonical form; which ADDRESSES may be reached is the
+    // downloader's policy, never KatLang's.
+    [InlineData("https://127.0.0.1/m.kat", "https://127.0.0.1/m.kat")]
+    [InlineData("https://127.1/m.kat", "https://127.0.0.1/m.kat")]
+    [InlineData("https://203.0.113.7:8443/m.kat", "https://203.0.113.7:8443/m.kat")]
+    [InlineData("https://[2001:DB8::1]/m.kat", "https://[2001:db8::1]/m.kat")]
+    [InlineData("https://[::1]:8443/m.kat", "https://[::1]:8443/m.kat")]
+    public async Task AllowAnyHost_AdmitsEveryValidHttpsHost_InItsCanonicalForm(string written, string requested)
+    {
+        var (parsed, downloader) = await ParseLoadingFromAnyHost($"M = load('{written}')\nM.V");
+
+        AssertNoDiagnostics(parsed);
+        Assert.Equal([requested], downloader.Requests);
+    }
+
+    [Theory]
+    [InlineData("http://example.com/m.kat", "load: only HTTPS URLs are allowed (got 'http').")]
+    [InlineData("ftp://example.com/m.kat", "load: only HTTPS URLs are allowed (got 'ftp').")]
+    [InlineData("file:///C:/m.kat", "load: only HTTPS URLs are allowed (got 'file').")]
+    [InlineData("data:text/plain,public V = 1", "load: only HTTPS URLs are allowed (got 'data').")]
+    [InlineData(
+        "https://alice:s3cr3t-t0ken@example.com/m.kat",
+        "load: a module URL must not contain user information; remove the 'user@' or 'user:password@' part before the host.")]
+    [InlineData(
+        "https://alice@example.com/m.kat",
+        "load: a module URL must not contain user information; remove the 'user@' or 'user:password@' part before the host.")]
+    [InlineData(
+        "https://@example.com/m.kat",
+        "load: a module URL must not contain user information; remove the 'user@' or 'user:password@' part before the host.")]
+    public async Task AllowAnyHost_LiftsOnlyTheHostList_SchemeAndUserInformationAreStillRefused(string written, string message)
+    {
+        var (parsed, downloader) = await ParseLoadingFromAnyHost($"M = load('{written}')\nM.V");
+
+        Assert.Empty(downloader.Requests);
+        var error = SingleError(parsed);
+        Assert.Equal(DiagnosticCode.InvalidLoadUrl, error.Code);
+        Assert.Equal(message, error.Message);
+        Assert.DoesNotContain("s3cr3t-t0ken", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("https://exa mple.com/m.kat")]
+    [InlineData("https://example.com:99999/m.kat")]
+    [InlineData("https://[fe80::1%25eth0]/m.kat")]
+    [InlineData("https:///example.com/m.kat")]
+    [InlineData("https://example.com%2F.evil.test/m.kat")]
+    [InlineData("example.com/m.kat")]
+    [InlineData("//example.com/m.kat")]
+    [InlineData("")]
+    public async Task AllowAnyHost_StillRefusesATargetWithNoValidHost(string written)
+    {
+        var (parsed, downloader) = await ParseLoadingFromAnyHost($"M = load('{written}')\nM.V");
+
+        Assert.Empty(downloader.Requests);
+        Assert.Equal(DiagnosticCode.InvalidLoadUrl, SingleError(parsed).Code);
+    }
+
+    [Fact]
+    public void AnyHostPolicy_AdmitsEveryCanonicalHost_AndAListStillDoesNot()
+    {
+        var any = ModuleLoadTarget.AllowedHosts.Any;
+
+        Assert.True(any.Admits("example.com", isIpLiteral: false));
+        Assert.True(any.Admits("127.0.0.1", isIpLiteral: true));
+        Assert.Same(any, ModuleLoadTarget.AllowedHosts.Any);
+
+        // A wildcard entry builds a list like any other entry, and that list admits nothing here.
+        foreach (var entry in new[] { "*", "*.com", "*.example.com" })
+        {
+            var list = ModuleLoadTarget.AllowedHosts.From([entry]);
+            Assert.False(list.Admits("example.com", isIpLiteral: false));
+            Assert.False(list.Admits("127.0.0.1", isIpLiteral: true));
+        }
+
+        // The other checks of TryAdmit do not depend on the policy.
+        Assert.False(ModuleLoadTarget.TryAdmit("http://example.com/m.kat", any, out _, out var scheme));
+        Assert.Equal("load: only HTTPS URLs are allowed (got 'http').", scheme.Message);
+        Assert.True(ModuleLoadTarget.TryAdmit("https://Example.COM/m.kat#f", any, out var canonical, out _));
+        Assert.Equal("https://example.com/m.kat", canonical);
+    }
+
+    [Fact]
+    public async Task AllowAnyHost_AppliesAtEveryDepth_ToNestedAndDeferredModules()
+    {
+        // One program, three hosts: a module loaded by the program, a module loaded by that
+        // module, and a module a clause branch loads only when it is selected.
+        const string first = "https://first.example/a.kat";
+        const string second = "https://second.example.net/b.kat";
+        const string third = "https://third.example.org/c.kat";
+        var modules = new Dictionary<string, string>
+        {
+            [first] = $"B = load('{second}')\npublic V = B.W + 1",
+            [second] = "public W = 40",
+            [third] = "public X = 1",
+        };
+        var source = $"A = load('{first}')\nF(0) = 0\nF(n) = {{\n    M = load('{third}')\n    M.X + n\n}}\n";
+
+        var unselecting = new RecordingDownloader(url => modules[url]);
+        var unselected = await KatLangEngine.RunAsync(
+            source + "A.V, F(0)", new RunOptions { DownloadCode = unselecting.Download, AllowAnyHost = true });
+
+        Assert.Equal("41\n0", unselected.ToDisplayString().ReplaceLineEndings("\n"));
+        Assert.Equal([first, second], unselecting.Requests);
+
+        var selecting = new RecordingDownloader(url => modules[url]);
+        var selected = await KatLangEngine.RunAsync(
+            source + "A.V, F(1)", new RunOptions { DownloadCode = selecting.Download, AllowAnyHost = true });
+
+        Assert.Equal("41\n2", selected.ToDisplayString().ReplaceLineEndings("\n"));
+        Assert.Equal([first, second, third], selecting.Requests);
+
+        // The same program under the default list reaches none of the three hosts.
+        var refusing = new RecordingDownloader(url => modules[url]);
+        var refused = await KatLangEngine.RunAsync(source + "A.V, F(1)", new RunOptions { DownloadCode = refusing.Download });
+
+        Assert.IsType<RunResult.ParseFailure>(refused);
+        Assert.Empty(refusing.Requests);
+    }
+
+    [Fact]
+    public async Task AllowAnyHost_TogetherWithAList_IsRejectedAtEveryEntryPoint_InEitherOrder()
+    {
+        // A list restricts hosts and the option lifts the restriction: neither could be
+        // honored without silently dropping the other, so the pair is refused before anything
+        // is processed — also an empty list, and also with no downloader configured.
+        static ValueTask<string> Download(string url, CancellationToken cancellationToken) => ValueTask.FromResult("public V = 1");
+        RunOptions[] contradictions =
+        [
+            new() { AllowAnyHost = true, AllowedHosts = [Trusted] },
+            new() { AllowedHosts = [Trusted], AllowAnyHost = true },
+            new() { AllowAnyHost = true, AllowedHosts = [] },
+            new() { AllowAnyHost = true, AllowedHosts = ["katlang.org"], DownloadCode = Download },
+        ];
+
+        foreach (var options in contradictions)
+        {
+            var parseAsync = await Assert.ThrowsAsync<ArgumentException>(async () => await Parser.ParseAsync("1", options));
+            var runAsync = await Assert.ThrowsAsync<ArgumentException>(async () => await KatLangEngine.RunAsync("1", options));
+            Assert.Equal(nameof(RunOptions.AllowAnyHost), parseAsync.ParamName);
+            Assert.Equal(nameof(RunOptions.AllowAnyHost), runAsync.ParamName);
+            Assert.Contains("RunOptions.AllowAnyHost is set together with RunOptions.AllowedHosts", parseAsync.Message, StringComparison.Ordinal);
+
+            if (options.DownloadCode is null)
+            {
+                Assert.Equal(nameof(RunOptions.AllowAnyHost), Assert.Throws<ArgumentException>(() => Parser.Parse("1", options)).ParamName);
+                Assert.Equal(nameof(RunOptions.AllowAnyHost), Assert.Throws<ArgumentException>(() => KatLangEngine.Run("1", options)).ParamName);
+            }
+        }
+
+        // No contradiction: the option with no list, a list with the option off, and neither.
+        Assert.IsType<RunResult.Success>(KatLangEngine.Run("1", new RunOptions { AllowAnyHost = true }));
+        Assert.IsType<RunResult.Success>(KatLangEngine.Run("1", new RunOptions { AllowAnyHost = true, AllowedHosts = null }));
+        Assert.IsType<RunResult.Success>(KatLangEngine.Run("1", new RunOptions { AllowAnyHost = false, AllowedHosts = [Trusted] }));
+        // A blank entry is still its own error, whatever the option says.
+        Assert.Equal(
+            nameof(RunOptions.AllowedHosts),
+            Assert.Throws<ArgumentException>(() => KatLangEngine.Run("1", new RunOptions { AllowAnyHost = true, AllowedHosts = [" "] })).ParamName);
+    }
+
+    [Fact]
+    public async Task AllowAnyHost_WithoutADownloader_LoadsNothing()
+    {
+        // The option admits hosts; it is no downloader. Loading stays off until a host supplies one.
+        var options = new RunOptions { AllowAnyHost = true };
+
+        var sync = Parser.Parse("M = load('https://example.com/m.kat')\nM.V", options);
+        var async = await Parser.ParseAsync("M = load('https://example.com/m.kat')\nM.V", options);
+
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, SingleError(sync).Code);
+        Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, SingleError(async).Code);
+    }
+
     // ── 5. Module identity: one canonical URL for cache, cycle, and transport ──
 
     [Fact]
@@ -850,7 +1089,13 @@ public sealed class ModuleLoadingSecurityTests
     public async Task WithoutADownloader_NoConfigurationCanLoad()
     {
         const string source = "M = load('https://katlang.org/m.kat')\nM.V";
-        foreach (var options in new RunOptions?[] { null, new RunOptions(), new RunOptions { AllowedHosts = ["katlang.org"] } })
+        foreach (var options in new RunOptions?[]
+        {
+            null,
+            new RunOptions(),
+            new RunOptions { AllowedHosts = ["katlang.org"] },
+            new RunOptions { AllowAnyHost = true },
+        })
         {
             var syncParsed = Parser.Parse(source, options);
             Assert.Equal(DiagnosticCode.LoadElaborationUnavailable, SingleError(syncParsed).Code);

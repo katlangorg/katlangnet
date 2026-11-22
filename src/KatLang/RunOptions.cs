@@ -15,7 +15,8 @@ namespace KatLang;
 /// <para><b>Lifetime.</b> Every member is init-only; collection inputs are snapshotted when the
 /// object is initialized. Configuration is safe to share across sequential and
 /// concurrent runs: each run creates its own budgets, caches, and random stream, and no run
-/// changes the options. Allowed-host entries are validated at parse/run entry; each decimal-places
+/// changes the options. Allowed-host entries, and the pair of <see cref="AllowedHosts"/> and
+/// <see cref="AllowAnyHost"/>, are validated at parse/run entry; each decimal-places
 /// setting and every limit setting is validated during initialization, and the decimal-places
 /// PAIR (a minimum never above the maximum) where a run begins. Delegate closures and cancellation
 /// sources remain host-owned mutable state, so shared delegates must support concurrent calls.
@@ -66,12 +67,13 @@ public sealed class RunOptions
     /// <c>load</c> is rejected by the public parser/run pipeline with a diagnostic.</para>
     /// <para>KatLang performs no ambient downloading: the library owns no HTTP transport and
     /// ships no default downloader, so every byte of module source arrives through this
-    /// delegate. <see cref="AllowedHosts"/> governs which source-written load targets KatLang
-    /// hands to the delegate; transport behavior after that — connections, timeouts, and any
-    /// redirect policy — is owned entirely by the host implementation.</para>
+    /// delegate. <see cref="AllowedHosts"/> (or <see cref="AllowAnyHost"/>, which lifts the
+    /// list) governs which source-written load targets KatLang hands to the delegate; transport
+    /// behavior after that — connections, timeouts, and any redirect policy — is owned entirely
+    /// by the host implementation.</para>
     /// <para><b>What the delegate receives.</b> Only a target KatLang admitted (an absolute
     /// <c>https</c> URL without user information whose host is allowed — see
-    /// <see cref="AllowedHosts"/>), in ONE canonical form: <c>https://</c>, the host in its
+    /// <see cref="AllowedHosts"/> and <see cref="AllowAnyHost"/>), in ONE canonical form: <c>https://</c>, the host in its
     /// lower-case ASCII (IDNA) form or as a canonical IP literal, the port when it is not 443,
     /// and the escaped path and query as <see cref="Uri"/> normalizes them — never a fragment.
     /// That URL is also the module's identity: equivalent spellings in the program share one
@@ -221,7 +223,8 @@ public sealed class RunOptions
     /// every load target — in the program, in loaded modules at any depth, and in modules a
     /// conditional branch loads when selected — against this set BEFORE passing it to
     /// <see cref="DownloadCode"/>; a refused target never reaches the delegate. Defaults to
-    /// <c>katlang.org</c> only.
+    /// <c>katlang.org</c> only. A host that means to admit every host sets
+    /// <see cref="AllowAnyHost"/> instead of a list; the two cannot be combined.
     /// <para><b>Matching.</b> An entry is a bare host: a DNS name or an IP literal (IPv6 with
     /// or without brackets). A DNS entry admits that name and every subdomain of it, by whole
     /// labels (<c>sub.ex.com</c> under <c>ex.com</c>; never <c>notex.com</c> or
@@ -240,7 +243,8 @@ public sealed class RunOptions
     /// <para><b>Entries.</b> Entries are trimmed; a null, empty, or whitespace-only entry is
     /// rejected with <see cref="ArgumentException"/> at the parse/run entry point before
     /// anything is processed. An entry that is not a bare host (a URL, <c>host:port</c>, a
-    /// wildcard) admits nothing.</para>
+    /// wildcard) admits nothing; no entry admits every host
+    /// (<see cref="AllowAnyHost"/> is the only way to do that).</para>
     /// <para>The sequence is enumerated ONCE, when the options object is initialized, into a
     /// snapshot this property then returns: later changes to the caller's collection do not
     /// reach the options, so one options object shared by concurrent runs can never be
@@ -253,6 +257,50 @@ public sealed class RunOptions
         get => _allowedHosts;
         init => _allowedHosts = value is null ? null : SafeReadOnlyCollection.Snapshot(value);
     }
+
+    /// <summary>
+    /// When <c>true</c>, source-written load targets may name ANY host: KatLang applies no
+    /// allow-list, and hands <see cref="DownloadCode"/> every target that passes its other
+    /// checks. Default <c>false</c>, which keeps <see cref="AllowedHosts"/> in force
+    /// (<c>katlang.org</c> and its subdomains when no list is set), so a host that does not set
+    /// this option behaves exactly as before.
+    /// <para><b>What stays checked.</b> Only the host comparison is lifted. A target must still
+    /// be an absolute <c>https</c> URL without user information whose host is a DNS name with a
+    /// valid IDNA form or an IP literal (an IPv6 zone index is refused); anything else is
+    /// refused before the delegate is invoked, exactly as under a list. The delegate still
+    /// receives ONE canonical URL per module, which stays the module's identity, and the same
+    /// rule holds at every depth: nested modules and modules a conditional branch loads when
+    /// selected.</para>
+    /// <para><b>This is the only way to admit every host.</b> No entry of
+    /// <see cref="AllowedHosts"/> does it: an entry is a bare host, and a wildcard such as
+    /// <c>*</c> or <c>*.example.com</c> admits nothing.</para>
+    /// <para><b>Not a network-access policy.</b> As with <see cref="AllowedHosts"/>, KatLang
+    /// sees only the host name written in source, never what it resolves to or redirects to.
+    /// With this option the name is no longer restricted either, so the downloader is the ONLY
+    /// barrier between a program and the network it runs in: a program can name a loopback,
+    /// private, or link-local address, or an internal host name. Set this option only together
+    /// with a downloader that resolves the host itself, refuses every address it must not
+    /// reach, connects only to an address it checked, refuses redirects, and bounds time and
+    /// response size.</para>
+    /// <para><b>Capabilities.</b> Loaded source runs with every <see cref="HostOperations"/>
+    /// member the run registers. Admitting every host means running code from anyone who can
+    /// make a program load a URL, so register no host operation such code must not call.</para>
+    /// <para><b>Together with a list.</b> A list restricts hosts and this option lifts the
+    /// restriction, so setting both is a contradiction and is never resolved silently: the
+    /// parse/run entry point rejects an options object with this option set and a non-null
+    /// <see cref="AllowedHosts"/> with <see cref="ArgumentException"/> before anything is
+    /// processed. The pair is checked there, not in the init accessors, so the order in which
+    /// the two properties are initialized never matters.</para>
+    /// <para>Like every member, this is immutable configuration: nothing a program or its
+    /// modules do can change it, and it is safe to share across concurrent runs.</para>
+    /// </summary>
+    public bool AllowAnyHost { get; init; }
+
+    /// <summary>
+    /// The two host-admission settings as initialized, for the options boundary that validates
+    /// them together (<see cref="FrontEndPipeline.NormalizeHostAdmission"/>).
+    /// </summary>
+    internal ModuleLoadTarget.ModuleHostAdmission HostAdmission => new(_allowedHosts, AllowAnyHost);
 
     /// <summary>
     /// Optional host operations exposed to the program as ambient callables (resolved
