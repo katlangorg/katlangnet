@@ -224,6 +224,15 @@ internal abstract class NeedNode
 ///   awaited, and the two gates are never nested.</item>
 ///   <item><b>Cleanup.</b> An edge exists exactly while its observation frame is active. It is removed
 ///   on every exit: success, failure, exception, cancellation or a cycle.</item>
+///   <item><b>Host termination carried by value.</b> Inside an asynchronous twin run's
+///   host-termination boundary (<see cref="EvaluationBudget.CarriesHostTermination"/>) a host exception
+///   or cancellation reaches a cell as the run's marker (<see cref="EvalError.HostTermination"/>)
+///   instead of a thrown exception. The cell's STATE is the same either way: the run's retained
+///   exception is stored, nothing is published on either channel, the flight completes cancelled or
+///   faulted and the computation is never restarted. Only the answer differs: an observer of that
+///   run receives the marker by value, at its observation entry or from the stored exception, where
+///   it would otherwise rethrow. Outside the boundary — the synchronous route, a cell without a run,
+///   a run after its boundary closed — every observer rethrows the stored exception as before.</item>
 ///   <item><b>Cells without a budget.</b> A Ready cell carries no budget but never joins a graph: it
 ///   is complete before any edge is considered, and it is never a demand's parent. A suspended cell
 ///   without a budget, which only a test builds, shares one process-wide fallback graph.</item>
@@ -700,15 +709,61 @@ internal sealed class NeedCell : NeedNode
         return false;
     }
 
+    // THE OBSERVATION ENTRY of both channels: the cell's own cancellation, then its run's terminal
+    // state, before any memo is read. Outside a run's host-termination boundary a cancellation
+    // throws here, as it always did. Inside one (an asynchronous twin run,
+    // EvaluationBudget.CarriesHostTermination) it is retained by the run and answered, like every
+    // other terminal state, by the returned failure.
+    private EvalError? ObserveRun()
+    {
+        if (_budget is not { } budget)
+        {
+            _token.ThrowIfCancellationRequested();
+            return null;
+        }
+
+        return budget.ObserveToken(_token) ?? budget.CheckContinuation();
+    }
+
+    // An observer's answer to a STORED exception. Inside its run's host-termination boundary the
+    // run's own retained exception is answered by the run's marker, by value; everything else —
+    // another exception, a cell without a run, a run outside the boundary — is rethrown, the
+    // original object with its token and dispatch information.
+    private EvalError ThrowOrCarry(ExceptionDispatchInfo stored)
+    {
+        if (_budget?.CarriedHostTermination(stored) is { } carried) return carried;
+        stored.Throw();
+        throw new System.Diagnostics.UnreachableException();
+    }
+
+    // A joiner whose wait on the shared completion faulted (a cancelled completion task
+    // synthesizes TaskCanceledException): the VALUE computation's stored exception, answered as
+    // ThrowOrCarry answers it. Null when nothing was stored; the joiner then rethrows what it caught.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private EvalError? JoinedValueFault()
+    {
+        ExceptionDispatchInfo? stored;
+        lock (this) stored = _exception;
+        return stored is null ? null : ThrowOrCarry(stored);
+    }
+
+    // The same for a joiner of the runtime CALLABLE projection's flight.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private EvalError? JoinedProjectionFault(ProjectionNode node)
+    {
+        ExceptionDispatchInfo? stored;
+        lock (this) stored = node.Exception;
+        return stored is null ? null : ThrowOrCarry(stored);
+    }
+
     internal EvalResult<Algorithm?> ProjectCallable()
     {
-        _token.ThrowIfCancellationRequested();
-        var terminal = _budget?.CheckContinuation();
+        var terminal = ObserveRun();
         if (_projection is ProjectionNode node) return ProjectRuntime(node, terminal);
         if (terminal is not null) return terminal;
         lock (this)
         {
-            if (_exception?.SourceException is OperationCanceledException) _exception.Throw();
+            if (_exception?.SourceException is OperationCanceledException) return ThrowOrCarry(_exception);
             if (_callable is { } known) return known;
             var computed = _suspension is not null
                 ? Evaluator.ProjectSuspendedCallable(this, Source!, _suspension)
@@ -718,6 +773,9 @@ internal sealed class NeedCell : NeedNode
             // operation, its result is not this cell's outcome (it may be the pending marker
             // itself), so it is not published; the retried observation computes it again.
             if (t_observation is { Pending: not null }) return computed;
+            // Nor is the run's host-termination marker (a cancellation a chokepoint inside the
+            // projection carried by value): a thrown cancellation published nothing here.
+            if (computed is { IsError: true, Error.IsHostTermination: true }) return computed;
             _callable = computed;
             return computed;
         }
@@ -762,9 +820,10 @@ internal sealed class NeedCell : NeedNode
         lock (this)
         {
             if (terminal is not null)
-                return _callable is { IsError: true } failed && failed.Error.IsResourceLimit ? failed : terminal;
-            if (_exception?.SourceException is OperationCanceledException) _exception.Throw();
-            node.Exception?.Throw();
+                return _callable is { IsError: true } failed && failed.Error.IsResourceLimit && !terminal.IsHostTermination
+                    ? failed : terminal;
+            if (_exception?.SourceException is OperationCanceledException) return ThrowOrCarry(_exception);
+            if (node.Exception is not null) return ThrowOrCarry(node.Exception);
             return _callable;
         }
     }
@@ -790,7 +849,7 @@ internal sealed class NeedCell : NeedNode
             lock (this)
             {
                 if (_callable is { } completed) return completed;
-                node.Exception?.Throw();
+                if (node.Exception is not null) return ThrowOrCarry(node.Exception);
                 task = JoinOrStartProjectionFlight(node);
             }
             if (task is null)
@@ -807,7 +866,7 @@ internal sealed class NeedCell : NeedNode
             catch
             {
                 // As in Demand: preserve the original host exception and token.
-                lock (this) node.Exception?.Throw();
+                if (JoinedProjectionFault(node) is { } carried) return carried;
                 throw;
             }
         }
@@ -816,8 +875,7 @@ internal sealed class NeedCell : NeedNode
 
     private async ValueTask<EvalResult<Algorithm?>> ProjectRuntimeAsync(ProjectionNode node)
     {
-        _token.ThrowIfCancellationRequested();
-        if (ObserveProjected(node, _budget?.CheckContinuation()) is { } known) return known;
+        if (ObserveProjected(node, ObserveRun()) is { } known) return known;
         ThrowIfInitiatingWhileObserving();
         var parent = Current.Value;
         if (!node.AddDependency(parent))
@@ -828,7 +886,7 @@ internal sealed class NeedCell : NeedNode
             lock (this)
             {
                 if (_callable is { } completed) return completed;
-                node.Exception?.Throw();
+                if (node.Exception is not null) return ThrowOrCarry(node.Exception);
                 task = JoinOrStartProjectionFlight(node);
             }
             if (task is null)
@@ -839,7 +897,7 @@ internal sealed class NeedCell : NeedNode
             try { return await task.ConfigureAwait(false); }
             catch
             {
-                lock (this) node.Exception?.Throw();
+                if (JoinedProjectionFault(node) is { } carried) return carried;
                 throw;
             }
         }
@@ -882,8 +940,7 @@ internal sealed class NeedCell : NeedNode
     private EvalResult<Algorithm?> ProjectionStarterOutcome(ProjectionNode node)
     {
         if (_callable is { } completed) return completed;
-        node.Exception!.Throw();
-        throw new System.Diagnostics.UnreachableException();
+        return ThrowOrCarry(node.Exception!);
     }
 
     // A non-initiating observation is synchronous: an asynchronous start inside one means a
@@ -899,6 +956,13 @@ internal sealed class NeedCell : NeedNode
     {
         if (result.IsError && IsObservationPending(result.Error))
             throw EvalError.ObservationPending.Escaped();
+        // The run's host-termination marker is a host exception or cancellation carried by value:
+        // stored, never published, exactly as if it had been thrown (see Complete).
+        if (result.IsError && _budget?.StoredHostTermination(result.Error) is { } termination)
+        {
+            CompleteProjectionStored(node, termination);
+            return;
+        }
         if (result.IsError && result.Error.IsResourceLimit) _budget?.RetainTerminal(result.Error);
         // META-S3-0b provenance (NEED-06): an ordinary failure of a RUNTIME projection is a
         // failed computation, never "no identity" — marked once, here, for the absence
@@ -919,20 +983,25 @@ internal sealed class NeedCell : NeedNode
     }
 
     private void CompleteProjectionException(ProjectionNode node, Exception error)
+        => CompleteProjectionStored(node, ExceptionDispatchInfo.Capture(error));
+
+    // The projection's exceptional completion: a thrown exception just captured, or the run's
+    // retained host termination when the computation ended with the run's marker.
+    private void CompleteProjectionStored(ProjectionNode node, ExceptionDispatchInfo stored)
     {
         lock (this)
         {
             // Stored, never published: every later observer rethrows it before it could start.
-            node.Exception = ExceptionDispatchInfo.Capture(error);
+            node.Exception = stored;
             var flight = node.Flight!;
             node.Flight = null;
             node.Project = null;
             node.ProjectAsync = null;
             if (ReferenceEquals(flight, ProjectionNode.UnjoinedFlight)) return;
-            if (error is OperationCanceledException cancelled)
+            if (stored.SourceException is OperationCanceledException cancelled)
                 flight.TrySetCanceled(cancelled.CancellationToken);
             else
-                flight.TrySetException(error);
+                flight.TrySetException(stored.SourceException);
         }
     }
 
@@ -944,14 +1013,14 @@ internal sealed class NeedCell : NeedNode
 
     internal EvalResult<Evaluator.CountedResult> Demand()
     {
-        _token.ThrowIfCancellationRequested();
-        var terminal = _budget?.CheckContinuation();
+        var terminal = ObserveRun();
         lock (this)
         {
             if (terminal is not null)
-                return _completed is { IsError: true } failed && failed.Error.IsResourceLimit ? failed : terminal;
+                return _completed is { IsError: true } failed && failed.Error.IsResourceLimit && !terminal.IsHostTermination
+                    ? failed : terminal;
             if (_completed is { } cached) return cached;
-            _exception?.Throw();
+            if (_exception is not null) return ThrowOrCarry(_exception);
         }
         // META-S3-0b: a non-initiating observation never starts (or joins) a VALUE flight; it
         // reads the outcome its resolution recorded, or reports this VALUE pending.
@@ -965,7 +1034,7 @@ internal sealed class NeedCell : NeedNode
             lock (this)
             {
                 if (_completed is { } completed) return completed;
-                _exception?.Throw();
+                if (_exception is not null) return ThrowOrCarry(_exception);
                 task = JoinOrStartFlight();
             }
             if (task is null)
@@ -983,7 +1052,7 @@ internal sealed class NeedCell : NeedNode
             {
                 // A cancelled completion task synthesizes TaskCanceledException.
                 // Preserve the original host exception and token at the language boundary.
-                lock (this) _exception?.Throw();
+                if (JoinedValueFault() is { } carried) return carried;
                 throw;
             }
         }
@@ -992,14 +1061,14 @@ internal sealed class NeedCell : NeedNode
 
     internal async ValueTask<EvalResult<Evaluator.CountedResult>> DemandAsync()
     {
-        _token.ThrowIfCancellationRequested();
-        var terminal = _budget?.CheckContinuation();
+        var terminal = ObserveRun();
         lock (this)
         {
             if (terminal is not null)
-                return _completed is { IsError: true } failed && failed.Error.IsResourceLimit ? failed : terminal;
+                return _completed is { IsError: true } failed && failed.Error.IsResourceLimit && !terminal.IsHostTermination
+                    ? failed : terminal;
             if (_completed is { } cached) return cached;
-            _exception?.Throw();
+            if (_exception is not null) return ThrowOrCarry(_exception);
         }
         ThrowIfInitiatingWhileObserving();
         var parent = Current.Value;
@@ -1011,7 +1080,7 @@ internal sealed class NeedCell : NeedNode
             lock (this)
             {
                 if (_completed is { } completed) return completed;
-                _exception?.Throw();
+                if (_exception is not null) return ThrowOrCarry(_exception);
                 task = JoinOrStartFlight();
             }
             if (task is null)
@@ -1022,7 +1091,7 @@ internal sealed class NeedCell : NeedNode
             try { return await task.ConfigureAwait(false); }
             catch
             {
-                lock (this) _exception?.Throw();
+                if (JoinedValueFault() is { } carried) return carried;
                 throw;
             }
         }
@@ -1064,13 +1133,25 @@ internal sealed class NeedCell : NeedNode
     private EvalResult<Evaluator.CountedResult> StarterOutcome()
     {
         if (_completed is { } completed) return completed;
-        _exception!.Throw();
-        throw new System.Diagnostics.UnreachableException();
+        return ThrowOrCarry(_exception!);
     }
 
     private void Complete(EvalResult<Evaluator.CountedResult> result)
     {
-        if (result.IsError && result.Error.IsResourceLimit) _budget?.RetainTerminal(result.Error);
+        if (result.IsError)
+        {
+            if (result.Error.IsResourceLimit) _budget?.RetainTerminal(result.Error);
+            // A computation that ended with its run's host-termination marker was ended by a host
+            // exception or host cancellation carried by value (an asynchronous twin run). The
+            // cell's completion is the one a thrown exception leaves: the retained exception
+            // stored, nothing published, never restarted (NEED-09).
+            else if (_budget?.StoredHostTermination(result.Error) is { } termination)
+            {
+                CompleteStored(termination);
+                return;
+            }
+        }
+
         lock (this)
         {
             // Published with the completion, as CompleteProjection does: every later observer
@@ -1085,21 +1166,25 @@ internal sealed class NeedCell : NeedNode
         }
     }
 
-    private void CompleteException(Exception error)
+    private void CompleteException(Exception error) => CompleteStored(ExceptionDispatchInfo.Capture(error));
+
+    // The VALUE computation's exceptional completion: a thrown exception just captured, or the
+    // run's retained host termination when the computation ended with the run's marker.
+    private void CompleteStored(ExceptionDispatchInfo stored)
     {
         lock (this)
         {
             // Stored, never published: every later observer rethrows it before it could start.
-            _exception = ExceptionDispatchInfo.Capture(error);
+            _exception = stored;
             _evaluate = null;
             _evaluateAsync = null;
             var flight = _flight!;
             _flight = null;
             if (ReferenceEquals(flight, UnjoinedFlight)) return;
-            if (error is OperationCanceledException cancelled)
+            if (stored.SourceException is OperationCanceledException cancelled)
                 flight.TrySetCanceled(cancelled.CancellationToken);
             else
-                flight.TrySetException(error);
+                flight.TrySetException(stored.SourceException);
         }
     }
 

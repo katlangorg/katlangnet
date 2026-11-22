@@ -107,8 +107,12 @@ public class KatLangErrorCodeTests
         // The internal non-initiating observation marker (META-S3-0b) is never a run outcome and
         // deliberately has no code: classifying it fails loud.
         Assert.Throws<System.Diagnostics.UnreachableException>(() => EvalError.ObservationPending.Instance.Code);
+        // Nor has the marker an asynchronous twin run carries in place of a host exception or host
+        // cancellation: the run's entry point rethrows that exception, so no host receives the marker.
+        Assert.Throws<System.Diagnostics.UnreachableException>(() => EvalError.HostTermination.Marker.Code);
         var concreteVariants = typeof(EvalError).Assembly.GetTypes()
-            .Where(t => t.IsAssignableTo(typeof(EvalError)) && !t.IsAbstract && t != typeof(EvalError.ObservationPending))
+            .Where(t => t.IsAssignableTo(typeof(EvalError)) && !t.IsAbstract
+                && t != typeof(EvalError.ObservationPending) && t != typeof(EvalError.HostTermination))
             .ToHashSet();
 
         Assert.NotEmpty(concreteVariants);

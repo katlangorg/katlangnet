@@ -29,8 +29,9 @@ public class DifferentialObservationTests
         var hostNames = new[] { "EvaluationDepthExceeded", "EvaluationStepLimitExceeded", "EvaluationStackExhausted",
             "CollectionSizeLimitExceeded", "MaterializationLimitExceeded", "StringSizeLimitExceeded", "StringMaterializationLimitExceeded",
             "DisplayLengthLimitExceeded", "AstDepthLimitExceeded", "AstCycleDetected", "ModuleRegionMaterializationFailed" };
-        // Internal markers that are never a run outcome (META-S3-0b's non-initiating observation).
-        var internalNames = new[] { "ObservationPending" };
+        // Internal markers that are never a run outcome (META-S3-0b's non-initiating observation; the
+        // marker an asynchronous twin run carries in place of a host exception or cancellation).
+        var internalNames = new[] { "ObservationPending", "HostTermination" };
         var variants = typeof(EvalError).GetNestedTypes(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
             .Where(t => t.BaseType == typeof(EvalError)).ToArray();
         var expectedNames = contracts.Select(c => c.Error.GetType().Name).Distinct().Concat(hostNames).Concat(internalNames).Order().ToArray();
@@ -50,6 +51,8 @@ public class DifferentialObservationTests
         }
         Assert.Throws<System.Diagnostics.UnreachableException>(() => DifferentialErrors.Observe(EvalError.ObservationPending.Instance));
         Assert.Throws<System.Diagnostics.UnreachableException>(() => EvalError.ObservationPending.Instance.Code);
+        Assert.Throws<System.Diagnostics.UnreachableException>(() => DifferentialErrors.Observe(EvalError.HostTermination.Marker));
+        Assert.Throws<System.Diagnostics.UnreachableException>(() => EvalError.HostTermination.Marker.Code);
         // The Lean switches are exhaustive (no wildcard); every new Lean constructor must be classified too.
         var lean = File.ReadAllText(Path.Combine(RepoRoot.Find(), "lean/KatLang.lean"));
         var taxonomy = lean[lean.IndexOf("inductive Error where", StringComparison.Ordinal)..];

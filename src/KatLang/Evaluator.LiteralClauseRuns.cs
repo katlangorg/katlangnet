@@ -425,7 +425,10 @@ public static partial class Evaluator
         /// <summary>A failed demand: the outcome of the attempt that made it.</summary>
         internal readonly EvalResult<int> Failure(EvalError error)
         {
-            _attempts?.RecordOutcome(ClauseAttemptOutcome.Error);
+            // A run its host ended leaves the attempt pending, as a thrown exception does: the
+            // run's marker (an asynchronous twin run carries the exception by value) is no outcome.
+            if (!error.IsHostTermination)
+                _attempts?.RecordOutcome(ClauseAttemptOutcome.Error);
             return error;
         }
     }

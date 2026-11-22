@@ -307,7 +307,19 @@ public static partial class Evaluator
         catch (OperationCanceledException error) when (region.Loader.SourceProcessingCancellationToken.IsCancellationRequested)
         {
             ctx.Budget.RetainRequiredSourceCancellation(error);
+            // Inside the run's host-termination boundary the same exception is the run's outcome,
+            // carried by value from this frame (see the next handler).
+            if (ctx.Budget.CarriesHostTermination)
+                return ctx.Budget.RetainHostTermination(error);
             throw;
+        }
+        // THE CARRIED HOST FAILURE of a materialization (an asynchronous twin run's
+        // host-termination boundary): a cancellation of the run's own token observed while the
+        // module downloads, or an exception the loader lets through, is retained by the run — the
+        // original object — and the run's marker goes up by value; the entry point rethrows it.
+        catch (Exception error) when (ctx.Budget.CarriesHostTermination)
+        {
+            return ctx.Budget.RetainHostTermination(error);
         }
     }
 

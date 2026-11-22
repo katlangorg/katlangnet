@@ -642,10 +642,9 @@ public static partial class Evaluator
     /// demand did (NEED-09), and a selected cell's demand never absorbs a terminal run.
     /// </summary>
     private static EvalError? RetainedObservationTerminal(EvalCtx ctx)
-    {
-        ctx.Budget.CancellationToken.ThrowIfCancellationRequested();
-        return ctx.Budget.CheckContinuation();
-    }
+        // The run's token, then its terminal state. A cancellation throws here, or — inside an
+        // asynchronous twin run's host-termination boundary — is retained by the run and returned.
+        => ctx.Budget.ObserveToken(ctx.Budget.CancellationToken) ?? ctx.Budget.CheckContinuation();
 
     /// <summary>
     /// The VALUE TERMINAL of a written STATIC REFERENCE, without evaluating it (A-2): a name's is the VALUE
@@ -1769,7 +1768,15 @@ public static partial class Evaluator
     private static EvalResult<NeedFamilyPreparation> PrepareNeedFamilyHeads(
         Algorithm callee, int supplied, in EvalCtx ctx)
     {
-        var family = NeedFamilyPreparationOf(callee, ctx);
+        NeedFamilyPreparation family;
+        try
+        {
+            family = NeedFamilyPreparationOf(callee, ctx);
+        }
+        catch (OperationCanceledException error) when (ctx.Budget.CarriesCancellation(error))
+        {
+            return ctx.Budget.RetainHostTermination(error);
+        }
         if (family.Heads is not { } heads) return new EvalError.DuplicateBranchPattern();
         for (var i = 0; i < heads.Length; i++)
             if (NeedAcceptsCardinality(heads[i], supplied)) return EvalResult<NeedFamilyPreparation>.Ok(family);
@@ -1793,6 +1800,9 @@ public static partial class Evaluator
     private static void ObserveClauseOutcome(in EvalResult<NeedEnv?> bindings, in EvalCtx ctx)
     {
         if (ctx.Observations?.ClauseAttempts is not { } observer) return;
+        // A run its host ended leaves the attempt pending, whether the exception was thrown past
+        // this frame or arrives as the run's marker (an asynchronous twin run carries it by value).
+        if (bindings.IsError && bindings.Error.IsHostTermination) return;
         observer.RecordOutcome(bindings.IsError ? ClauseAttemptOutcome.Error
             : bindings.Value is null ? ClauseAttemptOutcome.NonMatch : ClauseAttemptOutcome.Matched);
     }

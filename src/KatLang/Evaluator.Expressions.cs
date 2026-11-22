@@ -1368,8 +1368,44 @@ public static partial class Evaluator
         var argumentsR = CollectHostOperationArguments(argNames, ctx, valEnv);
         if (argumentsR.IsError) return argumentsR.Error;
 
+        // An asynchronous twin run carries the operation's exception by value (see the helper).
+        if (ctx.Budget.CarriesHostTermination)
+            return InvokeSynchronousHostOperationCarryingTermination(
+                hostOperation, implementation, argumentsR.Value, ctx.Budget, ctx.Observations?.StructuralTraversal);
+
         var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
         return NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
+    }
+
+    /// <summary>
+    /// The invocation of <see cref="InvokeSynchronousHostOperation"/> and its async twin INSIDE AN
+    /// ASYNCHRONOUS TWIN RUN'S HOST-TERMINATION BOUNDARY
+    /// (<see cref="Evaluation.EvaluationBudget.CarriesHostTermination"/>): the same call and the same
+    /// value boundary, but whatever the host code throws — and the fail-loud contract violation of
+    /// a null return — is retained by the run as its outcome, the original exception object, and
+    /// the run's marker is returned instead of a throw through every twin frame above. The run's
+    /// entry point rethrows the retained exception, so the host observes exactly the exception
+    /// that would have propagated. Shared by both families: neither twin body knows the transport.
+    /// Out of line, and handed the run's budget rather than the by-value context: the synchronous
+    /// route never takes it, and its host-call frame stays as it was.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Result> InvokeSynchronousHostOperationCarryingTermination(
+        HostOperation hostOperation,
+        Func<IReadOnlyList<Result>, CancellationToken, Result> implementation,
+        IReadOnlyList<Result> arguments,
+        Evaluation.EvaluationBudget budget,
+        ValueTraversalObservations? observations)
+    {
+        try
+        {
+            var value = implementation(arguments, budget.CancellationToken);
+            return NormalizeHostOperationValue(hostOperation, value, budget, observations);
+        }
+        catch (Exception error) when (budget.CarriesHostTermination)
+        {
+            return budget.RetainHostTermination(error);
+        }
     }
 
     /// <summary>

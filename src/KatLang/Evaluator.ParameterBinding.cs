@@ -652,6 +652,9 @@ public static partial class Evaluator
     /// the value of a run that succeeds. Laziness is untouched: an argument the language does
     /// not demand — an unused argument, an unselected <c>if</c> branch, an invoking callback
     /// slot — reaches no limit. No Lean counterpart: Lean models no resource limits.
+    /// <para>The marker an asynchronous twin run carries in place of a host exception or host
+    /// cancellation (<see cref="EvalError.HostTermination"/>) is terminal in the same way and is
+    /// never ordinary either: the test is <see cref="EvalError.IsTerminalForRun"/>.</para>
     /// </summary>
-    internal static bool IsDeferrableEvaluationFailure(EvalError failure) => !failure.IsResourceLimit;
+    internal static bool IsDeferrableEvaluationFailure(EvalError failure) => !failure.IsTerminalForRun;
 }

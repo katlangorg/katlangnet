@@ -233,8 +233,16 @@ public static partial class Evaluator
         if (IsArgumentView(value))
             return ArgumentViewUnsupported(BuiltinId.@atoms);
         var limit = ctx.Budget.MaxCollectionItems;
-        if (!value.TryLanguageAtomsObserved(limit, ctx.Observations?.StructuralTraversal, out var atoms, ctx.Budget))
-            return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
+        IReadOnlyList<Decimal128> atoms;
+        try
+        {
+            if (!value.TryLanguageAtomsObserved(limit, ctx.Observations?.StructuralTraversal, out atoms, ctx.Budget))
+                return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
+        }
+        catch (OperationCanceledException cancellation) when (ctx.Budget.CarriesCancellation(cancellation))
+        {
+            return ctx.Budget.RetainHostTermination(cancellation);
+        }
 
         if (ReserveExactListItems(ctx, atoms.Count, out var items, span) is { } error)
             return error;
@@ -1354,7 +1362,7 @@ public static partial class Evaluator
         if (!result.IsError) return item with { Value = result.Value.Value };
         if (item.Source is Expr.Param(var name))
             return item with { ValueError = DemandParameter(cell, result, name, item.Source.Span).Error };
-        if (result.Error.IsResourceLimit) return item with { ValueError = result.Error };
+        if (result.Error.IsTerminalForRun) return item with { ValueError = result.Error };
         // Diagnostic enrichment only (the message choice): a NON-INITIATING read (META-S3-0b).
         var named = item with { ValueError = result.Error, Callable = cell.PeekCallable() };
         return named.Callable is Algorithm.Alias { IsReference: false } carrier ? NameCarrierValueTerminal(named, carrier, ctx) : named;

@@ -942,7 +942,7 @@ public static partial class Evaluator
     /// Lean: withCtx.
     /// </summary>
     private static EvalResult<T> WithCtx<T>(ErrorContext context, EvalResult<T> result) =>
-        result.IsError && !result.Error.IsResourceLimit
+        result.IsError && !result.Error.IsTerminalForRun
             ? new EvalError.WithContext(context, result.Error) { Span = result.Error.Span }
             : result;
 
@@ -962,7 +962,7 @@ public static partial class Evaluator
     /// helper.</para>
     /// </summary>
     private static EvalResult<T> WithCallCtx<T>(CallDiagnosticName function, EvalCtx ctx, EvalResult<T> result)
-        => result.IsError && !result.Error.IsResourceLimit && !function.IsDiagnosticallyTransparent
+        => result.IsError && !result.Error.IsTerminalForRun && !function.IsDiagnosticallyTransparent
             ? new EvalError.WithContext(CtxCall(function, ctx), result.Error) { Span = result.Error.Span }
             : result;
 
@@ -975,7 +975,7 @@ public static partial class Evaluator
     /// predicate for a diagnostic nothing would ever read.</para>
     /// </summary>
     private static EvalResult<T> WithFilterItemCtx<T>(Result item, int index, EvalCtx ctx, EvalResult<T> result)
-        => result.IsError && !result.Error.IsResourceLimit
+        => result.IsError && !result.Error.IsTerminalForRun
             ? new EvalError.WithContext(FilterPredicateItemContext(item, index, ctx.Observations), result.Error) { Span = result.Error.Span }
             : result;
 
@@ -995,7 +995,7 @@ public static partial class Evaluator
     /// <see cref="WithCallCtx{T}"/>).
     /// </summary>
     private static EvalResult<T> WithDotCallCtx<T>(Expr.DotCall dotCall, EvalCtx ctx, EvalResult<T> result)
-        => result.IsError && !result.Error.IsResourceLimit
+        => result.IsError && !result.Error.IsTerminalForRun
             ? new EvalError.WithContext(
                 CtxDotCall(dotCall.Target, dotCall.Name, ctx),
                 result.Error)

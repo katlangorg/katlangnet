@@ -54,6 +54,9 @@ internal sealed record MetamorphicErrorDetail(
             // A non-initiating observation's internal pending marker (META-S3-0b) never leaves its
             // observation scope, so no run outcome can carry it.
             EvalError.ObservationPending => throw new System.Diagnostics.UnreachableException("internal observation marker"),
+            // The marker an asynchronous twin run carries in place of a host exception or host
+            // cancellation never leaves the run: its entry point rethrows the exception.
+            EvalError.HostTermination => throw new System.Diagnostics.UnreachableException("internal host-termination marker"),
             EvalError.ArityMismatch e => Fields("arity", "arity", counts: [e.Expected, e.Actual]),
             EvalError.VariadicArityMismatch e => Fields("arity", "arity", counts: [e.ExpectedMinimum, e.Actual], partial: true),
             EvalError.BadArity => Fields("arity", "badArity"),

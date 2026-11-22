@@ -972,7 +972,7 @@ internal static class SequencePipelineOptimizer
         EvalResult<T> result)
         => Evaluator.WithSpan(
             syntax.FilterExpression.Span,
-            result.IsError && !result.Error.IsResourceLimit
+            result.IsError && !result.Error.IsTerminalForRun
                 ? new EvalError.WithContext(EvaluationContext(syntax, ctx), result.Error) { Span = result.Error.Span }
                 : result);
 

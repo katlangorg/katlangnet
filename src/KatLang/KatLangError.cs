@@ -552,6 +552,7 @@ public sealed class KatLangError
                 + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
             EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e, renderFragment),
             EvalError.ObservationPending => throw EvalError.ObservationPending.Escaped(),
+            EvalError.HostTermination => throw EvalError.HostTermination.Escaped(),
             // Written by FormatEvalError's loop; named here so that every future variant still
             // requires a message above.
             EvalError.WithContext => throw new System.Diagnostics.UnreachableException(),

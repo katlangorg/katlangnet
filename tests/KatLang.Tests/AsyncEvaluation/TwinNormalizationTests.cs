@@ -280,7 +280,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "the stored fallback identity's callee lookups go through ResolveAsync"),
         new("Evaluator.DispatchPlannedAsync", "Evaluator.DispatchPlannedCounted", "a9529f6698a6a52f", SH, HopReason),
         new("Evaluator.DispatchPlannedUserAsync", "Evaluator.DispatchPlannedUserCounted", "f50c64803cb8a749", SH, HopReason),
-        new("Evaluator.PreparePlanSupplyAsync", "Evaluator.PreparePlanSupplyCounted", "13339c88037ad478", AJ,
+        new("Evaluator.PreparePlanSupplyAsync", "Evaluator.PreparePlanSupplyCounted", "6ab7f0d800774d04", AJ,
             "a concurrent preparation is joined by awaiting its waiters (reentrancy is a DemandCycle) instead of JoinPlanPreparationCounted's blocking join"),
         new("Evaluator.SelectedBranchBodyAsync", "Evaluator.SelectedBranchBody", "196591982fbfe597", DR,
             "a deferred region is materialized by MaterializeRequiredRegionAsync"),

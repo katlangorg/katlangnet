@@ -108,7 +108,10 @@ public closed record EvalError
     /// absorbs it (a demanded cell keeps it as its terminal completion and the run budget
     /// retains it), so nothing is evaluated after it and a successful run never reached one.
     /// </summary>
-    public bool IsResourceLimit => UnwrapContext() switch
+    public bool IsResourceLimit => IsResourceLimitKind(UnwrapContext());
+
+    // The classification of an error that is no context frame (see IsResourceLimit).
+    private static bool IsResourceLimitKind(EvalError terminal) => terminal switch
     {
         EvaluationDepthExceeded
             or AstDepthLimitExceeded
@@ -124,6 +127,33 @@ public closed record EvalError
         null => throw new NullReferenceException(),
         _ => false,
     };
+
+    /// <summary>
+    /// Whether this is (or wraps) the run's <see cref="HostTermination"/> marker: the value an
+    /// asynchronous twin run carries in place of a host exception or host cancellation. Internal,
+    /// like the marker; no host ever reads it.
+    /// </summary>
+    internal bool IsHostTermination => UnwrapContext() is HostTermination;
+
+    /// <summary>
+    /// THE EVALUATOR'S ONE "TERMINAL FOR THE RUN" TEST: a resource limit
+    /// (<see cref="IsResourceLimit"/>) or the run's host-termination marker
+    /// (<see cref="IsHostTermination"/>). Neither is ever deferred, absorbed, turned into a branch
+    /// non-match or another failure, or given call, property or item context on the way out. Every
+    /// evaluator site that asks "may this failure be treated as an ordinary one" asks this, never
+    /// <see cref="IsResourceLimit"/> alone, which stays the public classification of a failure a
+    /// host can receive.
+    /// </summary>
+    internal bool IsTerminalForRun
+    {
+        get
+        {
+            // One pass down the context frames, as IsResourceLimit makes: this is read once per
+            // frame an ordinary failure leaves.
+            var terminal = UnwrapContext();
+            return terminal is HostTermination || IsResourceLimitKind(terminal);
+        }
+    }
 
     /// <summary>
     /// The error below every <see cref="WithContext"/> frame, found without recursion: a host may
@@ -202,6 +232,7 @@ public closed record EvalError
                 AstCycleDetected => KatLangErrorCode.AstCycleDetected,
                 ModuleRegionMaterializationFailed e => KatLangError.MapDiagnosticCode(e.Primary.Code),
                 ObservationPending => throw ObservationPending.Escaped(),
+                HostTermination => throw HostTermination.Escaped(),
             };
         }
     }
@@ -609,6 +640,34 @@ public closed record EvalError
 
         internal static System.Diagnostics.UnreachableException Escaped()
             => new("META-S3-0b: a non-initiating observation's pending marker escaped its observation scope.");
+    }
+
+    /// <summary>
+    /// THE RUN'S HOST-TERMINATION MARKER (November 2026; C# execution control of the asynchronous
+    /// twin route, with no Lean counterpart and no language, API or observable-outcome change). A
+    /// run ended by its host — a host operation's exception, a faulted host awaitable, or host
+    /// cancellation — ends with that EXCEPTION, the same object, at the public entry point. Inside
+    /// an asynchronous twin run that exception is not thrown through the evaluator's
+    /// <c>async</c> frames: every such frame freezes and restores the exception's growing stack
+    /// trace, so one host failure cost time and memory quadratic in the evaluation depth. The run's
+    /// budget retains the exception once (<c>EvaluationBudget.RetainHostTermination</c>) and this
+    /// marker travels upward as an ordinary failed result instead; the run's entry point rethrows
+    /// the retained exception with its dispatch information
+    /// (<c>EvaluationBudget.RethrowHostTermination</c>).
+    ///
+    /// <para>The marker exists only inside that boundary and is TERMINAL for the run
+    /// (<see cref="IsTerminalForRun"/>): every budget chokepoint answers with it from then on, so
+    /// nothing is evaluated after it, no consumer absorbs it, and whatever value or failure the
+    /// root would otherwise return is replaced by the retained exception. It carries nothing: one
+    /// shared instance, and a copy only where a span was attached on the way out. It is not a
+    /// KatLang error category, so classifying or rendering it fails loud.</para>
+    /// </summary>
+    internal sealed record HostTermination : EvalError
+    {
+        internal static HostTermination Marker { get; } = new();
+
+        internal static System.Diagnostics.UnreachableException Escaped()
+            => new("The run's host-termination marker escaped the asynchronous run boundary that rethrows its exception.");
     }
 
     /// <summary>Contextual wrapper attaching structured context to an inner error.</summary>

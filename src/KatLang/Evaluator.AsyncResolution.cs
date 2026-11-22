@@ -17,7 +17,9 @@ namespace KatLang;
 // PROGRESS: an observation answers terminal/cancellation → memo → recorded outcome → pending, so
 // it reports pending only for a (cell, channel) pair with no observable outcome; the step
 // performed for it always records one (a flow-local DemandCycle, a terminal answer, an ordinary
-// failure or a success — cancellation and host exceptions leave the resolution instead). Every
+// failure or a success — cancellation and host exceptions leave the resolution instead, thrown,
+// or, inside an asynchronous twin run's host-termination boundary, as the run's marker: a
+// terminal answer, which the retried resolver reads at the cell's observation entry). Every
 // retry therefore strictly enlarges the set of determined pairs; the resolver reaches only
 // retry-stable cells (supplied and parameter cells, cells retained by stable owners — Guard B in
 // NeedCell), so the set is finite and the resolution ends after at most one step per reachable

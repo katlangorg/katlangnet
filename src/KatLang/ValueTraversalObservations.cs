@@ -245,8 +245,13 @@ internal sealed class ValueTraversalObservations
     /// </summary>
     public long LanguageAtomsCancellationCheckpointCount { get; private set; }
 
+    internal Action? LanguageAtomsCheckpointReached { get; init; }
+
     internal void RecordLanguageAtomsCancellationCheckpoint()
-        => LanguageAtomsCancellationCheckpointCount = checked(LanguageAtomsCancellationCheckpointCount + 1);
+    {
+        LanguageAtomsCancellationCheckpointCount = checked(LanguageAtomsCancellationCheckpointCount + 1);
+        LanguageAtomsCheckpointReached?.Invoke();
+    }
 
     /// <summary>
     /// Number of structure NODES descended into across the <c>Result.TryToHostAtoms</c>

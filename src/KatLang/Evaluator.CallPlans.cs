@@ -303,10 +303,13 @@ public static partial class Evaluator
 
         /// <summary>
         /// Publishes a computed route (first writer wins) and returns the retained one: <paramref name="computed"/>
-        /// or the route another party published first.
+        /// or the route another party published first. The run's host-termination marker is never a route
+        /// failure — a host exception or cancellation carried by value publishes nothing, as a thrown one
+        /// publishes nothing — so it is returned to the caller unpublished.
         /// </summary>
         internal object PublishRouteState(object computed)
         {
+            if (computed is EvalError { IsHostTermination: true }) return computed;
             while (true)
             {
                 var state = Volatile.Read(ref _observation);
@@ -447,11 +450,19 @@ public static partial class Evaluator
             // META-S3-4: the route first, through the async adapter when asynchronous (never the
             // synchronous resolver under the async engine), with the D-1A refusal of an intrinsic route.
             var route = InvocationRouteOf(asynchronous ? await PlanRouteOfAsync(this).ConfigureAwait(false) : PlanRouteOf(this), this);
-            if (route.IsError) return route.Error;
+            if (route.IsError) return ObserverFailure(route.Error);
             var supply = asynchronous
                 ? await PreparePlanSupplyAsync(this, PlanSupplyShape.Cells, byInvocation: true).ConfigureAwait(false)
                 : PreparePlanSupplyCounted(this, PlanSupplyShape.Cells, byInvocation: true);
-            return supply.IsError ? supply.Error : EvalResult<PreparedSupply>.Ok(new PreparedSupply(PlanCells(supply.Value)));
+            return supply.IsError ? ObserverFailure(supply.Error) : EvalResult<PreparedSupply>.Ok(new PreparedSupply(PlanCells(supply.Value)));
+
+            // This observer can finish on another thread before the entry point closes the
+            // boundary. Like the entry point, it exposes the original host exception.
+            EvalError ObserverFailure(EvalError error)
+            {
+                Caller.Budget.StoredHostTermination(error)?.Throw();
+                return error;
+            }
         }
     }
 
@@ -1284,7 +1295,7 @@ public static partial class Evaluator
                 return RunPlanPreparationCounted(plan, shape, byInvocation);
             state = Volatile.Read(ref plan.Supply);
         }
-        return state is PlanPreparation ? JoinPlanPreparationCounted(plan) : PlanSupplyOutcome(state!);
+        return state is PlanPreparation ? JoinPlanPreparationCounted(plan) : PlanSupplyOutcome(plan, state!);
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -1318,7 +1329,7 @@ public static partial class Evaluator
         while (true)
         {
             var state = Volatile.Read(ref plan.Supply);
-            if (state is not PlanPreparation preparing) return PlanSupplyOutcome(state!);
+            if (state is not PlanPreparation preparing) return PlanSupplyOutcome(plan, state!);
             if (IsReentrantPlanPreparation(plan, preparing)) return new EvalError.DemandCycle { Span = plan.Source.Span };
             if (EnsurePlanWaiters(plan, preparing) is { } waiters)
                 waiters.Task.GetAwaiter().GetResult();
@@ -1338,7 +1349,7 @@ public static partial class Evaluator
         while (true)
         {
             state = Volatile.Read(ref plan.Supply);
-            if (state is not PlanPreparation preparing) return PlanSupplyOutcome(state!);
+            if (state is not PlanPreparation preparing) return PlanSupplyOutcome(plan, state!);
             if (IsReentrantPlanPreparation(plan, preparing)) return new EvalError.DemandCycle { Span = plan.Source.Span };
             if (EnsurePlanWaiters(plan, preparing) is { } waiters)
                 await waiters.Task.ConfigureAwait(false);
@@ -1373,7 +1384,10 @@ public static partial class Evaluator
     {
         if (formed.IsError)
         {
-            PublishPlanSupply(plan, formed.Error);
+            // A formation that ended with the run's host-termination marker (an asynchronous twin
+            // run carries a host exception or cancellation by value) records what a thrown one
+            // records: the sticky retained exception, never the marker.
+            PublishPlanSupply(plan, plan.Caller.Budget.StoredHostTermination(formed.Error) ?? (object)formed.Error);
             return formed.Error;
         }
         object prepared = shape switch
@@ -1414,10 +1428,14 @@ public static partial class Evaluator
         return false;
     }
 
-    private static EvalResult<object> PlanSupplyOutcome(object final)
+    private static EvalResult<object> PlanSupplyOutcome(InvocationPlan plan, object final)
     {
         if (final is EvalError error) return error;
-        if (final is ExceptionDispatchInfo exception) exception.Throw();
+        if (final is ExceptionDispatchInfo exception)
+        {
+            if (plan.Caller.Budget.CarriedHostTermination(exception) is { } carried) return carried;
+            exception.Throw();
+        }
         return EvalResult<object>.Ok(final);
     }
 
@@ -1488,7 +1506,22 @@ public static partial class Evaluator
         var cells = new NeedCell?[argNames.Count];
         for (var i = 0; i < cells.Length; i++)
             cells[i] = ParameterNeedCell(argNames[i], ctx);
-        var value = receiver(cells);
+        // A receiver is TEST code that demands, projects and invokes the run's own cells and reads the
+        // outcome as an exception where the run's host ended it. It therefore runs outside the run's
+        // host-termination boundary (an asynchronous twin run carries those exceptions by value): what it
+        // starts throws, exactly as it does on the synchronous route, and the boundary is restored when it
+        // returns or throws. Production runs have no receiver.
+        var carried = ctx.Budget.CarriesHostTermination;
+        Result value;
+        if (carried) ctx.Budget.CloseHostTerminationBoundary();
+        try
+        {
+            value = receiver(cells);
+        }
+        finally
+        {
+            if (carried) ctx.Budget.OpenHostTerminationBoundary();
+        }
         // A receiver can inspect a failed demand/invocation and return its own value. A reached
         // resource limit or cancellation still ends the run (NEED-09); the seam cannot absorb it.
         if (ctx.Budget.CheckContinuation() is { } terminal) return terminal;

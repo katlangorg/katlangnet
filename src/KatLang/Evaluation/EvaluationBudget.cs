@@ -98,9 +98,188 @@ internal sealed class EvaluationBudget
 
     internal EvalError? CheckContinuation()
     {
+        if (_carriesHostTermination) return CheckContinuationCarried();
         Volatile.Read(ref _requiredSourceCancellation)?.Throw();
-        ObserveCancellation();
+        _cancellationToken.ThrowIfCancellationRequested();
         return _terminalFailure;
+    }
+
+    // ── Host termination carried by value (the asynchronous twin run boundary) ──────────────────────
+    //
+    // A run ended by its host ends with an EXCEPTION at the public entry point: the host operation's
+    // own exception object, or OperationCanceledException carrying the token that was cancelled. That
+    // contract is unchanged. What an asynchronous twin run changes is the TRANSPORT between the place
+    // where the exception arises and the entry point. Thrown through the twins, the exception crosses
+    // about twenty `async ValueTask` frames per KatLang call level, and each of them freezes the
+    // exception's accumulated stack trace and restores it into the frame that awaits it: one host
+    // failure or one cancellation cost time and memory QUADRATIC in the evaluation depth (727 MB at
+    // depth 120, and a cancelled runaway loop recursion that never returned).
+    //
+    // Inside the boundary an asynchronous twin run opens (Evaluator.Run*Async, the twin path) the
+    // exception is therefore retained here ONCE, where it arises, and the run's marker
+    // (EvalError.HostTermination) travels upward as an ordinary failed result. The boundary rethrows
+    // the retained exception with its dispatch information. Three rules keep the outcome the one a
+    // thrown exception produced:
+    //   - FIRST OUTCOME WINS. The first retained exception is the run's outcome; a later one never
+    //     replaces it, and a retained resource limit never outranks it (as a thrown exception never
+    //     lost to an error value).
+    //   - TERMINAL. Every chokepoint answers with the marker from then on, so no expression, call,
+    //     loop round, host operation, random draw or tick runs after it, and a consumer that inspects
+    //     a failure and continues is stopped at its next chokepoint.
+    //   - SAME STORED STATE. A need cell or an invocation plan whose computation ends with the marker
+    //     records the retained ExceptionDispatchInfo exactly as it records a thrown exception
+    //     (stored, never published, never restarted).
+    // The synchronous route, a run prepared below the entry points (a hand-built budget), and
+    // everything after the boundary has closed keep throwing: there the native unwind is linear and
+    // nothing would rethrow a carried exception.
+    private ExceptionDispatchInfo? _hostTermination;
+    private volatile bool _carriesHostTermination;
+
+    /// <summary>
+    /// Whether this run currently carries host exceptions and host cancellation BY VALUE: true only
+    /// between <see cref="OpenHostTerminationBoundary"/> and
+    /// <see cref="CloseHostTerminationBoundary"/> of an asynchronous twin run's entry point.
+    /// </summary>
+    internal bool CarriesHostTermination => _carriesHostTermination;
+
+    /// <summary>Opened by the asynchronous twin run's entry point, before any evaluation.</summary>
+    internal void OpenHostTerminationBoundary() => _carriesHostTermination = true;
+
+    /// <summary>
+    /// Closed by that entry point on EVERY exit of its evaluation, before
+    /// <see cref="RethrowHostTermination"/>: from here on the run throws again, as it did before the
+    /// boundary existed, so nothing can receive a marker no boundary would rethrow.
+    /// </summary>
+    internal void CloseHostTerminationBoundary() => _carriesHostTermination = false;
+
+    /// <summary>
+    /// THE PUBLIC RETHROW BOUNDARY: rethrows the run's retained host exception or cancellation — the
+    /// original object, with the stack trace it had where it was retained — and does nothing for a
+    /// run its host never ended. Whatever result the evaluation returned is irrelevant once an
+    /// exception is retained.
+    /// </summary>
+    internal void RethrowHostTermination() => Volatile.Read(ref _hostTermination)?.Throw();
+
+    /// <summary>
+    /// Retains <paramref name="error"/> as the run's host termination unless one is already
+    /// retained, and returns the marker the caller propagates instead of throwing. Called only from a
+    /// <c>catch</c> whose filter read <see cref="CarriesHostTermination"/>; outside the boundary the
+    /// exception is rethrown unchanged, never swallowed.
+    /// </summary>
+    internal EvalError RetainHostTermination(Exception error)
+    {
+        if (!_carriesHostTermination)
+            ExceptionDispatchInfo.Throw(error);
+        if (Volatile.Read(ref _hostTermination) is null)
+            Interlocked.CompareExchange(ref _hostTermination, ExceptionDispatchInfo.Capture(error), null);
+        return EvalError.HostTermination.Marker;
+    }
+
+    /// <summary>
+    /// The retained exception a need cell or an invocation plan STORES when its computation ended
+    /// with the run's marker, or <c>null</c> for every other failure: the stored state is then the
+    /// one a thrown exception leaves.
+    /// </summary>
+    internal ExceptionDispatchInfo? StoredHostTermination(EvalError error)
+        => error.IsHostTermination ? Volatile.Read(ref _hostTermination) : null;
+
+    /// <summary>
+    /// The marker, when <paramref name="stored"/> is this run's own retained exception and the
+    /// boundary is open; otherwise <c>null</c> and the caller rethrows what it stored. A different
+    /// stored exception is never converted: it is an unexpected failure and stays loud.
+    ///
+    /// <para>One exception is ADOPTED here as the run's outcome when none is retained yet: a
+    /// cancellation carrying this run's token, thrown while that token is cancelled. It comes from
+    /// a caller that observes the token directly and has no failure to return (a clause family's
+    /// preparation, a value walk's checkpoint). The run is cancelled either way — every chokepoint
+    /// would report it next — and the thrown object is the first one, so it is the outcome a
+    /// thrown exception delivers; from here it travels by value.</para>
+    /// </summary>
+    internal EvalError? CarriedHostTermination(ExceptionDispatchInfo stored)
+    {
+        if (!_carriesHostTermination) return null;
+        var retained = Volatile.Read(ref _hostTermination);
+        if (retained is null
+            && stored.SourceException is OperationCanceledException cancelled
+            && cancelled.CancellationToken == _cancellationToken
+            && _cancellationToken.IsCancellationRequested)
+        {
+            retained = Interlocked.CompareExchange(ref _hostTermination, stored, null) ?? stored;
+        }
+
+        return retained is not null && ReferenceEquals(retained.SourceException, stored.SourceException)
+            ? EvalError.HostTermination.Marker
+            : null;
+    }
+
+    // A synchronous helper may observe the token while an async evaluator is calling it.
+    // Its immediate caller can return a failure, before any recursive twin frame unwinds.
+    internal bool CarriesCancellation(OperationCanceledException error)
+        => _carriesHostTermination && error.CancellationToken == _cancellationToken
+            && _cancellationToken.IsCancellationRequested;
+
+    /// <summary>
+    /// Observes <paramref name="token"/> — a need cell's own token at its observation entry, or the
+    /// run's after an awaited host operation. Not cancelled: <c>null</c>. Cancelled: throws
+    /// <see cref="OperationCanceledException"/> carrying that token, or, inside the boundary, retains
+    /// that exception and returns the marker.
+    /// </summary>
+    internal EvalError? ObserveToken(CancellationToken token)
+    {
+        if (!token.IsCancellationRequested) return null;
+        if (!_carriesHostTermination) token.ThrowIfCancellationRequested();
+        return RetainCancellation(token);
+    }
+
+    private EvalError? CheckContinuationCarried()
+    {
+        // The chokepoints' order, with the run's first retained exception ahead of everything.
+        if (Volatile.Read(ref _hostTermination) is not null) return EvalError.HostTermination.Marker;
+        if (Volatile.Read(ref _requiredSourceCancellation) is { } source) return RetainHostTermination(source);
+        if (_cancellationToken.IsCancellationRequested) return RetainCancellation(_cancellationToken);
+        return _terminalFailure;
+    }
+
+    private EvalError RetainHostTermination(ExceptionDispatchInfo termination)
+    {
+        Interlocked.CompareExchange(ref _hostTermination, termination, null);
+        return EvalError.HostTermination.Marker;
+    }
+
+    // The exception is created by the framework's own throw, caught in this frame: the object, its
+    // message and its token are exactly those of a cancellation thrown at a chokepoint, and the
+    // one throw is not repeated per evaluator frame.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private EvalError RetainCancellation(CancellationToken token)
+    {
+        if (Volatile.Read(ref _hostTermination) is null)
+        {
+            try
+            {
+                token.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException cancelled)
+            {
+                Interlocked.CompareExchange(ref _hostTermination, ExceptionDispatchInfo.Capture(cancelled), null);
+            }
+        }
+
+        return EvalError.HostTermination.Marker;
+    }
+
+    // A caller that cannot return a failure (a value walk's cancellation checkpoint). Inside the
+    // boundary it still throws, but only the run's FIRST exception: the one already retained, or
+    // the cancellation it retains now.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ObserveCancellationCarried()
+    {
+        if (Volatile.Read(ref _hostTermination) is null)
+        {
+            if (!_cancellationToken.IsCancellationRequested) return;
+            RetainCancellation(_cancellationToken);
+        }
+
+        Volatile.Read(ref _hostTermination)!.Throw();
     }
 
     // A loader's source-processing token can differ from the evaluation token. Once required
@@ -634,8 +813,21 @@ internal sealed class EvaluationBudget
     /// reads plus replayed atoms) and the once-per-run result export scan (inspected slots). The
     /// engine's and the flat entry points' host-atom projection runs after evaluation and
     /// observes the same token itself, at the same cadence and once more after the walk.</para>
+    ///
+    /// <para>INSIDE AN ASYNCHRONOUS TWIN RUN'S BOUNDARY (<see cref="CarriesHostTermination"/>) the
+    /// same cancellation is the same host demand and the same public outcome, but it is carried: a
+    /// chokepoint retains the <see cref="OperationCanceledException"/> once and returns the run's
+    /// marker (<see cref="EvalError.HostTermination"/>, terminal for the run) instead of throwing
+    /// it through every twin frame, and the run's entry point rethrows it. The marker is not a
+    /// language outcome either: a cell records the retained exception, never the marker, as its
+    /// completion, and no verdict is built from it. This parameterless form serves the callers
+    /// that cannot return a failure and so still throws there — the run's first exception.</para>
     /// </summary>
-    internal void ObserveCancellation() => _cancellationToken.ThrowIfCancellationRequested();
+    internal void ObserveCancellation()
+    {
+        if (_carriesHostTermination) ObserveCancellationCarried();
+        else _cancellationToken.ThrowIfCancellationRequested();
+    }
 
     /// <summary>The enforced depth limit (the internal ceiling, or a lower configured value).</summary>
     internal int MaxDepth => _maxDepth;

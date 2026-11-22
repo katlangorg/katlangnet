@@ -850,3 +850,129 @@ tiny-thread reserve backstop), `ModuleLoaderCancellationTests` (async-contract
 cancellation matrix incl. the synchronous entry points' downloader rejection),
 `ModuleLoaderTests`, `SourceProcessingLimitsTests`, and the loader/front-end subprocess
 probes in `AstStructuralDepthProcessTests`.
+
+# Host termination carried by value (November 2026)
+
+Finding 2 of the adversarial performance audit of 2026-11-21. C#-only host-execution
+control of the twin path: no language, API or observable-outcome change, and no Lean
+counterpart (the async surface has none).
+
+## The defect
+
+A run its host ends — a host operation's exception, a faulted host awaitable, host
+cancellation — ends with an exception at the entry point. Thrown through the twin spine,
+that exception crossed about twenty `async ValueTask` frames per KatLang call level. Each
+`async` frame that faults freezes the exception's accumulated stack trace
+(`AsyncValueTaskMethodBuilder.SetException`), and the frame that awaits it restores the
+trace and extends it, so propagation through F frames copies O(F²) bytes. One host
+failure or one cancellation therefore cost time and memory QUADRATIC in the evaluation
+depth. The synchronous route unwinds natively and was not affected.
+
+Measured on `b061a98d`, Release, one run after warm-up, `KatLangEngine.RunAsync` with an
+asynchronous operation configured. The standalone probe counted process-wide first-chance
+notifications during each run. The regression tests count only the host's exception object
+or cancellations carrying that run's token.
+
+| Program (innermost level calls the operation) | Depth | Before: allocated; raises | After: allocated; raises |
+| --- | --- | --- | --- |
+| `F(n) = if(n == 0, fail(1), F(n - 1) + 1)`, synchronous operation throws | 15 / 30 / 60 / 120 | 14.2 / 49.8 / 187.5 / 727.0 MB; 322 / 607 / 1,177 / 2,317 | 0.52 / 0.56 / 0.88 / 1.29 MB; 4 / 4 / 4 / 4 |
+| same, asynchronous operation throws after `Task.Yield()` | 120 | 727.0 MB; 2,317 | 1.50 MB; 5 |
+| same, the operation cancels the token and returns | 120 | 712.0 MB; 2,288 | 1.3 MB; 4 |
+| same, cancelled while suspended, observed after the await | 120 | 501.1 MB; 2,316 | 1.50 MB; 4 |
+| same, the operation throws `OperationCanceledException` with the run's token | 120 | 726.9 MB; 2,317 | 1.29 MB; 4 |
+| clause family `F(0) = fail(1)` / `F(n) = F(n - 1) + 1` | 120 | 295.2 MB; 1,470 | 0.90 MB; 4 |
+| callback `first(map([n - 1], F)) + 1` | 60 / 120 | 536.0 / 2,099 MB; 1,957 / 3,877 | 1.2 / 2.0 MB; 4 / 4 |
+| loop step `R(n - 1).repeat(1)` (no depth charge) | 125 / 250 / 500 / 1,000 | 0.84 / 3.33 / 13.2 / 41.9 GB; 2,537 / 5,037 / 10,037 / 20,037 (10.4 s at 1,000) | 2.2 / 3.8 / 7.4 / 14.2 MB; 4 (67 ms at 1,000) |
+| successful control (`pass(1)` in place of `fail(1)`) under `if` | 15 / 30 / 60 / 120 | 0.53 / 0.57 / 0.89 / 1.30 MB; 0 | unchanged |
+
+A host-ended run now allocates what its successful control allocates, and the count of
+raises does not depend on the depth.
+
+## The design
+
+The twin path's run entries open a boundary on the run's budget, close it on every exit
+and rethrow:
+
+```csharp
+ctx.Budget.OpenHostTerminationBoundary();
+try { result = await /* the root twin */; }
+finally { ctx.Budget.CloseHostTerminationBoundary(); }
+ctx.Budget.RethrowHostTermination();   // the retained exception, by ExceptionDispatchInfo
+```
+
+Inside the boundary an exception that ends the run is RETAINED once, where it arises, and
+the run's marker — `EvalError.HostTermination`, an internal variant with no payload, code
+or message — is returned as an ordinary failed `EvalResult`:
+
+- the budget chokepoints (`CheckContinuation`, and with it every enter, charge and
+  reservation) and the need cell's observation entry retain a cancellation instead of
+  throwing it. The exception object is still the framework's own: one
+  `ThrowIfCancellationRequested`, thrown and caught in one frame;
+- the two host-operation sites catch what host code throws: the synchronous one in a
+  helper both twins call, so their bodies stay mirrored, and the awaiting one around its
+  `await`, where it also carries the post-await observation;
+- a deferred region's materialization retains what the loader lets through.
+  The family dispatcher and the `atoms` builtin also catch run cancellation at the
+  return from their synchronous walks, before any recursive evaluator frame unwinds.
+
+Three rules keep the outcome the one a thrown exception produced:
+
+1. **First outcome wins.** The first retained exception is the run's outcome. A later one
+   never replaces it and a retained resource limit never outranks it.
+2. **Terminal.** The marker is terminal for the run like a resource limit: every
+   chokepoint answers with it from then on, so nothing is evaluated after it.
+   `EvalError.IsTerminalForRun` (a resource limit or the marker) is the evaluator's one
+   test of "may this failure be treated as an ordinary one"; `IsResourceLimit` stays the
+   public classification of a failure a host can receive.
+3. **Same stored state.** A need cell, a runtime projection or a plan supply whose
+   computation ends with the marker records the retained `ExceptionDispatchInfo` exactly as
+   it records a thrown exception. Only the answer to an observer inside the boundary
+   differs. A cell observer or a plan waiter receives the marker while the boundary
+   is open. The test-side plan observer rethrows the original exception even if it
+   wakes before the run closes. After closure, the stored exception is rethrown on
+   the production path as well.
+
+Both twins use the same plan-supply reader and synchronous host-operation helper.
+
+## Alternatives considered
+
+- **Keep throwing, with fewer frames per level.** Fusing twin state machines lowers the
+  constant only: the cost stays quadratic, and the fused bodies would no longer mirror
+  their synchronous counterparts.
+- **Catch and rethrow at one frame per call level.** Still one throw and one stack-trace
+  restore per level, on top of a `try`/`catch` in every invocation twin and, by the
+  `MIRROR OF` rule, in its synchronous counterpart, whose frames are stack-calibrated.
+- **A landing pad at the need cell only.** Cells already catch and store an exception, so
+  converting there needs no twin edit, but not every call level has a cell (a clause
+  family's recursion spine has none): the exception would still cross every frame between
+  two cells.
+- **Complete the root task out of band and abandon the suspended frames.** Constant cost,
+  but the abandoned frames' `finally` blocks never run: depth releases, the property
+  cache's ownership, need-cell flights and wait-for edges, plan waiters and the loader's
+  gate would leak.
+- **Classify the marker as a resource limit.** Every existing "terminal" guard would cover
+  it without an edit, but `IsResourceLimit` is the public classification of a failure a
+  host receives, and the limit paths retain what they are handed (`RetainTerminal`); a
+  separate internal predicate keeps both honest.
+- **Carry the exception on the synchronous route too.** Nothing to gain: the native unwind
+  is linear, and every synchronous entry point would need the boundary.
+
+## What still throws
+
+Outside the boundary everything throws as before: the synchronous route, a budget built
+below the entry points, every observation after the boundary closed, and the internal
+META-receiver seam, which suspends the boundary around test code that reads an outcome as
+an exception. Inside it, clause-family preparation and the `atoms` walk can throw
+cancellation locally. Their immediate callers carry the outcome even when the entire
+call chain above them contains no need cell. An unexpected exception elsewhere in
+the evaluator or in the async cache seam still propagates by throwing.
+
+What a host can still observe is the stack trace's content: it keeps the frames the
+exception was thrown through up to the place it was retained, then the entry point's
+rethrow frames, where it used to list every evaluator frame in between.
+
+## Divergence pinning
+
+`AsyncEvaluation/AsyncHostTerminationTests`; the full list is in
+`language-rules/evaluator-and-hosting.md` § Budgets and cancellation, HOST TERMINATION IS
+CARRIED BY VALUE ON THE ASYNC TWIN ROUTE.

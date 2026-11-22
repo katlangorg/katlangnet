@@ -67,7 +67,31 @@ namespace KatLang;
 /// (which are shared code), plus once at entry and once before completion. Requested
 /// cancellation escapes as <see cref="OperationCanceledException"/> carrying the supplied
 /// token — surfaced through the returned task, as an async API surfaces exceptions — and
-/// is never converted into an <see cref="EvalError"/> or retained binding value.</para>
+/// is never a language outcome: no <see cref="EvalError"/> a host can receive, no retained
+/// binding value, no cell completion.</para>
+///
+/// <para><b>Host termination is carried, not thrown, between its origin and the entry point.</b>
+/// A host operation's exception, a faulted host awaitable and host cancellation end the run
+/// with that exception — the same object, with its dispatch information — exactly as on the
+/// synchronous route. But an exception thrown through the twins crosses about twenty
+/// <c>async</c> frames per KatLang call level, and each of them freezes the exception's growing
+/// stack trace and restores it into the frame that awaits it: one host failure or one
+/// cancellation cost time and memory QUADRATIC in the evaluation depth (727 MB at depth 120;
+/// 41.9 GB at 1,000 loop-step levels; a cancelled runaway loop recursion that never returned).
+/// The twin path therefore opens a boundary on the run's budget
+/// (<see cref="EvaluationBudget.CarriesHostTermination"/>): inside it the exception is retained
+/// once, where it arises — the host-operation sites, the budget chokepoints and the need-cell
+/// entries that observe the token, a deferred region's materialization — and the run's marker
+/// (<see cref="EvalError.HostTermination"/>, terminal for the run like a resource limit)
+/// travels up the twins as an ordinary failed result. The entry point closes the boundary on
+/// every exit and rethrows the retained exception
+/// (<see cref="EvaluationBudget.RethrowHostTermination"/>). The first retained exception is the
+/// run's outcome; cells and invocation plans record it exactly as they record a thrown one.
+/// The twins themselves do not know the transport: it lives in the shared chokepoints and
+/// helpers, so no twin differs from its synchronous counterpart because of it. The synchronous route and a run
+/// prepared below these entry points keep throwing. The synchronous walks used to prepare
+/// a clause family or collect <c>atoms</c> can throw cancellation locally. Their immediate
+/// evaluator callers carry it from there.</para>
 ///
 /// <para><b>Stack.</b> The synchronous family's calibrated stack behavior is untouched.
 /// The twin family runs the same dynamic-depth budget and shares the same
@@ -580,17 +604,30 @@ public static partial class Evaluator
 
         var ctx = preparation.Ctx;
         EvalResult<Result> result;
-        if (expr is Expr.AlgorithmExpr(var alg))
+        // THE HOST-TERMINATION BOUNDARY of the twin path (EvaluationBudget.CarriesHostTermination):
+        // inside it a host exception or cancellation is retained by the run and carried upward by
+        // value; it is closed on every exit and the retained exception is rethrown here, once.
+        ctx.Budget.OpenHostTerminationBoundary();
+        try
         {
-            result = ProjectCountedValue(await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false));
+            if (expr is Expr.AlgorithmExpr(var alg))
+            {
+                result = ProjectCountedValue(await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false));
+            }
+            else
+            {
+                var countedR = await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+                result = countedR.IsError
+                    ? countedR.Error
+                    : EvalResult<Result>.Ok(countedR.Value.Value);
+            }
         }
-        else
+        finally
         {
-            var countedR = await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
-            result = countedR.IsError
-                ? countedR.Error
-                : EvalResult<Result>.Ok(countedR.Value.Value);
+            ctx.Budget.CloseHostTerminationBoundary();
         }
+
+        ctx.Budget.RethrowHostTermination();
 
         // The run result boundary and the completion-boundary observation, exactly as on the
         // synchronous path.
@@ -624,9 +661,22 @@ public static partial class Evaluator
             return preparationError;
 
         var ctx = preparation.Ctx;
-        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
-            ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), expr, ctx);
+        EvalResult<CountedResult> evaluated;
+        // The twin path's host-termination boundary (see RunAsync above).
+        ctx.Budget.OpenHostTerminationBoundary();
+        try
+        {
+            evaluated = expr is Expr.AlgorithmExpr(var alg)
+                ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
+                : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+        }
+        finally
+        {
+            ctx.Budget.CloseHostTerminationBoundary();
+        }
+
+        ctx.Budget.RethrowHostTermination();
+        var result = ExportRunValue(evaluated, expr, ctx);
 
         ctx.Budget.ObserveCancellation();
         return result;
@@ -670,20 +720,30 @@ public static partial class Evaluator
 
         var ctx = preparation.Ctx;
         EvalResult<CountedRootProgramResult> result;
-        if (expr is Expr.AlgorithmExpr(var alg))
+        // The twin path's host-termination boundary (see RunAsync above).
+        ctx.Budget.OpenHostTerminationBoundary();
+        try
         {
-            result = await EvalRootProgramCountedWithTopLevelPropertiesAsync(alg, expr.Span, ctx, topLevelPropertyNames)
-                .ConfigureAwait(false);
+            if (expr is Expr.AlgorithmExpr(var alg))
+            {
+                result = await EvalRootProgramCountedWithTopLevelPropertiesAsync(alg, expr.Span, ctx, topLevelPropertyNames)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                var outputR = await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+                result = outputR.IsError
+                    ? outputR.Error
+                    : EvalResult<CountedRootProgramResult>.Ok(
+                        new CountedRootProgramResult(outputR.Value, new CountedResult?[topLevelPropertyNames.Count]));
+            }
         }
-        else
+        finally
         {
-            var outputR = await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
-            result = outputR.IsError
-                ? outputR.Error
-                : EvalResult<CountedRootProgramResult>.Ok(
-                    new CountedRootProgramResult(outputR.Value, new CountedResult?[topLevelPropertyNames.Count]));
+            ctx.Budget.CloseHostTerminationBoundary();
         }
 
+        ctx.Budget.RethrowHostTermination();
         result = ExportRunValue(result, expr, topLevelPropertyNames, ctx);
         ctx.Budget.ObserveCancellation();
         return result;
@@ -741,19 +801,24 @@ public static partial class Evaluator
             return (preparationError, preparation.Budget);
 
         var ctx = preparation.Ctx;
-        EvalResult<CountedResult> result;
+        EvalResult<CountedResult> evaluated;
         ctx.Budget.RootOutputRows = rootOutputRows;
+        // The twin path's host-termination boundary (see RunAsync above).
+        ctx.Budget.OpenHostTerminationBoundary();
         try
         {
-            result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
+            evaluated = expr is Expr.AlgorithmExpr(var alg)
                 ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-                : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), expr, ctx);
+                : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
         }
         finally
         {
+            ctx.Budget.CloseHostTerminationBoundary();
             ctx.Budget.RootOutputRows = null;
         }
 
+        ctx.Budget.RethrowHostTermination();
+        var result = ExportRunValue(evaluated, expr, ctx);
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);
     }
@@ -966,6 +1031,11 @@ public static partial class Evaluator
 
         var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
         if (argumentsR.IsError) return argumentsR.Error;
+
+        // An asynchronous twin run carries the operation's exception by value (see the helper).
+        if (ctx.Budget.CarriesHostTermination)
+            return InvokeSynchronousHostOperationCarryingTermination(
+                hostOperation, implementation, argumentsR.Value, ctx.Budget, ctx.Observations?.StructuralTraversal);
 
         var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
         return NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
@@ -2080,19 +2150,37 @@ public static partial class Evaluator
         var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
         if (argumentsR.IsError) return argumentsR.Error;
 
-        var value = await hostOperation.AsynchronousImplementation!(
-            argumentsR.Value, ctx.Budget.CancellationToken).ConfigureAwait(false);
+        EvalResult<Result> normalizedR;
+        try
+        {
+            var value = await hostOperation.AsynchronousImplementation!(
+                argumentsR.Value, ctx.Budget.CancellationToken).ConfigureAwait(false);
 
-        // Deterministic post-resumption observation: a token cancelled while the run
-        // was suspended in the host operation is honored as soon as evaluation resumes,
-        // rather than at whichever charging chokepoint happens to come next.
-        // Observation-only — no counter moves, matching every other observation point.
-        ctx.Budget.ObserveCancellation();
+            // Deterministic post-resumption observation: a token cancelled while the run
+            // was suspended in the host operation is honored as soon as evaluation resumes,
+            // rather than at whichever charging chokepoint happens to come next.
+            // Observation-only — no counter moves, matching every other observation point.
+            // Inside the run's host-termination boundary the cancellation is retained and
+            // comes back as the run's marker; anywhere else it throws from here.
+            if (ctx.Budget.ObserveToken(ctx.Budget.CancellationToken) is { } cancelled)
+                return cancelled;
 
-        // Shared canonical-value and admission boundary (null contract included) — see
-        // NormalizeHostOperationValue; a cancelled-while-suspended run was already
-        // honored above, so only genuinely successful values are normalized and admitted.
-        var normalizedR = NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
+            // Shared canonical-value and admission boundary (null contract included) — see
+            // NormalizeHostOperationValue; a cancelled-while-suspended run was already
+            // honored above, so only genuinely successful values are normalized and admitted.
+            normalizedR = NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
+        }
+        // THE CARRIED HOST FAILURE (an asynchronous twin run's host-termination boundary): the
+        // delegate's own throw, its faulted or cancelled awaitable, and the null-return contract
+        // violation are retained by the run — the original exception object — here, in the one
+        // frame that awaited the operation, and the run's marker goes up by value. The run's
+        // entry point rethrows the retained exception. Outside the boundary the filter is false
+        // and the exception propagates from this await exactly as before.
+        catch (Exception error) when (ctx.Budget.CarriesHostTermination)
+        {
+            return ctx.Budget.RetainHostTermination(error);
+        }
+
         if (normalizedR.IsError) return normalizedR.Error;
         var normalized = normalizedR.Value;
         return EvalResult<CountedResult>.Ok(new CountedResult(normalized, normalized.ValueCount()));
