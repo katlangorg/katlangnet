@@ -2,6 +2,8 @@
 
 Tool: Stryker.NET 4.16.0 (pinned in `dotnet-tools.json`). Config: `stryker-config.json`.
 Reports (gitignored): `artifacts/stryker/{calibration,core,evalcore}/reports/`.
+Lean-side counterpart (one decision of the Lean model at a time against the generated differential
+corpora): `lean-model-mutation-campaign-2026-11.md`.
 
 ## 1. Why
 
