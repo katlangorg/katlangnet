@@ -829,7 +829,18 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
 - Downloader failures keep the existing normalization, now uniformly: the `catch`
   around the await covers a synchronously-throwing delegate and a faulted awaitable
   identically → `load: failed to fetch '<url>': <message>`. Parse/elaboration failures
-  inside downloaded source keep their established diagnostics.
+  inside downloaded source keep their established diagnostics. Since 2026-11-22 the message
+  is read under a guard (`ModuleLoadTarget.EchoDownloaderFailure`): a `Message` getter that
+  throws is replaced by the exception's type name instead of escaping the parse or the
+  evaluator, and cancellation requested while it runs stays cancellation with the
+  established token (`DownloaderFailureDetailTests`; `language-rules/evaluator-and-hosting.md`,
+  "Retained parse results and downloader failure details").
+- A retained tree uses its parse-time token for every deferred materialization. After
+  cancellation, evaluation can reuse compiled branches. Selecting a branch that still
+  needs compilation throws `OperationCanceledException` carrying the parse token, even if
+  the run's evaluation token is live. Evaluate `ParseResult.Root` only when `HasErrors`
+  is false. A recovery tree can download modules before branch compilation throws
+  `InvalidOperationException` (`RetainedParseLifecycleTests`).
 
 ## Performance
 

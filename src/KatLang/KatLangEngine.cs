@@ -936,7 +936,9 @@ public static class KatLangEngine
     /// worker threads (browser WebAssembly), await the task instead of blocking on it.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>.
+    /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>. Compiling a deferred
+    /// branch during evaluation also observes <see cref="RunOptions.SourceProcessingCancellationToken"/>.
+    /// Cancellation observed there carries the source token, including when the evaluation token is live.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
@@ -1266,9 +1268,12 @@ public static class KatLangEngine
     /// </summary>
     /// <exception cref="KatLangException">The program did not succeed (see <see cref="EvaluateToAtoms"/>).</exception>
     /// <exception cref="OperationCanceledException">
-    /// Same cancellation contract as <see cref="EvaluateToAtoms"/>.
+    /// Same cancellation contract as <see cref="RunAsync"/>, including source-processing
+    /// cancellation during materialization of a selected branch.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentException">The options are invalid under <see cref="RunAsync"/>'s
+    /// host admission or decimal-place rules.</exception>
     /// <remarks>Like <see cref="RunAsync"/>, every exception — including argument validation —
     /// is delivered through the returned task.</remarks>
     public static async Task<IReadOnlyList<Decimal128>> EvaluateToAtomsAsync(string source, RunOptions? options = null)

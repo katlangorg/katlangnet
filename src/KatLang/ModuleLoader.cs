@@ -2243,13 +2243,8 @@ internal sealed partial class ModuleLoader
                 // Cancellation is authoritative even if the downloader surfaced a different
                 // exception while reacting to it. Only a still-active token permits a fetch
                 // diagnostic (including downloader-owned cancellation/timeout exceptions).
-                // The host's message can carry remote-controlled text (a status reason, a
-                // response excerpt), so it is echoed bounded and with control characters escaped.
                 ThrowIfCancellationRequested();
-                ReportError(
-                    DiagnosticCode.LoadFetchFailed,
-                    $"load: failed to fetch '{moduleUrl}': {ModuleLoadTarget.EchoHostMessage(ex.Message)}",
-                    site);
+                ReportFetchFailure(moduleUrl, ex, site);
                 return RefuseLoad(load);
             }
 
@@ -2463,6 +2458,27 @@ internal sealed partial class ModuleLoader
     // budget diagnostic instead (classified as ModuleNestingTooDeep at the load site).
 
     // ── Error reporting ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reports the downloader's failure to fetch <paramref name="moduleUrl"/> as the one
+    /// <see cref="DiagnosticCode.LoadFetchFailed"/> diagnostic at <paramref name="site"/>, quoting
+    /// the failure's details through <see cref="ModuleLoadTarget.EchoDownloaderFailure"/>: the
+    /// host's message can carry remote-controlled text (a status reason, a response excerpt), so
+    /// it is echoed bounded and with control characters escaped, and reading it runs host code
+    /// (<see cref="Exception.Message"/> is virtual), so a getter that throws leaves a fixed
+    /// description instead of an exception escaping the fetch boundary. Cancellation requested
+    /// while that host code ran is as authoritative as cancellation the downloader raced: it is
+    /// thrown here, with the established token identity, and nothing is reported. A synchronous
+    /// leaf, kept out of line, so its temporaries never join <see cref="FetchAndSpliceAsync"/>'s
+    /// state machine or frame on the nested-load spine.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void ReportFetchFailure(string moduleUrl, Exception failure, SourceSpan? site)
+    {
+        var details = ModuleLoadTarget.EchoDownloaderFailure(failure);
+        ThrowIfCancellationRequested();
+        ReportError(DiagnosticCode.LoadFetchFailed, $"load: failed to fetch '{moduleUrl}': {details}", site);
+    }
 
     private static string BuildLoadedSourceParseErrorMessage(string moduleUrl, string source)
     {

@@ -150,8 +150,15 @@ internal readonly record struct DiagnosticMessage(string Text, IReadOnlyList<int
 /// the variant it was given — so the root's properties, parameters, and output are readable
 /// without a pattern match.
 /// When <see cref="HasErrors"/> is true this is a recovery tree for diagnostics and
-/// editor queries. Source-based engine entry points reject it without evaluation;
-/// passing <see cref="Root"/> directly to an AST evaluator discards that source gate.
+/// editor queries. Source-based engine entry points reject it without evaluation.
+/// <para><b>Evaluate <see cref="Root"/> only when <see cref="HasErrors"/> is false.</b>
+/// Direct evaluation bypasses the engine's diagnostic check. Compiling a deferred branch in
+/// a recovery tree can throw <see cref="InvalidOperationException"/> because the parse did
+/// not publish the required elaboration context. This can happen before or after a download.
+/// A load that fails first produces its ordinary materialization diagnostic.</para>
+/// <para>A deferred branch uses the <see cref="RunOptions.SourceProcessingCancellationToken"/>
+/// supplied to <see cref="Parser.ParseAsync"/> whenever it needs compilation. Cancelling that
+/// token still permits evaluation of branches that have already been compiled.</para>
 /// <para><see cref="Root"/> is ALWAYS the output of that complete front end, never raw
 /// syntax — including when a module is MISSING. A <c>load</c> directive whose module was not
 /// elaborated — unavailable because the parse had no <see cref="RunOptions.DownloadCode"/>
@@ -178,7 +185,7 @@ public sealed record ParseResult
         => (this.Root, this.Diagnostics) = (Root, Diagnostics);
 
     /// <summary>
-    /// The elaborated root produced by the complete front end: a recovery tree when the parse
+    /// Evaluate this root only when <see cref="HasErrors"/> is false. It is a recovery tree when the parse
     /// has errors, and a provisional elaboration that keeps each unresolved <c>load</c> directive
     /// in place when its module is missing (unavailable without a downloader, or refused by
     /// module elaboration). Never raw syntax.
@@ -201,7 +208,8 @@ public sealed record ParseResult
     /// <summary>
     /// True when <see cref="Diagnostics"/> contains an <see cref="DiagnosticSeverity.Error"/>
     /// diagnostic: <see cref="Root"/> is then a recovery tree that
-    /// <see cref="KatLangEngine"/> would refuse to evaluate.
+    /// <see cref="KatLangEngine"/> would refuse to evaluate, and that a host must not evaluate
+    /// either (see <see cref="ParseResult"/>).
     /// </summary>
     public bool HasErrors => Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error);
 

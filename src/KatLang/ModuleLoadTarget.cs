@@ -265,6 +265,30 @@ internal static class ModuleLoadTarget
     /// </summary>
     internal static string EchoHostMessage(string? message) => Echo(message ?? string.Empty, MaxEchoedHostMessageLength, escapeNonAscii: false);
 
+    /// <summary>
+    /// Renders a downloader failure for a failed-fetch diagnostic: its message through
+    /// <see cref="EchoHostMessage"/>. <see cref="Exception.Message"/> is virtual, so reading it
+    /// runs host code; when that getter throws, whatever it throws is dropped and the text names
+    /// the failure's exception type instead (echoed the same way), so the failure stays an
+    /// ordinary failed fetch and no exception escapes while its details are rendered. The
+    /// caller decides cancellation before and after this call.
+    /// </summary>
+    internal static string EchoDownloaderFailure(Exception failure)
+    {
+        string? message;
+        try
+        {
+            message = failure.Message;
+        }
+        catch (Exception)
+        {
+            var type = failure.GetType();
+            return $"the downloader failed with {EchoHostMessage(type.FullName ?? type.Name)}, whose message could not be read";
+        }
+
+        return EchoHostMessage(message);
+    }
+
     private static string Echo(string text, int maxLength, bool escapeNonAscii)
     {
         var builder = new StringBuilder(Math.Min(text.Length, maxLength) + 8);

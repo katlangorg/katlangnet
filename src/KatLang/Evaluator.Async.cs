@@ -121,6 +121,10 @@ public static partial class Evaluator
     /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/> for the
     /// contract.
     /// </summary>
+    /// <exception cref="OperationCanceledException">A selected branch still requires materialization
+    /// and the tree's source-processing token was cancelled. The exception carries that token.</exception>
+    /// <exception cref="InvalidOperationException">A deferred branch of a recovery tree lacked
+    /// the elaboration context needed to compile. See <see cref="ParseResult"/>.</exception>
     public static Task<EvalResult<Result>> RunAsync(Expr expr)
         => RunAsync(expr, limits: null);
 
@@ -129,6 +133,10 @@ public static partial class Evaluator
     /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/> for the
     /// contract.
     /// </summary>
+    /// <exception cref="OperationCanceledException">A selected branch still requires materialization
+    /// and the tree's source-processing token was cancelled. The exception carries that token.</exception>
+    /// <exception cref="InvalidOperationException">A deferred branch of a recovery tree lacked
+    /// the elaboration context needed to compile. See <see cref="ParseResult"/>.</exception>
     public static Task<EvalResult<Result>> RunAsync(Expr expr, EvaluationLimits? limits)
         => RunAsync(expr, limits, cancellationToken: default);
 
@@ -155,16 +163,29 @@ public static partial class Evaluator
     /// downloader and genuinely suspend the run. Such a run has the twin path's host-stack
     /// behavior, described under <see cref="EvaluationLimits.MaxDepth"/>.</para>
     ///
+    /// <para>For a tree returned by <see cref="Parser.ParseAsync"/>, evaluate its root only when
+    /// <see cref="ParseResult.HasErrors"/> is false. Compiling a deferred branch during evaluation
+    /// observes the tree's <see cref="RunOptions.SourceProcessingCancellationToken"/>. Successfully
+    /// compiled branches remain available after that token is cancelled.</para>
+    ///
     /// <para>Cancellation follows the synchronous contract exactly — same token, same
     /// chokepoints, same completion-boundary observation — except that, as with any
     /// async API, the <see cref="OperationCanceledException"/> is delivered through the
     /// returned task (which transitions to the Canceled state) rather than thrown
-    /// synchronously. The exception instance carries this token; cancellation is never
-    /// converted into an <see cref="EvalError"/>.</para>
+    /// synchronously. The exception instance carries this token, or the tree's
+    /// source-processing token at a deferred branch's selection as described above;
+    /// cancellation is never converted into an <see cref="EvalError"/>.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
-    /// The exception is delivered through the returned task and carries that token.
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation, or the
+    /// source-processing token the tree was parsed with was cancelled before or during
+    /// materialization of a selected branch. The exception is delivered through the returned
+    /// task and carries the cancelled token (the source-processing token when that selection
+    /// observes both).
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A deferred branch of a recovery tree lacked the elaboration context needed to compile.
+    /// See <see cref="ParseResult"/>.
     /// </exception>
     public static Task<EvalResult<Result>> RunAsync(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
@@ -179,12 +200,18 @@ public static partial class Evaluator
     /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>.
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation.
-    /// The exception is delivered through the returned task and carries that token.
+    /// <paramref name="cancellationToken"/> was cancelled before or during evaluation, or the
+    /// tree's source-processing token at a deferred branch's selection (see
+    /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>).
+    /// The exception is delivered through the returned task and carries the cancelled token.
     /// </exception>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="expr"/> is null. Like every exception of the asynchronous entry
     /// points, delivered through the returned task.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A deferred branch of a recovery tree lacked the elaboration context needed to compile.
+    /// See <see cref="ParseResult"/>.
     /// </exception>
     public static async Task<EvalResult<Result>> RunAsync(
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
@@ -264,8 +291,13 @@ public static partial class Evaluator
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation
     /// (including while suspended in a host operation, observed when evaluation
-    /// resumes). The exception is delivered through the returned task and carries that
-    /// token.
+    /// resumes), or the tree's source-processing token at a deferred branch's selection (see
+    /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>). The exception is
+    /// delivered through the returned task and carries the cancelled token.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A deferred branch of a recovery tree lacked the elaboration context needed to compile.
+    /// See <see cref="ParseResult"/>.
     /// </exception>
     public static async Task<EvalResult<Result>> RunAsync(
         Expr expr,
@@ -299,6 +331,10 @@ public static partial class Evaluator
     /// <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> for the
     /// contract.
     /// </summary>
+    /// <exception cref="OperationCanceledException">A selected branch still requires materialization
+    /// and the tree's source-processing token was cancelled. The exception carries that token.</exception>
+    /// <exception cref="InvalidOperationException">A deferred branch of a recovery tree lacked
+    /// the elaboration context needed to compile. See <see cref="ParseResult"/>.</exception>
     public static Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(Expr expr)
         => RunFlatAsync(expr, limits: null);
 
@@ -307,6 +343,10 @@ public static partial class Evaluator
     /// <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> for the
     /// contract.
     /// </summary>
+    /// <exception cref="OperationCanceledException">A selected branch still requires materialization
+    /// and the tree's source-processing token was cancelled. The exception carries that token.</exception>
+    /// <exception cref="InvalidOperationException">A deferred branch of a recovery tree lacked
+    /// the elaboration context needed to compile. See <see cref="ParseResult"/>.</exception>
     public static Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(Expr expr, EvaluationLimits? limits)
         => RunFlatAsync(expr, limits, cancellationToken: default);
 
@@ -318,8 +358,13 @@ public static partial class Evaluator
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation
-    /// or the bounded host projection. The exception is delivered through the returned
-    /// task and carries that token.
+    /// or the bounded host projection, or the tree's source-processing token at a deferred
+    /// branch's selection (see <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>).
+    /// The exception is delivered through the returned task and carries the cancelled token.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A deferred branch of a recovery tree lacked the elaboration context needed to compile.
+    /// See <see cref="ParseResult"/>.
     /// </exception>
     public static Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(
         Expr expr, EvaluationLimits? limits, CancellationToken cancellationToken)
@@ -333,8 +378,13 @@ public static partial class Evaluator
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// <paramref name="cancellationToken"/> was cancelled before or during evaluation
-    /// or the bounded host projection. The exception is delivered through the returned
-    /// task and carries that token.
+    /// or the bounded host projection, or the tree's source-processing token at a deferred
+    /// branch's selection (see <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>).
+    /// The exception is delivered through the returned task and carries the cancelled token.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A deferred branch of a recovery tree lacked the elaboration context needed to compile.
+    /// See <see cref="ParseResult"/>.
     /// </exception>
     public static async Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
@@ -350,7 +400,16 @@ public static partial class Evaluator
     /// the effective collection limit, and every exception is delivered through the task.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="expr"/> or <paramref name="hostOperations"/> is null.</exception>
-    /// <exception cref="OperationCanceledException">Evaluation or projection was cancelled.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// Evaluation or projection was cancelled through <paramref name="cancellationToken"/>, or
+    /// the tree's source-processing token was cancelled at a deferred branch's selection (see
+    /// <see cref="RunAsync(Expr, EvaluationLimits?, CancellationToken)"/>); the exception carries
+    /// the cancelled token.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// A deferred branch of a recovery tree lacked the elaboration context needed to compile.
+    /// See <see cref="ParseResult"/>.
+    /// </exception>
     public static async Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlatAsync(
         Expr expr, HostOperations hostOperations, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
         => ProjectFlatHostAtoms(

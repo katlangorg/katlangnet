@@ -371,6 +371,8 @@ internal sealed class DeferredModuleRegion
         if (TryGetMaterialized(out var ready))
             return EvalResult<Algorithm>.Ok(ready);
 
+        // Direct evaluation of a recovery tree can reach this guard, for example when refused
+        // parameter inference stopped elaboration before the branch's contexts were recorded.
         if (Structure is not { Forwardable: not null } || Validation is null || Exposure is null)
         {
             throw new InvalidOperationException(
@@ -774,6 +776,8 @@ internal sealed class DeferredModuleRegion
         try
         {
             var structural = Structure ?? throw new InvalidOperationException("Deferred compilation requires a shared structural context.");
+            // A recovery tree can reach this guard after a successful load. Only an error-free,
+            // non-provisional parse publishes the continuation needed to compile the branch.
             var completed = structural.Registry.StructuralContinuation
                 ?? throw new InvalidOperationException("A deferred structural unit requires completed eager publications.");
             var measurement = StaticStructureAdmission.Measure(loaded, completed.Prelude, Loader.ProcessingLimits, cancellationToken: cancellationToken);

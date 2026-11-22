@@ -749,9 +749,15 @@ public sealed class Parser
     /// <c>load</c> directives — or a downloader that completes synchronously — the returned task
     /// completes synchronously on the calling thread. An incomplete download genuinely suspends
     /// source processing and resumes it at the same point when the download completes.
+    /// <para>Evaluate <see cref="ParseResult.Root"/> only when <see cref="ParseResult.HasErrors"/>
+    /// is false. The tree retains the configured <see cref="RunOptions.SourceProcessingCancellationToken"/>
+    /// for deferred module work. After cancellation, a later evaluation that reaches a branch
+    /// still requiring compilation throws <see cref="OperationCanceledException"/> carrying
+    /// that token, even if its own evaluation token is live.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
-    /// The configured source-processing token was cancelled.
+    /// The configured source-processing token was cancelled before or during parsing or elaboration.
+    /// The exception carries that token.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">

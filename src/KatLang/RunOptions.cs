@@ -88,7 +88,9 @@ public sealed class RunOptions
     /// <see cref="KatLang.SourceProcessingLimits.MaxModuleCount"/> whatever it returns, including
     /// cancellation after invocation (re-evaluations of a parsed tree share its loading budget); a
     /// thrown exception or faulted task becomes a <c>load: failed to fetch</c> diagnostic
-    /// quoting a bounded, escaped excerpt of its message, and a <c>null</c> result is a failed
+    /// quoting a bounded, escaped excerpt of its message — or naming the exception's type when
+    /// reading its <see cref="Exception.Message"/> throws — unless cancellation decides it (see
+    /// <see cref="SourceProcessingCancellationToken"/>), and a <c>null</c> result is a failed
     /// fetch as well. The delegate may be invoked from any thread and, for runs sharing this
     /// options object, concurrently.</para>
     /// <para><b>Capabilities.</b> Downloaded source is part of the program: it is elaborated
@@ -181,11 +183,21 @@ public sealed class RunOptions
     /// completed, but remains authoritative for later deferred module materialization;
     /// use <see cref="EvaluationCancellationToken"/> to cancel evaluation and
     /// <see cref="EvaluationLimits"/> to bound evaluator work.
-    /// <para>When this token is cancelled, an escaping <see cref="OperationCanceledException"/>
-    /// carries this exact token, taking precedence over evaluation cancellation —
+    /// <para>When source processing observes cancellation, the escaping
+    /// <see cref="OperationCanceledException"/> carries this exact token —
     /// including when the downloader's awaitable faults with a different exception or cancellation
-    /// token while the host token is cancelled. A downloader cancellation or timeout without
-    /// source or materialization cancellation remains an ordinary <c>load: failed to fetch</c> diagnostic.</para>
+    /// token while the host token is cancelled, and when the token is cancelled while the failure's
+    /// message is read for the diagnostic (that read runs host code). A downloader cancellation or
+    /// timeout without source or materialization cancellation remains an ordinary
+    /// <c>load: failed to fetch</c> diagnostic.</para>
+    /// <para>A tree returned by <see cref="Parser.ParseAsync"/> retains this token. Once it is
+    /// cancelled, selecting any branch that still needs materialization throws
+    /// <see cref="OperationCanceledException"/> carrying this token before starting the work,
+    /// even with a fresh evaluation token or cached module source. Already materialized branches
+    /// remain available. To keep deferred loading available across requests, choose a token that
+    /// covers the tree's intended lifetime or use <see cref="CancellationToken.None"/>. After
+    /// cancellation, parse again with a live token to compile further branches. The same rule
+    /// applies during the evaluation phase of <see cref="KatLangEngine.RunAsync"/>.</para>
     /// </summary>
     public CancellationToken SourceProcessingCancellationToken { get; init; }
 
