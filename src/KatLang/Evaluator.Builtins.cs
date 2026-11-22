@@ -512,16 +512,11 @@ public static partial class Evaluator
         if (IsExported(binding))
             return null;
 
-        for (var scope = resolvedAlgorithm.Parent; scope is not null; scope = scope.Parent)
-        {
-            if (scope.Activation is not { } activation)
-                continue;
-            return IsDetached(activation, ctx)
-                ? LocalOnlyPropertyError(DeclaringOwnerDescription(owner), binding)
-                : null;
-        }
-
-        return null;
+        // The nearest activated level of the declaring chain: the very activation the key is keyed on
+        // (DeclaringActivation reads the chain's memoized key facts, so the check costs the same at any depth).
+        return DeclaringActivation(resolvedAlgorithm.Parent) is { } activation && IsDetached(activation, ctx)
+            ? LocalOnlyPropertyError(DeclaringOwnerDescription(owner), binding)
+            : null;
     }
 
     // How a refused detached read names the declaring owner: its path when it has one. Presentation only.

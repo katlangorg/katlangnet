@@ -120,7 +120,7 @@ internal sealed class ParameterActivation
     /// activation reuses it, and it is forgotten with the activation. A static level keeps its memo on its
     /// scope instead (<see cref="ScopeCtx.StaticOpenLevel"/>).
     /// </summary>
-    internal Evaluator.ResolvedOpenLevel? OpenLevel => Volatile.Read(ref _memos)?.OpenLevel;
+    internal Evaluator.ResolvedOpenLevel? OpenLevel => (Volatile.Read(ref _memos) as ActivationMemo)?.OpenLevel;
 
     /// <summary>Memoizes <paramref name="level"/> as this activation's resolved open providers (see <see cref="OpenLevel"/>).</summary>
     internal void PublishOpenLevel(Evaluator.ResolvedOpenLevel level) => Memos.OpenLevel = level;
@@ -131,31 +131,91 @@ internal sealed class ParameterActivation
     /// <see cref="ScopeCtx.Owner"/>, forgotten with the activation. A run keeps the slot of aliases declared
     /// outside every activation (<see cref="EvaluationBudget.AliasHeadLevel"/>).
     /// </summary>
-    internal ScopeCtx? AliasHeadLevel => Volatile.Read(ref _memos)?.AliasHeadLevel;
+    internal ScopeCtx? AliasHeadLevel => (Volatile.Read(ref _memos) as ActivationMemo)?.AliasHeadLevel;
 
     /// <summary>Keeps <paramref name="level"/> as this activation's alias head level (see <see cref="AliasHeadLevel"/>).</summary>
     internal void PublishAliasHeadLevel(ScopeCtx level) => Memos.AliasHeadLevel = level;
 
+    /// <summary>
+    /// The key facts of this activation's LEVEL — the one scope this activation is the
+    /// <see cref="ScopeCtx.Activation"/> of (<see cref="Evaluation.Caching.ScopeKeyFacts"/>, which names that
+    /// level) — memoized by the first cache key built over it, or null, and forgotten with the activation. A
+    /// static level keeps them on its scope instead (<see cref="ScopeCtx.StaticKeyFacts"/>).
+    /// </summary>
+    internal Evaluation.Caching.ScopeKeyFacts? KeyFacts => Volatile.Read(ref _memos) switch
+    {
+        Evaluation.Caching.ScopeKeyFacts facts => facts,
+        ActivationMemo memo => memo.KeyFacts,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Memoizes <paramref name="facts"/> as this activation's level's key facts (see <see cref="KeyFacts"/>). An
+    /// activation without other memos holds them directly, so the key facts alone cost no memo holder; a
+    /// racing publication stores equivalent facts.
+    /// </summary>
+    internal void PublishKeyFacts(Evaluation.Caching.ScopeKeyFacts facts)
+    {
+        if (_serialAndInvocation == 0)
+            throw new InvalidOperationException("An unbound parameter's stand-in activation owns no memo.");
+
+        while (true)
+        {
+            var current = Volatile.Read(ref _memos);
+            if (current is ActivationMemo memo)
+            {
+                memo.KeyFacts = facts;
+                return;
+            }
+
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _memos, facts, current), current))
+                return;
+        }
+    }
+
     // The activation's memos hang off ONE lazily created holder (published first-wins, so racing chases meet
     // in one dictionary): an activation that never meets an alias or consults its level's opens pays one null
-    // field.
+    // field, and one whose level only memoized its key facts holds those alone until a holder is needed (the
+    // holder then carries them).
     // The two unbound stand-ins (serial 0) are process-wide and must never own a memo.
     private ActivationMemo Memos
-        => _serialAndInvocation == 0
-            ? throw new InvalidOperationException("An unbound parameter's stand-in activation owns no memo.")
-            : Volatile.Read(ref _memos)
-           ?? Interlocked.CompareExchange(ref _memos, new ActivationMemo(), null)
-           ?? _memos!;
+    {
+        get
+        {
+            if (_serialAndInvocation == 0)
+                throw new InvalidOperationException("An unbound parameter's stand-in activation owns no memo.");
 
-    private ActivationMemo? _memos;
+            while (true)
+            {
+                var current = Volatile.Read(ref _memos);
+                if (current is ActivationMemo memo)
+                    return memo;
+
+                var created = new ActivationMemo { KeyFacts = current as Evaluation.Caching.ScopeKeyFacts };
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _memos, created, current), current))
+                    return created;
+            }
+        }
+    }
+
+    // Null, the level's key facts alone, or the ActivationMemo holder.
+    private object? _memos;
 
     // The alias-target memo itself, carrying the route-decision memo created on first use, the level's
-    // resolved open providers and the alias head level.
+    // resolved open providers, the alias head level and the level's key facts.
     private sealed class ActivationMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
     {
         private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _routeDecisions;
         private Evaluator.ResolvedOpenLevel? _openLevel;
         private ScopeCtx? _aliasHeadLevel;
+        private Evaluation.Caching.ScopeKeyFacts? _keyFacts;
+
+        // A pure function of the activation's level, so a racing publication stores equivalent facts.
+        public Evaluation.Caching.ScopeKeyFacts? KeyFacts
+        {
+            get => Volatile.Read(ref _keyFacts);
+            set => Volatile.Write(ref _keyFacts, value);
+        }
 
         public Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> RouteDecisions
             => Volatile.Read(ref _routeDecisions)
@@ -487,16 +547,18 @@ public static partial class Evaluator
     /// lifetime. An activation a property-style read recorded is skipped: a read inherits
     /// (CACHE-OWNER-D1), it owns nothing. Null selects the RUN-SCOPED binding, independent of every
     /// activation of the owner before or after. Lean: <c>propertyOwnerInvocation</c>.
+    /// <para>The search above the declaring level reads its parent's memoized key facts
+    /// (<see cref="Evaluation.Caching.ScopeKeyFacts"/>; implementation-only, 2026-11-22), so a read costs the same at
+    /// any depth: the nearest such activation of a chain is a pure function of the chain. The declaring level
+    /// itself is read directly — it is often a scope a single read wired, which needs no memo.</para>
     /// </summary>
     internal static object? DeclaringInvocationIdentity(ScopeCtx? declaringScope)
     {
-        for (var scope = declaringScope; scope is not null; scope = scope.Parent)
-        {
-            if (scope.Activation is { OwnsInvocation: true } activation)
-                return activation.ValueEnvironmentIdentity;
-        }
-
-        return null;
+        if (declaringScope is null)
+            return null;
+        if (declaringScope.Activation is { OwnsInvocation: true } activation)
+            return activation.ValueEnvironmentIdentity;
+        return Evaluation.Caching.ScopeKeyFacts.ForActivationLookup(declaringScope.Parent).InvocationActivation?.ValueEnvironmentIdentity;
     }
 
     /// <summary>
@@ -522,18 +584,20 @@ public static partial class Evaluator
     /// null when no level is activated (the root, an unactivated host scope). It keys a local-only
     /// property's cache entry (<c>ZeroArgPropertyCacheKey.FromExecution</c>) and is what a
     /// parameterless owner entered by a property-style read inherits (CACHE-OWNER-D1). Lean:
-    /// <c>propertyOwnerBindingContext</c>.
+    /// <c>propertyOwnerBindingContext</c>. Read like <see cref="DeclaringInvocationIdentity"/>
+    /// (<see cref="DeclaringActivation"/>).
     /// </summary>
     internal static object? DeclaringBindingIdentity(ScopeCtx? declaringScope)
-    {
-        for (var scope = declaringScope; scope is not null; scope = scope.Parent)
-        {
-            if (scope.Activation is { } activation)
-                return activation.ValueEnvironmentIdentity;
-        }
+        => DeclaringActivation(declaringScope)?.ValueEnvironmentIdentity;
 
-        return null;
-    }
+    /// <summary>
+    /// The activation of the nearest ACTIVATED level of <paramref name="declaringScope"/>'s chain, or null: the
+    /// level itself, then its parent's memoized key facts (<see cref="Evaluation.Caching.ScopeKeyFacts"/>).
+    /// </summary>
+    internal static ParameterActivation? DeclaringActivation(ScopeCtx? declaringScope)
+        => declaringScope is null
+            ? null
+            : declaringScope.Activation ?? Evaluation.Caching.ScopeKeyFacts.ForActivationLookup(declaringScope.Parent).BindingActivation;
 
     /// <summary>
     /// The scope of the context's head as the site sees it: the activated head scope when the

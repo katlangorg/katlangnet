@@ -1083,19 +1083,19 @@ public static partial class Evaluator
     /// chase runs again there, with the reading context's checks, and records nothing. Every other
     /// reader — and every alias whose chain holds no detached activation — uses the memos as before:
     /// their checks read only the chain's own activations, which the watermark leaves usable.
+    /// <para>An activation is detached when its serial lies below the watermark (<see cref="IsDetached"/>), so the
+    /// chain holds one exactly when its OLDEST activation's serial does: the level itself, then its parent's
+    /// memoized key facts (<see cref="Evaluation.Caching.ScopeKeyFacts"/>), at the same cost at any depth.</para>
     /// </summary>
     private static bool AliasMemoDetached(Algorithm wired, in EvalCtx ctx)
     {
-        if (ctx.DetachedBefore == 0)
+        if (ctx.DetachedBefore == 0 || wired.Parent is not { } level)
             return false;
 
-        for (var level = wired.Parent; level is not null; level = level.Parent)
-        {
-            if (level.Activation is { } activation && IsDetached(activation, ctx))
-                return true;
-        }
-
-        return false;
+        var oldest = Evaluation.Caching.ScopeKeyFacts.ForActivationLookup(level.Parent).OldestActivationSerial;
+        if (level.Activation is { } activation && activation.Serial < oldest)
+            oldest = activation.Serial;
+        return oldest < ctx.DetachedBefore;
     }
 
     /// <summary>
@@ -1208,15 +1208,9 @@ public static partial class Evaluator
 
     // The nearest activation of an alias's declaring chain, which owns its PURE memo entries (static ends,
     // route decisions, the head level) and qualifies a chase visit. A binding cell is never owned by an activation.
+    // Read through the chain's memoized key facts (DeclaringActivation), so a read costs the same at any depth.
     private static ParameterActivation? AliasMemoOwner(Algorithm wired)
-    {
-        for (var level = wired.Parent; level is not null; level = level.Parent)
-        {
-            if (level.Activation is { } activation)
-                return activation;
-        }
-        return null;
-    }
+        => DeclaringActivation(wired.Parent);
 
     /// <summary>
     /// The remembered static end of the alias BINDING <paramref name="binding"/> wired as
