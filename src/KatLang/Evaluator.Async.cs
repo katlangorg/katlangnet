@@ -72,12 +72,12 @@ namespace KatLang;
 /// <para><b>Stack.</b> The synchronous family's calibrated stack behavior is untouched.
 /// The twin family runs the same dynamic-depth budget and shares the same
 /// <c>TryEnsureSufficientExecutionStack</c> probes, but where a twin is about to enter an
-/// invocation or argument-evaluation level, a row-loop funnel, or a need cell's
-/// asynchronous computation with the host stack below the runtime's reserve (tested a small
+/// invocation or argument-evaluation level, a row-loop funnel, a loop that will run a round, or a
+/// need cell's asynchronous computation with the host stack below the runtime's reserve (tested a small
 /// fixed margin below the site, <see cref="StackHop.ChokepointMargin"/>, so it covers the
 /// chokepoint helpers that run the probe), it first
 /// awaits a <see cref="StackHop"/> and continues on a fresh thread-pool stack (TWIN-ONLY,
-/// marked at each site beside its <c>// MIRROR OF</c> counterpart). A twin chain that
+/// marked at each hop site). A twin chain that
 /// would have outgrown the host stack therefore completes asynchronously; invocation recursion
 /// is bounded by the deterministic depth budget, like a run that genuinely suspends before descending.
 /// The probes stay after each hop (a fresh stack that is still low fails structurally),
@@ -220,11 +220,14 @@ public static partial class Evaluator
     /// the returned task then completes asynchronously even if nothing else suspends, and
     /// invocation recursion is bounded by the deterministic <see cref="EvaluationLimits.MaxDepth"/>
     /// verdict, so it can go DEEPER than the synchronous evaluator, as a run that genuinely
-    /// suspends before descending can. Synchronous helpers the twin path shares with the
+    /// suspends before descending can. Recursion routed through <c>while</c>/<c>repeat</c> steps
+    /// charges no depth and continues on fresh stacks. Each active loop retains heap state.
+    /// A finite <see cref="EvaluationLimits.MaxSteps"/> bounds the rounds executed, and host
+    /// cancellation can stop the run. Without either, unbounded nesting can exhaust memory.
+    /// Synchronous helpers the twin path shares with the
     /// synchronous evaluator keep the host-stack backstop — the structured
     /// <see cref="EvalError.EvaluationStackExhausted"/> — so a twin run can still stop with
-    /// it, possibly at a SHALLOWER depth than the synchronous evaluator. The outcome is always a
-    /// value or a structured resource-limit error, never a process crash; where the backstop
+    /// it, possibly at a SHALLOWER depth than the synchronous evaluator. Where the backstop
     /// fires depends on the host (thread, build, runtime and JIT state, platform), never on
     /// which limits are configured, and is not a language guarantee (see
     /// <see cref="EvaluationLimits.MaxDepth"/>).</para>

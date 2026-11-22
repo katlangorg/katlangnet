@@ -12,8 +12,12 @@ namespace KatLang;
 ///   repeats work without nesting, so it charges a step and never depth. Recursion
 ///   routed through loop steps (a step whose body starts a loop over itself) therefore
 ///   nests host frames the depth budget does not see; it is bounded by the evaluator's
-///   host-stack backstop, which reports the structured
-///   <see cref="EvalError.EvaluationStackExhausted"/> rather than overflowing.</item>
+///   host-stack backstop, which every loop passes before its first round and which reports
+///   the structured <see cref="EvalError.EvaluationStackExhausted"/> rather than overflowing.
+///   A run on the asynchronous twin path (see <see cref="MaxDepth"/>) continues such a
+///   recursion on fresh stacks. Each active loop then retains heap state. A finite
+///   <see cref="MaxSteps"/> bounds the rounds executed, and host cancellation can stop the
+///   run. Without either, unbounded nesting can exhaust memory.</item>
 ///   <item><b>Structural AST depth</b> (<see cref="MaxAstDepth"/>) bounds how deeply
 ///   the program tree ITSELF is nested, judged by a non-recursive preflight before any
 ///   recursive validator, optimizer, or evaluator sees the tree. Its purpose is
@@ -121,7 +125,10 @@ public sealed record EvaluationLimits
     /// thread-pool stack (a stack hop) and completes asynchronously, even when nothing else
     /// suspends, so its invocation recursion is bounded by this deterministic limit and can go
     /// DEEPER than the synchronous evaluator, which would report
-    /// <see cref="EvalError.EvaluationStackExhausted"/> there. Synchronous helpers the twin
+    /// <see cref="EvalError.EvaluationStackExhausted"/> there. Recursion routed through loop
+    /// steps is continued the same way. Each round charges one step towards <see cref="MaxSteps"/>
+    /// and leaves this depth counter unchanged. Active loops retain heap state across hops.
+    /// Synchronous helpers the twin
     /// path shares with the synchronous evaluator (alias chains, receiver and
     /// <c>open</c> navigation, non-recursive sub-evaluations) keep the backstop, so a twin run
     /// can still stop with it, possibly at a SHALLOWER depth than the synchronous evaluator

@@ -338,4 +338,151 @@ public class SpreadFailureOriginTests
         Assert.Equal<EvalError>(own, nested);
         Assert.Equal(KatLangErrorCode.MissingOutput, nested.Code);
     }
+
+    // ── 7. The context-chain readers are loops with the recursive definitions' outcomes ──
+
+    // The definitions the readers had until November 2026, one native frame per context frame (Lean:
+    // `isOwnMissingOutputError`, `Error.nestMissingOutput`, the own arm of `spreadOperandFailure`). They are
+    // the oracle here; the evaluator's readers are loops, because a run's chain grows with its nesting, which
+    // the async route does not bound by the stack (EvaluationLimitsProcessTests covers the depth).
+    private static bool OwnOracle(EvalError error) => error switch
+    {
+        EvalError.MissingOutput missing => !missing.IsNested,
+        EvalError.WithContext(_, var inner) => OwnOracle(inner),
+        _ => false,
+    };
+
+    private static bool MissingOracle(EvalError error) => error switch
+    {
+        EvalError.MissingOutput => true,
+        EvalError.WithContext(_, var inner) => MissingOracle(inner),
+        _ => false,
+    };
+
+    private static EvalError NestOracle(EvalError error) => error switch
+    {
+        EvalError.MissingOutput { IsNested: false } missing => missing with { IsNested = true },
+        EvalError.WithContext { Inner: EvalError.MissingOutput { IsNested: false } framed } context
+            => context.WithInner(framed with { IsNested = true, KeepsOwnBlame = true }),
+        EvalError.WithContext context when OwnOracle(context.Inner)
+            => context.WithInner(NestOracle(context.Inner)),
+        _ => error,
+    };
+
+    private static EvalError ConvertOracle(EvalError error, SourceSpan? span)
+        => error is EvalError.WithContext context
+            ? context.WithInner(ConvertOracle(context.Inner, span))
+            : new EvalError.SpreadMissingOutput { Span = span };
+
+    private static bool LiftableOracle(EvalError error) => !error.IsProjectionFailure && error switch
+    {
+        EvalError.NotAnAlgorithm => true,
+        EvalError.IllegalInEval => true,
+        EvalError.WithContext(_, var inner) => LiftableOracle(inner),
+        _ => false,
+    };
+
+    /// <summary>Everything a chain node carries: kind, span, context, and the equality-transparent slots.</summary>
+    private sealed record NodeFacts(
+        Type Kind, SourceSpan? Span, ErrorContext? Context, bool ProjectionFailure, bool Nested, bool KeepsOwnBlame, bool SelectedMember);
+
+    private static NodeFacts[] Facts(EvalError error)
+        => [.. Chain(error).Select(static node => new NodeFacts(
+            node.GetType(), node.Span, (node as EvalError.WithContext)?.ErrorContext, node.IsProjectionFailure,
+            node is EvalError.MissingOutput { IsNested: true }, node is EvalError.MissingOutput { KeepsOwnBlame: true },
+            node is EvalError.MissingOutput { IsSelectedMemberOutput: true }))];
+
+    private static void AssertSameOutcome(EvalError input, EvalError expected, EvalError actual, string what)
+    {
+        Assert.True(Facts(expected).SequenceEqual(Facts(actual)), $"{what}: the chains differ");
+        // Unchanged means the SAME object; a changed chain shares no node with the input (a memoized
+        // failure is shared by every consumer) and keeps every frame's own context object.
+        Assert.Equal(ReferenceEquals(expected, input), ReferenceEquals(actual, input));
+        if (ReferenceEquals(actual, input))
+            return;
+        var before = Chain(input).ToArray();
+        var after = Chain(actual).ToArray();
+        Assert.Equal(before.Length, after.Length);
+        for (var i = 0; i < before.Length; i++)
+        {
+            Assert.NotSame(before[i], after[i]);
+            if (before[i] is EvalError.WithContext frame)
+                Assert.Same(frame.ErrorContext, Assert.IsType<EvalError.WithContext>(after[i]).ErrorContext);
+        }
+    }
+
+    public static TheoryData<int, int> ChainShapes()
+    {
+        var shapes = new TheoryData<int, int>();
+        for (var terminal = 0; terminal < 9; terminal++)
+        {
+            foreach (var frames in new[] { 0, 1, 2, 3, 7, 64 })
+                shapes.Add(terminal, frames);
+        }
+
+        return shapes;
+    }
+
+    [Theory]
+    [MemberData(nameof(ChainShapes))]
+    public void ChainReaders_AgreeWithTheRecursiveDefinitions(int terminalKind, int frames)
+    {
+        var origin = new SourceSpan(3, 4, 3, 5);
+        EvalError terminal = terminalKind switch
+        {
+            0 => new EvalError.MissingOutput { Span = origin, IsSelectedMemberOutput = true },
+            1 => new EvalError.MissingOutput(),
+            2 => new EvalError.MissingOutput { IsNested = true, Span = origin },
+            3 => new EvalError.MissingOutput { IsNested = true, KeepsOwnBlame = true },
+            4 => new EvalError.DivByZero { Span = origin },
+            5 => new EvalError.NotAnAlgorithm("x"),
+            6 => new EvalError.IllegalInEval("x") { Span = origin },
+            7 => new EvalError.NotAnAlgorithm("x") { IsProjectionFailure = true },
+            _ => new EvalError.SpreadMissingOutput { Span = origin },
+        };
+
+        // Every third frame has no span, every fifth carries the projection mark, and the contexts alternate.
+        foreach (var marked in new[] { false, true })
+        {
+            var input = terminal;
+            for (var i = frames - 1; i >= 0; i--)
+            {
+                ErrorContext context = i % 2 == 0 ? new CallContext("F" + i) : new PropertyEvaluationContext("P" + i);
+                var frame = new EvalError.WithContext(context, input) { Span = i % 3 == 0 ? null : new SourceSpan(i + 1, 1, i + 1, 2) };
+                input = marked && i % 5 == 4 ? frame with { IsProjectionFailure = true } : frame;
+            }
+
+            var what = $"terminal {terminalKind} under {frames} frame(s), marked={marked}";
+            var untouched = Facts(input);
+
+            Assert.Equal(OwnOracle(input), Evaluator.IsOwnMissingOutputError(input));
+            Assert.Equal(LiftableOracle(input), Evaluator.IsLiftableError(input));
+            AssertSameOutcome(input, NestOracle(input), Evaluator.NestMissingOutput(input), what + ", nest");
+
+            var operand = new Expr.Param("x") { Span = new SourceSpan(9, 2, 9, 3) };
+            foreach (var span in new SourceSpan?[] { operand.Span, null })
+            {
+                var spread = Evaluator.SpreadOperandFailure(operand, span, input);
+                if (OwnOracle(input))
+                {
+                    AssertSameOutcome(input, ConvertOracle(input, span), spread, what + ", spread of an own missing output");
+                }
+                else if (MissingOracle(input))
+                {
+                    // A nested missing output keeps its chain: one spread frame is added around the same object.
+                    var added = Assert.IsType<EvalError.WithContext>(spread);
+                    Assert.IsType<SpreadOperandContext>(added.ErrorContext);
+                    Assert.Same(input, added.Inner);
+                    Assert.Equal(Chain(input).Select(static node => node.Span).FirstOrDefault(static s => s is not null) ?? span, added.Span);
+                }
+                else
+                {
+                    Assert.Same(input, spread);
+                }
+            }
+
+            // No reader mutates the failure it reads.
+            Assert.True(untouched.SequenceEqual(Facts(input)), $"{what}: a reader changed its input");
+        }
+    }
 }

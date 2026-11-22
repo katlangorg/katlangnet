@@ -358,6 +358,561 @@ public class EvaluationLimitsProcessTests
         WriteProbeMarker();
     }
 
+    // ── Recursion routed through loop steps: the loop-entry backstop (audit finding 1, 2026-11-21) ──
+
+    private const string WhileOverItself = "W = while(W())\nmark(1), W(), mark(2)";
+    private const string DotWhileInStep = "Countdown(x) = x - 1, Countdown(x).while > 1\nmark(1), Countdown(5).while, mark(2)";
+    private const string RepeatWithForwardedCount = "F(c) = repeat(F(c), c)\nmark(1), F(1), mark(2)";
+    private const string RepeatWithFreshCount = "F(n) = repeat(F(n), 1)\nmark(1), F(0), mark(2)";
+
+    /// <summary>
+    /// Unbounded recursions in which every level ENTERS A LOOP and no invocation: the step's body starts a loop
+    /// over the step itself. A loop-step invocation charges a step and never depth, so nothing but the host-stack
+    /// backstop bounds them on the synchronous routes. Before the loop entry probed, the first four and the
+    /// family step killed the process on every route (the round kernel charges its step without a stack probe,
+    /// and the loop-step row readers bypass the row funnels' probe); the fresh-count <c>repeat</c> stopped only
+    /// because its literal count is a fresh need cell, whose VALUE computation happens to probe. The forwarded
+    /// count and the fresh count are a matched pair: one differs from the other by that incidental probe alone.
+    /// </summary>
+    private static readonly (string Name, string Source)[] UnboundedLoopStepRecursions =
+    [
+        ("while over itself", WhileOverItself),
+        ("while over a parameter", "F(n) = while(F(n))\nmark(1), F(0), mark(2)"),
+        ("dot while in its own step", DotWhileInStep),
+        ("repeat with a forwarded count", RepeatWithForwardedCount),
+        ("repeat with a fresh count", RepeatWithFreshCount),
+        ("family step", "F(0) = 0\nF(n) = repeat(F(n), n)\nmark(1), F(1), mark(2)"),
+    ];
+
+    /// <summary>
+    /// A TERMINATING recursion through loop steps: each <c>while</c> round reads its flag row first, so the
+    /// recursion is <paramref name="levels"/> loops deep when the run-wide <c>tick()</c> counter reaches the bound
+    /// and every loop ends. Its value is <c>(0, false)</c> at every depth.
+    /// </summary>
+    private static string TerminatingLoopStepRecursion(int levels, string counter = "tick()")
+        => $"F(n) = while(F(n)), {counter} < {levels}\nF(0)";
+
+    private const string TerminatingLoopStepRecursionValue = "(0, false)";
+
+    /// <summary>The same value in the evaluator routes' neutral rendering (<see cref="SemanticExplorerHarness.Neutral"/>).</summary>
+    private const string TerminatingLoopStepRecursionNeutral = "S[0, false]";
+
+    private sealed class LoopStepRecursionRun
+    {
+        private readonly List<string> _marks = [];
+        private int _calledOnThePool;
+
+        public LoopStepRecursionRun(string source, bool asynchronousOperation = false)
+        {
+            Source = source;
+            var here = HostOperation.Create("here", (args, _) =>
+            {
+                if (Thread.CurrentThread.IsThreadPoolThread)
+                    Volatile.Write(ref _calledOnThePool, 1);
+                return args[0];
+            }, "value");
+            var mark = HostOperation.Create("mark", (args, _) =>
+            {
+                lock (_marks)
+                    _marks.Add(SemanticExplorerHarness.Neutral(args[0]));
+                return args[0];
+            }, "value");
+            // An asynchronous operation that is configured and never called routes the public engine through the
+            // twin family (the route is chosen by capability); `yield` genuinely suspends where a program calls it.
+            Operations = asynchronousOperation
+                ? HostOperations.Create(mark, here, HostOperation.CreateAsync("yield", async (args, _) =>
+                {
+                    await Task.Yield();
+                    return args[0];
+                }, "value"))
+                : HostOperations.Create(mark, here);
+            var parsed = Parser.Parse(source, new RunOptions { HostOperations = Operations });
+            Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(static d => d.Message)));
+            Program = new Expr.AlgorithmExpr(parsed.Root);
+        }
+
+        public string Source { get; }
+
+        public HostOperations Operations { get; }
+
+        public Expr Program { get; }
+
+        public string Marks
+        {
+            get
+            {
+                lock (_marks)
+                    return string.Join(",", _marks);
+            }
+        }
+
+        public bool CalledAnOperationOnThePool => Volatile.Read(ref _calledOnThePool) == 1;
+
+        /// <summary>The generic or planned synchronous evaluator, or the forced twin awaited on this thread.</summary>
+        public (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) Evaluate(
+            string route, EvaluationLimits? limits = null, LoopOptimizationDiagnostics? loopDiagnostics = null)
+            => route == "twin"
+                ? Evaluator.RunCountedObservedAsync(
+                    Program,
+                    limits,
+                    zeroArgPropertyResultCache: new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache(),
+                    hostOperations: Operations).AsTask().GetAwaiter().GetResult()
+                : Evaluator.RunCountedObserved(Program, limits, enableOptimizations: route == "planned",
+                    loopDiagnostics: loopDiagnostics, hostOperations: Operations);
+
+        public RunResult Engine(EvaluationLimits? limits = null)
+            => KatLangEngine.Run(Source, new RunOptions { HostOperations = Operations, EvaluationLimits = limits });
+
+        public RunResult EngineAsync(EvaluationLimits? limits = null)
+            => KatLangEngine.RunAsync(Source, new RunOptions { HostOperations = Operations, EvaluationLimits = limits })
+                .GetAwaiter().GetResult();
+    }
+
+    private static EvalError ContextTerminal(EvalError error)
+    {
+        while (error is EvalError.WithContext(_, var inner))
+            error = inner;
+        return error;
+    }
+
+    private static int ContextFrameCount(EvalError error)
+    {
+        var frames = 0;
+        for (; error is EvalError.WithContext(_, var inner); error = inner)
+            frames++;
+        return frames;
+    }
+
+    /// <summary>
+    /// One line per context frame and one for the terminal, without recursion: a deep run's chain has thousands
+    /// of frames, which the indented recursive description of <see cref="LoopDiagnosticParityAssertions"/> cannot hold.
+    /// </summary>
+    private static string DescribeErrorChain(EvalError error)
+    {
+        var text = new System.Text.StringBuilder();
+        for (; error is EvalError.WithContext frame; error = frame.Inner)
+            text.Append(frame.ErrorContext).Append(" @").Append(frame.Span).Append('\n');
+        return text.Append(error.GetType().Name).Append(" @").Append(error.Span).ToString();
+    }
+
+    private static string DescribeLoopStepRun(EvalResult<Evaluator.CountedResult> result, EvaluationBudget budget)
+        => (result.IsError ? DescribeErrorChain(result.Error) : SemanticExplorerHarness.Neutral(result.Value.Value))
+            + $" steps={budget.ConsumedSteps} checkpoints={budget.ConsumedExpressionCheckpoints} peak={budget.PeakDepth}"
+            + $" depth={budget.CurrentDepth} items={budget.MaterializedItems}";
+
+    /// <summary>
+    /// Recursion routed through loop steps is bounded by the host-stack backstop on the synchronous routes, as
+    /// <see cref="EvaluationLimits"/> documents: the structured, terminal
+    /// <see cref="EvalError.EvaluationStackExhausted"/>, never a process overflow (audit finding 1 of 2026-11-21).
+    /// The child runs every unbounded shape through the public engine and the planned and generic evaluators on
+    /// 1, 16 and 64 MiB threads, once with tiering (Tier-0 frames first) and once without. Each stop is terminal
+    /// (the row after the recursion never runs) and leaves no depth level open. On the 1 MiB thread each
+    /// evaluator stop is also checked against the generic accounting (Q-09b: a route may stop anywhere, Q-09a,
+    /// but it charged exactly the generic prefix), and a step budget that binds before every route's stop gives
+    /// the generic, planned and twin routes one verdict with identical counters. The terminating recursion
+    /// returns its value wherever it fits and on every thread of at least 16 MiB.
+    /// <para>This is a different boundary from the two earlier repairs in this class: the argument-evaluation
+    /// chokepoint (<see cref="BuiltinArgumentRecursion_ProbeChild"/>: a loop's initial STATE or COUNT reaching
+    /// itself) and the nested <see cref="LoopValueEnvironment"/> views of
+    /// <see cref="RecursionThroughPlannedLoopSteps_ProbeChild"/>, whose one shape (the fresh count) had a probe
+    /// in its cycle all along.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0")]
+    public async Task RecursionThroughLoopSteps_StopsAtTheLoopEntryBackstop_InSubprocess(string tieredCompilation)
+        => await RunProbeChild(
+            nameof(RecursionThroughLoopSteps_ProbeChild),
+            new Dictionary<string, string> { ["DOTNET_TieredCompilation"] = tieredCompilation });
+
+    [Fact]
+    public void RecursionThroughLoopSteps_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        const int oneMiB = 1024 * 1024;
+        string[] evaluators = ["generic", "planned"];
+
+        foreach (var (name, source) in UnboundedLoopStepRecursions)
+        {
+            var stops = new Dictionary<string, (long Steps, long Checkpoints)>();
+            foreach (var stackMiB in new[] { 1, 16, 64 })
+            {
+                AstStructuralDepthProcessTests.RunOnThreadWithStack(stackMiB * oneMiB, () =>
+                {
+                    var where = $"{name} on {stackMiB} MiB";
+                    var engine = new LoopStepRecursionRun(source);
+                    // The same high step ceiling as the planned-frame regression above bounds each case
+                    // independently of the stack probe. The probe must fire first on these stacks.
+                    var limits = new EvaluationLimits { MaxSteps = 200_000 };
+                    var failure = Assert.Single(Assert.IsType<RunResult.EvalFailure>(engine.Engine(limits)).Errors);
+                    Assert.True(failure.Code == KatLangErrorCode.EvaluationStackExhausted,
+                        $"KatLangEngine.Run, {where}: {failure.Code}: {failure.Message}");
+                    Assert.True(failure.IsResourceLimit);
+                    Assert.Equal("1", engine.Marks);
+
+                    foreach (var route in evaluators)
+                    {
+                        var run = new LoopStepRecursionRun(source);
+                        var diagnostics = new LoopOptimizationDiagnostics();
+                        var (result, budget) = run.Evaluate(route, limits, diagnostics);
+                        Assert.True(result.IsError, $"{route}, {where}: completed an unbounded recursion");
+                        var terminal = ContextTerminal(result.Error);
+                        Assert.True(terminal is EvalError.EvaluationStackExhausted, $"{route}, {where}: {terminal.GetType().Name}");
+                        Assert.True(result.Error.IsResourceLimit);
+                        // A resource limit takes no context frame on the way out.
+                        Assert.Equal(0, ContextFrameCount(result.Error));
+                        Assert.Equal(0, budget.CurrentDepth);
+                        // Loop steps charge no depth: only the one root call and its argument levels are ever open.
+                        Assert.InRange(budget.PeakDepth, 1, 4);
+                        // Nothing follows a resource limit: the row after the recursion never ran.
+                        Assert.Equal("1", run.Marks);
+                        // The recursion really nested loops (each level executes one). No depth is promised
+                        // (Q-09a): this only rules out a stop before any nesting.
+                        Assert.True(diagnostics.LoopExecutions > 2, $"{route}, {where}: only {diagnostics.LoopExecutions} loop(s) ran");
+                        if (route == "planned" && source is DotWhileInStep or RepeatWithForwardedCount)
+                            Assert.True(diagnostics.OptimizedLoopHits > 1, $"{where}: expected nesting through planned rounds");
+                        if (stackMiB == 1)
+                            stops[route] = (budget.ConsumedSteps, budget.ConsumedExpressionCheckpoints);
+                    }
+                });
+            }
+
+            // The generic accounting on a stack where only the step budget binds: where a route stopped on the
+            // 1 MiB thread, its counters lie between those of the generic run refused at that step and the next.
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(64 * oneMiB, () =>
+            {
+                long CheckpointsRefusedAt(long step)
+                {
+                    var (result, budget) = new LoopStepRecursionRun(source)
+                        .Evaluate("generic", new EvaluationLimits { MaxSteps = step - 1 });
+                    Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ContextTerminal(result.Error));
+                    Assert.Equal(step - 1, budget.ConsumedSteps);
+                    return budget.ConsumedExpressionCheckpoints;
+                }
+
+                foreach (var (route, (steps, checkpoints)) in stops)
+                {
+                    var low = CheckpointsRefusedAt(steps);
+                    var high = CheckpointsRefusedAt(steps + 1);
+                    Assert.True(low <= checkpoints && checkpoints <= high,
+                        $"{name}: {route} stopped after {steps} steps with {checkpoints} checkpoints, off the generic "
+                        + $"trajectory [{low}, {high}]");
+                }
+
+                // A budget binding before every route's stop: one verdict, identical counters and effects.
+                var limits = new EvaluationLimits { MaxSteps = Math.Max(2, stops.Values.Min(static stop => stop.Steps) / 2) };
+                var expected = new LoopStepRecursionRun(source);
+                var (genericResult, genericBudget) = expected.Evaluate("generic", limits);
+                Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ContextTerminal(genericResult.Error));
+                Assert.Equal(limits.MaxSteps, genericBudget.ConsumedSteps);
+                foreach (var route in new[] { "planned", "twin" })
+                {
+                    var run = new LoopStepRecursionRun(source);
+                    var (result, budget) = run.Evaluate(route, limits);
+                    Assert.Equal(DescribeLoopStepRun(genericResult, genericBudget), DescribeLoopStepRun(result, budget));
+                    Assert.Equal(expected.Marks, run.Marks);
+                }
+            });
+        }
+
+        // The terminating recursion: its value wherever it fits, the backstop otherwise, and never a crash.
+        var terminating = TerminatingLoopStepRecursion(100);
+        foreach (var stackMiB in new[] { 1, 16, 64 })
+        {
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(stackMiB * oneMiB, () =>
+            {
+                var roomy = stackMiB >= 16;
+                var engine = new LoopStepRecursionRun(terminating).Engine();
+                if (roomy || engine is RunResult.Success)
+                    Assert.Equal(TerminatingLoopStepRecursionValue, Assert.IsType<RunResult.Success>(engine).ToDisplayString());
+                else
+                    Assert.Equal(KatLangErrorCode.EvaluationStackExhausted,
+                        Assert.Single(Assert.IsType<RunResult.EvalFailure>(engine).Errors).Code);
+
+                string? completed = null;
+                foreach (var route in evaluators)
+                {
+                    var (result, budget) = new LoopStepRecursionRun(terminating).Evaluate(route);
+                    Assert.Equal(0, budget.CurrentDepth);
+                    if (result.IsError)
+                    {
+                        Assert.False(roomy, $"{route} on {stackMiB} MiB stopped a recursion of 100 loops: {DescribeErrorChain(result.Error)}");
+                        Assert.IsType<EvalError.EvaluationStackExhausted>(ContextTerminal(result.Error));
+                        continue;
+                    }
+
+                    // Every route that completes agrees on the value and on every counter.
+                    var described = DescribeLoopStepRun(result, budget);
+                    Assert.StartsWith(TerminatingLoopStepRecursionNeutral + " ", described, StringComparison.Ordinal);
+                    Assert.Equal(completed ??= described, described);
+                }
+            });
+        }
+
+        WriteProbeMarker();
+    }
+
+    /// <summary>
+    /// The async twin route's side of the loop-entry backstop: a twin about to enter a loop on a low host stack
+    /// first hops (<see cref="StackHop"/>) and continues on a fresh thread-pool stack, like every other twin site
+    /// that shares a synchronous probe, so recursion routed through loop steps does not end at the first thread's
+    /// stack. Before the loop entry hopped and probed, the shapes with no other hop site in their cycle
+    /// overflowed the process on this route too. Every case here is BOUNDED, by a step budget or by its own
+    /// termination: on this route nothing else bounds loop-step recursion (no depth is charged, and each hop
+    /// supplies a fresh stack), so an unbounded one runs until the host cancels it or memory runs out. That
+    /// remaining gap is the separately tracked owner decision on a deterministic loop-nesting limit.
+    /// <para>The child checks, on a 1 MiB thread: a step budget far deeper than one stack holds is reached
+    /// exactly, with the generic counters of the same budget where a synchronous stack can hold it; a
+    /// terminating recursion four times deeper than the stack completes with the synchronous value and
+    /// counters; a genuinely suspending one does too; and a failure at the bottom of a deep recursion unwinds
+    /// to its structured error, with the frame count and step count that shallow synchronous runs predict.
+    /// The last one is the Q-36 walkers' regression at depth: nesting a failure once per level used to recurse
+    /// over the whole context chain on whatever stack the completing twin had left.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0")]
+    public async Task RecursionThroughLoopSteps_OnTheTwinRoute_ContinuesOnFreshStacks_InSubprocess(string tieredCompilation)
+        => await RunProbeChild(
+            nameof(RecursionThroughLoopStepsOnTheTwinRoute_ProbeChild),
+            new Dictionary<string, string> { ["DOTNET_TieredCompilation"] = tieredCompilation });
+
+    [Fact]
+    public void RecursionThroughLoopStepsOnTheTwinRoute_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        const int oneMiB = 1024 * 1024;
+
+        // 1. Unbounded shapes under a step budget: the budget is reached, on fresh stacks.
+        foreach (var (name, source) in UnboundedLoopStepRecursions)
+        {
+            // Shallow enough for a synchronous 64 MiB stack: the three routes agree on everything.
+            var shallow = new EvaluationLimits { MaxSteps = 150 };
+            var expected = AstStructuralDepthProcessTests.RunOnThreadWithStack(64 * oneMiB, () =>
+            {
+                var (result, budget) = new LoopStepRecursionRun(source).Evaluate("generic", shallow);
+                Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ContextTerminal(result.Error));
+                return DescribeLoopStepRun(result, budget);
+            });
+
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(oneMiB, () =>
+            {
+                var twin = new LoopStepRecursionRun(source);
+                var (result, budget) = twin.Evaluate("twin", shallow);
+                Assert.Equal(expected, DescribeLoopStepRun(result, budget));
+                Assert.Equal("1", twin.Marks);
+
+                // Far deeper than any one stack: only fresh stacks reach this budget.
+                var deep = new EvaluationLimits { MaxSteps = 4_000 };
+                var deepTwin = new LoopStepRecursionRun(source);
+                var (deepResult, deepBudget) = deepTwin.Evaluate("twin", deep);
+                Assert.True(deepResult.IsError, $"{name}: the twin completed an unbounded recursion");
+                var terminal = ContextTerminal(deepResult.Error);
+                Assert.True(terminal is EvalError.EvaluationStepLimitExceeded, $"{name}: the twin stopped with {terminal.GetType().Name}");
+                Assert.Equal(deep.MaxSteps, deepBudget.ConsumedSteps);
+                Assert.Equal(0, deepBudget.CurrentDepth);
+                Assert.InRange(deepBudget.PeakDepth, 1, 4);
+                Assert.Equal("1", deepTwin.Marks);
+
+                // The public engine takes the twin route once an asynchronous operation is configured.
+                var engine = new LoopStepRecursionRun(source, asynchronousOperation: true);
+                var failure = Assert.Single(Assert.IsType<RunResult.EvalFailure>(engine.EngineAsync(deep)).Errors);
+                Assert.True(failure.Code == KatLangErrorCode.EvaluationStepLimitExceeded, $"{name}: KatLangEngine.RunAsync: {failure.Code}: {failure.Message}");
+                Assert.Equal("1", engine.Marks);
+            });
+        }
+
+        // 2. A terminating recursion deeper than the 1 MiB stack holds: the twin completes it on fresh stacks
+        //    (its `here` operation runs on the thread pool once the run has hopped) with the value and counters
+        //    of the synchronous routes on a stack that holds it.
+        var terminating = TerminatingLoopStepRecursion(400, "here(tick())");
+        var synchronous = AstStructuralDepthProcessTests.RunOnThreadWithStack(64 * oneMiB, () =>
+        {
+            var (generic, genericBudget) = new LoopStepRecursionRun(terminating).Evaluate("generic");
+            var (planned, plannedBudget) = new LoopStepRecursionRun(terminating).Evaluate("planned");
+            var described = DescribeLoopStepRun(generic, genericBudget);
+            Assert.StartsWith(TerminatingLoopStepRecursionNeutral + " ", described, StringComparison.Ordinal);
+            Assert.Equal(described, DescribeLoopStepRun(planned, plannedBudget));
+            return described;
+        });
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(oneMiB, () =>
+        {
+            var stopped = new LoopStepRecursionRun(terminating).Evaluate("generic");
+            Assert.IsType<EvalError.EvaluationStackExhausted>(ContextTerminal(stopped.Result.Error));
+
+            var twin = new LoopStepRecursionRun(terminating);
+            var (result, budget) = twin.Evaluate("twin");
+            Assert.Equal(synchronous, DescribeLoopStepRun(result, budget));
+            Assert.True(twin.CalledAnOperationOnThePool, "the twin never left the 1 MiB thread, so no hop was exercised");
+
+            var engine = new LoopStepRecursionRun(terminating, asynchronousOperation: true);
+            Assert.Equal(TerminatingLoopStepRecursionValue, Assert.IsType<RunResult.Success>(engine.EngineAsync()).ToDisplayString());
+            Assert.True(engine.CalledAnOperationOnThePool);
+
+            // A genuinely suspending recursion: every level awaits a real asynchronous operation first.
+            var suspending = new LoopStepRecursionRun(TerminatingLoopStepRecursion(400, "yield(tick())"), asynchronousOperation: true);
+            Assert.Equal(TerminatingLoopStepRecursionValue, Assert.IsType<RunResult.Success>(suspending.EngineAsync()).ToDisplayString());
+        });
+
+        // 3. A failure at the bottom of a deep recursion. Each level adds the same context frames and charges the
+        //    same steps, so two shallow synchronous runs predict the deep twin run's chain length and step count.
+        foreach (var (bottom, kind) in new[] { ("1 / 0", typeof(EvalError.DivByZero)), ("G", typeof(EvalError.MissingOutput)) })
+        {
+            string Failing(int levels) => $"G = {{\n    public X = 1\n}}\nR(n) = if(n == 0, {bottom}, R(n - 1).repeat(1))\nR({levels})";
+
+            var (ten, twenty, chain20) = AstStructuralDepthProcessTests.RunOnThreadWithStack(64 * oneMiB, () =>
+            {
+                static (int Frames, long Steps, long Checkpoints) Measure(EvalResult<Evaluator.CountedResult> result, EvaluationBudget budget)
+                {
+                    // Below the first bulk block, so every step is a call or a loop round.
+                    Assert.InRange(budget.ConsumedExpressionCheckpoints, 1, EvaluationBudget.ExpressionCheckpointsPerStep - 1);
+                    return (ContextFrameCount(result.Error), budget.ConsumedSteps, budget.ConsumedExpressionCheckpoints);
+                }
+
+                var (tenResult, tenBudget) = new LoopStepRecursionRun(Failing(10)).Evaluate("generic");
+                var (twentyResult, twentyBudget) = new LoopStepRecursionRun(Failing(20)).Evaluate("generic");
+                var (planned, plannedBudget) = new LoopStepRecursionRun(Failing(20)).Evaluate("planned");
+                Assert.Equal(DescribeLoopStepRun(twentyResult, twentyBudget), DescribeLoopStepRun(planned, plannedBudget));
+                return (Measure(tenResult, tenBudget), Measure(twentyResult, twentyBudget), DescribeLoopStepRun(twentyResult, twentyBudget));
+            });
+            Assert.True(twenty.Frames > ten.Frames, $"a level of `{bottom}` adds no context frame");
+
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(oneMiB, () =>
+            {
+                var (shallow, shallowBudget) = new LoopStepRecursionRun(Failing(20)).Evaluate("twin");
+                Assert.Equal(chain20, DescribeLoopStepRun(shallow, shallowBudget));
+
+                const int levels = 3_000;
+                // Keep the deep failure bounded even if a regression stops the recursion from reaching its base.
+                var limits = new EvaluationLimits { MaxSteps = 200_000 };
+                var (result, budget) = new LoopStepRecursionRun(Failing(levels)).Evaluate("twin", limits);
+                Assert.True(result.IsError);
+                var terminal = ContextTerminal(result.Error);
+                Assert.True(terminal.GetType() == kind, $"`{bottom}` at the bottom of {levels} levels: {terminal.GetType().Name}");
+                // The failure stays positioned through every level it left.
+                Assert.NotNull(result.Error.Span);
+                // Per level: the same frames, calls, rounds and expression checkpoints; every completed block of
+                // checkpoints charges one more step (the bulk expression-work unit).
+                static long At(long ten, long twenty, int levels) => ten + (twenty - ten) * (levels - 10) / 10;
+                var checkpoints = At(ten.Checkpoints, twenty.Checkpoints, levels);
+                Assert.Equal(At(ten.Frames, twenty.Frames, levels), ContextFrameCount(result.Error));
+                Assert.Equal(checkpoints, budget.ConsumedExpressionCheckpoints);
+                Assert.Equal(At(ten.Steps, twenty.Steps, levels) + checkpoints / EvaluationBudget.ExpressionCheckpointsPerStep, budget.ConsumedSteps);
+                Assert.Equal(0, budget.CurrentDepth);
+                // A missing output that left the bottom is someone else's at every consumer above it (Q-36).
+                if (terminal is EvalError.MissingOutput missing)
+                    Assert.True(missing.IsNested);
+
+                var failure = Assert.Single(Assert.IsType<RunResult.EvalFailure>(
+                    new LoopStepRecursionRun(Failing(levels), asynchronousOperation: true).EngineAsync(limits)).Errors);
+                Assert.Equal(terminal.Code, failure.Code);
+            });
+        }
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
+    public async Task DeepContextChainReaders_AreStackSafe_InSubprocess()
+        => await RunProbeChild(nameof(DeepContextChainReaders_ProbeChild));
+
+    /// <summary>
+    /// The Q-36 context-chain readers on a SYNTHETIC chain far deeper than any stack, with no stack pressure of
+    /// their own: 100,000 host-built frames on an ordinary thread. They are loops, like
+    /// <see cref="EvalError.Code"/> (<see cref="DeepErrorContextCode_ProbeChild"/>): one native frame per context
+    /// frame overflowed the process here. The outcomes are the recursive definitions': an own missing output is
+    /// nested under copies of every frame (each keeps its context, span and slots; the original chain is
+    /// untouched), a nested one and every other failure pass through as the same object, a spread turns the own
+    /// one into its own failure kind under the same frames, and the lifting test reads the terminal's kind and the
+    /// projection mark at any depth.
+    /// </summary>
+    [Fact]
+    public void DeepContextChainReaders_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        const int depth = 100_000;
+        var operand = new Expr.Param("x") { Span = new SourceSpan(9, 2, 9, 3) };
+
+        static EvalError Wrap(EvalError terminal, int frames, int markedFrame = -1)
+        {
+            var wrapped = terminal;
+            for (var i = frames - 1; i >= 0; i--)
+            {
+                // Frame i is the i-th from the outside: a distinct context and span per frame.
+                var frame = new EvalError.WithContext(new CallContext("F" + i), wrapped) { Span = new SourceSpan(i + 1, 1, i + 1, 2) };
+                wrapped = i == markedFrame ? frame with { IsProjectionFailure = true } : frame;
+            }
+
+            return wrapped;
+        }
+
+        static void AssertSameFramesAround(EvalError original, EvalError rebuilt, int frames)
+        {
+            for (var i = 0; i < frames; i++)
+            {
+                var before = Assert.IsType<EvalError.WithContext>(original);
+                var after = Assert.IsType<EvalError.WithContext>(rebuilt);
+                if (!ReferenceEquals(before.ErrorContext, after.ErrorContext) || !Equals(before.Span, after.Span)
+                    || before.IsProjectionFailure != after.IsProjectionFailure || ReferenceEquals(before, after))
+                    Assert.Fail($"frame {i} was not copied with its context, span and slots");
+                (original, rebuilt) = (before.Inner, after.Inner);
+            }
+
+            Assert.IsNotType<EvalError.WithContext>(original);
+            Assert.IsNotType<EvalError.WithContext>(rebuilt);
+        }
+
+        // An own missing output: nested under copies of every frame, the original untouched.
+        var origin = new SourceSpan(3, 4, 3, 5);
+        var ownTerminal = new EvalError.MissingOutput { Span = origin, IsSelectedMemberOutput = true };
+        var own = Wrap(ownTerminal, depth, markedFrame: depth / 2);
+        Assert.True(Evaluator.IsOwnMissingOutputError(own));
+        var nested = Evaluator.NestMissingOutput(own);
+        AssertSameFramesAround(own, nested, depth);
+        var nestedTerminal = Assert.IsType<EvalError.MissingOutput>(ContextTerminal(nested));
+        Assert.True(nestedTerminal.IsNested);
+        Assert.True(nestedTerminal.KeepsOwnBlame);
+        Assert.True(nestedTerminal.IsSelectedMemberOutput);
+        Assert.Equal(origin, nestedTerminal.Span);
+        Assert.Same(ownTerminal, ContextTerminal(own));
+        Assert.False(ownTerminal.IsNested);
+        Assert.False(ownTerminal.KeepsOwnBlame);
+        Assert.Equal(KatLangErrorCode.MissingOutput, nested.Code);
+
+        // Nesting is idempotent, and every other failure is the same object afterwards.
+        Assert.False(Evaluator.IsOwnMissingOutputError(nested));
+        Assert.Same(nested, Evaluator.NestMissingOutput(nested));
+        var other = Wrap(new EvalError.DivByZero { Span = origin }, depth);
+        Assert.False(Evaluator.IsOwnMissingOutputError(other));
+        Assert.Same(other, Evaluator.NestMissingOutput(other));
+
+        // The spread's decision over the same chains.
+        var converted = Evaluator.SpreadOperandFailure(operand, operand.Span, own);
+        AssertSameFramesAround(own, converted, depth);
+        Assert.Equal(operand.Span, Assert.IsType<EvalError.SpreadMissingOutput>(ContextTerminal(converted)).Span);
+        var preserved = Assert.IsType<EvalError.WithContext>(Evaluator.SpreadOperandFailure(operand, operand.Span, nested));
+        Assert.IsType<SpreadOperandContext>(preserved.ErrorContext);
+        Assert.Same(nested, preserved.Inner);
+        Assert.Equal(nested.Span, preserved.Span);
+        Assert.Same(other, Evaluator.SpreadOperandFailure(operand, operand.Span, other));
+
+        // The lifting test: the terminal's kind, unless the projection mark sits anywhere on the chain.
+        Assert.True(Evaluator.IsLiftableError(Wrap(new EvalError.NotAnAlgorithm("x"), depth)));
+        Assert.True(Evaluator.IsLiftableError(Wrap(new EvalError.IllegalInEval("x"), depth)));
+        Assert.False(Evaluator.IsLiftableError(other));
+        Assert.False(Evaluator.IsLiftableError(Wrap(new EvalError.NotAnAlgorithm("x"), depth, markedFrame: depth - 1)));
+        Assert.False(Evaluator.IsLiftableError(Wrap(new EvalError.NotAnAlgorithm("x") { IsProjectionFailure = true }, depth)));
+        Assert.True(Evaluator.IsProjectionFailure(Wrap(new EvalError.NotAnAlgorithm("x"), depth, markedFrame: depth - 1)));
+
+        WriteProbeMarker();
+    }
+
     [Fact]
     public async Task StructuralAndDynamicDepthComposition_IsSafe_InSubprocess()
         => await RunProbeChild(nameof(StructuralAndDynamicDepthComposition_ProbeChild));

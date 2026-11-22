@@ -78,7 +78,9 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         DistinctWalk = 1 << 4,
 
         /// <summary>Twin-only <c>if (StackHop.HostStackIsLow()) await new StackHop();</c> before a shared probe
-        /// (Q-09a; <c>StackHop</c>). The synchronous family never hops.</summary>
+        /// (Q-09a; <c>StackHop</c>). The synchronous family never hops. In a flag body the hop is guarded by the
+        /// flag (<c>if (asynchronous &amp;&amp; StackHop.HostStackIsLow()) …</c>: the loop entry,
+        /// <c>Evaluator.EvalNeedLoop</c>), a branch point of this class.</summary>
         StackHop = 1 << 5,
 
         /// <summary>The twin family mirrors only the COUNTED family (AGENTS.md): where the synchronous side calls the
@@ -310,15 +312,11 @@ public class TwinNormalizationTests(ITestOutputHelper output)
     /// <summary>Every marker that forms no compared pair, by exact key, with its reason.</summary>
     internal static readonly UnpairedMarkerEntry[] UnpairedMarkers =
     [
-        new("src/KatLang/Evaluation/StackHop.cs :: type StackHop :: MIRROR OF</c>", UnpairedMarkerClass.ProseMention,
-            "StackHop's documentation names the marker convention"),
         new("src/KatLang/Evaluator.AlgorithmProjection.cs :: Evaluator.EvalAlgorithmCalleeCallCountedAsync :: MIRROR OF the synchronous member arm (the async strategy pins fusion off).",
             UnpairedMarkerClass.Fragment, "qualifies the member arm of its pinned pair (FrameSplit/OptimizerPinned)"),
         new("src/KatLang/Evaluator.Aliases.cs :: Evaluator.AliasChaseMachine.NavigateRoute :: MIRROR OF that navigation, its head", UnpairedMarkerClass.Analog,
             "the synchronous route chase mirrors ResolveDotReceiver's synchronous navigation"),
         new("src/KatLang/Evaluator.Async.cs :: type Evaluator :: MIRROR OF ...</c>) and", UnpairedMarkerClass.ProseMention,
-            "the twin family's documentation names the marker convention"),
-        new("src/KatLang/Evaluator.Async.cs :: type Evaluator :: MIRROR OF</c> counterpart). A twin chain that", UnpairedMarkerClass.ProseMention,
             "the twin family's documentation names the marker convention"),
         new("src/KatLang/Evaluator.Async.cs :: Evaluator.EvalCountedAsync :: MIRROR OF EvalCounted's compiler-exhaustive switch expression, case for case. A",
             UnpairedMarkerClass.Fragment, "restates the declaration marker of the EvalCountedAsync ~ EvalCounted pair for its switch"),
@@ -357,10 +355,11 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalNeedCallbackBody", 0, "5a5cdc57a0ea488a", AC, "the builtin callback"),
         new("Evaluator.EvalNeedCallbackBody", 1, "40eee9248c95941d", AC, "the family callback's driver"),
         new("Evaluator.EvalNeedCallbackBody", 2, "a1733cfe57da7715", AC, "the user callback's driver"),
-        new("Evaluator.EvalNeedLoop", 0, "c613b240dc6307dc", RA, "the asynchronous step projection takes ctx for its adapter"),
-        new("Evaluator.EvalNeedLoop", 1, "83cadc7942d61e81", AC, "the alias step's target"),
-        new("Evaluator.EvalNeedLoop", 2, "70563d5fe6206b30", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step); its handover continues, synchronously, in the one round kernel"),
-        new("Evaluator.EvalNeedLoop", 3, "c3141958221e536e", OP, "the loop diagnostics report the pinned strategy for the asynchronous run"),
+        new("Evaluator.EvalNeedLoop", 0, "7981bb5f399044bc", SH, "the twin-only stack hop before the shared loop-entry probe (EvaluationBudget.TryAdmitLoopEntry); the synchronous run never hops"),
+        new("Evaluator.EvalNeedLoop", 1, "c613b240dc6307dc", RA, "the asynchronous step projection takes ctx for its adapter"),
+        new("Evaluator.EvalNeedLoop", 2, "83cadc7942d61e81", AC, "the alias step's target"),
+        new("Evaluator.EvalNeedLoop", 3, "70563d5fe6206b30", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step); its handover continues, synchronously, in the one round kernel"),
+        new("Evaluator.EvalNeedLoop", 4, "c3141958221e536e", OP, "the loop diagnostics report the pinned strategy for the asynchronous run"),
     ];
 
     /// <summary>

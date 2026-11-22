@@ -1888,7 +1888,11 @@ public static partial class Evaluator
     /// <c>repeat</c> (already demanded and validated, RP-1; ignored by <c>while</c>), and the initial
     /// state cells (the captured plan's ONE sticky supply, possibly empty, OD-1) with the slots written for
     /// them in the captured call (<paramref name="initialSources"/>, parallel to the cells, or <c>null</c>).
-    /// It owns what happens ONCE per loop, and only when a round will run: the step's CALLABLE is projected
+    /// It owns what happens ONCE per loop, and only when a round will run: the loop passes the host-stack
+    /// backstop of its entry first (<see cref="EvaluationBudget.TryAdmitLoopEntry"/>: a loop-step invocation
+    /// charges no depth, so this is the one probe that recursion routed through loop steps crosses at every
+    /// level on every strategy; the async run first continues on a fresh stack, <see cref="StackHop"/>), the
+    /// step's CALLABLE is projected
     /// only when an iteration needs it, the optimizer (<see cref="LoopOptimizer"/>) is tried once the step
     /// is projected, and the step's binding is prepared once. Every generic round then runs in the ONE round
     /// kernel (<see cref="RunGenericLoopRounds"/>) — this route's rounds and, after a planned handover, the
@@ -1916,6 +1920,15 @@ public static partial class Evaluator
         // prepared, and the kernel, running no round, never reads the null step.
         if (!repeat || remaining > 0)
         {
+            // THE LOOP-ENTRY HOST-STACK BACKSTOP, before the step is projected, planned or invoked. A
+            // loop-step invocation enters no depth level, so recursion routed through loop steps passes
+            // no invocation chokepoint or row-loop funnel; this entry is the one boundary every level of
+            // it crosses, on every strategy (EvaluationBudget.TryAdmitLoopEntry: no step, no depth, and
+            // nothing observed while the host stack has headroom). A loop of zero rounds nests nothing
+            // and is not probed.
+            // TWIN-ONLY (the synchronous run never hops): see StackHop.
+            if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
+            if (ctx.Budget.TryAdmitLoopEntry() is { } stackRefusal) return stackRefusal;
             // CALLABLE projection only now, when an iteration needs the step: a zero-iteration
             // `repeat` never projects or validates it (LOOP-05), and a step argument with no
             // CALLABLE identity is NotAnAlgorithm (Q-06, LOOP-08), never a VALUE demand.

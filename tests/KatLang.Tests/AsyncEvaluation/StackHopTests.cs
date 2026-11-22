@@ -287,7 +287,7 @@ public class StackHopTests
     /// reserve, by recursing with a small stack allocation per level.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static T WithLowStack<T>(Func<T> body)
+    internal static T WithLowStack<T>(Func<T> body)
     {
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return body();

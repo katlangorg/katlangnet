@@ -910,25 +910,48 @@ public static partial class Evaluator
     private static EvalError SpreadMissingOutput(SourceSpan? span)
         => new EvalError.SpreadMissingOutput() { Span = span };
 
+    // THE Q-36 CONTEXT-CHAIN READERS ARE LOOPS (November 2026, implementation only). Each of them reads or
+    // rebuilds a failure's WHOLE chain of context frames, and the consumers run once per level a failure
+    // leaves. A run's chain grows with its nesting, which the async route does not bound by the host stack
+    // (a stack hop continues recursion routed through loop steps on fresh stacks), and a completing twin
+    // runs its continuation on whatever stack is left above the runtime's reserve: one native frame per
+    // context frame there overflowed the process at about 1,200 frames. They therefore find the terminal
+    // through EvalError.UnwrapContext and rebuild through WithContextTerminal, in constant stack. The
+    // verdicts, the copied frames (span and runtime slots), their order and the terminal are unchanged.
+
     /// <summary>Any missing output, whatever its origin and context frames (the category test).</summary>
-    private static bool IsMissingOutputError(EvalError error) => error switch
-    {
-        EvalError.MissingOutput => true,
-        EvalError.WithContext(_, var inner) => IsMissingOutputError(inner),
-        _ => false,
-    };
+    private static bool IsMissingOutputError(EvalError error)
+        => error.UnwrapContext() is EvalError.MissingOutput;
 
     /// <summary>
     /// The failure is the OWN missing output of the computation whose outcome it is (Q-36): raised
     /// by that computation's output check and carried through its context frames only.
     /// Lean: <c>isOwnMissingOutputError</c>.
     /// </summary>
-    internal static bool IsOwnMissingOutputError(EvalError error) => error switch
+    internal static bool IsOwnMissingOutputError(EvalError error)
+        => error.UnwrapContext() is EvalError.MissingOutput { IsNested: false };
+
+    /// <summary>
+    /// The same context frames, outermost first, around <paramref name="terminal"/> in place of the
+    /// failure they carried: every frame is copied with its span and runtime slots
+    /// (<see cref="EvalError.WithContext.WithInner"/>), innermost first, so nothing is shared with
+    /// <paramref name="outermost"/> but the contexts themselves. Constant stack: the frames are
+    /// collected in a heap buffer, never on one native frame each.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError.WithContext WithContextTerminal(EvalError.WithContext outermost, EvalError terminal)
     {
-        EvalError.MissingOutput missing => !missing.IsNested,
-        EvalError.WithContext(_, var inner) => IsOwnMissingOutputError(inner),
-        _ => false,
-    };
+        if (outermost.Inner is not EvalError.WithContext second)
+            return outermost.WithInner(terminal);
+
+        var frames = new List<EvalError.WithContext> { outermost, second };
+        while (frames[^1].Inner is EvalError.WithContext next)
+            frames.Add(next);
+        var rebuilt = frames[^1].WithInner(terminal);
+        for (var i = frames.Count - 2; i >= 0; i--)
+            rebuilt = frames[i].WithInner(rebuilt);
+        return rebuilt;
+    }
 
     /// <summary>
     /// THE ONE BLAME TEST (2026-11-08): may a report NAME the subject of the frame that holds
@@ -955,16 +978,22 @@ public static partial class Evaluator
     /// that frame's subject before it was nested (<c>F() + 1</c>: the call frame of an output-less
     /// <c>F</c>), so its copy also keeps that blame (<see cref="EvalError.MissingOutput.KeepsOwnBlame"/>,
     /// <see cref="IsOwnForBlame"/>); the origin itself is nested exactly as before.</para>
+    ///
+    /// <para>Uses constant stack. A failure whose
+    /// terminal is not an own missing output is returned as it is, the same object; otherwise every
+    /// context frame is copied around the nested copy of the terminal
+    /// (<see cref="WithContextTerminal"/>). Out of line (FRAME-SIZE DISCIPLINE): it runs on error
+    /// paths only, while its callers sit on the evaluator's recursion spines.</para>
     /// </summary>
-    internal static EvalError NestMissingOutput(EvalError error) => error switch
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static EvalError NestMissingOutput(EvalError error)
     {
-        EvalError.MissingOutput { IsNested: false } missing => missing with { IsNested = true },
-        EvalError.WithContext { Inner: EvalError.MissingOutput { IsNested: false } framed } context
-            => context.WithInner(framed with { IsNested = true, KeepsOwnBlame = true }),
-        EvalError.WithContext context when IsOwnMissingOutputError(context.Inner)
-            => context.WithInner(NestMissingOutput(context.Inner)),
-        _ => error,
-    };
+        if (error.UnwrapContext() is not EvalError.MissingOutput { IsNested: false } own)
+            return error;
+        return error is EvalError.WithContext outermost
+            ? WithContextTerminal(outermost, own with { IsNested = true, KeepsOwnBlame = true })
+            : own with { IsNested = true };
+    }
 
     /// <summary>
     /// <see cref="NestMissingOutput(EvalError)"/> through a TRANSPARENT layer whose subject the next
@@ -1028,10 +1057,11 @@ public static partial class Evaluator
     private static EvalResult<T> NestMissingOutput<T>(EvalResult<T> result)
         => result.IsError ? NestMissingOutput(result.Error) : result;
 
-    // Keep the demand's property/call/argument frames when changing its own missing-output kind.
+    // Keep the demand's property/call/argument frames when changing its own missing-output kind
+    // (rebuilt in constant stack, WithContextTerminal).
     private static EvalError ConvertOwnSpreadMissingOutput(EvalError error, SourceSpan? span)
-        => error is EvalError.WithContext context
-            ? context.WithInner(ConvertOwnSpreadMissingOutput(context.Inner, span))
+        => error is EvalError.WithContext outermost
+            ? WithContextTerminal(outermost, SpreadMissingOutput(span))
             : SpreadMissingOutput(span);
 
     /// <summary>

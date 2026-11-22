@@ -921,7 +921,11 @@ public static class KatLangEngine
     /// returned task then completes asynchronously; invocation recursion is bounded by
     /// <see cref="EvaluationLimits.MaxDepth"/> and can go deeper than
     /// <see cref="Run(string, RunOptions?)"/>, which may report
-    /// <see cref="KatLangErrorCode.EvaluationStackExhausted"/> there. Synchronous helpers the
+    /// <see cref="KatLangErrorCode.EvaluationStackExhausted"/> there. Recursion routed through
+    /// <c>while</c>/<c>repeat</c> steps charges no depth and continues on fresh stacks.
+    /// Each active loop retains heap state. A finite <see cref="EvaluationLimits.MaxSteps"/>
+    /// bounds the rounds executed, and host cancellation can stop the run. Without either,
+    /// unbounded nesting can exhaust memory. Synchronous helpers the
     /// twin path shares with the synchronous evaluator keep that structured backstop, so a
     /// twin run can still stop with it, possibly at a shallower depth than the synchronous
     /// run. Where the backstop fires depends on the host and the route, never on which

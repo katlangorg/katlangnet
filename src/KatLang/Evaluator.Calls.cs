@@ -44,14 +44,23 @@ public static partial class Evaluator
     /// have no independent callable identity. VALUE remains its suspended computation.
     /// A runtime CALLABLE projection's FAILURE (<see cref="EvalError.IsProjectionFailure"/>, at any
     /// wrapping depth) is never one: the computation failed, so its error propagates (NEED-06).
+    /// <para>One pass down the context frames, in constant stack like <see cref="IsProjectionFailure"/>
+    /// and the Q-36 readers (<see cref="IsOwnMissingOutputError"/>): every frame and the terminal are
+    /// tested for the projection mark, then the terminal for its kind. Out of line (FRAME-SIZE
+    /// DISCIPLINE): it runs on error paths only, under the identity-resolution spines.</para>
     /// </summary>
-    private static bool IsLiftableError(EvalError error) => !error.IsProjectionFailure && error switch
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static bool IsLiftableError(EvalError error)
     {
-        EvalError.NotAnAlgorithm => true,
-        EvalError.IllegalInEval => true,
-        EvalError.WithContext(_, var inner) => IsLiftableError(inner),
-        _ => false,
-    };
+        var current = error;
+        while (true)
+        {
+            if (current.IsProjectionFailure) return false;
+            if (current is not EvalError.WithContext frame)
+                return current is EvalError.NotAnAlgorithm or EvalError.IllegalInEval;
+            current = frame.Inner;
+        }
+    }
 
     /// <summary>
     /// Whether an identity-resolution error is the completed FAILURE of a runtime CALLABLE

@@ -13,9 +13,11 @@ namespace KatLang.Evaluation;
 /// probes it shares with the synchronous family: before a twin enters
 /// <see cref="EvaluationBudget.TryEnterInvocation"/> or
 /// <see cref="EvaluationBudget.TryEnterArgumentEvaluation"/>, at the head of the two twin
-/// row-loop funnels, and before a <see cref="NeedCell"/>'s asynchronous VALUE or runtime
-/// CALLABLE computation. Each such site is marked TWIN-ONLY beside its <c>// MIRROR OF</c>
-/// counterpart; the synchronous family never hops. Synchronous helpers a twin calls (alias
+/// row-loop funnels, before a <see cref="NeedCell"/>'s asynchronous VALUE or runtime
+/// CALLABLE computation, and before a loop that will run a round passes its entry probe
+/// (<see cref="EvaluationBudget.TryAdmitLoopEntry"/>; that site is ONE body with an
+/// <c>asynchronous</c> flag, <c>Evaluator.EvalNeedLoop</c>, so the hop is guarded by the flag).
+/// Each hop site is marked TWIN-ONLY. Synchronous helpers a twin calls (alias
 /// chases, receiver and open navigation, sync-delegated leaves) keep their own probes, so they
 /// can still reach the backstop.</para>
 ///
@@ -30,8 +32,11 @@ namespace KatLang.Evaluation;
 /// (or, at an invocation chokepoint, with the limit verdict that chokepoint still reports first),
 /// unless it came within the margin of the reserve without reaching it. Once hopping, invocation
 /// recursion is bounded by the deterministic <see cref="EvaluationLimits.MaxDepth"/>, as for a twin that
-/// genuinely suspends before descending. The hop happens at most once per site visit, so a fresh
-/// stack that is still low falls through to the probe and its structured error.</para>
+/// genuinely suspends before descending. Recursion routed through LOOP STEPS charges no depth, so on
+/// this route its active levels can accumulate on the heap across hops. A finite
+/// <see cref="EvaluationLimits.MaxSteps"/> bounds the rounds executed. A separate limit on loop
+/// nesting is an open owner decision. The hop happens at most once per site
+/// visit, so a fresh stack that is still low falls through to the probe and its structured error.</para>
 ///
 /// <para><b>Held state.</b> The awaiting flow keeps its <see cref="ExecutionContext"/>, so every
 /// <see cref="AsyncLocal{T}"/> it reads — the <see cref="NeedCell"/> wait-for graph, the invocation

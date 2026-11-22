@@ -128,8 +128,11 @@ public closed record EvalError
     /// <summary>
     /// The error below every <see cref="WithContext"/> frame, found without recursion: a host may
     /// build a chain deeper than any stack. Null only for a host-built frame whose inner error is null.
+    /// The evaluator's context-chain classifiers (<c>Evaluator.IsOwnMissingOutputError</c> and the
+    /// other Q-36 readers) decide on it too: a run's own chain grows with its nesting, which the async
+    /// route does not bound by the stack.
     /// </summary>
-    private EvalError UnwrapContext()
+    internal EvalError UnwrapContext()
     {
         var terminal = this;
         while (terminal is WithContext frame)

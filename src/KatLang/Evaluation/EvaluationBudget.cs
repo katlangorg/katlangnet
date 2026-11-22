@@ -739,6 +739,33 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>
+    /// THE LOOP-ENTRY HOST-STACK BACKSTOP (November 2026; C#-only host policy under Q-09a): the one
+    /// probe every <c>while</c>/<c>repeat</c> that will run a round passes before its step is
+    /// projected, planned or invoked (<c>Evaluator.EvalNeedLoop</c>, the entry of the generic and
+    /// planned strategies on both routes). A loop-step invocation is deliberately outside the depth
+    /// protocol (a round charges a step and never depth), so a step whose body starts a loop over
+    /// itself (<c>W = while(W())</c>, <c>F(c) = repeat(F(c), c)</c>) nests host frames through no
+    /// invocation chokepoint, row-loop funnel or fresh need cell: without this probe such a recursion
+    /// overflowed the process stack, where <see cref="EvaluationLimits"/> documents the structured
+    /// <see cref="EvalError.EvaluationStackExhausted"/>.
+    ///
+    /// <para>It is an ADMISSION, not a level: it charges NOTHING (no step, no depth, and
+    /// <see cref="PeakDepth"/> is untouched), there is nothing to release, and a run with host-stack
+    /// headroom passes it without observing anything, so its value, effects, counters and
+    /// cancellation chokepoints are those it always had (Q-09b). Only the refusal reads the run's
+    /// state, in the chokepoints' order: host cancellation throws first, a failure the run already
+    /// retained keeps its place, and otherwise the stack refusal is retained as the run's terminal
+    /// failure. No step verdict is reported here: the round's own charge decides it, and a low
+    /// stack must not move the point at which a semantic limit fires.</para>
+    /// </summary>
+    internal EvalError? TryAdmitLoopEntry()
+        => RuntimeHelpers.TryEnsureSufficientExecutionStack() ? null : RefuseLoopEntry();
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private EvalError RefuseLoopEntry()
+        => CheckContinuation() ?? RetainTerminal(new EvalError.EvaluationStackExhausted());
+
+    /// <summary>
     /// Dynamic invocation levels currently held open by this run. Observation only, like
     /// <see cref="PeakDepth"/>: reading it cannot change what is evaluated. It exists so a
     /// test can assert the scoped protocol's conservation invariant DIRECTLY — every
