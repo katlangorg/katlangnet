@@ -49,6 +49,14 @@ internal static class PropertyExposureResolver
     /// </summary>
     internal static readonly AsyncLocal<SettlementShareMode> SettlementShareModeForTesting = new();
 
+    /// <summary>
+    /// TEST SEAM (<c>ExposureSettlementComponentTests</c>): while set on the calling flow, no partial settlement is kept
+    /// for its component (COMPONENT SETTLEMENTS, <c>PendingResolution</c>): a key a cycle cut left incomplete is walked
+    /// again at every later meeting, the per-path settlement every component settlement must equal. Never set by
+    /// production code.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> ComponentSettlementsPerPathForTesting = new();
+
     /// <summary>How a resolution's <see cref="SettlementShare"/> reuses completed settlements (test seam only).</summary>
     internal enum SettlementShareMode
     {
@@ -966,8 +974,10 @@ internal static class PropertyExposureResolver
     /// settlement, complete nested results also share their exact (reference, level, site, bound)
     /// key; that cache dies before any summary can grow. A complete nested result that read NO
     /// summary of this level is kept for the whole run instead (<see cref="SettlementShare"/>): every
-    /// summary it read is final, so no growth can reach it. A nested result that encountered any cycle
-    /// cut is never cached. Every read from a reused computation remains in the enclosing top-level
+    /// summary it read is final, so no growth can reach it. A nested result a cycle cut left partial
+    /// is never published: within its own top-level settlement it answers later meetings of its exact
+    /// key while its component is being settled, and nothing else (COMPONENT SETTLEMENTS,
+    /// <c>PendingResolution</c>). Every read from a reused computation remains in the enclosing top-level
     /// recording, so dependency validation and reader notification remain complete.</para>
     /// </summary>
     private sealed class LevelSolver(
@@ -1171,7 +1181,9 @@ internal static class PropertyExposureResolver
     /// expose a different dependency. Where a frame meets a key in progress (a cycle cut) may differ
     /// under other owners, because bound-owner sets of two frames may become equal or unequal; it
     /// changes no whole result, which is everything its reference reaches however its repeats are cut
-    /// (EXPOSURE-OPEN-1), and partial results are kept nowhere. So a kept settlement answers any key of
+    /// (EXPOSURE-OPEN-1), and partial results are never kept here (a component keeps its own for their exact
+    /// keys while it is being settled, and its closing settlement's record covers every member:
+    /// <c>PendingResolution</c>, COMPONENT SETTLEMENTS). So a kept settlement answers any key of
     /// its content and level whose bound owners satisfy its footprint — by exact membership tests,
     /// never a fingerprint — under the site, live-read and view rules above, which are unchanged. A
     /// settlement that read more than <see cref="MaxFootprint"/> memberships, or reused such a result,
@@ -1334,6 +1346,9 @@ internal static class PropertyExposureResolver
         private readonly Dictionary<(object Content, SummaryScope Level), List<(Settled Settled, long Weight)>> _candidates = [];
         private readonly SettlementShareMode _mode = SettlementShareModeForTesting.Value;
         private long _retained;
+        // The existing site-free exact cache can depend on the order in which off-chain
+        // owner lookups were settled. Keep that order once a resolution has made one.
+        internal bool SawOffChainLookup { get; set; }
 
         /// <summary>
         /// C1: per open level and facts view, the keys its walks' anchoring passes below the level's chain
@@ -1527,11 +1542,191 @@ internal static class PropertyExposureResolver
         // The settlements in progress, each with its frame: a reference met again while its own settlement runs is a
         // cycle cut, and the frame says how far out the cut reaches (Frame.OutermostCut).
         private readonly Dictionary<SettlementKey, Frame> _inProgress = [];
+        private readonly record struct SeedSite(PropertyDependencyGraphBuilder.SummarySeed Seed, SummaryScope Level, SummaryScope Site);
+        private readonly Dictionary<SeedSite, Frame> _firstSeed = [];
+        private bool _triedEquations;
+        private ComponentEquations? _collecting;
+        private SolvedComponent? _solved;
+        private Frame? _solvedUntil;
+
+        private sealed record SolvedComponent(HashSet<SeedSite> Members, SettlementShare.Settled Union)
+        {
+            public bool Answers(SeedSite site, BoundOwnerSet? bound)
+                => Members.Contains(site) && Union.Satisfies(bound, null) && Union.ViewsStand();
+        }
+
+        // Collect each seed's direct union and the seed settlements it reads. The ordinary reference walk
+        // selects every edge. A discarded result, a live read, an off-chain lookup or a changing view
+        // disqualifies the graph. At an edge the child's union is a variable, initially empty.
+        private sealed class ComponentEquations
+        {
+            public readonly List<SeedSite> Vertices = [];
+            private readonly Dictionary<SeedSite, List<SeedSite>> _readers = [];
+            private readonly HashSet<BoundOwnerSet> _extensions = new(ReferenceEqualityComparer.Instance);
+            public SeedSite Current;
+            public int Edges;
+            public bool Disqualified;
+
+            public List<SeedSite> Add(SeedSite site)
+            {
+                if (_readers.TryGetValue(site, out var readers))
+                    return readers;
+                readers = [];
+                _readers.Add(site, readers);
+                Vertices.Add(site);
+                return readers;
+            }
+
+            public void Edge(SeedSite site, BoundOwnerSet? added)
+            {
+                Edges++;
+                Add(site).Add(Current);
+                if (added is not null)
+                    _extensions.Add(added);
+            }
+
+            public SolvedComponent? Complete(SeedSite root, SettlementShare.Settled union, CancellationToken cancellationToken)
+            {
+                if (union.Footprint is null)
+                    return null;
+                foreach (var extension in _extensions)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!union.Satisfies(extension, null))
+                        return null;
+                }
+
+                // Every vertex is reachable from root. Exactly those which also reach root have
+                // its entire reachable union. The remaining vertices contribute only as dependencies.
+                var stack = new Stack<SeedSite>();
+                var members = new HashSet<SeedSite> { root };
+                stack.Push(root);
+                while (stack.TryPop(out var next))
+                    foreach (var reader in _readers[next])
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (members.Add(reader))
+                            stack.Push(reader);
+                    }
+                return new(members, union);
+            }
+        }
+
+        // The equations are computed at the meeting's bound owners. Their direct terms are invariant
+        // for every input satisfying the combined footprint: every edge extends that input by its
+        // written owners, and Complete checks that none of those extensions flips any read. C1 can
+        // reset the bound set; a seed dependency inside that unbound trial disqualifies the equations.
+        // Thus substitution on all paths preserves the direct terms. Their union is the least solution
+        // for each seed that both reaches and is reached by the entry. Only those exact sites answer.
+        private SolvedComponent? SolveComponent(SeedSite entry, BoundOwnerSet? bound)
+        {
+            var equations = new ComponentEquations();
+            var directShare = new SettlementShare(null, capacity: 0);
+            var direct = new PendingResolution(memos, sets, levelInProgress, directShare,
+                ledger, cancellationToken) { _collecting = equations };
+            var record = new Frame(memos.Observations);
+            equations.Add(entry);
+            for (var i = 0; i < equations.Vertices.Count; i++)
+            {
+                var site = equations.Current = equations.Vertices[i];
+                direct.ChargeFrame();
+                memos.Observations?.RecordRequiredAncestorSettlementFrame(site.Seed);
+                var frame = new Frame(memos.Observations);
+                frame.Body = direct.ResolveSeed(frame, site.Seed, site.Level, site.Site, bound);
+                direct.Run(frame);
+                if (equations.Disqualified || frame.ReadLive || directShare.SawOffChainLookup)
+                    return null;
+                record.Absorb(frame);
+                record.Result = sets.Union(record.Result, frame.Result);
+            }
+
+            var union = record.Complete();
+            return !union.InconsistentViews && union.ViewsStand() ? equations.Complete(entry, union, cancellationToken) : null;
+        }
+
         // Unlike anchoring, settlement reads live equations. A complete result that read one, or that depends
         // on its site, is reused only inside ONE synchronous Run; the run's share keeps the others, and
         // _liveOpenWalks the level's own open walks.
         private readonly Dictionary<SettlementKey, SettlementShare.Settled> _completed = [];
         private readonly Dictionary<SeedSettlementKey, SettlementShare.Settled> _completedSeeds = [];
+
+        /// <summary>
+        /// COMPONENT SETTLEMENTS (2026-11-22; implementation only, no classification or Lean rule). A settlement a cycle
+        /// cut left partial (<see cref="Frame.IsWhole"/> false) is the union over what its reference reaches short of
+        /// the settlements that were in progress when it ran. It used to be discarded when it completed, so every later
+        /// meeting of its key walked everything below it again: once per simple path through a component of mutually
+        /// reading members, exponentially many when each member reads two or more others. It is now kept, by its exact
+        /// key (content, level, site, bound owners), while the component it belongs to is still being settled:
+        /// <list type="bullet">
+        /// <item>REUSE. A later meeting of that key in the same <see cref="Run"/> takes its result and its record
+        /// (<see cref="Frame.Reuse"/>) and is CUT WHERE IT WAS CUT: its <see cref="Frame.OutermostCut"/> is the kept
+        /// one's. The kept settlement began before the meeting, so the meeting is partial too, and so is every
+        /// settlement around it that does not hold the settlements the result still lacks. Those are settled in the
+        /// first whole settlement around the one that was kept, whose union they reach as its own nested frames
+        /// complete: a whole settlement is still everything its reference reaches (EXPOSURE-OPEN-1).</item>
+        /// <item>NEVER PUBLISHED. A partial settlement is kept here only: never in <see cref="_completed"/>,
+        /// <see cref="_completedSeeds"/>, the run's share or <see cref="_liveOpenWalks"/>, and never beyond its Run.</item>
+        /// <item>RELEASE. When a keyed settlement completes whole, every partial settlement kept since it began
+        /// belongs to a component it closes (each cut inside it reached it or a settlement nested in it), and all of
+        /// them are released (<see cref="CloseComponents"/>): from then on only whole settlements answer.</item>
+        /// <item>DISCARDED RESULTS. A settlement that runs nested settlements and then discards their results (the
+        /// unbound open walks when C1 does not take them; an open level that turns out to select nothing, and the walks
+        /// of a name nothing provides) stops what was kept inside them from answering a meeting whose result is used
+        /// (<see cref="DiscardPartials"/>): what such a partial result lacks was to reach the enclosing unions through
+        /// the discarded results.</item>
+        /// <item>THE COMPONENT'S RECORD. What a settlement depended on beyond its key reaches its reader translated by
+        /// the frames on the way: a reference that binds owners drops the reads of them, an unbound walk drops every
+        /// read of bound owners, a consulted-level walk bounds a lookup that found no owner. The per-path settlement
+        /// carried a member's reads along every path that met it. A reused partial result brings only what its own
+        /// settlement had read, so the whole settlement that closes a component in which one was reused takes the
+        /// record of EVERY member, untranslated (<see cref="Frame.AbsorbComponentMember"/>): at least what any path
+        /// would have brought it.</item>
+        /// </list>
+        /// A top-level settlement returns the set it returned before; <see cref="ComponentSettlementsPerPathForTesting"/>
+        /// is the former walk.
+        /// </summary>
+        private readonly Dictionary<SettlementKey, PartialSettlement> _partial = [];
+        private readonly Dictionary<SeedSettlementKey, PartialSettlement> _partialSeeds = [];
+        // Every partial settlement kept and not yet released, in completion order: a frame's ComponentMark is the count
+        // when it began, so the ones from there on were kept inside it.
+        private readonly List<PartialSettlement> _component = [];
+        private readonly bool _componentSettlements = !ComponentSettlementsPerPathForTesting.Value;
+        // The next discovery index of the Run in progress (Frame.Index).
+        private int _nextIndex;
+
+        /// <summary>
+        /// One partial settlement kept for its component (<see cref="_partial"/>): its result and record as its frame
+        /// completed, the outermost settlement its cuts reached, and what the closing settlement needs of it untranslated
+        /// (the deepest landing and the off-chain lookup before the frame's own consulted-level bound).
+        /// </summary>
+        private sealed class PartialSettlement(SettlementShare.Settled settled, int outermostCut, int siteLanding, bool ownerOffChain,
+            SettlementKey? key, SeedSettlementKey? seedKey)
+        {
+            public SettlementShare.Settled Settled => settled;
+            public int OutermostCut => outermostCut;
+            public int SiteLanding => siteLanding;
+            public bool OwnerOffChain => ownerOffChain;
+            public SettlementKey? Key => key;
+            public SeedSettlementKey? SeedKey => seedKey;
+
+            /// <summary>A later meeting of the key took this result: its component's closing settlement takes every member's record.</summary>
+            public bool Reused;
+
+            /// <summary>The <see cref="Frame.Index"/> of the frame that ran this settlement's frame.</summary>
+            public int ParentIndex { get; init; }
+
+            /// <summary>
+            /// Every partial settlement a meeting inside this one took was kept inside it (<see cref="Frame.OldestReuse"/>):
+            /// what its result lacks lies only beyond the settlements that enclosed it when it ran.
+            /// </summary>
+            public bool ReusedOnlyItsOwn { get; init; }
+
+            /// <summary>Its place among the kept ones (<see cref="_component"/>), stable while it is kept.</summary>
+            public int Place;
+
+            /// <summary>The discarded result cannot answer a meeting which consumes it.</summary>
+            public bool Discarded;
+        }
 
         /// <summary>
         /// The most summaries of the level in progress one settlement records by name
@@ -1619,23 +1814,46 @@ internal static class PropertyExposureResolver
             public RequirementSet Result;
             public SettlementKey? CacheKey;
             public SeedSettlementKey? SeedCacheKey;
-
-            /// <summary>The number of frames below this one on the run's stack (<see cref="Run"/>).</summary>
-            public int Depth;
+            public bool FirstSeedAtSite;
 
             /// <summary>
-            /// The outermost settlement a cycle cut inside this one reached, as that frame's <see cref="Depth"/>;
+            /// The frame's discovery index in its <see cref="Run"/>: frames are numbered as they are pushed, so a frame
+            /// that began before this one has a smaller index, and the frames in progress with a smaller index are
+            /// exactly the settlements enclosing this one.
+            /// </summary>
+            public int Index;
+
+            /// <summary>
+            /// The outermost settlement a cycle cut inside this one reached, as that frame's <see cref="Index"/>;
             /// <see cref="int.MaxValue"/> when it saw none. A cut is a reference met again while its own settlement
-            /// is in progress, and it contributes nothing where it is met. When every cut inside a settlement
-            /// reached that settlement itself or one nested in it, each of them is settled inside it, so its union
-            /// is whole (<see cref="IsWhole"/>): it is the settlement its key has as a top-level one. A cut that
-            /// reached an ENCLOSING settlement leaves this one a partial union, which is kept nowhere
-            /// (EXPOSURE-OPEN-1).
+            /// is in progress, and it contributes nothing where it is met; a reference met again after its settlement
+            /// completed PARTIAL contributes that partial result and is cut where that settlement was cut (COMPONENT
+            /// SETTLEMENTS, <see cref="_partial"/>). When every cut inside a settlement reached that settlement itself
+            /// or one nested in it, each of them is settled inside it, so its union is whole (<see cref="IsWhole"/>): it
+            /// is the settlement its key has as a top-level one. A cut that reached a settlement that began BEFORE this
+            /// one leaves it a partial union, which is published nowhere and answers only its own key while its
+            /// component is being settled (EXPOSURE-OPEN-1).
             /// </summary>
             public int OutermostCut = int.MaxValue;
 
             /// <summary>No cycle cut inside this settlement reached a settlement that began before it.</summary>
-            public bool IsWhole => OutermostCut >= Depth;
+            public bool IsWhole => OutermostCut >= Index;
+
+            /// <summary>The number of partial settlements kept when this frame began (<see cref="_component"/>).</summary>
+            public int ComponentMark;
+
+            /// <summary>The <see cref="Index"/> of the frame that ran this one (-1 for the frame a Run starts with).</summary>
+            public int ParentIndex = -1;
+
+            /// <summary>
+            /// The oldest partial settlement a meeting inside this settlement took, as its place among the kept ones
+            /// (<see cref="_component"/>); <see cref="int.MaxValue"/> when it took none. At or after
+            /// <see cref="ComponentMark"/>, every one it took was kept inside this settlement itself.
+            /// </summary>
+            public int OldestReuse = int.MaxValue;
+
+            /// <summary>The bound owners of a keyed frame's key (null for none, and on a frame without a key).</summary>
+            public BoundOwnerSet? Bound;
 
             /// <summary>Set on a frame that computes a settlement the run's share may keep.</summary>
             public SettlementShare.Key? ShareKey;
@@ -1686,6 +1904,12 @@ internal static class PropertyExposureResolver
             private bool _ownerOffChain;
 
             public bool OwnerOffChain => _ownerOffChain && SiteIsItsLevel is null;
+
+            /// <summary>
+            /// An owner lookup found no owner here or in what this settlement reached or reused, whatever consulted
+            /// level bounds it (<see cref="OwnerOffChain"/> is the bounded fact).
+            /// </summary>
+            public bool LookedUpOffChain => _ownerOffChain;
 
             public void NoteOwnerOffChain() => _ownerOffChain = true;
 
@@ -1825,6 +2049,7 @@ internal static class PropertyExposureResolver
             public void Absorb(Frame nested)
             {
                 OutermostCut = Math.Min(OutermostCut, nested.OutermostCut);
+                OldestReuse = Math.Min(OldestReuse, nested.OldestReuse);
                 NoteSiteLanding(nested.SiteDepth);
                 AbsorbLiveReads(nested.ReadLive, nested._liveReads);
                 _inconsistentViews |= nested._inconsistentViews;
@@ -1839,7 +2064,9 @@ internal static class PropertyExposureResolver
 
             /// <summary>
             /// Takes a completed settlement as this frame's result, with everything it depended on: its footprint's
-            /// answers hold for this frame's bound owners, which are its exact ones or satisfy it.
+            /// answers hold for this frame's bound owners, which are its exact ones or satisfy it. The settlement is a
+            /// whole one, or a partial one kept for this frame's exact key (<see cref="ReusePartial"/>, which also cuts
+            /// this frame where that one was cut).
             /// </summary>
             public void Reuse(SettlementShare.Settled settled)
             {
@@ -1858,6 +2085,54 @@ internal static class PropertyExposureResolver
                     _exactBoundOwners ? null : _footprint is null ? [] : [.. _footprint], _emptiness, OwnerOffChain,
                     _liveReads is null ? null : [.. _liveReads]);
 
+            /// <summary>
+            /// This frame's partial settlement as its component keeps it (COMPONENT SETTLEMENTS): the record
+            /// <see cref="Complete"/> gives a meeting of its key, and the deepest landing and off-chain lookup BEFORE this
+            /// frame's own consulted-level bound (<see cref="SiteIsItsLevel"/>), which the component's closing
+            /// settlement takes untranslated.
+            /// </summary>
+            public PartialSettlement CompletePartial()
+                => new(Complete(), OutermostCut, _siteDepth, _ownerOffChain, CacheKey, SeedCacheKey)
+                {
+                    ParentIndex = ParentIndex,
+                    ReusedOnlyItsOwn = OldestReuse >= ComponentMark,
+                };
+
+            /// <summary>
+            /// Takes the record of one member of a component this settlement closes, UNTRANSLATED (COMPONENT
+            /// SETTLEMENTS). A reused partial result brought the meeting only what its own settlement had read, and
+            /// what it lacked arrived along the paths its frames ran on; the per-path settlement would have carried the
+            /// member's reads along every path that met it, and each path drops or bounds a different part. So no frame
+            /// on the way is trusted to have dropped or bounded anything: each bound owner the member read is a read of
+            /// THIS frame's bound owners (<paramref name="bound"/>), recorded with their own answer — except an owner
+            /// the member read as present that they do not hold, which every path to the member's key bound on the way
+            /// and which is therefore no read of them; a member that read whether its bound owners are none, or read
+            /// them in full, makes this frame read its own likewise; and its deepest landing and off-chain lookup count
+            /// before any consulted-level bound but this frame's own. Every answer recorded is a fact of this frame's
+            /// bound owners, so the record only narrows where the settlement is reused.
+            /// </summary>
+            public void AbsorbComponentMember(PartialSettlement member, BoundOwnerSet? bound)
+            {
+                NoteSiteLanding(member.SiteLanding);
+                _ownerOffChain |= member.OwnerOffChain;
+                var settled = member.Settled;
+                if (settled.Emptiness != BoundOwnerEmptiness.Unread)
+                    NoteNoBoundOwners(bound is null);
+                if (settled.Footprint is not { } footprint)
+                {
+                    ReadExactBoundOwners();
+                    return;
+                }
+
+                for (var i = 0; i < footprint.Length; i++)
+                {
+                    var held = bound?.Contains(footprint[i].Owner) == true;
+                    if (footprint[i].Present && !held)
+                        continue;
+                    NoteMembership(footprint[i].Owner, held);
+                }
+            }
+
             /// <summary><see cref="SettlementShare.Settled.AnswersEverySite"/> of what this frame has recorded so far.</summary>
             public bool AnswersEverySite(SummaryScope level)
                 => !_inconsistentViews && SiteDepth <= level.Depth;
@@ -1875,6 +2150,10 @@ internal static class PropertyExposureResolver
             // from the first computation remain in the top-level recording even on later cache hits.
             _completed.Clear();
             _completedSeeds.Clear();
+            ClearPartials();
+            _nextIndex = 0;
+            _triedEquations = false;
+            root.Index = _nextIndex++;
             var frames = new Stack<Frame>();
             frames.Push(root);
             try
@@ -1887,16 +2166,40 @@ internal static class PropertyExposureResolver
                     _running = frame;
                     if (frame.Body.MoveNext())
                     {
-                        frame.Body.Current.Depth = frames.Count;
-                        frames.Push(frame.Body.Current);
+                        var nested = frame.Body.Current;
+                        nested.Index = _nextIndex++;
+                        nested.ComponentMark = _component.Count;
+                        nested.ParentIndex = frame.Index;
+                        if (_componentSettlements && nested.SeedCacheKey is { } entering)
+                            nested.FirstSeedAtSite = _firstSeed.TryAdd(new(entering.Seed, entering.Level, entering.Site), nested);
+                        frames.Push(nested);
                         ObserveCancellation();
                     }
                     else
                     {
                         frames.Pop();
-                        // A settlement a cycle cut left partial is kept nowhere (Frame.OutermostCut).
-                        if (frame.IsWhole && (frame.CacheKey is not null || frame.SeedCacheKey is not null))
+                        if (frame.LookedUpOffChain)
+                            shared.SawOffChainLookup = true;
+                        if (frame.FirstSeedAtSite && frame.SeedCacheKey is { } leaving)
                         {
+                            _firstSeed.Remove(new(leaving.Seed, leaving.Level, leaving.Site));
+                            if (ReferenceEquals(frame, _solvedUntil))
+                            {
+                                _solved = null;
+                                _solvedUntil = null;
+                            }
+                        }
+                        var keyed = frame.CacheKey is not null || frame.SeedCacheKey is not null;
+                        // A settlement a cycle cut left partial is published nowhere (Frame.OutermostCut): its
+                        // component keeps it until the settlement that closes the component completes.
+                        if (keyed && !frame.IsWhole)
+                        {
+                            if (_componentSettlements)
+                                KeepPartial(frame);
+                        }
+                        else if (keyed)
+                        {
+                            CloseComponents(frame);
                             var settled = frame.Complete();
                             if (frame.CacheKey is { } key)
                                 _completed.TryAdd(key, settled);
@@ -1917,13 +2220,115 @@ internal static class PropertyExposureResolver
             finally
             {
                 _running = null;
+                _firstSeed.Clear();
+                _solved = null;
+                _solvedUntil = null;
                 while (frames.TryPop(out var suspended))
                     suspended.Body.Dispose();
                 _completed.Clear();
                 _completedSeeds.Clear();
+                ClearPartials();
             }
 
             return root.Result;
+        }
+
+        // Nothing partial outlives its Run: a completed, cancelled or failed settlement leaves none behind.
+        private void ClearPartials()
+        {
+            _partial.Clear();
+            _partialSeeds.Clear();
+            _component.Clear();
+        }
+
+        // A keyed settlement completed partial: it answers later meetings of its exact key until the settlement that
+        // closes its component completes (COMPONENT SETTLEMENTS). A seed has no in-progress cut of its own, so a second
+        // frame of one seed key can complete inside the first: the later, outer one then answers, and both stay members.
+        private void KeepPartial(Frame frame)
+        {
+            var kept = frame.CompletePartial();
+            if (kept.Key is { } key)
+                _partial[key] = kept;
+            else if (kept.SeedKey is { } seedKey)
+                _partialSeeds[seedKey] = kept;
+            kept.Place = _component.Count;
+            _component.Add(kept);
+        }
+
+        // The partial settlement kept for a key, as a later meeting of that key takes it: the meeting is counted, and its
+        // component's closing settlement will take every member's record (PartialSettlement.Reused).
+        private SettlementShare.Settled ReusePartial(PartialSettlement kept, Frame meeting)
+        {
+            kept.Reused = true;
+            memos.Observations?.RecordSettlementComponentReuse();
+            meeting.OutermostCut = Math.Min(meeting.OutermostCut, kept.OutermostCut);
+            meeting.OldestReuse = Math.Min(meeting.OldestReuse, kept.Place);
+            return kept.Settled;
+        }
+
+        // A keyed settlement completed WHOLE: every partial settlement kept since it began is a member of a component it
+        // closes, because no cut inside it reached a settlement that began before it. When a member was reused, the
+        // closing settlement takes every member's record untranslated (Frame.AbsorbComponentMember) before it is
+        // completed and published; then all of them are released, and only whole settlements answer from here on.
+        private void CloseComponents(Frame closing)
+        {
+            var first = closing.ComponentMark;
+            if (first == _component.Count)
+                return;
+            var reused = false;
+            for (var i = first; i < _component.Count && !reused; i++)
+                reused = _component[i].Reused;
+            for (var i = first; i < _component.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var member = _component[i];
+                if (reused)
+                    closing.AbsorbComponentMember(member, closing.Bound);
+                Release(member);
+            }
+
+            _component.RemoveRange(first, _component.Count - first);
+        }
+
+        /// <summary>
+        /// <paramref name="host"/> discards the results of the nested settlements it ran since <paramref name="mark"/>.
+        /// A partial settlement kept inside them lacks what lies beyond the settlements it was cut at, and expects
+        /// those to bring it to the enclosing unions themselves; one of them that ran INSIDE the discarded settlements
+        /// brings it only as far as the host, which drops it. So a kept settlement answers no meeting whose result is
+        /// used (<see cref="PartialSettlement.Discarded"/>) unless nothing it lacks lies inside: it is one of the
+        /// host's own nested settlements, so every settlement that enclosed it began before the host did, and every
+        /// partial settlement its meetings took was kept inside itself (<see cref="PartialSettlement.ReusedOnlyItsOwn"/>).
+        /// A discarded one stays a member of its component, whose closing settlement still takes its record. A
+        /// reference's also stays in the table for the one meeting whose result is discarded too, the unbound open
+        /// walks; a seed has no such meeting and is released.
+        /// </summary>
+        private void DiscardPartials(int mark, Frame host)
+        {
+            if (_collecting is not null)
+                _collecting.Disqualified = true;
+            for (var i = mark; i < _component.Count; i++)
+            {
+                var kept = _component[i];
+                cancellationToken.ThrowIfCancellationRequested();
+                if (kept.Discarded || kept.ParentIndex == host.Index && kept.ReusedOnlyItsOwn)
+                    continue;
+                kept.Discarded = true;
+                if (kept.SeedKey is not null)
+                    Release(kept);
+            }
+        }
+
+        // Remove only the entry this member still owns.
+        private void Release(PartialSettlement member)
+        {
+            if (member.Key is { } key)
+            {
+                if (_partial.TryGetValue(key, out var kept) && ReferenceEquals(kept, member))
+                    _partial.Remove(key);
+            }
+            else if (member.SeedKey is { } seedKey && _partialSeeds.TryGetValue(seedKey, out var keptSeed)
+                && ReferenceEquals(keptSeed, member))
+                _partialSeeds.Remove(seedKey);
         }
 
         private void ObserveCancellation()
@@ -1995,6 +2400,12 @@ internal static class PropertyExposureResolver
         {
             ChargeFrame();
             memos.Observations?.RecordRequiredAncestorSettlementFrame(seed);
+            var siteKey = new SeedSite(seed, level, site);
+            if (_collecting is not null)
+            {
+                _collecting.Edge(siteKey, boundOwners);
+                return new Frame(memos.Observations) { Body = NoFrames() };
+            }
             var key = new SeedSettlementKey(seed, level, site, boundOwners);
             var shareKey = new SettlementShare.Key(seed, level, boundOwners);
             if (shared.TryGet(shareKey, out var settled) || _completedSeeds.TryGetValue(key, out settled))
@@ -2004,9 +2415,51 @@ internal static class PropertyExposureResolver
                 return reused;
             }
 
-            var frame = new Frame(memos.Observations) { SeedCacheKey = key, ShareKey = shareKey };
-            frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
+            var frame = new Frame(memos.Observations);
+            if (!_triedEquations && !shared.SawOffChainLookup && _firstSeed.TryGetValue(siteKey, out var first)
+                && memos.CompletedContext.Facts is CompletedStaticStructures { HasProvisional: false })
+            {
+                _triedEquations = true;
+                // The enclosing driver pushes and checks this charged frame before any discovery work.
+                frame.Body = DiscoverAndSettle(frame, first, siteKey, key, shareKey);
+            }
+            else frame.Body = SeedBody(frame, siteKey, key, shareKey);
+
             return frame;
+        }
+
+        private IEnumerator<Frame> DiscoverAndSettle(Frame frame, Frame first, SeedSite site, SeedSettlementKey key, SettlementShare.Key shareKey)
+        {
+            var observations = memos.Observations;
+            var before = observations?.RequiredAncestorSettlementFrames ?? 0;
+            _solved = SolveComponent(site, key.Bound);
+            observations?.RecordSettlementComponentDiscovery(before);
+            _solvedUntil = _solved is null ? null : first;
+            using var body = SeedBody(frame, site, key, shareKey);
+            while (body.MoveNext())
+                yield return body.Current;
+        }
+
+        private IEnumerator<Frame> SeedBody(Frame frame, SeedSite site, SeedSettlementKey key, SettlementShare.Key shareKey)
+        {
+            if (_solved is { } solved && !shared.SawOffChainLookup && solved.Answers(site, key.Bound))
+            {
+                frame.SeedCacheKey = key;
+                frame.ShareKey = shareKey;
+                frame.Bound = key.Bound;
+                memos.Observations?.RecordSettlementComponentCompletion();
+                frame.Reuse(solved.Union);
+                return NoFrames();
+            }
+            if (_partialSeeds.TryGetValue(key, out var partial))
+            {
+                frame.Reuse(ReusePartial(partial, frame));
+                return NoFrames();
+            }
+            frame.SeedCacheKey = key;
+            frame.ShareKey = shareKey;
+            frame.Bound = key.Bound;
+            return ResolveSeed(frame, site.Seed, site.Level, site.Site, key.Bound);
         }
 
         private static IEnumerator<Frame> NoFrames() { yield break; }
@@ -2078,14 +2531,29 @@ internal static class PropertyExposureResolver
             }
             if (_inProgress.TryGetValue(key, out var inProgress))
             {
-                self.OutermostCut = Math.Min(self.OutermostCut, inProgress.Depth);
+                if (_collecting is not null)
+                    _collecting.Disqualified = true;
+                self.OutermostCut = Math.Min(self.OutermostCut, inProgress.Index);
                 self.Result = default;
+                yield break;
+            }
+
+            // The key's settlement completed PARTIAL earlier in this Run and its component is still being settled: it is
+            // taken as it is, and this meeting is cut where it was cut (COMPONENT SETTLEMENTS). The key is exact, as in
+            // progress: the same content, level, site and bound owners.
+            // A kept settlement whose result an enclosing settlement discarded answers only the unbound open walks
+            // (C1): this meeting is partial, so C1 does not take it and discards its result as well.
+            if (_partial.TryGetValue(key, out var partial) && (!partial.Discarded || self.RunsUnbound))
+            {
+                self.Reuse(ReusePartial(partial, self));
                 yield break;
             }
 
             _inProgress.Add(key, self);
             self.CacheKey = key;
             self.ShareKey = shareKey;
+            self.Bound = boundOwners;
+            var edgesAtEntry = _collecting?.Edges;
 
             try
             {
@@ -2099,13 +2567,20 @@ internal static class PropertyExposureResolver
                     // keeps it for the rest of this level's solve instead.
                     var unbound = ReferenceFrame(PropertyDependencyGraphBuilder.SummaryMemo.OpenWalksOf(pending.Origin),
                         opening, site, boundOwners: null);
+                    var edgesBeforeUnbound = _collecting?.Edges;
                     unbound.RunsUnbound = true;
                     yield return unbound;
+                    if (_collecting is { } collection && collection.Edges != edgesBeforeUnbound)
+                        collection.Disqualified = true;
                     if (unbound.IsWhole && unbound.AnswersEverySite(opening))
                     {
                         self.Result = unbound.Result;
                         yield break;
                     }
+
+                    // The unbound walks are not taken, so their result is discarded: no partial settlement kept inside
+                    // them answers the reader's own walks below (COMPONENT SETTLEMENTS).
+                    DiscardPartials(unbound.ComponentMark, self);
                 }
                 var published = new Frame(memos.Observations);
                 published.Body = ResolvePublishedReference(published, pending, level, site, boundOwners);
@@ -2115,6 +2590,13 @@ internal static class PropertyExposureResolver
             finally
             {
                 _inProgress.Remove(key);
+                // During discovery an edge represents another seed's unknown union. A cached direct
+                // result containing such a term would hide the edge if a later C1 trial read it.
+                if (_collecting is { } collecting && collecting.Edges != edgesAtEntry)
+                {
+                    self.CacheKey = null;
+                    self.ShareKey = null;
+                }
             }
         }
 
@@ -2285,8 +2767,19 @@ internal static class PropertyExposureResolver
                             }
                         var result = default(RequirementSet);
                         // A level with two or more providers selects nothing (ambiguousOpen): it charges nothing.
-                        if (group.Decides(sets, ref result, out var sole)) { self.Result = sole ? sets.Union(result, walks) : default; yield break; }
+                        if (group.Decides(sets, ref result, out var sole))
+                        {
+                            self.Result = sole ? sets.Union(result, walks) : default;
+                            // The walks and the providers' charges settled above are discarded with it: no partial
+                            // settlement kept inside them answers a later meeting (COMPONENT SETTLEMENTS).
+                            if (!sole)
+                                DiscardPartials(self.ComponentMark, self);
+                            yield break;
+                        }
                     }
+
+                    // No level provides the name: it charges nothing, and the walks settled on the way are discarded.
+                    DiscardPartials(self.ComponentMark, self);
                 }
             }
             foreach (var part in parts)

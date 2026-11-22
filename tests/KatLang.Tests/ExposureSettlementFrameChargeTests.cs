@@ -145,6 +145,7 @@ public sealed class ExposureSettlementFrameChargeTests
     [InlineData("branching")]
     [InlineData("opened")]
     [InlineData("captured")]
+    [InlineData("component")]
     public void EveryFrame_ChargesOneUnitOfTheOperationsWork_BeforeItIsCounted(string shape)
     {
         var source = shape switch
@@ -154,6 +155,7 @@ public sealed class ExposureSettlementFrameChargeTests
             "branching" => BranchingChain(12),
             "opened" => ExposureOpenChainComplexityTests.NestedOwnerChain(128),
             "captured" => ExposureOpenChainComplexityTests.NestedOwnerChain(128, last: "p"),
+            "component" => ExposureSettlementComponentTests.ReportWitness,
             _ => throw new ArgumentOutOfRangeException(nameof(shape)),
         };
         var (resolved, ledger, limits) = Resolved(source);

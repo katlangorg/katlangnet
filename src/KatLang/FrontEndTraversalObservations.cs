@@ -749,7 +749,7 @@ internal sealed class FrontEndTraversalObservations
 
     /// <summary>
     /// Nested settlements kept in the exposure run's share (<c>PropertyExposureResolver.SettlementShare</c>):
-    /// one per completed settlement that saw no cycle cut and read no summary of the level in progress.
+    /// one per requested key with a complete settlement eligible for reuse which the share did not already answer.
     /// </summary>
     public long SettlementShareStores { get; private set; }
 
@@ -778,6 +778,31 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordSettlementShareHit()
         => SettlementShareHits = checked(SettlementShareHits + 1);
+
+    /// <summary>
+    /// Settlement frames answered, inside one top-level settlement, from the PARTIAL settlement of their own key: one a
+    /// cycle cut left incomplete, kept only while the component it belongs to is still being settled
+    /// (<c>PropertyExposureResolver.PendingResolution</c>, COMPONENT SETTLEMENTS). Each is one of
+    /// <see cref="RequiredAncestorSettlementFrames"/>, is cut where that settlement was cut, and is published nowhere.
+    /// </summary>
+    public long SettlementComponentReuses { get; private set; }
+
+    internal void RecordSettlementComponentReuse()
+        => SettlementComponentReuses = checked(SettlementComponentReuses + 1);
+
+    /// <summary>
+    /// Actual seed requests answered by verified union equations while their component is active.
+    /// </summary>
+    public long SettlementComponentCompletions { get; private set; }
+
+    internal void RecordSettlementComponentCompletion()
+        => SettlementComponentCompletions = checked(SettlementComponentCompletions + 1);
+
+    /// <summary>Frames charged to collect and check component equations, including attempts that declined.</summary>
+    public long SettlementComponentDiscoveryFrames { get; private set; }
+
+    internal void RecordSettlementComponentDiscovery(long framesBeforeDiscovery)
+        => SettlementComponentDiscoveryFrames += RequiredAncestorSettlementFrames - framesBeforeDiscovery;
 
     /// <summary>
     /// Shared settlements dropped at a lookup because a completed-fact view they consulted has changed its
