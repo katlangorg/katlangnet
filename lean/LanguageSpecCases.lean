@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 795
+- specification surface cases: 798
 - excluded parse-level cases (Lean has no surface parser): 89
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 682
-- probe observations (C#-only by design): 1616
+- Lean-guarded cases: 685
+- probe observations (C#-only by design): 1643
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 678 programs have no cache observation, which is not an empty cache;
+  the other 681 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -499,6 +499,21 @@ def case_boolean_loop_state_transition : Expr :=
 def case_boolean_predicate_rejects_visible_empty : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.boolLiteral true, (.emptySequence 0)])] [(.dotCall (.dotCall (.call (.resolve "range") [.num 0, .num 2]) "filter" (some [.resolve "F"])) "count" none)])
 #guard obs case_boolean_predicate_rejects_visible_empty == "err type"
+
+-- logical-and-or-short-circuit [conditionals]: Safe(n, d) = d != 0 and n / d > 1 \n Safe(10, 0) \n Safe(10, 2) \n false and 1 / 0 > 0 \n true or 1 / 0 > 0
+def case_logical_and_or_short_circuit : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Safe" (alg ["n", "d"] [] [] [(.binary .and (.comparison (.param "d") [{ op := .ne, operand := (.num 0) }]) (.comparison (.binary .div (.param "n") (.param "d")) [{ op := .gt, operand := (.num 1) }]))])] [(.call (.resolve "Safe") [.num 10, .num 0]), (.call (.resolve "Safe") [.num 10, .num 2]), (.binary .and (.boolLiteral false) (.comparison (.binary .div (.num 1) (.num 0)) [{ op := .gt, operand := (.num 0) }])), (.binary .or (.boolLiteral true) (.comparison (.binary .div (.num 1) (.num 0)) [{ op := .gt, operand := (.num 0) }]))])
+#guard obs case_logical_and_or_short_circuit == "ok raw=S[false, true, false, true] n=4"
+
+-- logical-short-circuit-skips-effects [conditionals]: false and tick() == 1, true or tick() == 1, tick()
+def case_logical_short_circuit_skips_effects : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .and (.boolLiteral false) (.comparison (.call (.resolve "tick") []) [{ op := .eq, operand := (.num 1) }])), (.binary .or (.boolLiteral true) (.comparison (.call (.resolve "tick") []) [{ op := .eq, operand := (.num 1) }])), (.call (.resolve "tick") [])])
+#guard obs case_logical_short_circuit_skips_effects == "ok raw=S[false, true, 1] n=3"
+
+-- logical-left-operand-is-judged-first [errors]: 1 and 1 / 0 > 0
+def case_logical_left_operand_is_judged_first : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .and (.num 1) (.comparison (.binary .div (.num 1) (.num 0)) [{ op := .gt, operand := (.num 0) }]))])
+#guard obs case_logical_left_operand_is_judged_first == "err type"
 
 -- power-unary-precedence [arithmetic]: -2 ^ 2 \n (-2) ^ 2 \n 2 ^ 3 ^ 2
 def case_power_unary_precedence : Expr :=
@@ -3578,10 +3593,10 @@ def case_hunt_comparison_chain_operands_once : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.call (.resolve "tick") []) }, { op := .lt, operand := (.call (.resolve "tick") []) }, { op := .lt, operand := (.call (.resolve "tick") []) }])])] [.resolve "A", (.call (.resolve "tick") [])])
 #guard obs case_hunt_comparison_chain_operands_once == "ok raw=S[true, 5] n=2"
 
--- hunt-logical-operands-both-evaluated [equality-and-indexing]: true or tick() == 1, tick()
-def case_hunt_logical_operands_both_evaluated : Expr :=
-  .algorithmExpr (alg [] [] [] [(.binary .or (.boolLiteral true) (.comparison (.call (.resolve "tick") []) [{ op := .eq, operand := (.num 1) }])), (.call (.resolve "tick") [])])
-#guard obs case_hunt_logical_operands_both_evaluated == "ok raw=S[true, 2] n=2"
+-- hunt-logical-xor-operands-both-evaluated [equality-and-indexing]: true xor tick() == 1, tick()
+def case_hunt_logical_xor_operands_both_evaluated : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .xor (.boolLiteral true) (.comparison (.call (.resolve "tick") []) [{ op := .eq, operand := (.num 1) }])), (.call (.resolve "tick") [])])
+#guard obs case_hunt_logical_xor_operands_both_evaluated == "ok raw=S[false, 2] n=2"
 
 -- hunt-builtin-map-callbacks-run-in-collection-order [collection-builtins]: Only(*xs) = tick() + xs.count \n map([1, 2], Only), Only
 def case_hunt_builtin_map_callbacks_run_in_collection_order : Expr :=
@@ -3668,7 +3683,7 @@ def case_decon_target_calls_reuse_the_shared_source : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), (.call (.resolve "a") []), .resolve "b"])
 #guard obs case_decon_target_calls_reuse_the_shared_source == "ok raw=S[1, 1, 20] n=3"
 
--- 682 canonical Lean-guarded specification cases.
+-- 685 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3728,6 +3743,9 @@ def specCaseIds : List String := [
   "boolean-predicates-and-patterns",
   "boolean-loop-state-transition",
   "boolean-predicate-rejects-visible-empty",
+  "logical-and-or-short-circuit",
+  "logical-short-circuit-skips-effects",
+  "logical-left-operand-is-judged-first",
   "power-unary-precedence",
   "not-binds-below-comparisons",
   "comparison-chains-compare-adjacent-pairs",
@@ -4340,7 +4358,7 @@ def specCaseIds : List String := [
   "hunt-family-repeated-name-identity-nonmatch",
   "hunt-family-empty-and-pair-sequence-patterns",
   "hunt-comparison-chain-operands-once",
-  "hunt-logical-operands-both-evaluated",
+  "hunt-logical-xor-operands-both-evaluated",
   "hunt-builtin-map-callbacks-run-in-collection-order",
   "hunt-forwarding-closed-bare-row-uses-enclosing-parameter",
   "hunt-forwarding-closed-bare-row-uses-own-parameter",
@@ -4359,7 +4377,7 @@ def specCaseIds : List String := [
   "selective-collector-take-count-error-precedes-elements",
   "decon-target-calls-reuse-the-shared-source"
 ]
-#guard specCaseIds.length == 682
+#guard specCaseIds.length == 685
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

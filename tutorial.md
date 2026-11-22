@@ -680,7 +680,24 @@ false
 false
 ```
 
-`xor` is `true` when exactly one operand is `true`; unlike `or`, it is `false` when both are. Comparisons bind more tightly than the logical operators, so `x > 0 and x < 10` needs no parentheses, and `not x > 3` means `not (x > 3)`. Both operands of `and`, `or`, and `xor` are always evaluated, so `and` cannot protect a calculation: `d != 0 and n / d > 1` still divides by zero when `d` is `0`. Use `if` for that.
+`xor` is `true` when exactly one operand is `true`; unlike `or`, it is `false` when both are. Comparisons bind more tightly than the logical operators, so `x > 0 and x < 10` needs no parentheses, and `not x > 3` means `not (x > 3)`.
+
+`and` and `or` evaluate their left operand first, and the right operand only when the result still depends on it: `false and …` is `false` and `true or …` is `true`, whatever follows. So `and` can guard a calculation:
+
+```
+GoodAverage = games != 0 and points / games >= 20
+
+GoodAverage(4, 100)
+GoodAverage(0, 0)
+```
+
+**Results:**
+```
+true
+false
+```
+
+In `GoodAverage(0, 0)` the left operand is `false`, so the division is never evaluated. Computing `xor` requires both operand values.
 
 Only `true` and `false` are truth values. Numbers are not, so `1 and 0` is a type error: write the comparison you mean, such as `x != 0`.
 
@@ -3479,7 +3496,7 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
 - **A line-final `*` reads by its spacing.** An attached `A*` is a finished spread, so the next line starts a new row; a detached `A *` continues as multiplication with the usual operator precedence, and the end of the program or a new definition then leaves a missing operand. On one line, separate a spread from the next item with a comma: `A*, B`; `X = (A*)` groups the items into one value instead ([Spread or Multiplication?](#spread-or-multiplication)).
 - **Only Booleans are conditions.** `if`, `filter`, `while`, and the logical operators need `true` or `false`; a number is a type error.
-- **`and` does not protect a calculation.** Both operands are always evaluated, so guard a division with `if` ([Logical Operators](#logical-operators)).
+- **Guard a division with `and` or `or`.** In `d != 0 and n / d > 1`, a zero denominator makes the left operand false and skips the division. A comparison chain continues past a false link and stops on an error ([Logical Operators](#logical-operators)).
 - **Parentheses group, braces define.** `(n + 1)` is the expression `n + 1`; `{n + 1}` is an algorithm, with `n` as its parameter unless `n` is defined around it.
 - **Indentation never groups.** Only braces give an algorithm several rows; an indented line is an ordinary row of the algorithm around it.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.

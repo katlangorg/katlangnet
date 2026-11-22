@@ -656,23 +656,67 @@ theorem if_arm (rec : EvalRec) (c t e : ResolvedArgumentAlgorithm) (ctx : EvalCt
       | none => .error (Error.typeMismatch (booleanRequiredMessage "if condition" cr))) :
         EvalM CountedResult) := rfl
 
-/-- The logical operators read both operands through the Boolean view (`requireBooleanOperand`,
-    which is `Result.asBool?`): both operands are evaluated, then each must be a Boolean. -/
+/-- `and` / `or` SHORT-CIRCUIT. The left operand is evaluated and read through the Boolean view
+    (`requireBooleanOperand`, which is `Result.asBool?`) BEFORE the right operand is looked at. When
+    it decides the operator (`BinaryOp.leftOperandDecides`: `false and _`, `true or _`) the result is
+    that Boolean and the right operand is not evaluated; otherwise the right operand is evaluated,
+    read through the same view, and is the result. -/
 theorem logical_arm (rec : EvalRec) (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv)
-    (h : op = .and ∨ op = .or ∨ op = .xor) :
+    (h : op = .and ∨ op = .or) :
     EvalBody.evalBinaryCounted rec op a b ctx env = ((do
       let lr <- rec.eval a ctx env
-      let rr <- rec.eval b ctx env
       let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
       let x <- withCtx binaryContext (requireBooleanOperand op "left" lr)
-      let y <- withCtx binaryContext (requireBooleanOperand op "right" rr)
-      let value : Bool :=
-        match op with
-        | .and => x && y
-        | .or  => x || y
-        | _    => x != y
-      pure (Result.bool value, 1)) : EvalM CountedResult) := by
-  rcases h with rfl | rfl | rfl <;> rfl
+      if op.leftOperandDecides x then
+        pure (Result.bool x, 1)
+      else do
+        let rr <- rec.eval b ctx env
+        let y <- withCtx binaryContext (requireBooleanOperand op "right" rr)
+        pure (Result.bool y, 1)) : EvalM CountedResult) := by
+  rcases h with rfl | rfl <;> rfl
+
+/-- `xor` needs both operands: both are evaluated, left then right, and only then is each read
+    through the Boolean view (`requireBooleanOperand`), the left one first. -/
+theorem xor_arm (rec : EvalRec) (a b : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    EvalBody.evalBinaryCounted rec .xor a b ctx env = ((do
+      let lr <- rec.eval a ctx env
+      let rr <- rec.eval b ctx env
+      let binaryContext := s!"while evaluating `{binaryExprDiagnosticName .xor a b}`"
+      let x <- withCtx binaryContext (requireBooleanOperand .xor "left" lr)
+      let y <- withCtx binaryContext (requireBooleanOperand .xor "right" rr)
+      pure (Result.bool (x != y), 1)) : EvalM CountedResult) := rfl
+
+/-- THE SKIPPED OPERAND HAS NO EFFECT. When the left operand of `and` / `or` completes with a
+    Boolean that decides the operator, the expression completes with that Boolean in the state
+    the LEFT operand left: whatever the right operand is, nothing of it ran. -/
+theorem logical_arm_decided (rec : EvalRec) (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv)
+    (h : op = .and ∨ op = .or) (s s' : EvalState) (lr : Result) (x : Bool)
+    (hleft : (rec.eval a ctx env).runState s = (.ok lr, s'))
+    (hbool : Result.asBool? lr = some x) (hdecides : op.leftOperandDecides x = true) :
+    (EvalBody.evalBinaryCounted rec op a b ctx env).runState s = (.ok (Result.bool x, 1), s') := by
+  -- The left operand's Boolean check completes with `x` and leaves the state alone.
+  have hcheck : ∀ c : String,
+      (withCtx c (requireBooleanOperand op "left" lr)).runState s' = (.ok x, s') := by
+    intro c
+    have hrequire : (requireBooleanOperand op "left" lr).runState s' = (.ok x, s') := by
+      simp only [requireBooleanOperand, hbool]
+      rfl
+    unfold withCtx
+    rw [EvalM.bind_runState, evalAttempt_runState_of_complete _ s' s' (.ok x) hrequire rfl]
+    rfl
+  rw [logical_arm rec op a b ctx env h, EvalM.bind_runState, hleft]
+  dsimp only
+  rw [EvalM.bind_runState, hcheck]
+  simp only [hdecides, if_true]
+  rfl
+
+/-- A failing left operand of `and` / `or` is the expression's outcome, in the state the left
+    operand left: the right operand is not evaluated. -/
+theorem logical_arm_left_failure (rec : EvalRec) (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv)
+    (h : op = .and ∨ op = .or) (s s' : EvalState) (err : Error)
+    (hleft : (rec.eval a ctx env).runState s = (.error err, s')) :
+    (EvalBody.evalBinaryCounted rec op a b ctx env).runState s = (.error err, s') := by
+  rw [logical_arm rec op a b ctx env h, EvalM.bind_runState, hleft]
 
 /-- One `filter` step: the predicate is the callback call on the item as collected, and its result
     is read through the Boolean view — a non-Boolean result is a value-kind error, never a truth

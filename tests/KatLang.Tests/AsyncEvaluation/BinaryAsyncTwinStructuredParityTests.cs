@@ -23,9 +23,12 @@ public class BinaryAsyncTwinStructuredParityTests
             { "empty left of ordering", "X = ()\nX > 10" },
             { "empty right of ordering", "X = ()\n10 > X" },
             { "empty left of and", "X = ()\nX and 7" },
-            { "empty right of and", "X = ()\n7 and X" },
+            // The left operand is a Boolean that does not decide the operator, so the
+            // right operand is evaluated (a deciding or non-Boolean left operand ends the
+            // operator before `X` is read: the short circuit).
+            { "empty right of and", "X = ()\ntrue and X" },
             { "empty left of or", "X = ()\nX or 7" },
-            { "empty right of or", "X = ()\n7 or X" },
+            { "empty right of or", "X = ()\nfalse or X" },
             { "empty plus string", "X = ()\nX + 'text'" },
             { "string plus empty", "X = ()\n'text' + X" },
             { "both operands empty", "X = ()\nX + X" },

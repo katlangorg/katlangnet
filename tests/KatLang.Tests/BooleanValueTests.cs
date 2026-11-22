@@ -257,17 +257,24 @@ public class BooleanValueTests
         => AssertEvalFailsWithTypeMismatch(source, $"operator `not` expects a Boolean operand, but the operand was {blame}");
 
     [Fact]
-    public void LogicalOperators_EvaluateBothOperands_WithoutShortCircuit()
+    public void AndOr_ShortCircuit_WhileXorEvaluatesBothOperands()
     {
-        // The established evaluation order is preserved: both operands are evaluated left
-        // to right before the operator is applied, so a failing right operand fails even
-        // when the left operand already decides the result.
-        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("false and (1 / 0 == 1)")));
-        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("true or (1 / 0 == 1)")));
-        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("Boom = 1 / 0 == 1\nfalse and Boom")));
-        // ...and the left operand is validated first: a numeric left operand is blamed even
-        // when the right operand would have been rejected too.
+        // `and` / `or` evaluate the right operand only when the left one does not decide the
+        // result, so a failing right operand is never reached behind `false and` / `true or`
+        // (the whole rule, on every route: ShortCircuitLogicalOperatorTests).
+        AssertEvalBool("false and (1 / 0 == 1)", false);
+        AssertEvalBool("true or (1 / 0 == 1)", true);
+        AssertEvalBool("Boom = 1 / 0 == 1\nfalse and Boom", false);
+        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("true and (1 / 0 == 1)")));
+        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("false or (1 / 0 == 1)")));
+        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("Boom = 1 / 0 == 1\ntrue and Boom")));
+        // `xor` needs both operands, so it stays eager.
+        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("false xor (1 / 0 == 1)")));
+        Assert.IsType<EvalError.DivByZero>(Innermost(FailureOf("true xor (1 / 0 == 1)")));
+        // The left operand is validated first: a numeric left operand is blamed even when the
+        // right operand would have been rejected too, or would have failed.
         AssertEvalFailsWithTypeMismatch("1 and 2", "operator `and` expects Boolean operands, but the left operand was numeric value 1");
+        AssertEvalFailsWithTypeMismatch("1 or (1 / 0 == 1)", "operator `or` expects Boolean operands, but the left operand was numeric value 1");
     }
 
     [Theory]

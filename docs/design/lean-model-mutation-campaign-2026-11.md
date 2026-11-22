@@ -136,6 +136,12 @@ The three `hunt-gaps` and seven `hunt-controls` substitutions are the hunt's own
 still match the current model. The seven `extension` mutants are new: two per rule for NEED-04,
 `take` and the cache key, one for Q-38.
 
+`binary-right-first` was re-anchored later on 2026-11-22, when `and`/`or` became short-circuit
+(issue #202). The model now evaluates the left operand before it matches on the operator, so the
+mutant is three substitutions that reorder the arm needing both operands (arithmetic and `xor`);
+`and`/`or` evaluate their right operand only after the left one. Re-measured against the corpora
+of that change: Killed, with the same 8 / 6 / 27 / 3 failing guards as in section 5.
+
 Q-38 has no decision of its own in the model. The rule follows from the elaborated projection
 wrapper, which reads the hoisted source `$deconstruct$N` by a property-style read, and from the
 general cache law. At the explicit-invocation arm of `EvalBody.zeroArgPropertyCalculation`, the mutant

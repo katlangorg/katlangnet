@@ -9,8 +9,9 @@ open KatLang (resolve param num)
 -- Comparison chains (September 2026): the ONE comparison tier `< <= > >= == !=`
 -- is chainable. `Expr.comparison first links` compares ADJACENT operands
 -- (`a < b <= c == d` is `a < b`, `b <= c`, `c == d`), evaluates every operand
--- exactly once, left to right, keeps going after a `false` link (eager Boolean
--- composition), stops at the first error, and is `true` iff every link held.
+-- exactly once, left to right, keeps going after a `false` link (a chain is
+-- eager, unlike `and` / `or`), stops at the first error, and is `true` iff
+-- every link held.
 -- C# twins: `ComparisonChainEvaluationTests`, `ComparisonChainParserTests`.
 --------------------------------------------------------------------------------
 

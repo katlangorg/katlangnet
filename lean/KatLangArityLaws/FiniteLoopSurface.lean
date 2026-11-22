@@ -214,9 +214,19 @@ theorem binary_canonical (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : Val
   refine okSat_call (.evalBinaryCounted op a b ctx env) Canonical ?_
   show OkSat _ (EvalBody.evalBinaryCounted evalUnbounded op a b ctx env)
   unfold EvalBody.evalBinaryCounted
-  refine okSat_bind fun lr => okSat_bind fun rr => ?_
+  refine okSat_bind fun lr => ?_
   split
-  all_goals first | exact okSat_bind fun x => okSat_bind fun y => okSat_pure (canon_bool _) | skip
+  -- `and` / `or`: the left operand's Boolean when it decides, else the right operand's.
+  all_goals first
+    | (refine okSat_bind fun x => ?_
+       split
+       · exact okSat_pure (canon_bool _)
+       · exact okSat_bind fun rr => okSat_bind fun y => okSat_pure (canon_bool _))
+    | skip
+  refine okSat_bind fun rr => ?_
+  split
+  -- `xor`: both operands were evaluated.
+  · exact okSat_bind fun x => okSat_bind fun y => okSat_pure (canon_bool _)
   split
   all_goals first | exact okSat_error _ | skip
   refine okSat_bind fun x => okSat_bind fun y => ?_

@@ -216,7 +216,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "the Param/Resolve arms read expr.Span instead of the EvalParamCountedOf/EvalResolveCountedOf leaf frames; the guarded asynchronous host-operation case"),
         new("Evaluator.EvalResolveCountedAsync", "Evaluator.EvalResolveCounted", "1b39417654bf883e", FS | IH,
             "the sync hot path bypasses ReadValueBindingCounted for a non-alias, non-carrier binding; CountValue is the inline new CountedResult(v, v.ValueCount())"),
-        new("Evaluator.EvalExpressionSpineCountedAsync", "Evaluator.EvalExpressionSpineCounted", "681002d62b334996", AL | CO | FB | FS,
+        new("Evaluator.EvalExpressionSpineCountedAsync", "Evaluator.EvalExpressionSpineCounted", "f8b1408fd0029378", AL | CO | FB | FS,
             "no ref local across an await (frames[top] for ref frame/unwound; the null-forgiving ! on frames[top].ListItems, which flow analysis cannot track through an array element); FormSelectionSupplySync/SelectArgumentViewSync are the flag body FormSelectionSupply and the out-of-line view selection inline; plain Eval leaves are counted .Value; the invariant message names the twin"),
         new("Evaluator.EvalAlgOutputPreparedCoreAsync", "Evaluator.EvalAlgOutputPreparedCore", "2fc68e5da198dd65", DR,
             "a deferred region is materialized by MaterializeRequiredRegionAsync"),

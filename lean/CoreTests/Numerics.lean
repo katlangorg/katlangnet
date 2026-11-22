@@ -146,10 +146,14 @@ def emptyOperandMessage (op : KatLang.BinaryOp) (side : String) : String :=
       s!"operator `{op.symbol}` expects numeric scalar operands, but the {side} operand was a sequence value with 0 sequence elements: ()"
 
 /-- A valid other operand for `op`, so that the EMPTY operand is the one
-    rejected: a Boolean for the logical operators, a number otherwise. -/
+    rejected: a Boolean for the logical operators, a number otherwise. As a
+    LEFT operand the Boolean must not decide the operator, or the empty right
+    operand would be skipped by the short circuit: `true` for `and` (and
+    `xor`), `false` for `or`. -/
 def validOperandFor (op : KatLang.BinaryOp) : KatLang.Expr :=
   match op with
-  | .and | .or | .xor => .boolLiteral true
+  | .and | .xor => .boolLiteral true
+  | .or => .boolLiteral false
   | _ => .num 10
 
 def rejectsEmptyOperand (op : KatLang.BinaryOp) : Bool :=
@@ -283,7 +287,7 @@ def logicalOperatorsRejectNonBooleanOperands : Bool :=
        innermostIsTypeMismatch
          "operator `and` expects Boolean operands, but the left operand was numeric value 1" err
    | _ => false) &&
-  (match runResult (.binary .or (.boolLiteral true) (.num 0)) with
+  (match runResult (.binary .or (.boolLiteral false) (.num 0)) with
    | Except.error err =>
        innermostIsTypeMismatch
          "operator `or` expects Boolean operands, but the right operand was numeric value 0" err
@@ -321,20 +325,171 @@ def logicalOperatorsRejectNonBooleanOperands : Bool :=
 
 #guard logicalOperatorsRejectNonBooleanOperands
 
-/-- Both logical operands are evaluated left to right before the operator
-    applies (no short circuit): a rejected RIGHT operand is reported even when
-    the left operand alone would decide the result. -/
-def logicalOperatorsEvaluateBothOperands : Bool :=
-  (match runResult (.binary .or (.boolLiteral true) (.num 1)) with
-   | Except.error err =>
-       innermostIsTypeMismatch
-         "operator `or` expects Boolean operands, but the right operand was numeric value 1" err
+--------------------------------------------------------------------------------
+-- Short-circuit `and` / `or`
+--------------------------------------------------------------------------------
+-- `and` / `or` evaluate the left operand, require it to be a Boolean, and
+-- evaluate the right operand only when the left one does not decide the result
+-- (`false and _` is `false`, `true or _` is `true`). A skipped right operand has
+-- no effect at all: no failure, no `tick()`, no value-kind check. `xor` needs
+-- both operands and stays eager.
+
+/-- `1 / 0 > 0`: a Boolean-shaped operand whose evaluation fails. -/
+def failingComparisonOperand : KatLang.Expr :=
+  .compare .gt (.binary .div (.num 1) (.num 0)) (.num 0)
+
+def tickCallExpr : KatLang.Expr := .call (resolve "tick") []
+
+/-- `tick() == n`: an effectful Boolean operand that is `true` iff it ran as the run's n-th tick. -/
+def tickIs (n : Int) : KatLang.Expr := .compare .eq tickCallExpr (.num n)
+
+/-- The outcome of `e` and the number of `tick()` executions of the WHOLE run, kept for a
+    failed run too. -/
+def outcomeAndTicks (e : KatLang.Expr) : Except Error Result × Nat :=
+  let (result, state) := (KatLang.runResultM e).runState KatLang.EvalState.empty
+  (result, state.tickCounter)
+
+/-- `e` is the Boolean `expected`, and the run executed exactly `ticks` ticks. -/
+def boolAfterTicks (e : KatLang.Expr) (expected : Bool) (ticks : Nat) : Bool :=
+  match outcomeAndTicks e with
+  | (Except.ok (.bool value), ran) => value == expected && ran == ticks
+  | _ => false
+
+/-- `e` fails with `expected` as its innermost error after exactly `ticks` ticks. -/
+def failsAfterTicks (e : KatLang.Expr) (expected : Error -> Bool) (ticks : Nat) : Bool :=
+  match outcomeAndTicks e with
+  | (Except.error err, ran) => expected err && ran == ticks
+  | _ => false
+
+-- The four examples of the short-circuit decision: a deciding left operand
+-- skips the failing right operand; a non-deciding one evaluates it.
+def shortCircuitDecidesByTheLeftOperand : Bool :=
+  evaluatesToBool (.binary .and (.boolLiteral false) failingComparisonOperand) false &&
+  evaluatesToBool (.binary .or (.boolLiteral true) failingComparisonOperand) true &&
+  (match runResult (.binary .and (.boolLiteral true) failingComparisonOperand) with
+   | Except.error err => innermostIsDivByZero err
    | _ => false) &&
-  (match runResult (.binary .and (.boolLiteral false) (.binary .div (.num 1) (.num 0))) with
+  (match runResult (.binary .or (.boolLiteral false) failingComparisonOperand) with
    | Except.error err => innermostIsDivByZero err
    | _ => false)
 
-#guard logicalOperatorsEvaluateBothOperands
+#guard shortCircuitDecidesByTheLeftOperand
+
+-- A skipped right operand runs ZERO times; an evaluated one runs exactly ONCE.
+def shortCircuitSkippedOperandHasNoEffect : Bool :=
+  boolAfterTicks (.binary .and (.boolLiteral false) (tickIs 1)) false 0 &&
+  boolAfterTicks (.binary .or (.boolLiteral true) (tickIs 1)) true 0 &&
+  boolAfterTicks (.binary .and (.boolLiteral true) (tickIs 1)) true 1 &&
+  boolAfterTicks (.binary .and (.boolLiteral true) (tickIs 2)) false 1 &&
+  boolAfterTicks (.binary .or (.boolLiteral false) (tickIs 1)) true 1 &&
+  boolAfterTicks (.binary .or (.boolLiteral false) (tickIs 2)) false 1
+
+#guard shortCircuitSkippedOperandHasNoEffect
+
+-- Left before right, each evaluated operand once, with a left operand computed
+-- at run time: the left operand takes tick 1, and the right operand takes tick
+-- 2 only when the left one did not decide.
+def shortCircuitEvaluatesLeftThenRightOnce : Bool :=
+  boolAfterTicks (.binary .and (tickIs 1) (tickIs 2)) true 2 &&
+  boolAfterTicks (.binary .and (tickIs 1) (tickIs 1)) false 2 &&
+  boolAfterTicks (.binary .and (tickIs 2) (tickIs 2)) false 1 &&
+  boolAfterTicks (.binary .or (tickIs 1) (tickIs 2)) true 1 &&
+  boolAfterTicks (.binary .or (tickIs 2) (tickIs 2)) true 2 &&
+  boolAfterTicks (.binary .or (tickIs 2) (tickIs 1)) false 2 &&
+  -- Nested: `false and (…)` skips a whole right operand tree, and the skipped
+  -- operand of an inner operator stays skipped inside an evaluated outer one.
+  boolAfterTicks (.binary .and (.boolLiteral false) (.binary .or (tickIs 1) (tickIs 2))) false 0 &&
+  boolAfterTicks (.binary .or (.binary .and (.boolLiteral false) (tickIs 1)) (tickIs 1)) true 1 &&
+  boolAfterTicks (.binary .and (.binary .or (.boolLiteral true) (tickIs 1)) (tickIs 1)) true 1
+
+#guard shortCircuitEvaluatesLeftThenRightOnce
+
+/-- `Guard(x) = x != 0 and 8 / x > 1`, called with `x`. (The dividend is a
+    multiple of the nonzero divisors used below, so the integer core and the
+    C# decimal runtime compute the same quotient.) -/
+def zeroDenominatorGuard (x : Int) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("Guard", alg ["x"] [] []
+      [.binary .and (.compare .ne (param "x") (num 0))
+        (.compare .gt (.binary .div (num 8) (param "x")) (num 1))])]
+    [.call (resolve "Guard") [num x]])
+
+/-- `Alternative(x) = x == 0 or 8 / x > 1`, called with `x`. -/
+def zeroDenominatorAlternative (x : Int) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] []
+    [("Alternative", alg ["x"] [] []
+      [.binary .or (.compare .eq (param "x") (num 0))
+        (.compare .gt (.binary .div (num 8) (param "x")) (num 1))])]
+    [.call (resolve "Alternative") [num x]])
+
+-- The practical guard, with a left operand computed at run time: a zero
+-- denominator is never divided by, and a nonzero one still is.
+def shortCircuitGuardsAZeroDenominator : Bool :=
+  evaluatesToBool (zeroDenominatorGuard 0) false &&
+  evaluatesToBool (zeroDenominatorGuard 4) true &&
+  evaluatesToBool (zeroDenominatorGuard (-4)) false &&
+  evaluatesToBool (zeroDenominatorAlternative 0) true &&
+  evaluatesToBool (zeroDenominatorAlternative 4) true &&
+  evaluatesToBool (zeroDenominatorAlternative (-4)) false
+
+#guard shortCircuitGuardsAZeroDenominator
+
+-- The left operand's failure, or its value-kind rejection, is the outcome
+-- BEFORE any right operand work: the effectful right operand never ran.
+def shortCircuitLeftOperandIsJudgedFirst : Bool :=
+  failsAfterTicks (.binary .and (.num 1) (tickIs 1))
+    (fun err =>
+      hasContext "while evaluating `1 and tick(...) == 1`" err &&
+      innermostIsTypeMismatch
+        "operator `and` expects Boolean operands, but the left operand was numeric value 1" err) 0 &&
+  failsAfterTicks (.binary .or (.num 0) (tickIs 1))
+    (innermostIsTypeMismatch
+      "operator `or` expects Boolean operands, but the left operand was numeric value 0") 0 &&
+  failsAfterTicks (.binary .and (.binary .div (.num 1) (.num 0)) (tickIs 1)) innermostIsDivByZero 0 &&
+  failsAfterTicks (.binary .or failingComparisonOperand (tickIs 1)) innermostIsDivByZero 0
+
+#guard shortCircuitLeftOperandIsJudgedFirst
+
+-- A non-Boolean RIGHT operand is the ordinary right-operand rejection when it
+-- is evaluated, and is never looked at when it is skipped.
+def shortCircuitRightOperandIsCheckedOnlyWhenEvaluated : Bool :=
+  (match runResult (.binary .and (.boolLiteral true) (.num 1)) with
+   | Except.error err =>
+       hasContext "while evaluating `true and 1`" err &&
+       innermostIsTypeMismatch
+         "operator `and` expects Boolean operands, but the right operand was numeric value 1" err
+   | _ => false) &&
+  (match runResult (.binary .or (.boolLiteral false) (.num 1)) with
+   | Except.error err =>
+       hasContext "while evaluating `false or 1`" err &&
+       innermostIsTypeMismatch
+         "operator `or` expects Boolean operands, but the right operand was numeric value 1" err
+   | _ => false) &&
+  evaluatesToBool (.binary .and (.boolLiteral false) (.num 1)) false &&
+  evaluatesToBool (.binary .or (.boolLiteral true) (.num 1)) true &&
+  evaluatesToBool (.binary .and (.boolLiteral false) (.stringLiteral "a")) false &&
+  evaluatesToBool (.binary .or (.boolLiteral true) emptyOperandExpr) true
+
+#guard shortCircuitRightOperandIsCheckedOnlyWhenEvaluated
+
+-- Control: `xor` is EAGER. Both operands are evaluated, left then right, once
+-- each, whatever the left operand is — a failing or non-Boolean right operand
+-- is still reported, and the left operand's value kind is checked only after
+-- both were evaluated.
+def xorEvaluatesBothOperands : Bool :=
+  boolAfterTicks (.binary .xor (.boolLiteral true) (tickIs 1)) false 1 &&
+  boolAfterTicks (.binary .xor (.boolLiteral false) (tickIs 1)) true 1 &&
+  boolAfterTicks (.binary .xor (tickIs 1) (tickIs 2)) false 2 &&
+  failsAfterTicks (.binary .xor (.boolLiteral true) failingComparisonOperand) innermostIsDivByZero 0 &&
+  failsAfterTicks (.binary .xor (.boolLiteral false) failingComparisonOperand) innermostIsDivByZero 0 &&
+  failsAfterTicks (.binary .xor (.boolLiteral true) (.num 1))
+    (innermostIsTypeMismatch
+      "operator `xor` expects Boolean operands, but the right operand was numeric value 1") 0 &&
+  failsAfterTicks (.binary .xor (.num 1) (tickIs 1))
+    (innermostIsTypeMismatch
+      "operator `xor` expects Boolean operands, but the left operand was numeric value 1") 1
+
+#guard xorEvaluatesBothOperands
 
 -- Unary `-` rejects every non-numeric operand as a value KIND (Q-27): a
 -- sequence or list value — `()` included — and a Boolean are the one

@@ -1780,9 +1780,9 @@ public closed record Expr
     /// chain is <c>true</c> iff every link holds. Evaluation is incremental and left to
     /// right: every operand is evaluated EXACTLY ONCE (the previous operand's VALUE is
     /// reused, never its expression), each link is compared as soon as its operand is
-    /// available, a <c>false</c> link never stops the chain (KatLang's eager Boolean
-    /// composition, so a later invalid comparison is still reported), and an error
-    /// terminates it (later operands are not evaluated). A host-built chain with no
+    /// available, a <c>false</c> link never stops the chain (a chain is eager, unlike
+    /// <c>and</c> / <c>or</c>, so a later invalid comparison is still reported), and an
+    /// error terminates it (later operands are not evaluated). A host-built chain with no
     /// links evaluates its first operand and is <c>true</c>. Lean: <c>Expr.comparison</c>.
     /// </summary>
     public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr

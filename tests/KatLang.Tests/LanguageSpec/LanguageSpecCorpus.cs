@@ -712,6 +712,83 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "logical-and-or-short-circuit",
+            Category = "conditionals",
+            Source = "Safe(n, d) = d != 0 and n / d > 1\nSafe(10, 0)\nSafe(10, 2)\nfalse and 1 / 0 > 0\ntrue or 1 / 0 > 0",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "false\ntrue\nfalse\ntrue",
+            ExpectedRaw = "S[false, true, false, true]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // A left operand that does not decide the result: the right operand is
+                // evaluated, and its failure is the outcome.
+                new SpecProbe("true and 1 / 0 > 0", "err div0"),
+                new SpecProbe("false or 1 / 0 > 0", "err div0"),
+                // The `or` form of the guard.
+                new SpecProbe("Skip(n, d) = d == 0 or n / d > 1\nSkip(10, 0), Skip(10, 2), Skip(2, 4)", "ok raw=S[true, true, false] n=3"),
+                // A parameter read only by the skipped operand is never demanded.
+                new SpecProbe("F(a, b) = a and b\nF(false, 1 / 0 > 0)", "ok raw=false n=1"),
+                new SpecProbe("F(a, b) = a or b\nF(false, 1 / 0 > 0)", "err div0"),
+                // Nesting and precedence: `and` binds tighter than `or`.
+                new SpecProbe("true or 1 / 0 > 0 and 1 / 0 > 0", "ok raw=true n=1"),
+                new SpecProbe("false and 1 / 0 > 0 or true", "ok raw=true n=1"),
+                new SpecProbe("false and (true or 1 / 0 > 0)", "ok raw=false n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Issue #202. Lean `evalBinaryCounted` (`BinaryOp.leftOperandDecides`) / C# `Evaluator.DecideLogicalAfterLeftOperand`, shared by the expression-spine machine, its async twin and the planned loop evaluator.",
+            Explanation = "`and` and `or` short-circuit. The left operand is evaluated first, and the right operand is evaluated only when the left one does not already decide the result: `false and …` is `false` and `true or …` is `true` without evaluating `…`. So `d != 0 and n / d > 1` guards the division, and `Safe(10, 0)` is `false` instead of a division by zero.",
+        },
+        new()
+        {
+            Id = "logical-short-circuit-skips-effects",
+            Category = "conditionals",
+            Source = "false and tick() == 1, true or tick() == 1, tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "false\ntrue\n1",
+            ExpectedRaw = "S[false, true, 1]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // An evaluated right operand runs exactly once.
+                new SpecProbe("true and tick() == 1, false or tick() == 2, tick()", "ok raw=S[true, true, 3] n=3"),
+                // Left before right, with a left operand computed at run time: the right
+                // operand takes tick 2 only when the left one did not decide.
+                new SpecProbe("tick() == 1 and tick() == 2, tick()", "ok raw=S[true, 3] n=2"),
+                new SpecProbe("tick() == 2 and tick() == 2, tick()", "ok raw=S[false, 2] n=2"),
+                new SpecProbe("tick() == 1 or tick() == 2, tick()", "ok raw=S[true, 2] n=2"),
+                new SpecProbe("tick() == 2 or tick() == 2, tick()", "ok raw=S[true, 3] n=2"),
+                // A chain stops at the first operand that decides it.
+                new SpecProbe("tick() == 1 and tick() == 9 and tick() == 3, tick()", "ok raw=S[false, 3] n=2"),
+                new SpecProbe("tick() == 9 or tick() == 2 or tick() == 3, tick()", "ok raw=S[true, 3] n=2"),
+            ],
+            Explanation = "A skipped right operand does not run at all: neither `tick() == 1` executes, so the last `tick()` is the first tick of the run.",
+        },
+        new()
+        {
+            Id = "logical-left-operand-is-judged-first",
+            Category = "errors",
+            Source = "1 and 1 / 0 > 0",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                // The left operand must be a Boolean before the right operand is looked at...
+                new SpecProbe("0 or 1 / 0 > 0", "err type"),
+                // ...and its own failure is the outcome.
+                new SpecProbe("1 / 0 > 0 and 1", "err div0"),
+                new SpecProbe("1 / 0 > 0 or 1", "err div0"),
+                // An evaluated right operand must be a Boolean; a skipped one is never checked.
+                new SpecProbe("true and 1", "err type"),
+                new SpecProbe("false or 'x'", "err type"),
+                new SpecProbe("false and 1", "ok raw=false n=1"),
+                new SpecProbe("true or 'x'", "ok raw=true n=1"),
+                new SpecProbe("false and ()", "ok raw=false n=1"),
+            ],
+            Explanation = "The left operand of `and` and `or` must be a Boolean, and that is checked before the right operand is evaluated: `1 and …` is a type error whatever `…` is. A right operand is checked only when it is evaluated, so `true and 1` is a type error while `false and 1` is `false`.",
+        },
+        new()
+        {
             Id = "power-unary-precedence",
             Category = "arithmetic",
             Source = "-2 ^ 2\n(-2) ^ 2\n2 ^ 3 ^ 2",
@@ -856,8 +933,8 @@ public static class LanguageSpecCorpus
                 new SpecProbe("1 < true < (1 / 0)", "err type"),
             ],
             IncludeInGeneratorPrompt = true,
-            Notes = "Eager Boolean composition, like `and`/`or`: `false` never short-circuits a chain, so `3 < 2 < true` still compares `2 < true` and reports that link's ordering rejection (`while evaluating `2 < true``). Errors do terminate: an error in an earlier operand or link is the chain's outcome and later operands are not evaluated. Lean `evalComparisonCounted` / C# `EvalExpressionSpineCounted`.",
-            Explanation = "A `false` comparison never stops a chain — like `and` and `or`, comparison chains evaluate eagerly — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.",
+            Notes = "A chain is eager, unlike `and`/`or` (which short-circuit, issue #202): `false` never stops a chain, so `3 < 2 < true` still compares `2 < true` and reports that link's ordering rejection (`while evaluating `2 < true``). Errors do terminate: an error in an earlier operand or link is the chain's outcome and later operands are not evaluated. Lean `evalComparisonCounted` / C# `EvalExpressionSpineCounted`.",
+            Explanation = "A `false` comparison never stops a chain — unlike `and` and `or`, which short-circuit, a comparison chain evaluates every operand — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.",
         },
         new()
         {
@@ -11367,14 +11444,22 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "hunt-logical-operands-both-evaluated",
+            Id = "hunt-logical-xor-operands-both-evaluated",
             Category = "equality-and-indexing",
-            Source = "true or tick() == 1, tick()",
+            Source = "true xor tick() == 1, tick()",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "true\n2",
-            ExpectedRaw = "S[true, 2]",
+            ExpectedDisplay = "false\n2",
+            ExpectedRaw = "S[false, 2]",
             ExpectedEmittedCount = 2,
-            Explanation = "Logical operators have no short circuit: `tick() == 1` runs even though the left operand is `true`.",
+            Probes =
+            [
+                new SpecProbe("false xor tick() == 1, tick()", "ok raw=S[true, 2] n=2"),
+                // A failing or non-Boolean right operand is reported whatever the left one is.
+                new SpecProbe("false xor 1 / 0 > 0", "err div0"),
+                new SpecProbe("true xor 1 / 0 > 0", "err div0"),
+                new SpecProbe("true xor 1", "err type"),
+            ],
+            Explanation = "`xor` needs both operands, so it never short-circuits: `tick() == 1` runs even though the left operand is `true`. Only `and` and `or` skip a right operand that the left one already decides.",
         },
         new()
         {

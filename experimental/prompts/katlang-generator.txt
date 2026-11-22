@@ -307,6 +307,7 @@ Comparisons:
 
 Logical:
 - `and`, `or`, `xor`, `not`
+- Use `and` and `or` for guards such as `d != 0 and n / d > 1`. The left operand must be a Boolean. A false left operand ends `and` and a true one ends `or`, so the division is safe when `d` is zero. `xor` needs both values. A comparison chain continues past a false link. An evaluation error stops any of these expressions.
 - Use `not` for logical negation; a lone `!` is not a valid token. `!=` is the not-equal operator.
 
 Operator precedence, lowest to highest:
@@ -1224,7 +1225,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (180 of the 795-case canonical language specification,
+Verified reference examples (181 of the 798-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1271,6 +1272,20 @@ Regenerate this block from the repo root with:
     [0, 1, 2]
     true
     20
+
+[logical-and-or-short-circuit] `and` and `or` short-circuit. The left operand is evaluated first, and the right operand is evaluated only when the left one does not already decide the result: `false and …` is `false` and `true or …` is `true` without evaluating `…`. So `d != 0 and n / d > 1` guards the division, and `Safe(10, 0)` is `false` instead of a division by zero.
+
+    Safe(n, d) = d != 0 and n / d > 1
+    Safe(10, 0)
+    Safe(10, 2)
+    false and 1 / 0 > 0
+    true or 1 / 0 > 0
+
+  Displays:
+    false
+    true
+    false
+    true
 
 [power-unary-precedence] `^` binds tighter than prefix `-` on the left (and than `not`, which sits below the comparisons altogether), so `-2 ^ 2` negates the power: `-(2 ^ 2)`. Parenthesize the base to raise a negative value: `(-2) ^ 2`. The exponent side accepts a unary value directly (`2 ^ -2` is `0.25`), and `^` chains group from the right.
 
@@ -1321,7 +1336,7 @@ Regenerate this block from the repo root with:
     true
     false
 
-[comparison-chain-is-eager-after-false] A `false` comparison never stops a chain — like `and` and `or`, comparison chains evaluate eagerly — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.
+[comparison-chain-is-eager-after-false] A `false` comparison never stops a chain — unlike `and` and `or`, which short-circuit, a comparison chain evaluates every operand — so `3 < 2 < true` still performs `2 < true`, and that comparison is the error (Booleans are not ordered). Errors do stop a chain: once an operand or a comparison fails, the later operands are not evaluated.
 
     3 < 2 < true
 

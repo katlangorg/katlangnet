@@ -23,10 +23,10 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4559
-- guarded: 4421 (629 may capture calls, 3792 cannot)
+- corpus programs: 4562
+- guarded: 4424 (629 may capture calls, 3795 cannot)
 - excluded: 138
-  language-spec: 795 programs, 682 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+  language-spec: 798 programs, 685 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2821 programs, 2808 guarded (131 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
@@ -100,6 +100,9 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_boolean_predicates_and_patterns == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_boolean_loop_state_transition == true
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_boolean_predicate_rejects_visible_empty == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_logical_and_or_short_circuit == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_logical_short_circuit_skips_effects == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_logical_left_operand_is_judged_first == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_power_unary_precedence == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_not_binds_below_comparisons == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_comparison_chains_compare_adjacent_pairs == false
@@ -712,7 +715,7 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_family_repeated_name_identity_nonmatch == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_family_empty_and_pair_sequence_patterns == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_comparison_chain_operands_once == false
-#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_logical_operands_both_evaluated == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_logical_xor_operands_both_evaluated == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_builtin_map_callbacks_run_in_collection_order == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_own_parameter == false
@@ -786,6 +789,9 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_boolean_predicates_and_patterns,
   LanguageSpecCases.case_boolean_loop_state_transition,
   LanguageSpecCases.case_boolean_predicate_rejects_visible_empty,
+  LanguageSpecCases.case_logical_and_or_short_circuit,
+  LanguageSpecCases.case_logical_short_circuit_skips_effects,
+  LanguageSpecCases.case_logical_left_operand_is_judged_first,
   LanguageSpecCases.case_power_unary_precedence,
   LanguageSpecCases.case_not_binds_below_comparisons,
   LanguageSpecCases.case_comparison_chains_compare_adjacent_pairs,
@@ -1398,7 +1404,7 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_hunt_family_repeated_name_identity_nonmatch,
   LanguageSpecCases.case_hunt_family_empty_and_pair_sequence_patterns,
   LanguageSpecCases.case_hunt_comparison_chain_operands_once,
-  LanguageSpecCases.case_hunt_logical_operands_both_evaluated,
+  LanguageSpecCases.case_hunt_logical_xor_operands_both_evaluated,
   LanguageSpecCases.case_hunt_builtin_map_callbacks_run_in_collection_order,
   LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter,
   LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_own_parameter,
@@ -1417,7 +1423,7 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_selective_collector_take_count_error_precedes_elements,
   LanguageSpecCases.case_decon_target_calls_reuse_the_shared_source
 ]
-#guard languageSpecPrograms.length == 682
+#guard languageSpecPrograms.length == 685
 #guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 89
 
 /-! ## explorer -/
@@ -8958,5 +8964,5 @@ def plannedLoopTempPrograms : List Expr := [
 #guard plannedLoopTempPrograms.length == 36
 #guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
 
--- 4421 gate guards over 4559 corpus programs.
+-- 4424 gate guards over 4562 corpus programs.
 end KatLang.MayCaptureCallsCorpus

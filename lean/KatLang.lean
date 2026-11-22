@@ -4366,14 +4366,28 @@ def requireNumericComparisonOperand (op : ComparisonOp) (side : String) (value :
   requireNumericScalarOperandOf op.symbol side value
 
 /-- The logical operators `and` / `or` / `xor` require a Boolean value on
-    BOTH sides: there is no numeric truthiness, so a number, string, sequence
-    value, or list operand is a value-kind error naming the operand.
+    every side they EVALUATE: there is no numeric truthiness, so a number,
+    string, sequence value, or list operand is a value-kind error naming the
+    operand. (A right operand that `and` / `or` skip is never evaluated and so
+    never checked: `BinaryOp.leftOperandDecides`.)
     C#: `Evaluator.RequireBooleanOperand`. -/
 def requireBooleanOperand (op : BinaryOp) (side : String) (value : Result) : EvalM Bool :=
   match Result.asBool? value with
   | some b => pure b
   | none => .error (Error.typeMismatch
       s!"operator `{op.symbol}` expects Boolean operands, but the {side} operand was {operandDescription value}")
+
+/-- THE SHORT-CIRCUIT DECISION of `and` / `or`: whether the LEFT operand's
+    Boolean alone decides the operator — `false and _` is `false` and
+    `true or _` is `true` — so that the right operand is NOT evaluated. `xor`
+    needs both operands whatever the left one is, and so does every arithmetic
+    operator. Read by `evalBinaryCounted` after the left operand has passed
+    `requireBooleanOperand`. C#: `Evaluator.LeftOperandDecides`. -/
+def BinaryOp.leftOperandDecides (op : BinaryOp) (left : Bool) : Bool :=
+  match op with
+  | .and => !left
+  | .or => left
+  | _ => false
 
 /-- The ONE message for every position that REQUIRES a Boolean value — an
     `if` condition, a `filter` predicate result, a `while` continuation flag:
@@ -12323,85 +12337,108 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             s!"operator `-` expects a numeric scalar operand, but the operand was {operandDescription r}")
 
   /-- Evaluate a binary (arithmetic or logical) operator expression as one
-      counted value. Both operands are read at their value boundaries; strings
-      reject every binary operator; everything else follows the numeric-scalar
-      core or the Boolean-only logical rule. Comparisons are NOT binary
-      operators — every comparison is a link of a comparison chain
-      (`evalComparisonCounted`). The empty sequence value `()` is an ORDINARY
-      operand here — it has no numeric scalar value, so it is rejected by the
-      same operand validation as any other non-scalar value (SYN-01). Empty
-      NEUTRALITY belongs to the arity algebra's supply operations
-      (capture/collect/spread), never to scalar operators. Owned here so `eval`
-      (the value projection) never carries independent operator semantics.
-      C#: the binary case of `EvalExpressionSpineCounted` / `ApplyBinaryOperator`. -/
+      counted value. The LEFT operand is evaluated first, once, at its value
+      boundary; its failure is the expression's outcome before any right
+      operand work.
+
+      `and` / `or` SHORT-CIRCUIT: the left operand must be a Boolean
+      (`requireBooleanOperand`, checked BEFORE the right operand is looked at),
+      and when it alone decides the operator (`BinaryOp.leftOperandDecides`:
+      `false and _`, `true or _`) the result is that Boolean and the right
+      operand is NOT evaluated — it has no effect, failure, suspension or
+      charge, and its value kind is never checked. Otherwise the right operand
+      is evaluated once, must be a Boolean, and is the result.
+
+      `xor` and the arithmetic operators need BOTH operands: the right operand
+      is evaluated next, then the operator applies (`xor` checks its left and
+      then its right operand for a Boolean only after both were evaluated).
+      Strings reject every arithmetic operator; everything else follows the
+      numeric-scalar core. Comparisons are NOT binary operators — every
+      comparison is a link of a comparison chain (`evalComparisonCounted`).
+      The empty sequence value `()` is an ORDINARY operand here — it has no
+      numeric scalar value, so it is rejected by the same operand validation as
+      any other non-scalar value (SYN-01). Empty NEUTRALITY belongs to the
+      arity algebra's supply operations (capture/collect/spread), never to
+      scalar operators. Owned here so `eval` (the value projection) never
+      carries independent operator semantics.
+      C#: the binary case of `EvalExpressionSpineCounted` /
+      `DecideLogicalAfterLeftOperand` / `ApplyBinaryOperator`. -/
   def EvalBody.evalBinaryCounted (rec : EvalRec) (op : BinaryOp) (a b : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let lr <- rec.eval a ctx env
-    let rr <- rec.eval b ctx env
     match op with
-    -- The logical operators are Boolean-only: both operands are evaluated
-    -- left to right before the operator applies (the established evaluation
-    -- order — no short circuit), and each must be a Boolean value. There is
-    -- no numeric truthiness, so `1 and 2` is a value-kind error.
-    | .and | .or | .xor => do
+    -- SHORT CIRCUIT: `and` / `or` check the left operand for a Boolean and
+    -- evaluate the right operand only when the left one does not decide the
+    -- result. There is no numeric truthiness, so `1 and 2` is a value-kind
+    -- error — reported for the left operand before the right one is evaluated.
+    | .and | .or => do
         let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
         let x <- withCtx binaryContext (requireBooleanOperand op "left" lr)
-        let y <- withCtx binaryContext (requireBooleanOperand op "right" rr)
-        let value : Bool :=
-          match op with
-          | .and => x && y
-          | .or  => x || y
-          | _    => x != y
-        pure (Result.bool value, 1)
-    | _ =>
-      -- SYN-01: the empty sequence value is NOT an identity for scalar
-      -- operators. `()` carries no numeric scalar value, so it falls through to
-      -- the ordinary operand validation below exactly like `(1, 2)` or `[]` —
-      -- `10 / ()`, `() > 10`, `() and 7`, and `() + 'text'` are operand errors,
-      -- never a passthrough of the other operand.
-      match lr, rr with
-      -- Non-equality operators are not defined on strings (they fail here rather
-      -- than via expectInt so the diagnostic names the string operands).
-      | .str _, .str _ => .error (Error.typeMismatch "Strings only support == and != operators")
-      -- Mixed string/number or string/sequence value: fail for any operator
-      | .str _, _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
-      | _, .str _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
-      | _, _ => do
-        let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
-        let x <- withCtx binaryContext (requireNumericScalarOperand op "left" lr)
-        let y <- withCtx binaryContext (requireNumericScalarOperand op "right" rr)
-        -- Check for division by zero
-        if (op == BinaryOp.div || op == BinaryOp.idiv || op == BinaryOp.mod) && y == 0 then
-          .error Error.divByZero
-        else if op == BinaryOp.pow && y < 0 then do
-          let value <- negativeIntPow x y
-          pure (value, Result.valueCount value)
-        else
-          let value : Result :=
-            -- The logical operators are handled above; their arm below keeps
-            -- the match exhaustive over BinaryOp and is unreachable here.
-            match op with
-            | .add  => .atom (x + y)
-            | .sub  => .atom (x - y)
-            | .mul  => .atom (x * y)
-            -- Division and modulo truncate toward zero (Int.tdiv / Int.tmod),
-            -- matching the C# reference: `-7 div 2 = -3` and `-7 mod 2 = -1`.
-            -- `/` on non-divisible operands additionally truncates the exact
-            -- decimal quotient as part of the integer-core limitation.
-            | .div  => .atom (x.tdiv y)
-            | .idiv => .atom (x.tdiv y)
-            | .mod  => .atom (x.tmod y)
-            | .pow  => .atom (intPow x y.toNat)
-            | .and | .or | .xor => .bool false
-          pure (value, 1)
+        if op.leftOperandDecides x then
+          pure (Result.bool x, 1)
+        else do
+          let rr <- rec.eval b ctx env
+          let y <- withCtx binaryContext (requireBooleanOperand op "right" rr)
+          pure (Result.bool y, 1)
+    | _ => do
+      let rr <- rec.eval b ctx env
+      match op with
+      -- `xor` is Boolean-only and needs both operands: both were evaluated
+      -- left to right before this point, and each must be a Boolean value.
+      | .xor => do
+          let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
+          let x <- withCtx binaryContext (requireBooleanOperand op "left" lr)
+          let y <- withCtx binaryContext (requireBooleanOperand op "right" rr)
+          pure (Result.bool (x != y), 1)
+      | _ =>
+        -- SYN-01: the empty sequence value is NOT an identity for scalar
+        -- operators. `()` carries no numeric scalar value, so it falls through to
+        -- the ordinary operand validation below exactly like `(1, 2)` or `[]` —
+        -- `10 / ()`, `() > 10`, `() and 7`, and `() + 'text'` are operand errors,
+        -- never a passthrough of the other operand.
+        match lr, rr with
+        -- Non-equality operators are not defined on strings (they fail here rather
+        -- than via expectInt so the diagnostic names the string operands).
+        | .str _, .str _ => .error (Error.typeMismatch "Strings only support == and != operators")
+        -- Mixed string/number or string/sequence value: fail for any operator
+        | .str _, _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+        | _, .str _ => .error (Error.typeMismatch "Cannot apply operator to string and non-string operands")
+        | _, _ => do
+          let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
+          let x <- withCtx binaryContext (requireNumericScalarOperand op "left" lr)
+          let y <- withCtx binaryContext (requireNumericScalarOperand op "right" rr)
+          -- Check for division by zero
+          if (op == BinaryOp.div || op == BinaryOp.idiv || op == BinaryOp.mod) && y == 0 then
+            .error Error.divByZero
+          else if op == BinaryOp.pow && y < 0 then do
+            let value <- negativeIntPow x y
+            pure (value, Result.valueCount value)
+          else
+            let value : Result :=
+              -- The logical operators are handled above; their arm below keeps
+              -- the match exhaustive over BinaryOp and is unreachable here.
+              match op with
+              | .add  => .atom (x + y)
+              | .sub  => .atom (x - y)
+              | .mul  => .atom (x * y)
+              -- Division and modulo truncate toward zero (Int.tdiv / Int.tmod),
+              -- matching the C# reference: `-7 div 2 = -3` and `-7 mod 2 = -1`.
+              -- `/` on non-divisible operands additionally truncates the exact
+              -- decimal quotient as part of the integer-core limitation.
+              | .div  => .atom (x.tdiv y)
+              | .idiv => .atom (x.tdiv y)
+              | .mod  => .atom (x.tmod y)
+              | .pow  => .atom (intPow x y.toNat)
+              | .and | .or | .xor => .bool false
+            pure (value, 1)
 
   /-- Evaluate a COMPARISON CHAIN `first op1 x1 op2 x2 …` as one counted Boolean
       value — incrementally, left to right: the first operand, then link by
       link, evaluating the link's operand and comparing the PREVIOUS operand's
       value with it (`applyComparison`). Every operand is evaluated EXACTLY ONCE
       (the previous VALUE is carried forward, never its expression), a `false`
-      link never stops the chain (KatLang's eager Boolean composition: a later
-      invalid comparison is still reported), and an error terminates it before
-      any later operand is evaluated. The chain is `true` iff every link held; a
+      link never stops the chain (a chain is EAGER, unlike `and` / `or`, which
+      short-circuit: a later invalid comparison is still reported), and an
+      error terminates it before any later operand is evaluated. The chain is `true` iff every link held; a
       chain with no links evaluates its first operand and is `true`.
       C#: the Comparison case of `EvalExpressionSpineCounted` /
       `EvalExpressionSpineCountedAsync` and `LoopOptimizer.EvalLoopComparisonPlan`. -/

@@ -1332,6 +1332,14 @@ public static partial class Evaluator
 
                             hasPendingChild = false;
                             frames[top].FirstValue = pendingChild.Value;
+                            // SHORT CIRCUIT: the left operand of `and` / `or` is judged before
+                            // the right one is scheduled. A decided result — or the left
+                            // operand's rejection — completes the frame here, and the right
+                            // operand is never requested.
+                            completed = CompleteBinaryAfterLeftOperand(op, left, right, pendingChild.Value, frames[top].Node.Span);
+                            if (completed is not null)
+                                break;
+
                             frames[top].Phase = 1;
                             requestedChild = right;
                             break;

@@ -2618,8 +2618,10 @@ public static partial class Evaluator
 
     /// <summary>
     /// The logical operators <c>and</c> / <c>or</c> / <c>xor</c> require a Boolean value on
-    /// BOTH sides: there is no numeric truthiness, so a number, string, sequence value, or
-    /// list operand is a value-kind error naming the operand. Lean: <c>requireBooleanOperand</c>.
+    /// every side they EVALUATE: there is no numeric truthiness, so a number, string, sequence
+    /// value, or list operand is a value-kind error naming the operand. (A right operand that
+    /// <c>and</c> / <c>or</c> skip is never evaluated and so never checked:
+    /// <see cref="DecideLogicalAfterLeftOperand"/>.) Lean: <c>requireBooleanOperand</c>.
     /// </summary>
     private static EvalResult<bool> RequireBooleanOperand(BinaryOp op, string side, Result value)
     {

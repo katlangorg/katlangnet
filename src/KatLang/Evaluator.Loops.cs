@@ -307,11 +307,95 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// THE SHORT-CIRCUIT DECISION of <c>and</c> / <c>or</c>: whether the LEFT operand's Boolean
+    /// alone decides the operator — <c>false and _</c> is <c>false</c> and <c>true or _</c> is
+    /// <c>true</c> — so that the right operand is NOT evaluated. <c>xor</c> needs both operands
+    /// whatever the left one is, and so does every arithmetic operator.
+    /// Lean: <c>BinaryOp.leftOperandDecides</c>.
+    /// </summary>
+    internal static bool LeftOperandDecides(BinaryOp op, bool left)
+        => op switch
+        {
+            BinaryOp.And => !left,
+            BinaryOp.Or => left,
+            _ => false,
+        };
+
+    /// <summary>
+    /// THE POST-LEFT DECISION of a binary operator: what the expression is once its LEFT operand
+    /// has a value, made BEFORE the right operand is scheduled. It is the single short-circuit
+    /// rule of <c>and</c> / <c>or</c>, shared by every route that chooses which operand to
+    /// evaluate — the generic expression-spine machine, its async twin, and the planned loop
+    /// evaluator — so the strategies cannot drift:
+    /// <list type="bullet">
+    ///   <item><c>null</c>: the right operand is needed. Always the answer for <c>xor</c> and the
+    ///   arithmetic operators, and for <c>and</c> / <c>or</c> when the left operand is a Boolean
+    ///   that does not decide (<see cref="LeftOperandDecides"/>). The route then evaluates the
+    ///   right operand once and applies <see cref="ApplyBinaryOperator"/>.</item>
+    ///   <item>a value: the left operand decided <c>and</c> / <c>or</c>. The route completes
+    ///   with it and never evaluates the right operand, which therefore has no effect, failure,
+    ///   suspension or charge, and whose value kind is never checked.</item>
+    ///   <item>an error: the left operand of <c>and</c> / <c>or</c> is not a Boolean — the
+    ///   ordinary operand rejection (<see cref="RequireLogicalOperand"/>), reported before any
+    ///   right operand work.</item>
+    /// </list>
+    /// Lean: the <c>.and | .or</c> arm of <c>evalBinaryCounted</c>.
+    /// </summary>
+    internal static EvalResult<Result>? DecideLogicalAfterLeftOperand(
+        BinaryOp op,
+        Expr left,
+        Expr right,
+        Result leftValue,
+        SourceSpan? span)
+    {
+        if (op is not (BinaryOp.And or BinaryOp.Or))
+            return null;
+
+        var leftFlagR = RequireLogicalOperand(op, "left", left, right, leftValue, span);
+        if (leftFlagR.IsError)
+            return leftFlagR.Error;
+
+        // Written as two returns: in a conditional expression the `null` arm would convert
+        // through the EvalError conversion and yield a non-null error result.
+        if (!LeftOperandDecides(op, leftFlagR.Value))
+            return null;
+
+        return EvalResult<Result>.Ok(new Result.Bool(leftFlagR.Value));
+    }
+
+    /// <summary>
+    /// The Boolean requirement of ONE operand of a logical operator with its diagnostics: the
+    /// value-kind rejection naming the operator, the side and the operand
+    /// (<see cref="RequireBooleanOperand"/>) inside the binary operand-shape context, at the
+    /// binary expression's span. The one place the logical operators' operand error is built,
+    /// for the left operand judged before the right one is scheduled and for the operands
+    /// judged at application alike.
+    /// </summary>
+    private static EvalResult<bool> RequireLogicalOperand(
+        BinaryOp op,
+        string side,
+        Expr left,
+        Expr right,
+        Result value,
+        SourceSpan? span)
+    {
+        var flagR = RequireBooleanOperand(op, side, value);
+        return flagR.IsError
+            ? new EvalError.WithContext(BinaryOperandContext(op, left, right), flagR.Error) { Span = span }
+            : flagR;
+    }
+
+    /// <summary>
     /// Applies ONE binary (arithmetic or logical) operator to two evaluated operand
     /// values: the SINGLE binary application semantics and error/span policy shared by
     /// the generic expression-spine machine, its async twin, and the planned loop
     /// evaluator. Comparisons are NOT binary operators — every comparison is a link of a
     /// comparison chain and applies through <see cref="ApplyComparison"/>.
+    /// <para>For <c>and</c> / <c>or</c> the routes reach this only after
+    /// <see cref="DecideLogicalAfterLeftOperand"/> answered that the right operand is needed, so
+    /// <paramref name="rightValue"/> is the value of an operand that was evaluated. The left
+    /// operand is judged by the same rule here, so a deciding left operand is the result
+    /// whatever the right value is: application and scheduling cannot disagree.</para>
     /// Lean: <c>evalBinaryCounted</c>.
     /// </summary>
     internal static EvalResult<Result> ApplyBinaryOperator(
@@ -322,26 +406,26 @@ public static partial class Evaluator
         Result rightValue,
         SourceSpan? span)
     {
-        // The logical operators are Boolean-only: both operands were evaluated left to
-        // right before this point (the established evaluation order — no short circuit),
-        // and each must be a Boolean value; there is no numeric truthiness, so `1 and 2`
-        // is a value-kind error. Lean: evalBinaryCounted's `.and | .or | .xor` arm.
+        // The logical operators are Boolean-only: there is no numeric truthiness, so
+        // `1 and 2` is a value-kind error, and the left operand is judged first. A left
+        // operand that decides `and` / `or` is the result (the same rule the routes asked
+        // before scheduling the right operand: DecideLogicalAfterLeftOperand); otherwise
+        // the right operand must be a Boolean, and it is the result of `and` / `or`, while
+        // `xor` — which needs both operands, evaluated left to right before this point —
+        // is their inequality. Lean: evalBinaryCounted's `.and | .or` and `.xor` arms.
         if (op is BinaryOp.And or BinaryOp.Or or BinaryOp.Xor)
         {
-            var leftFlagR = RequireBooleanOperand(op, "left", leftValue);
+            var leftFlagR = RequireLogicalOperand(op, "left", left, right, leftValue, span);
             if (leftFlagR.IsError)
-                return new EvalError.WithContext(BinaryOperandContext(op, left, right), leftFlagR.Error) { Span = span };
-            var rightFlagR = RequireBooleanOperand(op, "right", rightValue);
+                return leftFlagR.Error;
+            if (LeftOperandDecides(op, leftFlagR.Value))
+                return EvalResult<Result>.Ok(new Result.Bool(leftFlagR.Value));
+
+            var rightFlagR = RequireLogicalOperand(op, "right", left, right, rightValue, span);
             if (rightFlagR.IsError)
-                return new EvalError.WithContext(BinaryOperandContext(op, left, right), rightFlagR.Error) { Span = span };
+                return rightFlagR.Error;
             bool a = leftFlagR.Value, b = rightFlagR.Value;
-            var flag = op switch
-            {
-                BinaryOp.And => a && b,
-                BinaryOp.Or => a || b,
-                _ => a != b,
-            };
-            return EvalResult<Result>.Ok(new Result.Bool(flag));
+            return EvalResult<Result>.Ok(new Result.Bool(op == BinaryOp.Xor ? a != b : b));
         }
 
         // SYN-01: the empty sequence value is NOT an identity for scalar operators.

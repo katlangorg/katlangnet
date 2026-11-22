@@ -732,11 +732,30 @@ internal static partial class LoopOptimizer
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        // Generic Binary frame: request the left operand; request the right one; apply.
+        // Generic Binary frame: request the left operand; decide after it, and request the
+        // right one only when it is needed; apply.
         if (RecordSpineTransition(frame) is { } leftLimit) return leftLimit;
         var leftR = EvalLoopExprPlan(binary.Left, frame, OperandDispatch(binary.Left));
         if (leftR.IsError) return leftR.Error;
         if (RecordSpineTransition(frame) is { } rightLimit) return rightLimit;
+        // SHORT CIRCUIT, in the transition where the generic frame receives its left operand:
+        // the shared post-left decision of `and` / `or`. A decided result or the left operand's
+        // rejection ends the operator here — one planned operation, like an applied one — and
+        // the right operand's plan is never entered: none of its checkpoints, temp reads,
+        // parameter demands or fallbacks runs.
+        if (binary.Op is BinaryOp.And or BinaryOp.Or)
+        {
+            var decided = Evaluator.DecideLogicalAfterLeftOperand(
+                binary.Op, binary.Left.Source, binary.Right.Source, leftR.Value.ToResult(), binary.Source.Span);
+            if (decided is { } outcome)
+            {
+                frame.Diagnostics?.RecordPlannedBuiltinOperation();
+                return outcome.IsError
+                    ? outcome.Error
+                    : EvalResult<PlannedLoopValue>.Ok(PlannedLoopValue.FromResult(outcome.Value));
+            }
+        }
+
         var rightR = EvalLoopExprPlan(binary.Right, frame, OperandDispatch(binary.Right));
         if (rightR.IsError) return rightR.Error;
         if (RecordSpineTransition(frame) is { } applyLimit) return applyLimit;

@@ -160,16 +160,20 @@ public static partial class Evaluator
     ///   <item><b>Unary</b>: non-scalar values, including <c>()</c>, are rejected; strings are a
     ///   <see cref="EvalError.TypeMismatch"/> at the unary expression's span; operand
     ///   errors propagate untouched. Lean: <c>eval</c> unary case.</item>
-    ///   <item><b>Binary</b>: left then right, each error propagating untouched, then
+    ///   <item><b>Binary</b>: the left operand, its error propagating untouched; then the
+    ///   post-left decision (<see cref="DecideLogicalAfterLeftOperand"/>): <c>and</c> /
+    ///   <c>or</c> SHORT-CIRCUIT — a left operand that is not a Boolean is rejected, and one
+    ///   that decides the operator completes the frame, in both cases WITHOUT requesting the
+    ///   right operand; otherwise the right operand, its error propagating untouched, then
     ///   <see cref="ApplyBinaryOperator"/> — where the empty sequence value is an
-    ///   ORDINARY operand, not an identity (SYN-01). Lean: <c>eval</c> binary
-    ///   case.</item>
+    ///   ORDINARY operand, not an identity (SYN-01). <c>xor</c> and the arithmetic operators
+    ///   always evaluate both operands. Lean: <c>evalBinaryCounted</c>.</item>
     ///   <item><b>Comparison</b>: the first operand, then link by link — evaluate the
     ///   link's operand, compare the PREVIOUS operand's value with it through
     ///   <see cref="ApplyComparison"/> (every operand evaluated exactly once; the
     ///   previous VALUE is reused, never its expression), accumulate the verdict, and
-    ///   continue: a <c>false</c> link never stops the chain (eager Boolean composition),
-    ///   an error does (later operands are not evaluated). Lean:
+    ///   continue: a <c>false</c> link never stops the chain (a chain is eager, unlike
+    ///   <c>and</c> / <c>or</c>), an error does (later operands are not evaluated). Lean:
     ///   <c>evalComparisonCounted</c>.</item>
     ///   <item><b>Index</b> (variadic postfix selection <c>R[s1, …, sn]</c>): (1) the receiver,
     ///   ONCE, as a machine child — a receiver failure gains the selection's span when it has
@@ -251,6 +255,14 @@ public static partial class Evaluator
 
                         hasPendingChild = false;
                         frame.FirstValue = pendingChild.Value;
+                        // SHORT CIRCUIT: the left operand of `and` / `or` is judged before
+                        // the right one is scheduled. A decided result — or the left
+                        // operand's rejection — completes the frame here, and the right
+                        // operand is never requested.
+                        completed = CompleteBinaryAfterLeftOperand(op, left, right, pendingChild.Value, frame.Node.Span);
+                        if (completed is not null)
+                            break;
+
                         frame.Phase = 1;
                         requestedChild = right;
                         break;
@@ -502,6 +514,32 @@ public static partial class Evaluator
             pendingChild = completedResult.Value;
             hasPendingChild = true;
         }
+    }
+
+    /// <summary>
+    /// A Binary frame's completion once its LEFT operand has a value, shared by both machines:
+    /// the counted form of the one post-left decision
+    /// (<see cref="DecideLogicalAfterLeftOperand"/>). <c>null</c> when the right operand is
+    /// needed; otherwise the frame's result — the Boolean that decided <c>and</c> / <c>or</c>,
+    /// or the left operand's rejection — reached without requesting the right operand.
+    /// <para>A helper that answers through the machines' existing <c>completed</c> local on
+    /// purpose: a local of its own would be hoisted into the async twin's state machine in
+    /// a Debug build and enlarge every expression-spine evaluation, arithmetic included.</para>
+    /// </summary>
+    private static EvalResult<CountedResult>? CompleteBinaryAfterLeftOperand(
+        BinaryOp op,
+        Expr left,
+        Expr right,
+        Result leftValue,
+        SourceSpan? span)
+    {
+        if (DecideLogicalAfterLeftOperand(op, left, right, leftValue, span) is not { } decided)
+            return null;
+
+        if (decided.IsError)
+            return decided.Error;
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(decided.Value, decided.Value.ValueCount()));
     }
 
     /// <summary>

@@ -377,19 +377,43 @@
             Name = 'binary-right-first'
             Group = 'hunt-controls'
             Rule = 'A binary operator evaluates its left operand before its right operand.'
-            Change = 'The right operand is evaluated first.'
+            Change = 'An operator that needs both operands (arithmetic, `xor`) evaluates the right one first.'
+            Note = 'Re-anchored when `and`/`or` became short-circuit (issue #202): the model evaluates the left operand once, before it matches on the operator, so the three edits move that evaluation into the two arms and put it after the right operand in the arm that needs both. `and`/`or` keep their order: their right operand is evaluated only after the left one failed to decide.'
             Expect = 'Killed'
             Edits = @(
                 @{
                     Find = @'
     let lr <- rec.eval a ctx env
-    let rr <- rec.eval b ctx env
     match op with
+    -- SHORT CIRCUIT: `and` / `or` check the left operand for a Boolean and
 '@
                     Replace = @'
-    let rr <- rec.eval b ctx env
-    let lr <- rec.eval a ctx env
     match op with
+    -- SHORT CIRCUIT: `and` / `or` check the left operand for a Boolean and
+'@
+                }
+                @{
+                    Find = @'
+    | .and | .or => do
+        let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
+'@
+                    Replace = @'
+    | .and | .or => do
+        let lr <- rec.eval a ctx env
+        let binaryContext := s!"while evaluating `{binaryExprDiagnosticName op a b}`"
+'@
+                }
+                @{
+                    Find = @'
+    | _ => do
+      let rr <- rec.eval b ctx env
+      match op with
+'@
+                    Replace = @'
+    | _ => do
+      let rr <- rec.eval b ctx env
+      let lr <- rec.eval a ctx env
+      match op with
 '@
                 }
             )

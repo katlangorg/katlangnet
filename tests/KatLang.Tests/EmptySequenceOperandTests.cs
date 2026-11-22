@@ -75,9 +75,12 @@ public class EmptySequenceOperandTests
     /// <summary>
     /// A valid operand for the other side of <paramref name="op"/>, so that only the
     /// empty side is ever blamed: the logical operators validate the left operand first
-    /// and would blame a number there before looking at the empty right operand.
+    /// and would blame a number there before looking at the empty right operand. As a
+    /// LEFT operand the Boolean must also not decide the operator, or the short circuit
+    /// would skip the empty right operand altogether: <c>true</c> for <c>and</c> (and
+    /// <c>xor</c>), <c>false</c> for <c>or</c>.
     /// </summary>
-    private static string ValidOperandFor(string op) => IsLogical(op) ? "true" : "1";
+    private static string ValidOperandFor(string op) => op == "or" ? "false" : IsLogical(op) ? "true" : "1";
 
     private static string OperandRule(string op)
         => IsLogical(op) ? "expects Boolean operands" : "expects numeric scalar operands";
@@ -447,7 +450,7 @@ public class EmptySequenceOperandTests
             { "() and true", "left" },
             { "true and ()", "right" },
             { "() or true", "left" },
-            { "true or ()", "right" },
+            { "false or ()", "right" },
         };
 
     [Theory]

@@ -420,6 +420,16 @@ public class MaintainedDocumentationConsistencyTests
             + @"PropertyProcessingOrderTests|CollectSiblingDependencyIndices|OwnedMemberSibling|OpenedSiblingProvider|PendingProperties)(?!\w)",
             "the implicit-argument processing order B3-5★ deleted (signatures are selected before the rewrite)"
         },
+        // Eager `and` / `or` (superseded 2026-11-22, issue #202): `and` and `or` short-circuit — the
+        // right operand is evaluated only when the left one does not decide the result. Only `xor`
+        // and comparison chains still evaluate every operand, so the shapes matched are the old
+        // claims about the logical operators as a group: both operands evaluated before the
+        // operator applies, no short circuit, and `and` being unable to guard a calculation.
+        {
+            @"both (?:logical )?operands (?:of `and`, `or`, and `xor` )?(?:are|were) (?:always )?evaluated(?: left to right)?(?: before the operator|, so `and`)|"
+            + @"logical operators have no short circuit|`and` (?:cannot|does not) protect a calculation",
+            "eager `and`/`or` (superseded 2026-11-22 by the short circuit; only `xor` and comparison chains evaluate every operand)"
+        },
     };
 
     [Theory]

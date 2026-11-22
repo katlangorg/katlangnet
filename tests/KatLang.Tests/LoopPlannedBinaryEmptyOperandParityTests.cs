@@ -41,14 +41,22 @@ public class LoopPlannedBinaryEmptyOperandParityTests
     private static bool IsLogical(string op) => op is "and" or "or" or "xor";
 
     /// <summary>
+    /// The Boolean literal the logical operators pair the captured operand with: one that
+    /// does not decide the operator when it sits on the LEFT, so the captured right operand
+    /// is still evaluated and validated (<c>true or value</c> would short-circuit).
+    /// </summary>
+    private static string LogicalOther(string op) => op == "or" ? "false" : "true";
+
+    /// <summary>
     /// The written binary. Arithmetic and ordering pair the captured operand with the
-    /// numeric state slot; the logical operators require Boolean operands on BOTH sides
-    /// (there is no numeric truthiness), so they pair it with the literal `true`: the
-    /// only way the captured side is the one validated when it sits on the right.
+    /// numeric state slot; the logical operators require Boolean operands on every side
+    /// they evaluate (there is no numeric truthiness), so they pair it with a Boolean
+    /// literal (<see cref="LogicalOther"/>): the only way the captured side is the one
+    /// validated when it sits on the right.
     /// </summary>
     private static string BinaryText(string op, string side)
     {
-        var other = IsLogical(op) ? "true" : "x";
+        var other = IsLogical(op) ? LogicalOther(op) : "x";
         return side == "left" ? $"value {op} {other}" : $"{other} {op} value";
     }
 
@@ -81,7 +89,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
 
     private static string PlanSummary(string op, string plan, string side)
     {
-        var other = IsLogical(op) ? "Const(true)" : "StateSlot(x)";
+        var other = IsLogical(op) ? $"Const({LogicalOther(op)})" : "StateSlot(x)";
         return side == "left" ? $"{plan}(CapturedSlot(value), {other})" : $"{plan}({other}, CapturedSlot(value))";
     }
 
@@ -242,12 +250,15 @@ public class LoopPlannedBinaryEmptyOperandParityTests
     [Theory]
     [InlineData("and", "And", true, true)]
     [InlineData("and", "And", false, false)]
-    [InlineData("or", "Or", false, true)]
+    [InlineData("or", "Or", true, true)]
+    [InlineData("or", "Or", false, false)]
     [InlineData("xor", "Xor", true, false)]
     public void PlannedBinary_CapturedBooleanOperand_StillComputesLogicallyInBothModes(string op, string plan, bool operand, bool expected)
     {
-        // The logical operators are Boolean-only on the planned path too: `true op value`
-        // over a captured Boolean is applied by the shared operator and yields a Boolean.
+        // The logical operators are Boolean-only on the planned path too: `true and value`,
+        // `false or value` and `true xor value` (a left operand that does not decide the
+        // operator) over a captured Boolean are applied by the shared operator and yield a
+        // Boolean.
         var source = Source(op, "right", "repeat", operand ? "true" : "false");
 
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
