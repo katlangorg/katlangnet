@@ -64,16 +64,17 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
             Assert.True(flow.Threads.Count >= 2, $"one flow ran on {flow.Threads.Count} thread(s)");
             Assert.Equal(flow.ExpectedBinds, flow.Binds);
             Assert.Equal(flow.ExpectedStored, flow.Memo.Count);
-            Assert.Equal(0, flow.Memo.RunningGroupCount);
+            Assert.Equal(0, flow.Memo.RunningExecutionCount);
             // Dead identities were freed in place: the table never held all of them.
             Assert.InRange(report.Capacity, 8, Rounds / 2);
             // Only the kept identities still own partitions (a straggler or two may await its collection).
             Assert.InRange(live, report.Kept.Count, report.Kept.Count + 2);
 
-            // No bind a live execution can name was lost: every kept identity still hits both of its stored binds.
+            // No bind a live execution can name was lost: every kept identity still hits its three stored binds.
             foreach (var kept in report.Kept)
             {
                 Assert.Same(kept.Owned, await flow.HitAsync(flow.Owned(kept.Identity)));
+                Assert.Same(kept.Nested, await flow.HitAsync(flow.Nested(kept.Identity)));
                 Assert.Same(kept.OtherGroup, await flow.HitAsync(flow.OtherGroup(kept.Identity)));
             }
 
@@ -135,7 +136,11 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
 
     // ── One sequential flow: one memo, used from whatever thread its continuations reach ──
 
-    private sealed record Kept(object Identity, IReadOnlyDictionary<string, NeedCell> Owned, IReadOnlyDictionary<string, NeedCell> OtherGroup);
+    private sealed record Kept(
+        object Identity,
+        IReadOnlyDictionary<string, NeedCell> Owned,
+        IReadOnlyDictionary<string, NeedCell> Nested,
+        IReadOnlyDictionary<string, NeedCell> OtherGroup);
 
     private sealed record FlowReport(Flow Flow, List<Kept> Kept, int Capacity);
 
@@ -162,7 +167,7 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
         private readonly object _run = new();
         private readonly object _owner = new();
         // One group's actual pattern list, and its source bindings: the group's own source, and a second source a
-        // nested bind of the same group reads.
+        // nested bind of the same group reads — another execution, as a recursive owner's inner activation is.
         private readonly object _group = new();
         private readonly object _pattern = new();
         private readonly object _source = new();
@@ -188,7 +193,7 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
         internal DeconstructionBindingExecution Exported()
             => new(_exportedGroup, _pattern, Key(_source, ZeroArgPropertyCacheKey.RunWideEnvironmentIdentity));
 
-        private DeconstructionBindingExecution Nested(object identity) => new(_group, _pattern, Key(_nestedSource, identity));
+        internal DeconstructionBindingExecution Nested(object identity) => new(_group, _pattern, Key(_nestedSource, identity));
 
         private DeconstructionBindingExecution Failing(object identity) => new(_failingGroup, _pattern, Key(_source, identity));
 
@@ -214,26 +219,48 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
             var identity = new object();
             Note();
 
-            // An owning bind that suspends and, while its group runs, binds the same group again
-            // (never stored) and binds another group (stored).
+            // An owning bind that suspends and, while it runs, binds ITSELF again (re-entrant: never stored),
+            // binds another execution of its group (stored, as a recursive owner's inner activation is) and
+            // binds another group (stored).
+            IReadOnlyDictionary<string, NeedCell>? nested = null;
             IReadOnlyDictionary<string, NeedCell>? otherGroup = null;
             var owned = Value(await Memo.GetOrBindAsync(Owned(identity), async () =>
             {
                 Binds++;
                 await Task.Yield();
                 Note();
-                Assert.Equal(1, Memo.RunningGroupCount);
-                var nested = Value(await Memo.GetOrBindAsync(Nested(identity), () => Bind(round + 1)));
+                Assert.Equal(1, Memo.RunningExecutionCount);
+                var reentrant = Value(await Memo.GetOrBindAsync(Owned(identity), async () =>
+                {
+                    Binds++;
+                    await Task.Yield();
+                    Note();
+                    Assert.Equal(1, Memo.RunningExecutionCount); // a re-entrant bind owns nothing
+                    return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(round - 1));
+                }));
+                Assert.Equal(round - 1, ValueOf(reentrant));
+                nested = Value(await Memo.GetOrBindAsync(Nested(identity), async () =>
+                {
+                    Binds++;
+                    await Task.Yield();
+                    Note();
+                    Assert.Equal(2, Memo.RunningExecutionCount);
+                    return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(round + 1));
+                }));
                 Assert.Equal(round + 1, ValueOf(nested));
+                Assert.Same(nested, await HitAsync(Nested(identity)));
                 otherGroup = Value(await Memo.GetOrBindAsync(OtherGroup(identity), () => Bind(-round)));
                 Assert.Same(otherGroup, await HitAsync(OtherGroup(identity)));
+                Assert.Equal(1, Memo.RunningExecutionCount);
                 return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(round));
             }));
-            ExpectedBinds += 3;
-            ExpectedStored += 2;
+            ExpectedBinds += 4;
+            ExpectedStored += 3;
             Assert.Equal(round, ValueOf(owned));
             Note();
+            // The owner's bind is the stored one, never the re-entrant bind made while it ran.
             Assert.Same(owned, await HitAsync(Owned(identity)));
+            Assert.Same(nested, await HitAsync(Nested(identity)));
             if (round == 0)
             {
                 // Read this local partition on a dedicated thread. A yield can resume on the same worker.
@@ -245,13 +272,6 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
                 Assert.Same(owned, hit);
             }
             Assert.Same(ExportedBind, await HitAsync(Exported()));
-
-            // The nested execution was not stored: outside its group's running bind it binds again, and is stored now.
-            var rebound = Value(await Memo.GetOrBindAsync(Nested(identity), () => Bind(round + 2)));
-            Assert.Equal(round + 2, ValueOf(rebound));
-            Assert.Same(rebound, await HitAsync(Nested(identity)));
-            ExpectedBinds++;
-            ExpectedStored++;
 
             if (round % 7 == 2)
             {
@@ -266,13 +286,13 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
                     });
                     ExpectedBinds++;
                     Assert.True(failed.IsError);
-                    Assert.Equal(0, Memo.RunningGroupCount);
+                    Assert.Equal(0, Memo.RunningExecutionCount);
                 }
             }
 
             if (round % 11 == 3)
             {
-                // Cancellation propagates, releases the group guard and stores nothing; a later request binds.
+                // Cancellation propagates, releases the owning-execution guard and stores nothing; a later request binds.
                 using var stop = new CancellationTokenSource();
                 await stop.CancelAsync();
                 var thrown = await Assert.ThrowsAsync<OperationCanceledException>(async () =>
@@ -284,7 +304,7 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
                         return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(0));
                     }));
                 Assert.Equal(stop.Token, thrown.CancellationToken);
-                Assert.Equal(0, Memo.RunningGroupCount);
+                Assert.Equal(0, Memo.RunningExecutionCount);
                 var bound = Value(await Memo.GetOrBindAsync(Failing(identity), () => Bind(round + 3)));
                 Assert.Same(bound, await HitAsync(Failing(identity)));
                 ExpectedBinds += 2;
@@ -292,7 +312,7 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
             }
 
             Note();
-            return keep ? new Kept(identity, owned, otherGroup!) : null;
+            return keep ? new Kept(identity, owned, nested!, otherGroup!) : null;
         }
 
         private ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> Bind(int value)

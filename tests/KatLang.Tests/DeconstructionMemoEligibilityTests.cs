@@ -14,8 +14,8 @@ namespace KatLang.Tests;
 /// every other helper shape executes its ordinary bind. Since OD-1 (October 2026) the reader is no part
 /// of the key: every consumer of one published source entry through one pattern list — callbacks,
 /// helpers, explicit <c>a()</c> calls, structural and opened reads of one declaring activation — shares
-/// ONE bind. Local-only sources separate declaring activations and loop rounds; exported sources keep
-/// one entry across activations. Distinct source owners and host scopes keep distinct entries and binds.
+/// ONE bind. Local-only sources separate declaring activations and loop rounds. Exported sources
+/// follow the owning invocation, or the run outside a call. Distinct source owners and host scopes keep distinct binds.
 ///
 /// <para>The host witnesses are the DECON-CACHE-1 research's (`experimental/features/decon-cache-1-research.md`
 /// §4): parsed ASTs transformed with public record copies (<c>with</c>), shared property lists and
@@ -364,8 +364,9 @@ public class DeconstructionMemoEligibilityTests
 
     /// <summary>
     /// The DECON-CACHE-2 baseline (HEAD 852d0b3c, the integrated correctness fix, before OD-1): the
-    /// observation of every surface case under the former per-reader key, identical on all three routes.
-    /// Kept beside <see cref="SurfaceExpectations"/> as the record of what OD-1 changed; checked against
+    /// observation of every surface case under the former per-reader key and the former GROUP-wide
+    /// re-entry guard, identical on all three routes. Kept beside <see cref="SurfaceExpectations"/> as the
+    /// record of what OD-1 and the per-execution re-entry guard (2026-11-22, R12) changed; checked against
     /// it by <see cref="Od1AccountingChange_IsExactlyTheEliminatedBinds"/>.
     /// </summary>
     private static readonly Dictionary<string, string> Decon2Baseline = new(StringComparer.Ordinal)
@@ -426,12 +427,14 @@ public class DeconstructionMemoEligibilityTests
     };
 
     /// <summary>
-    /// The OD-1 observation of every surface case (identical on all three routes): one full bind per
-    /// published source entry and pattern list in every shape that does not re-enter its group — R02,
-    /// R04–R09, R18–R22, R25, R28, X01, V01, V03, V11 and the additions bind once where the per-reader key
-    /// bound per consumer —, one per ACTIVATION where activations differ (R10/R11 and X04/V09/V10 two,
-    /// R27 three, R16/R26 one per loop round), and unchanged counts under re-entry (R12's seven binds, the
-    /// Q-37 cases R13–R15 and R29).
+    /// The current observation of every surface case (identical on all three routes): one full bind per
+    /// published source entry and pattern list in every shape that does not re-enter its own execution —
+    /// R02, R04–R09, R18–R22, R25, R28, X01, V01, V03, V11 and the additions bind once where the per-reader
+    /// key bound per consumer (OD-1) —, one per ACTIVATION where activations differ (R10/R11 and X04/V09/V10
+    /// two, R27 three, R16/R26 one per loop round, R12's recursive owner four: since the per-execution
+    /// re-entry guard of 2026-11-22 an inner activation's bind is stored although its outer activation's bind
+    /// of the same group is still running, where the group-wide guard bound it once per target, seven binds),
+    /// and unchanged counts under Q-37 re-entry of one execution (R13–R15 and R29).
     /// </summary>
     private static readonly Dictionary<string, string> SurfaceExpectations = new(StringComparer.Ordinal)
     {
@@ -448,7 +451,10 @@ public class DeconstructionMemoEligibilityTests
         ["R09"] = "ok 4 n=1 | t(1) | steps=7 chk=26 depth=5 items=4 binds=1",
         ["R10"] = "ok S[4, 6] n=2 | t(1),t(2) | steps=16 chk=64 depth=6 items=10 binds=2",
         ["R11"] = "ok S[4, 4] n=2 | t(1),t(1) | steps=16 chk=64 depth=6 items=10 binds=2",
-        ["R12"] = "ok 6 n=1 |  | steps=27 chk=95 depth=16 items=8 binds=7",
+        // The per-execution re-entry guard (2026-11-22): F(2), F(1) and F(0) bind while F(3)'s bind of the
+        // same group runs, and their binds are now stored, so each b reads its activation's bind (was binds=7,
+        // steps=27, chk=95; Od1AccountingChange_IsExactlyTheEliminatedBinds).
+        ["R12"] = "ok 6 n=1 |  | steps=24 chk=92 depth=16 items=8 binds=4",
         ["R13"] = "ok S[2, 2, 5] n=3 | tock#1,tock#2,tock#3 | steps=15 chk=50 depth=10 items=9 binds=3",
         ["R14"] = "ok S[2, 2, 5] n=3 | tock#1,tock#2,tock#3 | steps=17 chk=84 depth=12 items=13 binds=3",
         ["R15"] = "ok S[6, 5, 6] n=3 | tock#1,tock#2,tock#3 | steps=14 chk=49 depth=10 items=9 binds=3",
@@ -505,8 +511,9 @@ public class DeconstructionMemoEligibilityTests
     /// Every observed field of every surface case equals its OD-1 expectation on every route: one bind
     /// per published source entry across consumers (R02, R06, R07 — a key that still named the reader
     /// would bind per consumer and fail these), one per activation and loop round (R10, R11, R16, R26,
-    /// R27), the group-wide guard's recursive accounting (R12's seven binds — a full-key guard would
-    /// store the inner activations' binds and lower it), and the limit verdicts the eliminated work
+    /// R27), one per activation of a recursive owner whose right-hand side calls it again (R12's four
+    /// binds — the former group-wide re-entry guard left the inner activations' binds unstored, seven),
+    /// and the limit verdicts the eliminated work
     /// moves: R02 now completes at <c>MaxSteps = 10</c> and still refuses at 9; V02 now completes at
     /// <c>MaxMaterializedItems = 11</c> and still refuses at 10.
     /// </summary>
@@ -524,7 +531,9 @@ public class DeconstructionMemoEligibilityTests
 
     /// <summary>
     /// THE OD-1 ACCOUNTING LAW FOR THIS CORPUS, checked between the two pinned tables. Under the former per-reader key a
-    /// consumer whose first read of a target missed the memo performed one more full bind than OD-1 does,
+    /// consumer whose first read of a target missed the memo performed one more full bind than OD-1 does
+    /// — and so, under the former group-wide re-entry guard, did each later target of a recursive owner's
+    /// inner activation (R12), whose activation's bind was left unstored —,
     /// and that bind's only extra charged work was its read of the hoisted source — one step and one
     /// expression checkpoint (the RHS itself ran once either way: the property cache) — plus, for a
     /// collector it materialized, that list's reservation. So for every case the run reaches in both
@@ -590,11 +599,12 @@ public class DeconstructionMemoEligibilityTests
                 Assert.Equal(Field(before, "items"), Field(after, "items"));
         }
 
-        // Exactly the cross-consumer shapes changed; recursion, Q-37 re-entry, per-round loops, single-
-        // context reads and unreached groups keep their counts.
+        // Exactly the cross-consumer shapes (OD-1) and the recursive owner (R12, the per-execution re-entry
+        // guard) changed; Q-37 re-entry of one execution, per-round loops, single-context reads and
+        // unreached groups keep their counts.
         Assert.Equal(
             ["ALIAS-RHS", "LATE-COLLECTOR", "LOOP-STEP-READS", "NESTED-UNPACK", "R02", "R02-MaxSteps10", "R02-MaxSteps11",
-             "R02-REVERSED", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R18", "R19", "R20", "R21", "R22", "R25",
+             "R02-REVERSED", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12", "R18", "R19", "R20", "R21", "R22", "R25",
              "R27", "R28", "SIBLING-CALLBACKS", "V01", "V02-MaxItems10", "V02-MaxItems11", "V03", "V09", "V10", "V11", "X01", "X04"],
             reduced.Order(StringComparer.Ordinal));
     }
@@ -938,8 +948,24 @@ public class DeconstructionMemoEligibilityTests
     private static IReadOnlyDictionary<string, NeedCell> Bound(int value)
         => new Dictionary<string, NeedCell>(StringComparer.Ordinal) { ["x"] = NeedCell.Ready(new(new Result.Atom(value), 1)) };
 
+    private static EvalResult<IReadOnlyDictionary<string, NeedCell>> Ok(IReadOnlyDictionary<string, NeedCell> bound)
+        => EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(bound);
+
+    private static EvalResult<IReadOnlyDictionary<string, NeedCell>> MustHit()
+        => throw new InvalidOperationException("a stored bind must hit");
+
+    private static ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> MustHitAsync()
+        => throw new InvalidOperationException("a stored bind must hit");
+
+    /// <summary>
+    /// THE STORE INVARIANT at the store (DECON-CACHE-2 (2) and (3); (3) per execution since 2026-11-22): a
+    /// failed bind is never stored; a bind started while a bind of the SAME execution runs is re-entrant —
+    /// it owns nothing and is never stored, while its owner is; a bind of ANOTHER execution of the same group
+    /// (another activation of a recursive owner) started inside it owns that execution and is stored at once.
+    /// The owning-execution guard is released on every exit.
+    /// </summary>
     [Fact]
-    public void FailedOrNestedBinds_AreNeverStored_AndTheGuardIsReleased()
+    public void FailedOrReentrantBinds_AreNeverStored_AndTheGuardIsPerExecution()
     {
         var cache = new RunScopedDeconstructionBindingCache();
         var group = new object();
@@ -949,29 +975,125 @@ public class DeconstructionMemoEligibilityTests
         var failed = cache.GetOrBind(outer, () => new EvalError.ArityMismatch(2, 1));
         Assert.True(failed.IsError);
         Assert.Equal(0, cache.Count);
-        Assert.Equal(0, cache.RunningGroupCount);
+        Assert.Equal(0, cache.RunningExecutionCount);
 
-        // A bind started while another bind of its group runs is never stored; the outer one is.
         var binds = 0;
+        IReadOnlyDictionary<string, NeedCell>? innerBind = null;
         var result = cache.GetOrBind(outer, () =>
         {
             binds++;
-            Assert.Equal(1, cache.RunningGroupCount);
-            var nested = cache.GetOrBind(inner, () => { binds++; return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(1)); });
+            Assert.Equal(1, cache.RunningExecutionCount);
+            var reentrant = cache.GetOrBind(outer, () =>
+            {
+                binds++;
+                Assert.Equal(1, cache.RunningExecutionCount); // a re-entrant bind owns nothing
+                return Ok(Bound(0));
+            });
+            Assert.True(reentrant.IsOk);
+            var nested = cache.GetOrBind(inner, () =>
+            {
+                binds++;
+                Assert.Equal(2, cache.RunningExecutionCount);
+                return Ok(Bound(1));
+            });
             Assert.True(nested.IsOk);
-            return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(2));
+            innerBind = nested.Value;
+            Assert.Same(innerBind, cache.GetOrBind(inner, MustHit).Value);
+            Assert.Equal(1, cache.Count);
+            Assert.Equal(1, cache.RunningExecutionCount);
+            return Ok(Bound(2));
         });
         Assert.True(result.IsOk);
-        Assert.Equal(2, binds);
-        Assert.Equal(1, cache.Count);
-        Assert.Equal(0, cache.RunningGroupCount);
-        Assert.Same(result.Value, cache.GetOrBind(outer, () => throw new InvalidOperationException("a stored bind must hit")).Value);
-
-        // The nested execution was not stored: outside any running bind it binds again, and is stored now.
-        Assert.True(cache.GetOrBind(inner, () => { binds++; return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(3)); }).IsOk);
         Assert.Equal(3, binds);
         Assert.Equal(2, cache.Count);
-        Assert.Equal(0, cache.RunningGroupCount);
+        Assert.Equal(0, cache.RunningExecutionCount);
+        // The owner's bind is the stored one, never the re-entrant bind made while it ran.
+        Assert.Same(result.Value, cache.GetOrBind(outer, MustHit).Value);
+        Assert.Same(innerBind, cache.GetOrBind(inner, MustHit).Value);
+    }
+
+    /// <summary>
+    /// MIRROR of <see cref="FailedOrReentrantBinds_AreNeverStored_AndTheGuardIsPerExecution"/> on the async
+    /// twin, suspending inside every bind, plus the unwinding of NESTED owners: a nested owner that fails
+    /// stores nothing while its outer owner continues and is stored, and a cancellation thrown inside a
+    /// nested owner releases both owning entries and stores neither, so the next bind of either runs.
+    /// </summary>
+    [Fact]
+    public async Task AsyncTwin_KeepsThePerExecutionGuard_AndUnwindsNestedOwners()
+    {
+        var cache = new RunScopedDeconstructionBindingCache();
+        var group = new object();
+        var outer = Execution(group);
+        var inner = Execution(group);
+        var binds = 0;
+        async ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> SuspendingBind(int value, int running)
+        {
+            binds++;
+            await Task.Yield();
+            Assert.Equal(running, cache.RunningExecutionCount);
+            return Ok(Bound(value));
+        }
+
+        IReadOnlyDictionary<string, NeedCell>? innerBind = null;
+        var result = await cache.GetOrBindAsync(outer, async () =>
+        {
+            binds++;
+            await Task.Yield();
+            Assert.True((await cache.GetOrBindAsync(outer, () => SuspendingBind(0, running: 1))).IsOk);
+            innerBind = (await cache.GetOrBindAsync(inner, () => SuspendingBind(1, running: 2))).Value;
+            Assert.Same(innerBind, (await cache.GetOrBindAsync(inner, MustHitAsync)).Value);
+            return Ok(Bound(2));
+        });
+        Assert.True(result.IsOk);
+        Assert.Equal(3, binds);
+        Assert.Equal(2, cache.Count);
+        Assert.Equal(0, cache.RunningExecutionCount);
+        Assert.Same(result.Value, (await cache.GetOrBindAsync(outer, MustHitAsync)).Value);
+        Assert.Same(innerBind, (await cache.GetOrBindAsync(inner, MustHitAsync)).Value);
+
+        // A failing nested owner stores nothing; its outer owner continues and is stored.
+        var survivingOuter = Execution(group);
+        var failingInner = Execution(group);
+        var survived = await cache.GetOrBindAsync(survivingOuter, async () =>
+        {
+            await Task.Yield();
+            var failed = await cache.GetOrBindAsync(failingInner, async () =>
+            {
+                await Task.Yield();
+                Assert.Equal(2, cache.RunningExecutionCount);
+                return new EvalError.ArityMismatch(2, 1);
+            });
+            Assert.True(failed.IsError);
+            Assert.Equal(1, cache.RunningExecutionCount);
+            return Ok(Bound(3));
+        });
+        Assert.True(survived.IsOk);
+        Assert.Equal(3, cache.Count);
+        Assert.Equal(0, cache.RunningExecutionCount);
+        Assert.Same(survived.Value, (await cache.GetOrBindAsync(survivingOuter, MustHitAsync)).Value);
+
+        // A cancellation thrown inside a nested owner unwinds both owners and stores neither.
+        var cancelledOuter = Execution(group);
+        var cancelledInner = Execution(group);
+        using var stop = new CancellationTokenSource();
+        await stop.CancelAsync();
+        var thrown = await Assert.ThrowsAsync<OperationCanceledException>(async () => await cache.GetOrBindAsync(cancelledOuter, async () =>
+        {
+            await Task.Yield();
+            return await cache.GetOrBindAsync(cancelledInner, async () =>
+            {
+                await Task.Yield();
+                Assert.Equal(2, cache.RunningExecutionCount);
+                stop.Token.ThrowIfCancellationRequested();
+                return Ok(Bound(4));
+            });
+        }));
+        Assert.Equal(stop.Token, thrown.CancellationToken);
+        Assert.Equal(0, cache.RunningExecutionCount);
+        Assert.Equal(3, cache.Count);
+        Assert.True((await cache.GetOrBindAsync(cancelledInner, () => new(Ok(Bound(5))))).IsOk);
+        Assert.True((await cache.GetOrBindAsync(cancelledOuter, () => new(Ok(Bound(6))))).IsOk);
+        Assert.Equal(5, cache.Count);
     }
 
     [Fact]
@@ -983,7 +1105,7 @@ public class DeconstructionMemoEligibilityTests
         cts.Cancel();
 
         Assert.Throws<OperationCanceledException>(() => cache.GetOrBind(execution, () => throw new OperationCanceledException(cts.Token)));
-        Assert.Equal(0, cache.RunningGroupCount);
+        Assert.Equal(0, cache.RunningExecutionCount);
         Assert.Equal(0, cache.Count);
         Assert.True(cache.GetOrBind(execution, () => EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(1))).IsOk);
         Assert.Equal(1, cache.Count);
@@ -1006,11 +1128,11 @@ public class DeconstructionMemoEligibilityTests
         }).AsTask();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.False(pending.IsCompleted);
-        Assert.Equal(1, cache.RunningGroupCount);
+        Assert.Equal(1, cache.RunningExecutionCount);
 
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(30)));
-        Assert.Equal(0, cache.RunningGroupCount);
+        Assert.Equal(0, cache.RunningExecutionCount);
         Assert.Equal(0, cache.Count);
         Assert.True((await cache.GetOrBindAsync(execution, () => new(EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(Bound(2))))).IsOk);
         Assert.Equal(1, cache.Count);

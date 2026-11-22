@@ -13,7 +13,7 @@ namespace KatLang.Evaluation.Caching;
 /// served wrong values after public record transformations):
 /// <list type="bullet">
 ///   <item><see cref="GroupIdentity"/> — the per-deconstruction token the parser mints and every
-///   target helper carries (it also scopes the group-wide re-entry guard below);</item>
+///   target helper carries;</item>
 ///   <item><see cref="PatternIdentity"/> — the helper's ACTUAL parameter-pattern list, by reference.
 ///   The group token survives a host <c>with</c> copy that replaces the unpacking pattern, so the token
 ///   alone no longer names one pattern; the parser's helpers of one group share one list (an import
@@ -36,6 +36,8 @@ namespace KatLang.Evaluation.Caching;
 /// bind over that value creates Ready cells of its items plus, for a collector, a lazy cell that needs
 /// only the run budget (<c>Evaluator.CollectorCell</c>). So every reader of one published source entry
 /// through one actual pattern list shares one completed bind.
+/// The same key also scopes the re-entry guard (<see cref="RunScopedDeconstructionBindingCache"/>): a
+/// bind is unstorable only while a bind of this very execution is running.
 /// Every component compares by identity (references, or the source key's own equality),
 /// never by a diagnostic hash. No run identity is needed beyond the source key's: a
 /// <see cref="RunScopedDeconstructionBindingCache"/> is constructed inside the evaluator's root
@@ -133,14 +135,28 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
 /// execution — the source read that supplies it obtains the published value of exactly
 /// <see cref="DeconstructionBindingExecution.SourceKey"/>, decided before the bind starts from the lookup
 /// that read itself performs, with no extra read (<c>Evaluator.SharedDeconstructionBind</c>); (2) it
-/// succeeded; and (3) no other bind of its GROUP was running when it started. A stored bind is never
-/// replaced. (3) is the group-wide re-entry guard kept from Q-37: a target read again while its group
-/// is still binding gets its own, unstored bind. With (1) in force it is no longer what keeps an
-/// intermediate source value out of the memo — a re-entrant source read fails (1) — but it still keeps
-/// every bind started inside a running bind of its group (recursive owners, re-entrant targets) out of
-/// the memo, which is the established bind and step accounting of such programs (R12's seven binds,
-/// pinned by <c>DeconstructionMemoEligibilityTests</c>); narrowing it to the full key is an accounting
-/// change that needs its own decision.
+/// succeeded; and (3) it OWNS its execution: no bind of the same
+/// <see cref="DeconstructionBindingExecution"/> — group, actual pattern list and source entry — was
+/// running when it started. A stored bind is never replaced.
+/// <para><b>The re-entry guard is per execution (2026-11-22).</b> (3) is the property cache's own
+/// publication law (Q-37: the OUTERMOST evaluation of a key owns its entry) applied to the memo's key.
+/// A bind runs user code only inside its source read, and only when that read is the source entry's
+/// owning first evaluation (a published entry is read without evaluating anything; the binder then opens
+/// the value into Ready cells and, for a collector, one lazy cell). So a bind can start inside a running
+/// bind only during that evaluation: either a bind of the SAME execution — the source entry is then
+/// still being evaluated, so (1) already refuses it, and (3) keeps it out of the memo even if a cache's
+/// provenance missed that — or a bind of ANOTHER execution, which reads its own source entry and is
+/// admitted by (1) for that entry alone. Another activation of a recursive owner, whose right-hand side
+/// calls the owner again, is such an execution: its local-only source has its own key, and its bind is
+/// exactly the bind its later targets would compute, so it is stored and shared like any other. Until
+/// 2026-11-22 (3) was GROUP-wide — no bind started while another bind of its group ran was stored — so
+/// every inner activation of such a recursion bound once per distinct target read: width N and re-entry
+/// depth D cost 1 + D·N full binds of O(N) cells each instead of D + 1 (R12: seven binds, now four;
+/// <c>DeconstructionRecursiveReentryTests</c>). Values, effects, effect order, non-resource errors and
+/// the binds of distinct activations, owners and runs are unchanged; like OD-1's eliminated binds, each
+/// eliminated bind saves one source read (one step, one expression checkpoint, the read's invocation
+/// level) and a collector re-materialization when an explicit <c>t()</c> call reached it, so a recursive
+/// program near a limit may now complete.</para>
 /// <para><b>Work done once, work done per consumer (OD-1).</b> A stored bind is the ONE full bind of its
 /// execution: one <c>DeconstructionFullBindCount</c>, the one charged read of the source (one step and
 /// its expression checkpoints, the RHS evaluation itself on the owning read), the cardinality gate, the
@@ -167,24 +183,27 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
 /// live-partition test seam) runs to completion without awaiting, calling back into evaluation or running
 /// user code: <c>bind</c>, a nested bind of any group included, runs strictly between the lookup and the
 /// addition, and a bind that fails or throws (a host exception, cancellation) adds nothing and leaves only
-/// the transient group guard to unwind. A continuation that resumes the flow on another thread does so
+/// its transient owning-execution guard to unwind. A continuation that resumes the flow on another thread does so
 /// after the previous operation returned, and the await hand-off publishes its writes. A DEBUG build
 /// checks the premise: an operation that begins while another is running throws.</para>
 /// </summary>
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {
     // Stored binds, partitioned by the binding-context identity of their SOURCE entry
-    // (PartitionedMap): a bind over a local-only source is stored while that identity is reachable, a
-    // bind over an exported source for the run. The comparer compares that identity by reference
-    // (through the source key), so no execution can reach a bind after its identity is gone. The
+    // (PartitionedMap): the source key supplies the declaring binding identity for a local-only source,
+    // or the owning invocation for an exported source (run-wide outside such a call). The source key
+    // compares that identity by reference, so no execution can reach a bind after its identity is gone. The
     // partition table is the prompt-reclaim form (see the class remarks).
     private readonly PartitionedMap<DeconstructionBindingExecution, IReadOnlyDictionary<string, NeedCell>> _results =
         new(DeconstructionBindingCacheKeyComparer.Instance, BindingContextPartitions.OfDeconstruction);
 
-    // Transient: group identity -> number of its binds currently running (absent when none).
-    private readonly Dictionary<object, int> _runningBinds = new(ReferenceEqualityComparer.Instance);
+    // Transient: the executions whose OWNING bind is running (empty between accesses). Compared like the
+    // stored binds, so it names exactly the execution a stored bind would; an entry is removed when its
+    // owning bind ends however it ends (a removed slot keeps no reference), so it holds a binding-context
+    // identity no longer than the bind's own frames do.
+    private readonly HashSet<DeconstructionBindingExecution> _owningBinds = new(DeconstructionBindingCacheKeyComparer.Instance);
 
-    /// <summary>Number of binds stored in this run (monotonic: a stored bind is never removed).</summary>
+    /// <summary>Total successful insertions in this run, including binds whose partitions have since been reclaimed.</summary>
     internal int Count => BindingContextPartitions.SaturatedCount(_results.AddedCount);
 
     /// <summary>TEST SEAM: live binding-context partitions of the stored binds.</summary>
@@ -193,24 +212,8 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
     /// <summary>TEST SEAM: the entry capacity of the stored binds' prompt-reclaim partition table.</summary>
     internal int PromptTableCapacity => _results.PromptTableCapacity;
 
-    /// <summary>Number of groups with a bind still running (zero between accesses).</summary>
-    internal int RunningGroupCount => _runningBinds.Count;
-
-    private bool EnterBind(object group)
-    {
-        _runningBinds.TryGetValue(group, out var running);
-        _runningBinds[group] = running + 1;
-        return running > 0;
-    }
-
-    private void ExitBind(object group)
-    {
-        var running = _runningBinds[group] - 1;
-        if (running == 0)
-            _runningBinds.Remove(group);
-        else
-            _runningBinds[group] = running;
-    }
+    /// <summary>Number of executions with an owning bind still running (zero between accesses).</summary>
+    internal int RunningExecutionCount => _owningBinds.Count;
 
     public EvalResult<IReadOnlyDictionary<string, NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
@@ -219,7 +222,8 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         if (_results.TryGetValue(execution, out var cached))
             return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(cached);
 
-        var nested = EnterBind(execution.GroupIdentity);
+        // The OUTERMOST bind of an execution owns it; one started while it runs is re-entrant.
+        var owning = _owningBinds.Add(execution);
         EvalResult<IReadOnlyDictionary<string, NeedCell>> result;
         try
         {
@@ -227,21 +231,23 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         }
         finally
         {
-            ExitBind(execution.GroupIdentity);
+            if (owning)
+                _owningBinds.Remove(execution);
         }
 
         if (result.IsError)
             return result.Error;
 
-        // A bind nested in a running bind of its group is never stored (the group-wide guard).
-        if (!nested)
+        // A re-entrant bind of a running execution is never stored (the per-execution guard); a bind of
+        // another execution — another activation of a recursive owner included — owns its own.
+        if (owning)
             _results.TryAdd(execution, result.Value);
         return result;
     }
 
     /// <summary>
     /// MIRROR OF <see cref="GetOrBind"/> — keep in lock-step: same key, same store,
-    /// same nested-bind rule, same never-store-errors rule. One run drives evaluation through exactly one of the
+    /// same owning-execution rule, same never-store-errors rule. One run drives evaluation through exactly one of the
     /// sync/async evaluator families, and within the async family each bind is awaited
     /// before evaluation continues, so the store is never touched concurrently.
     /// </summary>
@@ -252,7 +258,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         if (_results.TryGetValue(execution, out var cached))
             return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(cached);
 
-        var nested = EnterBind(execution.GroupIdentity);
+        var owning = _owningBinds.Add(execution);
         EvalResult<IReadOnlyDictionary<string, NeedCell>> result;
         try
         {
@@ -260,13 +266,14 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         }
         finally
         {
-            ExitBind(execution.GroupIdentity);
+            if (owning)
+                _owningBinds.Remove(execution);
         }
 
         if (result.IsError)
             return result.Error;
 
-        if (!nested)
+        if (owning)
             _results.TryAdd(execution, result.Value);
         return result;
     }

@@ -50,7 +50,7 @@ public class DeconstructionConsumerOrderTests
         ("EXPORTED", "B = {\n    a, b = trace(1), 2\n    a + b\n}\nG(k) = [0].map{ n + B.a }[0] + B.b + k\nG(1), G(2)"),
         ("TARGET-CALLS", "F(k) = {\n    a, b = trace(k), k + 1\n    [0].map{ n + a() }[0] + a + b() + b\n}\nF(3)"),
         ("COLLECTOR", "F(k) = {\n    h, *t = trace(k), k + 1, k + 2\n    [0].map{ n + t.count }[0] + h + t.count + t().count\n}\nF(3)"),
-        // Q-37 / Constitution mechanism note: binds nested in a running bind of their group are never stored.
+        // Q-37: these nested binds read the same source entry while its owning evaluation is running.
         ("REENTRANT", "a, b = if(tock() < 3, (a + a, 0), (1, 1))\na, a"),
         // A successful right-hand side, then a count mismatch: the source is evaluated once.
         ("MISMATCH", "F(k) = {\n    a, b = trace(k), k + 1, k + 2\n    [0].map{ n + a }[0] + b\n}\nF(3)"),
@@ -281,8 +281,8 @@ public class DeconstructionConsumerOrderTests
 
     /// <summary>
     /// The re-entrant publication guard. The Constitution's witness keeps <c>S[3, 3]</c> (an unsafe memo
-    /// gives <c>S[4, 4]</c>) with five binds — the binds started inside a running bind of the group stay
-    /// unstored — on every route, shared or not, and at its exact step and item thresholds.
+    /// gives <c>S[4, 4]</c>) with five binds on every route, shared or not, and at its exact step and
+    /// item thresholds. The nested binds read unpublished intermediate values and stay unstored.
     /// </summary>
     [Theory]
     [InlineData(Route.Generic)]
