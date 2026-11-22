@@ -142,6 +142,39 @@ internal sealed class EvaluationObservations
     }
 
     /// <summary>
+    /// Number of member indexes of WIDE open levels built during this run (<c>Evaluator.OpenLevelMemberIndexCache</c>):
+    /// a memoized level of more than <c>Evaluator.OpenProviderLinearIndexLimit</c> providers takes the run's index
+    /// of its providers' member lists on its second read, and the run builds one per distinct sequence of lists,
+    /// however many level states — calls, entries, rounds, member calls — read through it.
+    /// </summary>
+    public long OpenLevelMemberIndexBuildCount { get; private set; }
+
+    /// <summary>
+    /// The members — public or not — that <see cref="OpenLevelMemberIndexBuildCount"/>'s builds visited: each build
+    /// visits every member of every provider's list once.
+    /// </summary>
+    public long OpenLevelMemberIndexMemberCount { get; private set; }
+
+    /// <summary>
+    /// Number of wide level states that took a member index an earlier state of this run had built, so visited no
+    /// member: with <see cref="OpenLevelMemberIndexBuildCount"/>, the level states read at least twice.
+    /// </summary>
+    public long OpenLevelMemberIndexShareCount { get; private set; }
+
+    internal void RecordOpenLevelMemberIndex(bool built, long members)
+    {
+        if (built)
+        {
+            OpenLevelMemberIndexBuildCount = checked(OpenLevelMemberIndexBuildCount + 1);
+            OpenLevelMemberIndexMemberCount = checked(OpenLevelMemberIndexMemberCount + members);
+        }
+        else
+        {
+            OpenLevelMemberIndexShareCount = checked(OpenLevelMemberIndexShareCount + 1);
+        }
+    }
+
+    /// <summary>
     /// Number of resolved open targets presented to provider deduplication during this run: the
     /// written targets left after the written-key skip, each indexed once per level resolution, so a
     /// level with <c>K</c> such targets adds exactly <c>K</c>.

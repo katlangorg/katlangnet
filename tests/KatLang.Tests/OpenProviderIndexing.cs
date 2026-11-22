@@ -34,7 +34,24 @@ internal static class OpenProviderIndexing
         public long WorkPerLevel => Levels == 0 ? 0 : (Entries + KeyComparisons + IdentityComparisons) / Levels;
     }
 
+    /// <summary>
+    /// One run's member-index work of WIDE open levels (<c>Evaluator.OpenLevelMemberIndexCache</c>): the indexes
+    /// it built, the members those builds visited, and the level states that took an index already built.
+    /// </summary>
+    internal sealed record MemberIndexWork(long Builds, long Members, long Shares)
+    {
+        internal static readonly MemberIndexWork None = new(0, 0, 0);
+
+        internal static MemberIndexWork Of(EvaluationObservations observations)
+            => new(observations.OpenLevelMemberIndexBuildCount, observations.OpenLevelMemberIndexMemberCount,
+                observations.OpenLevelMemberIndexShareCount);
+    }
+
     internal static async Task<Observation> ObserveAsync(Expr program, bool forcedAsync)
+        => (await ObserveWithIndexWorkAsync(program, forcedAsync)).Run;
+
+    /// <summary><see cref="ObserveAsync"/> together with the run's <see cref="MemberIndexWork"/>.</summary>
+    internal static async Task<(Observation Run, MemberIndexWork Index)> ObserveWithIndexWorkAsync(Expr program, bool forcedAsync)
     {
         var observations = new EvaluationObservations();
         var (result, _) = forcedAsync
@@ -46,7 +63,7 @@ internal static class OpenProviderIndexing
         var outcome = result.IsError
             ? "err " + Describe(result.Error)
             : "ok " + SixRouteAgreement.Neutral(result.Value.Value);
-        return new Observation(
+        return (new Observation(
             outcome,
             observations.OpenProviderLevelCount,
             observations.OpenProviderIndexEntryCount,
@@ -54,17 +71,28 @@ internal static class OpenProviderIndexing
             observations.OpenProviderIdentityComparisonCount,
             observations.OpenProviderCrossDeclarationIdentityComparisonCount,
             observations.OpenLevelConsultationCount,
-            observations.OpenLevelReuseCount);
+            observations.OpenLevelReuseCount), MemberIndexWork.Of(observations));
     }
 
-    /// <summary>The synchronous observation, after requiring the forced async twin to agree with it exactly.</summary>
-    internal static async Task<Observation> OnBothRoutesAsync(Expr program)
+    /// <summary>
+    /// The synchronous observation and member-index work, after requiring the forced async twin to agree with
+    /// both exactly.
+    /// </summary>
+    internal static async Task<(Observation Run, MemberIndexWork Index)> OnBothRoutesWithIndexWorkAsync(Expr program)
     {
-        var synchronous = await ObserveAsync(program, forcedAsync: false);
-        var asynchronous = await ObserveAsync(program, forcedAsync: true);
+        var synchronous = await ObserveWithIndexWorkAsync(program, forcedAsync: false);
+        var asynchronous = await ObserveWithIndexWorkAsync(program, forcedAsync: true);
         Assert.Equal(synchronous, asynchronous);
         return synchronous;
     }
+
+    /// <summary><see cref="OnBothRoutesWithIndexWorkAsync(Expr)"/> of a source the front end accepts cleanly.</summary>
+    internal static Task<(Observation Run, MemberIndexWork Index)> OnBothRoutesWithIndexWorkAsync(string source)
+        => OnBothRoutesWithIndexWorkAsync(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+
+    /// <summary>The synchronous observation, after requiring the forced async twin to agree with it — and on its member-index work — exactly.</summary>
+    internal static async Task<Observation> OnBothRoutesAsync(Expr program)
+        => (await OnBothRoutesWithIndexWorkAsync(program)).Run;
 
     /// <summary><see cref="OnBothRoutesAsync(Expr)"/> of a source the front end accepts cleanly.</summary>
     internal static Task<Observation> OnBothRoutesAsync(string source)

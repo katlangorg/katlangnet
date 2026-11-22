@@ -203,18 +203,21 @@ public class OpenLevelResolutionReuseTests
     [InlineData(12)]
     public async Task TheMemberIndexOfAWideLevel_SelectsExactlyWhatTheScanSelects(int width)
     {
-        // 8 providers scan on every read; 12 index their public members once. Either way a provider
-        // offers its FIRST public member of a name, and an ambiguity names every offering provider in
-        // written order.
+        // 8 providers scan on every read; 12 index their public members once, on the second read, visiting
+        // all 19 members of the 12 blocks. Either way a provider offers its FIRST public member of a name,
+        // and an ambiguity names every offering provider in written order.
         var last = width - 1;
-        var reads = await OpenProviderIndexing.OnBothRoutesAsync(
+        var indexWork = width > Evaluator.OpenProviderLinearIndexLimit ? new OpenProviderIndexing.MemberIndexWork(1, 19, 0) : OpenProviderIndexing.MemberIndexWork.None;
+        var (reads, readsIndex) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(
             ManyBlocks(width, new Expr.Resolve("Y"), new Expr.Resolve("W0"), new Expr.Resolve($"W{last}"), new Expr.Resolve("Y")));
         Assert.Equal($"ok S[1, 0, {last}, 1]", reads.Outcome);
         Assert.Equal((1, width, 4, 3), (reads.Levels, reads.Entries, reads.Consultations, reads.Reuses));
+        Assert.Equal(indexWork, readsIndex);
 
-        var ambiguous = await OpenProviderIndexing.OnBothRoutesAsync(ManyBlocks(width, new Expr.Resolve("W3"), new Expr.Resolve("Z")));
+        var (ambiguous, ambiguousIndex) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(ManyBlocks(width, new Expr.Resolve("W3"), new Expr.Resolve("Z")));
         Assert.Contains("AmbiguousOpen(Z: (inline#2), (inline#5), (inline#7)) @ ", ambiguous.Outcome, StringComparison.Ordinal);
         Assert.Equal((1, 2, 1), (ambiguous.Levels, ambiguous.Consultations, ambiguous.Reuses));
+        Assert.Equal(indexWork, ambiguousIndex);
     }
 
     // ── Failures, host levels and copies ────────────────────────────────────────────────────────
@@ -679,5 +682,303 @@ public class OpenLevelResolutionReuseTests
         var captured = $"F(p) = {{\n    open Lib.Sub\n    Lib = {{\n        public Sub = {{\n            public X = p\n{innerPads}        }}\n    }}\n    G(q) = X + q\n    [X, G(1), X]\n}}\n[F(10), F(20)]";
         Assert.Equal(new OpenProviderIndexing.Observation("ok L[L[10, 11, 10], L[20, 21, 20]]", 2, 2, 0, 0, 0, 6, 4), await OpenProviderIndexing.OnBothRoutesAsync(captured));
         Assert.Equal("ok", (await SixRouteAgreement.OnEveryRouteAsync(captured)).Kind);
+    }
+
+    // ── Repeated level states of one wide level (November 2026 follow-up) ─────────────────────────
+    // A level's providers are resolved once per level STATE: per call, clause-body entry, loop round or member
+    // call. A wide level's member index was built per state as well, so C calls through one level of providers
+    // holding M members visited C·M members, and every call allocated an index. The index depends on the
+    // providers' member lists alone, so the run builds it once per distinct sequence of lists
+    // (`Evaluator.OpenLevelMemberIndexCache`) and every later state takes it; the providers, their wiring, the
+    // access check and the selected member's wiring stay the state's and the read's.
+
+    /// <summary><c>M0 … M{K−1}</c>, each <c>Mi</c> holding <paramref name="padding"/> public <c>Pixj</c> members before its <c>public Wi = i</c>.</summary>
+    private static string PaddedProviders(int width, int padding)
+        => string.Concat(Enumerable.Range(0, width).Select(i =>
+            $"M{i} = {{\n{string.Concat(Enumerable.Range(0, padding).Select(j => $"    public P{i}x{j} = {j}\n"))}    public W{i} = {i}\n}}\n"));
+
+    private static string OpensOf(IEnumerable<int> providers) => $"open {string.Join(", ", providers.Select(static i => $"M{i}"))}";
+
+    private static string Calls(string callee, int calls)
+        => $"[{string.Join(", ", Enumerable.Range(1, calls).Select(c => $"{callee}({c})"))}]";
+
+    /// <summary>
+    /// <paramref name="calls"/> level states of ONE written level of <paramref name="width"/> providers, each
+    /// reading <c>W0</c> and <c>W{K−1}</c>: a parameterized body's own level (an activation per call), a clause
+    /// body's static head level (one per entry), a loop step's level (one per round), or the level of a module
+    /// owner its member calls read (a static wiring per call).
+    /// </summary>
+    private static string RepeatedStates(string shape, int width, int padding, int calls)
+    {
+        var opens = OpensOf(Enumerable.Range(0, width));
+        var reads = $"W0 + W{width - 1}";
+        return PaddedProviders(width, padding) + shape switch
+        {
+            "call" => $"F(x) = {{\n    {opens}\n    x + {reads}\n}}\n" + Calls("F", calls),
+            "entry" => $"H(0) = 0\nH(n) = {{\n    {opens}\n    n + {reads}\n}}\n" + Calls("H", calls),
+            "round" => $"Step(x) = {{\n    {opens}\n    x + {reads}\n}}\nStep(0).repeat({calls})",
+            "member" => $"Mod = {{\n    {opens}\n    public X(q) = q + {reads}\n}}\n" + Calls("Mod.X", calls),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
+        };
+    }
+
+    [Theory]
+    [InlineData("call", 8, 16, 5)]
+    [InlineData("call", 9, 0, 5)]
+    [InlineData("call", 9, 16, 5)]
+    [InlineData("call", 16, 3, 3)]
+    [InlineData("entry", 8, 16, 4)]
+    [InlineData("entry", 9, 16, 4)]
+    [InlineData("round", 8, 16, 4)]
+    [InlineData("round", 9, 16, 6)]
+    [InlineData("member", 8, 16, 4)]
+    [InlineData("member", 9, 16, 4)]
+    public async Task RepeatedStatesOfOneWideLevel_ShareOneMemberIndexPerRun(string shape, int width, int padding, int calls)
+    {
+        // Every state still resolves its own level once and reads it twice. At most 8 providers scan on every
+        // read and index nothing; a wider level's FIRST state builds the run's index on its second read, visiting
+        // every member of every provider once, and each later state takes it — formerly one build per state.
+        var source = RepeatedStates(shape, width, padding, calls);
+        var values = shape == "round"
+            ? $"ok {calls * (width - 1)}"
+            : $"ok L[{string.Join(", ", Enumerable.Range(1, calls).Select(c => c + width - 1))}]";
+        var index = width > Evaluator.OpenProviderLinearIndexLimit
+            ? new OpenProviderIndexing.MemberIndexWork(1, width * (padding + 1L), calls - 1)
+            : OpenProviderIndexing.MemberIndexWork.None;
+        var (observed, indexWork) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(source);
+        Assert.Equal(
+            new OpenProviderIndexing.Observation(values, calls, calls * width, calls * KeyComparisons(width), 0, 0, 2 * calls, calls),
+            observed);
+        Assert.Equal(index, indexWork);
+
+        // The plain (uncounted) and the generic (unoptimized) evaluator routes read through the same selection.
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var plain = new EvaluationObservations();
+        var plainResult = Evaluator.RunObserved(program, plain);
+        Assert.Equal(values, "ok " + SixRouteAgreement.Neutral(plainResult.Value));
+        Assert.Equal(index, OpenProviderIndexing.MemberIndexWork.Of(plain));
+        var generic = new EvaluationObservations();
+        var (genericResult, _) = Evaluator.RunCountedObserved(program, enableOptimizations: false, observations: generic);
+        Assert.Equal(values, "ok " + SixRouteAgreement.Neutral(genericResult.Value.Value));
+        Assert.Equal(index, OpenProviderIndexing.MemberIndexWork.Of(generic));
+        Assert.Equal("ok", (await SixRouteAgreement.OnEveryRouteAsync(source)).Kind);
+    }
+
+    [Fact]
+    public async Task ASharedMemberIndex_SelectsInEachRoundItsOwnProvider()
+    {
+        // The step's own `Sub` is one of nine providers and reads the round's `x`: the index the first round
+        // built selects `V` for every later round, and each round still wires it under ITS OWN `Sub`, so
+        // the rounds read 1, 9, 17 and 25 (one index shared by rounds 2–4; a stale wiring would read 1 forever).
+        var source = string.Concat(Enumerable.Range(0, 8).Select(static i => $"M{i} = {{ public W{i} = {i} }}\n"))
+            + $"Step(x) = {{\n    open Sub, {string.Join(", ", Enumerable.Range(0, 8).Select(static i => $"M{i}"))}\n"
+            + "    Sub = {\n        public V = x + 1\n    }\n    W7 + V\n}\nStep(0).repeat(4)";
+        var (observed, index) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(source);
+        Assert.Equal(new OpenProviderIndexing.Observation("ok 32", 4, 36, 0, 0, 0, 8, 4), observed);
+        Assert.Equal(new OpenProviderIndexing.MemberIndexWork(1, 9, 3), index);
+        Assert.Equal("ok", (await SixRouteAgreement.OnEveryRouteAsync(source)).Kind);
+    }
+
+    [Fact]
+    public async Task EachOrderOfProviderLists_HasItsOwnIndex_SharedByEveryLevelWithThatOrder()
+    {
+        // F and H open the same nine providers in the same order, G in the reverse order: two indexes for the
+        // run, each state of a known order taking its index (also after another order was served), and each
+        // read selecting through its own level's order.
+        var forward = OpensOf(Enumerable.Range(0, 9));
+        var backward = OpensOf(Enumerable.Range(0, 9).Reverse());
+        var source = PaddedProviders(9, 0)
+            + $"F(x) = {{\n    {forward}\n    x + W0 + W8\n}}\nG(x) = {{\n    {backward}\n    x + W0 + W8\n}}\nH(x) = {{\n    {forward}\n    x + W1 + W7\n}}\n"
+            + "[F(1), G(2), H(3), F(4), G(5), H(6)]";
+        var (observed, index) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(source);
+        Assert.Equal(new OpenProviderIndexing.Observation("ok L[9, 10, 11, 12, 13, 14]", 6, 54, 0, 0, 0, 12, 6), observed);
+        Assert.Equal(new OpenProviderIndexing.MemberIndexWork(2, 18, 4), index);
+    }
+
+    [Fact]
+    public async Task AnAmbiguityThroughASharedIndex_IsTheScansAmbiguity()
+    {
+        // `K(q) = q.Z` falls back to the lexical `Z(q)` at run time (a receiver-decided fallback, so the front
+        // end leaves the ambiguity to the evaluator), which reads `G`'s level: M2 and M7 both offer `Z`. Read
+        // first, `Z` is selected by the scan; read second, by the index `G`'s state built, or by the index
+        // `F`'s state built and `G`'s state took. All three name the same providers in written order. `Back`
+        // opens them in the reverse order, so it builds its own index and names them in its order; F's index
+        // read through Back's providers would name the providers at F's positions, M6 and M1.
+        var providers = string.Concat(Enumerable.Range(0, 9).Select(static i => i is 2 or 7
+            ? $"M{i} = {{\n    public W{i} = {i}\n    public Z = {i}\n}}\n"
+            : $"M{i} = {{ public W{i} = {i} }}\n"));
+        var opens = OpensOf(Enumerable.Range(0, 9));
+        var declarations = providers + $"F(x) = {{\n    {opens}\n    x + W0 + W8\n}}\n"
+            + $"G(x) = {{\n    {opens}\n    K(q) = q.Z\n    x + W1 + K(0)\n}}\n"
+            + $"Early(x) = {{\n    {opens}\n    K(q) = q.Z\n    K(0) + x + W1\n}}\n"
+            + $"Back(x) = {{\n    {OpensOf(Enumerable.Range(0, 9).Reverse())}\n    K(q) = q.Z\n    x + W1 + K(0)\n}}\n";
+        foreach (var (row, providerOrder, index) in new[]
+        {
+            ("Early(2)", "M2, M7", OpenProviderIndexing.MemberIndexWork.None),
+            ("G(2)", "M2, M7", new OpenProviderIndexing.MemberIndexWork(1, 11, 0)),
+            ("[F(1), G(2)]", "M2, M7", new OpenProviderIndexing.MemberIndexWork(1, 11, 1)),
+            ("[F(1), Back(2)]", "M7, M2", new OpenProviderIndexing.MemberIndexWork(2, 22, 0)),
+        })
+        {
+            var (observed, indexWork) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(declarations + row);
+            Assert.StartsWith("err ", observed.Outcome, StringComparison.Ordinal);
+            Assert.Contains($"AmbiguousOpen(Z: {providerOrder}) @ ", observed.Outcome, StringComparison.Ordinal);
+            Assert.Equal(index, indexWork);
+        }
+    }
+
+    [Fact]
+    public void TheLevelMemberIndex_OffersExactlyWhatTheOrderedScanOffers_ForEveryName()
+    {
+        // The index against the selection it replaces — each provider's first public member of the name, in
+        // provider order (PropertyBindingIndexCache.LookupPublic: a scan below 16 members, the list's index
+        // from 16) — for shared, repeated, private-only, absent and UNNAMED names. A host-built list may hold
+        // public members with a null name, which the scan compares like any other name; building the index of
+        // a wide level holding one used to throw.
+        static Property Member(string? name, decimal value, bool isPublic = true) => new(name!, Value(value), isPublic);
+        static Property[] Padded(int padding, params Property[] members)
+            => [.. Enumerable.Range(0, padding).Select(i => Member($"Pad{i}", i)), .. members];
+        Property[][] lists =
+        [
+            [Member("A", 0), Member("A", 1), Member("Hidden", 2, isPublic: false)],
+            Padded(16, Member("A", 3, isPublic: false), Member("B", 4), Member(null, 5), Member(null, 6)),
+            [],
+            [Member(null, 7, isPublic: false), Member("C", 8)],
+            Padded(20, Member("A", 9), Member("B", 10)),
+            [Member("B", 11, isPublic: false), Member("B", 12)],
+            [Member(null, 13), Member("A", 14)],
+            Padded(3, Member("Hidden", 15, isPublic: false)),
+            [Member("C", 16), Member("C", 17)],
+            Padded(16, Member(null, 18)),
+        ];
+        var providers = lists.Select((members, position) => new Evaluator.ResolvedOpen(
+            $"P{position}", new Expr.Resolve($"P{position}"), new Algorithm.User(null, [], [], members, OutputBundle.Empty))).ToList();
+        var index = new Evaluator.ResolvedOpenLevel.MemberIndex(providers);
+        Assert.Equal(lists.Sum(static members => (long)members.Length), index.MemberCount);
+        Assert.True(index.IndexesListsOf(providers));
+
+        var scan = new PropertyBindingIndexCache();
+        foreach (var name in new[] { "A", "B", "C", "Hidden", "Pad0", "Pad19", "Absent", null })
+        {
+            var expected = providers
+                .Select((provider, position) => (Position: position, Member: scan.LookupPublic(provider.Lib.Properties, name!)))
+                .Where(static offer => offer.Member is not null)
+                .ToList();
+            var offered = new List<(int Position, Property? Member)>();
+            var cursor = index.FirstOffer(name!);
+            for (var position = index.Offer(ref cursor, out var member); position >= 0; position = index.Offer(ref cursor, out member))
+                offered.Add((position, member));
+            Assert.Equal(expected.Select(static offer => offer.Position), offered.Select(static offer => offer.Position));
+            Assert.All(expected.Zip(offered), pair => Assert.Same(pair.First.Member, pair.Second.Member));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MemberIndexStorage_GrowsWithOffers(bool publicDuplicates)
+    {
+        static Evaluator.ResolvedOpen[] Providers(int padding, bool publicDuplicates)
+            => Enumerable.Range(0, 9).Select(i =>
+            {
+                var name = $"W{i}";
+                var offer = new Property(name, Value(i), IsPublic: true);
+                var filler = publicDuplicates ? offer : new Property("Private", Value(i));
+                Property[] members = [offer, .. Enumerable.Repeat(filler, padding)];
+                var block = new Algorithm.User(null, [], [], members, OutputBundle.Empty);
+                return new Evaluator.ResolvedOpen(name, new Expr.AlgorithmExpr(block), block);
+            }).ToArray();
+
+        static long BuildBytes(Evaluator.ResolvedOpen[] providers)
+        {
+            var start = GC.GetAllocatedBytesForCurrentThread();
+            var index = new Evaluator.ResolvedOpenLevel.MemberIndex(providers);
+            var bytes = GC.GetAllocatedBytesForCurrentThread() - start;
+            GC.KeepAlive(index);
+            return bytes;
+        }
+
+        var small = Providers(0, publicDuplicates);
+        var padded = Providers(4096, publicDuplicates);
+        _ = BuildBytes(small);
+        var smallBytes = BuildBytes(small);
+        var paddedBytes = BuildBytes(padded);
+        // Both levels offer nine members. Reserving an entry for each visited member adds over 500 KiB.
+        Assert.InRange(paddedBytes, 0, smallBytes + 4096);
+    }
+
+    [Fact]
+    public async Task AWideLevelHoldingAnUnnamedHostMember_ReadsItsNamedMembersAsANarrowOneDoes()
+    {
+        // The evaluator-level regression of the unnamed host member: the second read of a wide memoized level
+        // builds its index, which threw `ArgumentNullException` for a public member with a null name.
+        foreach (var width in new[] { 8, 9 })
+        {
+            var opens = Enumerable.Range(0, width).Select(i => (Expr)new Expr.AlgorithmExpr(new Algorithm.User(null, [], [],
+                i == 0
+                    ? [new Property(null!, Value(99), IsPublic: true), new Property("W0", Value(0), IsPublic: true)]
+                    : [new Property($"W{i}", Value(i), IsPublic: true)],
+                OutputBundle.Empty))).ToArray();
+            var program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], opens, [],
+                [new Expr.Resolve("W0"), new Expr.Resolve($"W{width - 1}"), new Expr.Resolve("W0")]));
+            var (observed, index) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(program);
+            Assert.Equal($"ok S[0, {width - 1}, 0]", observed.Outcome);
+            Assert.Equal(width > Evaluator.OpenProviderLinearIndexLimit
+                ? new OpenProviderIndexing.MemberIndexWork(1, width + 1, 0)
+                : OpenProviderIndexing.MemberIndexWork.None, index);
+        }
+    }
+
+    [Fact]
+    public void TheRunsMemberIndexes_AreKeyedByMemberLists_NeverByTheProvidersTheyWereBuiltFor()
+    {
+        // Two states of one level differ in their providers' wiring, never in their lists: a rewired view of each
+        // declaration (another parent) takes the same index, and so does a later state after another order was
+        // served. The same lists in another order are another index. An index keeps the declarations' lists.
+        var blocks = Enumerable.Range(0, 9)
+            .Select(static i => new Algorithm.User(null, [], [], [new Property($"W{i}", Value(i), IsPublic: true)], OutputBundle.Empty))
+            .ToArray();
+        static IReadOnlyList<Evaluator.ResolvedOpen> Level(IEnumerable<Algorithm> providers)
+            => providers.Select(static (provider, position) => new Evaluator.ResolvedOpen($"(inline#{position})", new Expr.AlgorithmExpr(provider), provider)).ToList();
+        var rewired = blocks.Select(static block => (Algorithm)(block with { Parent = new ScopeCtx(null, [], []) })).ToArray();
+        Assert.All(rewired.Zip(blocks), pair => Assert.Same(pair.Second.Properties, pair.First.Properties));
+
+        var observations = new EvaluationObservations();
+        var cache = new Evaluator.OpenLevelMemberIndexCache();
+        var first = cache.IndexOf(Level(blocks), observations);
+        Assert.Same(first, cache.IndexOf(Level(rewired), observations));
+        var reversed = cache.IndexOf(Level(Enumerable.Reverse(blocks)), observations);
+        Assert.NotSame(first, reversed);
+        Assert.Same(first, cache.IndexOf(Level(rewired), observations));
+        Assert.Same(reversed, cache.IndexOf(Level(Enumerable.Reverse(rewired)), observations));
+        Assert.Equal(2, cache.Count);
+        Assert.Equal(new OpenProviderIndexing.MemberIndexWork(2, 18, 3), OpenProviderIndexing.MemberIndexWork.Of(observations));
+        Assert.All(first.Lists.Zip(blocks), pair => Assert.Same(pair.Second.Properties, pair.First));
+
+        // One cache per run: a run reuses its own, another run never sees it.
+        var run = EvaluationBudget.Create(null);
+        Assert.Same(run.OpenLevelMemberIndexes, run.OpenLevelMemberIndexes);
+        Assert.NotSame(run.OpenLevelMemberIndexes, EvaluationBudget.Create(null).OpenLevelMemberIndexes);
+    }
+
+    [Fact]
+    public async Task AHostConstructedWideLevel_IsResolvedOnEveryRead_AndNeverIndexed()
+    {
+        // The host level of AHostConstructedLevel_IsResolvedOnEveryRead_AndNeverWritten, widened past the index
+        // threshold: it has no level state, so each read resolves and scans it again and nothing is indexed (the
+        // root's own level, read once for `Run`, is the fourth resolution).
+        const int width = 9;
+        var host = new ScopeCtx(null,
+            Enumerable.Range(0, width).Select(static i => (Expr)new Expr.Resolve($"M{i}")).ToArray(),
+            Enumerable.Range(0, width).Select(static i => new Property($"M{i}",
+                new Algorithm.User(null, [], [], [new Property($"V{i}", Value(i), IsPublic: true)], OutputBundle.Empty))).ToArray());
+        var block = new Algorithm.User(host, [], [], [new Property("Run", new Algorithm.User(null, [], [], [],
+            [new Expr.Resolve("V0"), new Expr.Resolve("V8"), new Expr.Resolve("V0")]), IsPublic: true)], OutputBundle.Empty);
+        var program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [new Expr.AlgorithmExpr(block)], [], [new Expr.Resolve("Run")]));
+
+        var (observed, index) = await OpenProviderIndexing.OnBothRoutesWithIndexWorkAsync(program);
+        Assert.Equal(new OpenProviderIndexing.Observation("ok S[0, 8, 0]", 4, 3 * width + 1, 0, 0, 0, 4, 0), observed);
+        Assert.Equal(OpenProviderIndexing.MemberIndexWork.None, index);
+        Assert.Null(host.StaticOpenLevel);
     }
 }

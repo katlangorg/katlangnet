@@ -576,6 +576,20 @@ internal sealed class EvaluationBudget
     private PropertyBindingIndexCache? _propertyBindings;
 
     /// <summary>
+    /// The member indexes of this run's WIDE open levels (<c>Evaluator.OpenLevelMemberIndexCache</c>): one per
+    /// distinct sequence of provider member lists, shared by every level state whose providers have those lists,
+    /// so repeated calls through one level index its members once per run, not once per call. Like
+    /// <see cref="PropertyBindings"/>, held here so neither AST records nor the hot by-value EvalCtx acquire cache
+    /// state, and independent runs observe host-list edits afresh.
+    /// </summary>
+    internal Evaluator.OpenLevelMemberIndexCache OpenLevelMemberIndexes
+        => Volatile.Read(ref _openLevelMemberIndexes)
+            ?? Interlocked.CompareExchange(ref _openLevelMemberIndexes, new(), null)
+            ?? _openLevelMemberIndexes;
+
+    private Evaluator.OpenLevelMemberIndexCache? _openLevelMemberIndexes;
+
+    /// <summary>
     /// Clause-family preparation for this run (duplicate-head verdict and translated heads), shared
     /// across wired views by branch-list reference. Like <see cref="PropertyBindings"/>, it is held
     /// here so neither AST records nor EvalCtx acquire cache state, and independent runs observe

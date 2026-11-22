@@ -1571,18 +1571,23 @@ public static partial class Evaluator
     /// host parent can supply it through the step's opens, so these reads share the planning scope.
     /// Fully planned rounds read slots directly. A round that reads rows generically enters the step with
     /// its own activation. A clause family pushed for its binding is never the head of a read (the selected
-    /// body is entered above it, under the family's activated scope). No table outlives
+    /// body is entered above it, under the family's activated scope). No table of providers outlives
     /// the state. A directly supplied alias without a wiring uses its memo owner's single spare head
     /// scope. <see cref="Level"/> and <see cref="Run"/> are checked on every reuse, so a <c>with</c>
     /// copy of a scope or a scope reached from another run resolves afresh.</para>
     /// <para><b>Selection.</b> A memoized wide level (more than <see cref="OpenProviderLinearIndexLimit"/>
-    /// providers) that is read a SECOND time indexes its providers' PUBLIC members by name once
+    /// providers) that is read a SECOND time takes the RUN's index of its providers' PUBLIC members by name
     /// (<see cref="MemberIndex"/>), in provider order, each provider contributing its first public member of a
     /// name (<see cref="LookupPublicPropBinding"/>), so later reads find their hits without scanning every
     /// provider; a narrow, unmemoized or once-read level asks its providers in order, each through the run's
     /// index of a large member list (<see cref="Evaluation.PropertyBindingIndexCache.LookupPublic"/>, from
     /// <see cref="Evaluation.PropertyBindingIndexCache.MinimumIndexedPublicPropertyCount"/> members) or a scan
-    /// of a small one. Either way a read sees exactly the ordered hits the scan sees.</para>
+    /// of a small one. Either way a read sees exactly the ordered hits the scan sees. The member index is a
+    /// function of the providers' member LISTS alone, never of the providers' wirings, so the run builds it
+    /// once per distinct sequence of member lists and every later level state with the same lists — the next
+    /// call of the same body, the next entry, round or member call — shares it
+    /// (<see cref="OpenLevelMemberIndexCache"/>); it holds no provider, activation or value, so it gives no
+    /// state a longer lifetime.</para>
     /// </summary>
     internal sealed class ResolvedOpenLevel
     {
@@ -1592,8 +1597,8 @@ public static partial class Evaluator
         // field instead of inlining the run's lazily created table.
         private readonly PropertyBindingIndexCache _bindings;
 
-        // A memoized wide level's member index, built by its second read and published whole; the read count
-        // that decides it may race, which at worst builds an equal index twice.
+        // A memoized wide level's member index, the run's (OpenLevelMemberIndexCache), taken by its second read
+        // and published whole; the read count that decides it may race, which at worst takes the same index twice.
         private MemberIndex? _index;
         private int _reads;
 
@@ -1649,16 +1654,23 @@ public static partial class Evaluator
         internal ResolvedOpen this[int position] => _providers[position];
 
         /// <summary>The providers publicly offering <paramref name="name"/>, in written order, for one read.</summary>
-        internal OfferCursor Offers(string name)
+        internal OfferCursor Offers(string name, EvaluationObservations? observations)
         {
             var index = Volatile.Read(ref _index);
             if (index is null && Level is not null && _providers.Count > OpenProviderLinearIndexLimit && ++_reads > 1)
-            {
-                index = new MemberIndex(_providers);
-                Volatile.Write(ref _index, index);
-            }
+                index = TakeMemberIndex(observations);
 
             return new OfferCursor(this, name, index);
+        }
+
+        // The run's member index of these providers' member lists, built by the first level state of the run that
+        // needs it (OpenLevelMemberIndexCache). Out of line: a level state pays for it once, on its second read.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private MemberIndex TakeMemberIndex(EvaluationObservations? observations)
+        {
+            var index = Run.OpenLevelMemberIndexes.IndexOf(_providers, observations);
+            Volatile.Write(ref _index, index);
+            return index;
         }
 
         /// <summary>
@@ -1694,28 +1706,47 @@ public static partial class Evaluator
 
         /// <summary>
         /// The public members of a wide level's providers by name: the name's first offer, each offer chained
-        /// to the next provider's offer of the same name (-1 ends a chain), in provider order. Immutable once
-        /// built.
+        /// to the next provider's offer of the same name (-1 ends a chain), in provider order. Built from the
+        /// providers' member LISTS alone — the list of each position, which the index keeps as its key
+        /// (<see cref="OpenLevelMemberIndexCache"/>) — so it serves every level state whose providers have the
+        /// same lists in the same order: a position names the reading level's own provider, and a selected
+        /// member is the list's own <see cref="Property"/>. A host-built list can hold PUBLIC members with a
+        /// null name, which the ordered scan compares like any other name; they form their own chain. Immutable
+        /// once built.
         /// </summary>
         internal sealed class MemberIndex
         {
+            private readonly IReadOnlyList<Property>[] _lists;
             private readonly Dictionary<string, int> _firstOffer = new(StringComparer.Ordinal);
+            // Private members and repeated names in one provider do not need offer storage.
             private readonly List<(int Provider, Property Binding, int Next)> _offers = [];
+            private readonly int _firstUnnamedOffer;
 
             internal MemberIndex(IReadOnlyList<ResolvedOpen> providers)
             {
+                _lists = new IReadOnlyList<Property>[providers.Count];
                 // Built backwards, so each offer is prepended to its name's chain: providers last to first, and
                 // each provider's members last to first, a later member of a name giving way to an earlier one.
-                for (var position = providers.Count - 1; position >= 0; position--)
+                var firstUnnamed = -1;
+                long members = 0;
+                for (var position = _lists.Length - 1; position >= 0; position--)
                 {
-                    var members = providers[position].Lib.Properties;
-                    for (var index = members.Count - 1; index >= 0; index--)
+                    var list = providers[position].Lib.Properties;
+                    _lists[position] = list;
+                    var count = list.Count;
+                    members += count;
+                    for (var index = count - 1; index >= 0; index--)
                     {
-                        var member = members[index];
+                        var member = list[index];
                         if (!member.IsPublic)
                             continue;
-                        ref var first = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(
-                            _firstOffer, member.Name, out var known);
+                        bool known;
+                        ref var first = ref firstUnnamed;
+                        if (member.Name is { } memberName)
+                            first = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(
+                                _firstOffer, memberName, out known);
+                        else
+                            known = first >= 0;
                         if (known && _offers[first].Provider == position)
                         {
                             _offers[first] = (position, member, _offers[first].Next);
@@ -1726,10 +1757,34 @@ public static partial class Evaluator
                         first = _offers.Count - 1;
                     }
                 }
+
+                _firstUnnamedOffer = firstUnnamed;
+                MemberCount = members;
             }
 
-            /// <summary>The first offer of <paramref name="name"/>, or -1.</summary>
-            internal int FirstOffer(string name) => _firstOffer.TryGetValue(name, out var first) ? first : -1;
+            /// <summary>The members of the providers' lists, public or not, that building this index visited.</summary>
+            internal long MemberCount { get; }
+
+            /// <summary>The member list of each provider, in provider order: the lists this index was built from.</summary>
+            internal IReadOnlyList<Property>[] Lists => _lists;
+
+            /// <summary>Whether this index was built from exactly the member lists of <paramref name="providers"/>, in order.</summary>
+            internal bool IndexesListsOf(IReadOnlyList<ResolvedOpen> providers)
+            {
+                if (providers.Count != _lists.Length)
+                    return false;
+                for (var position = 0; position < _lists.Length; position++)
+                {
+                    if (!ReferenceEquals(providers[position].Lib.Properties, _lists[position]))
+                        return false;
+                }
+
+                return true;
+            }
+
+            /// <summary>The first offer of <paramref name="name"/> (a null name: of an unnamed host-built member), or -1.</summary>
+            internal int FirstOffer(string name)
+                => name is null ? _firstUnnamedOffer : _firstOffer.TryGetValue(name, out var first) ? first : -1;
 
             /// <summary>The provider position of the offer at <paramref name="cursor"/>, advancing it, or -1 at a chain's end.</summary>
             internal int Offer(ref int cursor, out Property? binding)
@@ -1744,6 +1799,154 @@ public static partial class Evaluator
                 cursor = offer.Next;
                 binding = offer.Binding;
                 return offer.Provider;
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE RUN'S MEMBER INDEXES OF WIDE OPEN LEVELS (implementation-only optimization, November 2026): one
+    /// <see cref="ResolvedOpenLevel.MemberIndex"/> per distinct SEQUENCE of provider member lists, built by
+    /// the first wide level state of the run that is read twice and taken by every later one whose providers
+    /// have the same lists in the same order. A level's providers are resolved once per level STATE — per
+    /// call, entry, round, alias wiring or member call (<see cref="ResolvedOpenLevel"/>) — and the index used
+    /// to be built per state as well, so <c>C</c> calls through one level of providers with <c>M</c> members
+    /// in all visited <c>C·M</c> members; now the run visits <c>M</c> once and each later state compares its
+    /// <c>K</c> member lists with the last index served, or hashes them.
+    /// <para><b>Why sharing is exact.</b> The index reads nothing but the lists — each member's name and
+    /// visibility, in list order — and host-owned lists may not change during a run
+    /// (<see cref="Evaluation.PropertyBindingIndexCache"/>), so two states whose providers have the same lists
+    /// index the same offers. It stores provider POSITIONS and the lists' own members: the reading state
+    /// supplies the provider at a position (its wiring, display name and identity) and the access check and
+    /// wiring stay per read, in the reading context, so providers, order, precedence, ambiguity and errors are
+    /// the scan's. Different lists, or the same lists in another order, are another key.</para>
+    /// <para><b>Lifetime.</b> Run-scoped (<see cref="Evaluation.EvaluationBudget.OpenLevelMemberIndexes"/>), like
+    /// the run's index of one large member list (<see cref="Evaluation.PropertyBindingIndexCache.LookupPublic"/>):
+    /// a new run builds new indexes, so host edits between runs stay visible. An entry keeps only member lists
+    /// and their members — the declarations' own, never a provider, scope, activation or value — so no frame
+    /// outlives its state through it, and there is one entry per distinct sequence of lists the run's wide
+    /// levels resolve to, not one per call. Unmemoized levels (a host-constructed level, a head pushed without
+    /// a head scope) never reach it.</para>
+    /// <para>Sequential lookups need no lock, but the cache follows the run's other shared preparation table
+    /// (<see cref="NeedFamilyPreparationCache"/>): the last index served is read without the lock, the table
+    /// under it, and an index is built outside it, the first published one winning.</para>
+    /// </summary>
+    internal sealed class OpenLevelMemberIndexCache
+    {
+        // The last index served: repeated calls through one level take it without hashing or locking.
+        // Indexes are immutable, so a racing reader sees a complete one.
+        private ResolvedOpenLevel.MemberIndex? _last;
+        private readonly Dictionary<IReadOnlyList<Property>[], ResolvedOpenLevel.MemberIndex> _indexes;
+        private readonly Dictionary<IReadOnlyList<Property>[], ResolvedOpenLevel.MemberIndex>.AlternateLookup<IReadOnlyList<ResolvedOpen>> _byProviders;
+
+        internal OpenLevelMemberIndexCache()
+        {
+            _indexes = new(MemberListsComparer.Instance);
+            _byProviders = _indexes.GetAlternateLookup<IReadOnlyList<ResolvedOpen>>();
+        }
+
+        /// <summary>
+        /// The run's member index of the member lists of <paramref name="providers"/>, built now if no level
+        /// state of the run has needed it yet; <paramref name="observations"/> records a build or a share.
+        /// </summary>
+        internal ResolvedOpenLevel.MemberIndex IndexOf(IReadOnlyList<ResolvedOpen> providers, EvaluationObservations? observations)
+        {
+            if (Volatile.Read(ref _last) is { } last && last.IndexesListsOf(providers))
+            {
+                observations?.RecordOpenLevelMemberIndex(built: false, members: 0);
+                return last;
+            }
+
+            ResolvedOpenLevel.MemberIndex? found;
+            lock (_indexes)
+                _byProviders.TryGetValue(providers, out found);
+            var built = false;
+            if (found is null)
+            {
+                // Built outside the lock: a pure function of the lists; a racing equal index is discarded.
+                var index = new ResolvedOpenLevel.MemberIndex(providers);
+                lock (_indexes)
+                {
+                    if (!_byProviders.TryGetValue(providers, out found))
+                    {
+                        _indexes.Add(index.Lists, index);
+                        found = index;
+                        built = true;
+                    }
+                }
+            }
+
+            observations?.RecordOpenLevelMemberIndex(built, built ? found.MemberCount : 0);
+            Volatile.Write(ref _last, found);
+            return found;
+        }
+
+        /// <summary>The number of member indexes this run has built; a test observation.</summary>
+        internal int Count
+        {
+            get
+            {
+                lock (_indexes)
+                    return _indexes.Count;
+            }
+        }
+
+        // Keys are the member lists of a level's providers, in order, compared by reference; a level's providers
+        // look their key up without copying it out.
+        private sealed class MemberListsComparer
+            : IEqualityComparer<IReadOnlyList<Property>[]>, IAlternateEqualityComparer<IReadOnlyList<ResolvedOpen>, IReadOnlyList<Property>[]>
+        {
+            internal static readonly MemberListsComparer Instance = new();
+
+            public bool Equals(IReadOnlyList<Property>[]? left, IReadOnlyList<Property>[]? right)
+            {
+                if (ReferenceEquals(left, right))
+                    return true;
+                if (left is null || right is null || left.Length != right.Length)
+                    return false;
+                for (var position = 0; position < left.Length; position++)
+                {
+                    if (!ReferenceEquals(left[position], right[position]))
+                        return false;
+                }
+
+                return true;
+            }
+
+            public int GetHashCode(IReadOnlyList<Property>[] lists)
+            {
+                var hash = new HashCode();
+                foreach (var list in lists)
+                    hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(list));
+                return hash.ToHashCode();
+            }
+
+            public bool Equals(IReadOnlyList<ResolvedOpen> providers, IReadOnlyList<Property>[] lists)
+            {
+                if (providers.Count != lists.Length)
+                    return false;
+                for (var position = 0; position < lists.Length; position++)
+                {
+                    if (!ReferenceEquals(providers[position].Lib.Properties, lists[position]))
+                        return false;
+                }
+
+                return true;
+            }
+
+            public int GetHashCode(IReadOnlyList<ResolvedOpen> providers)
+            {
+                var hash = new HashCode();
+                for (var position = 0; position < providers.Count; position++)
+                    hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(providers[position].Lib.Properties));
+                return hash.ToHashCode();
+            }
+
+            public IReadOnlyList<Property>[] Create(IReadOnlyList<ResolvedOpen> providers)
+            {
+                var lists = new IReadOnlyList<Property>[providers.Count];
+                for (var position = 0; position < lists.Length; position++)
+                    lists[position] = providers[position].Lib.Properties;
+                return lists;
             }
         }
     }
@@ -2064,7 +2267,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty?> SelectOpenHit(ResolvedOpenLevel level, string name, EvalCtx ctx)
     {
-        var offers = level.Offers(name);
+        var offers = level.Offers(name, ctx.Observations);
         var first = offers.Next(out var binding);
         if (first < 0)
             return EvalResult<ResolvedLexicalProperty?>.Ok(null);
