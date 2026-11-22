@@ -11,6 +11,11 @@ namespace KatLang.CLI;
 /// <param name="AllowPlainHttp">Admit <c>http://</c> addresses as well as <c>https://</c>.</param>
 /// <param name="IsAllowedAddress">The address rule; production's is <see cref="PublicAddress.IsPublic"/>.</param>
 /// <param name="ResolveAsync">Host name to addresses; production's is the platform resolver.</param>
+/// <remarks>
+/// <see cref="OpenAsync"/> is the fourth substitution point: how the connection to one judged
+/// address is opened. It relaxes no rule — it is called only for an address that passed
+/// <see cref="IsAllowedAddress"/> — and production's is a plain TCP socket.
+/// </remarks>
 internal sealed record DownloadSeam(
     bool AllowPlainHttp,
     Func<IPAddress, bool> IsAllowedAddress,
@@ -31,6 +36,29 @@ internal sealed record DownloadSeam(
         AllowPlainHttp: true,
         static address => IPAddress.IsLoopback(address) || PublicAddress.IsPublic(address),
         Dns.GetHostAddressesAsync);
+
+    /// <summary>
+    /// Opens the TCP connection to one address that passed <see cref="IsAllowedAddress"/>.
+    /// Production's is <see cref="OpenSocketAsync"/>; a test substitutes its own to make an
+    /// address stall or to see which addresses were dialed, in what order.
+    /// </summary>
+    public Func<IPEndPoint, CancellationToken, ValueTask<Stream>> OpenAsync { get; init; } = OpenSocketAsync;
+
+    /// <summary>A TCP connection to <paramref name="target"/>, on a socket of its own address family.</summary>
+    public static async ValueTask<Stream> OpenSocketAsync(IPEndPoint target, CancellationToken cancellationToken)
+    {
+        var socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(target, cancellationToken).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
 }
 
 /// <summary>
@@ -407,6 +435,13 @@ internal sealed class HttpSourceDownloader : IDisposable
     /// answer, and connects to the first permitted address that accepts. The address that was
     /// judged IS the address connected to — nothing resolves the name again — and a refused
     /// address is never tried, whatever else the answer holds.
+    ///
+    /// <para>Permitted addresses are tried one at a time, in the answer's order. One that
+    /// refuses is passed over at once. One that does not answer is given up after its share of
+    /// <see cref="ConnectFallbackBudget"/>, which all attempts before the last divide equally,
+    /// so however many addresses stall, the last still has two thirds of the deadline for its
+    /// connection, TLS and the response. An IPv4-mapped address is dialed as the IPv4 address
+    /// it carries.</para>
     /// </summary>
     private async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
     {
@@ -447,36 +482,35 @@ internal sealed class HttpSourceDownloader : IDisposable
                 : DownloadException.NameResolution();
         }
 
+        // An address that never answers (a host with an unreachable IPv6 address, say) must
+        // not use up the download's deadline while another address would answer. Every attempt
+        // but the last is bounded, and together they may take no more than ConnectFallbackBudget,
+        // however many addresses the answer holds: an equal share each. The last attempt is not
+        // bounded here, so it has all the time the download has left.
+        var fallbackAttempts = permitted.Count - 1;
         Exception? connectFailure = null;
         for (var index = 0; index < permitted.Count; index++)
         {
+            // An IPv4-mapped address (::ffff:a.b.c.d) is the IPv4 address it carries, and only
+            // an IPv4 socket reaches it: an IPv6 socket is IPv6-only. It was judged as that
+            // IPv4 address (PublicAddress), so the address dialed is the address judged.
             var address = permitted[index];
+            var target = new IPEndPoint(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address, endPoint.Port);
 
-            // An address that never answers (a host with an unreachable IPv6 address, say) must
-            // not use up the download's whole deadline while another address would answer: every
-            // attempt but the last is bounded, and the last has whatever time remains.
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            if (index < permitted.Count - 1)
-                attempt.CancelAfter(ConnectAttemptTimeout);
+            if (index < fallbackAttempts)
+                attempt.CancelAfter(ConnectFallbackBudget / fallbackAttempts);
 
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             try
             {
-                await socket.ConnectAsync(new IPEndPoint(address, endPoint.Port), attempt.Token).ConfigureAwait(false);
-                return new NetworkStream(socket, ownsSocket: true);
+                return await _seam.OpenAsync(target, attempt.Token).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is SocketException
                 || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
             {
                 // This address refused, or did not answer in its share of the time; the next
                 // permitted one may.
-                socket.Dispose();
                 connectFailure = ex;
-            }
-            catch
-            {
-                socket.Dispose();
-                throw;
             }
         }
 
@@ -484,10 +518,11 @@ internal sealed class HttpSourceDownloader : IDisposable
     }
 
     /// <summary>
-    /// The longest one address may take to accept a connection while another permitted address
-    /// of the same host is still untried: a third of the download's deadline.
+    /// The most time the connection attempts before the last one may take TOGETHER, when a host
+    /// has several permitted addresses: a third of the download's deadline. The rest of the
+    /// deadline is left for the last address, TLS, the request and the response.
     /// </summary>
-    private TimeSpan ConnectAttemptTimeout => ConfiguredDownloadTimeout / 3;
+    internal TimeSpan ConnectFallbackBudget => ConfiguredDownloadTimeout / 3;
 
     private static DownloadException? FindDownloadException(Exception exception)
     {

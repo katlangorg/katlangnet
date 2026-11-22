@@ -316,6 +316,195 @@ public sealed class DownloadGuardrailTests
         Assert.Equal(1, server.RequestCount);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(7)]
+    public async Task StalledAddresses_ShareABoundedPartOfTheDeadline_SoAReachableLastAddressStillAnswers(int stalled)
+    {
+        // A host with several addresses of which only the last answers. However many stall
+        // before it, together they may use no more than a third of the deadline, so the address
+        // that answers still has time for the connection and the response. (At five seconds
+        // each, three stalled addresses once used up the whole deadline.)
+        await using var server = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public Value = 42"));
+        var port = new Uri(server.Url("127.0.0.1")).Port;
+        var answer = Enumerable.Range(1, stalled).Select(index => IPAddress.Parse($"203.0.113.{index}")).Append(IPAddress.Loopback).ToArray();
+        var dialed = new List<string>();
+        var deadline = TimeSpan.FromSeconds(12);
+        using var transport = new HttpSourceDownloader(
+            HttpSourceDownloader.MaxResponseBodyBytes,
+            deadline,
+            handler: null,
+            new DownloadSeam(
+                AllowPlainHttp: true,
+                // The documentation range stands in for addresses that never answer: nothing
+                // is ever sent to one, because the substituted opener below stalls instead.
+                static address => IPAddress.IsLoopback(address) || address.ToString().StartsWith("203.0.113.", StringComparison.Ordinal),
+                (_, _) => Task.FromResult(answer))
+            {
+                OpenAsync = async (target, cancellationToken) =>
+                {
+                    lock (dialed)
+                        dialed.Add("dial " + target.Address);
+
+                    if (IPAddress.IsLoopback(target.Address))
+                        return await DownloadSeam.OpenSocketAsync(target, cancellationToken);
+
+                    try
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        lock (dialed)
+                            dialed.Add("gave up " + target.Address);
+                        throw;
+                    }
+
+                    throw new InvalidOperationException("unreachable");
+                },
+            });
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var text = await Guarded(transport.DownloadAsync($"http://many-addresses.example:{port}/module.kat", CancellationToken.None).AsTask());
+
+        Assert.Equal("public Value = 42", text);
+        Assert.Equal(1, server.RequestCount);
+        // One address at a time, in the answer's order, each given up before the next is dialed.
+        var expected = answer[..^1].SelectMany(address => new[] { "dial " + address, "gave up " + address }).Append("dial 127.0.0.1");
+        Assert.Equal(expected, dialed);
+        // The stalled attempts took their budget, a third of the deadline, and no more than
+        // that by any margin a slow machine could explain.
+        Assert.Equal(deadline / 3, transport.ConnectFallbackBudget);
+        Assert.InRange(clock.Elapsed, transport.ConnectFallbackBudget - TimeSpan.FromSeconds(1), deadline - TimeSpan.FromSeconds(3));
+    }
+
+    [Fact]
+    public async Task AnAddressThatRefuses_GivesItsTimeBack_AndTheNextIsDialedAtOnce()
+    {
+        // A refusal is not a stall: the next address is tried immediately, with no waiting.
+        await using var server = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public Value = 42"));
+        var port = new Uri(server.Url("127.0.0.1")).Port;
+        var dialed = new List<IPAddress>();
+        using var transport = new HttpSourceDownloader(
+            HttpSourceDownloader.MaxResponseBodyBytes,
+            TimeSpan.FromSeconds(30),
+            handler: null,
+            new DownloadSeam(
+                AllowPlainHttp: true,
+                static address => IPAddress.IsLoopback(address) || address.ToString().StartsWith("203.0.113.", StringComparison.Ordinal),
+                (_, _) => Task.FromResult(new[] { IPAddress.Parse("203.0.113.1"), IPAddress.Parse("203.0.113.2"), IPAddress.Loopback }))
+            {
+                OpenAsync = (target, cancellationToken) =>
+                {
+                    lock (dialed)
+                        dialed.Add(target.Address);
+                    return IPAddress.IsLoopback(target.Address)
+                        ? DownloadSeam.OpenSocketAsync(target, cancellationToken)
+                        : ValueTask.FromException<Stream>(new SocketException((int)SocketError.ConnectionRefused));
+                },
+            });
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        var text = await Guarded(transport.DownloadAsync($"http://refusing.example:{port}/module.kat", CancellationToken.None).AsTask());
+
+        Assert.Equal("public Value = 42", text);
+        Assert.Equal([IPAddress.Parse("203.0.113.1"), IPAddress.Parse("203.0.113.2"), IPAddress.Loopback], dialed);
+        // Far less than one stalled attempt's share (five seconds here).
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(4), $"took {clock.Elapsed}");
+    }
+
+    [Fact]
+    public async Task WhenEveryAddressStalls_TheDownloadEndsByItsDeadline()
+    {
+        // The last address is not bounded by the fallback budget; the download's deadline ends it.
+        using var transport = new HttpSourceDownloader(
+            HttpSourceDownloader.MaxResponseBodyBytes,
+            TimeSpan.FromSeconds(3),
+            handler: null,
+            new DownloadSeam(
+                AllowPlainHttp: true,
+                static _ => true,
+                (_, _) => Task.FromResult(new[] { IPAddress.Parse("203.0.113.1"), IPAddress.Parse("203.0.113.2") }))
+            {
+                OpenAsync = async (_, cancellationToken) =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    throw new InvalidOperationException("unreachable");
+                },
+            });
+
+        var error = await Assert.ThrowsAsync<DownloadException>(
+            () => Guarded(transport.DownloadAsync("http://nothing-answers.example/module.kat", CancellationToken.None).AsTask()));
+
+        Assert.Equal(DownloadFailure.DeadlineExceeded, error.Failure);
+        Assert.Equal("the download did not complete within 3 seconds.", error.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AnIpv4MappedAddress_IsDialedAsTheIpv4AddressItCarries(bool literal)
+    {
+        // ::ffff:a.b.c.d is judged as a.b.c.d, and it must be dialed as a.b.c.d too: an IPv6
+        // socket is IPv6-only, so it cannot reach an IPv4 host through the mapped form. Here the
+        // mapped loopback address comes once from the resolver and once as a literal in the link.
+        await using var server = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public Value = 42"));
+        var port = new Uri(server.Url("127.0.0.1")).Port;
+        var mapped = IPAddress.Loopback.MapToIPv6();
+        Assert.True(mapped.IsIPv4MappedToIPv6);
+        var dialed = new List<IPEndPoint>();
+        using var transport = new HttpSourceDownloader(
+            HttpSourceDownloader.MaxResponseBodyBytes,
+            Deadline,
+            handler: null,
+            DownloadSeam.LoopbackStandsInForPublic with
+            {
+                ResolveAsync = (_, _) => Task.FromResult(new[] { mapped }),
+                OpenAsync = (target, cancellationToken) =>
+                {
+                    lock (dialed)
+                        dialed.Add(target);
+                    return DownloadSeam.OpenSocketAsync(target, cancellationToken);
+                },
+            });
+        var url = literal ? $"http://[{mapped}]:{port}/module.kat" : $"http://mapped.example:{port}/module.kat";
+
+        var text = await Guarded(transport.DownloadAsync(url, CancellationToken.None).AsTask());
+
+        Assert.Equal("public Value = 42", text);
+        Assert.Equal(1, server.RequestCount);
+        var target = Assert.Single(dialed);
+        Assert.Equal(AddressFamily.InterNetwork, target.AddressFamily);
+        Assert.Equal(new IPEndPoint(IPAddress.Loopback, port), target);
+    }
+
+    [Fact]
+    public async Task ANonPublicIpv4MappedAddress_IsStillRefused_AndNeverDialed()
+    {
+        var dialed = 0;
+        using var transport = new HttpSourceDownloader(
+            HttpSourceDownloader.MaxResponseBodyBytes,
+            Deadline,
+            handler: null,
+            DownloadSeam.Production with
+            {
+                ResolveAsync = (_, _) => Task.FromResult(new[] { IPAddress.Parse("10.0.0.1").MapToIPv6(), IPAddress.Loopback.MapToIPv6() }),
+                OpenAsync = (target, cancellationToken) =>
+                {
+                    Interlocked.Increment(ref dialed);
+                    return DownloadSeam.OpenSocketAsync(target, cancellationToken);
+                },
+            });
+
+        var error = await Assert.ThrowsAsync<DownloadException>(
+            () => Guarded(transport.DownloadAsync("https://mapped-private.example/module.kat", CancellationToken.None).AsTask()));
+
+        Assert.Equal(DownloadFailure.NonPublicAddress, error.Failure);
+        Assert.Equal($"its host is not at a public address ({IPAddress.Parse("10.0.0.1").MapToIPv6()}).", error.Message);
+        Assert.Equal(0, dialed);
+    }
+
     [Fact]
     public async Task ThroughTheCli_ALoopbackServerStandsInForAPublicHost_ForAModule()
     {
