@@ -6,9 +6,9 @@ namespace KatLang.Tests;
 /// F10 — the Grace ELIGIBILITY boundary (Q-16 G-O, decided 2026-10-07: "effective" means
 /// eligible, never "moved"). Grace `~` is valid on exactly one kind of occurrence: a FREE
 /// bare name that its owner's implicit-signature collection promotes to one of the owner's
-/// OWN inferred parameters — that is the one place its weight is consumed
-/// (<c>ParameterDetector.CollectFreeParams</c>, then <c>GraceMovement.Apply</c>), whether or
-/// not the weight then moves the name. Every other occurrence has no inferred parameter for
+/// OWN inferred parameters — that is the one place its weight is consumed (Q7,
+/// <c>StaticStructureQueries.Inputs</c>, which sums it and applies <c>GraceMovement.Apply</c>), whether
+/// or not the weight then moves the name. Every other occurrence has no inferred parameter for
 /// the weight to attach to and is the front-end error
 /// <see cref="DiagnosticCode.InvalidGraceMarker"/> naming what fixed the binding: an explicit
 /// parameter, a parameter of an enclosing algorithm, a visible property, a builtin, an opened

@@ -307,7 +307,8 @@ public class FrontEndDagComplexityTests
 
     /// <summary>
     /// Grace weight is the ONE per-occurrence-additive fact of free-name collection, so it is
-    /// the discriminating oracle for the memo's weight effects: a shared graced leaf under a
+    /// the discriminating oracle for Q7's occurrence multiplicity (<c>StaticStructureQueries.Inputs</c>;
+    /// detection's own walk sums no weight, <see cref="DetectorGraceWorkTests"/>): a shared graced leaf under a
     /// depth-2 diamond has FOUR semantic occurrences (weight -4, enough to move the parameter
     /// left past two earlier names), where a per-distinct-node accounting would contribute -1
     /// (one move) and a per-edge accounting -2. The duplicated tree must agree exactly.
@@ -331,8 +332,8 @@ public class FrontEndDagComplexityTests
 
     /// <summary>
     /// Beyond any materializable tree (2^200 occurrences), the accumulated weight stays EXACT
-    /// (PAR-06: weights are unbounded integers): the memo re-applies one exact delta per reach, so
-    /// the walk stays bounded by distinct nodes and 2^200 still outweighs 2^200 − 1 by one unit.
+    /// (PAR-06: weights are unbounded integers): Q7 counts the shared node's occurrences exactly, so
+    /// the walks stay bounded by distinct nodes and 2^200 still outweighs 2^200 − 1 by one unit.
     /// </summary>
     [Fact]
     public Task Detector_AstronomicalGraceMultiplicity_StaysExact()
@@ -353,9 +354,9 @@ public class FrontEndDagComplexityTests
         });
 
     /// <summary>
-    /// Exact addition is associative and commutative, so replaying a shared subtree's memoized
-    /// delta equals walking a cloned tree: (+Max, +Max, −Max) is +Max per visit — never a clamped
-    /// zero — and two visits weigh 2 × Max.
+    /// Exact addition is associative and commutative, so weighing a shared subtree by its
+    /// occurrence count equals walking a cloned tree: (+Max, +Max, −Max) is +Max per visit — never a
+    /// clamped zero — and two visits weigh 2 × Max.
     /// </summary>
     [Fact]
     public void Detector_SharedMixedGraceWeights_SumExactlyLikeTheDuplicatedTree()

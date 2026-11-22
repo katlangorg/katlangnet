@@ -1,5 +1,3 @@
-using System.Numerics;
-
 namespace KatLang;
 
 /// <summary>
@@ -49,8 +47,9 @@ internal static class ParameterDetector
     /// traversal work is bounded by the DISTINCT reachable nodes, never by the number of
     /// root-to-node paths, and rewritten output preserves the input's sharing instead of
     /// expanding it into a tree. The memos are run-local (created per detection, garbage
-    /// afterwards); grace-weight accumulation stays per semantic occurrence through memoized
-    /// per-visit weight effects. The one deliberate per-NODE (rather than per-path) behavior is diagnostic
+    /// afterwards). Grace weights are not summed by these walks: Q7 sums them per semantic
+    /// occurrence, with each shared node's exact occurrence multiplicity
+    /// (<c>StaticStructureQueries.Inputs</c>). The one deliberate per-NODE (rather than per-path) behavior is diagnostic
     /// multiplicity: an erroneous shared node is diagnosed once, not once per path.</para>
     /// </summary>
     public static DetectedProgram Detect(Algorithm root)
@@ -235,13 +234,19 @@ internal static class ParameterDetector
             ? context.Operation.Read(StaticQueryKey.IsInput(context.Key, name)).Kind == StaticFactKind.Yes
             : !IsBoundName(name, scope);
 
+    /// <summary>
+    /// Q7's signature of an inferring body, with the collection pass that records its occurrence provenance in written
+    /// order. Q7 has already applied Grace, with each shared node's occurrence multiplicity, so the pass sums no weight:
+    /// until November 2026 it built per-visit weight vectors on every ancestor of a graced occurrence (quadratic in a
+    /// nested sum of graced names) that this method then discarded. A circular classification keeps the pass's
+    /// first-occurrence order, which Grace never moved.
+    /// </summary>
     private static ImplicitParameterOccurrenceRecorder CollectStructuralInputs(IReadOnlyList<Expr> rows, ElaboratedPropertyScope scope,
         ParameterOwnership bindings, IReadOnlyList<string> written, HashSet<string> names, List<string> order,
-        Dictionary<string, BigInteger> weights, DetectionRun run, FrontEndTraversalObservations? observations, StaticStructureContext context, DiagnosticBag? diagnosticSink)
+        DetectionRun run, FrontEndTraversalObservations? observations, StaticStructureContext context, DiagnosticBag? diagnosticSink)
     {
         var inputs = context.Operation.Read(StaticQueryKey.Inputs(context.Key));
-        var recorder = CollectInputPass(rows, scope, bindings, names, order, weights, run, observations);
-        weights.Clear(); // Q7 has already applied Grace with shared-DAG occurrence multiplicity.
+        var recorder = CollectInputPass(rows, scope, bindings, names, order, run, observations);
         if (inputs.IsUnknown)
         {
             var undecided = context.Operation.UndecidedInputs(context.Key);
@@ -315,7 +320,6 @@ internal static class ParameterDetector
         var paramNames = new HashSet<string>(parameterNames);
         var paramOrder = new List<string>(parameterNames);
         IReadOnlySet<string> ownParameterNames = paramNames;
-        var graceWeights = new Dictionary<string, BigInteger>();
         var hasExplicitParameterList = alg.HasExplicitParameterList;
 
         // The program root is never called: its signature (unresolved root names) binds
@@ -363,11 +367,9 @@ internal static class ParameterDetector
         }
         else
         {
+            // Q7's signature, Grace movement included (StaticStructureQueries.Inputs).
             provenanceRecorder = CollectOwnInputs(
-                writtenRows, scope, boundParameters, parameterNames, paramNames, paramOrder, graceWeights, run, observations, diagnostics);
-
-            if (graceWeights.Count > 0)
-                GraceMovement.Apply(paramOrder, graceWeights);
+                writtenRows, scope, boundParameters, parameterNames, paramNames, paramOrder, run, observations, diagnostics);
         }
 
         // The bindings in force inside this body: every inferred parameter is now known, and
@@ -671,7 +673,7 @@ internal static class ParameterDetector
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
-    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
+    /// exact moment <see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// first promotes the unresolved name: its first semantic source
     /// occurrence span (the same occurrence order the inference itself uses)
     /// and the context of a conservative near-miss suggestion, captured against
@@ -1039,34 +1041,27 @@ internal static class ParameterDetector
     }
 
     /// <summary>
-    /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
+    /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
     /// walk (one algorithm's collection region — scope, bound names, target sets, mode and
     /// recorder are all constant for the walk's lifetime). A legal shared (acyclic) subtree is
-    /// expanded once; a later reach of the same node reference re-applies only the node's
-    /// memoized per-visit GRACE-WEIGHT DELTA, because weight accumulation is the one
-    /// per-occurrence-additive fact of this walk — every other contribution (name sets,
-    /// first-occurrence order, provenance) is idempotent, so skipping the re-walk preserves
-    /// exactly the semantics of the equivalent duplicated tree. Weights are exact unbounded
-    /// integers (PAR-06), and exact addition is associative and commutative, so a subtree's
-    /// per-visit contribution is one signed sum per name, whatever the weight it is added to.
+    /// expanded once, and a later reach of the same node reference adds nothing: every
+    /// contribution of this walk is complete after the first reach (name sets, first-occurrence
+    /// order and provenance dedup by name; checked and provisional fallbacks are recorded per
+    /// edge), so skipping the re-walk preserves exactly the semantics of the equivalent
+    /// duplicated tree. Grace weight, the one per-occurrence-additive
+    /// fact of free-name collection, is not this walk's: Q7 sums it with each shared node's
+    /// occurrence multiplicity (<c>StaticStructureQueries.Inputs</c>). Until November 2026 the walk
+    /// also kept a per-visit weight vector for every in-progress node and re-applied it on every
+    /// reach, data no caller read since Q7 took Grace over (October 2026).
     /// </summary>
     private sealed class FreeNameWalkMemo(FrontEndTraversalObservations? observations)
     {
         /// <summary>
-        /// Completed nodes → their per-visit grace-weight delta (<c>null</c> = no weight
-        /// contribution, the overwhelmingly common case). Completion-marked: a node appears
-        /// only after its subtree finished, so an (illegal, preflight-rejected) cycle keeps
-        /// today's non-terminating behavior instead of silently truncating the walk.
+        /// Completed nodes. Completion-marked: a node appears only after its subtree finished, so
+        /// an (illegal, preflight-rejected) cycle keeps today's non-terminating behavior instead of
+        /// silently truncating the walk.
         /// </summary>
-        public readonly Dictionary<Expr, Dictionary<string, BigInteger>?> CompletedVectors =
-            new(ReferenceEqualityComparer.Instance);
-
-        /// <summary>
-        /// One slot per in-progress memoizable node on the recursion path (LIFO). Every weight
-        /// application lands in the walk's <c>graceWeights</c> AND in every open slot, so when a
-        /// node completes, its slot holds exactly its subtree's per-visit contribution.
-        /// </summary>
-        public readonly List<Dictionary<string, BigInteger>?> OpenSlots = [];
+        public readonly HashSet<Expr> Completed = new(ReferenceEqualityComparer.Instance);
 
         public readonly FrontEndTraversalObservations? Observations = observations;
 
@@ -1166,8 +1161,8 @@ internal static class ParameterDetector
     /// Grace eligibility of ONE owner region (F10, Q-16 G-O, decided 2026-10-07): Grace belongs
     /// to the owner whose written rows contain the marked occurrence, and a marker is valid
     /// exactly when that occurrence becomes one of the owner's OWN inferred parameters — the
-    /// one place its weight is consumed (<see cref="CollectFreeParams(Expr, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>, then
-    /// <see cref="GraceMovement.Apply"/>). Eligibility never depends on whether the weight
+    /// one place its weight is consumed (Q7, <c>StaticStructureQueries.Inputs</c>, which sums the
+    /// weights of the inferred names and applies <see cref="GraceMovement.Apply"/>). Eligibility never depends on whether the weight
     /// moves the name: a single own name, a name already at the boundary it points to, excess
     /// weight, a tie, a cancelled weight and the own/lifted boundary are saturation, not errors.
     /// Every other occurrence has no inferred parameter for the weight to attach to and is
@@ -1220,38 +1215,6 @@ internal static class ParameterDetector
         public readonly DetectionRun Run = run;
 
         public readonly FrontEndTraversalObservations? Observations = observations;
-    }
-
-    /// <summary>
-    /// Adds one exact grace-weight amount for <paramref name="name"/> to the walk's accumulated
-    /// weights (exactly once per semantic occurrence) and to every open memo slot, so each
-    /// in-progress ancestor retains its subtree's per-visit delta.
-    /// </summary>
-    private static void AddGraceWeight(
-        Dictionary<string, BigInteger> graceWeights,
-        FreeNameWalkMemo memo,
-        string name,
-        BigInteger amount)
-    {
-        graceWeights[name] = graceWeights.GetValueOrDefault(name) + amount;
-        for (var i = 0; i < memo.OpenSlots.Count; i++)
-        {
-            var slot = memo.OpenSlots[i] ??= new Dictionary<string, BigInteger>(StringComparer.Ordinal);
-            slot[name] = slot.GetValueOrDefault(name) + amount;
-        }
-    }
-
-    /// <summary>Re-applies a completed node's per-visit weight delta for one more reach.</summary>
-    private static void ApplyGraceVector(
-        Dictionary<string, BigInteger>? vector,
-        Dictionary<string, BigInteger> graceWeights,
-        FreeNameWalkMemo memo)
-    {
-        if (vector is null)
-            return;
-
-        foreach (var (name, delta) in vector)
-            AddGraceWeight(graceWeights, memo, name, delta);
     }
 
     /// <summary>
@@ -1888,10 +1851,9 @@ internal static class ParameterDetector
         deferred = null;
         var freeNames = new HashSet<string>();
         var freeOrder = new List<string>();
-        var dummyWeights = new Dictionary<string, BigInteger>();
         var memo = new FreeNameWalkMemo(observations) { CertainMisses = certainMisses };
         CollectFreeParams(
-            rows, scope, boundParameters, freeNames, freeOrder, dummyWeights,
+            rows, scope, boundParameters, freeNames, freeOrder,
             FreeNameCollection.DeclaredNameCheck,
             recorder: null,
             memo);
@@ -1962,7 +1924,7 @@ internal static class ParameterDetector
             var probeOrder = new List<string>();
             CollectFreeParams(
                 edge.EffectiveLexicalFallback, scope, boundParameters, new HashSet<string>(), probeOrder,
-                new Dictionary<string, BigInteger>(), FreeNameCollection.DeclaredNameCheck, recorder: null, new FreeNameWalkMemo(observations));
+                FreeNameCollection.DeclaredNameCheck, recorder: null, new FreeNameWalkMemo(observations));
             if (probeOrder.Count > 0)
                 return true;
         }
@@ -2161,10 +2123,9 @@ internal static class ParameterDetector
     private static ImplicitParameterOccurrenceRecorder CollectOwnInputs(
         IReadOnlyList<Expr> writtenRows, ElaboratedPropertyScope scope, ParameterOwnership boundParameters,
         IReadOnlyList<string> writtenParameters, HashSet<string> paramNames, List<string> paramOrder,
-        Dictionary<string, BigInteger> graceWeights, DetectionRun run, FrontEndTraversalObservations? observations,
-        DiagnosticBag? diagnosticSink)
+        DetectionRun run, FrontEndTraversalObservations? observations, DiagnosticBag? diagnosticSink)
         => CollectStructuralInputs(writtenRows, scope, boundParameters, writtenParameters, paramNames, paramOrder,
-            graceWeights, run, observations, scope.StaticContext
+            run, observations, scope.StaticContext
                 ?? throw new InvalidOperationException("Inference requires the shared structural operation."), diagnosticSink);
 
     /// <summary>One collection pass of an inferring body's own inputs (<see cref="CollectOwnInputs"/>).</summary>
@@ -2174,13 +2135,12 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, BigInteger> graceWeights,
         DetectionRun run,
         FrontEndTraversalObservations? observations)
     {
         var recorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters, run.SuggestionContexts(observations));
         CollectFreeParams(
-            writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
+            writtenRows, scope, boundParameters, paramNames, paramOrder,
             FreeNameCollection.ImplicitSignature,
             recorder,
             new FreeNameWalkMemo(observations));
@@ -2197,13 +2157,12 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, BigInteger> graceWeights,
         FreeNameCollection mode,
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
     {
         foreach (var expr in exprs)
-            CollectFreeParams(expr, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+            CollectFreeParams(expr, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
     }
 
     private static void CollectFreeParams(
@@ -2212,35 +2171,27 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, BigInteger> graceWeights,
         FreeNameCollection mode,
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
     {
         // DAG-safety: a shared node reference is expanded once per collection walk. Every
-        // contribution of a completed subtree except grace weight is idempotent (name sets,
-        // first-occurrence order, provenance all dedup by name), so a later reach re-applies
-        // only the memoized per-visit ordered weight effect — exactly the effect walking the
-        // equivalent duplicated tree would have. Childless leaves skip the memo (O(1) each).
+        // contribution of a completed subtree is idempotent (name sets, first-occurrence order
+        // and provenance all dedup by name), so a later reach adds nothing — exactly what walking
+        // the equivalent duplicated tree would add (Grace weight is Q7's, FreeNameWalkMemo).
+        // Childless leaves skip the memo (O(1) each).
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
         {
-            CollectFreeParamsCore(expr, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+            CollectFreeParamsCore(expr, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
             return;
         }
 
-        if (memo.CompletedVectors.TryGetValue(expr, out var vector))
-        {
-            ApplyGraceVector(vector, graceWeights, memo);
+        if (memo.Completed.Contains(expr))
             return;
-        }
 
         memo.Observations?.RecordDetectorCollectExpansion();
-        memo.OpenSlots.Add(null);
-        var slotIndex = memo.OpenSlots.Count - 1;
-        CollectFreeParamsCore(expr, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-        var completedVector = memo.OpenSlots[slotIndex];
-        memo.OpenSlots.RemoveAt(slotIndex);
-        memo.CompletedVectors[expr] = completedVector;
+        CollectFreeParamsCore(expr, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
+        memo.Completed.Add(expr);
     }
 
     private static void CollectFreeParamsCore(
@@ -2249,7 +2200,6 @@ internal static class ParameterDetector
         ParameterOwnership boundParameters,
         HashSet<string> paramNames,
         List<string> paramOrder,
-        Dictionary<string, BigInteger> graceWeights,
         FreeNameCollection mode,
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
@@ -2257,28 +2207,16 @@ internal static class ParameterDetector
         FrontEndStack.Ensure();
         switch (expr)
         {
-            case Expr.Grace(var graceOperand, var graceWeight):
+            case Expr.Grace(var graceOperand, _):
             {
-                // Grace decorates exactly ONE bare name occurrence. Stacked
-                // wrappers on the SAME occurrence accumulate their weights.
-                // Repeated prefix/postfix markers use this same arithmetic in
-                // every context, including before a dot (`a~~.t` is ordinary
-                // postfix Grace with weight +2). Grace never distributes a
-                // weight through a compound expression: source validation
-                // rejects complex operands, and a host-built one is handled
-                // defensively by collecting its names WITHOUT any reordering
-                // weight.
-                // A host-built AST can carry arbitrary int weights on stacked wrappers; the
-                // weight is an exact unbounded integer (PAR-06), so the one-occurrence amount
-                // is summed without overflow, wrapping or clamping. Source `~` markers are
-                // only +/-1 each.
-                var accumulatedWeight = new BigInteger(graceWeight);
-                var gracedCore = graceOperand;
-                while (gracedCore is Expr.Grace(var deeperOperand, var deeperWeight))
-                {
-                    accumulatedWeight += deeperWeight;
-                    gracedCore = deeperOperand;
-                }
+                // Grace decorates exactly ONE bare name occurrence; stacked wrappers
+                // (`a~~.t` is ordinary postfix Grace with weight +2) decorate the same
+                // one. The occurrence is collected like the bare name it marks: its
+                // weight is summed and applied by Q7 (StaticStructureQueries.Inputs),
+                // never here. Grace never distributes a weight through a compound
+                // expression: source validation rejects complex operands, and a
+                // host-built one is collected for its names, with no weight in Q7.
+                var gracedCore = graceOperand.UnwrapGraceOperand();
 
                 if (gracedCore is Expr.Resolve(var gracedName))
                 {
@@ -2289,14 +2227,11 @@ internal static class ParameterDetector
                             paramOrder.Add(gracedName);
                             recorder?.RecordFirstOccurrence(gracedName, gracedCore);
                         }
-                        // Accumulate weight (multiple references sum up). Routed through the
-                        // memo so in-progress ancestors record it in their per-visit effects.
-                        AddGraceWeight(graceWeights, memo, gracedName, accumulatedWeight);
                     }
                 }
                 else
                 {
-                    CollectFreeParams(gracedCore, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(gracedCore, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 }
 
                 break;
@@ -2314,41 +2249,41 @@ internal static class ParameterDetector
                 break;
 
             case Expr.Binary(_, var left, var right):
-                CollectFreeParams(left, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(left, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
+                CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.Comparison(var first, var links):
-                CollectFreeParams(first, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(first, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 foreach (var link in links)
-                    CollectFreeParams(link.Operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(link.Operand, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.Unary(_, var operand):
-                CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.Index(var target, var selectors):
                 // Occurrence order: the receiver, then each selector slot as written.
-                CollectFreeParams(target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(target, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 foreach (var selector in selectors)
-                    CollectFreeParams(selector, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(selector, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.SequenceSpread(var operand):
-                CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(operand, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.SequenceConstruct(var left, var right):
-                CollectFreeParams(left, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(left, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
+                CollectFreeParams(right, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.ListLiteral(var items):
                 // List-literal elements are transparent to the enclosing
                 // parameter scope, like spread operands and sequence joins.
                 foreach (var item in items)
-                    CollectFreeParams(item, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(item, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.DotCall dotCall:
@@ -2369,14 +2304,14 @@ internal static class ParameterDetector
                 // the callee `F`, then the receiver, then the written arguments.
                 if (mode == FreeNameCollection.ImplicitSignature && LoweredReceiverMarker(dotCall, scope) is not null)
                 {
-                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
-                    CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
+                    CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                     if (dotCall.Args is { } loweredArgs)
-                        CollectFreeParams(loweredArgs, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                        CollectFreeParams(loweredArgs, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                     break;
                 }
 
-                CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(dotCall.Target, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
 
                 // A statically impossible fallback — a guaranteed structural
                 // member (any visibility: accessibility is checked after
@@ -2437,18 +2372,18 @@ internal static class ParameterDetector
                                     dotCall.Name,
                                     dotCall)
                                 : null);
-                        CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                        CollectFreeParams(dotCall.EffectiveLexicalFallback, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                         recorder?.ExitDotMemberContext(previousReceiver);
                     }
                 }
                 if (dotCall.Args is { } dotArgs)
-                    CollectFreeParams(dotArgs, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                    CollectFreeParams(dotArgs, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.Capture(var captureBody):
                 // Captures are transparent: free identifiers bubble up to the
                 // enclosing param scope.
-                CollectFreeParams(captureBody, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(captureBody, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             case Expr.AlgorithmExpr:
@@ -2456,11 +2391,11 @@ internal static class ParameterDetector
                 break;
 
             case Expr.Call(var func, var args):
-                CollectFreeParams(func, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(func, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 // Argument bundles are transparent: free identifiers inside
                 // argument slots belong to the enclosing algorithm. (A brace
                 // block argument is an AlgorithmExpr slot and owns its names.)
-                CollectFreeParams(args, scope, boundParameters, paramNames, paramOrder, graceWeights, mode, recorder, memo);
+                CollectFreeParams(args, scope, boundParameters, paramNames, paramOrder, mode, recorder, memo);
                 break;
 
             // Intentional leaves with no free-name occurrences: literals, the

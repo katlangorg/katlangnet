@@ -191,6 +191,28 @@ provider whose structure depends on whether one of the level's opened names is a
 the names whose deferred presence runs before it settles (K = N = 128: 33,924 witness entries, before 34,441).
 `OpenLevelPresenceReuseTests`, `StaticStructureWitnessTests`.
 
+**Owner-by-name audit (2026-11-22, investigation baseline `8947d21e`).** Q1 carries a query per
+lexical level. Q6 tests a candidate's outer ownership through `InferenceBinding`. The detector and
+lookup adapters use `OwnedBinding` for parameter/property selection. Open heads use
+`OpenHeadBinding`, which excludes the program root's phantom parameters and the semantic prelude's
+placeholders. Aliases and receivers consume the selected declaring scope and property in Q3.
+Completed facts retain those identities when a deferred unit imports them. The earlier
+`DeferredOpenPresence` change shares provider evidence at a level.
+
+`StaticQueryEngine.EntryOf` already reuses an entry for an equal `StaticQueryKey`. Each intervening
+level in a binding walk changes the scope component of that key, even when its equation returns
+its parent's fact by reference. Distinct branch regions, binding projections and cycle-check strata
+also have distinct keys. Skipping these entries in a prototype made a previously refused
+64-level, 64-name program succeed under 4 MiB (4,096 entries). It also moved the first storage
+refusal for the explicit-parameter settlement chain from 441 to 445 links under 8 MiB and from
+3,604 to 3,642 under 64 MiB. Keeping the existing walk preserves those admissions and refusals.
+
+With nested single-reference alias rows ending in reads of N root properties, detection creates
+N(D + 1) owner-binding keys at depth D. Holding N at 32, depths 16 and 64 use 544 and 2,080
+keys. Holding D at 64, widths 32 and 128 use 2,080 and 8,320. Re-reading an identical key reuses
+its entry and its declaring property. `StaticOwnerWalkTests` checks the reuse and the 4-MiB
+refusal. The depth-times-width cost remains.
+
 The production admission policy is deterministic for equivalent source, configured resource policy and
 compilation phase. `SourceProcessingLimits.MaxStaticStructureBytes` may lower the fixed 1-GiB ceiling;
 values must be positive, larger requests clamp to the ceiling, and null selects that ceiling. No GC
