@@ -119,6 +119,14 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
     /// <summary>Long-string classifications answered from the identity cache.</summary>
     internal long CacheHits { get; private set; }
 
+    /// <summary>
+    /// Long-string classifications performed while the cache was full, so not kept: the next visit
+    /// to the same string is classified, and charged, again. Every other answer costs nothing to
+    /// repeat (a short string, a cached string, a raw-length refusal, an exhausted classifier's
+    /// refusal), so a layout may reuse a walk's answers only while this count is unchanged.
+    /// </summary>
+    internal long UncachedClassifications { get; private set; }
+
     /// <summary>Classification requests answered "not classified within budget".</summary>
     internal long UnclassifiedResults { get; private set; }
 
@@ -187,6 +195,8 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
         _cache ??= new Dictionary<string, StringFacts>(ReferenceEqualityComparer.Instance);
         if (_cache.Count < FactsCacheCapacity)
             _cache.TryAdd(value, facts);
+        else
+            UncachedClassifications++;
         return true;
     }
 

@@ -32,7 +32,17 @@ namespace KatLang.Formatting;
 /// shared (DAG) value costs at most O(width) measurement per emitted node
 /// instead of re-walking whole subtrees. A value measured to fit is written
 /// from the text its measurement kept, so an inline item is walked once, and
-/// the walks of one rendering call share one continuation stack. Every emitted
+/// the walks of one rendering call share one continuation stack. A measurement
+/// that does not fit keeps its walk
+/// (<see cref="ValueTextRenderer.ResumableMeasurement"/>): when the structure is
+/// opened, the item the walk entered is measured by continuing it and the items
+/// it completed by short separate walks, so the leading text of a nested value
+/// is not walked again at every level. That matters where the remaining width
+/// does not shrink with depth (zero indentation), which otherwise cost a full
+/// line width of measurement per nesting level. Every answer is the fresh
+/// walk's, and a walk is continued only while that holds for string
+/// classification too (see <see cref="ValueTextRenderer.ResumableMeasurement"/>).
+/// Every emitted
 /// code unit — indentation, separators, quotes, and newlines included — goes
 /// through the bounded writer, which preserves the all-or-nothing
 /// display-limit contract.</para>
@@ -67,14 +77,16 @@ internal static class StructuredLayoutRenderer
         bool concise,
         BoundedDisplayWriter writer,
         LayoutWorkStatistics? statistics = null,
-        long? classificationBudget = null)
+        long? classificationBudget = null,
+        bool resumeMeasurements = true)
     {
         var session = new LayoutSession(
             displayOptions,
             options,
             concise,
             writer,
-            classificationBudget ?? DelimitedStringTextPolicy.DefaultClassificationBudget(writer.Limit));
+            classificationBudget ?? DelimitedStringTextPolicy.DefaultClassificationBudget(writer.Limit),
+            resumeMeasurements);
         try
         {
             return session.WriteAllRows(rows);
@@ -87,7 +99,8 @@ internal static class StructuredLayoutRenderer
 
     /// <summary>
     /// Internal observation of one rendering call's string-classification
-    /// work, for deterministic tests of the F4 bound (production passes none).
+    /// and width-measurement work, for deterministic tests of the F4 bound and
+    /// of measurement growth (production passes none).
     /// </summary>
     internal sealed class LayoutWorkStatistics
     {
@@ -96,10 +109,17 @@ internal static class StructuredLayoutRenderer
         public long ScanInputCodeUnits { get; private set; }
         public long LongClassifications { get; private set; }
         public long CacheHits { get; private set; }
+        public long UncachedClassifications { get; private set; }
         public long UnclassifiedResults { get; private set; }
         public long LengthRefusals { get; private set; }
         public bool ClassificationExhausted { get; private set; }
         public int RowRestarts { get; private set; }
+
+        /// <summary>Code units the width measurements accepted, kept walks and fresh walks together.</summary>
+        public long MeasuredCodeUnits { get; private set; }
+
+        /// <summary>Item measurements answered from the kept walk of the structure they belong to.</summary>
+        public long ResumedMeasurements { get; private set; }
 
         internal void Record(LayoutSession session)
         {
@@ -109,10 +129,13 @@ internal static class StructuredLayoutRenderer
             ScanInputCodeUnits = strings.ScanInputCodeUnits;
             LongClassifications = strings.LongClassifications;
             CacheHits = strings.CacheHits;
+            UncachedClassifications = strings.UncachedClassifications;
             UnclassifiedResults = strings.UnclassifiedResults;
             LengthRefusals = strings.LengthRefusals;
             ClassificationExhausted = strings.ClassificationExhausted;
             RowRestarts = session.RowRestarts;
+            MeasuredCodeUnits = session.MeasuredCodeUnits;
+            ResumedMeasurements = session.ResumedMeasurements;
         }
     }
 
@@ -138,6 +161,12 @@ internal static class StructuredLayoutRenderer
         public bool PairRun;
         public bool CloseComma;
         public bool PrevItemWasLine;
+
+        /// <summary>
+        /// The structure lies inside text the kept measurement walk completed, so its items are
+        /// measured by separate fresh walks and the kept walk stays for the item after it.
+        /// </summary>
+        public bool MeasuredAside;
     }
 
     internal sealed class LayoutSession
@@ -150,17 +179,29 @@ internal static class StructuredLayoutRenderer
         private readonly string _newLine;
         private readonly int _rootSpacing;
         private readonly bool _concise;
-        private readonly CappedWidthSink _measure = new();
+
+        // Created on the first measurement aside: a rendering whose items all fit where its
+        // kept walk measured them needs none.
+        private CappedWidthSink? _measure;
         private readonly Stack<Frame> _frames = new();
 
-        // The continuation stack of every value walk in this rendering call,
-        // measurements and inline appends alike: created by the first walk
-        // that enters a nested structure and reused by the later ones.
+        // The continuation stack of every walk through ValueTextRenderer.AppendValue in
+        // this rendering call, aside measurements and inline appends alike: created by
+        // the first walk that enters a nested structure and reused by the later ones.
         private Stack<ValueTextRenderer.SuspendedStructure>? _valueWalk;
 
-        // The value the last FitsInline call measured to fit; _measure holds
-        // its complete inline text until the next measurement.
+        // An item about to be written or opened is measured through _resumable, which keeps a
+        // refused walk: the frame opened for the structure it is suspended in (_resumableFrame)
+        // measures its items from that walk instead of walking their text again. Lookahead and
+        // items inside text the kept walk already completed use _measure, so the kept walk stays.
+        private readonly ValueTextRenderer.ResumableMeasurement _resumable = new();
+        private readonly bool _resumeMeasurements;
+        private Frame? _resumableFrame;
+
+        // The value the last measurement found to fit, and whether its complete inline text is
+        // in _resumable or in _measure (kept until the next measurement).
         private Result? _measuredInline;
+        private bool _measuredResumably;
 
         // Created on first use: only values of PredicateCacheThreshold or more
         // items consult them, so a small rendering allocates none.
@@ -173,14 +214,20 @@ internal static class StructuredLayoutRenderer
 
         internal int RowRestarts { get; private set; }
 
+        internal long ResumedMeasurements { get; private set; }
+
+        internal long MeasuredCodeUnits => (_measure?.MeasuredCodeUnits ?? 0) + _resumable.MeasuredCodeUnits;
+
         public LayoutSession(
             DisplayOptions displayOptions,
             OutputFormattingOptions options,
             bool concise,
             BoundedDisplayWriter writer,
-            long classificationBudget)
+            long classificationBudget,
+            bool resumeMeasurements = true)
         {
             _writer = writer;
+            _resumeMeasurements = resumeMeasurements;
             _displayOptions = displayOptions;
             // The delimiter mode influences layout only through the string
             // policy's per-value token decisions — the layout engine itself
@@ -238,6 +285,8 @@ internal static class StructuredLayoutRenderer
         private bool WriteRowLayout(Result row)
         {
             _frames.Clear();
+            _resumable.Reset();
+            _resumableFrame = null;
 
             if (_concise && row is Result.SequenceValue { Items.Count: >= 2 } rootSequence)
             {
@@ -267,12 +316,12 @@ internal static class StructuredLayoutRenderer
             }
 
             if (row is not (Result.SequenceValue or Result.ListValue)
-                || (FitsInline(row, 0, 0, keepText: true) && !RequiresStructuredLayout(row, asChild: false)))
+                || (FitsToWrite(row, 0, 0, parent: null, index: -1) && !RequiresStructuredLayout(row, asChild: false)))
             {
                 return StartLine(0) && AppendInline(row);
             }
 
-            if (!OpenDelimited(row, 0, closeComma: false)) return false;
+            if (!OpenDelimited(row, 0, closeComma: false, parent: null, index: -1)) return false;
             return WriteFrames();
         }
 
@@ -285,6 +334,9 @@ internal static class StructuredLayoutRenderer
                 if (frame.Next >= frame.Items.Count)
                 {
                     _frames.Pop();
+                    if (ReferenceEquals(frame, _resumableFrame))
+                        _resumableFrame = null;
+
                     if (frame.Kind != FrameKind.ConciseBlock)
                     {
                         if (!StartLine(frame.Level - 1)) return false;
@@ -317,9 +369,9 @@ internal static class StructuredLayoutRenderer
 
                 if (item is Result.SequenceValue or Result.ListValue
                     && (RequiresStructuredLayout(item, asChild: true)
-                        || !FitsInline(item, frame.Level, isLast ? 0 : 1, keepText: true)))
+                        || !FitsToWrite(item, frame.Level, isLast ? 0 : 1, frame, frame.Next - 1)))
                 {
-                    if (!OpenDelimited(item, frame.Level, closeComma: !isLast)) return false;
+                    if (!OpenDelimited(item, frame.Level, closeComma: !isLast, frame, frame.Next - 1)) return false;
                     continue;
                 }
 
@@ -396,7 +448,7 @@ internal static class StructuredLayoutRenderer
                     return WriteSpaceJoinedLine(childItems, frame.Level);
                 }
 
-                if (RequiresStructuredLayout(item, asChild: true) || !FitsInline(item, frame.Level, 0, keepText: true))
+                if (RequiresStructuredLayout(item, asChild: true) || !FitsToWrite(item, frame.Level, 0, frame, frame.Next))
                 {
                     // A child sequence rendered as a complete indented block may
                     // hide its parentheses only when the indentation uniquely
@@ -414,28 +466,30 @@ internal static class StructuredLayoutRenderer
 
                     if (subBlockEligible)
                     {
-                        _frames.Push(new Frame
+                        var block = new Frame
                         {
                             Items = childItems,
                             Level = frame.Level + 1,
                             Kind = FrameKind.ConciseBlock,
                             PairRun = IsConcisePairRun(childItems, frame.Level + 1),
-                        });
+                        };
+                        _frames.Push(block);
+                        LinkResumableWalk(block, frame, frame.Next - 1, item);
                         return true;
                     }
 
-                    return OpenDelimited(item, frame.Level, closeComma: false);
+                    return OpenDelimited(item, frame.Level, closeComma: false, frame, frame.Next - 1);
                 }
 
                 // Fits inline with parentheses: an ordinary line below.
             }
-            else if (item is (Result.SequenceValue or Result.ListValue) && !FitsInline(item, frame.Level, 0, keepText: true))
+            else if (item is (Result.SequenceValue or Result.ListValue) && !FitsToWrite(item, frame.Level, 0, frame, frame.Next))
             {
                 // Lists always keep their brackets; empty and singleton
                 // sequences always keep their parentheses.
                 frame.Next++;
                 frame.PrevItemWasLine = false;
-                return OpenDelimited(item, frame.Level, closeComma: false);
+                return OpenDelimited(item, frame.Level, closeComma: false, frame, frame.Next - 1);
             }
 
             frame.Next++;
@@ -738,8 +792,11 @@ internal static class StructuredLayoutRenderer
             return true;
         }
 
-        /// <summary>Opens a multiline delimited structure: the opening token on its own line, items one level deeper.</summary>
-        private bool OpenDelimited(Result value, int atLevel, bool closeComma)
+        /// <summary>
+        /// Opens a multiline delimited structure: the opening token on its own line, items one level
+        /// deeper. <paramref name="parent"/> is the frame whose item <paramref name="index"/> this is.
+        /// </summary>
+        private bool OpenDelimited(Result value, int atLevel, bool closeComma, Frame? parent, int index)
         {
             IReadOnlyList<Result> items;
             FrameKind kind;
@@ -759,35 +816,150 @@ internal static class StructuredLayoutRenderer
 
             if (!StartLine(atLevel)) return false;
             if (!_writer.Append(kind == FrameKind.ParenSequence ? "(" : "[")) return false;
-            _frames.Push(new Frame
+            var frame = new Frame
             {
                 Items = items,
                 Level = atLevel + 1,
                 Kind = kind,
                 PairRun = kind == FrameKind.ParenSequence && IsCommaPairRun(items, atLevel + 1),
                 CloseComma = closeComma,
-            });
+            };
+            _frames.Push(frame);
+            LinkResumableWalk(frame, parent, index, value);
             return true;
         }
+
+        /// <summary>
+        /// Connects a frame just opened for <paramref name="value"/> (item <paramref name="index"/> of
+        /// <paramref name="parent"/>) with the kept measurement walk. A frame opened for the structure the
+        /// walk is suspended in measures its items from the walk. One opened for an item the walk had
+        /// completed measures its items aside, and so does everything inside it, so the walk stays for the
+        /// item it entered next; opening that entered item, measured or not, moves the walk into it.
+        /// </summary>
+        private void LinkResumableWalk(Frame frame, Frame? parent, int index, Result value)
+        {
+            if (!_resumeMeasurements) return;
+            if (parent is not null)
+            {
+                if (parent.MeasuredAside)
+                {
+                    frame.MeasuredAside = true;
+                    return;
+                }
+
+                if (ReferenceEquals(parent, _resumableFrame))
+                {
+                    if (KeptWalkIsExact && index < _resumable.CompletedItems)
+                    {
+                        frame.MeasuredAside = true;
+                        return;
+                    }
+
+                    _resumableFrame = null;
+                    if (!KeptWalkIsExact || index != _resumable.EnteredChildIndex
+                        || !ReferenceEquals(_resumable.EnteredChild, value))
+                    {
+                        return;
+                    }
+
+                    _resumable.DescendIntoEnteredChild();
+                }
+            }
+
+            if (KeptWalkIsExact && _resumable.IsSuspendedIn(value))
+                _resumableFrame = frame;
+        }
+
+        /// <summary>
+        /// Whether continuing the kept walk computes what fresh walks would: no long string has been
+        /// classified without being cached since it began (such a string is charged on every visit).
+        /// </summary>
+        private bool KeptWalkIsExact
+            => _resumable.IsSuspended && _resumable.Mark == _strings.UncachedClassifications;
 
         /// <summary>
         /// Width-capped inline-fit test: measures through the SAME renderer
         /// that would emit the text, stopping at the remaining line width. A
         /// string leaf longer than the remaining width is refused on length
         /// alone, and one not classified within the work budget does not fit.
-        /// A caller about to write the value asks to keep its text for <see cref="AppendInline"/>.
-        /// Lookahead can test many siblings before the first write and only counts their text.
+        /// This form is lookahead: it can test siblings before the first write,
+        /// only counts their text, and leaves the kept walk alone.
         /// </summary>
-        private bool FitsInline(Result value, int level, int reserve, bool keepText = false)
+        private bool FitsInline(Result value, int level, int reserve)
+        {
+            _measuredInline = null;
+            var budget = (long)_width - ColumnsOf(level) - reserve;
+            return budget >= 0 && MeasureAside(value, budget, keepText: false);
+        }
+
+        /// <summary>
+        /// The inline-fit test of an item about to be written (from the kept text,
+        /// <see cref="AppendInline"/>) or opened: item <paramref name="index"/> of
+        /// <paramref name="parent"/>, or a root row. The answer is the fresh walk's in
+        /// every case. The item a kept walk entered is measured by continuing it; an
+        /// item that walk completed is measured aside, so the walk stays; any other
+        /// item starts a new kept walk. Nested layouts therefore no longer walk the
+        /// same leading text once per level, which at zero indentation (a remaining
+        /// width that does not shrink with depth) cost a full line width per level.
+        /// </summary>
+        private bool FitsToWrite(Result value, int level, int reserve, Frame? parent, int index)
         {
             _measuredInline = null;
             var budget = (long)_width - ColumnsOf(level) - reserve;
             if (budget < 0) return false;
-            _measure.Reset((int)Math.Min(budget, int.MaxValue), keepText);
-            if (!ValueTextRenderer.AppendValue(value, _displayOptions, _strings.Measurement, _measure, ref _valueWalk))
+            if (!_resumeMeasurements || parent is { MeasuredAside: true })
+                return MeasureAside(value, budget, keepText: true);
+
+            bool fits;
+            if (parent is not null && ReferenceEquals(parent, _resumableFrame) && KeptWalkIsExact)
+            {
+                if (index < _resumable.CompletedItems)
+                    return MeasureAside(value, budget, keepText: true);
+
+                if (index == _resumable.EnteredChildIndex && ReferenceEquals(_resumable.EnteredChild, value))
+                {
+                    _resumableFrame = null;
+                    ResumedMeasurements++;
+                    fits = _resumable.MeasureEnteredChild(budget, _displayOptions, _strings.Measurement);
+                }
+                else
+                {
+                    fits = MeasureKept(value, budget);
+                }
+            }
+            else
+            {
+                fits = MeasureKept(value, budget);
+            }
+
+            if (fits)
+            {
+                _measuredInline = value;
+                _measuredResumably = true;
+            }
+
+            return fits;
+        }
+
+        private bool MeasureKept(Result value, long budget)
+        {
+            _resumableFrame = null;
+            return _resumable.Measure(value, budget, _strings.UncachedClassifications, _displayOptions, _strings.Measurement);
+        }
+
+        private bool MeasureAside(Result value, long budget, bool keepText)
+        {
+            var measure = _measure ??= new CappedWidthSink();
+            measure.Reset((int)Math.Min(budget, int.MaxValue), keepText);
+            if (!ValueTextRenderer.AppendValue(value, _displayOptions, _strings.Measurement, measure, ref _valueWalk))
                 return false;
 
-            if (keepText) _measuredInline = value;
+            if (keepText)
+            {
+                _measuredInline = value;
+                _measuredResumably = false;
+            }
+
             return true;
         }
 
@@ -802,7 +974,7 @@ internal static class StructuredLayoutRenderer
         /// </summary>
         private bool AppendInline(Result value)
             => ReferenceEquals(value, _measuredInline)
-                ? _writer.Append(_measure.Text)
+                ? _writer.Append(_measuredResumably ? _resumable.Text : _measure!.Text)
                 : ValueTextRenderer.AppendValue(value, _displayOptions, _strings, _writer, ref _valueWalk);
 
         /// <summary>Ends the previous line (if any) and writes this line's indentation, all charged.</summary>

@@ -28,10 +28,18 @@ internal sealed class RawStringTextPolicy : IStringTextPolicy
 /// <summary>
 /// Formatter-neutral, iterative rendering of KatLang values. Structural
 /// punctuation and atom text have one owner; only string-leaf presentation is
-/// supplied as a strategy.
+/// supplied as a strategy. <see cref="ResumableMeasurement"/> is the same walk in
+/// a width-capped form that layout measurement can continue.
 /// </summary>
-internal static class ValueTextRenderer
+internal static partial class ValueTextRenderer
 {
+    // The structural punctuation of every value walk in this class.
+    private const string SequenceOpen = "(";
+    private const string SequenceClose = ")";
+    private const string ListOpen = "[";
+    private const string ListClose = "]";
+    private const string ItemSeparator = ", ";
+
     /// <summary>
     /// One structure the value walk has entered and will resume: its items, the index of its next
     /// item, and its closing delimiter.
@@ -79,14 +87,14 @@ internal static class ValueTextRenderer
             case Result.Bool flag:
                 return sink.Append(FormatBool(flag.Value));
             case Result.SequenceValue sequence:
-                if (!sink.Append("(")) return false;
+                if (!sink.Append(SequenceOpen)) return false;
                 items = sequence.Items;
-                close = ")";
+                close = SequenceClose;
                 break;
             case Result.ListValue list:
-                if (!sink.Append("[")) return false;
+                if (!sink.Append(ListOpen)) return false;
                 items = list.Items;
-                close = "]";
+                close = ListClose;
                 break;
             case Result.CallReference reference:
                 return AppendCallReference(reference, stringPolicy, sink);
@@ -110,7 +118,7 @@ internal static class ValueTextRenderer
                 continue;
             }
 
-            if (next > 0 && !sink.Append(", ")) return false;
+            if (next > 0 && !sink.Append(ItemSeparator)) return false;
             var child = items[next];
             next++;
 
@@ -126,14 +134,14 @@ internal static class ValueTextRenderer
                     if (!sink.Append(FormatBool(flag.Value))) return false;
                     break;
                 case Result.SequenceValue sequence:
-                    if (!sink.Append("(")) return false;
+                    if (!sink.Append(SequenceOpen)) return false;
                     (suspended ??= new()).Push(new(items, next, close));
-                    (items, next, close) = (sequence.Items, 0, ")");
+                    (items, next, close) = (sequence.Items, 0, SequenceClose);
                     break;
                 case Result.ListValue list:
-                    if (!sink.Append("[")) return false;
+                    if (!sink.Append(ListOpen)) return false;
                     (suspended ??= new()).Push(new(items, next, close));
-                    (items, next, close) = (list.Items, 0, "]");
+                    (items, next, close) = (list.Items, 0, ListClose);
                     break;
                 case Result.CallReference reference:
                     if (!AppendCallReference(reference, stringPolicy, sink)) return false;

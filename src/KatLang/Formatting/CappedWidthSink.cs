@@ -11,18 +11,31 @@ internal sealed class CappedWidthSink : ICapacityDisplaySink
 {
     private const int InitialTextCapacity = 32;
 
+    private long _cap;
     private long _remaining;
     private bool _keepText;
     private char[] _text = [];
     private int _length;
 
+    // Work observation without a per-append cost: code units accepted by earlier measurements,
+    // and those the current one accepted before its first refusal.
+    private long _counted;
+    private long _acceptedBeforeRefusal;
+
     public long RemainingCapacity => Math.Max(_remaining, 0);
+
+    /// <summary>Code units accepted by this sink over all its measurements (work observation).</summary>
+    public long MeasuredCodeUnits => _counted + Accepted;
+
+    private long Accepted => _remaining >= 0 ? _cap - _remaining : _acceptedBeforeRefusal;
 
     /// <summary>The text accepted by the current measurement when requested.</summary>
     public ReadOnlySpan<char> Text => _text.AsSpan(0, _length);
 
     public void Reset(int cap, bool keepText = false)
     {
+        _counted += Accepted;
+        _cap = cap;
         _remaining = cap;
         _keepText = keepText;
         _length = 0;
@@ -49,7 +62,13 @@ internal sealed class CappedWidthSink : ICapacityDisplaySink
     private bool Charge(int length)
     {
         _remaining -= length;
-        return _remaining >= 0;
+        if (_remaining >= 0) return true;
+
+        // A refusal sticks: every later append is refused too. Only the first one records the
+        // accepted length.
+        if (_remaining + length >= 0)
+            _acceptedBeforeRefusal = _cap - (_remaining + length);
+        return false;
     }
 
     /// <summary>
