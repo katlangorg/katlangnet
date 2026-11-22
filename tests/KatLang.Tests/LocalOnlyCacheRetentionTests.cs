@@ -404,8 +404,8 @@ public sealed class LocalOnlyCacheRetentionTests(ITestOutputHelper output)
 }
 
 /// <summary>
-/// The peak-memory guard of identity-partitioned run caches: four <c>reduce</c>s over a callback whose
-/// body has a local-only property may not take much more peak memory than one. Each program runs in a
+/// The peak-memory guard of identity-partitioned run caches: four <c>reduce</c>s of one range over a callback
+/// whose body has a local-only property may not take much more peak memory than one. Each program runs in a
 /// fresh <see cref="SubprocessProbe"/> child on the default engine (<see cref="KatLangEngine.Run"/>),
 /// which reports its peak working set; the parent compares the two. When every finished call's
 /// entry stayed until the run ended, the difference was about 280 MB; a partition now dies with its
@@ -418,8 +418,27 @@ public sealed class LocalOnlyCacheRetentionTests(ITestOutputHelper output)
 /// entries in the former <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey, TValue}"/>,
 /// whose dead entries wait for finalizers, it measured 10.9–11.2 in Debug and 9.9–12.0 in Release on
 /// Windows, and 10.9–11.2 in Debug on Linux — a regression the former 40 MB bound, sized for one weak table
-/// per store (37–43 MB), did not see. 6 MiB leaves at least 3.4 MiB above every prompt-form measurement
-/// and 3.9 MiB below every weak-table one.</para>
+/// per store (37–43 MB), did not see. Against those samples, 6 MiB left at least 3.4 MiB above every
+/// prompt-form measurement and 3.9 MiB below every weak-table one.</para>
+/// <para><b>One range for the run</b> (2026-11-22). Every reduce reads the one range the root property
+/// <c>Xs</c> holds, so the two programs differ only in their calls; the samples above are of the former
+/// program, in which each reduce built its own <c>range(1, 100000)</c>, about 4 MB of atoms and arrays live for
+/// the whole reduce. On GitHub's Linux runners its four − one measured −2.8–1.9 in the 74 validation runs from
+/// 2026-11-17 to 2026-11-22, then 6.4 and 6.5 on runners near 84 MiB and 5.0 on one near 150 MiB, after commits
+/// that add no retention path we could find. Re-measured that day on the current code, in Debug, 129 pairs per
+/// program and table form (ten GitHub-hosted runners — two AMD EPYC 7763 and one 9V74 near 85 MiB, seven Intel
+/// Xeon 6975P-C near 150 MiB — each idle and beside three CPU-bound processes, and an AMD Ryzen 7 7840U under
+/// Windows; the weak-table form restored for the measurement in a scratch build). With the prompt-reclaim
+/// table the former program measured 4.6–6.6 on the AMD machines, so it now fails this bound there, and
+/// −3.2–1.3 on the Intel ones; the shared-range program measured −4.2–4.0, within ±0.5 in all but five pairs,
+/// each beside the CPU-bound processes. With the weak table the former program measured 6.2–19.5 and the
+/// shared-range program 9.0–22.0, at least 12.6 in all but one pair. 6 MiB lies 2.0 MiB above the highest
+/// shared-range pair with the prompt-reclaim table and 3.0 MiB below the lowest with the weak one. With the
+/// prompt-reclaim table the former program's four-reduce child ran three full collections and the
+/// shared-range one none, which supports the explanation: a finished reduce's range waited for a full
+/// collection, sometimes past a later reduce's peak. <see cref="PropertyCachePromptReclaimTests"/> also pins
+/// the table form directly: every run-scoped property cache uses the prompt-reclaim table, and its capacity
+/// stays bounded.</para>
 /// </summary>
 public sealed class LocalOnlyCachePeakMemoryProcessTests(ITestOutputHelper output)
 {
@@ -445,8 +464,9 @@ public sealed class LocalOnlyCachePeakMemoryProcessTests(ITestOutputHelper outpu
             return;
 
         var reduces = int.Parse(Environment.GetEnvironmentVariable(Reduces)!, CultureInfo.InvariantCulture);
-        var source = "F(x) = { V = x + 1\n V * 1 }\nSum(acc, x) = acc + F(x)\n"
-            + string.Join(" + ", Enumerable.Repeat("reduce(range(1, 100000), Sum, 0)", reduces));
+        // Every reduce reads the one range the root property Xs holds for the run (see the class remarks).
+        var source = "F(x) = { V = x + 1\n V * 1 }\nSum(acc, x) = acc + F(x)\nXs = range(1, 100000)\n"
+            + string.Join(" + ", Enumerable.Repeat("reduce(Xs, Sum, 0)", reduces));
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
         // sum over x = 1..100000 of (x + 1), once per reduce
         Assert.Equal((5_000_150_000L * reduces).ToString(CultureInfo.InvariantCulture), success.ToDisplayString());
