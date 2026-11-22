@@ -13,8 +13,20 @@ internal sealed class PropertyBindingIndexCache
 
     // Key the actual list, not an algorithm's record equality or declaration token:
     // wired views share their list, while a with-copy can replace it independently.
-    private Dictionary<IReadOnlyList<Property>, Dictionary<string, Property>>? _indexes;
+    // Name -> the FIRST property of that name, per list, and apart the list's first nameless property.
+    private Dictionary<IReadOnlyList<Property>, (Dictionary<string, Property> Named, Property? Unnamed)>? _indexes;
 
+    /// <summary>
+    /// The first property of <paramref name="properties"/>, of any visibility, named <paramref name="name"/>, or
+    /// null — exactly what the ordered scan for <c>Name == name</c> returns (Lean <c>Algorithm.lookupPropDefAny?</c>).
+    /// A list of at least <see cref="MinimumIndexedPropertyCount"/> properties is indexed once per run, in list
+    /// order, each name keeping its first property; a smaller list is scanned. A host-built list can hold a
+    /// property whose name is null, which the scan compares like any other name: a named query never selects it,
+    /// and a null query selects the first one. The index keeps that property apart, since a dictionary refuses a
+    /// null key (2026-11-22: building the index of such a list threw <see cref="ArgumentNullException"/> from
+    /// <see cref="MinimumIndexedPropertyCount"/> properties on, while the scan served it below). Selection only:
+    /// exposure, the access check, wiring and values stay with the caller.
+    /// </summary>
     internal Property? Lookup(IReadOnlyList<Property> properties, string name)
     {
         if (properties.Count < MinimumIndexedPropertyCount)
@@ -32,13 +44,19 @@ internal sealed class PropertyBindingIndexCache
         _indexes ??= new(ReferenceEqualityComparer.Instance);
         if (!_indexes.TryGetValue(properties, out var index))
         {
-            index = new(properties.Count, StringComparer.Ordinal);
+            index = (new(properties.Count, StringComparer.Ordinal), null);
             foreach (var property in properties)
-                index.TryAdd(property.Name, property);
+            {
+                // Host-built lists can contain a null name. The ordered scan compares it like any other name.
+                if (property.Name is null)
+                    index.Unnamed ??= property;
+                else
+                    index.Named.TryAdd(property.Name, property);
+            }
             _indexes.Add(properties, index);
         }
 
-        return index.GetValueOrDefault(name);
+        return name is null ? index.Unnamed : index.Named.GetValueOrDefault(name);
     }
 
     /// <summary>

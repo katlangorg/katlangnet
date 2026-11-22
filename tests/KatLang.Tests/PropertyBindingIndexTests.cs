@@ -105,6 +105,198 @@ public class PropertyBindingIndexTests
         Assert.Same(first, new PropertyBindingIndexCache().Lookup(properties, "X"));
     }
 
+    // ── Nameless host members across the any-visibility threshold (2026-11-22) ───────────────────
+    // A host-built list can hold a member whose name is null: the front end never builds one, and the
+    // ordered scan compares it like any other name — a named query skips it, a null query selects the
+    // first. Building the index of a list of MinimumIndexedPropertyCount members threw
+    // ArgumentNullException for such a member (Dictionary.TryAdd) while the scan, one member below,
+    // served the same list. The ordered scan (`Linear`) is the authority for the selected member.
+
+    private static readonly int IndexedWidth = PropertyBindingIndexCache.MinimumIndexedPropertyCount;
+
+    // The receiver of the nameless-member tests, padded to `width` members: two nameless members, a
+    // repeated name, the empty name, a member calling the host, and a local-only member requiring an
+    // ancestor parameter `p` that no reading site binds.
+    private static List<Property> NamelessFixture(int width)
+    {
+        List<Property> members =
+        [
+            Constant(null!, 99, isPublic: true),
+            Constant("D", 1),
+            Constant("Valid", 4),
+            Constant(null!, 98),
+            Constant("D", 2),
+            Constant("", 5),
+            new("T", Body([], new Expr.NativeCall("host:tock", []))),
+            Constant("Hidden", 6, exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters) with { RequiredAncestorParameters = ["p"] },
+        ];
+        members.AddRange(Enumerable.Range(0, width - members.Count).Select(i => Constant($"Pad{i}", i)));
+        return members;
+    }
+
+    [Theory]
+    [InlineData(31)]
+    [InlineData(32)]
+    [InlineData(33)]
+    [InlineData(128)]
+    public void NamelessMembers_AreSelectedExactlyAsTheOrderedScanSelects(int width)
+    {
+        // Include a null query with no nameless member, and nameless members first, last and interleaved.
+        var fixture = NamelessFixture(width);
+        Property[] nameless = [Constant(null!, 50), Constant(null!, 51, isPublic: true)];
+        List<Property>[] lists =
+        [
+            fixture,
+            [.. fixture.Select((member, position) => member.Name is null ? Constant($"Named{position}", 0) : member)],
+            [.. fixture.Where(static member => member.Name is not null), .. nameless],
+            [.. fixture.SelectMany((member, position) => position % 5 == 0 ? [nameless[position % 2], member] : new[] { member }).Take(width)],
+        ];
+        string?[] queries = ["Absent", null, "Valid", "D", "", "Pad0", "Hidden", "T", "valid", "Absent", null];
+        foreach (var members in lists)
+        {
+            Assert.Equal(width, members.Count);
+            var observed = new ObservedProperties([.. members]);
+            var lookup = new PropertyBindingIndexCache();
+            foreach (var name in queries.Concat(queries.Reverse()))
+                Assert.Same(Linear(members, name!), lookup.Lookup(observed, name!));
+
+            // Count structural reads before the public lookup consults the same list.
+            if (width >= IndexedWidth)
+                Assert.Equal(width, observed.Reads);
+            else
+                Assert.True(observed.Reads > width);
+
+            foreach (var name in queries)
+            {
+                Assert.Same(LinearPublic(members, name!), lookup.LookupPublic(observed, name!));
+                Assert.Same(Linear(members, name!), lookup.Lookup(observed, name!));
+            }
+        }
+    }
+
+    // The routes of a host-built tree: the public synchronous and asynchronous entry points (the asynchronous one
+    // with a suspending host operation, so it runs the async twin), the generic and optimized evaluators, and the
+    // forced async twin. They must agree exactly; the agreed outcome is returned.
+    private static async Task<string> OnEveryHostRouteAsync(Expr program)
+    {
+        static Result Seven() => new Result.Atom((Decimal128)7);
+        var synchronous = HostOperations.Create(HostOperation.Create("tock", (_, _) => Seven()));
+        var suspending = HostOperations.Create(HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Seven(); }));
+        static string Of(EvalResult<Result> result)
+            => result.IsError ? "err " + OpenProviderIndexing.Describe(result.Error) : "ok " + SixRouteAgreement.Neutral(result.Value);
+
+        string[] outcomes =
+        [
+            Of(Evaluator.Run(program, synchronous, limits: null, randomSeed: null, CancellationToken.None)),
+            Of(await Evaluator.RunAsync(program, suspending, limits: null, randomSeed: null, CancellationToken.None)),
+            Of(ToResult(Evaluator.RunCountedObserved(program, enableOptimizations: false, hostOperations: synchronous).Result)),
+            Of(ToResult(Evaluator.RunCountedObserved(program, enableOptimizations: true, hostOperations: synchronous).Result)),
+            Of(ToResult((await Evaluator.RunCountedObservedAsync(program,
+                zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: suspending)).Result)),
+        ];
+        Assert.All(outcomes, outcome => Assert.Equal(outcomes[0], outcome));
+        return outcomes[0];
+    }
+
+    private static EvalResult<Result> ToResult(EvalResult<Evaluator.CountedResult> counted)
+        => counted.IsError ? counted.Error : EvalResult<Result>.Ok(counted.Value.Value);
+
+    // A root holding the receiver `R` and reading the members `names` of it, one output row each.
+    private static Expr ReadsOfReceiver(IReadOnlyList<Property> members, params string?[] names)
+        => new Expr.AlgorithmExpr(Body([new Property("R", Body(members))],
+            [.. names.Select(static name => (Expr)new Expr.DotCall(new Expr.Resolve("R"), name!))]));
+
+    [Fact]
+    public async Task AHostReceiverHoldingNamelessMembers_IsReadAlikeOnBothSidesOfTheThreshold()
+    {
+        // The same receiver one member below the threshold (the ordered scan, the authority) and at it (the
+        // index), read on every host route: a named hit, the first of a repeated name, the empty name and a
+        // host-calling member as one run; a miss, a local-only member and the first nameless member as runs of
+        // their own. Selection only: the miss still falls back to the lexical extension call, and the access
+        // check still refuses `Hidden`.
+        string?[][] reads = [["Valid", "D", "", "T"], ["Absent"], ["Hidden"], [null]];
+        var scanned = new List<string>();
+        var indexed = new List<string>();
+        foreach (var names in reads)
+        {
+            var members = NamelessFixture(IndexedWidth - 1);
+            var program = ReadsOfReceiver(members, names);
+            scanned.Add(await OnEveryHostRouteAsync(program));
+            members.Add(Constant("PaddingAtThreshold", 0));
+            indexed.Add(await OnEveryHostRouteAsync(program));
+        }
+
+        Assert.Equal(scanned, indexed);
+        Assert.Equal("ok S[4, 1, 5, 7]", scanned[0]);
+        Assert.StartsWith("err ", scanned[1], StringComparison.Ordinal);
+        Assert.Contains("| UnknownName: Property 'Absent' was not found on `R`", scanned[1], StringComparison.Ordinal);
+        Assert.StartsWith("err ", scanned[2], StringComparison.Ordinal);
+        Assert.Contains("| LocalOnlyProperty: ", scanned[2], StringComparison.Ordinal);
+        Assert.Equal("ok 99", scanned[3]);
+    }
+
+    [Theory]
+    [InlineData(31)]
+    [InlineData(32)]
+    public void TheRunsSelectionsOfANamelessReceiver_AreTheListsOwnMembers(int width)
+    {
+        // From the threshold on, the run's index is the list's: selections after the run read no member of it,
+        // and each is the very member the ordered scan selects, the null query's included.
+        var members = NamelessFixture(width);
+        var observed = new ObservedProperties([.. members]);
+        var (result, budget) = Evaluator.RunCountedObserved(ReadsOfReceiver(observed, "Valid", "D", "Valid"));
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+        Assert.Equal(new Decimal128[] { 4, 1, 4 }, result.Value.Value.ToHostAtoms());
+        var reads = observed.Reads;
+        foreach (var name in new[] { "Valid", "D", "", "Absent", null })
+            Assert.Same(Linear(members, name!), budget.PropertyBindings.Lookup(observed, name!));
+        // Below the threshold each selection scans up to its member: 3, 2, 6, every member for the miss, and 1.
+        Assert.Equal(width >= IndexedWidth ? reads : reads + 3 + 2 + 6 + width + 1, observed.Reads);
+    }
+
+    [Theory]
+    [InlineData(31)]
+    [InlineData(32)]
+    public async Task AProgramRootHoldingANamelessMember_IsReadAlikeOnBothSidesOfTheThreshold(int width)
+    {
+        // The program root's own level, read through the public entry points, which admit a host-built root holding
+        // a nameless member: a named read skips it, the empty name is an ordinary name, and the null read selects it.
+        List<Property> members = [Constant(null!, 99), Constant("Valid", 4), Constant("", 5)];
+        members.AddRange(Enumerable.Range(0, width - members.Count).Select(i => Constant($"Pad{i}", i)));
+        var root = new Expr.AlgorithmExpr(Body(members, new Expr.Resolve("Valid"), new Expr.Resolve(""), new Expr.Resolve(null!)));
+
+        Assert.Equal("ok S[4, 5, 99]", await OnEveryHostRouteAsync(root));
+        var flat = Evaluator.RunFlat(root);
+        Assert.True(flat.IsOk, flat.IsError ? flat.Error.ToString() : "");
+        Assert.Equal(new Decimal128[] { 4, 5, 99 }, flat.Value);
+        var flatAsync = await Evaluator.RunFlatAsync(root);
+        Assert.True(flatAsync.IsOk, flatAsync.IsError ? flatAsync.Error.ToString() : "");
+        Assert.Equal(new Decimal128[] { 4, 5, 99 }, flatAsync.Value);
+    }
+
+    [Fact]
+    public async Task HostEditsAroundNamelessMembers_BetweenRuns_AreObservedOnBothSidesOfTheThreshold()
+    {
+        // One host-built program per width, its receiver's list edited between runs: each run selects from the list
+        // it reads, so a nameless member given a name, a named one made nameless, and a list grown by one member
+        // (past the threshold, from below it) all show through the same tree.
+        foreach (var width in new[] { IndexedWidth - 1, IndexedWidth })
+        {
+            var members = NamelessFixture(width);
+            var program = ReadsOfReceiver(members, "Valid", "D");
+            Task<string> Read() => OnEveryHostRouteAsync(program);
+
+            Assert.Equal("ok S[4, 1]", await Read());
+            members[0] = Constant("Valid", 3); // Same count: the first nameless member is now the first `Valid`.
+            Assert.Equal("ok S[3, 1]", await Read());
+            members[0] = Constant(null!, 97);
+            members[1] = Constant(null!, 96); // Same count: the first `D` loses its name, so the second one is selected.
+            Assert.Equal("ok S[4, 2]", await Read());
+            members.Insert(0, Constant("D", 8));
+            Assert.Equal("ok S[4, 8]", await Read());
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
