@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace KatLang;
 
 /// <summary>
@@ -63,6 +65,18 @@ internal readonly record struct DotMemberReceiver(Algorithm Algorithm, string? Q
 /// function of the captured set — the unique closest candidate, or none — so
 /// deferring it and enumerating the set in the interner's order change no
 /// suggestion.</para>
+///
+/// <para>BOUNDED RENDERING. A failed run's message can carry the notes of many
+/// bodies (lifting gathers every callee's promotions into one signature), so the
+/// renderer evaluates suggestions under ONE allowance per message
+/// (<see cref="MessageSuggestionAllowance"/>, <see cref="MaxCandidatesPerMessage"/>
+/// candidates), and each comparison computes only the diagonal band the accepted
+/// distance can reach, stopping as soon as no alignment can stay within it
+/// (<see cref="BoundedOptimalStringAlignmentDistance(ReadOnlySpan{char}, ReadOnlySpan{char}, int, Span{int}, ref int)"/>,
+/// at most <see cref="MaxDistanceCellsPerCandidate"/> cells). Both bounds are
+/// deterministic, and the kernel returns exactly what the full table
+/// (<see cref="OptimalStringAlignmentDistance(string, string)"/>, the reference)
+/// gives for every distance a policy accepts.</para>
 /// </summary>
 internal static class NameSuggestions
 {
@@ -71,6 +85,34 @@ internal static class NameSuggestions
 
     /// <summary>Above this many distinct visible candidates no suggestion is attempted (diagnostic-only work bound; realistic scopes stay far below it).</summary>
     internal const int MaxCandidates = 512;
+
+    /// <summary>
+    /// Suggestion contexts one body captures at most: the detector's inferred-parameter recorder and its closed-body
+    /// check each capture no further context once this many of a body's names have tried (best-effort diagnostics;
+    /// the provenance itself stays complete).
+    /// </summary>
+    internal const int MaxSuggestionsPerBody = 64;
+
+    /// <summary>
+    /// The candidates one rendered message may compare across all of its notes (<see cref="MessageSuggestionAllowance"/>):
+    /// exactly what one body's captures can hold, <see cref="MaxSuggestionsPerBody"/> × <see cref="MaxCandidates"/>.
+    /// </summary>
+    internal const int MaxCandidatesPerMessage = MaxSuggestionsPerBody * MaxCandidates;
+
+    /// <summary>Separate allowance for replaying a shared note's receiver confirmations after candidate selection.</summary>
+    internal const int MaxConfirmationsPerMessage = MaxCandidatesPerMessage;
+
+    /// <summary>The widest distance any policy accepts: the member-typo threshold's cap (<see cref="MaxAllowedMemberDistance"/>).</summary>
+    internal const int MaxAcceptedDistance = 3;
+
+    /// <summary>
+    /// Distance cells one candidate comparison computes at most: one band of <c>2k + 1</c> cells per character of the
+    /// written name, for the widest accepted distance <c>k</c> (<see cref="MaxAcceptedDistance"/>).
+    /// </summary>
+    internal const int MaxDistanceCellsPerCandidate = MaxNameLength * (2 * MaxAcceptedDistance + 1);
+
+    /// <summary>The three distance rows a comparison against a suggestible candidate needs.</summary>
+    private const int DistanceRowsLength = 3 * (MaxNameLength + 1);
 
     /// <summary>
     /// Suggests one visible name the unresolved <paramref name="name"/> is a
@@ -97,6 +139,7 @@ internal static class NameSuggestions
     /// parameter names plus every name the elaborated scope can resolve, under
     /// the strict length-scaled threshold.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     internal static NameSuggestion? SelectLexicalName(
         string name,
         IEnumerable<string> candidates,
@@ -106,9 +149,8 @@ internal static class NameSuggestions
         string? best = null;
         var bestDistance = int.MaxValue;
         var bestIsAmbiguous = false;
-        Span<int> previousPrevious = stackalloc int[MaxNameLength + 1];
-        Span<int> previous = stackalloc int[MaxNameLength + 1];
-        Span<int> current = stackalloc int[MaxNameLength + 1];
+        Span<int> rows = stackalloc int[DistanceRowsLength];
+        var cells = 0;
 
         foreach (var candidateName in candidates)
         {
@@ -117,9 +159,8 @@ internal static class NameSuggestions
                 name,
                 candidateName,
                 maxDistance,
-                previousPrevious,
-                previous,
-                current);
+                rows,
+                ref cells);
             if (distance is null)
                 continue;
 
@@ -136,6 +177,7 @@ internal static class NameSuggestions
             }
         }
 
+        observations?.RecordSuggestionDistanceCells(cells);
         return bestIsAmbiguous || best is null
             ? null
             : new NameSuggestion(best);
@@ -152,25 +194,45 @@ internal static class NameSuggestions
         IReadOnlyList<string> members,
         string? qualifier,
         FrontEndTraversalObservations? observations)
+        => SelectReceiverMember(name, new ReceiverMemberSurface([.. members]), qualifier, observations);
+
+    /// <summary>
+    /// <see cref="SelectReceiverMember(string, IReadOnlyList{string}, string?, FrontEndTraversalObservations?)"/> over a
+    /// captured surface, whose members' invariant upper-case spellings (what the policy compares) are derived once per
+    /// surface and shared by every evaluation over it; the written name is cased once per evaluation, and neither is
+    /// cased until a candidate reaches a distance comparison.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    internal static NameSuggestion? SelectReceiverMember(
+        string name,
+        ReceiverMemberSurface members,
+        string? qualifier,
+        FrontEndTraversalObservations? observations)
     {
         var maxDistance = MaxAllowedMemberDistance(name);
         string? best = null;
         var bestDistance = int.MaxValue;
         var bestIsAmbiguous = false;
-        Span<int> previousPrevious = stackalloc int[MaxNameLength + 1];
-        Span<int> previous = stackalloc int[MaxNameLength + 1];
-        Span<int> current = stackalloc int[MaxNameLength + 1];
+        Span<int> rows = stackalloc int[DistanceRowsLength];
+        var cells = 0;
+        string? upperName = null;
+        string[]? upperMembers = null;
+        var names = members.Names;
 
-        foreach (var candidateName in members)
+        for (var index = 0; index < names.Count; index++)
         {
+            var candidateName = names[index];
             observations?.RecordSuggestionCandidateExamined();
             var distance = EffectiveMemberDistance(
                 name,
                 candidateName,
                 maxDistance,
-                previousPrevious,
-                previous,
-                current);
+                ref upperName,
+                ref upperMembers,
+                members,
+                index,
+                rows,
+                ref cells);
             if (distance is null)
                 continue;
 
@@ -187,6 +249,7 @@ internal static class NameSuggestions
             }
         }
 
+        observations?.RecordSuggestionDistanceCells(cells);
         return bestIsAmbiguous || best is null
             ? null
             : new NameSuggestion(best, qualifier, isReceiverMember: true);
@@ -216,7 +279,7 @@ internal static class NameSuggestions
     {
         < 3 => 0,
         <= 4 => 1,
-        _ => Math.Min(3, name.Length / 2),
+        _ => Math.Min(MaxAcceptedDistance, name.Length / 2),
     };
 
     /// <summary>
@@ -231,9 +294,8 @@ internal static class NameSuggestions
         string name,
         string candidate,
         int maxDistance,
-        Span<int> previousPrevious,
-        Span<int> previous,
-        Span<int> current)
+        Span<int> rows,
+        ref int cells)
     {
         // The identical spelling would have resolved; never "suggest" it.
         if (string.Equals(name, candidate, StringComparison.Ordinal))
@@ -245,12 +307,7 @@ internal static class NameSuggestions
         if (maxDistance == 0 || Math.Abs(name.Length - candidate.Length) > maxDistance)
             return null;
 
-        var distance = OptimalStringAlignmentDistance(
-            name,
-            candidate,
-            previousPrevious,
-            previous,
-            current);
+        var distance = BoundedOptimalStringAlignmentDistance(name, candidate, maxDistance, rows, ref cells);
         return distance <= maxDistance ? distance : null;
     }
 
@@ -260,14 +317,20 @@ internal static class NameSuggestions
     /// normally keeps the written initial letter (case-insensitively). Short
     /// names need that safeguard (<c>Min</c> must not suggest <c>Sin</c>), but
     /// a long name with just one edit may have a mistyped or transposed initial.
+    /// The distance compares invariant upper-case spellings: the written name's,
+    /// cased into <paramref name="upperName"/> on first need, and the member's,
+    /// read from the surface's once-derived spellings.
     /// </summary>
     private static int? EffectiveMemberDistance(
         string name,
         string candidate,
         int maxDistance,
-        Span<int> previousPrevious,
-        Span<int> previous,
-        Span<int> current)
+        ref string? upperName,
+        ref string[]? upperMembers,
+        ReceiverMemberSurface members,
+        int index,
+        Span<int> rows,
+        ref int cells)
     {
         if (string.Equals(name, candidate, StringComparison.Ordinal))
             return null;
@@ -281,12 +344,9 @@ internal static class NameSuggestions
             return null;
         }
 
-        var distance = OptimalStringAlignmentDistance(
-            name.ToUpperInvariant(),
-            candidate.ToUpperInvariant(),
-            previousPrevious,
-            previous,
-            current);
+        upperName ??= name.ToUpperInvariant();
+        upperMembers ??= members.UpperInvariantNames;
+        var distance = BoundedOptimalStringAlignmentDistance(upperName, upperMembers[index], maxDistance, rows, ref cells);
         var sameInitial = char.ToUpperInvariant(name[0]) == char.ToUpperInvariant(candidate[0]);
         return distance <= maxDistance
             && (sameInitial || (Math.Min(name.Length, candidate.Length) >= 5 && distance == 1))
@@ -294,9 +354,108 @@ internal static class NameSuggestions
     }
 
     /// <summary>
+    /// The optimal string alignment distance of <paramref name="a"/> and <paramref name="b"/> when it is at most
+    /// <paramref name="maxDistance"/>, and <paramref name="maxDistance"/> + 1 otherwise: exactly
+    /// <c>min(</c><see cref="OptimalStringAlignmentDistance(string, string)"/><c>, maxDistance + 1)</c>, which is all a
+    /// policy reads.
+    ///
+    /// <para>The reference table's cell <c>(i, j)</c> is never below <c>|i - j|</c> (insertions and deletions move off
+    /// the diagonal one unit per edit; substitutions and transpositions stay on it), so only the band
+    /// <c>|i - j| &lt;= maxDistance</c> can stay within the threshold. The band is computed with every value capped at
+    /// <c>maxDistance + 1</c> and every cell outside it read as that cap — capping commutes with the recurrence's
+    /// minimum of non-negative steps, so each band cell is the reference cell, capped. A row whose cells (the column-0
+    /// cell included while it is in the band) all reach the cap ends the computation: every later cell extends an
+    /// alignment through that row, except a transposition, which reads the row before it — but its source
+    /// <c>(i - 1, j - 2)</c> is at least <c>(i, j - 1)</c> minus one (a match or substitution extends it), so it reaches
+    /// the cap too. At most <c>2 * maxDistance + 1</c> cells per character of <paramref name="a"/> are computed;
+    /// <paramref name="cells"/> accumulates their number.</para>
+    ///
+    /// <para><paramref name="rows"/> holds three rows of <c>b.Length + 1</c> cells; nothing outside the written band
+    /// and its two edge cells is read, so stale contents never matter.</para>
+    ///
+    /// <para>This kernel and the two selection loops are compiled fully optimized on first use: they run only when a
+    /// failure renders, often once per process, where unoptimized first-tier code tripled the time of a message that
+    /// spends its whole allowance (implementation-only; a valid program never calls them).</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    internal static int BoundedOptimalStringAlignmentDistance(
+        ReadOnlySpan<char> a,
+        ReadOnlySpan<char> b,
+        int maxDistance,
+        Span<int> rows,
+        ref int cells)
+    {
+        var cap = maxDistance + 1;
+        if (Math.Abs(a.Length - b.Length) > maxDistance)
+            return cap;
+
+        var width = b.Length + 1;
+        var previousPrevious = rows.Slice(0, width);
+        var previous = rows.Slice(width, width);
+        var current = rows.Slice(2 * width, width);
+
+        // Row 0: j insertions, inside the band; the cap just past it.
+        var bandEnd = Math.Min(b.Length, maxDistance);
+        for (var j = 0; j <= bandEnd; j++)
+            previous[j] = j;
+        if (bandEnd < b.Length)
+            previous[bandEnd + 1] = cap;
+
+        for (var i = 1; i <= a.Length; i++)
+        {
+            var low = Math.Max(1, i - maxDistance);
+            var high = Math.Min(b.Length, i + maxDistance);
+
+            // The cell left of the band: column 0 (i deletions) while the band reaches it, else outside the band.
+            var rowMinimum = current[low - 1] = low == 1 ? Math.Min(i, cap) : cap;
+            for (var j = low; j <= high; j++)
+            {
+                var substitutionCost = a[i - 1] == b[j - 1] ? 0 : 1;
+                var value = Math.Min(
+                    Math.Min(previous[j] + 1, current[j - 1] + 1),
+                    previous[j - 1] + substitutionCost);
+
+                if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1])
+                    value = Math.Min(value, previousPrevious[j - 2] + 1);
+
+                if (value > cap)
+                    value = cap;
+                current[j] = value;
+                if (value < rowMinimum)
+                    rowMinimum = value;
+            }
+
+            cells += high - low + 1;
+            if (high < b.Length)
+                current[high + 1] = cap;
+            if (rowMinimum >= cap)
+                return cap;
+
+            var reusable = previousPrevious;
+            previousPrevious = previous;
+            previous = current;
+            current = reusable;
+        }
+
+        return previous[b.Length];
+    }
+
+    /// <summary>
+    /// <see cref="BoundedOptimalStringAlignmentDistance(ReadOnlySpan{char}, ReadOnlySpan{char}, int, Span{int}, ref int)"/>
+    /// with its own rows, reporting the cells it computed (any operand length).
+    /// </summary>
+    internal static int BoundedOptimalStringAlignmentDistance(string a, string b, int maxDistance, out int cells)
+    {
+        cells = 0;
+        return BoundedOptimalStringAlignmentDistance(a, b, maxDistance, new int[3 * (b.Length + 1)], ref cells);
+    }
+
+    /// <summary>
     /// Optimal string alignment distance (Levenshtein plus adjacent
-    /// transposition counted as one edit), ordinal over UTF-16 code units.
-    /// Operand lengths are bounded by <see cref="MaxNameLength"/>.
+    /// transposition counted as one edit), ordinal over UTF-16 code units: the
+    /// full reference table, which the bounded kernel the policies use
+    /// (<see cref="BoundedOptimalStringAlignmentDistance(ReadOnlySpan{char}, ReadOnlySpan{char}, int, Span{int}, ref int)"/>)
+    /// must agree with at every accepted distance.
     /// </summary>
     internal static int OptimalStringAlignmentDistance(string a, string b)
     {
@@ -364,6 +523,13 @@ internal abstract class SuggestionQuery
 {
     /// <summary>The suggestion; a pure function of the captured context, so every evaluation agrees.</summary>
     public abstract NameSuggestion? Evaluate();
+
+    /// <summary>
+    /// The candidates an evaluation compares — its whole work, at most
+    /// <see cref="NameSuggestions.MaxDistanceCellsPerCandidate"/> distance cells each — known without evaluating, so a
+    /// rendered message can charge it deterministically (<see cref="MessageSuggestionAllowance"/>).
+    /// </summary>
+    internal abstract int CandidateCount { get; }
 }
 
 /// <summary>The lexical policy over the bound and resolvable names a promotion's scope sees.</summary>
@@ -375,6 +541,8 @@ internal sealed class LexicalSuggestionQuery(
     /// <summary>The captured candidates: every bound parameter name and every name the scope resolves.</summary>
     internal CanonicalNameSet Candidates => candidates;
 
+    internal override int CandidateCount => candidates.Count;
+
     public override NameSuggestion? Evaluate()
         => NameSuggestions.SelectLexicalName(name, candidates.Names, observations);
 }
@@ -382,15 +550,91 @@ internal sealed class LexicalSuggestionQuery(
 /// <summary>The member policy over a statically known receiver's declared members.</summary>
 internal sealed class ReceiverMemberSuggestionQuery(
     string name,
-    string[] members,
+    ReceiverMemberSurface members,
     string? qualifier,
     FrontEndTraversalObservations? observations) : SuggestionQuery
 {
     /// <summary>The captured candidates: the receiver's suggestible members, first occurrence each.</summary>
-    internal IReadOnlyList<string> Members => members;
+    internal IReadOnlyList<string> Members => members.Names;
+
+    internal override int CandidateCount => members.Names.Count;
 
     public override NameSuggestion? Evaluate()
         => NameSuggestions.SelectReceiverMember(name, members, qualifier, observations);
+}
+
+/// <summary>
+/// A statically known receiver's member suggestion surface: its suggestible members in declaration order, first
+/// occurrence each, shared by every promotion against that receiver in one detection run. The member policy compares
+/// invariant upper-case spellings; they are derived once per surface, on the first evaluation that compares a member,
+/// and published atomically — a pure function of the names, so concurrent first evaluations agree and the surface
+/// stays observationally immutable. It holds strings only, never the receiver's AST.
+/// </summary>
+internal sealed class ReceiverMemberSurface(string[] names)
+{
+    private string[]? _upperInvariantNames;
+
+    /// <summary>The members, in declaration order.</summary>
+    internal IReadOnlyList<string> Names => names;
+
+    /// <summary>Each member's <see cref="string.ToUpperInvariant()"/> spelling, index for index.</summary>
+    internal string[] UpperInvariantNames
+    {
+        get
+        {
+            if (Volatile.Read(ref _upperInvariantNames) is { } known)
+                return known;
+
+            lock (this)
+            {
+                if (_upperInvariantNames is null)
+                {
+                    var upper = new string[names.Length];
+                    for (var index = 0; index < names.Length; index++)
+                        upper[index] = names[index].ToUpperInvariant();
+                    Volatile.Write(ref _upperInvariantNames, upper);
+                }
+                return _upperInvariantNames;
+            }
+        }
+    }
+}
+
+/// <summary>
+/// ONE rendered message's allowance of near-miss suggestion work: the notes of an
+/// <see cref="EvalError.UnresolvedImplicitParams"/> or <see cref="EvalError.ArityMismatch"/> message offer their
+/// suggestions, in the message's note order, while each note's whole captured candidate count
+/// (<see cref="ImplicitParameterProvenance.SuggestionCandidateCount"/>) still fits in what the message has left of
+/// <see cref="NameSuggestions.MaxCandidatesPerMessage"/>; a note that does not fit renders as a note without a suggestion
+/// and charges nothing, and a later note that fits is still offered. A note is charged whether or not its suggestion was
+/// already computed (by an earlier rendering or a direct read), so the rendered text is a function of the message alone —
+/// never of rendering order, threads or memoization — and every rendering of one error agrees. The work a message
+/// performs is therefore at most <see cref="NameSuggestions.MaxCandidatesPerMessage"/> candidate comparisons of at most
+/// <see cref="NameSuggestions.MaxDistanceCellsPerCandidate"/> distance cells each.
+///
+/// <para>A shared note can also carry many receiver confirmations. They fit independently under
+/// <see cref="NameSuggestions.MaxConfirmationsPerMessage"/> so one candidate cannot trigger unbounded revalidation.</para>
+/// </summary>
+internal struct MessageSuggestionAllowance()
+{
+    private int _remainingCandidates = NameSuggestions.MaxCandidatesPerMessage;
+    private int _remainingConfirmations = NameSuggestions.MaxConfirmationsPerMessage;
+
+    /// <summary>
+    /// The suggestion <paramref name="note"/> renders with in this message: its suggestion when its candidate count fits
+    /// in the allowance (charged), otherwise none.
+    /// </summary>
+    internal string? SuggestedName(ImplicitParameterProvenance note)
+    {
+        var candidates = note.SuggestionCandidateCount;
+        var confirmations = note.SuggestionConfirmationCount;
+        if (candidates == 0 || candidates > _remainingCandidates || confirmations > _remainingConfirmations)
+            return null;
+
+        _remainingCandidates -= candidates;
+        _remainingConfirmations -= confirmations;
+        return note.SuggestedName;
+    }
 }
 
 /// <summary>
@@ -432,7 +676,7 @@ internal sealed class SuggestionContexts(FrontEndTraversalObservations? observat
     private readonly Dictionary<ElaboratedPropertyScope, ScopeNames> _scopeNames = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Algorithm, CanonicalNameSet> _publicMembers = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ProviderTargets, (CanonicalNameSet Provided, CanonicalNameSet Unique)> _providedNames = [];
-    private readonly Dictionary<Algorithm, string[]?> _receiverMembers = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Algorithm, ReceiverMemberSurface?> _receiverMembers = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// The suggestion context of promoting <paramref name="name"/> in <paramref name="scope"/> under
@@ -453,7 +697,7 @@ internal sealed class SuggestionContexts(FrontEndTraversalObservations? observat
         {
             // Beyond the work bound, or with only unsuggestible declarations, the receiver still
             // declares members: the apparent member access is not answered lexically.
-            return ReceiverMembers(member.Algorithm) is { Length: > 0 } members
+            return ReceiverMembers(member.Algorithm) is { Names.Count: > 0 } members
                 ? new ReceiverMemberSuggestionQuery(name, members, member.Qualifier, observations)
                 : null;
         }
@@ -474,8 +718,9 @@ internal sealed class SuggestionContexts(FrontEndTraversalObservations? observat
     /// A receiver's suggestible members in declaration order, first occurrence each, or <c>null</c>
     /// when a suggestible declaration remains once <see cref="NameSuggestions.MaxCandidates"/>
     /// distinct members are collected (the work bound: the surface is then not searched at all).
+    /// One surface per receiver, so its promotions share its once-derived casing.
     /// </summary>
-    private string[]? ReceiverMembers(Algorithm receiver)
+    private ReceiverMemberSurface? ReceiverMembers(Algorithm receiver)
     {
         if (_receiverMembers.TryGetValue(receiver, out var known))
             return known;
@@ -498,7 +743,7 @@ internal sealed class SuggestionContexts(FrontEndTraversalObservations? observat
                 members.Add(property.Name);
         }
 
-        known = bounded ? [.. members] : null;
+        known = bounded ? new ReceiverMemberSurface([.. members]) : null;
         _receiverMembers.Add(receiver, known);
         return known;
     }

@@ -417,16 +417,36 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordNameSetOperationStep()
         => NameSetOperationSteps = checked(NameSetOperationSteps + 1);
 
+    private long _suggestionCandidatesExamined;
+    private long _suggestionDistanceCells;
+
     /// <summary>
     /// Candidate names a near-miss suggestion query compared against its unresolved name
     /// (<see cref="SuggestionQuery.Evaluate"/>). A promotion captures only the canonical candidate
     /// context; the comparison runs when a diagnostic actually renders the suggestion, so a valid
     /// program that never renders one records none, however many names it promotes.
     /// </summary>
-    public long SuggestionCandidatesExamined { get; private set; }
+    public long SuggestionCandidatesExamined => Interlocked.Read(ref _suggestionCandidatesExamined);
 
     internal void RecordSuggestionCandidateExamined()
-        => SuggestionCandidatesExamined = checked(SuggestionCandidatesExamined + 1);
+        => Interlocked.Increment(ref _suggestionCandidatesExamined);
+
+    /// <summary>
+    /// Distance-table cells those comparisons computed: the banded, early-exiting kernel
+    /// (<see cref="NameSuggestions.BoundedOptimalStringAlignmentDistance(ReadOnlySpan{char}, ReadOnlySpan{char}, int, Span{int}, ref int)"/>)
+    /// computes at most <see cref="NameSuggestions.MaxDistanceCellsPerCandidate"/> per examined candidate, and none for a
+    /// candidate a case-insensitive spelling, the threshold or the length difference already decides.
+    /// </summary>
+    public long SuggestionDistanceCells => Interlocked.Read(ref _suggestionDistanceCells);
+
+    /// <summary>Test callback at completion of a suggestion comparison loop, including the final one of a message.</summary>
+    internal Action? SuggestionCompared { get; init; }
+
+    internal void RecordSuggestionDistanceCells(int cells)
+    {
+        Interlocked.Add(ref _suggestionDistanceCells, cells);
+        SuggestionCompared?.Invoke();
+    }
 
     /// <summary>Exposure rewrite expansions (<c>PropertyExposureResolver.RewriteExpr</c>).</summary>
     public long ExposureRewriteExpansions { get; private set; }

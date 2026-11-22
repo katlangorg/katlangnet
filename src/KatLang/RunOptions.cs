@@ -26,6 +26,9 @@ namespace KatLang;
 /// </summary>
 public sealed class RunOptions
 {
+    /// <summary>Operation-scoped test observer for front-end work and the diagnostic queries it captures.</summary>
+    internal FrontEndTraversalObservations? TraversalObservations { get; init; }
+
     /// <summary>
     /// The largest valid count of displayed decimal places: the upper bound of the inclusive range
     /// <c>0</c> through <c>99</c> shared by every decimal-places setting — a program root's own
@@ -193,7 +196,8 @@ public sealed class RunOptions
     /// any opt-in budget being configured, so cancellation also works under default
     /// <see cref="EvaluationLimits"/>. A final observation before completion prevents
     /// cancellation requested by the last evaluator operation from being missed; host
-    /// flattening entry points also observe after their bounded atom projection.
+    /// flattening entry points also observe after their bounded atom projection. Failure
+    /// projection observes the token at each inferred-parameter note and after rendering.
     /// <para>Separate from <see cref="SourceProcessingCancellationToken"/>, which
     /// governs parsing and module loading only. A host that wants one stop signal for
     /// the whole pipeline passes the same token to both properties.</para>

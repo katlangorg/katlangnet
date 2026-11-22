@@ -35,7 +35,7 @@ internal static class FrontEndPipeline
     /// <see cref="Parser.ParseAsync"/>).
     /// </exception>
     internal static FrontEndResult Process(string source, RunOptions? options)
-        => Process(source, options, comparisonObservations: null);
+        => Process(source, options, comparisonObservations: null, options?.TraversalObservations);
 
     /// <summary>
     /// <see cref="Process(string, RunOptions?)"/> with a passive clause-family duplicate-detection
@@ -75,7 +75,7 @@ internal static class FrontEndPipeline
     /// no work is scheduled elsewhere and nothing yields artificially.
     /// </summary>
     internal static ValueTask<FrontEndResult> ProcessAsync(string source, RunOptions? options)
-        => ProcessAsync(source, options, comparisonObservations: null);
+        => ProcessAsync(source, options, comparisonObservations: null, options?.TraversalObservations);
 
     /// <summary>
     /// <see cref="ProcessAsync(string, RunOptions?)"/> with a passive clause-family

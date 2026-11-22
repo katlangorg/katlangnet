@@ -327,6 +327,8 @@ public class Fe1HostileReviewTests
 
     private sealed class Query : SuggestionQuery
     {
+        internal override int CandidateCount => 1;
+
         public override NameSuggestion Evaluate() => new("Double", "Lib", isReceiverMember: true);
     }
 

@@ -17,6 +17,8 @@ public class DeferredSuggestionProtocolTests
 
         public int Evaluations => Volatile.Read(ref _evaluations);
 
+        internal override int CandidateCount => 1;
+
         public override NameSuggestion? Evaluate()
         {
             Interlocked.Increment(ref _evaluations);

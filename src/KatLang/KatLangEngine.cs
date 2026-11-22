@@ -791,7 +791,9 @@ public static class KatLangEngine
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled during front-end processing,
-    /// or the configured evaluation token was cancelled before or during evaluation.
+    /// or the configured evaluation token was cancelled before or during evaluation or the
+    /// projection of its outcome (the host-atom walk, or the bounded near-miss suggestions a
+    /// failure renders); the exception carries that token.
     /// Cancellation is never converted into a <see cref="RunResult"/>.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
@@ -1057,7 +1059,10 @@ public static class KatLangEngine
     /// Shared post-evaluation projection for <see cref="Run"/> and
     /// <see cref="RunAsync"/>: error classification, display-configuration resolution
     /// (<see cref="ResolveDisplayOptions"/>), bounded host-atom projection, and success
-    /// construction — byte-for-byte the former inline body of <see cref="Run"/>.
+    /// construction — byte-for-byte the former inline body of <see cref="Run"/>. Every
+    /// failure it projects is rendered under the run's evaluation token
+    /// (<see cref="KatLangError.FromRunEvalError"/>): a failure's near-miss suggestions are
+    /// bounded per message and observe that token, as the host-atom walk does.
     /// </summary>
     private static RunResult ProjectEvaluationOutcome(
         FrontEndResult frontEndResult,
@@ -1070,7 +1075,7 @@ public static class KatLangEngine
     {
         if (evalResult.IsError)
         {
-            var evalError = KatLangError.FromEvalError(evalResult.Error);
+            var evalError = KatLangError.FromRunEvalError(evalResult.Error, evaluationCancellationToken);
             if (IsTopLevelNoProgramOutput(evalResult.Error))
                 return new RunResult.NoProgramOutput(frontEndResult.ElaboratedRoot, evalError)
                 {
@@ -1097,7 +1102,7 @@ public static class KatLangEngine
         {
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                SafeReadOnlyCollection.Over([KatLangError.FromEvalError(displayOptionsResult.Error)]))
+                SafeReadOnlyCollection.Over([KatLangError.FromRunEvalError(displayOptionsResult.Error, evaluationCancellationToken)]))
             {
                 DisplayOptions = diagnosticDisplayOptions,
             };
@@ -1122,9 +1127,9 @@ public static class KatLangEngine
             // span (none). RunFlat keeps its bare error, which hosts may type-match.
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                SafeReadOnlyCollection.Over([KatLangError.FromEvalError(new EvalError.WithContext(
+                SafeReadOnlyCollection.Over([KatLangError.FromRunEvalError(new EvalError.WithContext(
                     HostAtomProjectionContext,
-                    new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L)))]))
+                    new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L)), evaluationCancellationToken)]))
             {
                 DisplayOptions = diagnosticDisplayOptions,
             };
@@ -1221,7 +1226,8 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// The configured source-processing token was cancelled during front-end processing,
-    /// or the configured evaluation token was cancelled before or during evaluation —
+    /// or the configured evaluation token was cancelled before or during evaluation or the
+    /// projection of its outcome (see <see cref="Run(string, RunOptions?)"/>) —
     /// cancellation propagates and is never wrapped in a <see cref="KatLangException"/>.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>

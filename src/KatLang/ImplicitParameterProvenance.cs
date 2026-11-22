@@ -51,7 +51,9 @@ namespace KatLang;
 /// order they were made, exactly the value eager computation followed by those
 /// in-place operations produced. The first read publishes that pure result
 /// atomically, so concurrent first readers compute the same value and the note
-/// stays observationally immutable after publication.</para>
+/// stays observationally immutable after publication. A rendered message reads
+/// it only within its allowance (<see cref="MessageSuggestionAllowance"/>, charged
+/// by <see cref="SuggestionCandidateCount"/> and <see cref="SuggestionConfirmationCount"/>).</para>
 /// </summary>
 internal sealed class ImplicitParameterProvenance
 {
@@ -108,6 +110,18 @@ internal sealed class ImplicitParameterProvenance
     internal bool IsSuggestionEvaluated => Volatile.Read(ref _suggestion) is not null;
 
     /// <summary>
+    /// The candidates a first read of <see cref="SuggestedName"/> compares: the captured query's
+    /// <see cref="SuggestionQuery.CandidateCount"/>, or 0 when there is nothing to compare (no query, or a
+    /// suggestion the finalizer dropped). Fixed once the note is published and the same whether or not the
+    /// suggestion has been computed, so a rendered message charges it deterministically
+    /// (<see cref="MessageSuggestionAllowance"/>).
+    /// </summary>
+    internal int SuggestionCandidateCount => _suggestionDropped ? 0 : _suggestionQuery?.CandidateCount ?? 0;
+
+    /// <summary>Receiver membership checks a first read can perform after it finds a candidate.</summary>
+    internal int SuggestionConfirmationCount => _confirmedReceivers?.Count ?? 0;
+
+    /// <summary>
     /// Present when the promoted name was the member of a dot edge whose
     /// receiver is statically known and provably lacks that member, so the
     /// edge's lexical fallback was the selected resolution and its unresolved
@@ -130,10 +144,14 @@ internal sealed class ImplicitParameterProvenance
             if (!_suggestionDropped)
             {
                 suggestion = _suggestionQuery?.Evaluate();
-                if (_confirmedReceivers is not null)
+                if (suggestion is not null && _confirmedReceivers is not null)
                 {
                     foreach (var receiver in _confirmedReceivers)
-                        suggestion = suggestion?.RestrictToReceiver(receiver);
+                    {
+                        suggestion = suggestion.RestrictToReceiver(receiver);
+                        if (suggestion is null)
+                            break;
+                    }
                 }
             }
 
@@ -349,9 +367,7 @@ internal sealed class NameSuggestion
         if (!IsReceiverMember)
             return receiverMembers.Count == 0 ? this : null;
 
-        return receiverMembers.Contains(Name)
-            ? new NameSuggestion(Name, ReceiverQualifier, isReceiverMember: true)
-            : null;
+        return receiverMembers.Contains(Name) ? this : null;
     }
 
     internal string EligibleName

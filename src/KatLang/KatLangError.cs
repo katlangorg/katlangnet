@@ -107,9 +107,22 @@ public sealed class KatLangError
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="error"/> is null.</exception>
     public static KatLangError FromEvalError(EvalError error)
+        => FromRunEvalError(error, CancellationToken.None);
+
+    /// <summary>
+    /// <see cref="FromEvalError"/> on a run's outcome projection (<c>KatLangEngine.ProjectEvaluationOutcome</c>): the same
+    /// error and message, with <paramref name="evaluationCancellationToken"/> — the run's evaluation token — observed before
+    /// rendering, at each inferred note and after rendering, including cancellation during the final suggestion.
+    /// </summary>
+    internal static KatLangError FromRunEvalError(EvalError error, CancellationToken evaluationCancellationToken)
     {
         ArgumentNullException.ThrowIfNull(error);
-        return new(AppendOutputSpreadNotes(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error), error.Span, error.Code, error);
+        evaluationCancellationToken.ThrowIfCancellationRequested();
+        var message = AppendOutputSpreadNotes(
+            AppendInferredImplicitParameterNotes(FormatEvalError(error), error, renderFragment: null, evaluationCancellationToken),
+            error);
+        evaluationCancellationToken.ThrowIfCancellationRequested();
+        return new(message, error.Span, error.Code, error);
     }
 
     /// <summary>
@@ -159,7 +172,10 @@ public sealed class KatLangError
     {
         var message = Source is { } source
             ? AppendOutputSpreadNotes(
-                AppendInferredImplicitParameterNotes(FormatEvalError(source, renderFragment), source, renderFragment), source, renderFragment)
+                AppendInferredImplicitParameterNotes(
+                    FormatEvalError(source, renderFragment), source, renderFragment, CancellationToken.None),
+                source,
+                renderFragment)
             : _diagnostic is { } diagnostic ? diagnostic.RenderMessage(renderFragment) : renderFragment(Message);
         return Span is { } span ? $"[{span.Start.Line}:{span.Start.Column}] {message}" : message;
     }
@@ -274,14 +290,19 @@ public sealed class KatLangError
     /// property/value-access phrasing hides the names entirely, so every note
     /// is rendered with its origin location.</item>
     /// </list>
+    /// Suggestions are read under ONE <see cref="MessageSuggestionAllowance"/> for the message, in note order: a note
+    /// past it is rendered exactly as a note without a suggestion, so the work is bounded per message and the text
+    /// is the same for every rendering of the error. <paramref name="cancellationToken"/> is the run's evaluation
+    /// token on the run's projection path, observed before each suggestion read, and none elsewhere.
     /// </summary>
     private static string AppendInferredImplicitParameterNotes(
-        string message, EvalError error, Func<string, string>? renderFragment = null)
+        string message, EvalError error, Func<string, string>? renderFragment, CancellationToken cancellationToken)
     {
         var terminal = error;
         while (terminal is EvalError.WithContext withContext)
             terminal = withContext.Inner;
 
+        var allowance = new MessageSuggestionAllowance();
         switch (terminal)
         {
             case EvalError.UnresolvedImplicitParams { InferredImplicitParameters: { Count: > 0 } notes } unresolved:
@@ -292,6 +313,7 @@ public sealed class KatLangError
                     var builder = new System.Text.StringBuilder(message);
                     foreach (var note in notes)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (note.CycleOrigin is { } cycle)
                         {
                             builder.Append('\n').Append(RenderFragment(FormatCycleOrigin(note.Name, cycle), renderFragment));
@@ -304,7 +326,7 @@ public sealed class KatLangError
                             builder.Append(RenderFragment(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, note.Span), renderFragment));
                         }
 
-                        if (note.SuggestedName is not { } suggestion || !(suggested ??= []).Add($"{note.Name}\n{suggestion}"))
+                        if (allowance.SuggestedName(note) is not { } suggestion || !(suggested ??= []).Add($"{note.Name}\n{suggestion}"))
                             continue;
 
                         builder.Append('\n');
@@ -322,13 +344,15 @@ public sealed class KatLangError
                     var builder = new System.Text.StringBuilder(message);
                     foreach (var note in notes)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         if (note.CycleOrigin is { } cycle)
                         {
                             builder.Append('\n').Append(RenderFragment(FormatCycleOrigin(note.Name, cycle), renderFragment));
                             continue;
                         }
 
-                        if (signatureShown && note.SuggestedName is null && note.DotMemberOrigin is null)
+                        var suggestedName = allowance.SuggestedName(note);
+                        if (signatureShown && suggestedName is null && note.DotMemberOrigin is null)
                             continue;
 
                         builder.Append('\n');
@@ -341,7 +365,7 @@ public sealed class KatLangError
                             builder.Append(RenderFragment(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, at: null), renderFragment));
                         }
 
-                        if (note.SuggestedName is { } suggestion)
+                        if (suggestedName is { } suggestion)
                             builder.Append('\n').Append(RenderFragment($"Did you mean '{suggestion}'?", renderFragment));
                     }
 

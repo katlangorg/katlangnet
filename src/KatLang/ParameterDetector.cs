@@ -685,7 +685,7 @@ internal static class ParameterDetector
         // Suggestions are best-effort diagnostics. Provenance remains complete,
         // but cap edit-distance/candidate enumeration for adversarial bodies
         // containing hundreds of distinct unresolved names.
-        private const int MaxSuggestionAttempts = 64;
+        private const int MaxSuggestionAttempts = NameSuggestions.MaxSuggestionsPerBody;
 
         private readonly ElaboratedPropertyScope _scope;
         private readonly ParameterOwnership _parameters;
@@ -1941,7 +1941,7 @@ internal static class ParameterDetector
     /// The suggestion work bound of one closed-body check, as the inferred-parameter recorder's: a
     /// body with more undeclared member names than this offers no further suggestion.
     /// </summary>
-    private const int MaxClosedBodySuggestionAttempts = 64;
+    private const int MaxClosedBodySuggestionAttempts = NameSuggestions.MaxSuggestionsPerBody;
 
     /// <summary>
     /// Whether one of the fallbacks a closed body's check left to the runtime receiver (MAY) names something the check
