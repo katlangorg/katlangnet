@@ -798,7 +798,8 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry,
+    /// <see cref="RunOptions.AllowAnyHost"/> is set together with <see cref="RunOptions.AllowedHosts"/>, or
     /// <see cref="RunOptions.MinDecimalPlaces"/> exceeds <see cref="RunOptions.MaxDecimalPlaces"/>
     /// (the host's own pair is inconsistent; thrown before any parsing or evaluation, never
     /// reported as a source diagnostic).
@@ -935,7 +936,8 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry,
+    /// <see cref="RunOptions.AllowAnyHost"/> is set together with <see cref="RunOptions.AllowedHosts"/>, or
     /// <see cref="RunOptions.MinDecimalPlaces"/> exceeds <see cref="RunOptions.MaxDecimalPlaces"/>.
     /// </exception>
     /// <remarks>
@@ -1232,7 +1234,8 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry,
+    /// <see cref="RunOptions.AllowAnyHost"/> is set together with <see cref="RunOptions.AllowedHosts"/>, or
     /// <see cref="RunOptions.MinDecimalPlaces"/> exceeds <see cref="RunOptions.MaxDecimalPlaces"/>.
     /// </exception>
     /// <exception cref="InvalidOperationException">

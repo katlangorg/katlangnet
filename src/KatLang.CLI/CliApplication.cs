@@ -13,8 +13,13 @@ namespace KatLang.CLI;
 /// evaluation, diagnostics, and result formatting all belong to the KatLang
 /// package, and so does the code-link format (<see cref="CodeLink"/>): the CLI
 /// words its results (<see cref="CodeLinkText"/>). <c>source</c> is the one
-/// command with no program to process: it writes the program a code link
-/// carries and stops.</para>
+/// command with no program to process: it writes the program a link names
+/// and stops.</para>
+///
+/// <para>The source of <c>run</c>, <c>check</c> and <c>source</c> comes from ONE place,
+/// <see cref="TryReadProgramAsync"/>: a file, a code link decoded offline, or a program URL
+/// downloaded as text (<see cref="ProgramOperand"/> tells them apart). Only how the text is
+/// obtained differs; once it is in hand the command is the same for all three.</para>
 /// </summary>
 public static class CliApplication
 {
@@ -29,17 +34,44 @@ public static class CliApplication
     /// </summary>
     public const int FailureExitCode = 1;
 
-    /// <param name="loadingDownloader">
-    /// The downloader used when <c>--allow-loading</c> is supplied. Defaults to
-    /// the HTTP transport; tests substitute their own. It is NEVER handed to
-    /// KatLang without the flag, which is what keeps loading disabled by default.
+    /// <param name="downloader">
+    /// What the CLI downloads through: the program a URL operand names and, when
+    /// <c>--allow-loading</c> is supplied, every module. Defaults to the guarded HTTP
+    /// transport (<see cref="HttpSourceDownloader"/>); tests substitute their own, so they
+    /// never touch the network. It is NEVER handed to KatLang without the flag, which is what
+    /// keeps loading disabled by default, and it is never called for a file or a code link.
     /// </param>
-    public static async Task<int> RunAsync(
+    public static Task<int> RunAsync(
         IReadOnlyList<string> args,
         TextWriter output,
         TextWriter error,
-        Func<string, CancellationToken, ValueTask<string>>? loadingDownloader = null,
+        Func<string, CancellationToken, ValueTask<string>>? downloader = null,
         CancellationToken cancellationToken = default)
+        => RunAsync(
+            args,
+            output,
+            error,
+            downloader is null ? CliDownloads.Production : CliDownloads.Through(downloader),
+            cancellationToken);
+
+    /// <summary>
+    /// The same command line with every download made through <paramref name="transport"/>: a
+    /// test's own instance of the real downloader, so its rules run in the test.
+    /// </summary>
+    internal static Task<int> RunAsync(
+        IReadOnlyList<string> args,
+        TextWriter output,
+        TextWriter error,
+        HttpSourceDownloader transport,
+        CancellationToken cancellationToken = default)
+        => RunAsync(args, output, error, CliDownloads.Through(transport), cancellationToken);
+
+    private static async Task<int> RunAsync(
+        IReadOnlyList<string> args,
+        TextWriter output,
+        TextWriter error,
+        CliDownloads downloads,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(args);
         ArgumentNullException.ThrowIfNull(output);
@@ -51,8 +83,9 @@ public static class CliApplication
 
         // With --code-link, the program text, recorded once the command has it and before the
         // command runs, so that the link line follows whatever happens next: output,
-        // diagnostics, a cancellation, or an unexpected error. A usage or file error stops the
-        // command before it has a source, and so before there is a link.
+        // diagnostics, a cancellation, or an unexpected error. A usage error, or a file or
+        // link that cannot be read, stops the command before it has a source, and so before
+        // there is a link.
         string? linkedSource = null;
         int exitCode;
         try
@@ -78,9 +111,6 @@ public static class CliApplication
                 case CliCommandKind.Version:
                     output.WriteLine(HelpText.VersionLine());
                     return SuccessExitCode;
-
-                case CliCommandKind.Source:
-                    return WriteLinkedProgram(invocation.Argument, output, diagnostics);
             }
 
             string source;
@@ -90,16 +120,20 @@ public static class CliApplication
             }
             else
             {
-                var fileRead = await TryReadSourceFileAsync(
-                    invocation.Argument,
+                var read = await TryReadProgramAsync(
+                    invocation,
                     diagnostics,
+                    downloads,
                     cancellationToken).ConfigureAwait(false);
 
-                if (!fileRead.Success)
+                if (!read.Success)
                     return FailureExitCode;
 
-                source = fileRead.Source;
+                source = read.Source;
             }
+
+            if (invocation.Kind == CliCommandKind.Source)
+                return WriteProgram(source, output, diagnostics);
 
             if (invocation.Options.CodeLink)
                 linkedSource = source;
@@ -109,7 +143,7 @@ public static class CliApplication
                 source,
                 output,
                 diagnostics,
-                loadingDownloader,
+                downloads.Module,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -138,14 +172,17 @@ public static class CliApplication
         string source,
         TextWriter output,
         DiagnosticWriter error,
-        Func<string, CancellationToken, ValueTask<string>>? loadingDownloader,
+        Func<string, CancellationToken, ValueTask<string>> moduleDownloader,
         CancellationToken cancellationToken)
     {
         // The ONE place the command options map onto the KatLang package. With
-        // --allow-loading, KatLang gets a downloader and resolves load /
-        // open '<url>' under its own host and module policy; without it,
-        // DownloadCode stays null and KatLang itself rejects loading source with
-        // a diagnostic. The evaluation options (run/eval only; the parser refused
+        // --allow-loading, KatLang gets the CLI's downloader and admits a module on ANY host
+        // (RunOptions.AllowAnyHost): its own checks of a load / open '<url>' target stay —
+        // HTTPS, no user information, a valid host name or IP literal — and which ADDRESS a
+        // host may be at is the downloader's rule (public addresses only; see
+        // HttpSourceDownloader). Without the flag, DownloadCode stays null and KatLang itself
+        // rejects loading source with a diagnostic: a plain run never contacts a host a
+        // program names. The evaluation options (run/eval only; the parser refused
         // them for check) are KatLang's own: --random-seed is RunOptions.RandomSeed,
         // and --min-decimal-places / --max-decimal-places are RunOptions.MinDecimalPlaces /
         // RunOptions.MaxDecimalPlaces, the host decimal-places settings that KatLang
@@ -156,9 +193,8 @@ public static class CliApplication
         // configuration.
         var options = new RunOptions
         {
-            DownloadCode = invocation.Options.AllowLoading
-                ? loadingDownloader ?? HttpSourceDownloader.Shared.DownloadAsync
-                : null,
+            DownloadCode = invocation.Options.AllowLoading ? moduleDownloader : null,
+            AllowAnyHost = invocation.Options.AllowLoading,
             RandomSeed = invocation.Options.RandomSeed,
             MinDecimalPlaces = invocation.Options.MinDecimalPlaces,
             MaxDecimalPlaces = invocation.Options.MaxDecimalPlaces,
@@ -211,9 +247,10 @@ public static class CliApplication
                     return FailureExitCode;
                 }
 
-                // The package's canonical display form, unmodified: program output is
-                // stdout, outside the stderr diagnostic policy.
-                output.WriteLine(rendering.Text);
+                // The package's canonical display form: program output is stdout, outside
+                // the stderr diagnostic policy. The one thing the CLI decides is an unpaired
+                // surrogate, which no byte encoding of stdout can represent (see WellFormed).
+                output.WriteLine(WellFormed(rendering.Text));
                 return SuccessExitCode;
 
             case RunResult.NoProgramOutput:
@@ -284,39 +321,129 @@ public static class CliApplication
     }
 
     /// <summary>
-    /// <c>source</c>: the program the code link <paramref name="link"/> carries, written to
-    /// stdout EXACTLY — every code unit as the link carries it, control characters included,
-    /// and no line break added — so that redirecting stdout to a file reproduces the program
-    /// byte for byte as UTF-8. Nothing is parsed or run. The link is read exactly as given
-    /// (<see cref="CodeLink.DecodeLink"/>), with nothing trimmed.
+    /// <c>source</c>: the program a link names, written to stdout EXACTLY — every code unit as
+    /// it was read, control characters included, and no line break added — so that redirecting
+    /// stdout to a file reproduces the program byte for byte as UTF-8. Nothing is parsed or run.
     ///
-    /// <para>A link that carries no program is not a usage error (the command line was valid):
-    /// one line on stderr says why, nothing is written to stdout, and the command fails. So
-    /// does a program with an unpaired surrogate, which a code link can carry and UTF-8 cannot:
-    /// an encoder would write U+FFFD in its place, and the file would not be the program.</para>
+    /// <para>A program with an unpaired surrogate, which a code link can carry and UTF-8
+    /// cannot, is not printed: an encoder would write U+FFFD in its place, and the file would
+    /// not be the program. One line on stderr says so, nothing is written to stdout, and the
+    /// command fails.</para>
     /// </summary>
-    private static int WriteLinkedProgram(string link, TextWriter output, DiagnosticWriter error)
+    private static int WriteProgram(string source, TextWriter output, DiagnosticWriter error)
+    {
+        if (IndexOfUnpairedSurrogate(source, 0) >= 0)
+        {
+            error.WriteLine(
+                $"{CommandLine.ProgramName}: cannot print the program: " +
+                "it contains an unpaired surrogate, which UTF-8 cannot represent.");
+            return FailureExitCode;
+        }
+
+        // The program itself, outside the stderr diagnostic policy like all program
+        // output, and unlike it not a line: nothing is appended.
+        output.Write(source);
+        return SuccessExitCode;
+    }
+
+    /// <summary>
+    /// The index, from <paramref name="start"/>, of the first surrogate code unit of
+    /// <paramref name="text"/> that is not half of a pair — a high one not followed by a low
+    /// one, or a low one not preceded by a high one — or -1.
+    /// </summary>
+    private static int IndexOfUnpairedSurrogate(string text, int start)
+    {
+        for (var i = start; i < text.Length; i++)
+        {
+            if (!char.IsSurrogate(text[i]))
+                continue;
+
+            if (!char.IsHighSurrogate(text[i]) || i + 1 == text.Length || !char.IsLowSurrogate(text[i + 1]))
+                return i;
+
+            i++;
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Program output as stdout can carry it: <paramref name="text"/> with every unpaired
+    /// surrogate code unit replaced by U+FFFD REPLACEMENT CHARACTER. A program can hold one —
+    /// a code link carries a program's code units exactly, and <c>run</c> evaluates it as it
+    /// is, as the Playground does — and a string value can then put it in an output row. No
+    /// byte encoding of stdout represents it, so the CLI writes the substitute every UTF-8
+    /// encoder writes instead of leaving the choice to whichever encoder stdout has (a legacy
+    /// code page would write a question mark). The program's VALUE is unchanged: only this
+    /// rendering substitutes. Well-formed text, which is nearly all output, is returned as the
+    /// same instance. Diagnostics need no such rule: the stderr channel already shows an
+    /// unpaired surrogate as a visible escape (<see cref="DiagnosticWriter"/>).
+    /// </summary>
+    internal static string WellFormed(string text)
+    {
+        var index = IndexOfUnpairedSurrogate(text, 0);
+        if (index < 0)
+            return text;
+
+        var builder = new System.Text.StringBuilder(text.Length);
+        var copied = 0;
+        do
+        {
+            builder.Append(text, copied, index - copied).Append((char)0xFFFD);
+            copied = index + 1;
+            index = IndexOfUnpairedSurrogate(text, copied);
+        }
+        while (index >= 0);
+
+        return builder.Append(text, copied, text.Length - copied).ToString();
+    }
+
+    /// <summary>
+    /// The source of <c>run</c>, <c>check</c> and <c>source</c>, whatever the operand names: a
+    /// file, a code link or a program URL (<see cref="ProgramOperand.Classify"/>). On failure
+    /// one line has been written to stderr, and nothing else: no source was read, so the
+    /// command stops with no output, no usage hint, and no <c>katlang-link:</c> line.
+    /// </summary>
+    private static async Task<(bool Success, string Source)> TryReadProgramAsync(
+        CliInvocation invocation,
+        DiagnosticWriter error,
+        CliDownloads downloads,
+        CancellationToken cancellationToken)
+    {
+        var operand = invocation.Argument;
+        switch (ProgramOperand.Classify(invocation.Kind, operand))
+        {
+            case ProgramOperandKind.CodeLink:
+                return TryReadCodeLink(operand, error);
+
+            case ProgramOperandKind.ProgramUrl:
+                return await TryDownloadProgramAsync(operand, error, downloads.Program, cancellationToken)
+                    .ConfigureAwait(false);
+
+            default:
+                return await TryReadSourceFileAsync(operand, error, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// A code link: the program is in the link, so it is decoded here, offline — the network
+    /// is never touched. The link is read exactly as given (<see cref="CodeLink.DecodeLink"/>),
+    /// with nothing trimmed or percent-decoded, and the program is exactly what it carries, as
+    /// UTF-16 code units: nothing is stripped, so a leading U+FEFF and every line break stay,
+    /// as the Playground runs it. A link that carries no program is not a usage error (the
+    /// command line was valid): one line on stderr says why.
+    /// </summary>
+    private static (bool Success, string Source) TryReadCodeLink(string link, DiagnosticWriter error)
     {
         switch (CodeLink.DecodeLink(link))
         {
             case CodeLinkDecoding.Program program:
-                if (HasUnpairedSurrogate(program.Source))
-                {
-                    error.WriteLine(
-                        $"{CommandLine.ProgramName}: cannot print the program: " +
-                        "it contains an unpaired surrogate, which UTF-8 cannot represent.");
-                    return FailureExitCode;
-                }
-
-                // The program itself, outside the stderr diagnostic policy like all program
-                // output, and unlike it not a line: nothing is appended.
-                output.Write(program.Source);
-                return SuccessExitCode;
+                return (true, program.Source);
 
             case CodeLinkDecoding.Refused refused:
                 error.WriteLine(
                     $"{CommandLine.ProgramName}: invalid code link: {CodeLinkText.RefusalReason(refused.Reason)}");
-                return FailureExitCode;
+                return (false, string.Empty);
 
             default:
                 throw new InvalidOperationException("Unknown KatLang CodeLinkDecoding variant.");
@@ -324,23 +451,65 @@ public static class CliApplication
     }
 
     /// <summary>
-    /// Whether <paramref name="text"/> has a surrogate code unit that is not half of a pair: a
-    /// high one not followed by a low one, or a low one not preceded by a high one.
+    /// A program URL: the text at <see cref="ProgramUrl.DownloadAddress"/>, fetched through
+    /// the CLI's downloader and its guardrails. Naming the address as the operand is the
+    /// request to download it, so no option is needed; only a module a program names needs
+    /// <c>--allow-loading</c>. Every failure is one exact line
+    /// (<see cref="DownloadFailureLine"/>).
     /// </summary>
-    private static bool HasUnpairedSurrogate(string text)
+    private static async Task<(bool Success, string Source)> TryDownloadProgramAsync(
+        string link,
+        DiagnosticWriter error,
+        Func<string, CancellationToken, ValueTask<string>> download,
+        CancellationToken cancellationToken)
     {
-        for (var i = 0; i < text.Length; i++)
+        string? text = null;
+        Exception? failure = null;
+        try
         {
-            if (!char.IsSurrogate(text[i]))
-                continue;
-
-            if (!char.IsHighSurrogate(text[i]) || i + 1 == text.Length || !char.IsLowSurrogate(text[i + 1]))
-                return true;
-
-            i++;
+            text = await download(ProgramUrl.DownloadAddress(link), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // Everything but the caller's own cancellation is a failed download.
+            failure = ex;
         }
 
-        return false;
+        if (text is not null)
+            return (true, text);
+
+        error.WriteLine(DownloadFailureLine(link, failure));
+        return (false, string.Empty);
+    }
+
+    /// <summary>
+    /// The ONE wording of a program URL that gave no program. The link is quoted as given
+    /// (<see cref="ProgramUrl.Echo"/>), so a shared program's page is named as the user wrote
+    /// it, not as the raw-code address that was downloaded:
+    /// <list type="bullet">
+    ///   <item><c>katlang: not found: '&lt;link&gt;'.</c> for a <c>404</c> — for a shared
+    ///   program: private, unshared or unknown;</item>
+    ///   <item><c>katlang: not KatLang source: '&lt;link&gt;' returned &lt;what&gt;.</c> for a response
+    ///   that is not served as source text;</item>
+    ///   <item><c>katlang: cannot download '&lt;link&gt;': &lt;reason&gt;</c> for everything else, with
+    ///   the downloader's own sentence (<see cref="DownloadException"/>).</item>
+    /// </list>
+    /// </summary>
+    internal static string DownloadFailureLine(string link, Exception? failure)
+    {
+        var quoted = ProgramUrl.Echo(link);
+        return failure switch
+        {
+            DownloadException { Failure: DownloadFailure.UnexpectedStatus, StatusCode: System.Net.HttpStatusCode.NotFound }
+                => $"{CommandLine.ProgramName}: not found: '{quoted}'.",
+            DownloadException { Failure: DownloadFailure.NotKatLangSource } refused
+                => $"{CommandLine.ProgramName}: not KatLang source: '{quoted}' returned {refused.Returned}.",
+            DownloadException refused
+                => $"{CommandLine.ProgramName}: cannot download '{quoted}': {refused.Message}",
+
+            // Not the CLI's downloader (a substitute one): its text is not the CLI's to print.
+            _ => $"{CommandLine.ProgramName}: cannot download '{quoted}': the download failed.",
+        };
     }
 
     private static async Task<(bool Success, string Source)> TryReadSourceFileAsync(
@@ -390,4 +559,27 @@ public static class CliApplication
 
     internal static void WriteUnexpectedError(Exception exception, TextWriter error)
         => new DiagnosticWriter(error).WriteUnexpectedError(exception);
+}
+
+/// <summary>
+/// What the CLI downloads through, as two functions of one downloader: the program a URL
+/// operand names, and a module. Production's are the two entry points of the ONE guarded
+/// transport, <see cref="HttpSourceDownloader.Shared"/>, which is not created until a command
+/// actually downloads.
+/// </summary>
+internal readonly record struct CliDownloads(
+    Func<string, CancellationToken, ValueTask<string>> Program,
+    Func<string, CancellationToken, ValueTask<string>> Module)
+{
+    public static CliDownloads Production { get; } = new(
+        static (url, cancellationToken) => HttpSourceDownloader.Shared.DownloadProgramAsync(url, cancellationToken),
+        static (url, cancellationToken) => HttpSourceDownloader.Shared.DownloadAsync(url, cancellationToken));
+
+    /// <summary>Both kinds through one instance of the real downloader.</summary>
+    public static CliDownloads Through(HttpSourceDownloader transport)
+        => new(transport.DownloadProgramAsync, transport.DownloadAsync);
+
+    /// <summary>Both kinds through one substitute function (address to text), which applies no rule of its own.</summary>
+    public static CliDownloads Through(Func<string, CancellationToken, ValueTask<string>> downloader)
+        => new(downloader, downloader);
 }

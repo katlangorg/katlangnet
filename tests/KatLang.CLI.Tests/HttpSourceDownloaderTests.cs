@@ -9,7 +9,8 @@ namespace KatLang.CLI.Tests;
 /// The shipped CLI transport's own policies (<see cref="HttpSourceDownloader"/>):
 /// the response-body byte ceiling, the whole-download deadline, and how each
 /// failure reaches KatLang — a failed fetch for the transport's refusals and
-/// timeouts, a cancellation only for the caller's own token. Real loopback
+/// timeouts (each a <see cref="DownloadException"/> in the CLI's own words), a
+/// cancellation only for the caller's own token. Real loopback
 /// sockets cover the transport-level behaviors (stalls, trickles, endless and
 /// over-declared bodies); scripted handlers cover byte-exact boundaries,
 /// decoding, consumption accounting, and disposal, where a real socket's
@@ -136,10 +137,10 @@ public sealed class HttpSourceDownloaderTests
         var content = ScriptedContent.Bytes(body, declaredLength ? body.Length : null, writeSize: 1);
         using var transport = Transport(64, handler: ScriptedHandler.Serving(content));
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
-        Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, exception.HttpRequestError);
+        Assert.Equal(DownloadFailure.TooLarge, exception.Failure);
         Assert.Contains("64-byte limit", exception.Message);
         if (declaredLength)
         {
@@ -174,9 +175,9 @@ public sealed class HttpSourceDownloaderTests
 
         using (var transport = Transport(module.Length, handler: ScriptedHandler.Serving(ScriptedContent.Bytes(bytes))))
         {
-            var exception = await Assert.ThrowsAsync<HttpRequestException>(
+            var exception = await Assert.ThrowsAsync<DownloadException>(
                 () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
-            Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, exception.HttpRequestError);
+            Assert.Equal(DownloadFailure.TooLarge, exception.Failure);
         }
     }
 
@@ -242,17 +243,18 @@ public sealed class HttpSourceDownloaderTests
     [Theory]
     [InlineData("windows-1252")]
     [InlineData("no-such-charset")]
-    public async Task Download_UnsupportedCharset_FailsExactlyAsTheUnboundedReadDid(string charset)
+    public async Task Download_UnsupportedCharset_IsRefusedInTheCliOwnWords(string charset)
     {
-        // Pre-existing HttpContent.ReadAsStringAsync behavior, pinned so bounded buffering is
-        // shown not to change decoding failures; KatLang reports it as a failed fetch.
+        // HttpContent.ReadAsStringAsync has no decoder for the named character set; the
+        // transport words that refusal itself, and KatLang reports it as a failed fetch.
         var content = ScriptedContent.Bytes(Encoding.ASCII.GetBytes("V = 1"), charset: charset);
         using var transport = Transport(64, handler: ScriptedHandler.Serving(content));
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
-        Assert.Contains("character set", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(DownloadFailure.UnsupportedCharacterSet, exception.Failure);
+        Assert.Equal("the response names a character set that is not supported.", exception.Message);
         Assert.True(content.Disposed);
     }
 
@@ -269,10 +271,10 @@ public sealed class HttpSourceDownloaderTests
         var content = ScriptedContent.Endless(writeSize: 4096, declaredLength: declared);
         using var transport = Transport(64 * 1024, handler: ScriptedHandler.Serving(content));
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
-        Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, exception.HttpRequestError);
+        Assert.Equal(DownloadFailure.TooLarge, exception.Failure);
         Assert.Contains($"Content-Length of {declared} bytes", exception.Message);
         Assert.Equal(0, content.SerializeCalls);
         Assert.Equal(0, content.BytesAttempted);
@@ -298,10 +300,10 @@ public sealed class HttpSourceDownloaderTests
         });
         using var transport = Transport(64 * 1024);
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
-        Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, exception.HttpRequestError);
+        Assert.Equal(DownloadFailure.TooLarge, exception.Failure);
         Assert.Contains($"Content-Length of {declared} bytes", exception.Message);
         // The refusal closed the connection instead of taking the declared body.
         await Guarded(server.ClientDisconnected);
@@ -315,10 +317,10 @@ public sealed class HttpSourceDownloaderTests
         var content = ScriptedContent.Endless(writeSize);
         using var transport = Transport(ceiling, handler: ScriptedHandler.Serving(content));
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
-        Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, exception.HttpRequestError);
+        Assert.Equal(DownloadFailure.TooLarge, exception.Failure);
         Assert.Contains($"{ceiling}-byte limit", exception.Message);
         // Everything up to the ceiling was accepted; the write that would cross it was
         // refused, so consumption is the ceiling plus at most one write, never more.
@@ -334,9 +336,9 @@ public sealed class HttpSourceDownloaderTests
         // bytes. This pins the buffer's write limit, not a claim about real HTTP framing.
         var content = ScriptedContent.Endless(writeSize: 8, declaredLength: 1);
         using var transport = Transport(64, handler: ScriptedHandler.Serving(content));
-        var error = await Assert.ThrowsAsync<HttpRequestException>(
+        var error = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
-        Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, error.HttpRequestError);
+        Assert.Equal(DownloadFailure.TooLarge, error.Failure);
         Assert.Equal(64, content.BytesWritten);
         Assert.Equal(72, content.BytesAttempted);
         Assert.True(content.Disposed);
@@ -365,8 +367,8 @@ public sealed class HttpSourceDownloaderTests
         if (length == 64)
             Assert.Equal(new string('x', length), await Guarded(download));
         else
-            Assert.Equal(HttpRequestError.ConfigurationLimitExceeded,
-                (await Assert.ThrowsAsync<HttpRequestException>(() => Guarded(download))).HttpRequestError);
+            Assert.Equal(DownloadFailure.TooLarge,
+                (await Assert.ThrowsAsync<DownloadException>(() => Guarded(download))).Failure);
     }
 
     [Fact]
@@ -390,10 +392,10 @@ public sealed class HttpSourceDownloaderTests
         });
         using var transport = Transport(ceiling);
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
-        Assert.Equal(HttpRequestError.ConfigurationLimitExceeded, exception.HttpRequestError);
+        Assert.Equal(DownloadFailure.TooLarge, exception.Failure);
         Assert.Contains($"{ceiling}-byte limit", exception.Message);
         await Guarded(server.ClientDisconnected);
     }
@@ -428,7 +430,7 @@ public sealed class HttpSourceDownloaderTests
         using var transport = Transport(64 * 1024, ShortDeadline);
         var clock = Stopwatch.StartNew();
 
-        var exception = await Assert.ThrowsAsync<TimeoutException>(
+        var exception = await ThrowsDeadlineAsync(
             () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
         Assert.Contains("did not complete within 1.5 seconds", exception.Message);
@@ -455,7 +457,7 @@ public sealed class HttpSourceDownloaderTests
         });
         using var transport = Transport(64 * 1024, ShortDeadline);
 
-        await Assert.ThrowsAsync<TimeoutException>(
+        await ThrowsDeadlineAsync(
             () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
         await Guarded(server.ClientDisconnected);
@@ -469,7 +471,7 @@ public sealed class HttpSourceDownloaderTests
         await using var server = new LoopbackHttpServer(connection => connection.WaitForClientToDisconnectAsync());
         using var transport = Transport(64 * 1024, ShortDeadline);
 
-        await Assert.ThrowsAsync<TimeoutException>(
+        await ThrowsDeadlineAsync(
             () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
         await Guarded(server.ClientDisconnected);
@@ -484,7 +486,7 @@ public sealed class HttpSourceDownloaderTests
         var handler = ScriptedHandler.NeverResponding(requestStarted);
         using var transport = Transport(64, ShortDeadline, handler);
 
-        await Assert.ThrowsAsync<TimeoutException>(
+        await ThrowsDeadlineAsync(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
         Assert.True(requestStarted.Task.IsCompletedSuccessfully);
@@ -497,7 +499,7 @@ public sealed class HttpSourceDownloaderTests
         var content = ScriptedContent.Stalled();
         using var transport = Transport(64, ShortDeadline, ScriptedHandler.Serving(content));
 
-        await Assert.ThrowsAsync<TimeoutException>(
+        await ThrowsDeadlineAsync(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
         Assert.True(content.BodyStarted.Task.IsCompletedSuccessfully);
@@ -572,7 +574,7 @@ public sealed class HttpSourceDownloaderTests
 
         await using (var oversized = new LoopbackHttpServer(() => LoopbackHttpServer.Ok(new string('x', 65))))
         {
-            await Assert.ThrowsAsync<HttpRequestException>(
+            await Assert.ThrowsAsync<DownloadException>(
                 () => Guarded(transport.DownloadAsync(oversized.Url("127.0.0.1"), CancellationToken.None).AsTask()));
         }
 
@@ -582,7 +584,7 @@ public sealed class HttpSourceDownloaderTests
             await connection.WaitForClientToDisconnectAsync();
         }))
         {
-            await Assert.ThrowsAsync<TimeoutException>(
+            await ThrowsDeadlineAsync(
                 () => Guarded(transport.DownloadAsync(stalled.Url("127.0.0.1"), CancellationToken.None).AsTask()));
         }
 
@@ -778,10 +780,13 @@ public sealed class HttpSourceDownloaderTests
             $"HTTP/1.1 {status} Redirect\r\nLocation: {destination.Url("localhost")}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         using var transport = Transport(64 * 1024, ShortDeadline);
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(origin.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
-        Assert.Contains("redirects are not allowed", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(DownloadFailure.Redirect, exception.Failure);
+        Assert.Equal(
+            $"the server responded with a redirect (HTTP status {status}), and redirects are not allowed.",
+            exception.Message);
         Assert.Equal(1, origin.RequestCount);
         Assert.Equal(0, destination.RequestCount);
     }
@@ -794,10 +799,10 @@ public sealed class HttpSourceDownloaderTests
     {
         var content = ScriptedContent.Endless(8, declaredLength: long.MaxValue);
         using var transport = Transport(64, handler: ScriptedHandler.Serving(content, status));
-        var error = await Assert.ThrowsAsync<HttpRequestException>(
+        var error = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
         Assert.Equal(status, error.StatusCode);
-        Assert.NotEqual(HttpRequestError.ConfigurationLimitExceeded, error.HttpRequestError);
+        Assert.NotEqual(DownloadFailure.TooLarge, error.Failure);
         Assert.Equal(0, content.SerializeCalls);
         Assert.True(content.Disposed);
     }
@@ -810,18 +815,19 @@ public sealed class HttpSourceDownloaderTests
     [InlineData(HttpStatusCode.PartialContent)]
     public async Task Download_SuccessStatusOtherThan200_IsNotAModule_AndItsBodyIsNotRead(HttpStatusCode status)
     {
-        // #13: only 200 OK carries a module; a 204 used to become an empty module and a 206 a
+        // #13: only 200 OK carries source; a 204 used to become an empty module and a 206 a
         // partial one. The refusal is the CLI's own wording.
         var content = ScriptedContent.Endless(8, declaredLength: long.MaxValue);
         using var transport = Transport(64, handler: ScriptedHandler.Serving(content, status));
 
-        var error = await Assert.ThrowsAsync<HttpRequestException>(
+        var error = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
 
         Assert.Equal(status, error.StatusCode);
         Assert.Equal(
-            $"The server responded with HTTP status {(int)status}; only 200 (OK) is accepted for a KatLang module.",
+            $"the server responded with HTTP status {(int)status}; only 200 (OK) is accepted.",
             error.Message);
+        Assert.Equal(DownloadFailure.UnexpectedStatus, error.Failure);
         Assert.Equal(0, content.SerializeCalls);
         Assert.True(content.Disposed);
     }
@@ -841,7 +847,7 @@ public sealed class HttpSourceDownloaderTests
             () => $"HTTP/1.1 {status} {planted}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         using var transport = Transport(64 * 1024, ShortDeadline);
 
-        var error = await Assert.ThrowsAsync<HttpRequestException>(
+        var error = await Assert.ThrowsAsync<DownloadException>(
             () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
         Assert.Equal((HttpStatusCode)status, error.StatusCode);
@@ -869,20 +875,38 @@ public sealed class HttpSourceDownloaderTests
     }
 
     [Fact]
-    public async Task Download_SendsNoCredentials_EvenForAUrlCarryingUserInformation_OverRealTransport()
+    public async Task Download_RefusesAUrlCarryingUserInformation_BeforeAnyRequest_OverRealTransport()
     {
-        // KatLang refuses user information before any transport is called; independently, the
-        // transport configures no credentials and never turns URL user information into an
-        // Authorization header.
+        // KatLang refuses user information in a module target before any transport is called;
+        // independently, the transport refuses it for every download, so no request is made
+        // and no credential can become an Authorization header.
         await using var server = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public V = 1"));
         using var transport = Transport(64 * 1024, ShortDeadline);
         var url = server.Url("127.0.0.1").Replace("http://", "http://alice:s3cret@", StringComparison.Ordinal);
 
-        Assert.Equal("public V = 1", await Guarded(transport.DownloadAsync(url, CancellationToken.None).AsTask()));
+        var error = await Assert.ThrowsAsync<DownloadException>(
+            () => Guarded(transport.DownloadAsync(url, CancellationToken.None).AsTask()));
+
+        Assert.Equal(DownloadFailure.UserInformation, error.Failure);
+        Assert.DoesNotContain("s3cret", error.Message, StringComparison.Ordinal);
+        Assert.Equal(0, server.RequestCount);
+    }
+
+    [Fact]
+    public async Task Download_SendsTheFixedUserAgent_AndNoOtherAmbientHeader_OverRealTransport()
+    {
+        await using var server = new LoopbackHttpServer(() => LoopbackHttpServer.Ok("public V = 1"));
+        using var transport = Transport(64 * 1024, ShortDeadline);
+
+        Assert.Equal("public V = 1", await Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
 
         var head = Assert.IsType<string>(server.RequestHead);
+        Assert.StartsWith("GET /module.kat HTTP/1.1\r\n", head, StringComparison.Ordinal);
+        Assert.Contains($"\r\nUser-Agent: katlang-cli/{HelpText.Version}\r\n", head, StringComparison.Ordinal);
+        Assert.Equal("katlang-cli/" + HelpText.Version, HttpSourceDownloader.UserAgent);
         Assert.DoesNotContain("Authorization", head, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("s3cret", head, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cookie", head, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Accept-Encoding", head, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -892,14 +916,16 @@ public sealed class HttpSourceDownloaderTests
             HttpRequestError.ConnectionError, "scripted connection failure"));
         using (var transport = Transport(64, handler: handler))
         {
-            var error = await Assert.ThrowsAsync<HttpRequestException>(
+            var error = await Assert.ThrowsAsync<DownloadException>(
                 () => Guarded(transport.DownloadAsync(ModuleUrl, CancellationToken.None).AsTask()));
-            Assert.Equal(HttpRequestError.ConnectionError, error.HttpRequestError);
+            Assert.Equal(DownloadFailure.ConnectionFailed, error.Failure);
+            Assert.Equal("the connection failed.", error.Message);
             var result = await Guarded(Cli.InvokeWithDownloaderAsync(transport.DownloadAsync, "eval", LoadingSource, "--allow-loading"));
             Assert.Equal(Failure, result.ExitCode);
             Assert.Equal("", result.Output);
-            Assert.Contains("load: failed to fetch", result.TrimmedError);
-            Assert.Contains("scripted connection failure", result.TrimmedError);
+            // The CLI's own sentence, by the failure's category: never the platform's text.
+            Assert.Contains($"load: failed to fetch '{ModuleUrl}': the connection failed.", result.TrimmedError);
+            Assert.DoesNotContain("scripted connection failure", result.TrimmedError);
         }
         Assert.True(handler.Disposed);
     }
@@ -931,7 +957,7 @@ public sealed class HttpSourceDownloaderTests
         using var transport = Transport(64);
         try
         {
-            await Assert.ThrowsAnyAsync<HttpRequestException>(
+            await Assert.ThrowsAsync<DownloadException>(
                 () => Guarded(transport.DownloadAsync(server.Url("127.0.0.1"), CancellationToken.None).AsTask()));
         }
         finally
@@ -941,11 +967,25 @@ public sealed class HttpSourceDownloaderTests
         }
     }
 
+    /// <summary>
+    /// A transport under test. The loopback fixtures are plain-HTTP servers on 127.0.0.1, which
+    /// the shipped guardrails refuse twice over (HTTPS only, public addresses only), so every
+    /// instance here takes the seam that lets a loopback server stand in for a public HTTPS
+    /// host. The guardrails themselves are the subject of <see cref="DownloadGuardrailTests"/>.
+    /// </summary>
     private static HttpSourceDownloader Transport(
         long maxResponseBodyBytes,
         TimeSpan? deadline = null,
         HttpMessageHandler? handler = null)
-        => new(maxResponseBodyBytes, deadline ?? LongDeadline, handler);
+        => new(maxResponseBodyBytes, deadline ?? LongDeadline, handler, DownloadSeam.LoopbackStandsInForPublic);
+
+    /// <summary>The transport's own deadline: a failed download, worded by the CLI, never a cancellation.</summary>
+    private static async Task<DownloadException> ThrowsDeadlineAsync(Func<Task> download)
+    {
+        var exception = await Assert.ThrowsAsync<DownloadException>(download);
+        Assert.Equal(DownloadFailure.DeadlineExceeded, exception.Failure);
+        return exception;
+    }
 
     /// <summary>
     /// Awaits the operation under the watchdog WITHOUT cancelling it: a production bound that

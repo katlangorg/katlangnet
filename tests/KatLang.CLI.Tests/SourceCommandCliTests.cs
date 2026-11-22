@@ -8,7 +8,8 @@ namespace KatLang.CLI.Tests;
 /// <c>katlang source &lt;link&gt;</c> through the CLI boundary: the program a code link carries,
 /// written to stdout exactly — no newline added, control characters raw — and nothing run. A
 /// link that carries no program is one fixed line on stderr and exit status 1, with stdout
-/// empty and no usage hint; the command takes one operand and no option.
+/// empty and no usage hint; the command takes one operand and no option. (A link with no
+/// <c>#</c> is a program URL, which <c>source</c> downloads: <see cref="ProgramUrlCliTests"/>.)
 /// </summary>
 public sealed class SourceCommandCliTests
 {
@@ -272,8 +273,15 @@ public sealed class SourceCommandCliTests
 
     public static TheoryData<string, string> InvalidLinks => new()
     {
-        { "https://katlang.org/", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        // A web link with a # is read as a code link, never downloaded, whatever follows the #.
+        { "https://katlang.org/#", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        { "https://katlang.org/a/019ead4b-d41d-7564-ba11-c177f917a0fe#top", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        { "https://example.com/program.kat#L10", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        // An operand that is no web link at all is no program URL either.
         { "4MWjDBlNE4PH", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        { "katlang.org/api/a/019ead4b-d41d-7564-ba11-c177f917a0fe", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        { "ftp://katlang.org/program.kat", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
+        { "program.kat", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
         { "https://katlang.org/#01/4MWjDBlNE4PH", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
         { "", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
         { "https://katlang.org/#code/IwBhAIFpwZnAqcBWcA9cAmIA", "katlang: invalid code link: it has no #<format>/<payload> fragment." },
@@ -293,12 +301,16 @@ public sealed class SourceCommandCliTests
     [MemberData(nameof(InvalidLinks))]
     public async Task Source_OfAnInvalidLink_IsOneLineOnStderr_AndNothingOnStdout(string link, string expected)
     {
-        var result = await Cli.InvokeAsync("source", "--", link);
+        // None of these is downloaded: the downloader is never asked.
+        var downloader = new RecordingDownloader();
+
+        var result = await Cli.InvokeWithDownloaderAsync(downloader.DownloadAsync, "source", "--", link);
 
         // The command line was valid: no usage hint follows.
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
         Assert.Equal(expected + Environment.NewLine, result.Error);
+        Assert.Empty(downloader.RequestedUrls);
     }
 
     [Fact]
@@ -472,12 +484,12 @@ public sealed class SourceCommandCliTests
         Assert.Equal(Success, result.ExitCode);
 
         // Its usage line, after the three commands that take a program, with no option.
-        Assert.Contains("  katlang check <file> [--allow-loading] [--code-link]\n  katlang source <link>\n\nOptions:\n", help);
+        Assert.Contains("  katlang check <file|link> [--allow-loading] [--code-link]\n  katlang source <link>\n\nOptions:\n", help);
 
         // What it writes and where, exactly; what it refuses and how.
-        Assert.Contains("\nReading a code link:\n  source <link>      Write the program that a KatLang code link\n", help);
-        Assert.Contains("Write the program that a KatLang code link (https://katlang.org/#<format>/<payload>) carries to stdout, and run nothing.", prose);
-        Assert.Contains("exactly as the link carries it: no line break is added and control characters are written raw", prose);
+        Assert.Contains("\n  source <link>      Write the program of a link of either kind to\n", help);
+        Assert.Contains("Write the program of a link of either kind to stdout, and run nothing.", prose);
+        Assert.Contains("exactly as it was read: no line break is added and control characters are written raw", prose);
         Assert.Contains("redirecting stdout reproduces the program byte for byte as UTF-8 (katlang source \"<link>\" > program.kat).", prose);
         Assert.Contains("fails with exit status 1 and one line on stderr:", prose);
         Assert.Contains("\n                       katlang: invalid code link: <reason>\n", help);

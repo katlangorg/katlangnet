@@ -358,9 +358,9 @@ public sealed class CodeLinkCliTests
         Assert.Equal(Success, result.ExitCode);
 
         // Every command takes it.
-        Assert.Contains("                     [--max-decimal-places <integer>] [--code-link]\n", help);
+        Assert.Contains("                          [--max-decimal-places <integer>] [--code-link]\n", help);
         Assert.Contains("                        [--max-decimal-places <integer>] [--code-link]\n", help);
-        Assert.Contains("  katlang check <file> [--allow-loading] [--code-link]\n", help + "\n");
+        Assert.Contains("  katlang check <file|link> [--allow-loading] [--code-link]\n", help + "\n");
         Assert.Equal(3, help.Split("[--code-link]").Length - 1);
 
         // What it writes, where, when, and the limits, which are the encoder's own.

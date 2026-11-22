@@ -37,7 +37,9 @@ namespace KatLang;
 ///   literal's canonical text), so <c>bücher.example</c> and <c>xn--bcher-kva.example</c>
 ///   are the same host. A trailing dot is significant: <c>ex.com.</c> is matched only by an
 ///   entry that is itself spelled with the trailing dot. The port is not part of the host:
-///   ANY port of an allowed host is admitted.</item>
+///   ANY port of an allowed host is admitted. A host that set
+///   <see cref="RunOptions.AllowAnyHost"/> has no list: every host that passed checks 1–3 is
+///   allowed (<see cref="AllowedHosts.Any"/>), and those three checks are unchanged.</item>
 /// </list>
 ///
 /// <para><b>Canonical module URL</b>: <c>https://</c>, the canonical host, the port when it is
@@ -55,7 +57,10 @@ namespace KatLang;
 /// </summary>
 internal static class ModuleLoadTarget
 {
-    /// <summary>The allow-list used when <see cref="RunOptions.AllowedHosts"/> is null.</summary>
+    /// <summary>
+    /// The allow-list used when <see cref="RunOptions.AllowedHosts"/> is null and
+    /// <see cref="RunOptions.AllowAnyHost"/> is not set.
+    /// </summary>
     internal const string DefaultAllowedHost = "katlang.org";
 
     /// <summary>
@@ -306,6 +311,14 @@ internal static class ModuleLoadTarget
     }
 
     /// <summary>
+    /// The host-admission settings of one <see cref="RunOptions"/> object as it was initialized:
+    /// the allowed-host snapshot (null when none was set) and the any-host switch. The options
+    /// boundary (<see cref="FrontEndPipeline.NormalizeHostAdmission"/>) validates the pair and
+    /// returns it with its entries trimmed.
+    /// </summary>
+    internal readonly record struct ModuleHostAdmission(IReadOnlyList<string>? AllowedHosts, bool AllowAnyHost);
+
+    /// <summary>
     /// The canonical allow-list: DNS entries in lower-case ASCII IDNA form and IP entries in
     /// canonical literal form, built from <see cref="RunOptions.AllowedHosts"/> (or the
     /// <see cref="DefaultAllowedHost"/> default). An entry is written as a bare host — a DNS
@@ -319,10 +332,18 @@ internal static class ModuleLoadTarget
     {
         private readonly HashSet<string> _dnsNames = new(StringComparer.Ordinal);
         private readonly HashSet<string> _ipLiterals = new(StringComparer.Ordinal);
+        private readonly bool _admitsEveryHost;
 
-        private AllowedHosts()
-        {
-        }
+        private AllowedHosts(bool admitsEveryHost = false) => _admitsEveryHost = admitsEveryHost;
+
+        /// <summary>
+        /// The policy of <see cref="RunOptions.AllowAnyHost"/>: no list, so every canonical host
+        /// is admitted. It is reached only through that typed option, never through an entry: a
+        /// wildcard entry such as <c>*</c> is not a host and admits nothing. Only the host check
+        /// is lifted; <see cref="TryAdmit"/> still requires HTTPS, no user information, and a
+        /// host that is a valid DNS name or IP literal.
+        /// </summary>
+        internal static AllowedHosts Any { get; } = new(admitsEveryHost: true);
 
         internal static AllowedHosts From(IEnumerable<string?>? entries)
         {
@@ -342,6 +363,9 @@ internal static class ModuleLoadTarget
         /// </summary>
         internal bool Admits(string canonicalHost, bool isIpLiteral)
         {
+            if (_admitsEveryHost)
+                return true;
+
             if (isIpLiteral)
                 return _ipLiterals.Contains(canonicalHost);
 

@@ -46,7 +46,7 @@ internal static class FrontEndPipeline
     {
         // Validation only: no loader exists on the synchronous path, but a nonsensical
         // allow-list fails loudly at every options boundary, not just the loading one.
-        _ = NormalizeAllowedHosts(options?.AllowedHosts);
+        _ = NormalizeHostAdmission(options?.HostAdmission);
         ThrowIfSynchronousEntryWithDownloader(options);
 
         var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
@@ -90,7 +90,7 @@ internal static class FrontEndPipeline
     {
         // MIRROR OF Process(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?) — keep in lock-step; only module
         // elaboration is awaited.
-        var allowedHosts = NormalizeAllowedHosts(options?.AllowedHosts);
+        var allowedHosts = NormalizeHostAdmission(options?.HostAdmission);
 
         var cancellationToken = options?.SourceProcessingCancellationToken ?? CancellationToken.None;
         cancellationToken.ThrowIfCancellationRequested();
@@ -135,6 +135,36 @@ internal static class FrontEndPipeline
                 "KatLangEngine.RunAsync (or an async convenience entry point) or Parser.ParseAsync, " +
                 "or omit the downloader for source without load directives.");
         }
+    }
+
+    /// <summary>
+    /// The options boundary of BOTH host-admission settings, on the synchronous and the
+    /// asynchronous front end: the entries of <see cref="RunOptions.AllowedHosts"/> are validated
+    /// and trimmed (<see cref="NormalizeAllowedHosts"/>), and <see cref="RunOptions.AllowAnyHost"/>
+    /// is refused together with a list. A list restricts hosts and the option lifts the
+    /// restriction, so neither could be honored without silently dropping the other. An init
+    /// accessor sees one property at a time, so the pair is judged here, where a parse or run
+    /// begins, and the order in which the two properties are initialized never matters.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// An allowed-host entry is null, empty, or whitespace-only, or
+    /// <see cref="RunOptions.AllowAnyHost"/> is set together with <see cref="RunOptions.AllowedHosts"/>.
+    /// </exception>
+    internal static ModuleLoadTarget.ModuleHostAdmission NormalizeHostAdmission(ModuleLoadTarget.ModuleHostAdmission? admission)
+    {
+        var allowedHosts = NormalizeAllowedHosts(admission?.AllowedHosts);
+        if (admission is not { AllowAnyHost: true })
+            return new ModuleLoadTarget.ModuleHostAdmission(allowedHosts, AllowAnyHost: false);
+
+        if (allowedHosts is not null)
+        {
+            throw new ArgumentException(
+                "RunOptions.AllowAnyHost is set together with RunOptions.AllowedHosts; " +
+                "a run either admits every host or has a list of allowed hosts, never both.",
+                nameof(RunOptions.AllowAnyHost));
+        }
+
+        return new ModuleLoadTarget.ModuleHostAdmission(AllowedHosts: null, AllowAnyHost: true);
     }
 
     /// <summary>
@@ -238,7 +268,7 @@ internal static class FrontEndPipeline
     private static async ValueTask<FrontEndResult> ProcessWithModuleElaborationAsync(
         ElaborationInput input,
         Func<string, CancellationToken, ValueTask<string>> downloadCode,
-        IEnumerable<string>? allowedHosts,
+        ModuleLoadTarget.ModuleHostAdmission allowedHosts,
         SourceProcessingBudget budget,
         HostOperations? hostOperations,
         PatternComparisonObservations? comparisonObservations,
@@ -248,10 +278,11 @@ internal static class FrontEndPipeline
         var loader = new ModuleLoader(
             input.Diagnostics,
             downloadCode,
-            allowedHosts,
+            allowedHosts.AllowedHosts,
             budget,
             cancellationToken)
         {
+            AdmitsAnyHost = allowedHosts.AllowAnyHost,
             ComparisonObservations = comparisonObservations,
             TraversalObservations = traversalObservations,
         };

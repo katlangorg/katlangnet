@@ -45,7 +45,7 @@ Each example below is followed by its result: **Result** for one output, **Resul
 
 If any part of a program fails, the program shows only the error, not the results of the other rows. The command-line tool writes the error to stderr.
 
-To share a program, add the option `--code-link` to either command: after the results or the error, the tool writes one more line to stderr, `katlang-link: https://katlang.org/#1/...`, a link that opens that program in the playground and runs it. To get a program back from such a link, use `katlang source "<link>"`: it writes the program's text and runs nothing.
+To share a program, add the option `--code-link` to either command: after the results or the error, the tool writes one more line to stderr, `katlang-link: https://katlang.org/#1/...`, a link that opens that program in the playground and runs it. To get a program back from such a link, use `katlang source "<link>"`: it writes the program's text and runs nothing. To run it, give the link in place of a file: `katlang run "<link>"` runs the program of a code link, and it also runs a program shared from the playground when given that program's link (`https://katlang.org/a/...`), or any KatLang program stored as text at an `https` address.
 
 ### Your First Program
 
@@ -2849,7 +2849,7 @@ A loaded algorithm is called a **module**, and it is self-contained. Its names m
 
 One address is one module, however often it is loaded and however its URL is spelled: `open 'url'`, `Lib = load('url')` followed by `open Lib`, and `Lib.X` all use the same module. Reading one of its members gives one stored value, as for any property, and an explicit call of a member is still fresh. Two different addresses are two modules, even if they contain the same text. A URL is fixed text, written as a string in single quotes: a program never computes it.
 
-Loading is off unless the program that runs your code allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and a host that it allows, by default `katlang.org` and its subdomains.
+Loading is off unless the program that runs your code allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and name a host that the running program allows. The playground allows `katlang.org` and its subdomains; the command-line tool, with `--allow-loading`, allows any host on the public internet, and refuses an address on your own computer or network.
 
 Only the call `load('url')` is special: it is always the module directive, even where the program also defines something named `load`. The name `load` on its own is not a value. `X = load` or `F(load)` is rejected before the program runs — unless the program itself defines a property, parameter, or opened member named `load`, which then works like any other name.
 
