@@ -693,7 +693,9 @@ internal static partial class ImplicitArgumentResolver
     /// an alias's calls are its target's and spread exactly when the target is marked (a transparent reference
     /// inherits it through <see cref="MarkedCalleeOf"/>), and a runtime target has no static identity to
     /// spread. A structural forwarding carrier (<c>B* = { A }</c>) is a declaration of its own and keeps its
-    /// marker. Reported once per alias formation, at the marker (the import site inside module text).
+    /// marker. Reported once per alias formation, at the marker (the import site inside module text). The message —
+    /// for a transparent reference a wrapper over every parameter of the target — is built only when the list stores
+    /// the report (<see cref="ReportOutputSpreadMarkerError{TWording}"/>).
     /// </summary>
     private static void ReportOutputSpreadMarkerOnAlias(
         Algorithm.Alias alias, string targetName, AliasTarget? target, ResolverWalkMemos memos)
@@ -703,17 +705,32 @@ internal static partial class ImplicitArgumentResolver
         if (!alias.HasRuntimeTarget && !alias.IsReference)
             return;
 
-        var name = ExprNameRenderer.BoundName(marker.DeclarationName);
-        var message = alias.HasRuntimeTarget
+        ReportOutputSpreadMarkerError(
+            marker,
+            new AliasMarkerWording(marker.DeclarationName, alias.HasRuntimeTarget, targetName, target, memos.Observations),
+            FormatOutputSpreadMarkerOnAlias,
+            memos,
+            diagnostics);
+    }
+
+    /// <summary>What an <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> report about an alias is worded from (<see cref="ReportOutputSpreadMarkerOnAlias"/>).</summary>
+    private readonly record struct AliasMarkerWording(
+        string DeclarationName, bool HasRuntimeTarget, string TargetName, AliasTarget? Target, FrontEndTraversalObservations? Observations);
+
+    private static DiagnosticMessage FormatOutputSpreadMarkerOnAlias(AliasMarkerWording wording)
+    {
+        wording.Observations?.RecordDiagnosticMessage(DiagnosticCode.OutputSpreadMarkerOnAlias);
+        var name = ExprNameRenderer.BoundName(wording.DeclarationName);
+        return wording.HasRuntimeTarget
             ? DiagnosticMessage.JoinLines(
                 $"'{name}' is a runtime-target alias, so it cannot carry the output-spreading marker `*`: the callable it calls is known only at run time, "
                     + "and only a call the front end resolves statically to a marked declaration is spread.",
                 "Declare a marked algorithm with explicit parameters that calls it instead.")
             : DiagnosticMessage.JoinLines(
-                $"'{name}' is an alias of '{ExprNameRenderer.BoundName(targetName)}', so it cannot carry the output-spreading marker `*`: "
-                    + $"calls through an alias are calls of '{ExprNameRenderer.BoundName(targetName)}', and they spread exactly when it is marked.",
-                $"To spread the output of calls to '{name}' itself, declare a marked wrapper: `{MarkedWrapperSuggestion(name, targetName, target)}`.");
-        ReportOutputSpreadMarkerError(marker, message, memos, diagnostics);
+                $"'{name}' is an alias of '{ExprNameRenderer.BoundName(wording.TargetName)}', so it cannot carry the output-spreading marker `*`: "
+                    + $"calls through an alias are calls of '{ExprNameRenderer.BoundName(wording.TargetName)}', and they spread exactly when it is marked.",
+                $"To spread the output of calls to '{name}' itself, declare a marked wrapper: "
+                    + $"`{MarkedWrapperSuggestion(name, wording.TargetName, wording.Target, wording.Observations)}`.");
     }
 
     /// <summary>
@@ -731,26 +748,48 @@ internal static partial class ImplicitArgumentResolver
             || !link.UsesDotAlgorithmIntrinsic())
             return;
 
-        var name = ExprNameRenderer.BoundName(marker.DeclarationName);
-        ReportOutputSpreadMarkerError(marker, DiagnosticMessage.JoinLines(
-            $"'{name}' is an `.Algorithm` link, so it cannot carry the output-spreading marker `*`: the algorithm a link calls is known only at run time, "
-                + "and only a call the front end resolves statically to a marked declaration is spread.",
-            "Declare a marked algorithm with explicit parameters that calls it instead."), memos, diagnostics);
+        ReportOutputSpreadMarkerError(
+            marker,
+            (DeclarationName: marker.DeclarationName, Observations: memos.Observations),
+            static wording =>
+            {
+                wording.Observations?.RecordDiagnosticMessage(DiagnosticCode.OutputSpreadMarkerOnAlias);
+                var name = ExprNameRenderer.BoundName(wording.DeclarationName);
+                return DiagnosticMessage.JoinLines(
+                    $"'{name}' is an `.Algorithm` link, so it cannot carry the output-spreading marker `*`: the algorithm a link calls is known only at run time, "
+                        + "and only a call the front end resolves statically to a marked declaration is spread.",
+                    "Declare a marked algorithm with explicit parameters that calls it instead.");
+            },
+            memos,
+            diagnostics);
     }
 
-    private static void ReportOutputSpreadMarkerError(OutputSpreadMarker marker, DiagnosticMessage message, ResolverWalkMemos memos, DiagnosticBag diagnostics)
+    /// <summary>
+    /// Reports <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> at the marker (the import site inside module text). The
+    /// list counts every report; the message is built from <paramref name="wording"/> only for a report it stores, so the
+    /// marked aliases a flood reports past the list's capacity build none (implementation only).
+    /// </summary>
+    private static void ReportOutputSpreadMarkerError<TWording>(
+        OutputSpreadMarker marker, TWording wording, Func<TWording, DiagnosticMessage> formatMessage, ResolverWalkMemos memos, DiagnosticBag diagnostics)
     {
         var span = marker.Span ?? memos.Run.ImportSite;
-        diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, span) { Code = DiagnosticCode.OutputSpreadMarkerOnAlias });
-        memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.OutputSpreadMarkerOnAlias, _ => message, span));
+        memos.Observations?.RecordDiagnosticReport(DiagnosticCode.OutputSpreadMarkerOnAlias);
+        diagnostics.Report(DiagnosticCode.OutputSpreadMarkerOnAlias, span, wording, formatMessage);
+        if (memos.BranchDiagnosticTemplates is { } templates)
+            templates.Add(Template(wording, formatMessage, span));
+
+        // Capturing in a local function of its own allocates the closure only for a template.
+        static BranchDiagnosticTemplate Template(TWording wording, Func<TWording, DiagnosticMessage> formatMessage, SourceSpan? span)
+            => new(DiagnosticCode.OutputSpreadMarkerOnAlias, _ => formatMessage(wording), span);
     }
 
     /// <summary>
     /// The marked wrapper the alias report suggests: <c>B(x, y)* = A(x, y)</c> over the target's top-level
     /// parameters when they are plain names (a collector forwarded as <c>xs*</c>), <c>B* = A()</c> for a
-    /// target with none, and a generic wording for any other head.
+    /// target with none, and a generic wording for any other head. Every target parameter it reads is counted
+    /// (<see cref="FrontEndTraversalObservations.OutputSpreadMarkerWrapperParameterReads"/>).
     /// </summary>
-    private static string MarkedWrapperSuggestion(string alias, string targetName, AliasTarget? target)
+    private static string MarkedWrapperSuggestion(string alias, string targetName, AliasTarget? target, FrontEndTraversalObservations? observations)
     {
         var shownTarget = ExprNameRenderer.BoundName(targetName);
         if (target?.Signature.Signature is not { } signature)
@@ -759,6 +798,7 @@ internal static partial class ImplicitArgumentResolver
         var arguments = new List<string>(signature.ParameterPatterns.Count);
         foreach (var pattern in signature.ParameterPatterns)
         {
+            observations?.RecordOutputSpreadMarkerWrapperParameterRead();
             if (pattern is not CaptureParameterPattern capture)
                 return $"{alias}(…)* = {shownTarget}(…)";
             var parameterName = ExprNameRenderer.BoundName(capture.Name);

@@ -43,6 +43,7 @@ public sealed class Parser
     // Token consumptions and index probes. ParserTraversalObservations.TokenSteps also
     // includes the clause-head memo's access and initialization work.
     private long _tokenVisits;
+    private long _moduleHolderMarkerMessages;
 
     // One-entry memo of the most recent LookaheadThroughTildesToPropertyDefFrom scan,
     // keyed by the run's first significant token index (see that method).
@@ -544,7 +545,8 @@ public sealed class Parser
     /// </summary>
     internal static SyntaxParseResult ParseSyntaxObserved(
         string source,
-        ParserTraversalObservations traversalObservations)
+        ParserTraversalObservations traversalObservations,
+        DiagnosticBag? diagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(traversalObservations);
         return ParseSyntaxCore(
@@ -552,7 +554,7 @@ public sealed class Parser
             comparisonObservations: null,
             initialNestingDebt: 0,
             traversalObservations,
-            new DiagnosticBag(),
+            diagnostics ?? new DiagnosticBag(),
             CancellationToken.None,
             CancellationToken.None);
     }
@@ -1326,16 +1328,19 @@ public sealed class Parser
         return body with { OutputSpread = marker };
     }
 
+    // The message is formatted only when the list stores the report, so marked holders past its capacity build none.
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private void ReportOutputSpreadMarkerOnModuleHolder(OutputSpreadMarker marker)
-    {
-        var message = $"'{ExprNameRenderer.BoundName(marker.DeclarationName)}' holds a loaded module, so it cannot carry the output-spreading marker `*`: "
-            + "a module is one declaration, shared by every holder of its URL. Mark the module's own declarations instead.";
-        if (marker.Span is { } span)
-            ReportError(DiagnosticCode.OutputSpreadMarkerOnAlias, message, span);
-        else
-            ReportError(DiagnosticCode.OutputSpreadMarkerOnAlias, message);
-    }
+        => _diagnostics.Report(
+            DiagnosticCode.OutputSpreadMarkerOnAlias,
+            marker.Span ?? Current.Span,
+            (Parser: this, marker.DeclarationName),
+            static state =>
+            {
+                state.Parser._moduleHolderMarkerMessages++;
+                return $"'{ExprNameRenderer.BoundName(state.DeclarationName)}' holds a loaded module, so it cannot carry the output-spreading marker `*`: "
+                    + "a module is one declaration, shared by every holder of its URL. Mark the module's own declarations instead.";
+            });
 
     /// <summary>
     /// The marker of a whole clause family: every clause marked, or none (null). A family whose
@@ -3385,7 +3390,7 @@ public sealed class Parser
     }
 
     private void RecordTraversal(ParserTraversalObservations? observations)
-        => observations?.Record(_tokenVisits, _regionMemoAccessSteps, _regionMemoInitializationSteps, _regionMemoAllocatedSlots);
+        => observations?.Record(_tokenVisits, _regionMemoAccessSteps, _regionMemoInitializationSteps, _regionMemoAllocatedSlots, _moduleHolderMarkerMessages);
 
     private static bool DecodeDelimiterRegionEnd(int known, out int endIndex)
     {

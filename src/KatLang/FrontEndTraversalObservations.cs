@@ -208,6 +208,92 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordResolverForwardingVerdict()
         => ResolverForwardingVerdicts = checked(ResolverForwardingVerdicts + 1);
 
+    // ── Report payloads under the diagnostic list's capacity (DiagnosticBag) ──
+    //
+    // The list counts every report and stores the first ones, so a report it drops must cost no payload. These counters
+    // separate, for the two resolver producers whose payload grows with the source, the reports MADE (each counted by the
+    // list, stored or not), the messages BUILT (only for reports the list stores), and the checks only a message reads.
+
+    /// <summary>
+    /// Individual callee parameter verdicts in the ordered bare-forwarding walk.
+    /// </summary>
+    public long BareForwardingVerdicts { get; private set; }
+
+    internal void RecordBareForwardingVerdict()
+        => BareForwardingVerdicts = checked(BareForwardingVerdicts + 1);
+
+    /// <summary>Parameter visits building a rejected callee's name index and caller names probed against it.</summary>
+    public long BareForwardingIndexSteps { get; private set; }
+
+    internal void RecordBareForwardingIndexStep()
+        => BareForwardingIndexSteps = checked(BareForwardingIndexSteps + 1);
+
+    /// <summary>
+    /// Arguments bare forwarding built for supplied parameters: none after a row's first unforwardable parameter, whose row
+    /// is left as written.
+    /// </summary>
+    public long BareForwardingArgumentsBuilt { get; private set; }
+
+    internal void RecordBareForwardingArgumentBuilt()
+        => BareForwardingArgumentsBuilt = checked(BareForwardingArgumentsBuilt + 1);
+
+    /// <summary>
+    /// <see cref="DiagnosticCode.UnforwardableParameter"/> reports the resolver MADE — one per distinct unforwardable
+    /// parameter of a bare-forwarding row, and one per re-issue for a further family sharing a branch body — each counted by
+    /// the list whether it stores it or not.
+    /// </summary>
+    public long UnforwardableParameterReports { get; private set; }
+
+    /// <summary><see cref="DiagnosticCode.UnforwardableParameter"/> messages BUILT: one per report a list stores.</summary>
+    public long UnforwardableParameterMessages { get; private set; }
+
+    /// <summary>
+    /// Names the wording of an <see cref="DiagnosticCode.UnforwardableParameter"/> message checked to say whether the body
+    /// binds the parameter in another form: a capture's one name, a structural pattern's leaves until one is bound. Read
+    /// once per stored report, never for a dropped one.
+    /// </summary>
+    public long UnforwardableParameterWordingChecks { get; private set; }
+
+    internal void RecordUnforwardableParameterWordingCheck()
+        => UnforwardableParameterWordingChecks = checked(UnforwardableParameterWordingChecks + 1);
+
+    /// <summary>
+    /// <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> reports the resolver MADE (markers on aliases and on
+    /// <c>.Algorithm</c> links; the parser's module-holder report is not the resolver's), each counted by the list whether it
+    /// stores it or not.
+    /// </summary>
+    public long OutputSpreadMarkerOnAliasReports { get; private set; }
+
+    /// <summary><see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> messages the resolver BUILT: one per report a list stores.</summary>
+    public long OutputSpreadMarkerOnAliasMessages { get; private set; }
+
+    /// <summary>
+    /// Target parameters the marked-wrapper suggestion of an <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> message
+    /// read (<c>B(x, y)* = A(x, y)</c> lists every parameter of the alias's target): only for a stored report.
+    /// </summary>
+    public long OutputSpreadMarkerWrapperParameterReads { get; private set; }
+
+    internal void RecordOutputSpreadMarkerWrapperParameterRead()
+        => OutputSpreadMarkerWrapperParameterReads = checked(OutputSpreadMarkerWrapperParameterReads + 1);
+
+    /// <summary>Counts reports of <paramref name="code"/> made into a diagnostic list.</summary>
+    internal void RecordDiagnosticReport(DiagnosticCode code, int count = 1)
+    {
+        if (code == DiagnosticCode.UnforwardableParameter)
+            UnforwardableParameterReports = checked(UnforwardableParameterReports + count);
+        else if (code == DiagnosticCode.OutputSpreadMarkerOnAlias)
+            OutputSpreadMarkerOnAliasReports = checked(OutputSpreadMarkerOnAliasReports + count);
+    }
+
+    /// <summary>Counts one message of <paramref name="code"/> built for a stored report; a code not followed here records nothing.</summary>
+    internal void RecordDiagnosticMessage(DiagnosticCode code)
+    {
+        if (code == DiagnosticCode.UnforwardableParameter)
+            UnforwardableParameterMessages = checked(UnforwardableParameterMessages + 1);
+        else if (code == DiagnosticCode.OutputSpreadMarkerOnAlias)
+            OutputSpreadMarkerOnAliasMessages = checked(OutputSpreadMarkerOnAliasMessages + 1);
+    }
+
     /// <summary>
     /// Argument slots the D2 dependence check of declaration-level output spreading inspected
     /// (<c>ImplicitArgumentResolver.DependsOnPosition</c>): whether a slot's role differs at a known and an unknown

@@ -385,6 +385,57 @@ internal static partial class ImplicitArgumentResolver
 
         private Dictionary<IReadOnlyList<ParameterPattern>, IReadOnlySet<string>>? _calleeNames;
 
+        // A failed ordinary-name contract reports once per distinct name. When the entire row's
+        // reports will be dropped, count the supplied names from the smaller caller instead of
+        // judging every callee parameter again. A mixed contract keeps the ordered verdict walk.
+        private Dictionary<IReadOnlyList<ParameterPattern>, HashSet<string>?>? _ordinaryForwardingNames;
+
+        public int? CountMissingOrdinaryParameters(
+            IReadOnlyList<ParameterPattern> patterns, BareForwardingSources sources, ForwardableParameters enclosing)
+        {
+            if (patterns is ImplicitSignatureTemplate { Tail: { } tail } composed)
+            {
+                // Composition guarantees disjoint capture names. Keep the shared tail indexed once.
+                var headCount = CountMissingOrdinaryParameters(composed.Head, sources, enclosing);
+                return headCount is null ? null : headCount + CountMissingOrdinaryParameters(tail, sources, enclosing);
+            }
+
+            _ordinaryForwardingNames ??= new(ReferenceEqualityComparer.Instance);
+            if (!_ordinaryForwardingNames.TryGetValue(patterns, out var names))
+            {
+                names = new(StringComparer.Ordinal);
+                foreach (var pattern in patterns)
+                {
+                    Observations?.RecordBareForwardingIndexStep();
+                    if (pattern is not CaptureParameterPattern { Kind: ParameterKind.Normal } capture)
+                    {
+                        names = null;
+                        break;
+                    }
+                    names.Add(capture.Name);
+                }
+                _ordinaryForwardingNames.Add(patterns, names);
+            }
+
+            if (names is null)
+                return null;
+
+            var missing = names.Count;
+            foreach (var name in sources.TopLevelCaptureKinds.Keys)
+            {
+                Observations?.RecordBareForwardingIndexStep();
+                if (names.Contains(name))
+                    missing--;
+            }
+            foreach (var name in enclosing.BoundNames)
+            {
+                Observations?.RecordBareForwardingIndexStep();
+                if (!sources.BoundNames.Contains(name) && names.Contains(name))
+                    missing--;
+            }
+            return missing;
+        }
+
         /// <summary>
         /// The COLLECTING capture names of each callee pattern list (at any pattern level), by list
         /// reference — usually none or one, so a question about them costs O(1) per reference.
@@ -1234,8 +1285,9 @@ internal static partial class ImplicitArgumentResolver
     /// <summary>One branch-body report, minus the family name that words it.</summary>
     private readonly record struct BranchDiagnosticTemplate(
         DiagnosticCode Code,
-        Func<string?, DiagnosticMessage> FormatMessage,
-        SourceSpan? Span);
+        Func<string?, DiagnosticMessage>? FormatMessage,
+        SourceSpan? Span,
+        int DroppedCount = 0);
 
     /// <summary>
     /// The FREE reference names of an algorithm's subtree: every <see cref="Expr.Resolve"/>
@@ -2023,7 +2075,7 @@ internal static partial class ImplicitArgumentResolver
         if (regions.TryGetValue(regionKey, out var completedRegion))
         {
             if (branchContext is not null)
-                ReplayBranchDiagnostics(completedRegion, branchContext.BranchName, diagnostics);
+                ReplayBranchDiagnostics(completedRegion, branchContext.BranchName, diagnostics, observations);
             // The reach shares the region's processed object, so its descendants' resolved publications are the processing
             // context's (publishing them per reach would cost one copy per PATH of a shared graph).
             var reach = PublishStructuralBody(alg, completedRegion.Rewritten, branchContext, run);
@@ -2489,17 +2541,25 @@ internal static partial class ImplicitArgumentResolver
     /// family's name — so per-family diagnostic multiplicity matches a fresh rewrite without
     /// performing one, independent of which family was reached first.
     /// </summary>
-    private static void ReplayBranchDiagnostics(AlgorithmRegion region, string branchName, DiagnosticBag? diagnostics)
+    private static void ReplayBranchDiagnostics(
+        AlgorithmRegion region, string branchName, DiagnosticBag? diagnostics, FrontEndTraversalObservations? observations)
     {
         if (diagnostics is null || region.DiagnosticTemplates is null)
             return;
 
+        // Each re-issued report is counted by the list; its message is built only when the list stores it.
         foreach (var template in region.DiagnosticTemplates)
         {
-            diagnostics.Add(new Diagnostic(template.FormatMessage(branchName), DiagnosticSeverity.Error, template.Span)
+            if (template.FormatMessage is null)
             {
-                Code = template.Code,
-            });
+                // All families replay into this resolution's bag, after the original in-place reports.
+                diagnostics.ReportDroppedErrors(template.Code, template.DroppedCount);
+                observations?.RecordDiagnosticReport(template.Code, template.DroppedCount);
+                continue;
+            }
+            observations?.RecordDiagnosticReport(template.Code);
+            diagnostics.Report(template.Code, template.Span, (template.FormatMessage, Family: branchName),
+                static state => state.FormatMessage(state.Family));
         }
     }
 
@@ -3395,27 +3455,43 @@ internal static partial class ImplicitArgumentResolver
             ? BareForwardingSources.OfParameterList(alg.ParameterPatterns)
             : BareForwardingSources.OfBranchHead(branchContext.Pattern);
         var calleePatterns = contract.ParameterPatterns;
-        var forwarded = new List<Expr>(calleePatterns.Count);
+        List<Expr>? forwarded = null;
         Dictionary<ParameterPattern, Expr>? sourceArguments = null;
-        List<(ParameterPattern Parameter, bool DifferentPattern)>? unforwardable = null;
+        List<ParameterPattern>? unforwardable = null;
+        // After the first refusal the row stays as written. Further work serves only the diagnostic list.
         foreach (var parameter in calleePatterns)
         {
-            var verdict = BareForwardingArgument(parameter, sources, ownForwarding, ref sourceArguments);
-            if (verdict.Argument is { } argument)
-                forwarded.Add(argument);
-            else if (verdict.Unforwardable)
-                (unforwardable ??= []).Add((parameter, verdict.DifferentPattern));
+            memos.Observations?.RecordBareForwardingVerdict();
+            var verdict = BareForwardingArgument(parameter, sources, ownForwarding, buildArgument: unforwardable is null, ref sourceArguments);
+            if (verdict.Unforwardable)
+            {
+                if (memos.Diagnostics is null)
+                    return LeftAsWritten(alg, row, paramMap, memos);
+                if (unforwardable is null && !memos.Diagnostics.StoresNext
+                    && (long)sources.TopLevelCaptureKinds.Count + ownForwarding.Count < calleePatterns.Count
+                    && memos.Run.CountMissingOrdinaryParameters(calleePatterns, sources, ownForwarding) is int missing)
+                {
+                    ReportDroppedUnforwardableParameters(missing, memos);
+                    return LeftAsWritten(alg, row, paramMap, memos);
+                }
+                (unforwardable ??= []).Add(parameter);
+            }
+            else if (verdict.Argument is { } argument)
+            {
+                memos.Observations?.RecordBareForwardingArgumentBuilt();
+                (forwarded ??= new List<Expr>(calleePatterns.Count)).Add(argument);
+            }
         }
 
         if (unforwardable is not null)
         {
-            ReportUnforwardableParameters(row, writtenName, unforwardable, branchContext?.BranchName, memos);
+            ReportUnforwardableParameters(row, writtenName, unforwardable, sources, ownForwarding, branchContext?.BranchName, memos);
             return LeftAsWritten(alg, row, paramMap, memos);
         }
 
         // Nothing to forward: every callee parameter is a collector that no binding of its name
         // supplies, so the callee works with no arguments and the row is its bare name.
-        if (forwarded.Count == 0)
+        if (forwarded is null)
             return null;
 
         var arguments = OutputBundle.From(forwarded);
@@ -3632,21 +3708,28 @@ internal static partial class ImplicitArgumentResolver
         }
     }
 
-    /// <summary>BARE FORWARDING's verdict for one callee parameter pattern (<see cref="BareForwardingArgument"/>).</summary>
-    private readonly record struct BareForwardingVerdict(Expr? Argument, bool Unforwardable, bool DifferentPattern)
+    /// <summary>
+    /// BARE FORWARDING's verdict for one callee parameter pattern (<see cref="BareForwardingArgument"/>), Lean's
+    /// <c>BareForwardingVerdict</c>: supplied, optional or unforwardable. A supplied parameter carries its argument when
+    /// one was requested, and why a parameter is unforwardable is only the wording of its report
+    /// (<see cref="UnforwardableParameterWording"/>), read when the list stores it.
+    /// </summary>
+    private readonly record struct BareForwardingVerdict(Expr? Argument, bool Unforwardable)
     {
-        public static BareForwardingVerdict Supplied(Expr argument) => new(argument, Unforwardable: false, DifferentPattern: false);
+        /// <summary>An existing binding supplies the parameter: <paramref name="argument"/>, or null when none was requested.</summary>
+        public static BareForwardingVerdict Supplied(Expr? argument) => new(argument, Unforwardable: false);
 
         /// <summary>A collector that no binding of its name supplies: it receives no argument.</summary>
-        public static BareForwardingVerdict Optional => new(null, Unforwardable: false, DifferentPattern: false);
+        public static BareForwardingVerdict Optional => new(null, Unforwardable: false);
 
-        public static BareForwardingVerdict Unsupplied(bool differentPattern) => new(null, Unforwardable: true, differentPattern);
+        public static BareForwardingVerdict Unsupplied => new(null, Unforwardable: true);
     }
 
     /// <summary>
     /// BARE FORWARDING's verdict for ONE callee parameter pattern (FWD-02): the argument that supplies
-    /// it from an EXISTING binding, by name; no argument for a collector that nothing of its name
-    /// supplies (a collector accepts none); or unforwardable.
+    /// it from an EXISTING binding, by name (built only when <paramref name="buildArgument"/> asks for
+    /// it); no argument for a collector that nothing of its name supplies (a collector accepts none);
+    /// or unforwardable.
     /// <list type="bullet">
     ///   <item>A capture <c>n</c> reads the binding a written <c>n</c> would denote (Q-04): the body's
     ///   own TOP-LEVEL parameter <c>n</c>, else — when the body binds no <c>n</c> at all — the nearest
@@ -3665,35 +3748,26 @@ internal static partial class ImplicitArgumentResolver
         ParameterPattern parameter,
         BareForwardingSources sources,
         ForwardableParameters enclosing,
+        bool buildArgument,
         ref Dictionary<ParameterPattern, Expr>? arguments)
     {
         if (parameter is CaptureParameterPattern capture)
         {
             if (sources.TopLevelCaptureKinds.TryGetValue(capture.Name, out var ownKind))
-                return BareForwardingVerdict.Supplied(ForwardedBinding(capture, ownKind));
+                return BareForwardingVerdict.Supplied(buildArgument ? ForwardedBinding(capture, ownKind) : null);
             if (sources.BoundNames.Contains(capture.Name))
-                return BareForwardingVerdict.Unsupplied(differentPattern: true);
+                return BareForwardingVerdict.Unsupplied;
             if (enclosing.TryGetKind(capture.Name, out var enclosingKind))
-                return BareForwardingVerdict.Supplied(ForwardedBinding(capture, enclosingKind));
+                return BareForwardingVerdict.Supplied(buildArgument ? ForwardedBinding(capture, enclosingKind) : null);
             return capture.Kind == ParameterKind.Collecting
                 ? BareForwardingVerdict.Optional
-                : BareForwardingVerdict.Unsupplied(differentPattern: false);
+                : BareForwardingVerdict.Unsupplied;
         }
 
         if (sources.StructuralContracts.Contains(parameter))
-            return BareForwardingVerdict.Supplied(BuildSourceArgument(parameter, ref arguments));
+            return BareForwardingVerdict.Supplied(buildArgument ? BuildSourceArgument(parameter, ref arguments) : null);
 
-        var bindsAName = false;
-        foreach (var leaf in ParameterPattern.CapturesExpandingSharedNodesOnce([parameter]))
-        {
-            if (sources.BoundNames.Contains(leaf.Name) || enclosing.Binds(leaf.Name))
-            {
-                bindsAName = true;
-                break;
-            }
-        }
-
-        return BareForwardingVerdict.Unsupplied(differentPattern: bindsAName);
+        return BareForwardingVerdict.Unsupplied;
 
         static Expr ForwardedBinding(CaptureParameterPattern destination, ParameterKind sourceKind)
             => destination.Kind == ParameterKind.Collecting && sourceKind == ParameterKind.Collecting
@@ -3702,14 +3776,49 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
+    /// Whether the closed body binds an unforwardable callee parameter in ANOTHER FORM — the wording of its report only
+    /// (<see cref="FormatUnforwardableParameter"/>: "in that form"), never part of the verdict: a capture the body binds
+    /// only inside one of its own structural patterns, or a structural pattern one of whose leaves the body or an
+    /// enclosing parameter binds. Every name it checks is counted
+    /// (<see cref="FrontEndTraversalObservations.UnforwardableParameterWordingChecks"/>).
+    /// </summary>
+    private static bool IsBoundInAnotherForm(
+        ParameterPattern parameter,
+        IReadOnlySet<string> bodyNames,
+        ForwardableParameters enclosing,
+        FrontEndTraversalObservations? observations)
+    {
+        if (parameter is CaptureParameterPattern capture)
+        {
+            observations?.RecordUnforwardableParameterWordingCheck();
+            return bodyNames.Contains(capture.Name);
+        }
+
+        foreach (var leaf in ParameterPattern.CapturesExpandingSharedNodesOnce([parameter]))
+        {
+            observations?.RecordUnforwardableParameterWordingCheck();
+            if (bodyNames.Contains(leaf.Name) || enclosing.Binds(leaf.Name))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Reports every callee parameter bare forwarding cannot supply, once per parameter, at the bare
     /// reference (a row inside imported content at the import site). A conditional branch body's own
     /// region keeps each report re-issuable for further families sharing the body (M4).
+    /// <para>THE LIST DECIDES WHAT IS BUILT (implementation only): every report is made, so the list counts it whether it
+    /// stores it or not, but its message — the parameter's written form, whether the body binds it in another form, and
+    /// the wording — is built only for a report the list stores (<see cref="DiagnosticBag"/>'s lazy report), so the
+    /// parameters a flood reports past the list's capacity cost their verdicts and their counts, never a payload.</para>
     /// </summary>
     private static void ReportUnforwardableParameters(
         Expr row,
         string calleeDisplayName,
-        IReadOnlyList<(ParameterPattern Parameter, bool DifferentPattern)> unforwardable,
+        IReadOnlyList<ParameterPattern> unforwardable,
+        BareForwardingSources sources,
+        ForwardableParameters enclosing,
         string? branchName,
         ResolverWalkMemos memos)
     {
@@ -3717,20 +3826,53 @@ internal static partial class ImplicitArgumentResolver
             return;
 
         var span = row.Span ?? memos.Run.ImportSite;
-        var reported = new HashSet<ParameterPattern>(ParameterPattern.ContractComparer);
-        foreach (var (parameter, differentPattern) in unforwardable)
+        // One report per contract: a repeated callee parameter (`P(x, x)`) is reported once.
+        var reported = unforwardable.Count > 1 ? new HashSet<ParameterPattern>(ParameterPattern.ContractComparer) : null;
+        var dropped = 0;
+        foreach (var parameter in unforwardable)
         {
-            if (!reported.Add(parameter))
+            if (reported is not null && !reported.Add(parameter))
                 continue;
-            var parameterDisplayName = parameter.DisplayName;
 
-            DiagnosticMessage Format(string? family)
-                => FormatUnforwardableParameter(calleeDisplayName, parameterDisplayName, differentPattern, family);
-            diagnostics.Add(new Diagnostic(Format(branchName), DiagnosticSeverity.Error, span)
+            if (!diagnostics.StoresNext)
             {
-                Code = DiagnosticCode.UnforwardableParameter,
-            });
-            memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnforwardableParameter, Format, span));
+                dropped++;
+                continue;
+            }
+            memos.Observations?.RecordDiagnosticReport(DiagnosticCode.UnforwardableParameter);
+            var wording = new UnforwardableParameterWording(calleeDisplayName, ExprNameRenderer.BoundName(parameter.DisplayName),
+                IsBoundInAnotherForm(parameter, sources.BoundNames, enclosing, memos.Observations), memos.Observations);
+            diagnostics.Report(DiagnosticCode.UnforwardableParameter, span, (Wording: wording, Family: branchName),
+                static state => state.Wording.Format(state.Family));
+            memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnforwardableParameter, wording.Format, span));
+        }
+        if (dropped > 0)
+            ReportDroppedUnforwardableParameters(dropped, memos);
+    }
+
+    private static void ReportDroppedUnforwardableParameters(int count, ResolverWalkMemos memos)
+    {
+        const DiagnosticCode code = DiagnosticCode.UnforwardableParameter;
+        memos.Diagnostics!.ReportDroppedErrors(code, count);
+        memos.Observations?.RecordDiagnosticReport(code, count);
+        // No later family can store reports already past this run's cap. One count preserves their
+        // multiplicity without retaining a pattern, its wording context and a delegate per report.
+        memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(code, null, null, count));
+    }
+
+    /// <summary>
+    /// An admitted report retains the displayed parameter and its wording variant. Replays need only the new family name.
+    /// </summary>
+    private readonly record struct UnforwardableParameterWording(
+        string CalleeDisplayName,
+        string ShownParameter,
+        bool BoundInAnotherForm,
+        FrontEndTraversalObservations? Observations)
+    {
+        public DiagnosticMessage Format(string? family)
+        {
+            Observations?.RecordDiagnosticMessage(DiagnosticCode.UnforwardableParameter);
+            return FormatUnforwardableParameter(CalleeDisplayName, ShownParameter, BoundInAnotherForm, family);
         }
     }
 
@@ -3746,7 +3888,6 @@ internal static partial class ImplicitArgumentResolver
         string? conditionalBranchName)
     {
         calleeDisplayName = ExprNameRenderer.BoundName(calleeDisplayName);
-        parameterDisplayName = ExprNameRenderer.BoundName(parameterDisplayName);
         conditionalBranchName = conditionalBranchName is null ? null : ExprNameRenderer.BoundName(conditionalBranchName);
         if (conditionalBranchName is not null)
         {

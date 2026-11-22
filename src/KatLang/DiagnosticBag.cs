@@ -195,6 +195,25 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
         Store(place, diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
     }
 
+    /// <summary>Counts consecutive errors of one code when their first place is already past capacity.</summary>
+    internal void ReportDroppedErrors(DiagnosticCode code, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        if (StoresNext)
+            throw new InvalidOperationException("A stored diagnostic requires its payload.");
+
+        // CountReport records the code, severity, first place and truncation marker. Every subsequent
+        // place in the same scope is later, so only the counters and position advance for the rest.
+        CountReport(code, DiagnosticSeverity.Error);
+        var rest = count - 1;
+        _reported += rest;
+        _reportedErrors += rest;
+        if (_inserting is null)
+            _inPlace += rest;
+        else
+            _insertedUnderAnchor += rest;
+    }
+
     // Counts one report and says where it is stored (its place in the list), or null when it is dropped: a report whose
     // place is past the capacity truncates the list, and a more severe dropped one raises the marker's severity. A report
     // made at an anchor may move the last stored one past the capacity (Store drops it then). Nothing is stored here, so

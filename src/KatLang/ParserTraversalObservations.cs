@@ -47,11 +47,15 @@ internal sealed class ParserTraversalObservations
     /// </summary>
     public long RegionMemoAllocatedSlots { get; private set; }
 
-    internal void Record(long tokenVisits, long regionMemoAccessSteps, long regionMemoInitializationSteps, long regionMemoAllocatedSlots)
+    /// <summary>Messages formatted for a module holder carrying an output-spreading marker.</summary>
+    public long ModuleHolderMarkerMessages { get; private set; }
+
+    internal void Record(long tokenVisits, long regionMemoAccessSteps, long regionMemoInitializationSteps, long regionMemoAllocatedSlots, long moduleHolderMarkerMessages)
     {
         TokenVisits = tokenVisits;
         RegionMemoAccessSteps = regionMemoAccessSteps;
         RegionMemoInitializationSteps = regionMemoInitializationSteps;
         RegionMemoAllocatedSlots = regionMemoAllocatedSlots;
+        ModuleHolderMarkerMessages = moduleHolderMarkerMessages;
     }
 }

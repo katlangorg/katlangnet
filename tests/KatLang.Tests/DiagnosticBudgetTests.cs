@@ -17,6 +17,9 @@ namespace KatLang.Tests;
 /// aggregate, so module content multiplied across scopes stays bounded by the aggregate.</item>
 /// <item>BOUNDED ECHOES — text a diagnostic repeats per reference is bounded, so neither the stored
 /// list nor the work of formatting it grows with the product of two source sizes.</item>
+/// <item>NO PAYLOAD PAST THE LIMIT — a producer whose message grows with the source (bare forwarding's
+/// per-parameter reports, a marker refused on an alias or a module holder) makes and counts every
+/// report but builds a message, and reads what only a message needs, for a stored report alone.</item>
 /// </list>
 /// Boundaries use small configured limits so every assertion is exact; nothing here measures
 /// elapsed time.
@@ -259,6 +262,38 @@ public class DiagnosticBudgetTests
         bag.Report(DiagnosticCode.UnexpectedToken, "x", null);
         Assert.Equal(["e", "w0", "w1"], bag.Take(3).Select(d => d.Message));
         Assert.Equal(4, bag.Count);
+    }
+
+    [Fact]
+    public void Bag_BulkDroppedErrorsPreserveCountsSeverityAndAnchorOrder()
+    {
+        static DiagnosticBag Reports(bool bulk)
+        {
+            var bag = new DiagnosticBag(2);
+            var early = bag.ReserveAnchor();
+            bag.Report(DiagnosticCode.UnexpectedToken, "first", null);
+            bag.Report(DiagnosticCode.UnexpectedToken, "second", null);
+            var late = bag.ReserveAnchor();
+            void Drop()
+            {
+                if (bulk)
+                    bag.ReportDroppedErrors(DiagnosticCode.UnforwardableParameter, 7);
+                else
+                    for (var n = 0; n < 7; n++)
+                        bag.Report(DiagnosticCode.UnforwardableParameter, "unused", null);
+            }
+            using (bag.InsertingAt(late))
+                Drop();
+            Drop();
+            using (bag.InsertingAt(early))
+                bag.Report(DiagnosticCode.UndeclaredIdentifier, "inserted", null);
+            return bag;
+        }
+
+        var individual = Reports(bulk: false);
+        var grouped = Reports(bulk: true);
+        Assert.Equal(individual.Select(Stored), grouped.Select(Stored));
+        Assert.Equal((17, 17, true), (grouped.ReportedCount, grouped.ReportedErrorCount, grouped.HasReported(DiagnosticCode.UnforwardableParameter)));
     }
 
     [Fact]
@@ -986,5 +1021,377 @@ public class DiagnosticBudgetTests
         var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => Parser.ParseAsync(new string('@', 5000) + $"\nM = load('{Host}cancel')\n1", options));
         Assert.Equal(cancellation.Token, exception.CancellationToken);
+    }
+
+    // ── G. Report payloads past the limit ───────────────────────────────────
+    //
+    // A report past the limit is counted and dropped, so it must cost no payload. The producers whose payload grows with the
+    // source — implicit-argument resolution's UnforwardableParameter (one report per callee parameter bare forwarding cannot
+    // supply) and OutputSpreadMarkerOnAlias (whose alias wording lists every parameter of the target), and the parser's
+    // module-holder report of the same code — make every report and build a message only for a report the list stores.
+    // Each test counts the reports MADE, the messages BUILT and the checks only a message reads, below, at and above the
+    // limit, and checks the stored list against the unbounded one: the same prefix, order, codes, spans, text and layout.
+
+    private static (DiagnosticBag Diagnostics, FrontEndTraversalObservations Observations) Elaborate(string source, int? limit = null)
+    {
+        var observations = new FrontEndTraversalObservations();
+        var result = FrontEndPipeline.Process(source, new RunOptions { SourceProcessingLimits = Limits(limit) }, comparisonObservations: null, observations);
+        return (Assert.IsType<DiagnosticBag>(result.Diagnostics), observations);
+    }
+
+    private static string Lines(string first, string second) => first + Environment.NewLine + second;
+
+    private static string Names(string prefix, int count) => string.Join(", ", Enumerable.Range(0, count).Select(i => $"{prefix}{i}"));
+
+    /// <summary>Above, at and just below the number of reports, then far below it.</summary>
+    private static int[] LimitsAround(int reports) => [reports + 1, reports, reports - 1, 5, 1];
+
+    // Everything a host can read of a stored diagnostic, its line layout included.
+    private static (DiagnosticCode, DiagnosticSeverity, SourceSpan?, string, string) Stored(Diagnostic diagnostic)
+        => (diagnostic.Code, diagnostic.Severity, diagnostic.Span, diagnostic.Message, diagnostic.RenderMessage(static line => $"<{line}>"));
+
+    private static void AssertPrefixOfUnbounded(DiagnosticBag full, DiagnosticBag bounded, int limit)
+    {
+        Assert.False(full.IsTruncated);
+        if (limit >= full.Count)
+        {
+            Assert.False(bounded.IsTruncated);
+            Assert.Equal(full.Select(Stored), bounded.Select(Stored));
+            return;
+        }
+
+        Assert.Equal(limit + 1, bounded.Count);
+        Assert.Equal(full.Take(limit).Select(Stored), bounded.Take(limit).Select(Stored));
+        AssertMarker(bounded[limit], limit);
+    }
+
+    [Fact]
+    public void UnforwardableParameterFlood_BuildsAMessageOnlyForEachReportTheListKeeps()
+    {
+        // `A(q) = G` forwards none of G's 40 parameters: 40 reports at the bare reference, in G's parameter order.
+        const int parameters = 40;
+        var source = $"G({Names("p", parameters)}) = 0\nA(q) = G\n1";
+        var (full, unbounded) = Elaborate(source);
+        Assert.Equal(parameters, full.Count);
+        Assert.All(full, d => Assert.Equal((DiagnosticCode.UnforwardableParameter, (SourceSpan?)new SourceSpan(2, 8, 2, 9)), (d.Code, d.Span)));
+        Assert.Equal(Lines(
+                "'G' is forwarded by name here, but its parameter 'p39' is not a parameter of the enclosing explicit parameter list.",
+                "Bare forwarding reuses an existing parameter only under its own name, and explicit parameter lists are closed, "
+                    + "so 'p39' is neither renamed nor added. Declare 'p39' in the parameter list, or call 'G' with explicit arguments."),
+            full[^1].Message);
+        Assert.Equal(parameters, unbounded.UnforwardableParameterMessages);
+
+        foreach (var limit in LimitsAround(parameters))
+        {
+            var (bounded, observed) = Elaborate(source, limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            var stored = Math.Min(limit, parameters);
+            // Every report is made and counted, so the list's status is the unbounded run's …
+            Assert.Equal((parameters, parameters, true), (bounded.ReportedCount, bounded.ReportedErrorCount, bounded.HasReported(DiagnosticCode.UnforwardableParameter)));
+            Assert.Equal(parameters, observed.UnforwardableParameterReports);
+            // … every callee parameter is judged once, since each one's verdict decides whether it is reported, and the row
+            // that is left as written builds no argument …
+            Assert.Equal(parameters, observed.BareForwardingVerdicts);
+            Assert.Equal(0, observed.BareForwardingArgumentsBuilt);
+            // … but only a stored report builds its message, with the one name its wording checks.
+            Assert.Equal(stored, observed.UnforwardableParameterMessages);
+            Assert.Equal(stored, observed.UnforwardableParameterWordingChecks);
+        }
+    }
+
+    [Fact]
+    public void ManyNarrowForwarders_CountDroppedReportsWithoutJudgingEveryPair()
+    {
+        const int width = 40, callers = 16;
+        // The repeated p2 is one report. Each caller supplies a different name, and q is irrelevant.
+        var source = $"G({Names("p", width)}, p2) = 0\n"
+            + string.Concat(Enumerable.Range(0, callers).Select(i => $"A{i}(p{i + 1}, q) = G\n"))
+            + "1";
+        const int reports = callers * (width - 1);
+        var (full, unbounded) = Elaborate(source);
+        Assert.Equal(reports, full.Count);
+        Assert.Equal(callers * (width + 1), unbounded.BareForwardingVerdicts);
+
+        foreach (var limit in new[] { reports + 1, reports, reports - 1, 1 })
+        {
+            var (bounded, work) = Elaborate(source, limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            Assert.Equal((reports, reports, true), (bounded.ReportedCount, bounded.ReportedErrorCount,
+                bounded.HasReported(DiagnosticCode.UnforwardableParameter)));
+            Assert.Equal(reports, work.UnforwardableParameterReports);
+            Assert.Equal(Math.Min(limit, reports), work.UnforwardableParameterMessages);
+            if (limit == 1)
+            {
+                // One full ordered row plus one failed verdict per later row. The index visits the
+                // callee once and probes only each later caller's two names.
+                Assert.Equal(width + 1 + callers - 1, work.BareForwardingVerdicts);
+                Assert.Equal(width + 1 + 2 * (callers - 1), work.BareForwardingIndexSteps);
+            }
+        }
+    }
+
+    [Fact]
+    public void DroppedForwardingReports_RespectShadowingAndLeaveSuccessfulRowsIntact()
+    {
+        const string source = """
+            G(a, b, c, d, e, e) = a
+            First(q) = G
+            Outer(a, b) = {
+                Inner([a], b) = G
+                Accepted(c, d, e) = G
+                1
+            }
+            1
+            """;
+        // First misses five distinct names. Inner's nested a shadows the enclosing a, so only b
+        // supplies G. Accepted can forward all six slots from its own and its enclosing bindings.
+        var work = new FrontEndTraversalObservations();
+        var roomy = FrontEndPipeline.Process(source, new RunOptions { SourceProcessingLimits = Limits(Limit) });
+        var tiny = FrontEndPipeline.Process(source, new RunOptions { SourceProcessingLimits = Limits(1), TraversalObservations = work });
+        var full = Assert.IsType<DiagnosticBag>(roomy.Diagnostics);
+        var bounded = Assert.IsType<DiagnosticBag>(tiny.Diagnostics);
+        Assert.Equal(9, full.ReportedCount);
+        Assert.Equal(full.ReportedCount, bounded.ReportedCount);
+        AssertPrefixOfUnbounded(full, bounded, 1);
+        Assert.Equal(Tree(roomy.ElaboratedRoot), Tree(tiny.ElaboratedRoot));
+        Assert.True(work.BareForwardingIndexSteps > 0);
+        Assert.Equal(6, work.BareForwardingArgumentsBuilt);
+    }
+
+    public static TheoryData<string, string[], int, int> UnforwardableWordings => new()
+    {
+        // An explicit list: `u` is bound nowhere; `[a, b]` has a leaf the list binds as a whole parameter, so it is not
+        // declared "in that form"; `v` is supplied, after the first unforwardable parameter, so no argument is built for it.
+        {
+            "G(u, [a, b], v) = 0\nA(v, a) = G\n1",
+            [
+                Lines(
+                    "'G' is forwarded by name here, but its parameter 'u' is not a parameter of the enclosing explicit parameter list.",
+                    "Bare forwarding reuses an existing parameter only under its own name, and explicit parameter lists are closed, "
+                        + "so 'u' is neither renamed nor added. Declare 'u' in the parameter list, or call 'G' with explicit arguments."),
+                Lines(
+                    "'G' is forwarded by name here, but the enclosing explicit parameter list does not declare its parameter '[a, b]' in that form.",
+                    "Bare forwarding reuses an existing parameter only with the same pattern and never reshapes an argument. "
+                        + "Declare the parameter '[a, b]', or call 'G' with explicit arguments."),
+            ],
+            3,
+            2
+        },
+        // A conditional branch: `x` is bound only inside the head's list pattern, `y` not at all.
+        {
+            "G(x, y) = 0\nF([x]) = G\nF([1]) = 0\n1",
+            [
+                Lines(
+                    "'G' is forwarded by name here, but the pattern of conditional branch 'F' does not bind its parameter 'x' in that form.",
+                    "Bare forwarding reuses an existing binding only with the same pattern and never reshapes an argument. "
+                        + "Bind 'x' in the branch pattern, or call 'G' with explicit arguments."),
+                Lines(
+                    "'G' is forwarded by name here, but its parameter 'y' is not bound by the pattern of conditional branch 'F'.",
+                    "Bare forwarding reuses an existing binding only under its own name, and conditional branch patterns are closed, "
+                        + "so 'y' is neither renamed nor added. Bind 'y' in the branch pattern, or call 'G' with explicit arguments."),
+            ],
+            2,
+            2
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(UnforwardableWordings))]
+    public void UnforwardableParameterWording_IsReadOnlyForAStoredReport(string source, string[] messages, int verdicts, int wordingChecks)
+    {
+        var (full, unbounded) = Elaborate(source);
+        Assert.Equal(messages, full.Select(d => d.Message));
+        Assert.All(full, d => Assert.Equal(DiagnosticCode.UnforwardableParameter, d.Code));
+        Assert.Equal((messages.Length, messages.Length, verdicts, 0, wordingChecks), (unbounded.UnforwardableParameterReports,
+            unbounded.UnforwardableParameterMessages, unbounded.BareForwardingVerdicts, unbounded.BareForwardingArgumentsBuilt,
+            unbounded.UnforwardableParameterWordingChecks));
+
+        // A one-diagnostic list keeps the first report and words nothing else: the second report is made and counted, and
+        // neither its message nor the check of its pattern happens.
+        var (bounded, observed) = Elaborate(source, limit: 1);
+        AssertPrefixOfUnbounded(full, bounded, limit: 1);
+        Assert.Equal(messages.Length, bounded.ReportedCount);
+        Assert.Equal((messages.Length, 1, verdicts, 0, 1), (observed.UnforwardableParameterReports,
+            observed.UnforwardableParameterMessages, observed.BareForwardingVerdicts, observed.BareForwardingArgumentsBuilt,
+            observed.UnforwardableParameterWordingChecks));
+    }
+
+    [Theory]
+    // Arguments for the supplied parameters BEFORE the first unforwardable one are built (the verdict is not yet known),
+    // none after it; every parameter is still judged, because each verdict decides whether it is reported.
+    [InlineData("G(v, w, u) = 0\nA(v, w) = G\n1", 2)]
+    [InlineData("G(v, u, w) = 0\nA(v, w) = G\n1", 1)]
+    [InlineData("G(u, v, w) = 0\nA(v, w) = G\n1", 0)]
+    public void BareForwarding_BuildsNoArgumentAfterTheFirstUnforwardableParameter(string source, int argumentsBuilt)
+    {
+        var (diagnostics, observations) = Elaborate(source);
+        var diagnostic = Assert.Single(diagnostics);
+        Assert.StartsWith("'G' is forwarded by name here, but its parameter 'u' is not a parameter", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal((3, argumentsBuilt, 1), (observations.BareForwardingVerdicts, observations.BareForwardingArgumentsBuilt, observations.UnforwardableParameterReports));
+    }
+
+    [Fact]
+    public void BareForwarding_ThatSucceeds_BuildsEveryArgument_ByName()
+    {
+        // The accepted binding result is unchanged: `A(w, v) = G` is `G(v, w)` by name, so `A(10, 3)` is 3 - 10.
+        const string source = "G(v, w) = v - w\nA(w, v) = G\nA(10, 3)";
+        var (diagnostics, observations) = Elaborate(source);
+        Assert.Empty(diagnostics);
+        Assert.Equal((2, 2, 0), (observations.BareForwardingVerdicts, observations.BareForwardingArgumentsBuilt, observations.UnforwardableParameterReports));
+        Assert.Equal([-7m], Evaluator.RunFlat(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root)).Value);
+    }
+
+    [Fact]
+    public void UnforwardableParameters_WithNoListToReportInto_AreJudgedOnlyUpToTheFirst()
+    {
+        // A resolution that reports nothing (a provisional branch, a rewrite-only entry) needs one unforwardable parameter to
+        // leave the row as written: it judges no further parameter, and the row it leaves is the reporting run's.
+        const int parameters = 40;
+        var source = $"G({Names("p", parameters)}) = 0\nA(q) = G\n1";
+        (Algorithm Resolved, FrontEndTraversalObservations Observations) Resolve(DiagnosticBag? diagnostics)
+        {
+            var program = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+            Assert.Equal(0, program.Diagnostics.ReportedCount);
+            var observations = new FrontEndTraversalObservations();
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(
+                program.Root, observations, diagnostics, program.HostOperations, program.Modules, program.Operation);
+            return (resolved, observations);
+        }
+
+        var list = new DiagnosticBag(1);
+        var (reported, reporting) = Resolve(list);
+        var (silent, unreported) = Resolve(diagnostics: null);
+
+        Assert.Equal(parameters, list.ReportedCount);
+        Assert.Equal((parameters, parameters, 1), (reporting.BareForwardingVerdicts, reporting.UnforwardableParameterReports, reporting.UnforwardableParameterMessages));
+        Assert.Equal((1, 0, 0), (unreported.BareForwardingVerdicts, unreported.UnforwardableParameterReports, unreported.UnforwardableParameterMessages));
+        Assert.Equal(Tree(reported), Tree(silent));
+    }
+
+    [Fact]
+    public void UnforwardableParameterReplays_ForFamiliesSharingABranchBody_BuildOnlyTheMessagesTheListKeeps()
+    {
+        // One branch body `G` shared by three families is rewritten once; the second and third family re-issue its reports
+        // in their own names (M4). A re-issued report is made and counted like the first; its message is built only when
+        // the list stores it, and the parameter's part of the wording is read once, at its first stored report.
+        const int parameters = 6;
+        string[] families = ["Left", "Middle", "Right"];
+        var parsed = Parser.ParseSyntax($"G({Names("p", parameters)}) = 0\nF(0) = G\nF(1) = 0\n1");
+        Assert.False(parsed.HasErrors);
+        var sharedBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(parsed.SyntaxRoot.Properties, p => p.Name == "F").Value).Branches[0].Body;
+        var g = Assert.Single(parsed.SyntaxRoot.Properties, p => p.Name == "G");
+
+        (DiagnosticBag Diagnostics, FrontEndTraversalObservations Observations) Resolve(int limit)
+        {
+            var root = new Algorithm.User(null, [], [],
+                [g, .. families.Select(family => new Property(family, new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)])))],
+                new OutputBundle([new Expr.Num(1)]));
+            var diagnostics = new DiagnosticBag(limit);
+            var program = ParameterDetector.DetectPrevalidated(root, diagnostics: diagnostics);
+            Assert.Equal(0, diagnostics.ReportedCount);
+            var observations = new FrontEndTraversalObservations();
+            _ = ImplicitArgumentResolver.ResolvePrevalidated(program, observations, diagnostics);
+            return (diagnostics, observations);
+        }
+
+        const int reports = 3 * parameters;
+        var (full, unbounded) = Resolve(Limit);
+        Assert.Equal(1, unbounded.ResolverBranchBodyRegionExpansions);
+        Assert.Equal(
+            [.. families.SelectMany(family => Enumerable.Range(0, parameters).Select(i => $"'G' is forwarded by name here, but its parameter 'p{i}' is not bound by the pattern of conditional branch '{family}'."))],
+            full.Select(d => d.Message.Split(Environment.NewLine)[0]));
+        Assert.Equal((reports, reports, parameters), (unbounded.UnforwardableParameterReports, unbounded.UnforwardableParameterMessages, unbounded.UnforwardableParameterWordingChecks));
+
+        foreach (var limit in new[] { reports + 1, reports, reports - 1, parameters + 2, parameters, parameters - 1, 1 })
+        {
+            var (bounded, observed) = Resolve(limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            Assert.Equal(reports, bounded.ReportedCount);
+            Assert.Equal(reports, observed.UnforwardableParameterReports);
+            Assert.Equal(parameters, observed.BareForwardingVerdicts);
+            Assert.Equal(Math.Min(limit, reports), observed.UnforwardableParameterMessages);
+            Assert.Equal(Math.Min(limit, parameters), observed.UnforwardableParameterWordingChecks);
+        }
+    }
+
+    [Fact]
+    public void OutputSpreadMarkerOnAliasFlood_BuildsAMessageOnlyForEachReportTheListKeeps()
+    {
+        // 30 marked aliases of a 50-parameter target: each report's wrapper suggestion lists all 50 parameters.
+        const int aliases = 30;
+        const int parameters = 50;
+        var targetParameters = Names("p", parameters);
+        var source = $"T({targetParameters}) = 0\n" + string.Concat(Enumerable.Range(0, aliases).Select(i => $"B{i}* = T\n")) + "1";
+        var (full, unbounded) = Elaborate(source);
+        Assert.Equal(aliases, full.Count);
+        Assert.All(full, d => Assert.Equal(DiagnosticCode.OutputSpreadMarkerOnAlias, d.Code));
+        Assert.Equal(Enumerable.Range(0, aliases).Select(i => (SourceSpan?)new SourceSpan(i + 2, i < 10 ? 3 : 4, i + 2, i < 10 ? 4 : 5)), full.Select(d => d.Span));
+        Assert.Equal(Lines(
+                "'B0' is an alias of 'T', so it cannot carry the output-spreading marker `*`: calls through an alias are calls of 'T', and they spread exactly when it is marked.",
+                $"To spread the output of calls to 'B0' itself, declare a marked wrapper: `B0({targetParameters})* = T({targetParameters})`."),
+            full[0].Message);
+        Assert.Equal((aliases, aliases * parameters), (unbounded.OutputSpreadMarkerOnAliasMessages, unbounded.OutputSpreadMarkerWrapperParameterReads));
+
+        foreach (var limit in LimitsAround(aliases))
+        {
+            var (bounded, observed) = Elaborate(source, limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            var stored = Math.Min(limit, aliases);
+            Assert.Equal(aliases, bounded.ReportedCount);
+            Assert.Equal(aliases, observed.OutputSpreadMarkerOnAliasReports);
+            Assert.Equal(stored, observed.OutputSpreadMarkerOnAliasMessages);
+            Assert.Equal(stored * parameters, observed.OutputSpreadMarkerWrapperParameterReads);
+        }
+    }
+
+    [Theory]
+    // Two markers on runtime-target aliases, and two on `.Algorithm` links that stay calculations.
+    [InlineData("F(f) = {\nG* = f\nH* = f\nG(1)\n}\nF({ x + 1 })", "is a runtime-target alias, so it cannot carry the output-spreading marker `*`: the callable it calls is known only at run time")]
+    [InlineData("Mk(meta op) = op\nG* = Mk.Algorithm\nH* = Mk.Algorithm\n1", "is an `.Algorithm` link, so it cannot carry the output-spreading marker `*`: the algorithm a link calls is known only at run time")]
+    public void OutputSpreadMarkerOnRuntimeTargets_BuildAMessageOnlyForAStoredReport(string source, string reason)
+    {
+        var (full, unbounded) = Elaborate(source);
+        Assert.Equal(
+            new[] { "G", "H" }.Select(name => Lines(
+                $"'{name}' {reason}, and only a call the front end resolves statically to a marked declaration is spread.",
+                "Declare a marked algorithm with explicit parameters that calls it instead.")),
+            full.Select(d => d.Message));
+        Assert.All(full, d => Assert.Equal(DiagnosticCode.OutputSpreadMarkerOnAlias, d.Code));
+        Assert.Equal((2, 2), (unbounded.OutputSpreadMarkerOnAliasReports, unbounded.OutputSpreadMarkerOnAliasMessages));
+
+        foreach (var limit in new[] { 3, 2, 1 })
+        {
+            var (bounded, observed) = Elaborate(source, limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            Assert.Equal(2, bounded.ReportedCount);
+            Assert.Equal((2, Math.Min(limit, 2), 0), (observed.OutputSpreadMarkerOnAliasReports, observed.OutputSpreadMarkerOnAliasMessages, observed.OutputSpreadMarkerWrapperParameterReads));
+        }
+    }
+
+    [Fact]
+    public void ModuleHolderMarkerFlood_BuildsAMessageOnlyForEachReportTheListKeeps()
+    {
+        // The parser refuses a marker on a module holder: one OutputSpreadMarkerOnAlias report per marked holder, at its `*`.
+        static string Holders(int count, string marker)
+            => string.Concat(Enumerable.Range(0, count).Select(i => $"M{i}{marker} = load('{Host}lib.kat')\n")) + "1";
+
+        const int holders = 12;
+        var source = Holders(holders, "*");
+        var full = Parser.ParseSyntax(source, new DiagnosticBag()).Diagnostics;
+        Assert.Equal(holders, full.Count);
+        Assert.All(full, d => Assert.Equal(DiagnosticCode.OutputSpreadMarkerOnAlias, d.Code));
+        Assert.Equal(Enumerable.Range(0, holders).Select(i => (SourceSpan?)new SourceSpan(i + 1, i < 10 ? 3 : 4, i + 1, i < 10 ? 4 : 5)), full.Select(d => d.Span));
+        Assert.Equal(
+            "'M0' holds a loaded module, so it cannot carry the output-spreading marker `*`: a module is one declaration, "
+                + "shared by every holder of its URL. Mark the module's own declarations instead.",
+            full[0].Message);
+        foreach (var limit in LimitsAround(holders))
+        {
+            var observations = new ParserTraversalObservations();
+            var bounded = Parser.ParseSyntaxObserved(source, observations, new DiagnosticBag(limit)).Diagnostics;
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            Assert.Equal(holders, bounded.ReportedCount);
+            Assert.Equal(Math.Min(holders, limit), observations.ModuleHolderMarkerMessages);
+        }
     }
 }
