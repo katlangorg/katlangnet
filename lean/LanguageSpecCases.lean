@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 792
+- specification surface cases: 795
 - excluded parse-level cases (Lean has no surface parser): 89
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 679
-- probe observations (C#-only by design): 1615
+- Lean-guarded cases: 682
+- probe observations (C#-only by design): 1616
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 675 programs have no cache observation, which is not an empty cache;
+  the other 678 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -3653,7 +3653,22 @@ def case_hunt_forwarding_property_is_never_a_source : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 10))]), privateProp "F" (.alias none [] [privateProp "y" (alg [] [] [] [.num 4]), privateProp "G" (alg ["y"] [] [] [(.binary .add (.call (.resolve "A") [.param "y"]) (.num 0))])] (.resolve "G") none false)] [(.call (.resolve "F") [.num 2])])
 #guard obs case_hunt_forwarding_property_is_never_a_source == "ok raw=20 n=1"
 
--- 679 canonical Lean-guarded specification cases.
+-- selective-collector-take-zero-demands-no-element [variadic-calls]: Prefix(*xs) = xs.take(0) \n Prefix(1 / 0)
+def case_selective_collector_take_zero_demands_no_element : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Prefix" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "take" (some [.num 0]))])] [(.call (.resolve "Prefix") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_take_zero_demands_no_element == "ok raw=L[] n=1"
+
+-- selective-collector-take-count-error-precedes-elements [errors]: Prefix(*xs) = xs.take('a' + 1) \n Prefix(1 / 0)
+def case_selective_collector_take_count_error_precedes_elements : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Prefix" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "take" (some [(.binary .add (.stringLiteral "a") (.num 1))]))])] [(.call (.resolve "Prefix") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_take_count_error_precedes_elements == "err type"
+
+-- decon-target-calls-reuse-the-shared-source [deconstruction]: a, b = tick(), 20 \n a(), a(), b
+def case_decon_target_calls_reuse_the_shared_source : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), (.call (.resolve "a") []), .resolve "b"])
+#guard obs case_decon_target_calls_reuse_the_shared_source == "ok raw=S[1, 1, 20] n=3"
+
+-- 682 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -4339,9 +4354,12 @@ def specCaseIds : List String := [
   "hunt-forwarding-builtin-parameter-by-name",
   "hunt-forwarding-enclosing-bindings-at-two-levels",
   "hunt-forwarding-nearest-parameter-binding-wins",
-  "hunt-forwarding-property-is-never-a-source"
+  "hunt-forwarding-property-is-never-a-source",
+  "selective-collector-take-zero-demands-no-element",
+  "selective-collector-take-count-error-precedes-elements",
+  "decon-target-calls-reuse-the-shared-source"
 ]
-#guard specCaseIds.length == 679
+#guard specCaseIds.length == 682
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

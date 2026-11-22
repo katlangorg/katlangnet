@@ -85,22 +85,22 @@ are emitted once, with their multiplicity, and programs whose levels and guards 
 one block that names every one of them (1759 blocks): nothing is sampled.
 
 Partition:
-- corpus programs: 4594 (explorer 2821, spec 792, SEM-2B 744, tutorial 189,
+- corpus programs: 4597 (explorer 2821, spec 795, SEM-2B 744, tutorial 189,
   witness 48: 16 witnesses, three members each)
 - skipped, the parser rejected the source: 49
 - skipped, an unresolved `load` directive (module elaboration is async-only): 2
 - skipped, parameter inference refused as circular: 0
 - excluded by exact id, a reviewed Lean/C# disagreement (class and witness in
   `FrontEndDecisionCorpus.ReviewedDriftById`): 0
-- guarded programs: 4543 (15765 scope levels, 148 with a forwarded parameter)
-- name occurrences: 22759 (8059 parameters, 1838 dot-edge fallback names)
+- guarded programs: 4546 (15774 scope levels, 148 with a forwarded parameter)
+- name occurrences: 22773 (8063 parameters, 1840 dot-edge fallback names)
 - of those names and heads, the same node in the complete pipeline's tree (matched by source span):
-  21789; with no source span to match by (names the parser synthesized, such as the plumbing of an
-  assignment deconstruction): 1120; with no node of that span and name left there: 0
+  21799; with no source span to match by (names the parser synthesized, such as the plumbing of an
+  assignment deconstruction): 1124; with no node of that span and name left there: 0
 - open heads: 150 (9 parameter-owned)
 - clause families: 156 (24 with no lifting signature); skipped, a head with no Lean spelling: 1
-- promotion: 9263 inferring levels; 10451 decisions guarded (10307 over an owner chain, 144 over an encoded tree
-  of 108 programs): 394 promoted, 10048 resolved (89 through an open), 9 ambiguous; not asked: 268 owned
+- promotion: 9268 inferring levels; 10458 decisions guarded (10314 over an owner chain, 144 over an encoded tree
+  of 108 programs): 394 promoted, 10055 resolved (89 through an open), 9 ambiguous; not asked: 268 owned
   by an enclosing parameter, 736 not participating, 40 a C#-only prelude member;
   not guarded over an encoded tree: 15 in a program with an invalid open, 1 in a program the encoder cannot spell, 2 with no property path
 - forwarding: 414 reads (105 own, 24 captured, 285 forwarded) in 263 lifted calls;
@@ -108,10 +108,10 @@ Partition:
 - refused forwards: 23 unavailable sources (10 at closed value operands, 13 from bare-forwarding reports);
   not attributed: 3 bare references whose callee leaves 6 names unbound between them,
   5 bare-forwarding refusals of a pattern's form
-- slot roles: 8738 call nodes, 11362 positions including dot receivers; role shown at 423 slots of 372 programs
-  (38 value, including 3 unliftable-family reports; 385 callable: an available lift not made); not shown: 10015 hold no
+- slot roles: 8747 call nodes, 11370 positions including dot receivers; role shown at 423 slots of 372 programs
+  (38 value, including 3 unliftable-family reports; 385 callable: an available lift not made); not shown: 10019 hold no
   role-sensitive reference, 25 stay bare where a requested name is unbound (refused or callable);
-  329 receivers outside the argument supply; not read: 0 with no static callee classification, 10 after an inserted spread, 560 of a call
+  331 receivers outside the argument supply; not read: 0 with no static callee classification, 10 after an inserted spread, 562 of a call
   the parser synthesized, 0 with no counterpart in the complete tree
 - declaration validity: 584 declaring levels checked (8 with a reported collision, 8 names);
   626 innermost chains checked (14 invalid)
@@ -13736,8 +13736,9 @@ def p503_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p5
 #guard promotes p503_0 "FirstItem" == some false
 
 -- spec/selective-collector-take-demands-its-prefix: Prefix(*xs) = xs.take(1) \n Prefix(10, 1 / 0)
--- the same levels and decisions, 1 more:
---   spec/selective-collector-take-needs-the-prefix-element
+-- the same levels and decisions, 3 more:
+--   spec/selective-collector-take-needs-the-prefix-element, spec/selective-collector-take-zero-demands-no-element
+--   spec/selective-collector-take-count-error-precedes-elements
 def p504_0 : List OwnerLevel := { parameters := [], properties := ["Prefix"] } :: prelude
 def p504_1 : List OwnerLevel := { parameters := ["xs"], properties := [] } :: p504_0
 #guard selectOwnedDeclaration p504_1 "xs" == .parameter 0
@@ -23339,6 +23340,8 @@ def p949_2 : List OwnerLevel := { parameters := [], properties := [] } :: p949_0
 #guard promotes p949_2 "P" == some false
 
 -- spec/hunt-cache-deconstruction-call-establishes-target-entry: a, b = tick(), 20 \n a(), a, b()
+-- the same levels and decisions, 1 more:
+--   spec/decon-target-calls-reuse-the-shared-source
 def p950_0 : List OwnerLevel := { parameters := [], properties := ["$deconstruct$0", "a", "b"] } :: prelude
 def p950_1 : List OwnerLevel := { parameters := [], properties := [] } :: p950_0
 def p950_2 : List OwnerLevel := { parameters := ["a", "b"], properties := [] } :: p950_1
@@ -52445,6 +52448,8 @@ def specGuardedIds : List String := [
   "spec/selective-collector-first-selects-one-element",
   "spec/selective-collector-take-demands-its-prefix",
   "spec/selective-collector-take-needs-the-prefix-element",
+  "spec/selective-collector-take-zero-demands-no-element",
+  "spec/selective-collector-take-count-error-precedes-elements",
   "spec/selective-collector-effects-follow-first-demand",
   "spec/selective-collector-reads-through-a-transparent-reference",
   "spec/collector-member-path-keeps-known-slice",
@@ -52904,6 +52909,7 @@ def specGuardedIds : List String := [
   "spec/hunt-exposure-member-mixes-exported-and-dependent",
   "spec/hunt-cache-carrier-call-fresh-bare-read-target",
   "spec/hunt-cache-deconstruction-call-establishes-target-entry",
+  "spec/decon-target-calls-reuse-the-shared-source",
   "spec/hunt-cache-collecting-only-owner-read-and-calls",
   "spec/hunt-cache-collecting-only-owner-exported-member",
   "spec/hunt-collecting-owner-dependent-member-refused-at-root",
@@ -53016,7 +53022,7 @@ def specGuardedIds : List String := [
   "spec/hunt-forwarding-nearest-parameter-binding-wins",
   "spec/hunt-forwarding-property-is-never-a-source"
 ]
-#guard specGuardedIds.length == 757
+#guard specGuardedIds.length == 760
 
 /--
 Machine-checked partition count: sem2b ids from the block-emission loop against its corpus.
@@ -54012,7 +54018,7 @@ def witnessGuardedIds : List String := [
 #guard witnessGuardedIds.length == 48
 
 def guardedProgramIds : List String := explorerGuardedIds ++ specGuardedIds ++ sem2bGuardedIds ++ tutorialGuardedIds ++ witnessGuardedIds
-#guard guardedProgramIds.length == 4543
+#guard guardedProgramIds.length == 4546
 
 /--
 The programs that contribute no guard (the reasons are counted in the partition above).

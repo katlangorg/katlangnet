@@ -11528,5 +11528,46 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Explanation = "The property `y = 4` is not a parameter binding, so it never supplies `A`; `G` gains `y` as a new forwarded parameter, and the carrier `F` forwards its argument to `G`: `F(2)` is `20`.",
         },
+
+        // ==================== Lean mutation campaign gaps G1 and G2 (November 2026) ====================
+        // docs/design/lean-model-mutation-campaign-2026-11.md: no generated corpus program observed these
+        // two model decisions, so the mutants `take-first-element-before-count` and
+        // `decon-target-call-reruns-source` survived. Each case is a hand-written expectation of the rule.
+        new()
+        {
+            Id = "selective-collector-take-zero-demands-no-element",
+            Category = "variadic-calls",
+            Source = "Prefix(*xs) = xs.take(0)\nPrefix(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[]",
+            ExpectedRaw = "L[]",
+            ExpectedEmittedCount = 1,
+            Explanation = "Over a collecting parameter, `take` demands and validates its count before it reads any position. A count of 0 keeps no position, so no argument is demanded: the failing `1 / 0` never runs and the result is the empty list.",
+        },
+        new()
+        {
+            Id = "selective-collector-take-count-error-precedes-elements",
+            Category = "errors",
+            Source = "Prefix(*xs) = xs.take('a' + 1)\nPrefix(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "Over a collecting parameter, `take` demands its count before any element, so the type mismatch of `'a' + 1` is the error of `take` and the first argument's division by zero is never demanded. A written collection is the other way round: `take(1 / 0, 'a' + 1)` demands the collection first.",
+        },
+        new()
+        {
+            Id = "decon-target-calls-reuse-the-shared-source",
+            Category = "deconstruction",
+            Source = "a, b = tick(), 20\na(), a(), b",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n1\n20",
+            ExpectedRaw = "S[1, 1, 20]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // The run's own counter after the three rows: the shared right-hand side ran once.
+                new SpecProbe("a, b = tick(), 20\na(), a(), b, tick()", "ok raw=S[1, 1, 20, 2] n=4"),
+            ],
+            Explanation = "Calling a deconstruction target selects from the one shared calculation of the right-hand side instead of running it again: both calls `a()` read the same `tick()` result, 1, and `b` reads 20 from it. The right-hand side runs once, so a `tick()` written after these rows gives 2.",
+        },
     ];
 }

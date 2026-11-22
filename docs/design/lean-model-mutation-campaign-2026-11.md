@@ -17,7 +17,7 @@ four generated corpora fails:
 
 | Corpus | Module | `#guard` commands |
 | --- | --- | --- |
-| LanguageSpec | `lean/LanguageSpecCases.lean` | 737 |
+| LanguageSpec | `lean/LanguageSpecCases.lean` | 740 |
 | SemanticExplorer | `lean/SemanticExplorerCases.lean` | 3,230 |
 | SEM-2C | `lean/CoreTests/SemanticGeneratedCases.lean` | 910 |
 | HostParent | `lean/CoreTests/HostParentDifferential.lean` | 648 |
@@ -57,8 +57,9 @@ Two more switches serve a specific question:
 - `-CorpusRevision <commit>` takes the four corpus modules from that commit and keeps the working
   tree's model: what an earlier corpus made of a mutant. `Expect` is not enforced for such a run.
 - The five guards in `scripts/LeanMutationWitnesses.lean` run alongside the corpora. The catalog
-  requires the indicated witness failures for each survivor. `-ControlModules <file.lean>,...`
-  adds further controls. Their results appear separately from the corpus verdict.
+  requires the indicated witness failures for each entry that names them: the two mutants of gaps
+  G1 and G2, written while those mutants survived the corpora (section 6). `-ControlModules
+  <file.lean>,...` adds further controls. Their results appear separately from the corpus verdict.
 
 Every run writes a fresh `artifacts/validation/lean-model-mutants-<UTC time>-<pid>/` directory:
 `lean-model-mutants.log` (one line per step), `summary.md` (the table and the failing cases),
@@ -181,7 +182,8 @@ same corpora that day took 127–137 s, the longest with an empty Lake cache.
 | `cache-owner-d1-off` | Killed | 4 | 2 | 0 | 0 | 130 |
 
 15 killed, 2 survived, none invalid, none timed out. The repository snapshot and the nine input
-digests were unchanged by every completed run of the pilot.
+digests were unchanged by every completed run of the pilot. Both survivors are killed since three
+specification cases were added later the same day (section 6, closing G1 and G2).
 
 ### F02–F04 and the corpus import
 
@@ -238,10 +240,11 @@ reports kills where kills are known.
 ## 6. Gaps: missing differential witnesses
 
 A surviving mutant is not a defect in either implementation. It says that no generated corpus
-program observes the decision. For both survivors a candidate witness was written from the rule
-text, run in C#, encoded with the real `LeanAstEncoder`, and elaborated as a control module in the
-run of section 5: every guard passes on the unmodified model and fails under the mutant, so neither
-mutant is equivalent.
+program observes the decision. The pilot found two such gaps, G1 and G2. Both are closed now
+(below), so no catalogued mutant survives the corpora. For both survivors a candidate witness was
+written from the rule text, run in C#, encoded with the real `LeanAstEncoder`, and elaborated as a
+control module in the run of section 5: every guard passes on the unmodified model and fails under
+the mutant, so neither mutant is equivalent.
 
 | Gap | Rule | Candidate witness | Expected (C# and Lean agree) | Under the mutant |
 | --- | --- | --- | --- | --- |
@@ -254,21 +257,57 @@ mutant is equivalent.
 The first G1 witness is the example `call-by-need.md` gives for the rule. The three G1 witnesses
 also fail under `take-not-a-retained-reader`.
 
-How much each gap leaves open, from a one-off build of the 53 hand-written `CoreTests` modules
+How much each gap left open, from a one-off build of the 53 hand-written `CoreTests` modules
 against each survivor (66 s per build; baseline clean):
 
-- **G1 is a gap of the differential corpora only.** `CoreTests/SelectiveCollectorReads.lean` kills
-  the mutant (five guards), and C# pins the same example in
-  `SelectiveCollectorReadTests.AcceptanceTable_Values`. Each side is held by its own hand-written
-  test; no generated case holds both to one program.
+- **G1 was a gap of the differential corpora only.** `CoreTests/SelectiveCollectorReads.lean`
+  kills the mutant (five guards), and C# pins the same example in
+  `SelectiveCollectorReadTests.AcceptanceTable_Values`. Each side was held by its own hand-written
+  test; no generated case held both to one program.
 - **G2 survived the four corpora.** The separate hand-written `CoreTests` sweep also passed
   with the pilot's Q-38 prototype. C# pins the rule in `DeconstructionExplicitCallDecisionTests`,
   using a host counter. The pilot did not measure `KatLangArityLaws` against these mutants.
 
+### Closing G1 and G2 (2026-11-22)
+
+Three LanguageSpec cases reuse the witnesses' programs, each with a hand-written expectation of the
+rule: the C# runner requires it of C#, and the generated guard in `lean/LanguageSpecCases.lean`
+requires it of Lean.
+
+| Gap | Case | Program | Expected |
+| --- | --- | --- | --- |
+| G1 | `selective-collector-take-zero-demands-no-element` | `Prefix(*xs) = xs.take(0)` / `Prefix(1 / 0)` | `[]` |
+| G1 | `selective-collector-take-count-error-precedes-elements` | `Prefix(*xs) = xs.take('a' + 1)` / `Prefix(1 / 0)` | the count's type mismatch, not the element's division by zero |
+| G2 | `decon-target-calls-reuse-the-shared-source` | `a, b = tick(), 20` / `a(), a(), b` | `1, 1, 20` |
+
+The single evaluation of the shared right-hand side is observable where a counter is: the G2 case
+carries a C# probe that appends `tick()` and expects 2, and the existing host-counter rows of
+`DeconstructionExplicitCallDecisionTests` pin one evaluation per shared source under repeated
+target calls (`a(), a(), b(), a` inside a call, `p, p(), p(), q()` at the root) on six C# routes.
+The Lean corpus guard checks all three values. The campaign control `decon_target_call_twice`
+also checks that the run finishes with `EvalState.tickCounter = 1`.
+
+The mutants of the two rules before and after, each run with a clean baseline and an unchanged
+repository (corpus guards failed, LanguageSpec / SemanticExplorer / SEM-2C / HostParent):
+
+| Mutant | Corpora of `4bce6327` | With the three cases | Killing guards |
+| --- | --- | --- | --- |
+| `take-not-a-retained-reader` | Killed, 1 / 0 / 0 / 0 | Killed, 3 / 0 / 0 / 0 | `selective-collector-take-demands-its-prefix` and the two G1 cases |
+| `take-first-element-before-count` | Survived | Killed, 2 / 0 / 0 / 0 | the two G1 cases |
+| `decon-target-call-reruns-source` | Survived | Killed, 1 / 0 / 0 / 0 | `decon-target-calls-reuse-the-shared-source` |
+
+Runs `lean-model-mutants-20261122T214403Z-39680` (`-CorpusRevision 4bce6327`; the corpora and the
+model are unchanged since `02c39b75`), `lean-model-mutants-20261122T213000Z-27536` (the two gap
+mutants under the old `Expect = 'Survives'`, which the run reported as "Killed, expected Survives")
+and `lean-model-mutants-20261122T213637Z-1524` (all three under the updated catalog, every `Expect`
+met, exit 0). Baselines took 103–109 s and each mutant 102–104 s. The catalog now records both former
+survivors as `Killed` with these cases as `RequiredKillers` and keeps their control witnesses
+required; each witness still fails under its mutant.
+
 Thin margins, recorded so that a later corpus edit does not open them silently: F02, F04,
-`need04-pending-before-anchor` and `take-not-a-retained-reader` each die to one guard, and
-`cache-key-local-as-exported` to one host-parent case. `Expect = 'Killed'` makes the runner fail if
-one of them goes.
+`need04-pending-before-anchor` and `decon-target-call-reruns-source` each die to one guard,
+`take-first-element-before-count` to two, and `cache-key-local-as-exported` to one host-parent case.
+`Expect = 'Killed'` makes the runner fail if one of them goes.
 
 ## 7. Runtime, attribution and cadence
 
@@ -322,7 +361,8 @@ be added (Q-38). Remove a mutant that is shown equivalent.
 - Anchors are literal text. An edit near a catalogued site makes the mutant Invalid until its anchor
   is re-derived; it is never applied to a different place, because every anchor must match once.
 - Only the four generated corpora are run. A mutant that only the hand-written `CoreTests` guards or
-  the `KatLangArityLaws` proofs reject counts as Survived here (G1 is such a case).
+  the `KatLangArityLaws` proofs reject counts as Survived here (G1 was such a case until its corpus
+  cases were added).
 - The campaign perturbs the Lean model only. A kill shows that a case pins that decision to an
   expectation the C# runners assert too; it says nothing about C#-only machinery (the front end, the
   optimizer, async routes, host operations).
@@ -336,10 +376,9 @@ be added (Q-38). Remove a mutant that is shown equivalent.
 
 ## 9. Follow-ups
 
-1. **G2 (Q-38):** add a Lean-comparable case, for example `a, b = tick(), 20` / `a(), a(), b`
-   (expected `1, 1, 20`), with a hand-written expectation; then set the entry to `Killed`.
-2. **G1 (`take` count first):** add the rule's own example `Prefix(*xs) = xs.take(0)` /
-   `Prefix(1 / 0)` (expected `[]`) and one precedence case; then set the entry to `Killed`.
+1. **G2 (Q-38):** done 2026-11-22, `decon-target-calls-reuse-the-shared-source` (section 6).
+2. **G1 (`take` count first):** done 2026-11-22, `selective-collector-take-zero-demands-no-element`
+   and the precedence case `selective-collector-take-count-error-precedes-elements` (section 6).
 3. **Exported/local key:** decide whether a source program can distinguish
    `cache-key-local-as-exported`; if one can, add it, otherwise note the mutant as host-only.
 4. **Cadence:** the owner decisions of section 7 (`-CheckCatalog` in the Lean job; a weekly

@@ -244,6 +244,17 @@ kind), then regenerate all six evaluation artifacts with their registered flags.
 The front-end decision artifact calls the model's specification functions directly.
 The gate differential imports the Lean gate and checks it on the existing corpus definitions.
 
+One more evaluation module embeds the same definitions and is NOT generated:
+`lean/CoreTests/PlannedLoopPublications.lean`, the KL-06 F01 table (imported by
+the canonical `CoreTests` target). It is hand-maintained and has no flag, and
+`PlannedLoopPublicationTests` checks its text, so no regeneration run updates
+it. When `LeanObsTemplate.SharedDefinitions`, `CacheObservationDefinitions` or
+the five state guards of `AppendCacheObservationContracts` change, copy them
+into the module above its marker lines by hand. To add or change a case, edit
+the table of `PlannedLoopPublicationTests`, then copy the text that its failing
+`LeanTable_HoldsTheSameProgramsAndExpectations` prints between the module's
+marker lines. Review the diff, rerun the class, and build `CoreTests`.
+
 Q-67 adds a separate structured-error projection (`DifferentialErrors` /
 `sharedError`, guarded by `errorObs`), while preserving the FORMAL-06 neutral
 contract. Public-engine failures are checked too, including the distinction

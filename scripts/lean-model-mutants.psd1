@@ -174,9 +174,10 @@
             Group = 'extension'
             Rule = '`take` over a retained collector demands and validates its count BEFORE any element (`xs.take(0)` over `F(1 / 0)` is `[]`).'
             Change = '`take` over a retained collector demands the collector''s first element before its count; the kept prefix is otherwise unchanged.'
-            Expect = 'Survives'
+            Note = 'Gap G1 until 2026-11-22: the two LanguageSpec cases below closed it. The control witnesses stay required.'
+            Expect = 'Killed'
+            RequiredKillers = @('selective-collector-take-zero-demands-no-element', 'selective-collector-take-count-error-precedes-elements')
             Witnesses = @('take_zero_skips_failing_first', 'take_count_ticks_before_first_element', 'take_count_failure_outranks_first_element')
-            Gap = 'docs/design/lean-model-mutation-campaign-2026-11.md, gap G1'
             Edits = @(
                 @{
                     Find = @'
@@ -197,9 +198,10 @@
             Group = 'extension'
             Rule = 'Q-38: an explicit call `a()` of a deconstruction target freshly invokes its projection wrapper, which reads the separately cached shared right-hand side; it never requests a fresh evaluation of that right-hand side.'
             Change = 'Only when an unpacking projection is explicitly called, its one hoisted-source argument becomes a fresh zero-supply call. Other bindings and established entries retain ordinary cache semantics.'
-            Expect = 'Survives'
+            Note = 'Gap G2 until 2026-11-22: the LanguageSpec case below closed it. The control witnesses stay required.'
+            Expect = 'Killed'
+            RequiredKillers = @('decon-target-calls-reuse-the-shared-source')
             Witnesses = @('decon_target_call_twice', 'decon_target_call_after_read')
-            Gap = 'docs/design/lean-model-mutation-campaign-2026-11.md, gap G2'
             Edits = @(
                 @{
                     Find = @'

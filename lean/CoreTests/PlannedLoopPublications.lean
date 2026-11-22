@@ -15,7 +15,10 @@ their own keys (`zeroArgPropertyCacheKey`). The C# planned loop keeps such a val
 of the round instead of the property cache, and until this decision its optimized route reported no
 publication for it (the first program below: three entries here and on the generic C# route, none on
 the optimized one, the same result `S[3, 6]`). C# now reports the store of a frame slot as the
-publication it is (`LoopRunFrame.EstablishTempSlot`, `IPlannedLoopPublicationObserver`).
+publication it is (`LoopRunFrame.EstablishTempSlot`, `IPlannedLoopPublicationObserver`). The pair
+`while-state-row-demands-temp` / `while-twin-never-demands-temp` is the original F01 demand witness
+and its no-demand twin: the same four rounds and the same result `S[3, 6]`, with `T` published three
+times against never, so only the cache guards tell the two apart.
 
 HAND-MAINTAINED, and pinned from C#: the test class `PlannedLoopPublicationTests` holds the table of
 sources and reviewed expectations, runs every case on the generic, optimized and suspending async
@@ -265,6 +268,20 @@ def plpWhileConditionRowEstablishes : Expr :=
 #guard obs plpWhileConditionRowEstablishes == "ok raw=2 n=1"
 #guard cacheEntries plpWhileConditionRowEstablishes "Next" == some 3
 #guard cacheTotal plpWhileConditionRowEstablishes == some 3
+
+-- while-state-row-demands-temp: Step(n, acc) = { \n     T = n * 2 \n     n + 1, acc + T, n < 3 \n } \n Step(0, 0).while
+def plpWhileStateRowDemandsTemp : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .mul (.param "n") (.num 2))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.resolve "T")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none)])
+#guard obs plpWhileStateRowDemandsTemp == "ok raw=S[3, 6] n=1"
+#guard cacheEntries plpWhileStateRowDemandsTemp "T" == some 3
+#guard cacheTotal plpWhileStateRowDemandsTemp == some 3
+
+-- while-twin-never-demands-temp: Step(n, acc) = { \n     T = n * 2 \n     n + 1, acc + n * 2, n < 3 \n } \n Step(0, 0).while
+def plpWhileTwinNeverDemandsTemp : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .mul (.param "n") (.num 2))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.binary .mul (.param "n") (.num 2))), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none)])
+#guard obs plpWhileTwinNeverDemandsTemp == "ok raw=S[3, 6] n=1"
+#guard cacheEntries plpWhileTwinNeverDemandsTemp "T" == some 0
+#guard cacheTotal plpWhileTwinNeverDemandsTemp == some 0
 
 -- unused-temp: Step(n) = { \n     Unused = n + 1 \n     n + 2 \n } \n Step(0).repeat(3)
 def plpUnusedTemp : Expr :=

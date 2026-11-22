@@ -314,7 +314,7 @@ publishes it once, whether the property is local-only or exported.
   strategies, so it has no frame slot.
 - *Lean.* The model is unchanged. A round binds a fresh context, so its entries
   already had their own keys.
-- *Pins.* `PlannedLoopPublicationTests` holds 15 source programs with
+- *Pins.* `PlannedLoopPublicationTests` holds 17 source programs with
   hand-written expectations and `lean/CoreTests/PlannedLoopPublications.lean`
   the encoding of the same elaborated programs with their neutral and cache
   guards (hand-maintained; the C# class checks the module text). The module
@@ -329,6 +329,8 @@ publishes it once, whether the property is local-only or exported.
 | Exported property called, then read | `252` | `E=3` |
 | Alias property | `14` | `A=3`, `B=0` |
 | `while` (the condition row establishes the slot) | `2` | `Next=3` |
+| `while`, a state row reads `T = n * 2` (the original F01 demand witness) | `S[3, 6]` | `T=3` |
+| Its twin, `acc + n * 2` written in place of `acc + T` | `S[3, 6]` | `T=0` |
 | Undemanded property | `6` | `Unused=0` |
 | Calculation fails in the first round | `err div0` | `Bad=0` |
 | Calculation fails in the second round | `err div0` | `T=1` |
@@ -342,10 +344,19 @@ and the expected entries came from frame slots. It also requires the generic
 publication order and the generic step, checkpoint, depth and materialization
 counts of the optimized route, and that an unobserved optimized run has the
 observed run's result and counts while its cache stores nothing for a planned
-property. Without the report all 13 cases that publish fail with "generic and
+property. Without the report all 13 cases that then published failed with "generic and
 optimized routes published different cache entries" (measured 2026-11-21 before
 the report was added). The pilots, the census numbers and the corpus guards
 below are unchanged by this decision; widening them stays a separate decision.
+
+The demand witness and its twin (added 2026-11-22) run four planned rounds each:
+a round reads its condition row first, so the round whose verdict is false forms
+no state row and does not demand `T`. They give the same value, so only the
+publication guards tell them apart, on the generic and optimized routes and in
+Lean. The physical insertions into the run cache stay route-specific: three on
+the generic route for the witness, none on the optimized route, whose frame
+slots hold the witness's three values, and none for the twin
+(`OptimizedRoute_KeepsItsFrameStorage_AndObservingItChangesNoResultOrCharge`).
 
 **Three states, never written alike.**
 

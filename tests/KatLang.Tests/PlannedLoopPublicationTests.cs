@@ -103,6 +103,17 @@ public class PlannedLoopPublicationTests
         Planned("while-condition-row-establishes",
             "Step(n) = {\n    Next = n + 1\n    Next, Next < 3\n}\nStep(0).while",
             "ok raw=2 n=1", "Next=3", rounds: 3),
+        // The original F01 demand witness: a state row of a `while` step reads the local-only T. A
+        // round reads its condition row first and the round whose verdict is false forms no state
+        // row, so the four rounds demand T three times.
+        Planned("while-state-row-demands-temp",
+            "Step(n, acc) = {\n    T = n * 2\n    n + 1, acc + T, n < 3\n}\nStep(0, 0).while",
+            "ok raw=S[3, 6] n=1", "T=3", rounds: 4),
+        // Its no-demand twin: `acc + n * 2` in place of `acc + T` gives the same four rounds and the
+        // same result, and T, declared and planned, is never demanded: an observed EMPTY cache.
+        Planned("while-twin-never-demands-temp",
+            "Step(n, acc) = {\n    T = n * 2\n    n + 1, acc + n * 2, n < 3\n}\nStep(0, 0).while",
+            "ok raw=S[3, 6] n=1", "T=0", rounds: 4),
         // An undemanded step property does no work and publishes nothing: an observed EMPTY cache.
         Planned("unused-temp",
             "Step(n) = {\n    Unused = n + 1\n    n + 2\n}\nStep(0).repeat(3)",
@@ -201,15 +212,19 @@ public class PlannedLoopPublicationTests
     }
 
     /// <summary>
-    /// WHICH optimized path ran for the two witnesses of the owner decision, from the planner's own
-    /// description of the plan it executed: the step property is a planned temp, and every row reads
-    /// it through a planned temp slot (never a generic fallback, which would use the cache).
+    /// The planner's description of each F01 witness identifies the planned temp and the rows
+    /// that read its slot. The no-demand twin still plans the temp, but has no slot reads.
     /// </summary>
     [Theory]
     [InlineData("local-only-temp-read-twice", "Step.repeat", "Next", "Add(StateSlot(n), Const(1))",
-        "TempSlot(Next)|Add(StateSlot(total), TempSlot(Next))")]
-    [InlineData("exported-constant-temp", "Step.repeat", "T", "Const(5)", "Add(StateSlot(s), TempSlot(T))")]
-    public void Witness_IsExecutedAsAPlannedTempSlot(string id, string planIdentity, string temp, string tempPlan, string rowPlans)
+        "TempSlot(Next)|Add(StateSlot(total), TempSlot(Next))", 3, 3)]
+    [InlineData("exported-constant-temp", "Step.repeat", "T", "Const(5)", "Add(StateSlot(s), TempSlot(T))", 3, 3)]
+    [InlineData("while-state-row-demands-temp", "Step.while", "T", "Multiply(StateSlot(n), Const(2))",
+        "Add(StateSlot(n), Const(1))|Add(StateSlot(acc), TempSlot(T))|LessThan(StateSlot(n), Const(3))", 4, 3)]
+    [InlineData("while-twin-never-demands-temp", "Step.while", "T", "Multiply(StateSlot(n), Const(2))",
+        "Add(StateSlot(n), Const(1))|Add(StateSlot(acc), Multiply(StateSlot(n), Const(2)))|LessThan(StateSlot(n), Const(3))", 4, 0)]
+    public void Witness_IsExecutedAsAPlannedTempSlot(string id, string planIdentity, string temp, string tempPlan,
+        string rowPlans, int rounds, int publications)
     {
         var loopCase = CaseById(id);
         var diagnostics = new LoopOptimizationDiagnostics();
@@ -224,11 +239,24 @@ public class PlannedLoopPublicationTests
         Assert.Equal((temp, true, tempPlan), (planned.Name, planned.Planned, planned.PlanSummary));
         Assert.Equal(rowPlans.Split('|'), plan.Expressions.Select(expression => expression.PlanSummary));
 
-        // Three rounds, one frame-slot store each, and no cache store on the optimized route.
-        Assert.Equal(3, diagnostics.LoopIterations);
-        Assert.Equal(3, routes.OptimizedFrameSlots.Published(temp));
-        Assert.Equal(3, routes.Publications.Published(temp));
-        Assert.Equal([temp, temp, temp], routes.OptimizedOrder);
+        Assert.Equal(rounds, diagnostics.LoopIterations);
+        Assert.Equal(publications, routes.OptimizedFrameSlots.Published(temp));
+        Assert.Equal(publications, routes.Publications.Published(temp));
+        Assert.Equal(Enumerable.Repeat(temp, publications), routes.OptimizedOrder);
+    }
+
+    /// <summary>
+    /// Keep the two programs paired as the table evolves. The route theories check the
+    /// publications, physical cache insertions and result of each program.
+    /// </summary>
+    [Fact]
+    public void NoDemandTwin_ReplacesOnlyTheReadOfT()
+    {
+        var witness = CaseById("while-state-row-demands-temp");
+        var twin = CaseById("while-twin-never-demands-temp");
+        Assert.Equal(witness.Source.Replace("acc + T,", "acc + n * 2,", StringComparison.Ordinal), twin.Source);
+        Assert.NotEqual(witness.Source, twin.Source);
+        Assert.Equal(witness.Neutral, twin.Neutral);
     }
 
     /// <summary>

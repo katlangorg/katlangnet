@@ -1,6 +1,8 @@
 import KatLang
 
--- On-demand controls for surviving mutants. The four differential corpora are measured separately.
+-- On-demand controls for the mutants of gaps G1 and G2, written while no corpus program killed them.
+-- LanguageSpec cases kill both since 2026-11-22; the catalog still requires these guards to fail.
+-- The four differential corpora are measured separately.
 namespace LeanMutationWitnesses
 open KatLang
 
@@ -43,8 +45,10 @@ def deconstruction (a b : String) (rhs rows : List Expr) : Expr :=
   .algorithmExpr (alg [] [] [privateProp source (alg [] [] [] rhs), projection a, projection b] rows)
 
 -- decon_target_call_twice: a, b = tick(), 20 / a(), a(), b
-#guard gives (deconstruction "a" "b" [tick, .num 20] [.call (.resolve "a") [], .call (.resolve "a") [], .resolve "b"])
-  (.sequenceValue [.atom 1, .atom 1, .atom 20])
+#guard match runResultWithState (deconstruction "a" "b" [tick, .num 20]
+    [.call (.resolve "a") [], .call (.resolve "a") [], .resolve "b"]) with
+  | .ok (value, state) => value == .sequenceValue [.atom 1, .atom 1, .atom 20] && state.tickCounter == 1
+  | .error _ => false
 
 -- decon_target_call_after_read: p, q = tick(), tick() / p, p(), q
 #guard gives (deconstruction "p" "q" [tick, tick] [.resolve "p", .call (.resolve "p") [], .resolve "q"])

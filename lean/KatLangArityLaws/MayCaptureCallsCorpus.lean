@@ -23,10 +23,10 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4556
-- guarded: 4418 (629 may capture calls, 3789 cannot)
+- corpus programs: 4559
+- guarded: 4421 (629 may capture calls, 3792 cannot)
 - excluded: 138
-  language-spec: 792 programs, 679 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+  language-spec: 795 programs, 682 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2821 programs, 2808 guarded (131 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
@@ -727,6 +727,9 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_enclosing_bindings_at_two_levels == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_nearest_parameter_binding_wins == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_property_is_never_a_source == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_selective_collector_take_zero_demands_no_element == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_selective_collector_take_count_error_precedes_elements == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_decon_target_calls_reuse_the_shared_source == false
 
 /-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
     expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
@@ -1409,9 +1412,12 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_hunt_forwarding_builtin_parameter_by_name,
   LanguageSpecCases.case_hunt_forwarding_enclosing_bindings_at_two_levels,
   LanguageSpecCases.case_hunt_forwarding_nearest_parameter_binding_wins,
-  LanguageSpecCases.case_hunt_forwarding_property_is_never_a_source
+  LanguageSpecCases.case_hunt_forwarding_property_is_never_a_source,
+  LanguageSpecCases.case_selective_collector_take_zero_demands_no_element,
+  LanguageSpecCases.case_selective_collector_take_count_error_precedes_elements,
+  LanguageSpecCases.case_decon_target_calls_reuse_the_shared_source
 ]
-#guard languageSpecPrograms.length == 679
+#guard languageSpecPrograms.length == 682
 #guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 89
 
 /-! ## explorer -/
@@ -8952,5 +8958,5 @@ def plannedLoopTempPrograms : List Expr := [
 #guard plannedLoopTempPrograms.length == 36
 #guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
 
--- 4418 gate guards over 4556 corpus programs.
+-- 4421 gate guards over 4559 corpus programs.
 end KatLang.MayCaptureCallsCorpus
