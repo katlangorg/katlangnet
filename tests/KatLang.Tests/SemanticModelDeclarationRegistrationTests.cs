@@ -172,8 +172,8 @@ public class SemanticModelDeclarationRegistrationTests
             .OrderBy(static name => name, StringComparer.Ordinal)
             .ToList();
         // HasDeferredModuleOpen is a per-frame flag (B2c editor uncertainty), and OwnsDeferredModuleOpen /
-        // DeferredModuleLevels are its own-level bit and chain count (FE-4b's deferred reading context) —
-        // none of them is a name table.
-        Assert.Equal(["DeferredModuleLevels", "HasDeferredModuleOpen", "OwnsDeferredModuleOpen", "Parameters", "Parent", "PropertyScope"], members);
+        // DeferredModuleLevels are its own-level bit and chain count (FE-4b's deferred reading context);
+        // Depth orders two frames of one chain (metadata parking) — none of them is a name table.
+        Assert.Equal(["DeferredModuleLevels", "Depth", "HasDeferredModuleOpen", "OwnsDeferredModuleOpen", "Parameters", "Parent", "PropertyScope"], members);
     }
 }

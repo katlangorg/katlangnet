@@ -1078,6 +1078,17 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSemanticModelAlgorithmVisit()
         => SemanticModelAlgorithmVisits = checked(SemanticModelAlgorithmVisits + 1);
 
+    /// <summary>
+    /// Evaluations of one lookup level's open list for a DEFERRED module open by the semantic model builder:
+    /// one when it creates a scope frame, which keeps the answer, and one for a level of the lookup chain it
+    /// holds no frame for (the prelude level). Deferred-reference classification reads the kept answer at
+    /// each level it walks, so the count does not grow with references or with the levels they cross.
+    /// </summary>
+    public long SemanticModelDeferredOpenChecks { get; private set; }
+
+    internal void RecordSemanticModelDeferredOpenCheck()
+        => SemanticModelDeferredOpenChecks = checked(SemanticModelDeferredOpenChecks + 1);
+
     // ── Scope visibility construction (editor, FE-4b) ─────────────────────────
     // Every visibility tree node is made by ONE interner (VisibilityTreeBuilder.Make) and
     // every layer change passes ONE entry (VisibilityTreeBuilder.Apply), so these counters
@@ -1136,6 +1147,16 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordScopeVisibilityMetadataEntry()
         => ScopeVisibilityMetadataEntries = checked(ScopeVisibilityMetadataEntries + 1);
+
+    /// <summary>
+    /// Unfinished metadata-registration entries a closing scope found shadowed and parked on the shadowing
+    /// frame until that frame's region closes (SemanticModelBuilder.RegisterVisibleMetadata): every later scope
+    /// closing inside that region skips them instead of inspecting them again.
+    /// </summary>
+    public long ScopeVisibilityMetadataParks { get; private set; }
+
+    internal void RecordScopeVisibilityMetadataPark()
+        => ScopeVisibilityMetadataParks = checked(ScopeVisibilityMetadataParks + 1);
 
     // ── Elaborated scope-lookup work (M18) ────────────────────────────────────
     // Unlike the traversal counters above, these record LOOKUP work performed by
@@ -1223,7 +1244,8 @@ internal sealed class FrontEndTraversalObservations
 
 /// <summary>
 /// The bounded blocks of elaboration work at whose start the passes observe the source-processing
-/// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>).
+/// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>), and the blocks of
+/// semantic-model construction at whose start the builder observes the token of its cancellable entry.
 /// </summary>
 internal enum FrontEndCancellationCheckpoint
 {
@@ -1251,6 +1273,21 @@ internal enum FrontEndCancellationCheckpoint
     /// graph, or a frame pushed by the level-expansion driver.
     /// </summary>
     SummaryChannel,
+    /// <summary>
+    /// One algorithm the semantic model builder's walk analyzes (a body, a branch body, an open-target block),
+    /// for the cancellable <c>SemanticModelBuilder.Build</c> entry.
+    /// </summary>
+    SemanticModelAlgorithm,
+    /// <summary>One output row of an algorithm the semantic model builder's walk analyzes.</summary>
+    SemanticModelRow,
+    /// <summary>One scope whose visibility the semantic model builder derives and emits after its walk.</summary>
+    SemanticModelScope,
+    /// <summary>A metadata entry, opened provider, or parked entry processed during scope-close registration.</summary>
+    SemanticModelMetadata,
+    /// <summary>One written open examined to establish a level's deferred ownership.</summary>
+    SemanticModelDeferredOpen,
+    /// <summary>One lookup level examined to classify a possible deferred reference.</summary>
+    SemanticModelDeferredLookup,
 }
 
 /// <summary>
@@ -1274,7 +1311,7 @@ internal static class FrontEndPassStage
 
 internal static class FrontEndCancellationCheckpointKinds
 {
-    internal const int Count = (int)FrontEndCancellationCheckpoint.SummaryChannel + 1;
+    internal const int Count = (int)FrontEndCancellationCheckpoint.SemanticModelDeferredLookup + 1;
 }
 
 /// <summary>

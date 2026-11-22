@@ -91,24 +91,32 @@ public static class SemanticModelBuilder
     /// <summary>
     /// Test-only construction knobs of scope visibility storage (FE-4b). None of them may change
     /// any model content: <see cref="ForceBulk"/> pins every layer to one application path,
-    /// <see cref="CollideNodeHashes"/> makes every tree-node intern key hash alike, and
+    /// <see cref="CollideNodeHashes"/> makes every tree-node intern key hash alike,
     /// <see cref="PriorityOverride"/> replaces the builder's private random per-name treap priority
-    /// with a deterministic function of the name (<see cref="VisibilityTreeBuilder.PriorityOverride"/>).
+    /// with a deterministic function of the name (<see cref="VisibilityTreeBuilder.PriorityOverride"/>),
+    /// and <see cref="RescanReference"/> selects the pre-parking reference: every scope close rescans
+    /// every unfinished metadata entry (<c>Builder.RegisterVisibleMetadataByRescan</c>) and every
+    /// deferred-reference walk re-evaluates each level's opens instead of reading its frame's answer.
     /// </summary>
     internal sealed record VisibilityConstructionOptions(
         bool? ForceBulk = null,
         bool CollideNodeHashes = false,
-        Func<string?, int>? PriorityOverride = null);
+        Func<string?, int>? PriorityOverride = null,
+        bool RescanReference = false);
 
     /// <summary>
     /// Observed build of a parse result (tests): records the builder's walk and scope-visibility
-    /// construction work on <paramref name="observations"/>, under optional construction knobs.
+    /// construction work on <paramref name="observations"/>, under optional construction knobs, and
+    /// observes <paramref name="cancellationToken"/> at the walk's cancellation checkpoints exactly as
+    /// the cancellable public entry does (the observer's hook can place a cancellation there).
     /// </summary>
     internal static SemanticModel Build(
         ParseResult parseResult,
         FrontEndTraversalObservations? observations,
-        VisibilityConstructionOptions? visibilityOptions = null)
-        => BuildElaborated(parseResult.Root, observations, parseResult.HostOperations, nameof(parseResult), visibilityOptions: visibilityOptions);
+        VisibilityConstructionOptions? visibilityOptions = null,
+        CancellationToken cancellationToken = default)
+        => BuildElaborated(parseResult.Root, observations, parseResult.HostOperations, nameof(parseResult), visibilityOptions: visibilityOptions,
+            cancellationToken: cancellationToken);
 
     /// <summary>
     /// The FE-4b differential oracle (tests): builds the model and, for each of its
@@ -178,7 +186,8 @@ public static class SemanticModelBuilder
         {
             var context = AnalyzedStaticStructures.ForBoundAst(elaboratedRoot, hostOperations,
                 sourceProcessingLimits: sourceProcessingLimits, cancellationToken: cancellationToken);
-            var model = new Builder(observations, hostOperations, visibilityOptions, context.Facts).Build(elaboratedRoot, eagerReference);
+            var model = new Builder(observations, hostOperations, visibilityOptions, context.Facts, cancellationToken)
+                .Build(elaboratedRoot, eagerReference);
             cancellationToken.ThrowIfCancellationRequested();
             return model;
         }
@@ -299,10 +308,21 @@ public static class SemanticModelBuilder
 
         private readonly StaticLookupFacts? _lookupFacts;
 
+        // The cancellable entry's token, shared by the AST walk, metadata registration, deferred lookup
+        // and scope emission. Tokenless builds use the default.
+        private readonly CancellationToken _cancellationToken;
+
+        // VisibilityConstructionOptions.RescanReference (tests only): the pre-parking registration and
+        // deferred-ownership walk, the differential oracle of both.
+        private readonly bool _rescanReference;
+
         public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null,
-            VisibilityConstructionOptions? visibilityOptions = null, StaticLookupFacts? completed = null)
+            VisibilityConstructionOptions? visibilityOptions = null, StaticLookupFacts? completed = null,
+            CancellationToken cancellationToken = default)
         {
             _observations = observations;
+            _cancellationToken = cancellationToken;
+            _rescanReference = visibilityOptions?.RescanReference == true;
             _openMemberIndexes = new OpenMemberIndexCache(observations);
             _visibilityTrees = new VisibilityTreeBuilder(observations, visibilityOptions?.CollideNodeHashes == true)
             {
@@ -483,13 +503,18 @@ public static class SemanticModelBuilder
                 && !_analyzedRegions.Add((sharedRegion, extraParameters is { Count: > 0 } ? extraParameters : null)))
                 return;
 
+            FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelAlgorithm, _cancellationToken);
             _observations?.RecordSemanticModelAlgorithmVisit();
             switch (algorithm)
             {
                 // A hoisted deconstruction RHS keeps its written owner's lookup context.
                 // The synthetic storage property creates no editor scope or structural region.
                 case Algorithm.User { IsAssignmentDeconstructionSource: true } source:
-                    foreach (var row in source.Output) VisitExpr(row, parentScope);
+                    foreach (var row in source.Output)
+                    {
+                        FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelRow, _cancellationToken);
+                        VisitExpr(row, parentScope);
+                    }
                     break;
                 // A callable alias is a scope body like a user algorithm's: its own opens and
                 // declarations, and its one written row — the target reference, an ordinary
@@ -529,7 +554,10 @@ public static class SemanticModelBuilder
                 VisitAlgorithm(property.Value, scope, extraParameters: null);
 
             foreach (var expr in algorithm.Output)
+            {
+                FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelRow, _cancellationToken);
                 VisitExpr(expr, scope);
+            }
 
             CloseScopeRegion(region, scope);
         }
@@ -597,7 +625,7 @@ public static class SemanticModelBuilder
                     ParameterPatterns: ImplicitSignatureTemplate template,
                 })
             {
-                return new ScopeFrame(parentScope, ImplicitParameterTable(template), propertyScope, ownsDeferredModuleOpen);
+                return RegisterFrame(new ScopeFrame(parentScope, ImplicitParameterTable(template), propertyScope, ownsDeferredModuleOpen));
             }
 
             var parameterSymbols = new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal);
@@ -677,7 +705,24 @@ public static class SemanticModelBuilder
                     : new SymbolDefinition(parameterName, SymbolKind.ImplicitParameter, AlgorithmValue: null, Declaration: null, IsPublic: false, PropertyInfo: null);
             }
 
-            return new ScopeFrame(parentScope, parameterSymbols, propertyScope, ownsDeferredModuleOpen);
+            return RegisterFrame(new ScopeFrame(parentScope, parameterSymbols, propertyScope, ownsDeferredModuleOpen));
+        }
+
+        /// <summary>
+        /// The frame this build created for each lookup level that declares opens (one per level: every
+        /// CreateScope call builds a new level). Open questions are asked level by level along the LOOKUP chain —
+        /// these levels and, at its root, the prelude level, which has no frame of this build — and a loaded
+        /// module's level skips its holder's levels (Q-31 H-P), so that chain is a subsequence of the frame chain:
+        /// it is mapped to frames here, never followed through frame parents. A level without opens owns no
+        /// deferred open and provides no opened name, so it needs no entry.
+        /// </summary>
+        private readonly Dictionary<ElaboratedPropertyScope, ScopeFrame> _frameByLevel = new(ReferenceEqualityComparer.Instance);
+
+        private ScopeFrame RegisterFrame(ScopeFrame frame)
+        {
+            if (frame.PropertyScope.Opens.Count > 0)
+                _frameByLevel.Add(frame.PropertyScope, frame);
+            return frame;
         }
 
         private IReadOnlyDictionary<string, SymbolDefinition> ImplicitParameterTable(ImplicitSignatureTemplate template)
@@ -759,17 +804,45 @@ public static class SemanticModelBuilder
         /// modules are missing (unavailable because the parse had no downloader, or refused by
         /// module elaboration) — so this is exactly the module-backed uncertainty the editor
         /// cannot resolve without module I/O it never performs.
+        /// <para>Evaluated once per level of one build: <see cref="CreateScope"/> keeps the answer on the
+        /// frame it creates, and lookups read it through <see cref="OwnsDeferredModuleOpenAt"/>.</para>
         /// </summary>
-        private static bool OwnsDeferredModuleOpen(ElaboratedPropertyScope propertyScope)
+        private bool OwnsDeferredModuleOpen(ElaboratedPropertyScope propertyScope)
         {
+            _observations?.RecordSemanticModelDeferredOpenCheck();
             foreach (var open in propertyScope.Opens)
             {
+                FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelDeferredOpen, _cancellationToken);
                 if (IsDeferredOpenTarget(open, propertyScope))
                     return true;
             }
 
             return false;
         }
+
+        /// <summary>
+        /// <see cref="OwnsDeferredModuleOpen"/> for one level of a lookup chain: false for a level without
+        /// opens, otherwise read from the frame this build created for the level (the answer CreateScope
+        /// computed), and computed once for a level without one. The answer is fixed for the whole build:
+        /// it reads only the level's written opens, its chain's declarations and the build's completed
+        /// static facts, and none of them changes while a model is built (the facts are sealed before the
+        /// walk starts), so the memo — which lives and dies with this builder — is exactly the per-lookup
+        /// recomputation.
+        /// </summary>
+        private bool OwnsDeferredModuleOpenAt(ElaboratedPropertyScope level)
+        {
+            if (level.Opens.Count == 0)
+                return false;
+            if (_frameByLevel.TryGetValue(level, out var frame))
+                return frame.OwnsDeferredModuleOpen;
+
+            _unframedDeferredOwnership ??= new(ReferenceEqualityComparer.Instance);
+            if (!_unframedDeferredOwnership.TryGetValue(level, out var owns))
+                _unframedDeferredOwnership.Add(level, owns = OwnsDeferredModuleOpen(level));
+            return owns;
+        }
+
+        private Dictionary<ElaboratedPropertyScope, bool>? _unframedDeferredOwnership;
 
         private static bool IsDeferredOpenTarget(Expr expression, ElaboratedPropertyScope propertyScope)
         {
@@ -812,12 +885,19 @@ public static class SemanticModelBuilder
         /// module may supply it); otherwise — nothing found and no deferred open, or an
         /// ambiguous open provider set — genuinely unresolved, exactly as before.
         /// </summary>
-        private static IdentifierClassification ClassifyUnresolvedLexicalReference(ScopeFrame scope, string name)
+        private IdentifierClassification ClassifyUnresolvedLexicalReference(ScopeFrame scope, string name)
             => IsDeferredLexicalReference(scope, name)
                 ? IdentifierClassification.DeferredModuleReference
                 : IdentifierClassification.Unresolved;
 
-        private static bool IsDeferredLexicalReference(ScopeFrame scope, string name)
+        /// <summary>
+        /// Whether a bare name no direct declaration of the chain declares is indeterminate here: walking the
+        /// lookup chain outward, the first level that supplies the name or owns a deferred module open owns one
+        /// and does not supply the name twice (two providers make it ambiguous, never indeterminate). Each
+        /// level's deferred ownership is read from its frame (<see cref="OwnsDeferredModuleOpenAt"/>), never
+        /// re-evaluated.
+        /// </summary>
+        private bool IsDeferredLexicalReference(ScopeFrame scope, string name)
         {
             if (!scope.HasDeferredModuleOpen
                 || ElaboratedScopeLookup.TryLookupDirectLexicalProperty(scope.PropertyScope, name) is not null)
@@ -825,12 +905,13 @@ public static class SemanticModelBuilder
 
             for (var current = scope.PropertyScope; current is not null; current = current.Parent)
             {
+                FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelDeferredLookup, _cancellationToken);
                 if (current.CompletedContext is { } completed
                     && completed.Facts.Facts(completed.Key)?.AmbiguousOpenNames?.Contains(name) == true) return false;
                 var matches = ElaboratedScopeLookup.SelectOpenLevel(current, name).Count;
                 if (matches > 1)
                     return false;
-                if (OwnsDeferredModuleOpen(current))
+                if (_rescanReference ? OwnsDeferredModuleOpen(current) : OwnsDeferredModuleOpenAt(current))
                     return true;
                 if (matches == 1)
                     return false;
@@ -2661,24 +2742,26 @@ public static class SemanticModelBuilder
         {
             _regionStack.RemoveAt(_regionStack.Count - 1);
 
-            if (region.Suppressed)
-                return;
+            if (!region.Suppressed)
+            {
+                // A nested scope's content is part of the enclosing scope's source
+                // extent, so the hull folds outward before the region is emitted.
+                if (_regionStack.Count > 0)
+                    _regionStack[^1].Extend(region.Hull);
 
-            // A nested scope's content is part of the enclosing scope's source
-            // extent, so the hull folds outward before the region is emitted.
-            if (_regionStack.Count > 0)
-                _regionStack[^1].Extend(region.Hull);
+                // The root region is addressable without a span. A nested scope with
+                // no source anchor at all (possible only in host-built trees) has no
+                // position a cursor could reach, so it is not emitted. Its visible set is
+                // derived after the walk (see EmitScopeVisibilities), in this emission order.
+                if (region.IsRoot || region.Hull is not null)
+                    RegisterVisibleMetadata(scope);
+                if (region.IsRoot)
+                    _pendingScopes.Add(new PendingScope(Span: null, region.NestingDepth, scope));
+                else if (region.Hull is { } hull)
+                    _pendingScopes.Add(new PendingScope(hull, region.NestingDepth, scope));
+            }
 
-            // The root region is addressable without a span. A nested scope with
-            // no source anchor at all (possible only in host-built trees) has no
-            // position a cursor could reach, so it is not emitted. Its visible set is
-            // derived after the walk (see EmitScopeVisibilities), in this emission order.
-            if (region.IsRoot || region.Hull is not null)
-                RegisterVisibleMetadata(scope);
-            if (region.IsRoot)
-                _pendingScopes.Add(new PendingScope(Span: null, region.NestingDepth, scope));
-            else if (region.Hull is { } hull)
-                _pendingScopes.Add(new PendingScope(hull, region.NestingDepth, scope));
+            ReleaseFrameMetadata(scope);
         }
 
         private void ExtendCurrentRegion(SourceSpan? span)
@@ -2717,12 +2800,73 @@ public static class SemanticModelBuilder
 
         // The old visibility enumeration also registered one-level member declarations.
         // Preserve those side effects at the same walk boundary: tied source spans expose
-        // registration order through Declarations and FindResolutionAt. These shrinking
-        // worklists contain only unfinished metadata, never a scope's visible-name snapshot.
-        private readonly Dictionary<ElaboratedPropertyScope, List<PropertyLookupHit>> _pendingDirectMetadata = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<Algorithm, List<Property>> _pendingOpenMetadata = new(ReferenceEqualityComparer.Instance);
+        // registration order through Declarations and FindResolutionAt. The worklists hold only
+        // unfinished metadata, never a scope's visible-name snapshot: per lookup level, the level's
+        // own members (direct), and per level and open target, the members the level opens (open).
+        //
+        // SHADOWED ENTRIES ARE PARKED, NOT RESCANNED. A scope closing over a level examines each of
+        // the level's entries once, and the entry then leaves the worklist: FINISHED — registered now
+        // or before, or decided for good (no later scope over the level can register it) — or
+        // PARKED on the frame that shadows it at this scope. A frame is a parent only inside its own
+        // region, so every scope that closes over the level before that frame's region closes lies
+        // inside the region with the frame in its chain (a scope closing there without it is rooted
+        // at the prelude and holds no level from outside the region): the shadow holds for it too,
+        // and the entry would register nothing. ReleaseFrameMetadata returns parked entries when the
+        // region closes, and a worklist is always examined in declaration order. What is registered,
+        // and in which order, is therefore exactly what rescanning every unfinished entry at every
+        // close registers (RegisterVisibleMetadataByRescan, the retained differential oracle); the
+        // shadowed entries are no longer examined again at every close inside the shadowing region.
+        private readonly Dictionary<ElaboratedPropertyScope, MetadataWorklist> _directMetadata = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<ElaboratedPropertyScope, Dictionary<Algorithm, MetadataWorklist>> _openMetadata = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Algorithm, List<PendingMetadata>> _openMetadataCandidates = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<ScopeFrame, List<ParkedMetadata>> _parkedMetadata = new(ReferenceEqualityComparer.Instance);
+        private readonly MetadataWorklist _emptyWorklist = new();
 
         private readonly HashSet<Algorithm> _registeredMemberSurfaces = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>One unfinished registration: a property and its index in the list it was taken from.</summary>
+        private readonly record struct PendingMetadata(int Index, Property Property);
+
+        /// <summary>An entry parked on a shadowing frame, and the worklist it returns to.</summary>
+        private readonly record struct ParkedMetadata(MetadataWorklist Worklist, PendingMetadata Entry);
+
+        /// <summary>
+        /// The unfinished metadata of one lookup level (its own members) or of one level and one open
+        /// target (the members the level opens). A closing scope examines every entry, and each one
+        /// finishes, is parked, or — only where no frame of this build can hold it — stays for the next
+        /// close; parked entries come back appended (<see cref="ReleaseFrameMetadata"/>).
+        /// </summary>
+        private sealed class MetadataWorklist
+        {
+            public List<PendingMetadata> Entries { get; } = [];
+
+            private bool _ordered = true;
+
+            public void Return(PendingMetadata entry)
+            {
+                if (Entries.Count > 0 && Entries[^1].Index > entry.Index)
+                    _ordered = false;
+                Entries.Add(entry);
+            }
+
+            /// <summary>The entries in declaration order.</summary>
+            public List<PendingMetadata> InOrder()
+            {
+                if (!_ordered)
+                {
+                    Entries.Sort(static (left, right) => left.Index.CompareTo(right.Index));
+                    _ordered = true;
+                }
+
+                return Entries;
+            }
+        }
+
+        private void ObserveMetadataEntry()
+        {
+            FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelMetadata, _cancellationToken);
+            _observations?.RecordScopeVisibilityMetadataEntry();
+        }
 
         private bool MembersRegistered(Algorithm algorithm)
         {
@@ -2730,7 +2874,7 @@ public static class SemanticModelBuilder
                 return true;
             foreach (var property in user.Properties)
             {
-                _observations?.RecordScopeVisibilityMetadataEntry();
+                ObserveMetadataEntry();
                 if (!IsSyntheticProperty(property) && !_propertySymbolCache.ContainsKey(property))
                     return false;
             }
@@ -2738,13 +2882,18 @@ public static class SemanticModelBuilder
             return true;
         }
 
-        private static bool DirectVisibilityDecision(ScopeFrame scope, string name, out Property? selected)
+        /// <summary>
+        /// The frame of <paramref name="scope"/>'s chain that decides <paramref name="name"/> directly — the
+        /// nearest one binding it as a parameter or declaring it as a real (non-synthetic) property — and the
+        /// property it selects (null for a parameter); null when no frame decides it.
+        /// </summary>
+        private static ScopeFrame? DirectVisibilityDecider(ScopeFrame scope, string name, out Property? selected)
         {
             selected = null;
             for (var current = scope; current is not null; current = current.Parent)
             {
                 if (current.Parameters.ContainsKey(name))
-                    return true;
+                    return current;
                 var hit = current.PropertyScope.TryLookupOwnProperty(name);
                 if (hit is null)
                     continue;
@@ -2757,17 +2906,252 @@ public static class SemanticModelBuilder
                 if (hit is null)
                     continue;
                 selected = hit.Value.Property;
-                return true;
+                return current;
             }
-            return false;
+            return null;
         }
 
         private void RegisterVisibleMetadata(ScopeFrame scope)
         {
+            if (_rescanReference)
+            {
+                RegisterVisibleMetadataByRescan(scope);
+                return;
+            }
+
             for (var frame = scope; frame is not null && !ReferenceEquals(frame, _preludeScope); frame = frame.Parent)
             {
                 var level = frame.PropertyScope;
-                if (!_pendingDirectMetadata.TryGetValue(level, out var pending))
+                if (!_directMetadata.TryGetValue(level, out var worklist))
+                {
+                    var hits = level.Properties;
+                    for (var index = 0; index < hits.Count; index++)
+                    {
+                        var property = hits[index].Property;
+                        ObserveMetadataEntry();
+                        if (!IsSyntheticProperty(property) && !MembersRegistered(property.Value))
+                            (worklist ??= new MetadataWorklist()).Entries.Add(new PendingMetadata(index, property));
+                    }
+
+                    // Nothing parks from an empty worklist, so one empty instance serves every such level.
+                    _directMetadata.Add(level, worklist ??= _emptyWorklist);
+                }
+
+                if (worklist.Entries.Count == 0)
+                    continue;
+
+                var entries = worklist.InOrder();
+                var kept = 0;
+                for (var i = 0; i < entries.Count; i++)
+                {
+                    var entry = entries[i];
+                    var property = entry.Property;
+                    ObserveMetadataEntry();
+                    if (MembersRegistered(property.Value))
+                        continue;
+
+                    var decider = DirectVisibilityDecider(scope, property.Name, out var selected);
+                    if (ReferenceEquals(selected, property))
+                    {
+                        _ = CreateMemberSymbols(property.Value);
+                        if (!MembersRegistered(property.Value))
+                            entries[kept++] = entry;
+                    }
+                    else if (decider is not null && decider.Depth > frame.Depth)
+                    {
+                        // A nearer frame decides the name; it decides it for every scope inside its region.
+                        ParkMetadata(decider, worklist, entry);
+                    }
+                    else if (!ReferenceEquals(decider, frame))
+                    {
+                        entries[kept++] = entry;
+                    }
+
+                    // Otherwise the level itself selects another declaration of the name, or binds it as a
+                    // parameter, for every scope over it: this entry's members are never registered from here.
+                }
+
+                entries.RemoveRange(kept, entries.Count - kept);
+            }
+
+            for (var level = scope.PropertyScope; level is not null; level = level.Parent)
+            {
+                var providers = level.GetResolvedOpenProviders();
+                if (providers.Count == 0)
+                    continue;
+
+                // Opened entries are kept per opening level: an entry's answer depends on the chain, and
+                // only scopes whose chain holds this level examine its worklists. A target with nothing
+                // unfinished needs none (its candidates never grow).
+                _frameByLevel.TryGetValue(level, out var opener);
+                _openMetadata.TryGetValue(level, out var opened);
+                List<Algorithm>? memberSurfaces = null;
+                foreach (var provider in providers)
+                {
+                    FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelMetadata, _cancellationToken);
+                    var target = provider.Target;
+                    if (opened is null || !opened.TryGetValue(target, out var worklist))
+                    {
+                        var candidates = OpenMetadataCandidates(target);
+                        if (candidates.Count == 0)
+                            continue;
+                        worklist = new MetadataWorklist();
+                        worklist.Entries.AddRange(candidates);
+                        if (opened is null)
+                            _openMetadata.Add(level, opened = new(ReferenceEqualityComparer.Instance));
+                        opened.Add(target, worklist);
+                    }
+
+                    if (worklist.Entries.Count == 0)
+                        continue;
+
+                    var entries = worklist.InOrder();
+                    var kept = 0;
+                    for (var i = 0; i < entries.Count; i++)
+                    {
+                        var entry = entries[i];
+                        var property = entry.Property;
+                        ObserveMetadataEntry();
+                        if (OpenMetadataFinished(property))
+                            continue;
+
+                        if (DirectVisibilityDecider(scope, property.Name, out _) is { } decider)
+                        {
+                            // A direct declaration beats every open. One at or outside the opening level decides
+                            // the name for every scope over the level; a nearer one, for every scope inside its region.
+                            if (opener is null)
+                                entries[kept++] = entry;
+                            else if (decider.Depth > opener.Depth)
+                                ParkMetadata(decider, worklist, entry);
+                            continue;
+                        }
+
+                        var selection = ElaboratedScopeLookup.SelectFirstOpenLevel(scope.PropertyScope, property.Name);
+                        // The eager pass registered the first provider even when a later
+                        // provider made the name ambiguous; only a unique name got members.
+                        if (selection.Count > 0 && ReferenceEquals(selection[0].Hit.Property, property))
+                        {
+                            _ = CreateLookupPropertySymbol(target, property);
+                            if (selection.Count == 1)
+                                (memberSurfaces ??= []).Add(property.Value);
+                        }
+
+                        if (opener is null || selection.Level is not { } answering)
+                        {
+                            entries[kept++] = entry;
+                        }
+                        else if (!ReferenceEquals(answering, level))
+                        {
+                            // A nearer open level answers the name (its providers are fixed) for every scope
+                            // inside its region; whatever it answers is registered through its own worklists.
+                            if (_frameByLevel.TryGetValue(answering, out var nearer) && nearer.Depth > opener.Depth)
+                                ParkMetadata(nearer, worklist, entry);
+                            else
+                                entries[kept++] = entry;
+                        }
+
+                        // Otherwise this level answers the name, the same way for every scope over it: the entry was
+                        // registered just now (a unique member gets its members below), or it never is from here.
+                    }
+
+                    entries.RemoveRange(kept, entries.Count - kept);
+                }
+
+                // The eager open pass registered all first-provider symbols before
+                // constructing the unique symbols' member surfaces, in that order.
+                if (memberSurfaces is not null)
+                    foreach (var algorithm in memberSurfaces)
+                        _ = CreateMemberSymbols(algorithm);
+            }
+        }
+
+        /// <summary>
+        /// The open-metadata candidates of one target, scanned once per build: its first public member of each
+        /// name (the member an open of the target provides) that is not finished yet. A later call drops the
+        /// candidates finished since — registration only grows — so the levels opening one target share one
+        /// scan of it, and each opening level copies only what is still unfinished.
+        /// </summary>
+        private List<PendingMetadata> OpenMetadataCandidates(Algorithm target)
+        {
+            if (!_openMetadataCandidates.TryGetValue(target, out var candidates))
+            {
+                candidates = [];
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var properties = target.Properties;
+                for (var index = 0; index < properties.Count; index++)
+                {
+                    var property = properties[index];
+                    ObserveMetadataEntry();
+                    if (property.IsPublic && seen.Add(property.Name) && !OpenMetadataFinished(property))
+                        candidates.Add(new PendingMetadata(index, property));
+                }
+
+                _openMetadataCandidates.Add(target, candidates);
+                return candidates;
+            }
+
+            var kept = 0;
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                ObserveMetadataEntry();
+                if (!OpenMetadataFinished(candidates[i].Property))
+                    candidates[kept++] = candidates[i];
+            }
+
+            candidates.RemoveRange(kept, candidates.Count - kept);
+            return candidates;
+        }
+
+        private bool OpenMetadataFinished(Property property)
+            => _propertySymbolCache.ContainsKey(property) && MembersRegistered(property.Value);
+
+        private void ParkMetadata(ScopeFrame shadowing, MetadataWorklist worklist, PendingMetadata entry)
+        {
+            if (!_parkedMetadata.TryGetValue(shadowing, out var parked))
+                _parkedMetadata.Add(shadowing, parked = []);
+            parked.Add(new ParkedMetadata(worklist, entry));
+            _observations?.RecordScopeVisibilityMetadataPark();
+        }
+
+        /// <summary>
+        /// The end of <paramref name="frame"/>'s region. No scope closes over the frame's level again (a frame is
+        /// a parent only inside its own region), so the level's worklists are dropped; every entry parked on the
+        /// frame returns to its worklist, whose level encloses the frame and is still open.
+        /// </summary>
+        private void ReleaseFrameMetadata(ScopeFrame frame)
+        {
+            if (ReferenceEquals(frame, _preludeScope))
+                return;
+
+            if (_parkedMetadata.Remove(frame, out var parked))
+            {
+                foreach (var (worklist, entry) in parked)
+                {
+                    FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelMetadata, _cancellationToken);
+                    worklist.Return(entry);
+                }
+            }
+
+            _directMetadata.Remove(frame.PropertyScope);
+            _openMetadata.Remove(frame.PropertyScope);
+        }
+
+        // THE RESCANNING REFERENCE (the registration before parking, kept verbatim as the differential
+        // oracle of RegisterVisibleMetadata; production never runs it — only builds with
+        // VisibilityConstructionOptions.RescanReference do): every scope close rescans every unfinished
+        // entry, the direct ones per level and the opened ones per target.
+        private readonly Dictionary<ElaboratedPropertyScope, List<PropertyLookupHit>> _rescanDirectMetadata = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Algorithm, List<Property>> _rescanOpenMetadata = new(ReferenceEqualityComparer.Instance);
+
+        private static bool DirectVisibilityDecision(ScopeFrame scope, string name, out Property? selected)
+            => DirectVisibilityDecider(scope, name, out selected) is not null;
+
+        private void RegisterVisibleMetadataByRescan(ScopeFrame scope)
+        {
+            for (var frame = scope; frame is not null && !ReferenceEquals(frame, _preludeScope); frame = frame.Parent)
+            {
+                var level = frame.PropertyScope;
+                if (!_rescanDirectMetadata.TryGetValue(level, out var pending))
                 {
                     pending = [];
                     foreach (var hit in level.Properties)
@@ -2776,7 +3160,7 @@ public static class SemanticModelBuilder
                         if (!IsSyntheticProperty(hit.Property) && !MembersRegistered(hit.Property.Value))
                             pending.Add(hit);
                     }
-                    _pendingDirectMetadata.Add(level, pending);
+                    _rescanDirectMetadata.Add(level, pending);
                 }
                 var kept = 0;
                 for (var i = 0; i < pending.Count; i++)
@@ -2799,7 +3183,7 @@ public static class SemanticModelBuilder
                 foreach (var provider in level.GetResolvedOpenProviders())
                 {
                     var target = provider.Target;
-                    if (!_pendingOpenMetadata.TryGetValue(target, out var pending))
+                    if (!_rescanOpenMetadata.TryGetValue(target, out var pending))
                     {
                         pending = [];
                         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -2810,7 +3194,7 @@ public static class SemanticModelBuilder
                                 && (!_propertySymbolCache.ContainsKey(property) || !MembersRegistered(property.Value)))
                                 pending.Add(property);
                         }
-                        _pendingOpenMetadata.Add(target, pending);
+                        _rescanOpenMetadata.Add(target, pending);
                     }
                     var kept = 0;
                     for (var i = 0; i < pending.Count; i++)
@@ -2947,6 +3331,7 @@ public static class SemanticModelBuilder
         {
             foreach (var pending in _pendingScopes)
             {
+                FrontEndTraversalObservations.ObserveCancellation(_observations, FrontEndCancellationCheckpoint.SemanticModelScope, _cancellationToken);
                 var visibility = VisibilityOf(pending.Frame);
                 var scope = new ScopeVisibility(pending.Span, ViewOf(visibility), pending.NestingDepth);
                 _scopeVisibilities.Add(scope);
@@ -3694,9 +4079,16 @@ public static class SemanticModelBuilder
             OwnsDeferredModuleOpen = ownsDeferredModuleOpen;
             DeferredModuleLevels = (parent?.DeferredModuleLevels ?? 0) + (ownsDeferredModuleOpen ? 1 : 0);
             HasDeferredModuleOpen = DeferredModuleLevels > 0;
+            Depth = parent is null ? 0 : parent.Depth + 1;
         }
 
         public ScopeFrame? Parent { get; }
+
+        /// <summary>
+        /// The number of frames above this one (the prelude frame is 0): of two frames on one frame chain,
+        /// the deeper one is the nearer to the chain's start.
+        /// </summary>
+        public int Depth { get; }
 
         /// <summary>This level's own open list holds a DEFERRED module open.</summary>
         public bool OwnsDeferredModuleOpen { get; }

@@ -211,7 +211,7 @@ public class OpenMemberIndexHostileReviewTests
         Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics.Select(d => d.Message)));
         var type = typeof(SemanticModelBuilder).GetNestedType("Builder", BindingFlags.NonPublic)!;
         var builder = Activator.CreateInstance(type, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, args: [null, null, null, parsed.Root.CompletedStructure?.Facts], culture: null)!;
+            binder: null, args: [null, null, null, parsed.Root.CompletedStructure?.Facts, CancellationToken.None], culture: null)!;
         var model = (SemanticModel)type.GetMethod("Build", [typeof(Algorithm)])!.Invoke(builder, [parsed.Root])!;
         var cache = (OpenMemberIndexCache)type.GetField("_openMemberIndexes", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(builder)!;
         Assert.Equal(1, cache.Count);
