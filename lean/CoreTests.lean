@@ -7,6 +7,7 @@ import CoreTests.OutputSemantics
 import CoreTests.DotCallSemantics
 import CoreTests.HigherOrderCalls
 import CoreTests.Conditionals
+import CoreTests.LiteralClauseTables
 import CoreTests.Strings
 import CoreTests.SequenceCallbackBuiltins
 import CoreTests.CollectionBuiltins

@@ -17,6 +17,7 @@ public class LeanCoreTestsCompositionTests
         "DotCallSemantics",
         "HigherOrderCalls",
         "Conditionals",
+        "LiteralClauseTables",
         "Strings",
         "SequenceCallbackBuiltins",
         "CollectionBuiltins",

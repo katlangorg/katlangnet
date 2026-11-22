@@ -286,7 +286,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "a deferred region is materialized by MaterializeRequiredRegionAsync"),
         new("Evaluator.BindFlatLiteralHeadAsync", "Evaluator.BindFlatLiteralHead", "5a12adf396077700", AL,
             "no in parameter on an async member"),
-        new("Evaluator.BindNeedFamilySupply", "Evaluator.BindNeedFamilySupplyCounted", "3e6daea7a4089cf0", AL,
+        new("Evaluator.BindNeedFamilySupply", "Evaluator.BindNeedFamilySupplyCounted", "9c48563b1f2ad854", AL,
             "the flat-literal head is bound without in ctx, and the binder-or-literal-head conditional is restated as an if/else with one await site per arm"),
         new("Evaluator.EvalPublishedZeroSupplyInvocationAsync", "Evaluator.EvalPublishedZeroSupplyInvocation", "505987f55c715633", ACG | AL,
             "the run's cache must be an IAsyncZeroArgPropertyResultCache; the delegate returns ValueTask<...>"),
@@ -438,6 +438,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.EvalNeedUserSupply ~ Evaluator.EvalNeedUserSupplyCounted",
         "Evaluator.EvalNeedFamilyBody ~ Evaluator.EvalNeedFamilyBodyCounted",
         "Evaluator.EvalNeedFamilySupply ~ Evaluator.EvalNeedFamilySupplyCounted",
+        "Evaluator.SelectLiteralRunClauseAsync ~ Evaluator.SelectLiteralRunClause",
         "Evaluator.EvalOriginCallCountedAsync ~ Evaluator.EvalOriginCallCounted",
         "KatLangEngine.EvaluateToAtomsAsync ~ KatLangEngine.EvaluateToAtoms",
     ];

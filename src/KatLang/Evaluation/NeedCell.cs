@@ -936,6 +936,12 @@ internal sealed class NeedCell : NeedNode
         }
     }
 
+    // A literal-run probe can stand in for a later cell's repeated successful demand only
+    // when it would observe every cancellation or terminal failure that demand could observe.
+    internal bool CoversDemandChecksOf(NeedCell other)
+        => (other._budget is null || ReferenceEquals(_budget, other._budget))
+            && (!other._token.CanBeCanceled || _token == other._token);
+
     internal EvalResult<Evaluator.CountedResult> Demand()
     {
         _token.ThrowIfCancellationRequested();

@@ -98,6 +98,29 @@ internal sealed class EvaluationObservations
     internal void RecordClauseFamilyPreparation() => Interlocked.Increment(ref _clauseFamilyPreparationCount);
 
     /// <summary>
+    /// Number of literal clause runs (<c>Evaluator.LiteralClauseRun</c>) the run's completed clause-family
+    /// preparations indexed: maximal runs of at least <c>Evaluator.MinimumLiteralClauseRunLength</c> consecutive
+    /// literal-only clauses of one arity, counted once per preparation, however many calls select through them.
+    /// </summary>
+    public long LiteralClauseRunCount => Interlocked.Read(ref _literalClauseRunCount);
+
+    private long _literalClauseRunCount;
+
+    internal void RecordLiteralClauseRuns(int runs) => Interlocked.Add(ref _literalClauseRunCount, runs);
+
+    /// <summary>
+    /// Number of selections through a literal clause run's index during this run
+    /// (<c>Evaluator.SelectLiteralRunClause</c>): one per family dispatch that reached a run's first clause with a
+    /// supply its heads accept and whose first cell covers every position's demand checks. A run whose index the test seam
+    /// <c>OrderedClauseDispatchTestSeam</c> withheld records none.
+    /// </summary>
+    public long LiteralClauseRunSelectionCount => Interlocked.Read(ref _literalClauseRunSelectionCount);
+
+    private long _literalClauseRunSelectionCount;
+
+    internal void RecordLiteralClauseRunSelection() => Interlocked.Increment(ref _literalClauseRunSelectionCount);
+
+    /// <summary>
     /// Number of compound expression names rendered for call or dot-call diagnostics during this
     /// run. Successful calls and resource-limit errors observe zero; an ordinary error increments
     /// once for each diagnostic/context frame that actually needs the compound name. Simple

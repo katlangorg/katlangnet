@@ -1760,10 +1760,12 @@ public static partial class Evaluator
     // ArityMismatch with the first clause's minimum (0 when there is no clause). Which clause binds
     // is each clause's own gate afterwards, in written order: the driver's per-clause check, where a
     // refused count is that clause's non-match, then BindAcceptedNeedPatterns in family mode (a flat
-    // literal head binds through its equivalent direct path, BindFlatLiteralHead).
-    // The verdict and the translated heads are a pure function of the branch list, decided ONCE
-    // per run per list (NeedFamilyPreparationCache); every call still checks the verdict first and
-    // then decides its own arity. The driver selects bodies from the same prepared view.
+    // literal head binds through its equivalent direct path, BindFlatLiteralHead, and a run of
+    // literal-only heads through its index, LiteralClauseRun, which replays the run's ordered attempts
+    // only where they demand or select).
+    // The verdict, the translated heads and the runs' indexes are a pure function of the branch list,
+    // decided ONCE per run per list (NeedFamilyPreparationCache); every call still checks the verdict
+    // first and then decides its own arity. The driver selects bodies from the same prepared view.
     private static EvalResult<NeedFamilyPreparation> PrepareNeedFamilyHeads(
         Algorithm callee, int supplied, in EvalCtx ctx)
     {
@@ -1827,12 +1829,23 @@ public static partial class Evaluator
             // that demands a recursive argument holds no extra frame (stack headroom per level).
             var head = family.HeadAt(i);
             if (!NeedAcceptsCardinality(head, supply.Count)) continue;
-            ObserveClauseAttempt(i, ctx);
-            // A flat literal head binds directly (no dictionaries, stacks or binder state machine).
-            var bindings = IsFlatLiteralHead(head, supply)
-                ? BindFlatLiteralHead(head, supply, in ctx)
-                : BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
-            ObserveClauseOutcome(bindings, ctx);
+            var run = family.LiteralRunAt(i, supply);
+            EvalResult<NeedEnv?> bindings;
+            if (run is not null)
+            {
+                // A literal clause run starts here: its index replays only the attempts that demand or select
+                // (LiteralClauseRun). The dispatch resumes at the selected clause, or past the run.
+                bindings = LiteralRunBindings(SelectLiteralRunClause(run, supply, ctx.Observations), run, ref i);
+            }
+            else
+            {
+                ObserveClauseAttempt(i, ctx);
+                // A flat literal head binds directly (no dictionaries, stacks or binder state machine).
+                bindings = IsFlatLiteralHead(head, supply)
+                    ? BindFlatLiteralHead(head, supply, in ctx)
+                    : BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
+                ObserveClauseOutcome(bindings, ctx);
+            }
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
@@ -1856,15 +1869,25 @@ public static partial class Evaluator
         {
             var head = family.HeadAt(i);
             if (!NeedAcceptsCardinality(head, supply.Count)) continue;
-            ObserveClauseAttempt(i, ctx);
-            // As in the synchronous driver: a flat literal head binds directly. Separate await sites
-            // keep this state machine's frame closest to its former size.
+            var run = family.LiteralRunAt(i, supply);
             EvalResult<NeedEnv?> bindings;
-            if (!IsFlatLiteralHead(head, supply))
-                bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: true, family: true).ConfigureAwait(false);
+            if (run is not null)
+            {
+                // A literal clause run starts here: its index replays only the attempts that demand or select
+                // (LiteralClauseRun). The dispatch resumes at the selected clause, or past the run.
+                bindings = LiteralRunBindings(await SelectLiteralRunClauseAsync(run, supply, ctx.Observations).ConfigureAwait(false), run, ref i);
+            }
             else
-                bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(false);
-            ObserveClauseOutcome(bindings, ctx);
+            {
+                ObserveClauseAttempt(i, ctx);
+                // As in the synchronous driver: a flat literal head binds directly. Separate await sites
+                // keep this state machine's frame closest to its former size.
+                if (!IsFlatLiteralHead(head, supply))
+                    bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: true, family: true).ConfigureAwait(false);
+                else
+                    bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(false);
+                ObserveClauseOutcome(bindings, ctx);
+            }
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;

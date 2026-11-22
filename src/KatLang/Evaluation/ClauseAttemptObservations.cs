@@ -38,7 +38,10 @@ internal readonly record struct ClauseAttempt(
 /// and cardinality decisions, the skip of a clause whose head refuses the supply count, and the
 /// activation of a matched clause are not attempts. So a dispatch that wrongly continued past a
 /// terminal error to a later clause is visible here even when the run's retained terminal error
-/// (Q-02) stops that clause before its first demand.
+/// (Q-02) stops that clause before its first demand. A literal clause run selects through its index
+/// (<c>Evaluator.LiteralClauseRun</c>), which replays only the attempts that demand or select: its
+/// record is the subsequence of the ordered attempts it replays, each with the ordered outcome, so a
+/// run's first clause, an error and the selected clause are recorded exactly as before.
 ///
 /// <para>Internal, test-only C# implementation instrumentation, never language semantics and never
 /// compared against Lean. Created only by a test that asks for it: an ordinary run, or an observed

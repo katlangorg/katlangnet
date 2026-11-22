@@ -31,6 +31,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.FlatCaptureHeadBindingTests.BoundBodyEntry_ProjectsTheParameterNamesOncePerCall_GcIsolatedChild",
                 "KatLang.Tests.FlatCaptureHeadBindingTests.FindDuplicatePropName_OfAShortPropertyList_AllocatesNothing_GcIsolatedChild",
                 "KatLang.Tests.FlatCaptureHeadBindingTests.FlatCaptureHead_AllocatesExactlyItsEnvironment_AndARefusalNothing_GcIsolatedChild",
+                "KatLang.Tests.LiteralClauseRunTests.ASelection_AllocatesNothing_GcIsolatedChild",
                 "KatLang.Tests.MetaCallBindingContextTests.AnEmptyMintedNeedTier_CostsNoExtraAllocation_GcIsolatedChild",
                 "KatLang.Tests.NeedCellContextAndRecordTests.ARecordsFirstPair_AllocatesNoTable_GcIsolatedChild",
                 "KatLang.Tests.NeedCellDemandScaffoldingTests.AMathNativeCall_AllocatesExactlyItsReadsAndItsResult_GcIsolatedChild",
