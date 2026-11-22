@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 654
+- specification surface cases: 792
 - excluded parse-level cases (Lean has no surface parser): 89
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 541
+- Lean-guarded cases: 679
 - probe observations (C#-only by design): 1615
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 537 programs have no cache observation, which is not an empty cache;
+  the other 675 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -2963,7 +2963,697 @@ def case_exposure_shape_inline_head_enclosing_open_member_capture_outside : Expr
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "Q" (alg ["y"] [] [] [.param "y"])] [.num 0])] [])) "Sub" none)] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "Q") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
 #guard obs case_exposure_shape_inline_head_enclosing_open_member_capture_outside == "err localOnlyProperty"
 
--- 541 canonical Lean-guarded specification cases.
+-- hunt-exposure-inline-block-head-per-call [access-boundaries]: F(y) = { \n   A = { public Q = y * 10 }.Q + 0 \n   A \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_inline_block_head_per_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_inline_block_head_per_call == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-opened-member-read-per-call [access-boundaries]: F(y) = { \n   open B \n   B = { public Q = y * 10 } \n   R = Q + 0 \n   R \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_opened_member_read_per_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "B"] [privateProp "B" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_opened_member_read_per_call == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-carrier-of-dependent-property-per-call [access-boundaries]: F(y) = { \n   B = y * 10 \n   A = { B } \n   R = A + 0 \n   R \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_carrier_of_dependent_property_per_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "B") none false)) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "A") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_carrier_of_dependent_property_per_call == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-deconstruction-target-per-call [access-boundaries]: F(y) = { \n   a, b = y * 10, y \n   R = a + 0 \n   R \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_deconstruction_target_per_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10)), .param "y"])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "a") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_deconstruction_target_per_call == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-lifted-formula-uses-enclosing-parameter [access-boundaries]: A = y * 10 \n F(y) = { \n   G = A + 0 \n   G \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_lifted_formula_uses_enclosing_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 10))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "A") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "G"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_lifted_formula_uses_enclosing_parameter == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-bare-forwarding-clause-uses-enclosing-parameter [access-boundaries]: Inc(y) = y * 10 \n F(y) = { \n   K(0) = Inc \n   K(n) = n \n   G = K(0) + 0 \n   G \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_bare_forwarding_clause_uses_enclosing_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 10))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "K") [.num 0]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "K" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.call (.resolve "Inc") [.param "y"])])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "G"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_bare_forwarding_clause_uses_enclosing_parameter == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-inline-open-target-lifted-with-enclosing-parameter [name-resolution]: F(y) = { \n   open { public Q = y * 10 } \n   A = Q + 0 \n   A \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_inline_open_target_lifted_with_enclosing_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.algorithmExpr (alg [] [] [publicProp "Q" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 10))])] []))] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "Q") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_inline_open_target_lifted_with_enclosing_parameter == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-self-contained-property-fresh-in-every-call [access-boundaries]: F(y) = { \n   A = tick() \n   A + y * 0 \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_self_contained_property_fresh_in_every_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "A" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.resolve "A") (.binary .mul (.param "y") (.num 0)))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_self_contained_property_fresh_in_every_call == "ok raw=S[1, 2, L[3, 4]] n=3"
+
+-- hunt-exposure-dependent-property-evaluated-per-call [access-boundaries]: F(y) = { \n   A = tick() + y * 0 \n   A \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_dependent_property_evaluated_per_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "y") (.num 0)))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_dependent_property_evaluated_per_call == "ok raw=S[1, 2, L[3, 4]] n=3"
+
+-- hunt-exposure-call-reference-property-per-call [access-boundaries]: Cap(meta r) = r \n Id(v) = v \n F(y) = { \n   R = Cap(Id(y * 10)) \n   R.Invoke() \n } \n F(1), F(2), map([3, 4], F)
+def case_hunt_exposure_call_reference_property_per_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Id") [(.binary .mul (.param "y") (.num 10))])])])) with requiredOwnerDepths := some [("y", some 0)] }] [(.dotCall (.resolve "R") "Invoke" (some []))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_hunt_exposure_call_reference_property_per_call == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- hunt-exposure-member-mixes-exported-and-dependent [access-boundaries]: F(y) = { \n   B = { \n     public P = tick() \n     public Q = P + y \n   } \n   B.Q \n } \n F(10), F(20)
+def case_hunt_exposure_member_mixes_exported_and_dependent : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "B" (alg [] [] [publicProp "P" (alg [] [] [] [(.call (.resolve "tick") [])]), { (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "P") (.param "y"))])) with requiredOwnerDepths := some [("y", some 1)] }] [])] [(.dotCall (.resolve "B") "Q" none)])] [(.call (.resolve "F") [.num 10]), (.call (.resolve "F") [.num 20])])
+#guard obs case_hunt_exposure_member_mixes_exported_and_dependent == "ok raw=S[11, 22] n=2"
+
+-- hunt-cache-carrier-call-fresh-bare-read-target [access-boundaries]: P = tick() \n B = { P } \n P, B(), B
+def case_hunt_cache_carrier_call_fresh_bare_read_target : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "B" (.alias none [] [] (.resolve "P") none false)] [.resolve "P", (.call (.resolve "B") []), .resolve "B"])
+#guard obs case_hunt_cache_carrier_call_fresh_bare_read_target == "ok raw=S[1, 2, 1] n=3"
+
+-- hunt-cache-deconstruction-call-establishes-target-entry [deconstruction]: a, b = tick(), 20 \n a(), a, b()
+def case_hunt_cache_deconstruction_call_establishes_target_entry : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), .resolve "a", (.call (.resolve "b") [])])
+#guard obs case_hunt_cache_deconstruction_call_establishes_target_entry == "ok raw=S[1, 1, 20] n=3"
+
+-- hunt-cache-collecting-only-owner-read-and-calls [access-boundaries]: Only(*xs) = tick() + xs.count \n Only, Only(), Only, Only(5)
+def case_hunt_cache_collecting_only_owner_read_and_calls : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "tick") []) (.dotCall (.param "xs") "count" none))])] [.resolve "Only", (.call (.resolve "Only") []), .resolve "Only", (.call (.resolve "Only") [.num 5])])
+#guard obs case_hunt_cache_collecting_only_owner_read_and_calls == "ok raw=S[1, 2, 1, 4] n=4"
+
+-- hunt-cache-collecting-only-owner-exported-member [access-boundaries]: Only(*xs) = { \n   V = tick() \n   V + xs.count \n } \n Only, Only.V, Only(), Only(7)
+def case_hunt_cache_collecting_only_owner_exported_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "V" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.resolve "V") (.dotCall (.param "xs") "count" none))])] [.resolve "Only", (.dotCall (.resolve "Only") "V" none), (.call (.resolve "Only") []), (.call (.resolve "Only") [.num 7])])
+#guard obs case_hunt_cache_collecting_only_owner_exported_member == "ok raw=S[1, 1, 2, 4] n=4"
+
+-- hunt-collecting-owner-dependent-member-refused-at-root [access-boundaries]: Only(*xs) = { \n   V = tick() + xs.count \n   V \n } \n Only, Only.V, Only, Only.V
+def case_hunt_collecting_owner_dependent_member_refused_at_root : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["xs"]) (alg [] [] [] [(.binary .add (.call (.resolve "tick") []) (.dotCall (.param "xs") "count" none))])) with requiredOwnerDepths := some [("xs", some 0)] }] [.resolve "V"])] [.resolve "Only", (.dotCall (.resolve "Only") "V" none), .resolve "Only", (.dotCall (.resolve "Only") "V" none)])
+#guard obs case_hunt_collecting_owner_dependent_member_refused_at_root == "err localOnlyProperty"
+
+-- hunt-cache-declared-algorithm-member-grouped-call [access-boundaries]: Box = { public Algorithm = tick() } \n (Box.Algorithm)(), Box.Algorithm, (Box.Algorithm)()
+def case_hunt_cache_declared_algorithm_member_grouped_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "Algorithm" (alg [] [] [] [(.call (.resolve "tick") [])])] [])] [(.call (.dotCall (.resolve "Box") "Algorithm" none) []), (.dotCall (.resolve "Box") "Algorithm" none), (.call (.dotCall (.resolve "Box") "Algorithm" none) [])])
+#guard obs case_hunt_cache_declared_algorithm_member_grouped_call == "ok raw=S[1, 1, 2] n=3"
+
+-- hunt-cache-alias-of-member-path-shares-member-entry [access-boundaries]: Box = { public V = tick() } \n A = Box.V \n A, Box.V, A(), A
+def case_hunt_cache_alias_of_member_path_shares_member_entry : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "V" (alg [] [] [] [(.call (.resolve "tick") [])])] []), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "Box") "V" none)))] [.resolve "A", (.dotCall (.resolve "Box") "V" none), (.call (.resolve "A") []), .resolve "A"])
+#guard obs case_hunt_cache_alias_of_member_path_shares_member_entry == "ok raw=S[1, 1, 2, 1] n=4"
+
+-- hunt-cache-carrier-own-member-and-forwarded-read [access-boundaries]: P = tick() \n B = { \n   public Q = 99 \n   P \n } \n B.Q, B, B(), P
+def case_hunt_cache_carrier_own_member_and_forwarded_read : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "B" (.alias none [] [publicProp "Q" (alg [] [] [] [.num 99])] (.resolve "P") none false)] [(.dotCall (.resolve "B") "Q" none), .resolve "B", (.call (.resolve "B") []), .resolve "P"])
+#guard obs case_hunt_cache_carrier_own_member_and_forwarded_read == "ok raw=S[99, 1, 2, 1] n=4"
+
+-- hunt-cache-explicit-call-establishes-inner-reads-cached [access-boundaries]: A = tick() \n B = A + tick() \n B(), B, A
+def case_hunt_cache_explicit_call_establishes_inner_reads_cached : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "B" (alg [] [] [] [(.binary .add (.resolve "A") (.call (.resolve "tick") []))])] [(.call (.resolve "B") []), .resolve "B", .resolve "A"])
+#guard obs case_hunt_cache_explicit_call_establishes_inner_reads_cached == "ok raw=S[3, 3, 1] n=3"
+
+-- hunt-cache-reentrant-explicit-call-inside-owner [access-boundaries]: A = tick() + if(tick() < 3, A(), 0) \n A, A
+def case_hunt_cache_reentrant_explicit_call_inside_owner : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.binary .add (.call (.resolve "tick") []) (.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.num 3) }]), (.call (.resolve "A") []), .num 0]))])] [.resolve "A", .resolve "A"])
+#guard obs case_hunt_cache_reentrant_explicit_call_inside_owner == "ok raw=S[4, 4] n=2"
+
+-- hunt-cache-carrier-call-uses-declaring-activation [access-boundaries]: F(y) = { \n   O = { \n     public V = y * 0 + tick() \n     V \n   } \n   O(), O, O.V \n } \n F(1)
+def case_hunt_cache_carrier_call_uses_declaring_activation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "O" (.localCapturedAncestorParams ["y"]) (.alias none [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.num 0)) (.call (.resolve "tick") []))])) with requiredOwnerDepths := some [("y", some 1)] }] (.resolve "V") none false)) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "O") []), .resolve "O", (.dotCall (.resolve "O") "V" none)])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_hunt_cache_carrier_call_uses_declaring_activation == "ok raw=S[1, 1, 1] n=1"
+
+-- hunt-cache-explicit-owner-call-binds-fresh-activation [access-boundaries]: F(y) = { \n   O = { \n     public V = y * 0 + tick() \n     V + 0 \n   } \n   O(), O, O.V \n } \n F(1)
+def case_hunt_cache_explicit_owner_call_binds_fresh_activation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "O" (.localCapturedAncestorParams ["y"]) (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.num 0)) (.call (.resolve "tick") []))])) with requiredOwnerDepths := some [("y", some 1)] }] [(.binary .add (.resolve "V") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "O") []), .resolve "O", (.dotCall (.resolve "O") "V" none)])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_hunt_cache_explicit_owner_call_binds_fresh_activation == "ok raw=S[1, 1, 2] n=1"
+
+-- hunt-cache-explicit-call-owns-empty-key [access-boundaries]: A = tick() + if(tick() < 3, A(), 0) \n A(), A
+def case_hunt_cache_explicit_call_owns_empty_key : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.binary .add (.call (.resolve "tick") []) (.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.num 3) }]), (.call (.resolve "A") []), .num 0]))])] [(.call (.resolve "A") []), .resolve "A"])
+#guard obs case_hunt_cache_explicit_call_owns_empty_key == "ok raw=S[4, 4] n=2"
+
+-- hunt-cache-deconstruction-in-loop-step-per-round [deconstruction]: Step(n, s) = { \n   a, b = n * 10 + tick(), 0 \n   n + 1, s + a, n < 2 \n } \n Step(0, 0).while, tick()
+def case_hunt_cache_deconstruction_in_loop_step_per_round : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n", "s"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "n") (.num 10)) (.call (.resolve "tick") [])), .num 0])) with requiredOwnerDepths := some [("n", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("n", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "s") (.resolve "a")), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_cache_deconstruction_in_loop_step_per_round == "ok raw=S[S[2, 13], 3] n=2"
+
+-- hunt-cache-alias-of-collecting-owner [access-boundaries]: Only(*xs) = tick() + xs.count \n A = Only \n A(5), A, Only(), A
+def case_hunt_cache_alias_of_collecting_owner : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Only")), privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "tick") []) (.dotCall (.param "xs") "count" none))])] [(.call (.resolve "A") [.num 5]), .resolve "A", (.call (.resolve "Only") []), .resolve "A"])
+#guard obs case_hunt_cache_alias_of_collecting_owner == "ok raw=S[2, 2, 3, 2] n=4"
+
+-- hunt-cache-carrier-forwards-supplied-calls-fresh [access-boundaries]: P(x) = x + tick() \n B = { \n   public Q = 1 \n   P \n } \n B(10), B(10), B.Q
+def case_hunt_cache_carrier_forwards_supplied_calls_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.resolve "P") none false), privateProp "P" (alg ["x"] [] [] [(.binary .add (.param "x") (.call (.resolve "tick") []))])] [(.call (.resolve "B") [.num 10]), (.call (.resolve "B") [.num 10]), (.dotCall (.resolve "B") "Q" none)])
+#guard obs case_hunt_cache_carrier_forwards_supplied_calls_fresh == "ok raw=S[11, 12, 1] n=3"
+
+-- hunt-runtime-alias-cell-lifetime-exported [access-boundaries]: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n F(k) = { \n   A = Pick(tick()).Algorithm \n   A(k) \n } \n F(1), F(2), F(1), tick()
+def case_hunt_runtime_alias_cell_lifetime_exported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "F" (alg ["k"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.param "k"])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "F") [.num 1]), (.call (.resolve "tick") [])])
+#guard obs case_hunt_runtime_alias_cell_lifetime_exported == "ok raw=S[10, 20, 10, 4] n=4"
+
+-- hunt-runtime-alias-cell-lifetime-local [access-boundaries]: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n F(k) = { \n   A = Pick(tick() + k * 0).Algorithm \n   A(k) \n } \n F(1), F(2), F(1), tick()
+def case_hunt_runtime_alias_cell_lifetime_local : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "F" (alg ["k"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["k"]) (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "k") (.num 0)))]) "Algorithm" none)))) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "A") [.param "k"])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "F") [.num 1]), (.call (.resolve "tick") [])])
+#guard obs case_hunt_runtime_alias_cell_lifetime_local == "ok raw=S[10, 20, 10, 4] n=4"
+
+-- hunt-runtime-alias-cell-lifetime-per-loop-round [access-boundaries]: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n Step(n, acc) = { \n   A = Pick(tick() + n * 0).Algorithm \n   n + 1, acc + A(n), n < 3 \n } \n Step(0, 0).while, tick()
+def case_hunt_runtime_alias_cell_lifetime_per_loop_round : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["n"]) (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "n") (.num 0)))]) "Algorithm" none)))) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.call (.resolve "A") [.param "n"])), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_runtime_alias_cell_lifetime_per_loop_round == "ok raw=S[S[3, 30], 4] n=2"
+
+-- hunt-need-spread-formed-before-ordinary-cells [variadic-calls]: F(*xs) = xs \n F(tick(), (tick(), tick())*)
+def case_hunt_need_spread_formed_before_ordinary_cells : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "F") [(.call (.resolve "tick") []), (.sequenceSpread (.capture [(.call (.resolve "tick") []), (.call (.resolve "tick") [])]))])])
+#guard obs case_hunt_need_spread_formed_before_ordinary_cells == "ok raw=L[3, 1, 2] n=1"
+
+-- hunt-need-collector-selection-demands-one-cell-once [variadic-calls]: F(*xs) = xs[1], xs[1] \n F(tick(), tick())
+def case_hunt_need_collector_selection_demands_one_cell_once : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.index (.param "xs") [.num 1]), (.index (.param "xs") [.num 1])])] [(.call (.resolve "F") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])])
+#guard obs case_hunt_need_collector_selection_demands_one_cell_once == "ok raw=S[1, 1] n=1"
+
+-- hunt-need-repeated-name-value-contribution-anchors [variadic-calls]: Same(x, x) = x \n P = tick() * 0 + 5 \n Same(P, tick() + 4)
+def case_hunt_need_repeated_name_value_contribution_anchors : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.num 0)) (.num 5))]), privateProp "Same" (alg ["x", "x"] [] [] [.param "x"])] [(.call (.resolve "Same") [.resolve "P", (.binary .add (.call (.resolve "tick") []) (.num 4))])])
+#guard obs case_hunt_need_repeated_name_value_contribution_anchors == "ok raw=5 n=1"
+
+-- hunt-need-family-shares-one-supply-across-clauses [variadic-calls]: K(0, y) = 100 \n K(x, y) = x + y \n K(tick() - 1, tick())
+def case_hunt_need_family_shares_one_supply_across_clauses : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (.conditional none [] [⟨.sequenceValue [.litInt 0, .bind "y"], (alg [] [] [] [.num 100])⟩, ⟨.sequenceValue [.bind "x", .bind "y"], (alg [] [] [] [(.binary .add (.param "x") (.param "y"))])⟩])] [(.call (.resolve "K") [(.binary .sub (.call (.resolve "tick") []) (.num 1)), (.call (.resolve "tick") [])])])
+#guard obs case_hunt_need_family_shares_one_supply_across_clauses == "ok raw=100 n=1"
+
+-- hunt-need-unused-fixed-argument-never-runs [variadic-calls]: F(x, *rest) = rest \n F(1 / 0, tick(), tick())
+def case_hunt_need_unused_fixed_argument_never_runs : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), (.call (.resolve "tick") []), (.call (.resolve "tick") [])])])
+#guard obs case_hunt_need_unused_fixed_argument_never_runs == "ok raw=L[1, 2] n=1"
+
+-- hunt-need-callback-argument-evaluated-once [variadic-calls]: Apply(f, x) = f(x) + f(x) \n Inc(v) = v + 1 \n Apply(Inc, tick())
+def case_hunt_need_callback_argument_evaluated_once : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f", "x"] [] [] [(.binary .add (.call (.param "f") [.param "x"]) (.call (.param "f") [.param "x"]))]), privateProp "Inc" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 1))])] [(.call (.resolve "Apply") [.resolve "Inc", (.call (.resolve "tick") [])])])
+#guard obs case_hunt_need_callback_argument_evaluated_once == "ok raw=4 n=1"
+
+-- hunt-loop-while-false-round-forms-no-earlier-rows [conditionals]: Step(t, n) = tick(), n + 1, n < 2 \n Step(0, 0).while, tick()
+def case_hunt_loop_while_false_round_forms_no_earlier_rows : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["t", "n"] [] [] [(.call (.resolve "tick") []), (.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_loop_while_false_round_forms_no_earlier_rows == "ok raw=S[S[2, 2], 3] n=2"
+
+-- hunt-loop-while-empty-trailing-spread-passed-over [conditionals]: Step(t, n) = tick(), n + 1, n < 2, ()* \n Step(0, 0).while, tick()
+def case_hunt_loop_while_empty_trailing_spread_passed_over : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["t", "n"] [] [] [(.call (.resolve "tick") []), (.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }]), (.sequenceSpread (.emptySequence 0))])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_loop_while_empty_trailing_spread_passed_over == "ok raw=S[S[2, 2], 3] n=2"
+
+-- hunt-loop-while-single-item-state-and-flag [conditionals]: Step(b) = not b \n Step(true).while
+def case_hunt_loop_while_single_item_state_and_flag : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["b"] [] [] [(.unary .not (.param "b"))])] [(.dotCall (.call (.resolve "Step") [.boolLiteral true]) "while" none)])
+#guard obs case_hunt_loop_while_single_item_state_and_flag == "ok raw=true n=1"
+
+-- hunt-loop-repeat-prepares-supply-before-count [conditionals]: S(*xs) = xs.sum * 10, 1 \n repeat(S((tick(), 10)*), tick())
+def case_hunt_loop_repeat_prepares_supply_before_count : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "S" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .mul (.dotCall (.param "xs") "sum" none) (.num 10)), .num 1])] [(.call (.resolve "repeat") [(.call (.resolve "S") [(.sequenceSpread (.capture [(.call (.resolve "tick") []), .num 10]))]), (.call (.resolve "tick") [])])])
+#guard obs case_hunt_loop_repeat_prepares_supply_before_count == "ok raw=S[1110, 1] n=1"
+
+-- hunt-loop-repeat-zero-never-projects-step [conditionals]: R(v) = repeat(v(1), 0) \n R(5)
+def case_hunt_loop_repeat_zero_never_projects_step : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg ["v"] [] [] [(.call (.resolve "repeat") [(.call (.param "v") [.num 1]), .num 0])])] [(.call (.resolve "R") [.num 5])])
+#guard obs case_hunt_loop_repeat_zero_never_projects_step == "ok raw=1 n=1"
+
+-- hunt-loop-repeat-step-without-callable [errors]: R(v) = repeat(v(1), 1) \n R(5)
+def case_hunt_loop_repeat_step_without_callable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg ["v"] [] [] [(.call (.resolve "repeat") [(.call (.param "v") [.num 1]), .num 1])])] [(.call (.resolve "R") [.num 5])])
+#guard obs case_hunt_loop_repeat_step_without_callable == "err notAnAlgorithm"
+
+-- hunt-loop-builtin-step-result-is-one-row [conditionals]: count((1, 2, 3)).repeat(2)
+def case_hunt_loop_builtin_step_result_is_one_row : Expr :=
+  .algorithmExpr (alg [] [] [] [(.dotCall (.call (.resolve "count") [(.capture [.num 1, .num 2, .num 3])]) "repeat" (some [.num 2]))])
+#guard obs case_hunt_loop_builtin_step_result_is_one_row == "ok raw=1 n=1"
+
+-- hunt-loop-carrier-step-forwards [conditionals]: Inc(x) = x + 1 \n B = { Inc } \n B(5).repeat(3)
+def case_hunt_loop_carrier_step_forwards : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [] (.resolve "Inc") none false), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.call (.resolve "B") [.num 5]) "repeat" (some [.num 3]))])
+#guard obs case_hunt_loop_carrier_step_forwards == "ok raw=8 n=1"
+
+-- hunt-loop-nested-loop-is-one-slot [conditionals]: Inner(x) = x + 1 \n Outer(s, k) = Inner(s).repeat(k), k + 1 \n Outer(0, 1).repeat(3)
+def case_hunt_loop_nested_loop_is_one_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inner" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Outer" (alg ["s", "k"] [] [] [(.dotCall (.call (.resolve "Inner") [.param "s"]) "repeat" (some [.param "k"])), (.binary .add (.param "k") (.num 1))])] [(.dotCall (.call (.resolve "Outer") [.num 0, .num 1]) "repeat" (some [.num 3]))])
+#guard obs case_hunt_loop_nested_loop_is_one_slot == "ok raw=S[6, 4] n=1"
+
+-- hunt-loop-meta-parameter-cannot-forward-step [errors]: W(meta step) = while(step) \n Step(n) = n + 1, n < 3 \n W(Step(0))
+def case_hunt_loop_meta_parameter_cannot_forward_step : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "W" (algWithParameters [{ name := "step", kind := .metaRef }] [] [] [(.call (.resolve "while") [.param "step"])]), privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "W") [(.call (.resolve "Step") [.num 0])])])
+#guard obs case_hunt_loop_meta_parameter_cannot_forward_step == "err notAnAlgorithm"
+
+-- hunt-loop-bare-member-path-is-no-step [errors]: Box = { public S(n) = n + 1, n < 3 } \n Box.S.while
+def case_hunt_loop_bare_member_path_is_no_step : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "S" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [])] [(.dotCall (.dotCall (.resolve "Box") "S" none) "while" none)])
+#guard obs case_hunt_loop_bare_member_path_is_no_step == "err notAnAlgorithm"
+
+-- hunt-loop-local-step-temporary-per-round [conditionals]: Step(n, acc) = { \n   K = tick() + n * 0 \n   n + 1, acc + K, n < 3 \n } \n Step(0, 0).while, tick()
+def case_hunt_loop_local_step_temporary_per_round : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "K" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "n") (.num 0)))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.resolve "K")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_loop_local_step_temporary_per_round == "ok raw=S[S[3, 6], 4] n=2"
+
+-- hunt-loop-step-temporary-read-then-call [conditionals]: Step(n, acc) = { \n   K = tick() + n * 0 \n   n + 1, acc + K + K(), n < 3 \n } \n Step(0, 0).while, tick()
+def case_hunt_loop_step_temporary_read_then_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "K" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "n") (.num 0)))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.binary .add (.param "acc") (.resolve "K")) (.call (.resolve "K") [])), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_loop_step_temporary_read_then_call == "ok raw=S[S[3, 21], 7] n=2"
+
+-- hunt-loop-exported-temporary-call-is-fresh [conditionals]: Step(n) = { \n   K = tick() \n   n + K() \n } \n Step(0).repeat(3), tick()
+def case_hunt_loop_exported_temporary_call_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [privateProp "K" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.param "n") (.call (.resolve "K") []))])] [(.dotCall (.call (.resolve "Step") [.num 0]) "repeat" (some [.num 3])), (.call (.resolve "tick") [])])
+#guard obs case_hunt_loop_exported_temporary_call_is_fresh == "ok raw=S[6, 4] n=2"
+
+-- hunt-loop-step-structural-head-binds-state [conditionals]: Step((a, b), n) = (b, a + b), n + 1 \n Step((0, 1), 0).repeat(5)
+def case_hunt_loop_step_structural_head_binds_state : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }], .capture { name := "n" }] [] [] [(.capture [.param "b", (.binary .add (.param "a") (.param "b"))]), (.binary .add (.param "n") (.num 1))])] [(.dotCall (.call (.resolve "Step") [(.capture [.num 0, .num 1]), .num 0]) "repeat" (some [.num 5]))])
+#guard obs case_hunt_loop_step_structural_head_binds_state == "ok raw=S[S[5, 8], 5] n=1"
+
+-- hunt-loop-step-collecting-head-collects-state [conditionals]: Step(*xs) = xs.sum, xs.count \n Step(1, 2, 3).repeat(2)
+def case_hunt_loop_step_collecting_head_collects_state : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "sum" none), (.dotCall (.param "xs") "count" none)])] [(.dotCall (.call (.resolve "Step") [.num 1, .num 2, .num 3]) "repeat" (some [.num 2]))])
+#guard obs case_hunt_loop_step_collecting_head_collects_state == "ok raw=S[9, 2] n=1"
+
+-- hunt-loop-step-repeated-name-must-agree [errors]: Step(x, x) = x + 1, x + 2 \n Step(1, 1).repeat(2)
+def case_hunt_loop_step_repeated_name_must_agree : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 2))])] [(.dotCall (.call (.resolve "Step") [.num 1, .num 1]) "repeat" (some [.num 2]))])
+#guard obs case_hunt_loop_step_repeated_name_must_agree == "err arity"
+
+-- hunt-selection-invalid-position-stops-before-later-selector [equality-and-indexing]: [10, 20][99, 1 / 0]
+def case_hunt_selection_invalid_position_stops_before_later_selector : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, .num 20]) [.num 99, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_hunt_selection_invalid_position_stops_before_later_selector == "err index"
+
+-- hunt-selection-selectors-demanded-left-to-right [equality-and-indexing]: [10, 20, 30][tick(), tick()]
+def case_hunt_selection_selectors_demanded_left_to_right : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])])
+#guard obs case_hunt_selection_selectors_demanded_left_to_right == "ok raw=S[20, 30] n=1"
+
+-- hunt-selection-negative-index-is-bad-index [equality-and-indexing]: [10, 20][-1]
+def case_hunt_selection_negative_index_is_bad_index : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, .num 20]) [(.unary .minus (.num 1))])])
+#guard obs case_hunt_selection_negative_index_is_bad_index == "err index"
+
+-- hunt-selection-boolean-selector-is-type [errors]: [10, 20][true]
+def case_hunt_selection_boolean_selector_is_type : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, .num 20]) [.boolLiteral true])])
+#guard obs case_hunt_selection_boolean_selector_is_type == "err type"
+
+-- hunt-selection-first-selector-failure-wins [equality-and-indexing]: [10, 20][1 / 0, 99]
+def case_hunt_selection_first_selector_failure_wins : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, .num 20]) [(.binary .div (.num 1) (.num 0)), .num 99])])
+#guard obs case_hunt_selection_first_selector_failure_wins == "err div0"
+
+-- hunt-selection-scalar-boolean-selects-itself [equality-and-indexing]: true[0]
+def case_hunt_selection_scalar_boolean_selects_itself : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.boolLiteral true) [.num 0])])
+#guard obs case_hunt_selection_scalar_boolean_selects_itself == "ok raw=true n=1"
+
+-- hunt-meta-capture-is-inert [variadic-calls]: Cap(meta r) = 5 \n Cap(tick()), tick()
+def case_hunt_meta_capture_is_inert : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.num 5])] [(.call (.resolve "Cap") [(.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])
+#guard obs case_hunt_meta_capture_is_inert == "ok raw=S[5, 1] n=2"
+
+-- hunt-meta-invoke-reuses-sticky-supply [variadic-calls]: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(tick(), 10)) \n R.Invoke(), R.Invoke()
+def case_hunt_meta_invoke_reuses_sticky_supply : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.call (.resolve "tick") []), .num 10])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_invoke_reuses_sticky_supply == "ok raw=S[11, 11] n=2"
+
+-- hunt-meta-arguments-count-demands-nothing [variadic-calls]: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(1 / 0, 2)) \n R.Arguments.count
+def case_hunt_meta_arguments_count_demands_nothing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.binary .div (.num 1) (.num 0)), .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.dotCall (.dotCall (.resolve "R") "Arguments" none) "count" none)])
+#guard obs case_hunt_meta_arguments_count_demands_nothing == "ok raw=2 n=1"
+
+-- hunt-meta-arguments-selection-validates-before-reading [equality-and-indexing]: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(1 / 0, 2)) \n R.Arguments[5]
+def case_hunt_meta_arguments_selection_validates_before_reading : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.binary .div (.num 1) (.num 0)), .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.index (.dotCall (.resolve "R") "Arguments" none) [.num 5])])
+#guard obs case_hunt_meta_arguments_selection_validates_before_reading == "err index"
+
+-- hunt-meta-extension-route-receiver-first [variadic-calls]: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(5.Add(1)) \n R.Invoke(), R.Arguments.count, R.Arguments[0]
+def case_hunt_meta_extension_route_receiver_first : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.dotCall (.num 5) "Add" (some [.num 1]))])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.dotCall (.resolve "R") "Arguments" none) "count" none), (.index (.dotCall (.resolve "R") "Arguments" none) [.num 0])])
+#guard obs case_hunt_meta_extension_route_receiver_first == "ok raw=S[6, 2, 5] n=3"
+
+-- hunt-meta-intrinsic-route-refuses-invocation [errors]: Cap(meta r) = r \n R = Cap(5.string()) \n R.Invoke()
+def case_hunt_meta_intrinsic_route_refuses_invocation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.dotCall (.num 5) "string" (some []))])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [(.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_intrinsic_route_refuses_invocation == "err notAnAlgorithm"
+
+-- hunt-meta-arguments-and-invoke-share-cells [variadic-calls]: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(tick(), 100)) \n R.Arguments[0], R.Invoke()
+def case_hunt_meta_arguments_and_invoke_share_cells : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.call (.resolve "tick") []), .num 100])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.index (.dotCall (.resolve "R") "Arguments" none) [.num 0]), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_arguments_and_invoke_share_cells == "ok raw=S[1, 101] n=2"
+
+-- hunt-meta-member-route-invoke-is-fresh [variadic-calls]: Cap(meta r) = r \n Box = { public V = tick() } \n R = Cap(Box.V()) \n R.Invoke(), Box.V, R.Invoke()
+def case_hunt_meta_member_route_invoke_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "V" (alg [] [] [] [(.call (.resolve "tick") [])])] []), privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.dotCall (.resolve "Box") "V" (some []))])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "Box") "V" none), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_member_route_invoke_is_fresh == "ok raw=S[1, 1, 2] n=3"
+
+-- hunt-meta-sticky-supply-self-demand-cycle [errors]: Cap(meta r) = r \n F(x) = x + 1 \n R = Cap(F(R.Invoke())) \n R.Invoke()
+def case_hunt_meta_sticky_supply_self_demand_cycle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [(.dotCall (.resolve "R") "Invoke" (some []))])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_sticky_supply_self_demand_cycle == "err demandCycle"
+
+-- hunt-meta-arguments-count-inside-own-argument [variadic-calls]: Cap(meta r) = r \n F(x) = x + 1 \n R = Cap(F(R.Arguments.count)) \n R.Invoke()
+def case_hunt_meta_arguments_count_inside_own_argument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [(.dotCall (.dotCall (.resolve "R") "Arguments" none) "count" none)])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_arguments_count_inside_own_argument == "ok raw=2 n=1"
+
+-- hunt-meta-invoke-body-fresh-arguments-sticky [variadic-calls]: Cap(meta r) = r \n F(x) = x + tick() * 100 \n R = Cap(F(tick())) \n R.Invoke(), R.Invoke(), R.Arguments[0]
+def case_hunt_meta_invoke_body_fresh_arguments_sticky : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [(.call (.resolve "tick") [])])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.binary .mul (.call (.resolve "tick") []) (.num 100)))])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "R") "Invoke" (some [])), (.index (.dotCall (.resolve "R") "Arguments" none) [.num 0])])
+#guard obs case_hunt_meta_invoke_body_fresh_arguments_sticky == "ok raw=S[201, 301, 1] n=3"
+
+-- hunt-meta-algorithm-call-takes-fresh-supply [variadic-calls]: Cap(meta r) = r \n F(x) = x + tick() * 100 \n R = Cap(F(tick())) \n R.Algorithm(tick()), R.Invoke()
+def case_hunt_meta_algorithm_call_takes_fresh_supply : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [(.call (.resolve "tick") [])])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.binary .mul (.call (.resolve "tick") []) (.num 100)))])] [(.dotCall (.resolve "R") "Algorithm" (some [(.call (.resolve "tick") [])])), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_hunt_meta_algorithm_call_takes_fresh_supply == "ok raw=S[201, 403] n=2"
+
+-- hunt-lifting-cycle-settles-as-one-signature [name-resolution]: C = B + z \n A = { \n   H = B + 0 \n   x + 1 \n } \n B = y + A \n C(1, 2, 3)
+def case_hunt_lifting_cycle_settles_as_one_signature : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (alg ["z", "y", "x"] [] [] [(.binary .add (.call (.resolve "B") [.param "y", .param "x"]) (.param "z"))]), privateProp "A" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (alg ["y"] [] [] [(.binary .add (.call (.resolve "B") [.param "y", .param "x"]) (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.param "x") (.num 1))]), privateProp "B" (alg ["y", "x"] [] [] [(.binary .add (.param "y") (.call (.resolve "A") [.param "x"]))])] [(.call (.resolve "C") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_lifting_cycle_settles_as_one_signature == "ok raw=7 n=1"
+
+-- hunt-lifting-cycle-declaration-order-unobservable [name-resolution]: B = y + A \n A = { \n   H = B + 0 \n   x + 1 \n } \n C = B + z \n C(1, 2, 3)
+def case_hunt_lifting_cycle_declaration_order_unobservable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg ["y", "x"] [] [] [(.binary .add (.param "y") (.call (.resolve "A") [.param "x"]))]), privateProp "A" (alg ["x"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["x"]) (alg ["y"] [] [] [(.binary .add (.call (.resolve "B") [.param "y", .param "x"]) (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [(.binary .add (.param "x") (.num 1))]), privateProp "C" (alg ["z", "y", "x"] [] [] [(.binary .add (.call (.resolve "B") [.param "y", .param "x"]) (.param "z"))])] [(.call (.resolve "C") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_lifting_cycle_declaration_order_unobservable == "ok raw=7 n=1"
+
+-- hunt-lifting-mutual-recursion-settles [name-resolution]: A = if(tick() > 3, x + y, B + 1) \n B = A + z \n A(1, 2, 3)
+def case_hunt_lifting_mutual_recursion_settles : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y", "z"] [] [] [(.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .gt, operand := (.num 3) }]), (.binary .add (.param "x") (.param "y")), (.binary .add (.call (.resolve "B") [.param "z", .param "x", .param "y"]) (.num 1))])]), privateProp "B" (alg ["z", "x", "y"] [] [] [(.binary .add (.call (.resolve "A") [.param "x", .param "y", .param "z"]) (.param "z"))])] [(.call (.resolve "A") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_lifting_mutual_recursion_settles == "ok raw=15 n=1"
+
+-- hunt-lifting-recursive-formula-settles [name-resolution]: F = if(tick() > 3, x, F + 1) \n F(10)
+def case_hunt_lifting_recursive_formula_settles : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [(.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .gt, operand := (.num 3) }]), .param "x", (.binary .add (.call (.resolve "F") [.param "x"]) (.num 1))])])] [(.call (.resolve "F") [.num 10])])
+#guard obs case_hunt_lifting_recursive_formula_settles == "ok raw=13 n=1"
+
+-- hunt-grace-postfix-moves-ysx [name-resolution]: Z = s~ * 100 + x~ * 10 + y \n Z(1, 2, 3)
+def case_hunt_grace_postfix_moves_ysx : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Z" (alg ["y", "s", "x"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "s") (.num 100)) (.binary .mul (.param "x") (.num 10))) (.param "y"))])] [(.call (.resolve "Z") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_grace_postfix_moves_ysx == "ok raw=231 n=1"
+
+-- hunt-grace-three-postfix-markers [name-resolution]: K = a~ * 1000 + b~ * 100 + c~ * 10 + d \n K(1, 2, 3, 4)
+def case_hunt_grace_three_postfix_markers : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["d", "a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .add (.binary .mul (.param "a") (.num 1000)) (.binary .mul (.param "b") (.num 100))) (.binary .mul (.param "c") (.num 10))) (.param "d"))])] [(.call (.resolve "K") [.num 1, .num 2, .num 3, .num 4])])
+#guard obs case_hunt_grace_three_postfix_markers == "ok raw=2341 n=1"
+
+-- hunt-grace-three-prefix-markers [name-resolution]: K = a * 1000 + ~b * 100 + ~c * 10 + ~d \n K(1, 2, 3, 4)
+def case_hunt_grace_three_prefix_markers : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["b", "c", "d", "a"] [] [] [(.binary .add (.binary .add (.binary .add (.binary .mul (.param "a") (.num 1000)) (.binary .mul (.param "b") (.num 100))) (.binary .mul (.param "c") (.num 10))) (.param "d"))])] [(.call (.resolve "K") [.num 1, .num 2, .num 3, .num 4])])
+#guard obs case_hunt_grace_three_prefix_markers == "ok raw=4123 n=1"
+
+-- hunt-grace-mixed-markers [name-resolution]: K = a * 10000 + b~ * 1000 + c~ * 100 + d~ * 10 + ~e \n K(1, 2, 3, 4, 5)
+def case_hunt_grace_mixed_markers : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["e", "a", "b", "c", "d"] [] [] [(.binary .add (.binary .add (.binary .add (.binary .add (.binary .mul (.param "a") (.num 10000)) (.binary .mul (.param "b") (.num 1000))) (.binary .mul (.param "c") (.num 100))) (.binary .mul (.param "d") (.num 10))) (.param "e"))])] [(.call (.resolve "K") [.num 1, .num 2, .num 3, .num 4, .num 5])])
+#guard obs case_hunt_grace_mixed_markers == "ok raw=23451 n=1"
+
+-- hunt-lifting-group-pattern-first-occurrence [name-resolution]: P((x, a), x) = x * 10 + a \n D = P + 0 \n D((1, 2))
+def case_hunt_lifting_group_pattern_first_occurrence : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [(.binary .add (.call (.resolve "P") [(.capture [.param "x", .param "a"]), .param "x"]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "a" }], .capture { name := "x" }] [] [] [(.binary .add (.binary .mul (.param "x") (.num 10)) (.param "a"))])] [(.call (.resolve "D") [(.capture [.num 1, .num 2])])])
+#guard obs case_hunt_lifting_group_pattern_first_occurrence == "ok raw=12 n=1"
+
+-- hunt-lifting-group-pattern-second-occurrence [name-resolution]: P(x, (x, a)) = x * 10 + a \n D = P + 0 \n D(1, 2)
+def case_hunt_lifting_group_pattern_second_occurrence : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D" (alg ["x", "a"] [] [] [(.binary .add (.call (.resolve "P") [.param "x", (.capture [.param "x", .param "a"])]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .sequenceValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [(.binary .add (.binary .mul (.param "x") (.num 10)) (.param "a"))])] [(.call (.resolve "D") [.num 1, .num 2])])
+#guard obs case_hunt_lifting_group_pattern_second_occurrence == "ok raw=12 n=1"
+
+-- hunt-lifting-group-of-one-binder-is-the-binder [name-resolution]: P((x, x)) = x \n D = P + 0 \n D(5)
+def case_hunt_lifting_group_of_one_binder_is_the_binder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D" (alg ["x"] [] [] [(.binary .add (.call (.resolve "P") [(.capture [.param "x", .param "x"])]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "x" }]] [] [] [.param "x"])] [(.call (.resolve "D") [.num 5])])
+#guard obs case_hunt_lifting_group_of_one_binder_is_the_binder == "ok raw=5 n=1"
+
+-- hunt-lifting-list-group-keeps-kind [name-resolution]: P(x, [x, a]) = x * 10 + a \n D = P + 0 \n D(1, [2])
+def case_hunt_lifting_list_group_keeps_kind : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D" (algWithParameterPatterns [.capture { name := "x" }, .listValue [.capture { name := "a" }]] [] [] [(.binary .add (.call (.resolve "P") [.param "x", (.listLiteral [.param "x", .param "a"])]) (.num 0))]), privateProp "P" (algWithParameterPatterns [.capture { name := "x" }, .listValue [.capture { name := "x" }, .capture { name := "a" }]] [] [] [(.binary .add (.binary .mul (.param "x") (.num 10)) (.param "a"))])] [(.call (.resolve "D") [.num 1, (.listLiteral [.num 2])])])
+#guard obs case_hunt_lifting_list_group_keeps_kind == "ok raw=12 n=1"
+
+-- hunt-lifting-shared-collector-name-is-one-binding [name-resolution]: C(n, *xs) = n + xs.count \n K = C + C \n K(1, 2, 3)
+def case_hunt_lifting_shared_collector_name_is_one_binding : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (algWithParameters [{ name := "n" }, { name := "xs", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "C") [.param "n", (.sequenceSpread (.param "xs"))]) (.call (.resolve "C") [.param "n", (.sequenceSpread (.param "xs"))]))]), privateProp "C" (algWithParameters [{ name := "n" }, { name := "xs", kind := .collecting }] [] [] [(.binary .add (.param "n") (.dotCall (.param "xs") "count" none))])] [(.call (.resolve "K") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_lifting_shared_collector_name_is_one_binding == "ok raw=6 n=1"
+
+-- hunt-forwarding-new-parameter-beside-property-read [name-resolution]: v = 99 \n Need(v) = v \n Outer = { \n   Inner = v \n   Inner + Need \n } \n Outer(7)
+def case_hunt_forwarding_new_parameter_beside_property_read : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v" (alg [] [] [] [.num 99]), privateProp "Outer" (alg ["v"] [] [privateProp "Inner" (.alias none [] [] (.resolve "v"))] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.call (.resolve "Outer") [.num 7])])
+#guard obs case_hunt_forwarding_new_parameter_beside_property_read == "ok raw=106 n=1"
+
+-- hunt-lifting-dot-call-order-receiver-member-arguments [name-resolution]: K = a.t(b) \n T(p, q) = p * 10 + q \n K(5, T, 3)
+def case_hunt_lifting_dot_call_order_receiver_member_arguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["a", "t", "b"] [] [] [(.dotMember (.param "a") "t" (.param "t") (some [.param "b"]))]), privateProp "T" (alg ["p", "q"] [] [] [(.binary .add (.binary .mul (.param "p") (.num 10)) (.param "q"))])] [(.call (.resolve "K") [.num 5, .resolve "T", .num 3])])
+#guard obs case_hunt_lifting_dot_call_order_receiver_member_arguments == "ok raw=53 n=1"
+
+-- hunt-grace-on-dot-receiver [name-resolution]: K = a~.t(b) \n T(p, q) = p * 10 + q \n K(T, 5, 3)
+def case_hunt_grace_on_dot_receiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["t", "a", "b"] [] [] [(.dotMember (.param "a") "t" (.param "t") (some [.param "b"]))]), privateProp "T" (alg ["p", "q"] [] [] [(.binary .add (.binary .mul (.param "p") (.num 10)) (.param "q"))])] [(.call (.resolve "K") [.resolve "T", .num 5, .num 3])])
+#guard obs case_hunt_grace_on_dot_receiver == "ok raw=53 n=1"
+
+-- hunt-lifting-clause-family-plain-binder-slot [name-resolution]: Fam(0) = 100 \n Fam(n) = n * 2 \n D = Fam + 1 \n D(0), D(5)
+def case_hunt_lifting_clause_family_plain_binder_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D" (alg ["n"] [] [] [(.binary .add (.call (.resolve "Fam") [.param "n"]) (.num 1))]), privateProp "Fam" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.num 2))])⟩])] [(.call (.resolve "D") [.num 0]), (.call (.resolve "D") [.num 5])])
+#guard obs case_hunt_lifting_clause_family_plain_binder_slot == "ok raw=S[101, 11] n=2"
+
+-- hunt-lifting-through-alias-chain [name-resolution]: Mul(p, q) = p * q \n A = Mul \n B = A \n D = B + 1 \n D(3, 4)
+def case_hunt_lifting_through_alias_chain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Mul")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "D" (alg ["p", "q"] [] [] [(.binary .add (.call (.resolve "B") [.param "p", .param "q"]) (.num 1))]), privateProp "Mul" (alg ["p", "q"] [] [] [(.binary .mul (.param "p") (.param "q"))])] [(.call (.resolve "D") [.num 3, .num 4])])
+#guard obs case_hunt_lifting_through_alias_chain == "ok raw=13 n=1"
+
+-- hunt-lifting-if-branch-lifts-whether-selected [name-resolution]: Need(v) = v * 10 \n F = if(c, 1, Need) \n F(true, 5), F(false, 5)
+def case_hunt_lifting_if_branch_lifts_whether_selected : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["c", "v"] [] [] [(.call (.resolve "if") [.param "c", .num 1, (.call (.resolve "Need") [.param "v"])])]), privateProp "Need" (alg ["v"] [] [] [(.binary .mul (.param "v") (.num 10))])] [(.call (.resolve "F") [.boolLiteral true, .num 5]), (.call (.resolve "F") [.boolLiteral false, .num 5])])
+#guard obs case_hunt_lifting_if_branch_lifts_whether_selected == "ok raw=S[1, 50] n=2"
+
+-- hunt-lifting-list-element-value-role [name-resolution]: Sq(v) = v * v \n L = [Sq, 1] \n L(3)
+def case_hunt_lifting_list_element_value_role : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg ["v"] [] [] [(.listLiteral [(.call (.resolve "Sq") [.param "v"]), .num 1])]), privateProp "Sq" (alg ["v"] [] [] [(.binary .mul (.param "v") (.param "v"))])] [(.call (.resolve "L") [.num 3])])
+#guard obs case_hunt_lifting_list_element_value_role == "ok raw=L[9, 1] n=1"
+
+-- hunt-output-spread-marked-family [item-supply-vs-value]: M(0)* = 1, 2 \n M(n)* = n, n \n G(a, b) = a * 10 + b \n G(M(0)), G(M(5))
+def case_hunt_output_spread_marked_family : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "M" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1, .num 2])⟩, ⟨.bind "n", (alg [] [] [] [.param "n", .param "n"])⟩]), privateProp "G" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))])] [(.call (.resolve "G") [(.sequenceSpread (.call (.resolve "M") [.num 0]))]), (.call (.resolve "G") [(.sequenceSpread (.call (.resolve "M") [.num 5]))])])
+#guard obs case_hunt_output_spread_marked_family == "ok raw=S[12, 55] n=2"
+
+-- hunt-output-spread-bare-read-is-one-value [item-supply-vs-value]: P* = 1, 2 \n G(a, b) = a * 10 + b \n G(P)
+def case_hunt_output_spread_bare_read_is_one_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2]), privateProp "G" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))])] [(.call (.resolve "G") [.resolve "P"])])
+#guard obs case_hunt_output_spread_bare_read_is_one_value == "err arity"
+
+-- hunt-output-spread-zero-supply-call-spreads [item-supply-vs-value]: P* = 1, 2 \n G(a, b) = a * 10 + b \n G(P())
+def case_hunt_output_spread_zero_supply_call_spreads : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1, .num 2]), privateProp "G" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))])] [(.call (.resolve "G") [(.sequenceSpread (.call (.resolve "P") []))])])
+#guard obs case_hunt_output_spread_zero_supply_call_spreads == "ok raw=12 n=1"
+
+-- hunt-output-spread-if-slot-no-exemption [item-supply-vs-value]: A(x, y)* = x, y \n if(true, A(1, 2), 0)
+def case_hunt_output_spread_if_slot_no_exemption : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.call (.resolve "if") [.boolLiteral true, (.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), .num 0])])
+#guard obs case_hunt_output_spread_if_slot_no_exemption == "err arity"
+
+-- hunt-output-spread-selector-slot [item-supply-vs-value]: A(x, y)* = x, y \n [10, 20, 30][A(0, 2)]
+def case_hunt_output_spread_selector_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.sequenceSpread (.call (.resolve "A") [.num 0, .num 2]))])])
+#guard obs case_hunt_output_spread_selector_slot == "ok raw=S[10, 30] n=1"
+
+-- hunt-output-spread-step-row-spreads [item-supply-vs-value]: A(x, y)* = x, y \n S(n) = A(n + 1, n < 2) \n S(0).while
+def case_hunt_output_spread_step_row_spreads : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "S" (alg ["n"] [] [] [(.sequenceSpread (.call (.resolve "A") [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }])]))])] [(.dotCall (.call (.resolve "S") [.num 0]) "while" none)])
+#guard obs case_hunt_output_spread_step_row_spreads == "ok raw=2 n=1"
+
+-- hunt-output-spread-unmarked-step-row-is-one-slot [errors]: A(x, y) = x, y \n S(n) = A(n + 1, n < 2) \n S(0).while
+def case_hunt_output_spread_unmarked_step_row_is_one_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "S" (alg ["n"] [] [] [(.call (.resolve "A") [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }])])])] [(.dotCall (.call (.resolve "S") [.num 0]) "while" none)])
+#guard obs case_hunt_output_spread_unmarked_step_row_is_one_slot == "err type"
+
+-- hunt-output-spread-marked-step-call-is-two-arguments [errors]: M(n)* = n + 1, n < 2 \n M(0).while
+def case_hunt_output_spread_marked_step_call_is_two_arguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "M" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }])])] [(.call (.resolve "while") [(.sequenceSpread (.call (.resolve "M") [.num 0]))])])
+#guard obs case_hunt_output_spread_marked_step_call_is_two_arguments == "err arity"
+
+-- hunt-output-spread-through-transparent-alias [item-supply-vs-value]: A(x, y)* = x, y \n B = A \n G(a, b, c) = a * 100 + b * 10 + c \n G(B(1, 2), 3)
+def case_hunt_output_spread_through_transparent_alias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "G" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "G") [(.sequenceSpread (.call (.resolve "B") [.num 1, .num 2])), .num 3])])
+#guard obs case_hunt_output_spread_through_transparent_alias == "ok raw=123 n=1"
+
+-- hunt-output-spread-not-through-carrier [errors]: A(x, y)* = x, y \n B = { A } \n G(a, b, c) = a * 100 + b * 10 + c \n G(B(1, 2), 3)
+def case_hunt_output_spread_not_through_carrier : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [] (.resolve "A") none false), privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "G" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "G") [(.call (.resolve "B") [.num 1, .num 2]), .num 3])])
+#guard obs case_hunt_output_spread_not_through_carrier == "err arity"
+
+-- hunt-output-spread-member-path-call [item-supply-vs-value]: Lib = { public A(x, y)* = x, y } \n G(a, b, c) = a * 100 + b * 10 + c \n G(Lib.A(1, 2), 3)
+def case_hunt_output_spread_member_path_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] []), privateProp "G" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "G") [(.sequenceSpread (.dotCall (.resolve "Lib") "A" (some [.num 1, .num 2]))), .num 3])])
+#guard obs case_hunt_output_spread_member_path_call == "ok raw=123 n=1"
+
+-- hunt-output-spread-empty-rows-supply-nothing [item-supply-vs-value]: E* = () \n G(*xs) = xs.count \n G(E(), 5), G(E, 5)
+def case_hunt_output_spread_empty_rows_supply_nothing : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "E" (alg [] [] [] [(.emptySequence 0)]), privateProp "G" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)])] [(.call (.resolve "G") [(.sequenceSpread (.call (.resolve "E") [])), .num 5]), (.call (.resolve "G") [.resolve "E", .num 5])])
+#guard obs case_hunt_output_spread_empty_rows_supply_nothing == "ok raw=S[1, 2] n=2"
+
+-- hunt-output-spread-nested-marked-calls [item-supply-vs-value]: A(x, y)* = x, y \n B(p, q, r)* = p, q + r \n G(a, b) = a * 10 + b \n G(B(A(1, 2), 3))
+def case_hunt_output_spread_nested_marked_calls : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "B" (alg ["p", "q", "r"] [] [] [.param "p", (.binary .add (.param "q") (.param "r"))]), privateProp "G" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))])] [(.call (.resolve "G") [(.sequenceSpread (.call (.resolve "B") [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), .num 3]))])])
+#guard obs case_hunt_output_spread_nested_marked_calls == "ok raw=15 n=1"
+
+-- hunt-output-spread-repeat-count-slot [errors]: A(x, y)* = x, y \n Inc(v) = v + 1 \n repeat(Inc(0), A(2, 3))
+def case_hunt_output_spread_repeat_count_slot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "Inc" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "Inc") [.num 0]), (.sequenceSpread (.call (.resolve "A") [.num 2, .num 3]))])])
+#guard obs case_hunt_output_spread_repeat_count_slot == "err arity"
+
+-- hunt-output-spread-extension-receiver [item-supply-vs-value]: A(x, y)* = x, y \n Add(a, b) = a + b \n A(3, 4).Add
+def case_hunt_output_spread_extension_receiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "Add") [(.sequenceSpread (.call (.resolve "A") [.num 3, .num 4]))])])
+#guard obs case_hunt_output_spread_extension_receiver == "ok raw=7 n=1"
+
+-- hunt-anchoring-carried-container-reads-the-current-call [access-boundaries]: F(b, y) = { \n   p = { \n     Q = y \n     1 \n   } \n   b.Q \n } \n F(F.p, 5), F(F.p, 9)
+def case_hunt_anchoring_carried_container_reads_the_current_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] [(.dotCall (.param "b") "Q" none)])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 5]), (.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 9])])
+#guard obs case_hunt_anchoring_carried_container_reads_the_current_call == "ok raw=S[5, 9] n=2"
+
+-- hunt-anchoring-static-owner-above-activation-refused [access-boundaries]: F(b, y) = { \n   p(k) = { \n     c = { \n       Q = y \n       1 \n     } \n     F(c, 5) \n   } \n   b.Q \n } \n F.p(0)
+def case_hunt_anchoring_static_owner_above_activation_refused : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg ["k"] [] [privateProp "c" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [(.call (.resolve "F") [.resolve "c", .num 5])])] [(.dotCall (.param "b") "Q" none)])] [(.dotCall (.resolve "F") "p" (some [.num 0]))])
+#guard obs case_hunt_anchoring_static_owner_above_activation_refused == "err localOnlyProperty"
+
+-- hunt-anchoring-container-written-in-other-call-refused [access-boundaries]: H(f, n) = if(n != 0, H({ X = n }, 0), f.X) \n H(0, 5)
+def case_hunt_anchoring_container_written_in_other_call_refused : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "H" (alg ["f", "n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .ne, operand := (.num 0) }]), (.call (.resolve "H") [(.algorithmExpr (alg [] [] [{ (privateLocalProp "X" (.localCapturedAncestorParams ["n"]) (.alias none [] [] (.param "n"))) with requiredOwnerDepths := some [("n", some 1)] }] [])), .num 0]), (.dotCall (.param "f") "X" none)])])] [(.call (.resolve "H") [.num 0, .num 5])])
+#guard obs case_hunt_anchoring_container_written_in_other_call_refused == "err localOnlyProperty"
+
+-- hunt-anchoring-root-alias-of-container [access-boundaries]: F(b, y) = { \n   p = { \n     Q = y * 10 \n     1 \n   } \n   b.Q \n } \n C = F.p \n F(C, 4), F(C, 6)
+def case_hunt_anchoring_root_alias_of_container : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] ((.dotCall (.resolve "F") "p" none))), privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] [(.dotCall (.param "b") "Q" none)])] [(.call (.resolve "F") [.resolve "C", .num 4]), (.call (.resolve "F") [.resolve "C", .num 6])])
+#guard obs case_hunt_anchoring_root_alias_of_container == "ok raw=S[40, 60] n=2"
+
+-- hunt-anchoring-container-through-call-reference [access-boundaries]: Cap(meta r) = r \n F(b, y) = { \n   p = { \n     Q = y * 3 \n     1 \n   } \n   b.Q \n } \n R = Cap(F(F.p, 2)) \n R.Invoke(), R.Algorithm(F.p, 5)
+def case_hunt_anchoring_container_through_call_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 3))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] [(.dotCall (.param "b") "Q" none)])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "R") "Algorithm" (some [(.dotCall (.resolve "F") "p" none), .num 5]))])
+#guard obs case_hunt_anchoring_container_through_call_reference == "ok raw=S[6, 15] n=2"
+
+-- hunt-anchoring-open-member-and-carried-container [access-boundaries]: F(b, y) = { \n   p = { \n     public Q = y + 1 \n     1 \n   } \n   G = { \n     open p \n     Q \n   } \n   G + b.Q \n } \n F(F.p, 1)
+def case_hunt_anchoring_open_member_and_carried_container : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.num 1))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (.alias none [.resolve "p"] [] (.resolve "Q") none false)) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.resolve "G") (.dotCall (.param "b") "Q" none))])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 1])])
+#guard obs case_hunt_anchoring_open_member_and_carried_container == "ok raw=4 n=1"
+
+-- hunt-anchoring-recursive-owner-innermost-call [access-boundaries]: F(b, y) = { \n   p = { \n     Q = y \n     1 \n   } \n   if(y > 0, F(b, y - 1) + b.Q, b.Q) \n } \n F(F.p, 3)
+def case_hunt_anchoring_recursive_owner_innermost_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] [(.call (.resolve "if") [(.comparison (.param "y") [{ op := .gt, operand := (.num 0) }]), (.binary .add (.call (.resolve "F") [.param "b", (.binary .sub (.param "y") (.num 1))]) (.dotCall (.param "b") "Q" none)), (.dotCall (.param "b") "Q" none)])])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 3])])
+#guard obs case_hunt_anchoring_recursive_owner_innermost_call == "ok raw=6 n=1"
+
+-- hunt-open-owner-walk-before-opens [name-resolution]: X = 9 \n F = { \n   open M \n   M = { public X = 1 } \n   X \n } \n F
+def case_hunt_open_owner_walk_before_opens : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 9]), privateProp "F" (.alias none [.resolve "M"] [privateProp "M" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [])] (.resolve "X") none false)] [.resolve "F"])
+#guard obs case_hunt_open_owner_walk_before_opens == "ok raw=9 n=1"
+
+-- hunt-open-prelude-before-opens [errors]: open M \n M = { public count = 7 } \n count
+def case_hunt_open_prelude_before_opens : Expr :=
+  .algorithmExpr (alg [] [.resolve "M"] [privateProp "M" (alg [] [] [publicProp "count" (alg [] [] [] [.num 7])] [])] [.resolve "count"])
+#guard obs case_hunt_open_prelude_before_opens == "err arity"
+
+-- hunt-open-nested-levels-inner-first [name-resolution]: open A \n A = { public X = 1 } \n F = { \n   open B \n   B = { public X = 2 } \n   X \n } \n F, X
+def case_hunt_open_nested_levels_inner_first : Expr :=
+  .algorithmExpr (alg [] [.resolve "A"] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "F" (.alias none [.resolve "B"] [privateProp "B" (alg [] [] [publicProp "X" (alg [] [] [] [.num 2])] [])] (.resolve "X") none false)] [.resolve "F", .resolve "X"])
+#guard obs case_hunt_open_nested_levels_inner_first == "ok raw=S[2, 1] n=2"
+
+-- hunt-open-overlap-without-use-is-legal [name-resolution]: open A, B \n A = { public X = 1 } \n B = { public X = 2 } \n 5
+def case_hunt_open_overlap_without_use_is_legal : Expr :=
+  .algorithmExpr (alg [] [.resolve "A", .resolve "B"] [privateProp "A" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "B" (alg [] [] [publicProp "X" (alg [] [] [] [.num 2])] [])] [.num 5])
+#guard obs case_hunt_open_overlap_without_use_is_legal == "ok raw=5 n=1"
+
+-- hunt-builtin-reduce-demands-initial-on-empty [collection-builtins]: Add(a, b) = a + b \n reduce([], Add, 1 / 0)
+def case_hunt_builtin_reduce_demands_initial_on_empty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "reduce") [(.listLiteral []), .resolve "Add", (.binary .div (.num 1) (.num 0))])])
+#guard obs case_hunt_builtin_reduce_demands_initial_on_empty == "err div0"
+
+-- hunt-builtin-filter-count-predicate-per-item [collection-builtins]: filter([1, 2, 3], { x + tick() * 0 > 1 }).count, tick()
+def case_hunt_builtin_filter_count_predicate_per_item : Expr :=
+  .algorithmExpr (alg [] [] [] [(.dotCall (.call (.resolve "filter") [(.listLiteral [.num 1, .num 2, .num 3]), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.binary .add (.param "x") (.binary .mul (.call (.resolve "tick") []) (.num 0))) [{ op := .gt, operand := (.num 1) }])]))]) "count" none), (.call (.resolve "tick") [])])
+#guard obs case_hunt_builtin_filter_count_predicate_per_item == "ok raw=S[2, 4] n=2"
+
+-- hunt-meta-family-redispatch-on-new-supply [variadic-calls]: Cap(meta r) = r \n K(0) = 100 \n K(n) = n * 2 \n R = Cap(K(0)) \n R.Invoke(), R.Algorithm(5), R.Algorithm(0)
+def case_hunt_meta_family_redispatch_on_new_supply : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "K") [.num 0])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "K" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .mul (.param "n") (.num 2))])⟩])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "R") "Algorithm" (some [.num 5])), (.dotCall (.resolve "R") "Algorithm" (some [.num 0]))])
+#guard obs case_hunt_meta_family_redispatch_on_new_supply == "ok raw=S[100, 10, 100] n=3"
+
+-- hunt-family-repeated-name-identity-nonmatch [conditionals]: F(x, x) = 'same' \n F(x, y) = 'diff' \n A = 1 \n B = 1 \n F(A, B), F(A, A)
+def case_hunt_family_repeated_name_identity_nonmatch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1]), privateProp "B" (alg [] [] [] [.num 1]), privateProp "F" (.conditional none [] [⟨.sequenceValue [.bind "x", .bind "x"], (alg [] [] [] [.stringLiteral "same"])⟩, ⟨.sequenceValue [.bind "x", .bind "y"], (alg [] [] [] [.stringLiteral "diff"])⟩])] [(.call (.resolve "F") [.resolve "A", .resolve "B"]), (.call (.resolve "F") [.resolve "A", .resolve "A"])])
+#guard obs case_hunt_family_repeated_name_identity_nonmatch == "ok raw=S['diff', 'same'] n=2"
+
+-- hunt-family-empty-and-pair-sequence-patterns [conditionals]: F(()) = 'empty' \n F((a, b)) = 'pair' \n F((1, 2)), F(())
+def case_hunt_family_empty_and_pair_sequence_patterns : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.sequenceValue []], (alg [] [] [] [.stringLiteral "empty"])⟩, ⟨.sequenceValue [.sequenceValue [.bind "a", .bind "b"]], (alg [] [] [] [.stringLiteral "pair"])⟩])] [(.call (.resolve "F") [(.capture [.num 1, .num 2])]), (.call (.resolve "F") [(.emptySequence 0)])])
+#guard obs case_hunt_family_empty_and_pair_sequence_patterns == "ok raw=S['pair', 'empty'] n=2"
+
+-- hunt-comparison-chain-operands-once [equality-and-indexing]: A = (tick() < tick() < tick() < tick()) \n A, tick()
+def case_hunt_comparison_chain_operands_once : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.call (.resolve "tick") []) }, { op := .lt, operand := (.call (.resolve "tick") []) }, { op := .lt, operand := (.call (.resolve "tick") []) }])])] [.resolve "A", (.call (.resolve "tick") [])])
+#guard obs case_hunt_comparison_chain_operands_once == "ok raw=S[true, 5] n=2"
+
+-- hunt-logical-operands-both-evaluated [equality-and-indexing]: true or tick() == 1, tick()
+def case_hunt_logical_operands_both_evaluated : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .or (.boolLiteral true) (.comparison (.call (.resolve "tick") []) [{ op := .eq, operand := (.num 1) }])), (.call (.resolve "tick") [])])
+#guard obs case_hunt_logical_operands_both_evaluated == "ok raw=S[true, 2] n=2"
+
+-- hunt-builtin-map-callbacks-run-in-collection-order [collection-builtins]: Only(*xs) = tick() + xs.count \n map([1, 2], Only), Only
+def case_hunt_builtin_map_callbacks_run_in_collection_order : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "tick") []) (.dotCall (.param "xs") "count" none))])] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .resolve "Only"]), .resolve "Only"])
+#guard obs case_hunt_builtin_map_callbacks_run_in_collection_order == "ok raw=S[L[2, 3], 3] n=2"
+
+-- hunt-forwarding-closed-bare-row-uses-enclosing-parameter [name-resolution]: A = y + 1 \n F(y) = { \n   H(q) = A \n   H(0) \n } \n F(5)
+def case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["y"]) (alg ["q"] [] [] [(.call (.resolve "A") [.param "y"])])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "H") [.num 0])])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter == "ok raw=6 n=1"
+
+-- hunt-forwarding-closed-bare-row-uses-own-parameter [name-resolution]: A = y + 1 \n F(y) = { \n   H(y) = A \n   H(0) \n } \n F(5)
+def case_hunt_forwarding_closed_bare_row_uses_own_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "F" (alg ["y"] [] [privateProp "H" (alg ["y"] [] [] [(.call (.resolve "A") [.param "y"])])] [(.call (.resolve "H") [.num 0])])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_hunt_forwarding_closed_bare_row_uses_own_parameter == "ok raw=1 n=1"
+
+-- hunt-forwarding-closed-formula-reuses-enclosing-parameter [name-resolution]: A = y + 1 \n F(y) = { \n   H(q) = A + 0 \n   H(0) \n } \n F(5)
+def case_hunt_forwarding_closed_formula_reuses_enclosing_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["y"]) (alg ["q"] [] [] [(.binary .add (.call (.resolve "A") [.param "y"]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "H") [.num 0])])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_hunt_forwarding_closed_formula_reuses_enclosing_parameter == "ok raw=6 n=1"
+
+-- hunt-forwarding-branch-formula-reuses-enclosing-parameter [name-resolution]: A = y + 1 \n F(y) = { \n   K(0) = A + 0 \n   K(n) = n \n   K(0) \n } \n F(5)
+def case_hunt_forwarding_branch_formula_reuses_enclosing_parameter : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "K" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.binary .add (.call (.resolve "A") [.param "y"]) (.num 0))])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "K") [.num 0])])] [(.call (.resolve "F") [.num 5])])
+#guard obs case_hunt_forwarding_branch_formula_reuses_enclosing_parameter == "ok raw=6 n=1"
+
+-- hunt-forwarding-closed-list-without-source-is-a-demand [errors]: A = y + 1 \n H(q) = A + 0 \n H(0)
+def case_hunt_forwarding_closed_list_without_source_is_a_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .add (.param "y") (.num 1))]), privateProp "H" (alg ["q"] [] [] [(.binary .add (.resolve "A") (.num 0))])] [(.call (.resolve "H") [.num 0])])
+#guard obs case_hunt_forwarding_closed_list_without_source_is_a_demand == "err arity"
+
+-- hunt-forwarding-collector-to-collector-respreads [name-resolution]: Coll(*xs) = xs.count \n A(p, *xs) = Coll \n A(1, 2, 3)
+def case_hunt_forwarding_collector_to_collector_respreads : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "A" (algWithParameters [{ name := "p" }, { name := "xs", kind := .collecting }] [] [] [(.call (.resolve "Coll") [(.sequenceSpread (.param "xs"))])])] [(.call (.resolve "A") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_forwarding_collector_to_collector_respreads == "ok raw=2 n=1"
+
+-- hunt-forwarding-fixed-binding-passed-whole [name-resolution]: Coll(*xs) = xs \n A(xs) = Coll \n A((1, 2))
+def case_hunt_forwarding_fixed_binding_passed_whole : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "A" (alg ["xs"] [] [] [(.call (.resolve "Coll") [.param "xs"])])] [(.call (.resolve "A") [(.capture [.num 1, .num 2])])])
+#guard obs case_hunt_forwarding_fixed_binding_passed_whole == "ok raw=L[S[1, 2]] n=1"
+
+-- hunt-forwarding-collecting-only-callee-is-read [name-resolution]: Cnt(*xs) = xs.count \n F(*xs) = { \n   G = Cnt + 0 \n   G \n } \n F(1, 2, 3)
+def case_hunt_forwarding_collecting_only_callee_is_read : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "G" (alg [] [] [] [(.binary .add (.resolve "Cnt") (.num 0))])] [.resolve "G"])] [(.call (.resolve "F") [.num 1, .num 2, .num 3])])
+#guard obs case_hunt_forwarding_collecting_only_callee_is_read == "ok raw=0 n=1"
+
+-- hunt-grace-block-inside-closed-branch [name-resolution]: Apply(f) = f(1, 10) \n F(0) = Apply({ y - ~x }) \n F(n) = n \n F(0)
+def case_hunt_grace_block_inside_closed_branch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 1, .num 10])]), privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.call (.resolve "Apply") [(.algorithmExpr (alg ["x", "y"] [] [] [(.binary .sub (.param "y") (.param "x"))]))])])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
+#guard obs case_hunt_grace_block_inside_closed_branch == "ok raw=9 n=1"
+
+-- hunt-forwarding-builtin-parameter-by-name [name-resolution]: C(collection) = count \n C([1, 2, 3])
+def case_hunt_forwarding_builtin_parameter_by_name : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (alg ["collection"] [] [] [(.call (.resolve "count") [.param "collection"])])] [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2, .num 3])])])
+#guard obs case_hunt_forwarding_builtin_parameter_by_name == "ok raw=3 n=1"
+
+-- hunt-forwarding-enclosing-bindings-at-two-levels [name-resolution]: A = y * 10 + z \n F(y) = { \n   G(z) = { \n     H(q) = A + q \n     H(1) \n   } \n   G(2) \n } \n F(3)
+def case_hunt_forwarding_enclosing_bindings_at_two_levels : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y", "z"] [] [] [(.binary .add (.binary .mul (.param "y") (.num 10)) (.param "z"))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [{ (privateLocalProp "H" (.localCapturedAncestorParams ["y", "z"]) (alg ["q"] [] [] [(.binary .add (.call (.resolve "A") [.param "y", .param "z"]) (.param "q"))])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }] [(.call (.resolve "H") [.num 1])])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 2])])] [(.call (.resolve "F") [.num 3])])
+#guard obs case_hunt_forwarding_enclosing_bindings_at_two_levels == "ok raw=33 n=1"
+
+-- hunt-forwarding-nearest-parameter-binding-wins [name-resolution]: A = y * 10 \n F(y) = { \n   G(y) = A + 0 \n   G(7) \n } \n F(3)
+def case_hunt_forwarding_nearest_parameter_binding_wins : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 10))]), privateProp "F" (alg ["y"] [] [privateProp "G" (alg ["y"] [] [] [(.binary .add (.call (.resolve "A") [.param "y"]) (.num 0))])] [(.call (.resolve "G") [.num 7])])] [(.call (.resolve "F") [.num 3])])
+#guard obs case_hunt_forwarding_nearest_parameter_binding_wins == "ok raw=70 n=1"
+
+-- hunt-forwarding-property-is-never-a-source [name-resolution]: A = y * 10 \n F = { \n   y = 4 \n   G = A + 0 \n   G \n } \n F(2)
+def case_hunt_forwarding_property_is_never_a_source : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["y"] [] [] [(.binary .mul (.param "y") (.num 10))]), privateProp "F" (.alias none [] [privateProp "y" (alg [] [] [] [.num 4]), privateProp "G" (alg ["y"] [] [] [(.binary .add (.call (.resolve "A") [.param "y"]) (.num 0))])] (.resolve "G") none false)] [(.call (.resolve "F") [.num 2])])
+#guard obs case_hunt_forwarding_property_is_never_a_source == "ok raw=20 n=1"
+
+-- 679 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3511,9 +4201,147 @@ def specCaseIds : List String := [
   "exposure-shape-inline-head-open-of-reference-member-capture-inside",
   "exposure-shape-inline-head-open-of-reference-member-capture-outside",
   "exposure-shape-inline-head-enclosing-open-member-capture-inside",
-  "exposure-shape-inline-head-enclosing-open-member-capture-outside"
+  "exposure-shape-inline-head-enclosing-open-member-capture-outside",
+  "hunt-exposure-inline-block-head-per-call",
+  "hunt-exposure-opened-member-read-per-call",
+  "hunt-exposure-carrier-of-dependent-property-per-call",
+  "hunt-exposure-deconstruction-target-per-call",
+  "hunt-exposure-lifted-formula-uses-enclosing-parameter",
+  "hunt-exposure-bare-forwarding-clause-uses-enclosing-parameter",
+  "hunt-exposure-inline-open-target-lifted-with-enclosing-parameter",
+  "hunt-exposure-self-contained-property-fresh-in-every-call",
+  "hunt-exposure-dependent-property-evaluated-per-call",
+  "hunt-exposure-call-reference-property-per-call",
+  "hunt-exposure-member-mixes-exported-and-dependent",
+  "hunt-cache-carrier-call-fresh-bare-read-target",
+  "hunt-cache-deconstruction-call-establishes-target-entry",
+  "hunt-cache-collecting-only-owner-read-and-calls",
+  "hunt-cache-collecting-only-owner-exported-member",
+  "hunt-collecting-owner-dependent-member-refused-at-root",
+  "hunt-cache-declared-algorithm-member-grouped-call",
+  "hunt-cache-alias-of-member-path-shares-member-entry",
+  "hunt-cache-carrier-own-member-and-forwarded-read",
+  "hunt-cache-explicit-call-establishes-inner-reads-cached",
+  "hunt-cache-reentrant-explicit-call-inside-owner",
+  "hunt-cache-carrier-call-uses-declaring-activation",
+  "hunt-cache-explicit-owner-call-binds-fresh-activation",
+  "hunt-cache-explicit-call-owns-empty-key",
+  "hunt-cache-deconstruction-in-loop-step-per-round",
+  "hunt-cache-alias-of-collecting-owner",
+  "hunt-cache-carrier-forwards-supplied-calls-fresh",
+  "hunt-runtime-alias-cell-lifetime-exported",
+  "hunt-runtime-alias-cell-lifetime-local",
+  "hunt-runtime-alias-cell-lifetime-per-loop-round",
+  "hunt-need-spread-formed-before-ordinary-cells",
+  "hunt-need-collector-selection-demands-one-cell-once",
+  "hunt-need-repeated-name-value-contribution-anchors",
+  "hunt-need-family-shares-one-supply-across-clauses",
+  "hunt-need-unused-fixed-argument-never-runs",
+  "hunt-need-callback-argument-evaluated-once",
+  "hunt-loop-while-false-round-forms-no-earlier-rows",
+  "hunt-loop-while-empty-trailing-spread-passed-over",
+  "hunt-loop-while-single-item-state-and-flag",
+  "hunt-loop-repeat-prepares-supply-before-count",
+  "hunt-loop-repeat-zero-never-projects-step",
+  "hunt-loop-repeat-step-without-callable",
+  "hunt-loop-builtin-step-result-is-one-row",
+  "hunt-loop-carrier-step-forwards",
+  "hunt-loop-nested-loop-is-one-slot",
+  "hunt-loop-meta-parameter-cannot-forward-step",
+  "hunt-loop-bare-member-path-is-no-step",
+  "hunt-loop-local-step-temporary-per-round",
+  "hunt-loop-step-temporary-read-then-call",
+  "hunt-loop-exported-temporary-call-is-fresh",
+  "hunt-loop-step-structural-head-binds-state",
+  "hunt-loop-step-collecting-head-collects-state",
+  "hunt-loop-step-repeated-name-must-agree",
+  "hunt-selection-invalid-position-stops-before-later-selector",
+  "hunt-selection-selectors-demanded-left-to-right",
+  "hunt-selection-negative-index-is-bad-index",
+  "hunt-selection-boolean-selector-is-type",
+  "hunt-selection-first-selector-failure-wins",
+  "hunt-selection-scalar-boolean-selects-itself",
+  "hunt-meta-capture-is-inert",
+  "hunt-meta-invoke-reuses-sticky-supply",
+  "hunt-meta-arguments-count-demands-nothing",
+  "hunt-meta-arguments-selection-validates-before-reading",
+  "hunt-meta-extension-route-receiver-first",
+  "hunt-meta-intrinsic-route-refuses-invocation",
+  "hunt-meta-arguments-and-invoke-share-cells",
+  "hunt-meta-member-route-invoke-is-fresh",
+  "hunt-meta-sticky-supply-self-demand-cycle",
+  "hunt-meta-arguments-count-inside-own-argument",
+  "hunt-meta-invoke-body-fresh-arguments-sticky",
+  "hunt-meta-algorithm-call-takes-fresh-supply",
+  "hunt-lifting-cycle-settles-as-one-signature",
+  "hunt-lifting-cycle-declaration-order-unobservable",
+  "hunt-lifting-mutual-recursion-settles",
+  "hunt-lifting-recursive-formula-settles",
+  "hunt-grace-postfix-moves-ysx",
+  "hunt-grace-three-postfix-markers",
+  "hunt-grace-three-prefix-markers",
+  "hunt-grace-mixed-markers",
+  "hunt-lifting-group-pattern-first-occurrence",
+  "hunt-lifting-group-pattern-second-occurrence",
+  "hunt-lifting-group-of-one-binder-is-the-binder",
+  "hunt-lifting-list-group-keeps-kind",
+  "hunt-lifting-shared-collector-name-is-one-binding",
+  "hunt-forwarding-new-parameter-beside-property-read",
+  "hunt-lifting-dot-call-order-receiver-member-arguments",
+  "hunt-grace-on-dot-receiver",
+  "hunt-lifting-clause-family-plain-binder-slot",
+  "hunt-lifting-through-alias-chain",
+  "hunt-lifting-if-branch-lifts-whether-selected",
+  "hunt-lifting-list-element-value-role",
+  "hunt-output-spread-marked-family",
+  "hunt-output-spread-bare-read-is-one-value",
+  "hunt-output-spread-zero-supply-call-spreads",
+  "hunt-output-spread-if-slot-no-exemption",
+  "hunt-output-spread-selector-slot",
+  "hunt-output-spread-step-row-spreads",
+  "hunt-output-spread-unmarked-step-row-is-one-slot",
+  "hunt-output-spread-marked-step-call-is-two-arguments",
+  "hunt-output-spread-through-transparent-alias",
+  "hunt-output-spread-not-through-carrier",
+  "hunt-output-spread-member-path-call",
+  "hunt-output-spread-empty-rows-supply-nothing",
+  "hunt-output-spread-nested-marked-calls",
+  "hunt-output-spread-repeat-count-slot",
+  "hunt-output-spread-extension-receiver",
+  "hunt-anchoring-carried-container-reads-the-current-call",
+  "hunt-anchoring-static-owner-above-activation-refused",
+  "hunt-anchoring-container-written-in-other-call-refused",
+  "hunt-anchoring-root-alias-of-container",
+  "hunt-anchoring-container-through-call-reference",
+  "hunt-anchoring-open-member-and-carried-container",
+  "hunt-anchoring-recursive-owner-innermost-call",
+  "hunt-open-owner-walk-before-opens",
+  "hunt-open-prelude-before-opens",
+  "hunt-open-nested-levels-inner-first",
+  "hunt-open-overlap-without-use-is-legal",
+  "hunt-builtin-reduce-demands-initial-on-empty",
+  "hunt-builtin-filter-count-predicate-per-item",
+  "hunt-meta-family-redispatch-on-new-supply",
+  "hunt-family-repeated-name-identity-nonmatch",
+  "hunt-family-empty-and-pair-sequence-patterns",
+  "hunt-comparison-chain-operands-once",
+  "hunt-logical-operands-both-evaluated",
+  "hunt-builtin-map-callbacks-run-in-collection-order",
+  "hunt-forwarding-closed-bare-row-uses-enclosing-parameter",
+  "hunt-forwarding-closed-bare-row-uses-own-parameter",
+  "hunt-forwarding-closed-formula-reuses-enclosing-parameter",
+  "hunt-forwarding-branch-formula-reuses-enclosing-parameter",
+  "hunt-forwarding-closed-list-without-source-is-a-demand",
+  "hunt-forwarding-collector-to-collector-respreads",
+  "hunt-forwarding-fixed-binding-passed-whole",
+  "hunt-forwarding-collecting-only-callee-is-read",
+  "hunt-grace-block-inside-closed-branch",
+  "hunt-forwarding-builtin-parameter-by-name",
+  "hunt-forwarding-enclosing-bindings-at-two-levels",
+  "hunt-forwarding-nearest-parameter-binding-wins",
+  "hunt-forwarding-property-is-never-a-source"
 ]
-#guard specCaseIds.length == 541
+#guard specCaseIds.length == 679
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

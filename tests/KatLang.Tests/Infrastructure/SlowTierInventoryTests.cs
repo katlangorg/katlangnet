@@ -185,7 +185,7 @@ public class SlowTierInventoryTests
     ];
 
     /// <summary>
-    /// The four semantic-explorer variants of the deferred provisional parity sweep (2,564 programs each).
+    /// All four variants draw on the 2,821 semantic-explorer programs. The open variants skip programs with a root open.
     /// The four LanguageSpec variants stay per pull request: they caught a real defect on 2026-11-16.
     /// </summary>
     private static IEnumerable<SlowTest> ExplorerCorpusVariants()
@@ -194,7 +194,7 @@ public class SlowTierInventoryTests
            select new SlowTest(
                $"DeferredProvisionalParitySweepTests.SemanticExplorerCorpus_{variant}_{shape}",
                Category.CorpusVariant,
-               "Sweeps the 2,564 semantic-explorer programs as load-bearing clause bodies against the same text "
+               "Sweeps eligible semantic-explorer programs as load-bearing clause bodies against the same text "
                + "without the load. The same frame's LanguageSpec variants stay per pull request.");
 
     /// <summary>

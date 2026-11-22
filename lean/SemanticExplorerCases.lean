@@ -10,15 +10,15 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2564
+- surface corpus cases: 2821
 - excluded parse-level cases (Lean has no surface parser): 13
-- Lean-representable surface cases: 2551
+- Lean-representable surface cases: 2808
 - internal-node cases: 19
-- neutral guards: 2570 case guards + 2 count guards
+- neutral guards: 2827 case guards + 2 count guards
 - supplementary errorObs guards compare supported shared payloads independently
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 2566 programs have no cache observation, which is not an empty cache
+  the other 2823 programs have no cache observation, which is not an empty cache
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_EXPLORER = "1"
@@ -13307,7 +13307,1334 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2551 differential cases.
+-- special__huntGenLoopsAG0000: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = Sq((max((n, 1))) mod 5) \n   n + 1, (G(n * T0, acc)) mod 1000 \n } \n repeat(Step(0, 3), 3), n0
+def case_special__huntGenLoopsAG0000 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.call (.resolve "Sq") [(.binary .mod (.call (.resolve "max") [(.capture [.param "n", .num 1])]) (.num 5))])])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "G") [(.binary .mul (.param "n") (.resolve "T0")), .param "acc"]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0, .num 3]), .num 3]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0000 == "ok raw=S[S[3, 4], 4] n=2"
+
+-- special__huntGenLoopsAG0001: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = 0 + acc \n   n + 1, (Cl(if(acc < 3, acc, n))) mod 1000 \n } \n Step(0, 0).repeat(5), n0
+def case_special__huntGenLoopsAG0001 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.binary .add (.num 0) (.param "acc"))])) with requiredOwnerDepths := some [("acc", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "Cl") [(.call (.resolve "if") [(.comparison (.param "acc") [{ op := .lt, operand := (.num 3) }]), .param "acc", .param "n"])]) (.num 1000))])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "repeat" (some [.num 5])), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0001 == "ok raw=S[S[5, 5], 4] n=2"
+
+-- special__huntGenLoopsAG0002: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = n + 1, (acc + n) mod 1000 \n Step(2, 3).repeat(2), Step(1, 1)
+def case_special__huntGenLoopsAG0002 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.param "acc") (.param "n")) (.num 1000))])] [(.dotCall (.call (.resolve "Step") [.num 2, .num 3]) "repeat" (some [.num 2])), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0002 == "ok raw=S[S[4, 8], S[2, 2]] n=2"
+
+-- special__huntGenLoopsAG0003: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = (5) div 3 \n   T1 = (7) div 1 \n   T2 = 5 + max((5 - n, (5) mod 4)) \n   n + 1, (G(n, 8) - max((acc, 2))) mod 1000 \n } \n repeat(Step(1, -1), 2), n0
+def case_special__huntGenLoopsAG0003 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "T0" (alg [] [] [] [(.binary .idiv (.num 5) (.num 3))]), privateProp "T1" (alg [] [] [] [(.binary .idiv (.num 7) (.num 1))]), { (privateLocalProp "T2" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .add (.num 5) (.call (.resolve "max") [(.capture [(.binary .sub (.num 5) (.param "n")), (.binary .mod (.num 5) (.num 4))])]))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .sub (.call (.resolve "G") [.param "n", .num 8]) (.call (.resolve "max") [(.capture [.param "acc", .num 2])])) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 1, (.unary .minus (.num 1))]), .num 2]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0003 == "ok raw=S[S[3, -8], 4] n=2"
+
+-- special__huntGenLoopsAG0004: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = [acc, acc, 5].sum \n   n + 1, (6 + 6) mod 1000 \n } \n repeat(Step(1, -1), 2), n0
+def case_special__huntGenLoopsAG0004 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.dotCall (.listLiteral [.param "acc", .param "acc", .num 5]) "sum" none)])) with requiredOwnerDepths := some [("acc", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.num 6) (.num 6)) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 1, (.unary .minus (.num 1))]), .num 2]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0004 == "ok raw=S[S[3, 12], 4] n=2"
+
+-- special__huntGenLoopsAG0005: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = Sq((2) mod 5) \n   n + 1, (H(acc)) mod 1000 \n } \n repeat(Step(1, 3), 0), Step(1, 1)
+def case_special__huntGenLoopsAG0005 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "T0" (alg [] [] [] [(.call (.resolve "Sq") [(.binary .mod (.num 2) (.num 5))])])] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "H") [.param "acc"]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 1, .num 3]), .num 0]), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0005 == "ok raw=S[S[1, 3], S[2, 3]] n=2"
+
+-- special__huntGenLoopsAG0006: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = if((n) mod 2 == 0 and -1 > 0, acc, Box.K) \n   n + 1, (Pick(7)) mod 1000 \n } \n repeat(Step(0, -1), 3), Step(1, 1)
+def case_special__huntGenLoopsAG0006 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc", "n"]) (alg [] [] [] [(.call (.resolve "if") [(.binary .and (.comparison (.binary .mod (.param "n") (.num 2)) [{ op := .eq, operand := (.num 0) }]) (.comparison (.unary .minus (.num 1)) [{ op := .gt, operand := (.num 0) }])), .param "acc", (.dotCall (.resolve "Box") "K" none)])])) with requiredOwnerDepths := some [("acc", some 0), ("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "Pick") [.num 7]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0, (.unary .minus (.num 1))]), .num 3]), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0006 == "ok raw=S[S[3, 20], S[2, 20]] n=2"
+
+-- special__huntGenLoopsAG0007: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = H(8) \n   T1 = [acc, if(acc < 4, n, T0), 5].sum \n   n + 1, (max((T1 + 9, -1))) mod 1000, n < 5 \n } \n Step(2, 3).while
+def case_special__huntGenLoopsAG0007 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "T0" (alg [] [] [] [(.call (.resolve "H") [.num 8])]), { (privateLocalProp "T1" (.localCapturedAncestorParams ["acc", "n"]) (alg [] [] [] [(.dotCall (.listLiteral [.param "acc", (.call (.resolve "if") [(.comparison (.param "acc") [{ op := .lt, operand := (.num 4) }]), .param "n", .resolve "T0"]), .num 5]) "sum" none)])) with requiredOwnerDepths := some [("acc", some 0), ("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "max") [(.capture [(.binary .add (.resolve "T1") (.num 9)), (.unary .minus (.num 1))])]) (.num 1000)), (.comparison (.param "n") [{ op := .lt, operand := (.num 5) }])])] [(.dotCall (.call (.resolve "Step") [.num 2, .num 3]) "while" none)])
+#guard obs case_special__huntGenLoopsAG0007 == "ok raw=S[5, 81] n=1"
+
+-- special__huntGenLoopsAG0008: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = n + 1, (max((n, acc)) + n) mod 1000 \n Step(1, -1).repeat(5), Step(1, 1)
+def case_special__huntGenLoopsAG0008 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.call (.resolve "max") [(.capture [.param "n", .param "acc"])]) (.param "n")) (.num 1000))])] [(.dotCall (.call (.resolve "Step") [.num 1, (.unary .minus (.num 1))]) "repeat" (some [.num 5])), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0008 == "ok raw=S[S[6, 16], S[2, 2]] n=2"
+
+-- special__huntGenLoopsAG0009: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = n + 1, ((-1) mod 2) mod 1000 \n repeat(Step(0, -2), 1), Step(1, 1)
+def case_special__huntGenLoopsAG0009 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .mod (.unary .minus (.num 1)) (.num 2)) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0, (.unary .minus (.num 2))]), .num 1]), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0009 == "ok raw=S[S[1, -1], S[2, -1]] n=2"
+
+-- special__huntGenLoopsAG0010: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = -3 - n \n   n + 1, (n + T0) mod 1000, n < 6 \n } \n while(Step(2, -2)), n0
+def case_special__huntGenLoopsAG0010 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .sub (.unary .minus (.num 3)) (.param "n"))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.param "n") (.resolve "T0")) (.num 1000)), (.comparison (.param "n") [{ op := .lt, operand := (.num 6) }])])] [(.call (.resolve "while") [(.call (.resolve "Step") [.num 2, (.unary .minus (.num 2))])]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0010 == "ok raw=S[S[6, -3], 4] n=2"
+
+-- special__huntGenLoopsAG0011: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = n + H(n) \n   T1 = Cl(3) \n   T2 = G(0, acc) \n   n + 1, ([acc, 4, 5].sum) mod 1000 \n } \n repeat(Step(1, -2), 1), n0
+def case_special__huntGenLoopsAG0011 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .add (.param "n") (.call (.resolve "H") [.param "n"]))])) with requiredOwnerDepths := some [("n", some 0)] }, privateProp "T1" (alg [] [] [] [(.call (.resolve "Cl") [.num 3])]), { (privateLocalProp "T2" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.call (.resolve "G") [.num 0, .param "acc"])])) with requiredOwnerDepths := some [("acc", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.dotCall (.listLiteral [.param "acc", .num 4, .num 5]) "sum" none) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 1, (.unary .minus (.num 2))]), .num 1]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0011 == "ok raw=S[S[2, 7], 4] n=2"
+
+-- special__huntGenLoopsAG0012: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = n + 1, (H(-3)) mod 1000 \n repeat(Step(0, 0), 4), Step(1, 1)
+def case_special__huntGenLoopsAG0012 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "H") [(.unary .minus (.num 3))]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0, .num 0]), .num 4]), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0012 == "ok raw=S[S[4, -5], S[2, -5]] n=2"
+
+-- special__huntGenLoopsAG0013: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = max((1, -2 + n)) \n   T1 = n + acc \n   n + 1, (T1 - acc) mod 1000, n < 6 \n } \n while(Step(1, 1))
+def case_special__huntGenLoopsAG0013 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.call (.resolve "max") [(.capture [.num 1, (.binary .add (.unary .minus (.num 2)) (.param "n"))])])])) with requiredOwnerDepths := some [("n", some 0)] }, { (privateLocalProp "T1" (.localCapturedAncestorParams ["acc", "n"]) (alg [] [] [] [(.binary .add (.param "n") (.param "acc"))])) with requiredOwnerDepths := some [("acc", some 0), ("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .sub (.resolve "T1") (.param "acc")) (.num 1000)), (.comparison (.param "n") [{ op := .lt, operand := (.num 6) }])])] [(.call (.resolve "while") [(.call (.resolve "Step") [.num 1, .num 1])])])
+#guard obs case_special__huntGenLoopsAG0013 == "ok raw=S[6, 5] n=1"
+
+-- special__huntGenLoopsAG0014: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = if((1) mod 2 == 0 and [if((n) mod 2 == 0 and -3 > 0, acc, Box.K), 6, 5].sum > 0, acc, Box.K) \n   n + 1, (3 + acc) mod 1000 \n } \n repeat(Step(2, -2), 5), n0
+def case_special__huntGenLoopsAG0014 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc", "n"]) (alg [] [] [] [(.call (.resolve "if") [(.binary .and (.comparison (.binary .mod (.num 1) (.num 2)) [{ op := .eq, operand := (.num 0) }]) (.comparison (.dotCall (.listLiteral [(.call (.resolve "if") [(.binary .and (.comparison (.binary .mod (.param "n") (.num 2)) [{ op := .eq, operand := (.num 0) }]) (.comparison (.unary .minus (.num 3)) [{ op := .gt, operand := (.num 0) }])), .param "acc", (.dotCall (.resolve "Box") "K" none)]), .num 6, .num 5]) "sum" none) [{ op := .gt, operand := (.num 0) }])), .param "acc", (.dotCall (.resolve "Box") "K" none)])])) with requiredOwnerDepths := some [("acc", some 0), ("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.num 3) (.param "acc")) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 2, (.unary .minus (.num 2))]), .num 5]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0014 == "ok raw=S[S[7, 13], 4] n=2"
+
+-- special__huntGenLoopsAG0015: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = Pick((Sq((5) mod 5)) div 4) \n   T1 = (6 * n) div 3 \n   n + 1, (if((T0) mod 2 == 0 and 6 > 0, if(8 < 0, acc, T1 - acc), Box.K)) mod 1000 \n } \n repeat(Step(1, 1), 3)
+def case_special__huntGenLoopsAG0015 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "T0" (alg [] [] [] [(.call (.resolve "Pick") [(.binary .idiv (.call (.resolve "Sq") [(.binary .mod (.num 5) (.num 5))]) (.num 4))])]), { (privateLocalProp "T1" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .idiv (.binary .mul (.num 6) (.param "n")) (.num 3))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "if") [(.binary .and (.comparison (.binary .mod (.resolve "T0") (.num 2)) [{ op := .eq, operand := (.num 0) }]) (.comparison (.num 6) [{ op := .gt, operand := (.num 0) }])), (.call (.resolve "if") [(.comparison (.num 8) [{ op := .lt, operand := (.num 0) }]), .param "acc", (.binary .sub (.resolve "T1") (.param "acc"))]), (.dotCall (.resolve "Box") "K" none)]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 1, .num 1]), .num 3])])
+#guard obs case_special__huntGenLoopsAG0015 == "ok raw=S[4, 3] n=1"
+
+-- special__huntGenLoopsAG0016: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = Pick(n - acc) \n   n + 1, (if(([n, T0, 5].sum) div 3 < T0, n, 1)) mod 1000 \n } \n Step(2, 1).repeat(1), Step(1, 1)
+def case_special__huntGenLoopsAG0016 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc", "n"]) (alg [] [] [] [(.call (.resolve "Pick") [(.binary .sub (.param "n") (.param "acc"))])])) with requiredOwnerDepths := some [("acc", some 0), ("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "if") [(.comparison (.binary .idiv (.dotCall (.listLiteral [.param "n", .resolve "T0", .num 5]) "sum" none) (.num 3)) [{ op := .lt, operand := (.resolve "T0") }]), .param "n", .num 1]) (.num 1000))])] [(.dotCall (.call (.resolve "Step") [.num 2, .num 1]) "repeat" (some [.num 1])), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0016 == "ok raw=S[S[3, 2], S[2, 1]] n=2"
+
+-- special__huntGenLoopsAG0017: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = { \n   T0 = acc + (acc) div 4 \n   n + 1, (acc + n * 8) mod 1000 \n } \n repeat(Step(0, 3), 4), n0
+def case_special__huntGenLoopsAG0017 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.binary .add (.param "acc") (.binary .idiv (.param "acc") (.num 4)))])) with requiredOwnerDepths := some [("acc", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.param "acc") (.binary .mul (.param "n") (.num 8))) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0, .num 3]), .num 4]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0017 == "ok raw=S[S[4, 51], 4] n=2"
+
+-- special__huntGenLoopsAG0018: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = n + 1, ((Sq((H(n)) mod 5)) mod 4) mod 1000 \n repeat(Step(2, 2), 1), Step(1, 1)
+def case_special__huntGenLoopsAG0018 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .mod (.call (.resolve "Sq") [(.binary .mod (.call (.resolve "H") [.param "n"]) (.num 5))]) (.num 4)) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 2, .num 2]), .num 1]), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0018 == "ok raw=S[S[3, 0], S[2, 1]] n=2"
+
+-- special__huntGenLoopsAG0019: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = (acc) div 2 - acc \n   T1 = [2, -3, 5].sum \n   T2 = Pick(9) \n   n + 1, (G(max((acc, acc)) + T2, acc)) mod 1000 \n } \n Step(2, 0).repeat(2), Step(1, 1)
+def case_special__huntGenLoopsAG0019 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.binary .sub (.binary .idiv (.param "acc") (.num 2)) (.param "acc"))])) with requiredOwnerDepths := some [("acc", some 0)] }, privateProp "T1" (alg [] [] [] [(.dotCall (.listLiteral [.num 2, (.unary .minus (.num 3)), .num 5]) "sum" none)]), privateProp "T2" (alg [] [] [] [(.call (.resolve "Pick") [.num 9])])] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "G") [(.binary .add (.call (.resolve "max") [(.capture [.param "acc", .param "acc"])]) (.resolve "T2")), .param "acc"]) (.num 1000))])] [(.dotCall (.call (.resolve "Step") [.num 2, .num 0]) "repeat" (some [.num 2])), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0019 == "ok raw=S[S[4, 10], S[2, 10]] n=2"
+
+-- special__huntGenLoopsAG0020: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n n0 = 4 \n Step(n, acc) = n + 1, (Pick(-3)) mod 1000 \n repeat(Step(2, 1), 5), n0
+def case_special__huntGenLoopsAG0020 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "n0" (alg [] [] [] [.num 4]), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "Pick") [(.unary .minus (.num 3))]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 2, .num 1]), .num 5]), .resolve "n0"])
+#guard obs case_special__huntGenLoopsAG0020 == "ok raw=S[S[7, 10], 4] n=2"
+
+-- special__huntGenLoopsAG0021: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = Pick(8) \n   T1 = if((0) mod 2 == 0 and n > 0, acc, Box.K) \n   n + 1, (if((T0) div 3 < T0, acc, n)) mod 1000 \n } \n repeat(Step(2, -2), 4)
+def case_special__huntGenLoopsAG0021 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "T0" (alg [] [] [] [(.call (.resolve "Pick") [.num 8])]), { (privateLocalProp "T1" (.localCapturedAncestorParams ["acc", "n"]) (alg [] [] [] [(.call (.resolve "if") [(.binary .and (.comparison (.binary .mod (.num 0) (.num 2)) [{ op := .eq, operand := (.num 0) }]) (.comparison (.param "n") [{ op := .gt, operand := (.num 0) }])), .param "acc", (.dotCall (.resolve "Box") "K" none)])])) with requiredOwnerDepths := some [("acc", some 0), ("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.call (.resolve "if") [(.comparison (.binary .idiv (.resolve "T0") (.num 3)) [{ op := .lt, operand := (.resolve "T0") }]), .param "acc", .param "n"]) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 2, (.unary .minus (.num 2))]), .num 4])])
+#guard obs case_special__huntGenLoopsAG0021 == "ok raw=S[6, -2] n=1"
+
+-- special__huntGenLoopsAG0022: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = Cl(acc) \n   T1 = Cl(Cl(acc)) \n   n + 1, (T1 * n + acc) mod 1000, n < 2 \n } \n Step(0, 2).while
+def case_special__huntGenLoopsAG0022 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "T0" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.call (.resolve "Cl") [.param "acc"])])) with requiredOwnerDepths := some [("acc", some 0)] }, { (privateLocalProp "T1" (.localCapturedAncestorParams ["acc"]) (alg [] [] [] [(.call (.resolve "Cl") [(.call (.resolve "Cl") [.param "acc"])])])) with requiredOwnerDepths := some [("acc", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .add (.binary .mul (.resolve "T1") (.param "n")) (.param "acc")) (.num 1000)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 2]) "while" none)])
+#guard obs case_special__huntGenLoopsAG0022 == "ok raw=S[2, 6] n=1"
+
+-- special__huntGenLoopsAG0023: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = { \n   T0 = (4) mod 1 \n   T1 = H(n) \n   n + 1, (-(T1)) mod 1000 \n } \n repeat(Step(1, 2), 5), Step(1, 1)
+def case_special__huntGenLoopsAG0023 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "T0" (alg [] [] [] [(.binary .mod (.num 4) (.num 1))]), { (privateLocalProp "T1" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.call (.resolve "H") [.param "n"])])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.unary .minus (.resolve "T1")) (.num 1000))])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 1, .num 2]), .num 5]), (.call (.resolve "Step") [.num 1, .num 1])])
+#guard obs case_special__huntGenLoopsAG0023 == "ok raw=S[S[6, -11], S[2, -3]] n=2"
+
+-- special__huntGenLoopsAG0024: H(x) = x * 2 + 1 \n G(x, y) = x - y \n Sq(x) = x * x \n Pick(x) = [10, 20, 30][x mod 3] \n Neg(x) = -x \n Cl(0) = 100 \n Cl(x) = x + 1 \n Two(x) = x, x + 1 \n Box = { \n   public K = 7 \n   public F(x) = x + 3 \n } \n Step(n, acc) = n + 1, (n - (acc) mod 1) mod 1000, n < 5 \n while(Step(0, 1))
+def case_special__huntGenLoopsAG0024 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7]), publicProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 3))])] []), privateProp "H" (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 2)) (.num 1))]), privateProp "G" (alg ["x", "y"] [] [] [(.binary .sub (.param "x") (.param "y"))]), privateProp "Sq" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Pick" (alg ["x"] [] [] [(.index (.listLiteral [.num 10, .num 20, .num 30]) [(.binary .mod (.param "x") (.num 3))])]), privateProp "Neg" (alg ["x"] [] [] [(.unary .minus (.param "x"))]), privateProp "Cl" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "x", (alg [] [] [] [(.binary .add (.param "x") (.num 1))])⟩]), privateProp "Two" (alg ["x"] [] [] [.param "x", (.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .mod (.binary .sub (.param "n") (.binary .mod (.param "acc") (.num 1))) (.num 1000)), (.comparison (.param "n") [{ op := .lt, operand := (.num 5) }])])] [(.call (.resolve "while") [(.call (.resolve "Step") [.num 0, .num 1])])])
+#guard obs case_special__huntGenLoopsAG0024 == "ok raw=S[5, 4] n=1"
+
+-- special__huntGenFusionAU0000: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n map(L, { x * 3 }).filter({ false }).count, tick()
+def case_special__huntGenFusionAU0000 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.dotCall (.call (.resolve "map") [.resolve "L", (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 3))]))]) "filter" (some [(.algorithmExpr (alg [] [] [] [.boolLiteral false]))])) "count" none), (.call (.resolve "tick") [])])
+#guard obs case_special__huntGenFusionAU0000 == "err arity"
+
+#guard errorObs case_special__huntGenFusionAU0000 == .matched (some { kind := "arity", names := [], counts := [0, 1] })
+-- special__huntGenFusionAU0001: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n filter(range(1, 8), { x mod 3 == 0 }).count
+def case_special__huntGenFusionAU0001 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.call (.resolve "filter") [(.call (.resolve "range") [.num 1, .num 8]), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 3)) [{ op := .eq, operand := (.num 0) }])]))]) "count" none)])
+#guard obs case_special__huntGenFusionAU0001 == "ok raw=2 n=1"
+
+-- special__huntGenFusionAU0002: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n filter([], { x > T }).count(), 1
+def case_special__huntGenFusionAU0002 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.call (.resolve "filter") [(.listLiteral []), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.resolve "T") }])]))]) "count" (some [])), .num 1])
+#guard obs case_special__huntGenFusionAU0002 == "ok raw=S[0, 1] n=2"
+
+-- special__huntGenFusionAU0003: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n F = (L*, 7).filter(AliasEven) \n F.count, F
+def case_special__huntGenFusionAU0003 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "F" (alg [] [] [] [(.dotCall (.capture [(.sequenceSpread (.resolve "L")), .num 7]) "filter" (some [.resolve "AliasEven"]))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.resolve "F") "count" none), .resolve "F"])
+#guard obs case_special__huntGenFusionAU0003 == "ok raw=S[3, L[2, 4, 6]] n=2"
+
+-- special__huntGenFusionAU0004: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count([T, T + 1, T + 2].filter(Big)) + count([T, T + 1, T + 2])
+def case_special__huntGenFusionAU0004 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.binary .add (.call (.resolve "count") [(.dotCall (.listLiteral [.resolve "T", (.binary .add (.resolve "T") (.num 1)), (.binary .add (.resolve "T") (.num 2))]) "filter" (some [.resolve "Big"]))]) (.call (.resolve "count") [(.listLiteral [.resolve "T", (.binary .add (.resolve "T") (.num 1)), (.binary .add (.resolve "T") (.num 2))])]))])
+#guard obs case_special__huntGenFusionAU0004 == "ok raw=3 n=1"
+
+-- special__huntGenFusionAU0005: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count(range(0, 5).filter({ count([x]) == 1 })) + count(range(0, 5))
+def case_special__huntGenFusionAU0005 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.binary .add (.call (.resolve "count") [(.dotCall (.call (.resolve "range") [.num 0, .num 5]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.call (.resolve "count") [(.listLiteral [.param "x"])]) [{ op := .eq, operand := (.num 1) }])]))]))]) (.call (.resolve "count") [(.call (.resolve "range") [.num 0, .num 5])]))])
+#guard obs case_special__huntGenFusionAU0005 == "ok raw=12 n=1"
+
+-- special__huntGenFusionAU0006: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n (range(0, 5).filter({ x mod 3 == 0 })).count
+def case_special__huntGenFusionAU0006 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.dotCall (.call (.resolve "range") [.num 0, .num 5]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 3)) [{ op := .eq, operand := (.num 0) }])]))])) "count" none)])
+#guard obs case_special__huntGenFusionAU0006 == "ok raw=2 n=1"
+
+-- special__huntGenFusionAU0007: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n S.filter(Pos).count
+def case_special__huntGenFusionAU0007 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.dotCall (.resolve "S") "filter" (some [.resolve "Pos"])) "count" none)])
+#guard obs case_special__huntGenFusionAU0007 == "ok raw=4 n=1"
+
+-- special__huntGenFusionAU0008: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count(L.take(3).filter(AliasEven)) + count(L.take(3))
+def case_special__huntGenFusionAU0008 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.binary .add (.call (.resolve "count") [(.dotCall (.dotCall (.resolve "L") "take" (some [.num 3])) "filter" (some [.resolve "AliasEven"]))]) (.call (.resolve "count") [(.dotCall (.resolve "L") "take" (some [.num 3]))]))])
+#guard obs case_special__huntGenFusionAU0008 == "ok raw=4 n=1"
+
+-- special__huntGenFusionAU0009: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n ([1, 2, 3].filter({ x > tick() })).count
+def case_special__huntGenFusionAU0009 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.call (.resolve "tick") []) }])]))])) "count" none)])
+#guard obs case_special__huntGenFusionAU0009 == "ok raw=0 n=1"
+
+-- special__huntGenFusionAU0010: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count(filter((1, 2, 3), { x == x }))
+def case_special__huntGenFusionAU0010 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.call (.resolve "count") [(.call (.resolve "filter") [(.capture [.num 1, .num 2, .num 3]), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .eq, operand := (.param "x") }])]))])])])
+#guard obs case_special__huntGenFusionAU0010 == "ok raw=3 n=1"
+
+-- special__huntGenFusionAU0011: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count([3, -1, 4, -1, 5].filter({ x })) + count([3, -1, 4, -1, 5])
+def case_special__huntGenFusionAU0011 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.binary .add (.call (.resolve "count") [(.dotCall (.listLiteral [.num 3, (.unary .minus (.num 1)), .num 4, (.unary .minus (.num 1)), .num 5]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [.param "x"]))]))]) (.call (.resolve "count") [(.listLiteral [.num 3, (.unary .minus (.num 1)), .num 4, (.unary .minus (.num 1)), .num 5])]))])
+#guard obs case_special__huntGenFusionAU0011 == "err type"
+
+-- special__huntGenFusionAU0012: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n filter([3, -1, 4, -1, 5], { true }).count
+def case_special__huntGenFusionAU0012 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.call (.resolve "filter") [(.listLiteral [.num 3, (.unary .minus (.num 1)), .num 4, (.unary .minus (.num 1)), .num 5]), (.algorithmExpr (alg [] [] [] [.boolLiteral true]))]) "count" none)])
+#guard obs case_special__huntGenFusionAU0012 == "err arity"
+
+#guard errorObs case_special__huntGenFusionAU0012 == .matched (some { kind := "arity", names := [], counts := [0, 1] })
+-- special__huntGenFusionAU0013: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count(range(3, 3).filter(Even)) + count(range(3, 3))
+def case_special__huntGenFusionAU0013 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.binary .add (.call (.resolve "count") [(.dotCall (.call (.resolve "range") [.num 3, .num 3]) "filter" (some [.resolve "Even"]))]) (.call (.resolve "count") [(.call (.resolve "range") [.num 3, .num 3])]))])
+#guard obs case_special__huntGenFusionAU0013 == "ok raw=1 n=1"
+
+-- special__huntGenFusionAU0014: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n filter(S, Pair).count(), 1
+def case_special__huntGenFusionAU0014 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.call (.resolve "filter") [.resolve "S", .resolve "Pair"]) "count" (some [])), .num 1])
+#guard obs case_special__huntGenFusionAU0014 == "err type"
+
+-- special__huntGenFusionAU0015: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n (range(1, 8).filter(Even)).count
+def case_special__huntGenFusionAU0015 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.dotCall (.call (.resolve "range") [.num 1, .num 8]) "filter" (some [.resolve "Even"])) "count" none)])
+#guard obs case_special__huntGenFusionAU0015 == "ok raw=4 n=1"
+
+-- special__huntGenFusionAU0016: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n filter([1, 'a', 3], Pos).count
+def case_special__huntGenFusionAU0016 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.call (.resolve "filter") [(.listLiteral [.num 1, .stringLiteral "a", .num 3]), .resolve "Pos"]) "count" none)])
+#guard obs case_special__huntGenFusionAU0016 == "err type"
+
+-- special__huntGenFusionAU0017: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n ([1, 2, 3].filter({ x })).count
+def case_special__huntGenFusionAU0017 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [.param "x"]))])) "count" none)])
+#guard obs case_special__huntGenFusionAU0017 == "err type"
+
+-- special__huntGenFusionAU0018: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count(filter([], Even))
+def case_special__huntGenFusionAU0018 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.call (.resolve "count") [(.call (.resolve "filter") [(.listLiteral []), .resolve "Even"])])])
+#guard obs case_special__huntGenFusionAU0018 == "ok raw=0 n=1"
+
+-- special__huntGenFusionAU0019: Inc(x) = x + 1 \n Even(x) = x mod 2 == 0 \n Big(x) = x > 3 \n Pair((a, b)) = a < b \n L = [1, 2, 3, 4, 5, 6] \n S = 1, 2, 3, 4 \n E = [] \n Nested = [(1, 2), (3, 1), (2, 5)] \n AliasEven = Even \n Bad = 1 / 0 \n Pos = { x > 0 } \n T = tick() \n count(filter(range(1, 8), Even))
+def case_special__huntGenFusionAU0019 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3, .num 4, .num 5, .num 6])]), privateProp "S" (alg [] [] [] [.num 1, .num 2, .num 3, .num 4]), privateProp "E" (alg [] [] [] [(.listLiteral [])]), privateProp "Nested" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 1]), (.capture [.num 2, .num 5])])]), privateProp "AliasEven" (.alias none [] [] (.resolve "Even")), privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Pos" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }])]), privateProp "T" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Even" (alg ["x"] [] [] [(.comparison (.binary .mod (.param "x") (.num 2)) [{ op := .eq, operand := (.num 0) }])]), privateProp "Big" (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }])]), privateProp "Pair" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.comparison (.param "a") [{ op := .lt, operand := (.param "b") }])])] [(.call (.resolve "count") [(.call (.resolve "filter") [(.call (.resolve "range") [.num 1, .num 8]), .resolve "Even"])])])
+#guard obs case_special__huntGenFusionAU0019 == "ok raw=4 n=1"
+
+-- special__huntGenFaultsAF0000: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Coll(Box.K, ([1, 2][5])*)
+def case_special__huntGenFaultsAF0000 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Coll") [(.dotCall (.resolve "Box") "K" none), (.sequenceSpread (.index (.listLiteral [.num 1, .num 2]) [.num 5]))])])
+#guard obs case_special__huntGenFaultsAF0000 == "err index"
+
+#guard errorObs case_special__huntGenFaultsAF0000 == .matched (some { kind := "index", names := [], counts := [] })
+-- special__huntGenFaultsAF0001: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n 'a' * 2 < 1 / 0 < 2
+def case_special__huntGenFaultsAF0001 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.comparison (.binary .mul (.stringLiteral "a") (.num 2)) [{ op := .lt, operand := (.binary .div (.num 1) (.num 0)) }, { op := .lt, operand := (.num 2) }])])
+#guard obs case_special__huntGenFaultsAF0001 == "err type"
+
+-- special__huntGenFaultsAF0002: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Use(Bad, Box.K)
+def case_special__huntGenFaultsAF0002 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Use") [.resolve "Bad", (.dotCall (.resolve "Box") "K" none)])])
+#guard obs case_special__huntGenFaultsAF0002 == "err div0"
+
+#guard errorObs case_special__huntGenFaultsAF0002 == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__huntGenFaultsAF0003: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Use('a' * 2, (1 + true))
+def case_special__huntGenFaultsAF0003 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Use") [(.binary .mul (.stringLiteral "a") (.num 2)), (.binary .add (.num 1) (.boolLiteral true))])])
+#guard obs case_special__huntGenFaultsAF0003 == "err type"
+
+-- special__huntGenFaultsAF0004: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n reduce([1, 2], { a + b * 0 + 'a' * 2 }, Box.Nope)
+def case_special__huntGenFaultsAF0004 : Expr :=
+  .algorithmExpr (alg ["Nope"] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["a", "b"] [] [] [(.binary .add (.binary .add (.param "a") (.binary .mul (.param "b") (.num 0))) (.binary .mul (.stringLiteral "a") (.num 2)))])), (.dotMember (.resolve "Box") "Nope" (.param "Nope") none)])])
+#guard obs case_special__huntGenFaultsAF0004 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenFaultsAF0004 == .matched (some { kind := "unresolvedImplicitParams", names := ["Nope"], counts := [] })
+-- special__huntGenFaultsAF0005: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n [tick(), 20][[1, 2][5], first(())]
+def case_special__huntGenFaultsAF0005 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.index (.listLiteral [(.call (.resolve "tick") []), .num 20]) [(.index (.listLiteral [.num 1, .num 2]) [.num 5]), (.call (.resolve "first") [(.emptySequence 0)])])])
+#guard obs case_special__huntGenFaultsAF0005 == "err index"
+
+#guard errorObs case_special__huntGenFaultsAF0005 == .matched (some { kind := "index", names := [], counts := [] })
+-- special__huntGenFaultsAF0006: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Two(if(3, 1, 2))
+def case_special__huntGenFaultsAF0006 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Two") [(.call (.resolve "if") [.num 3, .num 1, .num 2])])])
+#guard obs case_special__huntGenFaultsAF0006 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0006 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntGenFaultsAF0007: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Use(Two(1), 2)
+def case_special__huntGenFaultsAF0007 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Use") [(.call (.resolve "Two") [.num 1]), .num 2])])
+#guard obs case_special__huntGenFaultsAF0007 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0007 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntGenFaultsAF0008: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Two(1, 2) < 0 < 'a' * 2 < Two(1)
+def case_special__huntGenFaultsAF0008 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.comparison (.call (.resolve "Two") [.num 1, .num 2]) [{ op := .lt, operand := (.num 0) }, { op := .lt, operand := (.binary .mul (.stringLiteral "a") (.num 2)) }, { op := .lt, operand := (.call (.resolve "Two") [.num 1]) }])])
+#guard obs case_special__huntGenFaultsAF0008 == "err type"
+
+-- special__huntGenFaultsAF0009: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n 'a' * 2.Inc + Id(1, 2)
+def case_special__huntGenFaultsAF0009 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.binary .add (.binary .mul (.stringLiteral "a") (.dotCall (.num 2) "Inc" none)) (.call (.resolve "Id") [.num 1, .num 2]))])
+#guard obs case_special__huntGenFaultsAF0009 == "err type"
+
+-- special__huntGenFaultsAF0010: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n map([1, 2], { x * 0 + Box.Nope }) + Id(4)
+def case_special__huntGenFaultsAF0010 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.binary .add (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x", "Nope"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 0)) (.dotMember (.resolve "Box") "Nope" (.param "Nope") none))]))]) (.call (.resolve "Id") [.num 4]))])
+#guard obs case_special__huntGenFaultsAF0010 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0010 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntGenFaultsAF0011: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Fst(min([]), Inc)
+def case_special__huntGenFaultsAF0011 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Fst") [(.call (.resolve "min") [(.listLiteral [])]), .resolve "Inc"])])
+#guard obs case_special__huntGenFaultsAF0011 == "err illegalInEval"
+
+-- special__huntGenFaultsAF0012: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n map([1, 2], { x * 0 + if(3, 1, 2) }) + Two(1, 2)
+def case_special__huntGenFaultsAF0012 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.binary .add (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 0)) (.call (.resolve "if") [.num 3, .num 1, .num 2]))]))]) (.call (.resolve "Two") [.num 1, .num 2]))])
+#guard obs case_special__huntGenFaultsAF0012 == "err type"
+
+-- special__huntGenFaultsAF0013: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Step(Box.K, 1 / 0).while
+def case_special__huntGenFaultsAF0013 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [(.dotCall (.resolve "Box") "K" none), (.binary .div (.num 1) (.num 0))]) "while" none)])
+#guard obs case_special__huntGenFaultsAF0013 == "err div0"
+
+#guard errorObs case_special__huntGenFaultsAF0013 == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__huntGenFaultsAF0014: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Step(min([]), Box.Nope).while
+def case_special__huntGenFaultsAF0014 : Expr :=
+  .algorithmExpr (alg ["Nope"] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [(.call (.resolve "min") [(.listLiteral [])]), (.dotMember (.resolve "Box") "Nope" (.param "Nope") none)]) "while" none)])
+#guard obs case_special__huntGenFaultsAF0014 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenFaultsAF0014 == .matched (some { kind := "unresolvedImplicitParams", names := ["Nope"], counts := [] })
+-- special__huntGenFaultsAF0015: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Id(1, 2).Inc + (1 + true)
+def case_special__huntGenFaultsAF0015 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.binary .add (.dotCall (.call (.resolve "Id") [.num 1, .num 2]) "Inc" none) (.binary .add (.num 1) (.boolLiteral true)))])
+#guard obs case_special__huntGenFaultsAF0015 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0015 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
+-- special__huntGenFaultsAF0016: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Two(0 ^ -1, Id(4), tick())
+def case_special__huntGenFaultsAF0016 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Two") [(.binary .pow (.num 0) (.unary .minus (.num 1))), (.call (.resolve "Id") [.num 4]), (.call (.resolve "tick") [])])])
+#guard obs case_special__huntGenFaultsAF0016 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0016 == .matched (some { kind := "arity", names := [], counts := [2, 3] })
+-- special__huntGenFaultsAF0017: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Id(1, 2) + first(())
+def case_special__huntGenFaultsAF0017 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.binary .add (.call (.resolve "Id") [.num 1, .num 2]) (.call (.resolve "first") [(.emptySequence 0)]))])
+#guard obs case_special__huntGenFaultsAF0017 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0017 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
+-- special__huntGenFaultsAF0018: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Use(Id(1, 2), 2)
+def case_special__huntGenFaultsAF0018 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Use") [(.call (.resolve "Id") [.num 1, .num 2]), .num 2])])
+#guard obs case_special__huntGenFaultsAF0018 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0018 == .matched (some { kind := "arity", names := [], counts := [1, 2] })
+-- special__huntGenFaultsAF0019: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Coll(Two(1), Inc(3)).count
+def case_special__huntGenFaultsAF0019 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Coll") [(.call (.resolve "Two") [.num 1]), (.call (.resolve "Inc") [.num 3])]) "count" none)])
+#guard obs case_special__huntGenFaultsAF0019 == "err arity"
+
+#guard errorObs case_special__huntGenFaultsAF0019 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntGenInferAI0000Base: D0 = s - s + q + s \n D1 = D0 \n D1(1, 10), D0(1, 10)
+def case_special__huntGenInferAI0000Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["s", "q"] [] [] [(.binary .add (.binary .add (.binary .sub (.param "s") (.param "s")) (.param "q")) (.param "s"))]), privateProp "D1" (.alias none [] [] (.resolve "D0"))] [(.call (.resolve "D1") [.num 1, .num 10]), (.call (.resolve "D0") [.num 1, .num 10])])
+#guard obs case_special__huntGenInferAI0000Base == "ok raw=S[11, 11] n=2"
+
+-- special__huntGenInferAI0001Base: D0 = w + q - q \n D1 = if(1 > 0, D0 - w + v + s, 0) \n D2 = [r + D1, 0][0] \n D3 = if(1 > 0, D0 + q + D2 - ~u, 0) \n D4 = D3 + q~ \n D0(1, 10), D3(1, 10, 100, 1000, 10000, 100000)
+def case_special__huntGenInferAI0001Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["w", "q"] [] [] [(.binary .sub (.binary .add (.param "w") (.param "q")) (.param "q"))]), privateProp "D1" (alg ["w", "v", "s", "q"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .add (.binary .sub (.call (.resolve "D0") [.param "w", .param "q"]) (.param "w")) (.param "v")) (.param "s")), .num 0])]), privateProp "D2" (alg ["r", "w", "v", "s", "q"] [] [] [(.index (.listLiteral [(.binary .add (.param "r") (.call (.resolve "D1") [.param "w", .param "v", .param "s", .param "q"])), .num 0]) [.num 0])]), privateProp "D3" (alg ["u", "q", "w", "r", "v", "s"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .add (.binary .add (.call (.resolve "D0") [.param "w", .param "q"]) (.param "q")) (.call (.resolve "D2") [.param "r", .param "w", .param "v", .param "s", .param "q"])) (.param "u")), .num 0])]), privateProp "D4" (alg ["q", "u", "w", "r", "v", "s"] [] [] [(.binary .add (.call (.resolve "D3") [.param "u", .param "q", .param "w", .param "r", .param "v", .param "s"]) (.param "q"))])] [(.call (.resolve "D0") [.num 1, .num 10]), (.call (.resolve "D3") [.num 1, .num 10, .num 100, .num 1000, .num 10000, .num 100000])])
+#guard obs case_special__huntGenInferAI0001Base == "ok raw=S[1, 111109] n=2"
+
+-- special__huntGenInferAI0002Base: D0 = z - u - r \n D1 = D0 \n D2 = D0 \n D0(1, 10, 100), D1(1, 10, 100)
+def case_special__huntGenInferAI0002Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["z", "u", "r"] [] [] [(.binary .sub (.binary .sub (.param "z") (.param "u")) (.param "r"))]), privateProp "D1" (.alias none [] [] (.resolve "D0")), privateProp "D2" (.alias none [] [] (.resolve "D0"))] [(.call (.resolve "D0") [.num 1, .num 10, .num 100]), (.call (.resolve "D1") [.num 1, .num 10, .num 100])])
+#guard obs case_special__huntGenInferAI0002Base == "ok raw=S[-109, -109] n=2"
+
+-- special__huntGenInferAI0003Base: D0(p, q) = [q + p + q, 0][0] \n D1 = D0 + D0 - D0 + D0 \n D2 = D1 - 1 \n D3 = D1 \n D2(1, 10), D1(1, 10)
+def case_special__huntGenInferAI0003Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D1" (alg ["p", "q"] [] [] [(.binary .add (.binary .sub (.binary .add (.call (.resolve "D0") [.param "p", .param "q"]) (.call (.resolve "D0") [.param "p", .param "q"])) (.call (.resolve "D0") [.param "p", .param "q"])) (.call (.resolve "D0") [.param "p", .param "q"]))]), privateProp "D2" (alg ["p", "q"] [] [] [(.binary .sub (.call (.resolve "D1") [.param "p", .param "q"]) (.num 1))]), privateProp "D3" (.alias none [] [] (.resolve "D1")), privateProp "D0" (alg ["p", "q"] [] [] [(.index (.listLiteral [(.binary .add (.binary .add (.param "q") (.param "p")) (.param "q")), .num 0]) [.num 0])])] [(.call (.resolve "D2") [.num 1, .num 10]), (.call (.resolve "D1") [.num 1, .num 10])])
+#guard obs case_special__huntGenInferAI0003Base == "ok raw=S[41, 42] n=2"
+
+-- special__huntGenInferAI0004Base: D0 = [v - 4, 0][0] \n D1 = q + D0 - s + D0 \n D2 = D0 + 4 \n D3(s, q, v) = if(1 > 0, D1 + D1 - 9, 0) \n D4 = D0 \n D5 = if(1 > 0, D4 + D4 + u, 0) \n D5(1, 10), D2(1)
+def case_special__huntGenInferAI0004Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["v"] [] [] [(.index (.listLiteral [(.binary .sub (.param "v") (.num 4)), .num 0]) [.num 0])]), privateProp "D1" (alg ["q", "s", "v"] [] [] [(.binary .add (.binary .sub (.binary .add (.param "q") (.call (.resolve "D0") [.param "v"])) (.param "s")) (.call (.resolve "D0") [.param "v"]))]), privateProp "D2" (alg ["v"] [] [] [(.binary .add (.call (.resolve "D0") [.param "v"]) (.num 4))]), privateProp "D4" (.alias none [] [] (.resolve "D0")), privateProp "D5" (alg ["u", "v"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .add (.call (.resolve "D4") [.param "v"]) (.call (.resolve "D4") [.param "v"])) (.param "u")), .num 0])]), privateProp "D3" (alg ["s", "q", "v"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .add (.call (.resolve "D1") [.param "q", .param "s", .param "v"]) (.call (.resolve "D1") [.param "q", .param "s", .param "v"])) (.num 9)), .num 0])])] [(.call (.resolve "D5") [.num 1, .num 10]), (.call (.resolve "D2") [.num 1])])
+#guard obs case_special__huntGenInferAI0004Base == "ok raw=S[13, 1] n=2"
+
+-- special__huntGenInferAI0005Base: D0 = r - q + p - s \n D1 = D0 \n D2(v, q, p) = [p + v + q, 0][0] \n D3 = q - q~ + v - r \n D4(p, v, r, s, q) = D0 - p + s - D3 \n D0(1, 10, 100, 1000), D1(1, 10, 100, 1000)
+def case_special__huntGenInferAI0005Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["r", "q", "p", "s"] [] [] [(.binary .sub (.binary .add (.binary .sub (.param "r") (.param "q")) (.param "p")) (.param "s"))]), privateProp "D1" (.alias none [] [] (.resolve "D0")), privateProp "D3" (alg ["v", "q", "r"] [] [] [(.binary .sub (.binary .add (.binary .sub (.param "q") (.param "q")) (.param "v")) (.param "r"))]), privateProp "D2" (alg ["v", "q", "p"] [] [] [(.index (.listLiteral [(.binary .add (.binary .add (.param "p") (.param "v")) (.param "q")), .num 0]) [.num 0])]), privateProp "D4" (alg ["p", "v", "r", "s", "q"] [] [] [(.binary .sub (.binary .add (.binary .sub (.call (.resolve "D0") [.param "r", .param "q", .param "p", .param "s"]) (.param "p")) (.param "s")) (.call (.resolve "D3") [.param "v", .param "q", .param "r"]))])] [(.call (.resolve "D0") [.num 1, .num 10, .num 100, .num 1000]), (.call (.resolve "D1") [.num 1, .num 10, .num 100, .num 1000])])
+#guard obs case_special__huntGenInferAI0005Base == "ok raw=S[-909, -909] n=2"
+
+-- special__huntGenInferAI0006Base: D0 = if(1 > 0, v + q + ~s, 0) \n D1(q, w) = if(1 > 0, q + 2 - w, 0) \n D2 = if(1 > 0, u - p + ~p, 0) \n D1(1, 10), D0(1, 10, 100)
+def case_special__huntGenInferAI0006Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["v", "s", "q"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .add (.param "v") (.param "q")) (.param "s")), .num 0])]), privateProp "D2" (alg ["p", "u"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .sub (.param "u") (.param "p")) (.param "p")), .num 0])]), privateProp "D1" (alg ["q", "w"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .add (.param "q") (.num 2)) (.param "w")), .num 0])])] [(.call (.resolve "D1") [.num 1, .num 10]), (.call (.resolve "D0") [.num 1, .num 10, .num 100])])
+#guard obs case_special__huntGenInferAI0006Base == "ok raw=S[-7, 111] n=2"
+
+-- special__huntGenInferAI0007Base: D0 = v + s - q~ + q \n D1 = D0 \n D2 = [D1 + D0, 0][0] \n D3 = 3 + ~r - 5 \n D4 = p - 7 + s - s \n D5 = D2 \n D0(1, 10, 100), D3(1)
+def case_special__huntGenInferAI0007Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["v", "s", "q"] [] [] [(.binary .add (.binary .sub (.binary .add (.param "v") (.param "s")) (.param "q")) (.param "q"))]), privateProp "D1" (.alias none [] [] (.resolve "D0")), privateProp "D2" (alg ["v", "s", "q"] [] [] [(.index (.listLiteral [(.binary .add (.call (.resolve "D1") [.param "v", .param "s", .param "q"]) (.call (.resolve "D0") [.param "v", .param "s", .param "q"])), .num 0]) [.num 0])]), privateProp "D3" (alg ["r"] [] [] [(.binary .sub (.binary .add (.num 3) (.param "r")) (.num 5))]), privateProp "D4" (alg ["p", "s"] [] [] [(.binary .sub (.binary .add (.binary .sub (.param "p") (.num 7)) (.param "s")) (.param "s"))]), privateProp "D5" (.alias none [] [] (.resolve "D2"))] [(.call (.resolve "D0") [.num 1, .num 10, .num 100]), (.call (.resolve "D3") [.num 1])])
+#guard obs case_special__huntGenInferAI0007Base == "ok raw=S[11, -1] n=2"
+
+-- special__huntGenInferAI0008Base: D0 = s + q - 5 + 6 \n D1 = v + D0 \n D1(1, 10, 100), D0(1, 10)
+def case_special__huntGenInferAI0008Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["s", "q"] [] [] [(.binary .add (.binary .sub (.binary .add (.param "s") (.param "q")) (.num 5)) (.num 6))]), privateProp "D1" (alg ["v", "s", "q"] [] [] [(.binary .add (.param "v") (.call (.resolve "D0") [.param "s", .param "q"]))])] [(.call (.resolve "D1") [.num 1, .num 10, .num 100]), (.call (.resolve "D0") [.num 1, .num 10])])
+#guard obs case_special__huntGenInferAI0008Base == "ok raw=S[112, 12] n=2"
+
+-- special__huntGenInferAI0009Base: D0 = [s - q - r + r~, 0][0] \n D1(q, s, r) = D0 + D0 \n D2 = r + D0 + u \n D3 = if(1 > 0, D2 - D1 - D2, 0) \n D4 = D0 + p + u + s \n D5 = D0 \n D4(1, 10, 100, 1000, 10000), D3(1, 10, 100, 1000)
+def case_special__huntGenInferAI0009Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["s", "q", "r"] [] [] [(.index (.listLiteral [(.binary .add (.binary .sub (.binary .sub (.param "s") (.param "q")) (.param "r")) (.param "r")), .num 0]) [.num 0])]), privateProp "D2" (alg ["r", "u", "s", "q"] [] [] [(.binary .add (.binary .add (.param "r") (.call (.resolve "D0") [.param "s", .param "q", .param "r"])) (.param "u"))]), privateProp "D3" (alg ["r", "u", "s", "q"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .sub (.call (.resolve "D2") [.param "r", .param "u", .param "s", .param "q"]) (.call (.resolve "D1") [.param "q", .param "s", .param "r"])) (.call (.resolve "D2") [.param "r", .param "u", .param "s", .param "q"])), .num 0])]), privateProp "D4" (alg ["p", "u", "s", "q", "r"] [] [] [(.binary .add (.binary .add (.binary .add (.call (.resolve "D0") [.param "s", .param "q", .param "r"]) (.param "p")) (.param "u")) (.param "s"))]), privateProp "D5" (.alias none [] [] (.resolve "D0")), privateProp "D1" (alg ["q", "s", "r"] [] [] [(.binary .add (.call (.resolve "D0") [.param "s", .param "q", .param "r"]) (.call (.resolve "D0") [.param "s", .param "q", .param "r"]))])] [(.call (.resolve "D4") [.num 1, .num 10, .num 100, .num 1000, .num 10000]), (.call (.resolve "D3") [.num 1, .num 10, .num 100, .num 1000])])
+#guard obs case_special__huntGenInferAI0009Base == "ok raw=S[-789, 1800] n=2"
+
+-- special__huntGenInferAI0010Base: D0 = w + p + r + p \n D1 = D0 + q + 5 \n D2(p, w, q, v, r) = if(1 > 0, v - 7 - D1 + D0, 0) \n D3(r) = 3 + r \n D4(q, u, r) = if(1 > 0, u + q - r + q, 0) \n D0(1, 10, 100), D4(1, 10, 100)
+def case_special__huntGenInferAI0010Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["w", "p", "r"] [] [] [(.binary .add (.binary .add (.binary .add (.param "w") (.param "p")) (.param "r")) (.param "p"))]), privateProp "D1" (alg ["q", "w", "p", "r"] [] [] [(.binary .add (.binary .add (.call (.resolve "D0") [.param "w", .param "p", .param "r"]) (.param "q")) (.num 5))]), privateProp "D2" (alg ["p", "w", "q", "v", "r"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .sub (.binary .sub (.param "v") (.num 7)) (.call (.resolve "D1") [.param "q", .param "w", .param "p", .param "r"])) (.call (.resolve "D0") [.param "w", .param "p", .param "r"])), .num 0])]), privateProp "D3" (alg ["r"] [] [] [(.binary .add (.num 3) (.param "r"))]), privateProp "D4" (alg ["q", "u", "r"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .sub (.binary .add (.param "u") (.param "q")) (.param "r")) (.param "q")), .num 0])])] [(.call (.resolve "D0") [.num 1, .num 10, .num 100]), (.call (.resolve "D4") [.num 1, .num 10, .num 100])])
+#guard obs case_special__huntGenInferAI0010Base == "ok raw=S[121, -88] n=2"
+
+-- special__huntGenInferAI0011Base: D0 = w - 6 \n D1 = D0 \n D2 = [~q + p + D1, 0][0] \n D1(1), D2(1, 10, 100)
+def case_special__huntGenInferAI0011Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["w"] [] [] [(.binary .sub (.param "w") (.num 6))]), privateProp "D1" (.alias none [] [] (.resolve "D0")), privateProp "D2" (alg ["q", "p", "w"] [] [] [(.index (.listLiteral [(.binary .add (.binary .add (.param "q") (.param "p")) (.call (.resolve "D1") [.param "w"])), .num 0]) [.num 0])])] [(.call (.resolve "D1") [.num 1]), (.call (.resolve "D2") [.num 1, .num 10, .num 100])])
+#guard obs case_special__huntGenInferAI0011Base == "ok raw=S[-5, 105] n=2"
+
+-- special__huntGenInferAI0012Base: D0(r) = r - 1 \n D1 = if(1 > 0, D0 + D0 + D0, 0) \n D0(1), D1(1)
+def case_special__huntGenInferAI0012Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D1" (alg ["r"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .add (.call (.resolve "D0") [.param "r"]) (.call (.resolve "D0") [.param "r"])) (.call (.resolve "D0") [.param "r"])), .num 0])]), privateProp "D0" (alg ["r"] [] [] [(.binary .sub (.param "r") (.num 1))])] [(.call (.resolve "D0") [.num 1]), (.call (.resolve "D1") [.num 1])])
+#guard obs case_special__huntGenInferAI0012Base == "ok raw=S[0, 0] n=2"
+
+-- special__huntGenInferAI0013Base: D0 = if(1 > 0, u + q, 0) \n D1 = if(1 > 0, 9 - ~z, 0) \n D2 = D0 \n D2(1, 10), D0(1, 10)
+def case_special__huntGenInferAI0013Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["u", "q"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.param "u") (.param "q")), .num 0])]), privateProp "D1" (alg ["z"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.num 9) (.param "z")), .num 0])]), privateProp "D2" (.alias none [] [] (.resolve "D0"))] [(.call (.resolve "D2") [.num 1, .num 10]), (.call (.resolve "D0") [.num 1, .num 10])])
+#guard obs case_special__huntGenInferAI0013Base == "ok raw=S[11, 11] n=2"
+
+-- special__huntGenInferAI0014Base: D0 = [~p - s, 0][0] \n D1 = if(1 > 0, D0 + q~ - D0 + D0, 0) \n D2 = r + s + u \n D3(v, u, p, q) = u - q - v + p \n D1(1, 10, 100), D0(1, 10)
+def case_special__huntGenInferAI0014Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["p", "s"] [] [] [(.index (.listLiteral [(.binary .sub (.param "p") (.param "s")), .num 0]) [.num 0])]), privateProp "D1" (alg ["q", "p", "s"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .sub (.binary .add (.call (.resolve "D0") [.param "p", .param "s"]) (.param "q")) (.call (.resolve "D0") [.param "p", .param "s"])) (.call (.resolve "D0") [.param "p", .param "s"])), .num 0])]), privateProp "D2" (alg ["r", "s", "u"] [] [] [(.binary .add (.binary .add (.param "r") (.param "s")) (.param "u"))]), privateProp "D3" (alg ["v", "u", "p", "q"] [] [] [(.binary .add (.binary .sub (.binary .sub (.param "u") (.param "q")) (.param "v")) (.param "p"))])] [(.call (.resolve "D1") [.num 1, .num 10, .num 100]), (.call (.resolve "D0") [.num 1, .num 10])])
+#guard obs case_special__huntGenInferAI0014Base == "ok raw=S[-89, -9] n=2"
+
+-- special__huntGenInferAI0015Base: D0 = w + q + 2 + p~ \n D1 = D0 \n D2 = D1 + D1 - q + 8 \n D3 = s - D2 + ~s + D1 \n D2(1, 10, 100), D3(1, 10, 100, 1000)
+def case_special__huntGenInferAI0015Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["w", "q", "p"] [] [] [(.binary .add (.binary .add (.binary .add (.param "w") (.param "q")) (.num 2)) (.param "p"))]), privateProp "D1" (.alias none [] [] (.resolve "D0")), privateProp "D2" (alg ["q", "w", "p"] [] [] [(.binary .add (.binary .sub (.binary .add (.call (.resolve "D1") [.param "w", .param "q", .param "p"]) (.call (.resolve "D1") [.param "w", .param "q", .param "p"])) (.param "q")) (.num 8))]), privateProp "D3" (alg ["s", "q", "w", "p"] [] [] [(.binary .add (.binary .add (.binary .sub (.param "s") (.call (.resolve "D2") [.param "q", .param "w", .param "p"])) (.param "s")) (.call (.resolve "D1") [.param "w", .param "q", .param "p"]))])] [(.call (.resolve "D2") [.num 1, .num 10, .num 100]), (.call (.resolve "D3") [.num 1, .num 10, .num 100, .num 1000])])
+#guard obs case_special__huntGenInferAI0015Base == "ok raw=S[233, -1108] n=2"
+
+-- special__huntGenInferAI0016Base: D0(u, p) = [p - u, 0][0] \n D1 = if(1 > 0, D0 - D0 + 3 + D0, 0) \n D2 = u + s - p \n D1(1, 10), D2(1, 10, 100)
+def case_special__huntGenInferAI0016Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D1" (alg ["u", "p"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .add (.binary .sub (.call (.resolve "D0") [.param "u", .param "p"]) (.call (.resolve "D0") [.param "u", .param "p"])) (.num 3)) (.call (.resolve "D0") [.param "u", .param "p"])), .num 0])]), privateProp "D2" (alg ["u", "s", "p"] [] [] [(.binary .sub (.binary .add (.param "u") (.param "s")) (.param "p"))]), privateProp "D0" (alg ["u", "p"] [] [] [(.index (.listLiteral [(.binary .sub (.param "p") (.param "u")), .num 0]) [.num 0])])] [(.call (.resolve "D1") [.num 1, .num 10]), (.call (.resolve "D2") [.num 1, .num 10, .num 100])])
+#guard obs case_special__huntGenInferAI0016Base == "ok raw=S[12, -89] n=2"
+
+-- special__huntGenInferAI0017Base: D0 = if(1 > 0, 8 + r - v, 0) \n D1 = if(1 > 0, p - D0 + D0 + D0, 0) \n D2 = [q + 5 - D1, 0][0] \n D1(1, 10, 100), D0(1, 10)
+def case_special__huntGenInferAI0017Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["r", "v"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .add (.num 8) (.param "r")) (.param "v")), .num 0])]), privateProp "D1" (alg ["p", "r", "v"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.binary .add (.binary .sub (.param "p") (.call (.resolve "D0") [.param "r", .param "v"])) (.call (.resolve "D0") [.param "r", .param "v"])) (.call (.resolve "D0") [.param "r", .param "v"])), .num 0])]), privateProp "D2" (alg ["q", "p", "r", "v"] [] [] [(.index (.listLiteral [(.binary .sub (.binary .add (.param "q") (.num 5)) (.call (.resolve "D1") [.param "p", .param "r", .param "v"])), .num 0]) [.num 0])])] [(.call (.resolve "D1") [.num 1, .num 10, .num 100]), (.call (.resolve "D0") [.num 1, .num 10])])
+#guard obs case_special__huntGenInferAI0017Base == "ok raw=S[-81, -1] n=2"
+
+-- special__huntGenInferAI0018Base: D0 = [p - 8, 0][0] \n D1(p, q, u) = [q + u + p + D0, 0][0] \n D2 = if(1 > 0, s + p + 7 - D1, 0) \n D3 = p + D2 \n D4 = if(1 > 0, D3 - 6 - ~r, 0) \n D2(1, 10, 100, 1000), D0(1)
+def case_special__huntGenInferAI0018Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["p"] [] [] [(.index (.listLiteral [(.binary .sub (.param "p") (.num 8)), .num 0]) [.num 0])]), privateProp "D2" (alg ["s", "p", "q", "u"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .add (.binary .add (.param "s") (.param "p")) (.num 7)) (.call (.resolve "D1") [.param "p", .param "q", .param "u"])), .num 0])]), privateProp "D3" (alg ["p", "s", "q", "u"] [] [] [(.binary .add (.param "p") (.call (.resolve "D2") [.param "s", .param "p", .param "q", .param "u"]))]), privateProp "D4" (alg ["r", "p", "s", "q", "u"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .sub (.binary .sub (.call (.resolve "D3") [.param "p", .param "s", .param "q", .param "u"]) (.num 6)) (.param "r")), .num 0])]), privateProp "D1" (alg ["p", "q", "u"] [] [] [(.index (.listLiteral [(.binary .add (.binary .add (.binary .add (.param "q") (.param "u")) (.param "p")) (.call (.resolve "D0") [.param "p"])), .num 0]) [.num 0])])] [(.call (.resolve "D2") [.num 1, .num 10, .num 100, .num 1000]), (.call (.resolve "D0") [.num 1])])
+#guard obs case_special__huntGenInferAI0018Base == "ok raw=S[-1094, -7] n=2"
+
+-- special__huntGenInferAI0019Base: D0 = v + r + p - p \n D1 = 1 + q \n D2(q, u) = u + u + q \n D3 = if(1 > 0, 1 + D1, 0) \n D2(1, 10), D1(1)
+def case_special__huntGenInferAI0019Base : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg ["v", "r", "p"] [] [] [(.binary .sub (.binary .add (.binary .add (.param "v") (.param "r")) (.param "p")) (.param "p"))]), privateProp "D1" (alg ["q"] [] [] [(.binary .add (.num 1) (.param "q"))]), privateProp "D3" (alg ["q"] [] [] [(.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }]), (.binary .add (.num 1) (.call (.resolve "D1") [.param "q"])), .num 0])]), privateProp "D2" (alg ["q", "u"] [] [] [(.binary .add (.binary .add (.param "u") (.param "u")) (.param "q"))])] [(.call (.resolve "D2") [.num 1, .num 10]), (.call (.resolve "D1") [.num 1])])
+#guard obs case_special__huntGenInferAI0019Base == "ok raw=S[21, 2] n=2"
+
+-- special__huntGenEqAQ0000: Same(x, x) = 1 \n P0 = 'a' \n P1 = (P0, P0, -1) \n P2 = [P1, P0, true] \n P3 = ([], 'a', P0) \n P4 = (P3, P3, P2) \n P5 = (P0, P3, false) \n P6 = P1 \n P1 == P0, P5 == P2, [P0, P0] != [P0, P0], [P1, P1] != [P1, P1], P3 == P3
+def case_special__huntGenEqAQ0000 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [.stringLiteral "a"]), privateProp "P1" (alg [] [] [] [(.capture [.resolve "P0", .resolve "P0", (.unary .minus (.num 1))])]), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P1", .resolve "P0", .boolLiteral true])]), privateProp "P3" (alg [] [] [] [(.capture [(.listLiteral []), .stringLiteral "a", .resolve "P0"])]), privateProp "P4" (alg [] [] [] [(.capture [.resolve "P3", .resolve "P3", .resolve "P2"])]), privateProp "P5" (alg [] [] [] [(.capture [.resolve "P0", .resolve "P3", .boolLiteral false])]), privateProp "P6" (.alias none [] [] (.resolve "P1")), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.resolve "P1") [{ op := .eq, operand := (.resolve "P0") }]), (.comparison (.resolve "P5") [{ op := .eq, operand := (.resolve "P2") }]), (.comparison (.listLiteral [.resolve "P0", .resolve "P0"]) [{ op := .ne, operand := (.listLiteral [.resolve "P0", .resolve "P0"]) }]), (.comparison (.listLiteral [.resolve "P1", .resolve "P1"]) [{ op := .ne, operand := (.listLiteral [.resolve "P1", .resolve "P1"]) }]), (.comparison (.resolve "P3") [{ op := .eq, operand := (.resolve "P3") }])])
+#guard obs case_special__huntGenEqAQ0000 == "ok raw=S[false, false, false, false, true] n=5"
+
+-- special__huntGenEqAQ0001: Same(x, x) = 1 \n P0 = [1, true, 'a'] \n P1 = P0 \n P2 = ('b', 2, P1, 'a') \n P3 = -1 \n [P3, P2] != [P2, P3], Same(P2, P3)
+def case_special__huntGenEqAQ0001 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.listLiteral [.num 1, .boolLiteral true, .stringLiteral "a"])]), privateProp "P1" (.alias none [] [] (.resolve "P0")), privateProp "P2" (alg [] [] [] [(.capture [.stringLiteral "b", .num 2, .resolve "P1", .stringLiteral "a"])]), privateProp "P3" (alg [] [] [] [(.unary .minus (.num 1))]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P3", .resolve "P2"]) [{ op := .ne, operand := (.listLiteral [.resolve "P2", .resolve "P3"]) }]), (.call (.resolve "Same") [.resolve "P2", .resolve "P3"])])
+#guard obs case_special__huntGenEqAQ0001 == "err type"
+
+-- special__huntGenEqAQ0002: Same(x, x) = 1 \n P0 = (-1, 0, -1, 1) \n P1 = (true, false) \n P2 = [P0, 0, true] \n P3 = P1 \n P4 = (true, P2) \n P2 == P3, P0 == P0
+def case_special__huntGenEqAQ0002 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [(.unary .minus (.num 1)), .num 0, (.unary .minus (.num 1)), .num 1])]), privateProp "P1" (alg [] [] [] [(.capture [.boolLiteral true, .boolLiteral false])]), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P0", .num 0, .boolLiteral true])]), privateProp "P3" (.alias none [] [] (.resolve "P1")), privateProp "P4" (alg [] [] [] [(.capture [.boolLiteral true, .resolve "P2"])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.resolve "P2") [{ op := .eq, operand := (.resolve "P3") }]), (.comparison (.resolve "P0") [{ op := .eq, operand := (.resolve "P0") }])])
+#guard obs case_special__huntGenEqAQ0002 == "ok raw=S[false, true] n=2"
+
+-- special__huntGenEqAQ0003: Same(x, x) = 1 \n P0 = [false, []] \n P1 = (P0, -1, true) \n P2 = (P0, P0, P0) \n P3 = P1 \n P4 = P0 \n P5 = ((), P2, 'a') \n P6 = [P0, P1, P1] \n P7 = (P3, P0, false, P1) \n [P6, P4] != [P4, P6], P4 == P5
+def case_special__huntGenEqAQ0003 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.listLiteral [.boolLiteral false, (.listLiteral [])])]), privateProp "P1" (alg [] [] [] [(.capture [.resolve "P0", (.unary .minus (.num 1)), .boolLiteral true])]), privateProp "P2" (alg [] [] [] [(.capture [.resolve "P0", .resolve "P0", .resolve "P0"])]), privateProp "P3" (.alias none [] [] (.resolve "P1")), privateProp "P4" (.alias none [] [] (.resolve "P0")), privateProp "P5" (alg [] [] [] [(.capture [(.emptySequence 0), .resolve "P2", .stringLiteral "a"])]), privateProp "P6" (alg [] [] [] [(.listLiteral [.resolve "P0", .resolve "P1", .resolve "P1"])]), privateProp "P7" (alg [] [] [] [(.capture [.resolve "P3", .resolve "P0", .boolLiteral false, .resolve "P1"])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P6", .resolve "P4"]) [{ op := .ne, operand := (.listLiteral [.resolve "P4", .resolve "P6"]) }]), (.comparison (.resolve "P4") [{ op := .eq, operand := (.resolve "P5") }])])
+#guard obs case_special__huntGenEqAQ0003 == "ok raw=S[true, false] n=2"
+
+-- special__huntGenEqAQ0004: Same(x, x) = 1 \n P0 = (1, 2, ()) \n P1 = (P0, 2, P0) \n P2 = (P1, [], P0) \n P3 = P0 \n P4 = [1] \n [P4, P3] != [P3, P4], P2 == P4, P3 == P2, contains([P3, P3, P1, P2], P0)
+def case_special__huntGenEqAQ0004 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [.num 1, .num 2, (.emptySequence 0)])]), privateProp "P1" (alg [] [] [] [(.capture [.resolve "P0", .num 2, .resolve "P0"])]), privateProp "P2" (alg [] [] [] [(.capture [.resolve "P1", (.listLiteral []), .resolve "P0"])]), privateProp "P3" (.alias none [] [] (.resolve "P0")), privateProp "P4" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P4", .resolve "P3"]) [{ op := .ne, operand := (.listLiteral [.resolve "P3", .resolve "P4"]) }]), (.comparison (.resolve "P2") [{ op := .eq, operand := (.resolve "P4") }]), (.comparison (.resolve "P3") [{ op := .eq, operand := (.resolve "P2") }]), (.call (.resolve "contains") [(.listLiteral [.resolve "P3", .resolve "P3", .resolve "P1", .resolve "P2"]), .resolve "P0"])])
+#guard obs case_special__huntGenEqAQ0004 == "ok raw=S[true, false, false, true] n=4"
+
+-- special__huntGenEqAQ0005: Same(x, x) = 1 \n P0 = [-1, false, true, []] \n P1 = 1 \n P2 = P1 \n P3 = 'b' \n P4 = [P0, P1] \n P3 == P4, distinct([P2, P3]).count
+def case_special__huntGenEqAQ0005 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.listLiteral [(.unary .minus (.num 1)), .boolLiteral false, .boolLiteral true, (.listLiteral [])])]), privateProp "P1" (alg [] [] [] [.num 1]), privateProp "P2" (.alias none [] [] (.resolve "P1")), privateProp "P3" (alg [] [] [] [.stringLiteral "b"]), privateProp "P4" (alg [] [] [] [(.listLiteral [.resolve "P0", .resolve "P1"])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.resolve "P3") [{ op := .eq, operand := (.resolve "P4") }]), (.dotCall (.call (.resolve "distinct") [(.listLiteral [.resolve "P2", .resolve "P3"])]) "count" none)])
+#guard obs case_special__huntGenEqAQ0005 == "ok raw=S[false, 2] n=2"
+
+-- special__huntGenEqAQ0006: Same(x, x) = 1 \n P0 = (2, 'b', 'b') \n P1 = [P0, P0] \n P2 = [P0] \n P3 = (P2, 'b', [], P1) \n P4 = [P1, P3, 2, P1] \n [P1, P2] != [P2, P1], P4 == P1
+def case_special__huntGenEqAQ0006 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [.num 2, .stringLiteral "b", .stringLiteral "b"])]), privateProp "P1" (alg [] [] [] [(.listLiteral [.resolve "P0", .resolve "P0"])]), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P0"])]), privateProp "P3" (alg [] [] [] [(.capture [.resolve "P2", .stringLiteral "b", (.listLiteral []), .resolve "P1"])]), privateProp "P4" (alg [] [] [] [(.listLiteral [.resolve "P1", .resolve "P3", .num 2, .resolve "P1"])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P1", .resolve "P2"]) [{ op := .ne, operand := (.listLiteral [.resolve "P2", .resolve "P1"]) }]), (.comparison (.resolve "P4") [{ op := .eq, operand := (.resolve "P1") }])])
+#guard obs case_special__huntGenEqAQ0006 == "ok raw=S[true, false] n=2"
+
+-- special__huntGenEqAQ0007: Same(x, x) = 1 \n P0 = ('a', 1, 0, -1) \n P1 = [-1, P0] \n P2 = [P0, P0, true, 'b'] \n P3 = [2, P2] \n P4 = [P3] \n P5 = [P2, 0] \n P6 = [P2] \n P7 = (P4, false, P5) \n P8 = P6 \n P3 == P8, P4 == P0, [P7, P0] != [P0, P7]
+def case_special__huntGenEqAQ0007 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [.stringLiteral "a", .num 1, .num 0, (.unary .minus (.num 1))])]), privateProp "P1" (alg [] [] [] [(.listLiteral [(.unary .minus (.num 1)), .resolve "P0"])]), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P0", .resolve "P0", .boolLiteral true, .stringLiteral "b"])]), privateProp "P3" (alg [] [] [] [(.listLiteral [.num 2, .resolve "P2"])]), privateProp "P4" (alg [] [] [] [(.listLiteral [.resolve "P3"])]), privateProp "P5" (alg [] [] [] [(.listLiteral [.resolve "P2", .num 0])]), privateProp "P6" (alg [] [] [] [(.listLiteral [.resolve "P2"])]), privateProp "P7" (alg [] [] [] [(.capture [.resolve "P4", .boolLiteral false, .resolve "P5"])]), privateProp "P8" (.alias none [] [] (.resolve "P6")), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.resolve "P3") [{ op := .eq, operand := (.resolve "P8") }]), (.comparison (.resolve "P4") [{ op := .eq, operand := (.resolve "P0") }]), (.comparison (.listLiteral [.resolve "P7", .resolve "P0"]) [{ op := .ne, operand := (.listLiteral [.resolve "P0", .resolve "P7"]) }])])
+#guard obs case_special__huntGenEqAQ0007 == "ok raw=S[false, false, true] n=3"
+
+-- special__huntGenEqAQ0008: Same(x, x) = 1 \n P0 = ('a', -1, 1) \n P1 = false \n P2 = (false, P0, 1, P1) \n P3 = (P1, P1, P2, P1) \n P4 = P1 \n P5 = (1, 'a', P2, P3) \n Same(P4, P1), P3 == P1, distinct([P1, P4, P0]).count
+def case_special__huntGenEqAQ0008 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [.stringLiteral "a", (.unary .minus (.num 1)), .num 1])]), privateProp "P1" (alg [] [] [] [.boolLiteral false]), privateProp "P2" (alg [] [] [] [(.capture [.boolLiteral false, .resolve "P0", .num 1, .resolve "P1"])]), privateProp "P3" (alg [] [] [] [(.capture [.resolve "P1", .resolve "P1", .resolve "P2", .resolve "P1"])]), privateProp "P4" (.alias none [] [] (.resolve "P1")), privateProp "P5" (alg [] [] [] [(.capture [.num 1, .stringLiteral "a", .resolve "P2", .resolve "P3"])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.call (.resolve "Same") [.resolve "P4", .resolve "P1"]), (.comparison (.resolve "P3") [{ op := .eq, operand := (.resolve "P1") }]), (.dotCall (.call (.resolve "distinct") [(.listLiteral [.resolve "P1", .resolve "P4", .resolve "P0"])]) "count" none)])
+#guard obs case_special__huntGenEqAQ0008 == "ok raw=S[1, false, 2] n=3"
+
+-- special__huntGenEqAQ0009: Same(x, x) = 1 \n P0 = ('b', 'a', (), 2) \n P1 = (P0, P0, P0) \n P2 = (P1, P1, P0, 1) \n P3 = [[]] \n P4 = [P3] \n P5 = [0, P1, false, P0] \n P6 = (-1, true) \n P7 = [] \n P8 = [] \n [P2, P0] != [P0, P2], P5 == P1, contains([P1, P4, P5], P2), Same(P2, P5), contains([P8], P0)
+def case_special__huntGenEqAQ0009 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [.stringLiteral "b", .stringLiteral "a", (.emptySequence 0), .num 2])]), privateProp "P1" (alg [] [] [] [(.capture [.resolve "P0", .resolve "P0", .resolve "P0"])]), privateProp "P2" (alg [] [] [] [(.capture [.resolve "P1", .resolve "P1", .resolve "P0", .num 1])]), privateProp "P3" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "P4" (alg [] [] [] [(.listLiteral [.resolve "P3"])]), privateProp "P5" (alg [] [] [] [(.listLiteral [.num 0, .resolve "P1", .boolLiteral false, .resolve "P0"])]), privateProp "P6" (alg [] [] [] [(.capture [(.unary .minus (.num 1)), .boolLiteral true])]), privateProp "P7" (alg [] [] [] [(.listLiteral [])]), privateProp "P8" (alg [] [] [] [(.listLiteral [])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P2", .resolve "P0"]) [{ op := .ne, operand := (.listLiteral [.resolve "P0", .resolve "P2"]) }]), (.comparison (.resolve "P5") [{ op := .eq, operand := (.resolve "P1") }]), (.call (.resolve "contains") [(.listLiteral [.resolve "P1", .resolve "P4", .resolve "P5"]), .resolve "P2"]), (.call (.resolve "Same") [.resolve "P2", .resolve "P5"]), (.call (.resolve "contains") [(.listLiteral [.resolve "P8"]), .resolve "P0"])])
+#guard obs case_special__huntGenEqAQ0009 == "err type"
+
+-- special__huntGenEqAQ0010: Same(x, x) = 1 \n P0 = ((), 'a', 'b') \n P1 = ['b', P0, P0, P0] \n P2 = [P1] \n P3 = P0 \n P4 = P0 \n P5 = [1, P2, P3, P1] \n P6 = 1 \n [P0, P3] != [P3, P0], [P6, P4] != [P4, P6], P6 == P5, P4 == P3, distinct([P3, P5]).count
+def case_special__huntGenEqAQ0010 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [(.emptySequence 0), .stringLiteral "a", .stringLiteral "b"])]), privateProp "P1" (alg [] [] [] [(.listLiteral [.stringLiteral "b", .resolve "P0", .resolve "P0", .resolve "P0"])]), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P1"])]), privateProp "P3" (.alias none [] [] (.resolve "P0")), privateProp "P4" (.alias none [] [] (.resolve "P0")), privateProp "P5" (alg [] [] [] [(.listLiteral [.num 1, .resolve "P2", .resolve "P3", .resolve "P1"])]), privateProp "P6" (alg [] [] [] [.num 1]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P0", .resolve "P3"]) [{ op := .ne, operand := (.listLiteral [.resolve "P3", .resolve "P0"]) }]), (.comparison (.listLiteral [.resolve "P6", .resolve "P4"]) [{ op := .ne, operand := (.listLiteral [.resolve "P4", .resolve "P6"]) }]), (.comparison (.resolve "P6") [{ op := .eq, operand := (.resolve "P5") }]), (.comparison (.resolve "P4") [{ op := .eq, operand := (.resolve "P3") }]), (.dotCall (.call (.resolve "distinct") [(.listLiteral [.resolve "P3", .resolve "P5"])]) "count" none)])
+#guard obs case_special__huntGenEqAQ0010 == "ok raw=S[false, true, false, true, 2] n=5"
+
+-- special__huntGenEqAQ0011: Same(x, x) = 1 \n P0 = 1 \n P1 = P0 \n P2 = [P0, P0] \n P3 = [()] \n P4 = [P2, P3, 1] \n P5 = [P3, P1, 2] \n distinct([P2, P0, P0, P5, P5]).count, contains([P1, P4, P5, P3, P5], P5), [P5, P3] != [P3, P5], P0 == P4
+def case_special__huntGenEqAQ0011 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [.num 1]), privateProp "P1" (.alias none [] [] (.resolve "P0")), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P0", .resolve "P0"])]), privateProp "P3" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "P4" (alg [] [] [] [(.listLiteral [.resolve "P2", .resolve "P3", .num 1])]), privateProp "P5" (alg [] [] [] [(.listLiteral [.resolve "P3", .resolve "P1", .num 2])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.dotCall (.call (.resolve "distinct") [(.listLiteral [.resolve "P2", .resolve "P0", .resolve "P0", .resolve "P5", .resolve "P5"])]) "count" none), (.call (.resolve "contains") [(.listLiteral [.resolve "P1", .resolve "P4", .resolve "P5", .resolve "P3", .resolve "P5"]), .resolve "P5"]), (.comparison (.listLiteral [.resolve "P5", .resolve "P3"]) [{ op := .ne, operand := (.listLiteral [.resolve "P3", .resolve "P5"]) }]), (.comparison (.resolve "P0") [{ op := .eq, operand := (.resolve "P4") }])])
+#guard obs case_special__huntGenEqAQ0011 == "ok raw=S[3, true, true, false] n=4"
+
+-- special__huntGenEqAQ0012: Same(x, x) = 1 \n P0 = 'b' \n P1 = P0 \n P2 = [P1] \n P1 == P2, distinct([P1, P0, P1, P2, P0]).count, Same(P2, P0), contains([P2, P0, P0, P0], P0)
+def case_special__huntGenEqAQ0012 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [.stringLiteral "b"]), privateProp "P1" (.alias none [] [] (.resolve "P0")), privateProp "P2" (alg [] [] [] [(.listLiteral [.resolve "P1"])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.resolve "P1") [{ op := .eq, operand := (.resolve "P2") }]), (.dotCall (.call (.resolve "distinct") [(.listLiteral [.resolve "P1", .resolve "P0", .resolve "P1", .resolve "P2", .resolve "P0"])]) "count" none), (.call (.resolve "Same") [.resolve "P2", .resolve "P0"]), (.call (.resolve "contains") [(.listLiteral [.resolve "P2", .resolve "P0", .resolve "P0", .resolve "P0"]), .resolve "P0"])])
+#guard obs case_special__huntGenEqAQ0012 == "err type"
+
+-- special__huntGenEqAQ0013: Same(x, x) = 1 \n P0 = (true, false) \n P1 = (P0, P0, P0, []) \n P2 = P0 \n P3 = P2 \n P4 = [P0, P1, false] \n contains([P4, P1, P4], P3), distinct([P4, P2, P4, P0]).count, P3 == P1, [P0, P0] != [P0, P0], P0 == P1
+def case_special__huntGenEqAQ0013 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.capture [.boolLiteral true, .boolLiteral false])]), privateProp "P1" (alg [] [] [] [(.capture [.resolve "P0", .resolve "P0", .resolve "P0", (.listLiteral [])])]), privateProp "P2" (.alias none [] [] (.resolve "P0")), privateProp "P3" (.alias none [] [] (.resolve "P2")), privateProp "P4" (alg [] [] [] [(.listLiteral [.resolve "P0", .resolve "P1", .boolLiteral false])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.call (.resolve "contains") [(.listLiteral [.resolve "P4", .resolve "P1", .resolve "P4"]), .resolve "P3"]), (.dotCall (.call (.resolve "distinct") [(.listLiteral [.resolve "P4", .resolve "P2", .resolve "P4", .resolve "P0"])]) "count" none), (.comparison (.resolve "P3") [{ op := .eq, operand := (.resolve "P1") }]), (.comparison (.listLiteral [.resolve "P0", .resolve "P0"]) [{ op := .ne, operand := (.listLiteral [.resolve "P0", .resolve "P0"]) }]), (.comparison (.resolve "P0") [{ op := .eq, operand := (.resolve "P1") }])])
+#guard obs case_special__huntGenEqAQ0013 == "ok raw=S[false, 2, false, false, false] n=5"
+
+-- special__huntGenEqAQ0014: Same(x, x) = 1 \n P0 = [false] \n P1 = P0 \n P2 = (P0, 'b') \n P3 = ['a', P0] \n P4 = ('a', -1, P3, 'a') \n P5 = (false, 'a') \n P6 = (P3, P4, ()) \n [P6, P1] != [P1, P6], P1 == P1, P5 == P2, P5 == P0
+def case_special__huntGenEqAQ0014 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P0" (alg [] [] [] [(.listLiteral [.boolLiteral false])]), privateProp "P1" (.alias none [] [] (.resolve "P0")), privateProp "P2" (alg [] [] [] [(.capture [.resolve "P0", .stringLiteral "b"])]), privateProp "P3" (alg [] [] [] [(.listLiteral [.stringLiteral "a", .resolve "P0"])]), privateProp "P4" (alg [] [] [] [(.capture [.stringLiteral "a", (.unary .minus (.num 1)), .resolve "P3", .stringLiteral "a"])]), privateProp "P5" (alg [] [] [] [(.capture [.boolLiteral false, .stringLiteral "a"])]), privateProp "P6" (alg [] [] [] [(.capture [.resolve "P3", .resolve "P4", (.emptySequence 0)])]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.comparison (.listLiteral [.resolve "P6", .resolve "P1"]) [{ op := .ne, operand := (.listLiteral [.resolve "P1", .resolve "P6"]) }]), (.comparison (.resolve "P1") [{ op := .eq, operand := (.resolve "P1") }]), (.comparison (.resolve "P5") [{ op := .eq, operand := (.resolve "P2") }]), (.comparison (.resolve "P5") [{ op := .eq, operand := (.resolve "P0") }])])
+#guard obs case_special__huntGenEqAQ0014 == "ok raw=S[true, true, false, false] n=4"
+
+-- special__huntGenExpoAX0000Pair: F(y) = { \n   K1(0) = map([1, 2], { x * 4 })[1] \n   K1(m) = m + 8 * 2 \n   H2(z) = z + 1 * [3, 9][0] \n   P3 = y + y \n   H4(z) = z + P3 \n   P5 = H2(P3 * y) + 0 \n   P3 + P5 + P5 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0000Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "P3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.param "y"))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P5" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "H2") [(.binary .mul (.resolve "P3") (.param "y"))]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "K1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 4))]))]) [.num 1])])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.binary .mul (.num 8) (.num 2)))])⟩]), privateProp "H2" (alg ["z"] [] [] [(.binary .add (.param "z") (.binary .mul (.num 1) (.index (.listLiteral [.num 3, .num 9]) [.num 0])))]), { (privateLocalProp "H4" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [] [(.binary .add (.param "z") (.resolve "P3"))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.binary .add (.resolve "P3") (.resolve "P5")) (.resolve "P5"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0000Pair == "ok raw=S[12, 26] n=2"
+
+-- special__huntGenExpoAX0001Pair: F(y) = { \n   P1 = y + [y, y][0] + 0 \n   P2 = y + map([1, 2], { x * 7 })[1] \n   a3, b4 = P1 * 5, if(y > 4, [P1, y][0], y) \n   H5(z) = z + P2 - { public Q = y }.Q \n   P6 = 7 + [4, y][1] + 0 \n   P7 = y * y \n   P2 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0001Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "P1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .add (.param "y") (.index (.listLiteral [.param "y", .param "y"]) [.num 0])) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 7))]))]) [.num 1]))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "P1") (.num 5)), (.call (.resolve "if") [(.comparison (.param "y") [{ op := .gt, operand := (.num 4) }]), (.index (.listLiteral [.resolve "P1", .param "y"]) [.num 0]), .param "y"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "a3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a3" }, .capture { name := "b4" }]] [] [] [.param "a3"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "b4" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a3" }, .capture { name := "b4" }]] [] [] [.param "b4"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P6" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .add (.num 7) (.index (.listLiteral [.num 4, .param "y"]) [.num 1])) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P7" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.param "y"))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "H5" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [] [(.binary .sub (.binary .add (.param "z") (.resolve "P2")) (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Q" none))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "P2"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0001Pair == "ok raw=S[15, 16] n=2"
+
+-- special__huntGenExpoAX0002Pair: F(y) = { \n   N1 = { \n     public V = if(7 > 4, y + 4, y) \n     public W = V * 2 \n   } \n   C2 = { y } \n   N1.W + N1.V + C2 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0002Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "N1" (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.resolve "if") [(.comparison (.num 7) [{ op := .gt, operand := (.num 4) }]), (.binary .add (.param "y") (.num 4)), .param "y"])])) with requiredOwnerDepths := some [("y", some 1)] }, { (publicLocalProp "W" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "V") (.num 2))])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "C2" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.binary .add (.dotCall (.resolve "N1") "W" none) (.dotCall (.resolve "N1") "V" none)) (.resolve "C2"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0002Pair == "ok raw=S[16, 20] n=2"
+
+-- special__huntGenExpoAX0003Pair: F(y) = { \n   P1 = [y, y][0] \n   N2 = { \n     public V = P1 * { public Q = y }.Q \n     public W = V * 2 \n   } \n   a3, b4 = map([1, 2], { x * N2.V })[1], y + { public Q = P1 }.Q \n   P5 = [y, b4][1] + 0 \n   A6 = a3 \n   P7 = y - { public Q = b4 }.Q + 0 \n   N2.V + b4 + a3 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0003Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "P1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.index (.listLiteral [.param "y", .param "y"]) [.num 0])])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "N2" (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "P1") (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 3)] }] [])) "Q" none))])) with requiredOwnerDepths := some [("y", some 1)] }, { (publicLocalProp "W" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "V") (.num 2))])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.dotCall (.resolve "N2") "V" none))]))]) [.num 1]), (.binary .add (.param "y") (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "P1"))) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Q" none))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "a3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a3" }, .capture { name := "b4" }]] [] [] [.param "a3"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "b4" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a3" }, .capture { name := "b4" }]] [] [] [.param "b4"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P5" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.index (.listLiteral [.param "y", .resolve "b4"]) [.num 1]) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A6" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "a3"))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P7" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .sub (.param "y") (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "b4"))) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Q" none)) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.binary .add (.dotCall (.resolve "N2") "V" none) (.resolve "b4")) (.resolve "a3"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0003Pair == "ok raw=S[5, 16] n=2"
+
+-- special__huntGenExpoAX0004Pair: F(y) = { \n   P1 = y - map([1, 2], { x * y })[1] + 0 \n   P2 = y * P1 \n   C3 = { P1 } \n   P2 + C3 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0004Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "P1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .sub (.param "y") (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "y"))]))]) [.num 1])) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.resolve "P1"))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "C3" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "P1") none false)) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.resolve "P2") (.resolve "C3"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0004Pair == "ok raw=S[-2, -6] n=2"
+
+-- special__huntGenExpoAX0005Pair: F(y) = { \n   N1 = { \n     public V = 1 - if(1 > 4, y, 8) \n     public W = V * 2 \n   } \n   P2 = 2 \n   P3 = map([1, 2], { x * P2 })[1] \n   P4 = P2 - N1.V - N1.V \n   H5(z) = z + P3 \n   N6 = { \n     public V = N1.V + P3 * 8 \n     public W = V * 2 \n   } \n   P3 + N6.W \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0005Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "N1" (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .sub (.num 1) (.call (.resolve "if") [(.comparison (.num 1) [{ op := .gt, operand := (.num 4) }]), .param "y", .num 8]))])) with requiredOwnerDepths := some [("y", some 1)] }, { (publicLocalProp "W" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "V") (.num 2))])) with requiredOwnerDepths := some [("y", some 1)] }] []), privateProp "P2" (alg [] [] [] [.num 2]), privateProp "P3" (alg [] [] [] [(.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.resolve "P2"))]))]) [.num 1])]), { (privateLocalProp "P4" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .sub (.binary .sub (.resolve "P2") (.dotCall (.resolve "N1") "V" none)) (.dotCall (.resolve "N1") "V" none))])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "N6" (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.resolve "N1") "V" none) (.binary .mul (.resolve "P3") (.num 8)))])) with requiredOwnerDepths := some [("y", some 1)] }, { (publicLocalProp "W" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "V") (.num 2))])) with requiredOwnerDepths := some [("y", some 1)] }] []), privateProp "H5" (alg ["z"] [] [] [(.binary .add (.param "z") (.resolve "P3"))])] [(.binary .add (.resolve "P3") (.dotCall (.resolve "N6") "W" none))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0005Pair == "ok raw=S[54, 54] n=2"
+
+-- special__huntGenExpoAX0006Pair: F(y) = { \n   open B4 \n   K1(0) = 2 - y * y \n   K1(m) = m + 8 \n   P2 = 3 * y + 0 \n   P3 = if(P2 > 4, map([1, 2], { x * P2 })[1], 5) \n   B4 = { \n     public Q = [P2, P3][0] \n     public R = Q + y \n   } \n   H5(z) = z + B4.Q + B4.Q + B4.R \n   B4.Q + R + Q \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0006Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "B4"] [{ (privateLocalProp "P2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.num 3) (.param "y")) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "P3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.resolve "if") [(.comparison (.resolve "P2") [{ op := .gt, operand := (.num 4) }]), (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.resolve "P2"))]))]) [.num 1]), .num 5])])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "B4" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.index (.listLiteral [.resolve "P2", .resolve "P3"]) [.num 0])])) with requiredOwnerDepths := some [("y", some 1)] }, { (publicLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.param "y"))])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "K1" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.binary .sub (.num 2) (.binary .mul (.param "y") (.param "y")))])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.num 8))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "H5" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [] [(.binary .add (.binary .add (.binary .add (.param "z") (.dotCall (.resolve "B4") "Q" none)) (.dotCall (.resolve "B4") "Q" none)) (.dotCall (.resolve "B4") "R" none))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.binary .add (.dotCall (.resolve "B4") "Q" none) (.resolve "R")) (.resolve "Q"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0006Pair == "ok raw=S[10, 20] n=2"
+
+-- special__huntGenExpoAX0007Pair: F(y) = { \n   P1 = 1 \n   P2 = P1 + 0 \n   P1 + P1 + P2 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0007Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "P1" (alg [] [] [] [.num 1]), privateProp "P2" (alg [] [] [] [(.binary .add (.resolve "P1") (.num 0))])] [(.binary .add (.binary .add (.resolve "P1") (.resolve "P1")) (.resolve "P2"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0007Pair == "ok raw=S[3, 3] n=2"
+
+-- special__huntGenExpoAX0008Pair: F(y) = { \n   P1 = 1 * 9 * 6 + 0 \n   P2 = y - y \n   P2 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0008Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "P1" (alg [] [] [] [(.binary .add (.binary .mul (.binary .mul (.num 1) (.num 9)) (.num 6)) (.num 0))]), { (privateLocalProp "P2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .sub (.param "y") (.param "y"))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "P2"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0008Pair == "ok raw=S[0, 0] n=2"
+
+-- special__huntGenExpoAX0009Pair: F(y) = { \n   P1 = y - { public Q = 9 }.Q \n   K2(0) = P1 \n   K2(m) = m + [P1, y][1] \n   P1 \n } \n F(1), F(2)
+def case_special__huntGenExpoAX0009Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "P1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .sub (.param "y") (.dotCall (.algorithmExpr (alg [] [] [publicProp "Q" (alg [] [] [] [.num 9])] [])) "Q" none))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "K2" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.resolve "P1"])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.index (.listLiteral [.resolve "P1", .param "y"]) [.num 1]))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "P1"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpoAX0009Pair == "ok raw=S[-8, -7] n=2"
+
+-- special__huntGenExpo2AY0000Pair: Step(n) = n + 1 \n F(y) = { \n   FK1(0) = { public Q = y - y }.Q \n   FK1(m) = m + Step(y).repeat(2) \n   FK2(0) = FK1(Step(6).repeat(2)) \n   FK2(m) = m + if(y > 4, Step(y).repeat(2), 5) \n   FP3 = 5 + if(8 > 4, 4, y) + 0 \n   FB4 = { \n     public Q = y * FP3 - FP3 \n     public R = Q + FP3 \n   } \n   G(z) = { \n     GH1(w) = w + map([1, 2], { x * FB4.R })[1] \n     GP2 = if(FB4.R > 4, y + FB4.R, FB4.R) + 0 \n     FB4.R + FB4.R + FB4.Q \n   } \n   G(1), G(3) \n } \n F(1), F(2)
+def case_special__huntGenExpo2AY0000Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "FP3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .add (.num 5) (.call (.resolve "if") [(.comparison (.num 8) [{ op := .gt, operand := (.num 4) }]), .num 4, .param "y"])) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "FB4" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .sub (.binary .mul (.param "y") (.resolve "FP3")) (.resolve "FP3"))])) with requiredOwnerDepths := some [("y", some 1)] }, { (publicLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.resolve "FP3"))])) with requiredOwnerDepths := some [("y", some 1)] }] []), { (privateLocalProp "FK1" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .sub (.param "y") (.param "y"))])) with requiredOwnerDepths := some [("y", some 3)] }] [])) "Q" none)])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.dotCall (.call (.resolve "Step") [.param "y"]) "repeat" (some [.num 2])))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FK2" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.call (.resolve "FK1") [(.dotCall (.call (.resolve "Step") [.num 6]) "repeat" (some [.num 2]))])])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.call (.resolve "if") [(.comparison (.param "y") [{ op := .gt, operand := (.num 4) }]), (.dotCall (.call (.resolve "Step") [.param "y"]) "repeat" (some [.num 2])), .num 5]))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [{ (privateLocalProp "GP2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "if") [(.comparison (.dotCall (.resolve "FB4") "R" none) [{ op := .gt, operand := (.num 4) }]), (.binary .add (.param "y") (.dotCall (.resolve "FB4") "R" none)), (.dotCall (.resolve "FB4") "R" none)]) (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GH1" (.localCapturedAncestorParams ["y"]) (alg ["w"] [] [] [(.binary .add (.param "w") (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.dotCall (.resolve "FB4") "R" none))]))]) [.num 1]))])) with requiredOwnerDepths := some [("y", some 1)] }] [(.binary .add (.binary .add (.dotCall (.resolve "FB4") "R" none) (.dotCall (.resolve "FB4") "R" none)) (.dotCall (.resolve "FB4") "Q" none))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 3])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpo2AY0000Pair == "ok raw=S[S[18, 18], S[45, 45]] n=2"
+
+-- special__huntGenExpo2AY0001Pair: Step(n) = n + 1 \n F(y) = { \n   FP1 = if(y > 4, Step(7).repeat(2), 8) \n   FP2 = y * y \n   FA3 = FP1 \n   FP4 = [y, FP1][1] \n   G(z) = { \n     GA1 = FP1 \n     GK2(0) = Step(z).repeat(2) \n     GK2(m) = m + z - [z, z][0] \n     GP3 = z \n     Ga4, Gb5 = z, y - { public Q = FA3 }.Q \n     FP1 \n   } \n   G(1), G(3) \n } \n F(1), F(2)
+def case_special__huntGenExpo2AY0001Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "FP1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.resolve "if") [(.comparison (.param "y") [{ op := .gt, operand := (.num 4) }]), (.dotCall (.call (.resolve "Step") [.num 7]) "repeat" (some [.num 2])), .num 8])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FP2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.param "y"))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FA3" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "FP1"))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FP4" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.index (.listLiteral [.param "y", .resolve "FP1"]) [.num 1])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [{ (privateLocalProp "GA1" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "FP1"))) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GP3" (.localCapturedAncestorParams ["z"]) (.alias none [] [] (.param "z"))) with requiredOwnerDepths := some [("z", some 0)] }, { (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y", "z"]) (alg [] [] [] [.param "z", (.binary .sub (.param "y") (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "FA3"))) with requiredOwnerDepths := some [("y", some 3)] }] [])) "Q" none))])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }, { (privateLocalProp "Ga4" (.localCapturedAncestorParams ["y", "z"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "Ga4" }, .capture { name := "Gb5" }]] [] [] [.param "Ga4"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }, { (privateLocalProp "Gb5" (.localCapturedAncestorParams ["y", "z"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "Ga4" }, .capture { name := "Gb5" }]] [] [] [.param "Gb5"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }, { (privateLocalProp "GK2" (.localCapturedAncestorParams ["z"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.dotCall (.call (.resolve "Step") [.param "z"]) "repeat" (some [.num 2]))])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .sub (.binary .add (.param "m") (.param "z")) (.index (.listLiteral [.param "z", .param "z"]) [.num 0]))])⟩])) with requiredOwnerDepths := some [("z", some 0)] }] [.resolve "FP1"])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 3])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpo2AY0001Pair == "ok raw=S[S[8, 8], S[8, 8]] n=2"
+
+-- special__huntGenExpo2AY0002Pair: Step(n) = n + 1 \n F(y) = { \n   FK1(0) = map([1, 2], { x * y })[1] \n   FK1(m) = m + [8, y][1] \n   FK2(0) = y - 2 - 7 \n   FK2(m) = m + [9, 4][0] \n   G(z) = { \n     GP1 = if(y > 4, Step(y).repeat(2), 2) \n     GP2 = 9 + GP1 \n     GP2 \n   } \n   G(1), G(3) \n } \n F(1), F(2)
+def case_special__huntGenExpo2AY0002Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "FK1" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "y"))]))]) [.num 1])])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.index (.listLiteral [.num 8, .param "y"]) [.num 1]))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FK2" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.binary .sub (.binary .sub (.param "y") (.num 2)) (.num 7))])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.index (.listLiteral [.num 9, .num 4]) [.num 0]))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [{ (privateLocalProp "GP1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.resolve "if") [(.comparison (.param "y") [{ op := .gt, operand := (.num 4) }]), (.dotCall (.call (.resolve "Step") [.param "y"]) "repeat" (some [.num 2])), .num 2])])) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GP2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.num 9) (.resolve "GP1"))])) with requiredOwnerDepths := some [("y", some 1)] }] [.resolve "GP2"])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 3])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpo2AY0002Pair == "ok raw=S[S[11, 11], S[11, 11]] n=2"
+
+-- special__huntGenExpo2AY0003Pair: Step(n) = n + 1 \n F(y) = { \n   FP1 = Step(6).repeat(2) + 0 \n   FK2(0) = Step(FP1).repeat(2) \n   FK2(m) = m + y + y + FP1 \n   G(z) = { \n     GA1 = FP1 \n     GC2 = { FP1 } \n     GP3 = FK2(FK2(FP1)) + 0 \n     GP4 = 5 - map([1, 2], { x * 5 })[1] + 0 \n     GP4 + GP3 + GP3 \n   } \n   G(1), G(3) \n } \n F(1), F(2)
+def case_special__huntGenExpo2AY0003Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), privateProp "F" (alg ["y"] [] [privateProp "FP1" (alg [] [] [] [(.binary .add (.dotCall (.call (.resolve "Step") [.num 6]) "repeat" (some [.num 2])) (.num 0))]), { (privateLocalProp "FK2" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.dotCall (.call (.resolve "Step") [.resolve "FP1"]) "repeat" (some [.num 2]))])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.binary .add (.binary .add (.param "m") (.param "y")) (.param "y")) (.resolve "FP1"))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [privateProp "GA1" (.alias none [] [] (.resolve "FP1")), privateProp "GC2" (.alias none [] [] (.resolve "FP1") none false), { (privateLocalProp "GP3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.call (.resolve "FK2") [(.call (.resolve "FK2") [.resolve "FP1"])]) (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }, privateProp "GP4" (alg [] [] [] [(.binary .add (.binary .sub (.num 5) (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 5))]))]) [.num 1])) (.num 0))])] [(.binary .add (.binary .add (.resolve "GP4") (.resolve "GP3")) (.resolve "GP3"))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 3])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpo2AY0003Pair == "ok raw=S[S[51, 51], S[59, 59]] n=2"
+
+-- special__huntGenExpo2AY0004Pair: Step(n) = n + 1 \n F(y) = { \n   FH1(w) = w + map([1, 2], { x * y })[1] \n   FP2 = y - 6 + 0 \n   FP3 = if(y > 4, FH1(FP2), y) \n   FK4(0) = FH1(FP2 * FP3) \n   FK4(m) = m + map([1, 2], { x * 1 })[1] \n   G(z) = { \n     GP1 = y * if(FP2 > 4, FP2, z) + 0 \n     GP2 = y + map([1, 2], { x * y })[1] \n     GK3(0) = 1 + GP1 * 9 \n     GK3(m) = m + if(9 > 4, map([1, 2], { x * y })[1], 9) \n     GP4 = y * Step(GP2).repeat(2) + 0 \n     GK5(0) = 9 * GP4 - y \n     GK5(m) = m + z - GP4 - z \n     GP4 + FP2 + GP1 \n   } \n   G(1), G(3) \n } \n F(1), F(2)
+def case_special__huntGenExpo2AY0004Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "FP2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .sub (.param "y") (.num 6)) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FP3" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.resolve "if") [(.comparison (.param "y") [{ op := .gt, operand := (.num 4) }]), (.call (.resolve "FH1") [.resolve "FP2"]), .param "y"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FH1" (.localCapturedAncestorParams ["y"]) (alg ["w"] [] [] [(.binary .add (.param "w") (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "y"))]))]) [.num 1]))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FK4" (.localCapturedAncestorParams ["y"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.call (.resolve "FH1") [(.binary .mul (.resolve "FP2") (.resolve "FP3"))])])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 1))]))]) [.num 1]))])⟩])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [{ (privateLocalProp "GP1" (.localCapturedAncestorParams ["y", "z"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.call (.resolve "if") [(.comparison (.resolve "FP2") [{ op := .gt, operand := (.num 4) }]), .resolve "FP2", .param "z"])) (.num 0))])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }, { (privateLocalProp "GP2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.param "y") (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "y"))]))]) [.num 1]))])) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GP4" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.dotCall (.call (.resolve "Step") [.resolve "GP2"]) "repeat" (some [.num 2]))) (.num 0))])) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GK3" (.localCapturedAncestorParams ["y", "z"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.binary .add (.num 1) (.binary .mul (.resolve "GP1") (.num 9)))])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .add (.param "m") (.call (.resolve "if") [(.comparison (.num 9) [{ op := .gt, operand := (.num 4) }]), (.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "y"))]))]) [.num 1]), .num 9]))])⟩])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }, { (privateLocalProp "GK5" (.localCapturedAncestorParams ["y", "z"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [] [(.binary .sub (.binary .mul (.num 9) (.resolve "GP4")) (.param "y"))])⟩, ⟨.bind "m", (alg [] [] [] [(.binary .sub (.binary .sub (.binary .add (.param "m") (.param "z")) (.resolve "GP4")) (.param "z"))])⟩])) with requiredOwnerDepths := some [("y", some 1), ("z", some 0)] }] [(.binary .add (.binary .add (.resolve "GP4") (.resolve "FP2")) (.resolve "GP1"))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 3])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpo2AY0004Pair == "ok raw=S[S[1, 3], S[14, 18]] n=2"
+
+-- special__huntGenExpo2AY0005Pair: Step(n) = n + 1 \n F(y) = { \n   Fa1, Fb2 = 8 - y + y, [y, 7][1] \n   FH3(w) = w + Fb2 \n   G(z) = { \n     GC1 = { Fa1 } \n     GP2 = map([1, 2], { x * GC1 })[1] \n     GP3 = z + 0 \n     GA4 = Fb2 \n     GA5 = GP3 \n     GP3 + Fb2 + GP2 \n   } \n   G(1), G(3) \n } \n F(1), F(2)
+def case_special__huntGenExpo2AY0005Pair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1))]), privateProp "F" (alg ["y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .sub (.num 8) (.param "y")) (.param "y")), (.index (.listLiteral [.param "y", .num 7]) [.num 1])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "Fa1" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "Fa1" }, .capture { name := "Fb2" }]] [] [] [.param "Fa1"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "Fb2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "Fa1" }, .capture { name := "Fb2" }]] [] [] [.param "Fb2"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "FH3" (.localCapturedAncestorParams ["y"]) (alg ["w"] [] [] [(.binary .add (.param "w") (.resolve "Fb2"))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["y"]) (alg ["z"] [] [{ (privateLocalProp "GC1" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "Fa1") none false)) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GP2" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.index (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.resolve "GC1"))]))]) [.num 1])])) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GP3" (.localCapturedAncestorParams ["z"]) (alg [] [] [] [(.binary .add (.param "z") (.num 0))])) with requiredOwnerDepths := some [("z", some 0)] }, { (privateLocalProp "GA4" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "Fb2"))) with requiredOwnerDepths := some [("y", some 1)] }, { (privateLocalProp "GA5" (.localCapturedAncestorParams ["z"]) (.alias none [] [] (.resolve "GP3"))) with requiredOwnerDepths := some [("z", some 0)] }] [(.binary .add (.binary .add (.resolve "GP3") (.resolve "Fb2")) (.resolve "GP2"))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "G") [.num 1]), (.call (.resolve "G") [.num 3])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2])])
+#guard obs case_special__huntGenExpo2AY0005Pair == "ok raw=S[S[24, 26], S[24, 26]] n=2"
+
+-- special__huntGenChaosGZ0000: Cap(meta r) = r \n D0x, D0y = tick(), 's'.string \n D1 = D0x((D0x)(), count(D0.Invoke())) \n map(D0y(D1 + 6, D0y.Arguments.count), { x + D0x.Arguments.count }), D1.K
+def case_special__huntGenChaosGZ0000 : Expr :=
+  .algorithmExpr (alg ["K", "D0"] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), (.dotCall (.stringLiteral "s") "string" none)]), privateProp "D0x" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D0x" }, .capture { name := "D0y" }]] [] [] [.param "D0x"])) [.resolve "$deconstruct$0"])]), privateProp "D0y" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D0x" }, .capture { name := "D0y" }]] [] [] [.param "D0y"])) [.resolve "$deconstruct$0"])]), privateProp "D1" (alg ["D0"] [] [] [(.call (.resolve "D0x") [(.call (.resolve "D0x") []), (.call (.resolve "count") [(.dotCall (.param "D0") "Invoke" (some []))])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [(.call (.resolve "map") [(.call (.resolve "D0y") [(.binary .add (.call (.resolve "D1") [.param "D0"]) (.num 6)), (.dotCall (.dotCall (.resolve "D0y") "Arguments" none) "count" none)]), (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.dotCall (.dotCall (.resolve "D0x") "Arguments" none) "count" none))]))]), (.dotMember (.resolve "D1") "K" (.param "K") none)])
+#guard obs case_special__huntGenChaosGZ0000 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0000 == .matched (some { kind := "unresolvedImplicitParams", names := ["K", "D0"], counts := [] })
+-- special__huntGenChaosGZ0001: Cap(meta r) = r \n D0x, D0y = b~, (b*).Q(7, (a.Arguments.count, 9[]), { public Q = count(6) }.Q) \n D1 = D0().D0y.string \n D2 = { \n   public K0 = { 1 * D0x } \n   public K1 = filter(if(D0 > 4, 2, D0), { x > 3 < 1 <= D0 }).count \n   [D1.Algorithm(-1), Cap(D0y())][0, 1] \n } \n D3 = D1.Arguments.count \n D4(s) = ('s') \n if('s' > D1.Invoke(), D1(D1, count(D4)).while, D3(8, map(D0x, { x + D3 }))), D4.D3 * (D2)(7, D4, 6) < (D0y)() <= count(8 div 3), reduce(-1, D2, map(D1, { x + D0 })).string
+def case_special__huntGenChaosGZ0001 : Expr :=
+  .algorithmExpr (alg ["Q", "b", "a", "D0", "s"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg [] [] [] [.param "b", (.dotMember (.capture [(.sequenceSpread (.param "b"))]) "Q" (.param "Q") (some [.num 7, (.capture [(.dotCall (.dotCall (.param "a") "Arguments" none) "count" none), (.index (.num 9) [])]), (.dotMember (.algorithmExpr (alg [] [] [publicProp "Q" (alg [] [] [] [(.call (.resolve "count") [.num 6])])] [])) "Q" (.param "Q") none)]))])) with requiredOwnerDepths := some [("Q", some 0), ("a", some 0), ("b", some 0)] }, { (privateLocalProp "D0x" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D0x" }, .capture { name := "D0y" }]] [] [] [.param "D0x"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("Q", some 0), ("a", some 0), ("b", some 0)] }, { (privateLocalProp "D0y" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D0x" }, .capture { name := "D0y" }]] [] [] [.param "D0y"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("Q", some 0), ("a", some 0), ("b", some 0)] }, { (privateLocalProp "D1" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg ["D0"] [] [] [(.dotCall (.dotCall (.call (.param "D0") []) "D0y" none) "string" none)])) with requiredOwnerDepths := some [("Q", some 0), ("a", some 0), ("b", some 0)] }, { (privateLocalProp "D2" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg ["D0"] [] [{ (publicLocalProp "K0" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg [] [] [] [(.binary .mul (.num 1) (.resolve "D0x"))])) with requiredOwnerDepths := some [("Q", some 1), ("a", some 1), ("b", some 1)] }, publicProp "K1" (alg ["D0"] [] [] [(.dotCall (.call (.resolve "filter") [(.call (.resolve "if") [(.comparison (.param "D0") [{ op := .gt, operand := (.num 4) }]), .num 2, .param "D0"]), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 3) }, { op := .lt, operand := (.num 1) }, { op := .le, operand := (.param "D0") }])]))]) "count" none)])] [(.index (.listLiteral [(.dotCall (.call (.resolve "D1") [.param "D0"]) "Algorithm" (some [(.unary .minus (.num 1))])), (.call (.resolve "Cap") [(.call (.resolve "D0y") [])])]) [.num 0, .num 1])])) with requiredOwnerDepths := some [("Q", some 0), ("a", some 0), ("b", some 0)] }, { (privateLocalProp "D3" (.localCapturedAncestorParams ["Q", "a", "b"]) (alg ["D0"] [] [] [(.dotCall (.dotCall (.call (.resolve "D1") [.param "D0"]) "Arguments" none) "count" none)])) with requiredOwnerDepths := some [("Q", some 0), ("a", some 0), ("b", some 0)] }, privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "D4" (alg ["s"] [] [] [.stringLiteral "s"])] [(.call (.resolve "if") [(.comparison (.stringLiteral "s") [{ op := .gt, operand := (.dotCall (.call (.resolve "D1") [.param "D0"]) "Invoke" (some [])) }]), (.dotCall (.call (.resolve "D1") [.resolve "D1", (.call (.resolve "count") [(.call (.resolve "D4") [.param "s"])])]) "while" none), (.call (.resolve "D3") [.num 8, (.call (.resolve "map") [.resolve "D0x", (.algorithmExpr (alg ["x", "D0"] [] [] [(.binary .add (.param "x") (.call (.resolve "D3") [.param "D0"]))]))])])]), (.comparison (.binary .mul (.dotCall (.resolve "D4") "D3" none) (.call (.resolve "D2") [.num 7, .resolve "D4", .num 6])) [{ op := .lt, operand := (.call (.resolve "D0y") []) }, { op := .le, operand := (.call (.resolve "count") [(.binary .idiv (.num 8) (.num 3))]) }]), (.dotCall (.call (.resolve "reduce") [(.unary .minus (.num 1)), .resolve "D2", (.call (.resolve "map") [(.call (.resolve "D1") [.param "D0"]), (.algorithmExpr (alg ["x", "D0"] [] [] [(.binary .add (.param "x") (.param "D0"))]))])]) "string" none)])
+#guard obs case_special__huntGenChaosGZ0001 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0001 == .matched (some { kind := "unresolvedImplicitParams", names := ["Q", "b", "a", "D0", "s"], counts := [] })
+-- special__huntGenChaosGZ0002: Cap(meta r) = r \n D0* = c.Invoke() \n D1(meta m) = { \n   count(7.string.string) \n } \n D2x, D2y = ~c, { public Q = D0(Cap(b(b, 8, 9))).repeat(2) }.Q \n D2y * 3 div 1 * (D2x*), D0
+def case_special__huntGenChaosGZ0002 : Expr :=
+  .algorithmExpr (alg ["c", "b"] [] [{ (privateLocalProp "D0" (.localCapturedAncestorParams ["c"]) (alg [] [] [] [(.dotCall (.param "c") "Invoke" (some []))])) with requiredOwnerDepths := some [("c", some 0)] }, { (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["b", "c"]) (alg [] [] [] [.param "c", (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["c"]) (alg ["b"] [] [] [(.call (.resolve "repeat") [(.sequenceSpread (.call (.resolve "D0") [(.call (.resolve "Cap") [(.call (.param "b") [.param "b", .num 8, .num 9])])])), .num 2])])) with requiredOwnerDepths := some [("c", some 2)] }] [])) "Q" (some [.param "b"]))])) with requiredOwnerDepths := some [("b", some 0), ("c", some 0)] }, { (privateLocalProp "D2x" (.localCapturedAncestorParams ["b", "c"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D2x" }, .capture { name := "D2y" }]] [] [] [.param "D2x"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("b", some 0), ("c", some 0)] }, { (privateLocalProp "D2y" (.localCapturedAncestorParams ["b", "c"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D2x" }, .capture { name := "D2y" }]] [] [] [.param "D2y"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("b", some 0), ("c", some 0)] }, privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "D1" (algWithParameters [{ name := "m", kind := .metaRef }] [] [] [(.call (.resolve "count") [(.dotCall (.dotCall (.num 7) "string" none) "string" none)])])] [(.binary .mul (.binary .idiv (.binary .mul (.resolve "D2y") (.num 3)) (.num 1)) (.capture [(.sequenceSpread (.resolve "D2x"))])), .resolve "D0"])
+#guard obs case_special__huntGenChaosGZ0002 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0002 == .matched (some { kind := "unresolvedImplicitParams", names := ["c", "b"], counts := [] })
+-- special__huntGenChaosGZ0005: Cap(meta r) = r \n D0 = { \n   c(['s', 7 * a][0, 1]*) \n } \n D1 = [4, a][0, 1].a.D0.D0 \n first(reduce(D1.string, D0, first(9)))
+def case_special__huntGenChaosGZ0005 : Expr :=
+  .algorithmExpr (alg ["a"] [] [privateProp "D0" (alg ["c", "a"] [] [] [(.call (.param "c") [(.sequenceSpread (.index (.listLiteral [.stringLiteral "s", (.binary .mul (.num 7) (.param "a"))]) [.num 0, .num 1]))])]), privateProp "D1" (alg ["a"] [] [] [(.dotCall (.dotCall (.dotMember (.index (.listLiteral [.num 4, .param "a"]) [.num 0, .num 1]) "a" (.param "a") none) "D0" none) "D0" none)]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [(.call (.resolve "first") [(.call (.resolve "reduce") [(.dotCall (.call (.resolve "D1") [.param "a"]) "string" none), .resolve "D0", (.call (.resolve "first") [.num 9])])])])
+#guard obs case_special__huntGenChaosGZ0005 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0005 == .matched (some { kind := "unresolvedImplicitParams", names := ["a"], counts := [] })
+-- special__huntGenChaosGZ0006: Cap(meta r) = r \n D0 = { reduce(c(2), b, a().while) } \n D1x, D1y = (D0().while, a~), ~c \n D0
+def case_special__huntGenChaosGZ0006 : Expr :=
+  .algorithmExpr (alg ["c", "a"] [] [{ (privateLocalProp "D0" (.localCapturedAncestorParams ["a", "c"]) (alg ["b"] [] [] [(.call (.resolve "reduce") [(.call (.param "c") [.num 2]), .param "b", (.dotCall (.call (.param "a") []) "while" none)])])) with requiredOwnerDepths := some [("a", some 0), ("c", some 0)] }, { (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["a", "c"]) (alg [] [] [] [(.capture [(.dotCall (.call (.resolve "D0") []) "while" none), .param "a"]), .param "c"])) with requiredOwnerDepths := some [("a", some 0), ("c", some 0)] }, { (privateLocalProp "D1x" (.localCapturedAncestorParams ["a", "c"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D1x" }, .capture { name := "D1y" }]] [] [] [.param "D1x"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("a", some 0), ("c", some 0)] }, { (privateLocalProp "D1y" (.localCapturedAncestorParams ["a", "c"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D1x" }, .capture { name := "D1y" }]] [] [] [.param "D1y"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("a", some 0), ("c", some 0)] }, privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [.resolve "D0"])
+#guard obs case_special__huntGenChaosGZ0006 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0006 == .matched (some { kind := "unresolvedImplicitParams", names := ["c", "a"], counts := [] })
+-- special__huntGenChaosGZ0010: Cap(meta r) = r \n D0(meta m) = [(m*), map((m).string, { x + { 0 }.m })][0, 1] \n D1(s, p) = (p)(if(D0.Arguments[2] > p, tick(), 3 * s)).D0(s) \n D0.D1[].D1
+def case_special__huntGenChaosGZ0010 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "D0" (algWithParameters [{ name := "m", kind := .metaRef }] [] [] [(.index (.listLiteral [(.capture [(.sequenceSpread (.param "m"))]), (.call (.resolve "map") [(.dotCall (.param "m") "string" none), (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.dotMember (.algorithmExpr (alg [] [] [] [.num 0])) "m" (.param "m") none))]))])]) [.num 0, .num 1])]), privateProp "D1" (alg ["s", "p"] [] [] [(.dotCall (.call (.param "p") [(.call (.resolve "if") [(.comparison (.index (.dotCall (.resolve "D0") "Arguments" none) [.num 2]) [{ op := .gt, operand := (.param "p") }]), (.call (.resolve "tick") []), (.binary .mul (.num 3) (.param "s"))])]) "D0" (some [.param "s"]))])] [(.dotCall (.index (.dotCall (.resolve "D0") "D1" none) []) "D1" none)])
+#guard obs case_special__huntGenChaosGZ0010 == "err arity"
+
+#guard errorObs case_special__huntGenChaosGZ0010 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntGenChaosGZ0013: Cap(meta r) = r \n D0 = a.Algorithm(a*) \n D1* = D0[~a][D0.Invoke()] < D0 <= filter((a*) < a.Algorithm <= tick(), { x > D0.Algorithm(a.Algorithm, c(a, 8, a).repeat(2)) }).count \n D2(q, s) = q.Algorithm \n D2.K.D0(Cap(D2(count(5), D2().while))), (D2)(D0.Arguments[2] div 2, D2(map(0, { x + D2 })).repeat(2)), []
+def case_special__huntGenChaosGZ0013 : Expr :=
+  .algorithmExpr (alg ["K", "a"] [] [privateProp "D0" (alg ["a"] [] [] [(.dotCall (.param "a") "Algorithm" (some [(.sequenceSpread (.param "a"))]))]), privateProp "D1" (alg ["a"] [] [] [(.comparison (.index (.index (.call (.resolve "D0") [.param "a"]) [.param "a"]) [(.dotCall (.call (.resolve "D0") [.param "a"]) "Invoke" (some []))]) [{ op := .lt, operand := (.call (.resolve "D0") [.param "a"]) }, { op := .le, operand := (.dotCall (.call (.resolve "filter") [(.comparison (.capture [(.sequenceSpread (.param "a"))]) [{ op := .lt, operand := (.dotCall (.param "a") "Algorithm" none) }, { op := .le, operand := (.call (.resolve "tick") []) }]), (.algorithmExpr (alg ["x", "c"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.dotCall (.call (.resolve "D0") [.param "a"]) "Algorithm" (some [(.dotCall (.param "a") "Algorithm" none), (.dotCall (.call (.param "c") [.param "a", .num 8, .param "a"]) "repeat" (some [.num 2]))])) }])]))]) "count" none) }])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "D2" (alg ["q", "s"] [] [] [(.dotCall (.param "q") "Algorithm" none)])] [(.dotCall (.dotMember (.resolve "D2") "K" (.param "K") none) "D0" (some [(.call (.resolve "Cap") [(.call (.resolve "D2") [(.call (.resolve "count") [.num 5]), (.dotCall (.call (.resolve "D2") []) "while" none)])])])), (.call (.resolve "D2") [(.binary .idiv (.index (.dotCall (.call (.resolve "D0") [.param "a"]) "Arguments" none) [.num 2]) (.num 2)), (.dotCall (.call (.resolve "D2") [(.call (.resolve "map") [.num 0, (.algorithmExpr (alg ["x", "q", "s"] [] [] [(.binary .add (.param "x") (.call (.resolve "D2") [.param "q", .param "s"]))]))])]) "repeat" (some [.num 2]))]), (.listLiteral [])])
+#guard obs case_special__huntGenChaosGZ0013 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0013 == .matched (some { kind := "unresolvedImplicitParams", names := ["K", "a"], counts := [] })
+-- special__huntGenChaosGZ0015: Cap(meta r) = r \n D0((p, q)) = { \n   { a(2.Q(7)*) } \n } \n D1(p)* = tick() \n D2(q) = first(Cap(D1(tick(), D0.Algorithm, D0.string))) \n D3(*r) = first((D2*, reduce(D0(D1*), D1, map(D0, { x + D1 })))) \n 1.string, filter(map(D1*, { x + (D0)(D2, D1) }), { x > D1.Algorithm }).count
+def case_special__huntGenChaosGZ0015 : Expr :=
+  .algorithmExpr (alg ["p"] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "D0" (algWithParameterPatterns [.sequenceValue [.capture { name := "p" }, .capture { name := "q" }]] [] [] [(.algorithmExpr (alg ["a", "Q"] [] [] [(.call (.param "a") [(.sequenceSpread (.dotMember (.num 2) "Q" (.param "Q") (some [.num 7])))])]))]), privateProp "D1" (alg ["p"] [] [] [(.call (.resolve "tick") [])]), privateProp "D2" (alg ["q"] [] [] [(.call (.resolve "first") [(.call (.resolve "Cap") [(.sequenceSpread (.call (.resolve "D1") [(.call (.resolve "tick") []), (.dotCall (.resolve "D0") "Algorithm" none), (.dotCall (.resolve "D0") "string" none)]))])])]), privateProp "D3" (algWithParameters [{ name := "r", kind := .collecting }] [] [] [(.call (.resolve "first") [(.capture [(.sequenceSpread (.resolve "D2")), (.call (.resolve "reduce") [(.call (.resolve "D0") [(.sequenceSpread (.resolve "D1"))]), .resolve "D1", (.call (.resolve "map") [.resolve "D0", (.algorithmExpr (alg ["x", "p"] [] [] [(.binary .add (.param "x") (.call (.resolve "D1") [.param "p"]))]))])])])])])] [(.dotCall (.num 1) "string" none), (.dotCall (.call (.resolve "filter") [(.call (.resolve "map") [(.sequenceSpread (.sequenceSpread (.call (.resolve "D1") [.param "p"]))), (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.call (.resolve "D0") [.resolve "D2", .resolve "D1"]))]))]), (.algorithmExpr (alg ["x", "p"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.dotCall (.call (.resolve "D1") [.param "p"]) "Algorithm" none) }])]))]) "count" none)])
+#guard obs case_special__huntGenChaosGZ0015 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0015 == .matched (some { kind := "unresolvedImplicitParams", names := ["p"], counts := [] })
+-- special__huntGenChaosGZ0017: Cap(meta r) = r \n D0(s) = s \n D1 = { \n   if(6 > D0, D0*, ({ public Q = 7 }.Q)) \n } \n D2((p, q)) = q \n D3x, D3y = count(D1 + 9) < reduce([0], D2, u~) <= 3, D0 \n D4 = 's' div 3 * count(a*)[D3(1*).D1] \n (D2)([D1(), (D2, D2)][0, 1]), (Cap(D0([D2, 7][0, 1])))
+def case_special__huntGenChaosGZ0017 : Expr :=
+  .algorithmExpr (algWithParameterPatterns [.capture { name := "u" }, .capture { name := "s" }, .sequenceValue [.capture { name := "p" }, .capture { name := "q" }]] [] [privateProp "D1" (alg ["s"] [] [] [(.call (.resolve "if") [(.comparison (.num 6) [{ op := .gt, operand := (.call (.resolve "D0") [.param "s"]) }]), (.sequenceSpread (.call (.resolve "D0") [.param "s"])), (.dotCall (.algorithmExpr (alg [] [] [publicProp "Q" (alg [] [] [] [.num 7])] [])) "Q" none)])]), { (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["s", "u"]) (alg [] [] [] [(.comparison (.call (.resolve "count") [(.binary .add (.call (.resolve "D1") [.param "s"]) (.num 9))]) [{ op := .lt, operand := (.call (.resolve "reduce") [(.listLiteral [.num 0]), .resolve "D2", .param "u"]) }, { op := .le, operand := (.num 3) }]), (.call (.resolve "D0") [.param "s"])])) with requiredOwnerDepths := some [("s", some 0), ("u", some 0)] }, { (privateLocalProp "D3x" (.localCapturedAncestorParams ["s", "u"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D3x" }, .capture { name := "D3y" }]] [] [] [.param "D3x"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("s", some 0), ("u", some 0)] }, { (privateLocalProp "D3y" (.localCapturedAncestorParams ["s", "u"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "D3x" }, .capture { name := "D3y" }]] [] [] [.param "D3y"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("s", some 0), ("u", some 0)] }, privateProp "D4" (alg ["a", "D3"] [] [] [(.binary .mul (.binary .idiv (.stringLiteral "s") (.num 3)) (.index (.call (.resolve "count") [(.sequenceSpread (.param "a"))]) [(.dotCall (.call (.param "D3") [(.sequenceSpread (.num 1))]) "D1" none)]))]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "D0" (alg ["s"] [] [] [.param "s"]), privateProp "D2" (algWithParameterPatterns [.sequenceValue [.capture { name := "p" }, .capture { name := "q" }]] [] [] [.param "q"])] [(.call (.resolve "D2") [(.index (.listLiteral [(.call (.resolve "D1") []), (.capture [(.call (.resolve "D2") [(.capture [.param "p", .param "q"])]), (.call (.resolve "D2") [(.capture [.param "p", .param "q"])])])]) [.num 0, .num 1])]), (.call (.resolve "Cap") [(.call (.resolve "D0") [(.index (.listLiteral [(.call (.resolve "D2") [(.capture [.param "p", .param "q"])]), .num 7]) [.num 0, .num 1])])])])
+#guard obs case_special__huntGenChaosGZ0017 == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntGenChaosGZ0017 == .matched (some { kind := "unresolvedImplicitParams", names := ["u", "s", "p", "q"], counts := [] })
+-- special__huntGenChaosGZ0020: Cap(meta r) = r \n D0 = { \n   public K0 = a() \n   public K1 = [[9], 0.Arguments.count][0, 1] \n   public K2 = a.string \n   tick() \n } \n D1 = { \n   open D0 \n   D0* \n } \n D2 = D1.Q \n not (D1(D0) == { D2.string }), reduce(7, D0, (D1)())
+def case_special__huntGenChaosGZ0020 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "D0" (alg [] [] [publicProp "K0" (alg ["a"] [] [] [(.call (.param "a") [])]), publicProp "K1" (alg [] [] [] [(.index (.listLiteral [(.listLiteral [.num 9]), (.dotCall (.dotCall (.num 0) "Arguments" none) "count" none)]) [.num 0, .num 1])]), publicProp "K2" (alg ["a"] [] [] [(.dotCall (.param "a") "string" none)])] [(.call (.resolve "tick") [])]), privateProp "D1" (alg [] [.resolve "D0"] [] [(.sequenceSpread (.resolve "D0"))]), privateProp "D2" (alg ["Q"] [] [] [(.dotMember (.resolve "D1") "Q" (.param "Q") none)]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [(.unary .not (.comparison (.call (.resolve "D1") [.resolve "D0"]) [{ op := .eq, operand := (.algorithmExpr (alg ["Q"] [] [] [(.dotCall (.call (.resolve "D2") [.param "Q"]) "string" none)])) }])), (.call (.resolve "reduce") [.num 7, .resolve "D0", (.call (.resolve "D1") [])])])
+#guard obs case_special__huntGenChaosGZ0020 == "err arity"
+
+#guard errorObs case_special__huntGenChaosGZ0020 == .matched (some { kind := "arity", names := [], counts := [0, 1] })
+-- special__huntA1Expo1E01Direct: F(y) = { \n   A = y * 10 \n   A + 0 \n } \n F(1), F(2), map([3, 4], F)
+def case_special__huntA1Expo1E01Direct : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.resolve "A") (.num 0))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_special__huntA1Expo1E01Direct == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- special__huntA1Expo1E02Member: F(y) = { \n   B = { public Q = y * 10 } \n   B.Q + 0 \n } \n F(1), F(2), map([3, 4], F)
+def case_special__huntA1Expo1E02Member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "B" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 1)] }] [])] [(.binary .add (.dotCall (.resolve "B") "Q" none) (.num 0))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_special__huntA1Expo1E02Member == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- special__huntA1Expo1E05Alias: F(y) = { \n   B = y * 10 \n   A = B \n   R = A + 0 \n   R \n } \n F(1), F(2), map([3, 4], F)
+def case_special__huntA1Expo1E05Alias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "B"))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "A") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_special__huntA1Expo1E05Alias == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- special__huntA1Expo1E07RuntimeAliasParam: F(y) = { \n   A = y \n   R = A * 10 \n   R \n } \n F(1), F(2), map([3, 4], F)
+def case_special__huntA1Expo1E07RuntimeAliasParam : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "R" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.resolve "A") (.num 10))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "R"])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_special__huntA1Expo1E07RuntimeAliasParam == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- special__huntA1Expo1E09DeconBoth: F(y) = { \n   a, b = y * 10, y \n   a + b \n } \n F(1), F(2), map([3, 4], F)
+def case_special__huntA1Expo1E09DeconBoth : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10)), .param "y"])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("y", some 0)] }] [(.binary .add (.resolve "a") (.resolve "b"))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_special__huntA1Expo1E09DeconBoth == "ok raw=S[11, 22, L[33, 44]] n=3"
+
+-- special__huntA1Expo1E10ClauseBinder: F(0) = 0 \n F(n) = { \n   A = n * 10 \n   A + 0 \n } \n F(1), F(2), map([3, 4], F)
+def case_special__huntA1Expo1E10ClauseBinder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .mul (.param "n") (.num 10))])) with requiredOwnerDepths := some [("n", some 1)] }] [(.binary .add (.resolve "A") (.num 0))])⟩])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "map") [(.listLiteral [.num 3, .num 4]), .resolve "F"])])
+#guard obs case_special__huntA1Expo1E10ClauseBinder == "ok raw=S[10, 20, L[30, 40]] n=3"
+
+-- special__huntA2Need1N01UndemandedSecond: F(x, y) = x \n F(tick(), tick())
+def case_special__huntA2Need1N01UndemandedSecond : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x", "y"] [] [] [.param "x"])] [(.call (.resolve "F") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])])
+#guard obs case_special__huntA2Need1N01UndemandedSecond == "ok raw=1 n=1"
+
+-- special__huntA2Need1N02DemandOrder: F(x, y) = y + x \n F(tick(), tick() * 10)
+def case_special__huntA2Need1N02DemandOrder : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x", "y"] [] [] [(.binary .add (.param "y") (.param "x"))])] [(.call (.resolve "F") [(.call (.resolve "tick") []), (.binary .mul (.call (.resolve "tick") []) (.num 10))])])
+#guard obs case_special__huntA2Need1N02DemandOrder == "ok raw=12 n=1"
+
+-- special__huntA2Need1N03AtMostOnce: F(x) = x + x + x \n F(tick())
+def case_special__huntA2Need1N03AtMostOnce : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [(.binary .add (.binary .add (.param "x") (.param "x")) (.param "x"))])] [(.call (.resolve "F") [(.call (.resolve "tick") [])])])
+#guard obs case_special__huntA2Need1N03AtMostOnce == "ok raw=3 n=1"
+
+-- special__huntA2Need1N04NeverDemanded: F(x) = 5 \n F(1 / 0)
+def case_special__huntA2Need1N04NeverDemanded : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.num 5])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__huntA2Need1N04NeverDemanded == "ok raw=5 n=1"
+
+-- special__huntA2Need1N05ForwardingNoForce: G(v) = 7 \n F(x) = G(x) \n F(1 / 0)
+def case_special__huntA2Need1N05ForwardingNoForce : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["v"] [] [] [.num 7]), privateProp "F" (alg ["x"] [] [] [(.call (.resolve "G") [.param "x"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__huntA2Need1N05ForwardingNoForce == "ok raw=7 n=1"
+
+-- special__huntA2Need1N06CardinalityFirst: F(x, y) = x \n F(1 / 0)
+def case_special__huntA2Need1N06CardinalityFirst : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x", "y"] [] [] [.param "x"])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__huntA2Need1N06CardinalityFirst == "err arity"
+
+#guard errorObs case_special__huntA2Need1N06CardinalityFirst == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntA2Need2T01MemberPathTransport: Coll(*ys) = ys.count \n F(*xs) = { \n   B = { public P = xs } \n   Coll(B.P*) \n } \n F(1 / 0, 2)
+def case_special__huntA2Need2T01MemberPathTransport : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [(.dotCall (.param "ys") "count" none)]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "B" (alg [] [] [{ (publicLocalProp "P" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 1)] }] [])] [(.call (.resolve "Coll") [(.sequenceSpread (.dotCall (.resolve "B") "P" none))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
+#guard obs case_special__huntA2Need2T01MemberPathTransport == "ok raw=2 n=1"
+
+-- special__huntA2Need2T02AliasChainTransport: Coll(*ys) = ys.count \n F(*xs) = { \n   A = xs \n   B = A \n   C = B \n   Coll(C*) \n } \n F(1 / 0, 2, 3)
+def case_special__huntA2Need2T02AliasChainTransport : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [(.dotCall (.param "ys") "count" none)]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }, { (privateLocalProp "B" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.resolve "A"))) with requiredOwnerDepths := some [("xs", some 0)] }, { (privateLocalProp "C" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.resolve "B"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Coll") [(.sequenceSpread (.resolve "C"))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2, .num 3])])
+#guard obs case_special__huntA2Need2T02AliasChainTransport == "ok raw=3 n=1"
+
+-- special__huntA2Need2T03ParamHoldingReference: Coll(*ys) = ys.count \n Pass(v) = Coll(v*) \n F(*xs) = { \n   A = xs \n   Pass(A) \n } \n F(1 / 0)
+def case_special__huntA2Need2T03ParamHoldingReference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [(.dotCall (.param "ys") "count" none)]), privateProp "Pass" (alg ["v"] [] [] [(.call (.resolve "Coll") [(.sequenceSpread (.param "v"))])]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Pass") [.resolve "A"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__huntA2Need2T03ParamHoldingReference == "ok raw=1 n=1"
+
+-- special__huntA2Need2T04CountThroughAlias: F(*xs) = { \n   A = xs \n   A.count \n } \n F(1 / 0, 1 / 0)
+def case_special__huntA2Need2T04CountThroughAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.dotCall (.resolve "A") "count" none)])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), (.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__huntA2Need2T04CountThroughAlias == "ok raw=2 n=1"
+
+-- special__huntA2Need2T05FirstThroughAlias: F(*xs) = { \n   A = xs \n   first(A) \n } \n F(7, 1 / 0)
+def case_special__huntA2Need2T05FirstThroughAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "first") [.resolve "A"])])] [(.call (.resolve "F") [.num 7, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_special__huntA2Need2T05FirstThroughAlias == "ok raw=7 n=1"
+
+-- special__huntA2Need2T06SelectThroughMember: F(*xs) = { \n   B = { public P = xs } \n   B.P[1] \n } \n F(1 / 0, 8)
+def case_special__huntA2Need2T06SelectThroughMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "B" (alg [] [] [{ (publicLocalProp "P" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 1)] }] [])] [(.index (.dotCall (.resolve "B") "P" none) [.num 1])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 8])])
+#guard obs case_special__huntA2Need2T06SelectThroughMember == "ok raw=8 n=1"
+
+-- special__huntA3Cache1C01ReentrantQ37: A = if(tick() < 3, A + 1, 0) \n A, A
+def case_special__huntA3Cache1C01ReentrantQ37 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.num 3) }]), (.binary .add (.resolve "A") (.num 1)), .num 0])])] [.resolve "A", .resolve "A"])
+#guard obs case_special__huntA3Cache1C01ReentrantQ37 == "ok raw=S[2, 2] n=2"
+
+-- special__huntA3Cache1C02CollectingAliasOnce: Only(*xs) = tick() \n A = Only \n A, Only, A
+def case_special__huntA3Cache1C02CollectingAliasOnce : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Only")), privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "tick") [])])] [.resolve "A", .resolve "Only", .resolve "A"])
+#guard obs case_special__huntA3Cache1C02CollectingAliasOnce == "ok raw=S[1, 1, 1] n=3"
+
+-- special__huntA3Cache1C03AliasRead: P = tick() \n A = P \n A, P, A
+def case_special__huntA3Cache1C03AliasRead : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "A" (.alias none [] [] (.resolve "P"))] [.resolve "A", .resolve "P", .resolve "A"])
+#guard obs case_special__huntA3Cache1C03AliasRead == "ok raw=S[1, 1, 1] n=3"
+
+-- special__huntA3Cache1C04AliasCallEstablishes: P = tick() \n A = P \n A(), P
+def case_special__huntA3Cache1C04AliasCallEstablishes : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "A" (.alias none [] [] (.resolve "P"))] [(.call (.resolve "A") []), .resolve "P"])
+#guard obs case_special__huntA3Cache1C04AliasCallEstablishes == "ok raw=S[1, 1] n=2"
+
+-- special__huntA3Cache1C06CarrierCalls: P = tick() \n B = { P } \n B(), B(), P()
+def case_special__huntA3Cache1C06CarrierCalls : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "tick") [])]), privateProp "B" (.alias none [] [] (.resolve "P") none false)] [(.call (.resolve "B") []), (.call (.resolve "B") []), (.call (.resolve "P") [])])
+#guard obs case_special__huntA3Cache1C06CarrierCalls == "ok raw=S[1, 2, 3] n=3"
+
+-- special__huntA3Cache1C07RuntimeMemberValueOnly: G(o) = tick() \n Use(b) = { \n   A = b.G \n   A(), A, A(), A \n } \n Use(5)
+def case_special__huntA3Cache1C07RuntimeMemberValueOnly : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["o"] [] [] [(.call (.resolve "tick") [])]), privateProp "Use" (alg ["b"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] ((.dotCall (.param "b") "G" none)))) with requiredOwnerDepths := some [("b", some 0)] }] [(.call (.resolve "A") []), .resolve "A", (.call (.resolve "A") []), .resolve "A"])] [(.call (.resolve "Use") [.num 5])])
+#guard obs case_special__huntA3Cache1C07RuntimeMemberValueOnly == "ok raw=S[1, 1, 1, 1] n=1"
+
+-- special__huntA3Cache2C203FormulaOwnerReadFirst: F(y) = { \n   O = { \n     public V = y * 0 + tick() \n     V + 0 \n   } \n   O, O.V, O() \n } \n F(1)
+def case_special__huntA3Cache2C203FormulaOwnerReadFirst : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "O" (.localCapturedAncestorParams ["y"]) (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.num 0)) (.call (.resolve "tick") []))])) with requiredOwnerDepths := some [("y", some 1)] }] [(.binary .add (.resolve "V") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "O", (.dotCall (.resolve "O") "V" none), (.call (.resolve "O") [])])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_special__huntA3Cache2C203FormulaOwnerReadFirst == "ok raw=S[1, 1, 2] n=1"
+
+-- special__huntA3Cache2C204ExportedOwner: O = { \n   public V = tick() \n   V + 0 \n } \n O(), O, O.V
+def case_special__huntA3Cache2C204ExportedOwner : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "O" (alg [] [] [publicProp "V" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.binary .add (.resolve "V") (.num 0))])] [(.call (.resolve "O") []), .resolve "O", (.dotCall (.resolve "O") "V" none)])
+#guard obs case_special__huntA3Cache2C204ExportedOwner == "ok raw=S[1, 1, 2] n=3"
+
+-- special__huntA3Cache2C205CallbackMemberRead: F(y) = { \n   O = { \n     public V = y * 0 + tick() \n     V + 0 \n   } \n   map([1, 2], { x * 0 + O.V }), O.V \n } \n F(1)
+def case_special__huntA3Cache2C205CallbackMemberRead : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "O" (.localCapturedAncestorParams ["y"]) (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.binary .mul (.param "y") (.num 0)) (.call (.resolve "tick") []))])) with requiredOwnerDepths := some [("y", some 1)] }] [(.binary .add (.resolve "V") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 0)) (.dotCall (.resolve "O") "V" none))]))]), (.dotCall (.resolve "O") "V" none)])] [(.call (.resolve "F") [.num 1])])
+#guard obs case_special__huntA3Cache2C205CallbackMemberRead == "ok raw=S[L[1, 1], 1] n=1"
+
+-- special__huntA3Cache2C206AliasCellExported: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = Cap(Mul(t)) \n F(k) = { \n   A = Pick(tick()).Algorithm \n   A(k) \n } \n F(1), F(2), F(1), tick()
+def case_special__huntA3Cache2C206AliasCellExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])])]), privateProp "F" (alg ["k"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.call (.resolve "A") [.param "k"])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "F") [.num 1]), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache2C206AliasCellExported == "ok raw=S[10, 20, 10, 1] n=4"
+
+-- special__huntA3Cache2C207AliasCellLocal: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = Cap(Mul(t)) \n F(k) = { \n   A = Pick(tick() + k * 0).Algorithm \n   A(k) \n } \n F(1), F(2), F(1), tick()
+def case_special__huntA3Cache2C207AliasCellLocal : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])])]), privateProp "F" (alg ["k"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["k"]) (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "k") (.num 0)))]) "Algorithm" none)))) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "A") [.param "k"])])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "F") [.num 1]), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache2C207AliasCellLocal == "ok raw=S[10, 20, 10, 1] n=4"
+
+-- special__huntA3Cache2C208AliasCellInLoopStep: Cap(meta r) = r \n Mul(t) = t * 10 \n Step(n, acc) = { \n   A = Cap(Mul(tick())).Algorithm \n   n + 1, acc + A(n), n < 3 \n } \n Step(0, 0).while, tick()
+def case_special__huntA3Cache2C208AliasCellInLoopStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "Mul") [(.call (.resolve "tick") [])])]) "Algorithm" none)))] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.call (.resolve "A") [.param "n"])), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache2C208AliasCellInLoopStep == "ok raw=S[S[3, 30], 1] n=2"
+
+-- special__huntA3Cache3C301tPropertyTwinExported: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n F(k) = { \n   P = Pick(tick()) \n   P.Algorithm(k) \n } \n F(1), F(2), F(1), tick()
+def case_special__huntA3Cache3C301tPropertyTwinExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "F" (alg ["k"] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "Pick") [(.call (.resolve "tick") [])])])] [(.dotCall (.resolve "P") "Algorithm" (some [.param "k"]))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "F") [.num 1]), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache3C301tPropertyTwinExported == "ok raw=S[10, 20, 10, 4] n=4"
+
+-- special__huntA3Cache3C302tPropertyTwinLocal: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n F(k) = { \n   P = Pick(tick() + k * 0) \n   P.Algorithm(k) \n } \n F(1), F(2), F(1), tick()
+def case_special__huntA3Cache3C302tPropertyTwinLocal : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "F" (alg ["k"] [] [{ (privateLocalProp "P" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "k") (.num 0)))])])) with requiredOwnerDepths := some [("k", some 0)] }] [(.dotCall (.resolve "P") "Algorithm" (some [.param "k"]))])] [(.call (.resolve "F") [.num 1]), (.call (.resolve "F") [.num 2]), (.call (.resolve "F") [.num 1]), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache3C302tPropertyTwinLocal == "ok raw=S[10, 20, 10, 4] n=4"
+
+-- special__huntA3Cache3C303AliasCellLoop: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n Step(n, acc) = { \n   A = Pick(tick()).Algorithm \n   n + 1, acc + A(n), n < 3 \n } \n Step(0, 0).while, tick()
+def case_special__huntA3Cache3C303AliasCellLoop : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "A" (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.call (.resolve "tick") [])]) "Algorithm" none)))] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.call (.resolve "A") [.param "n"])), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache3C303AliasCellLoop == "ok raw=S[S[3, 30], 4] n=2"
+
+-- special__huntA3Cache3C303tPropertyTwinLoop: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n Step(n, acc) = { \n   P = Pick(tick()) \n   n + 1, acc + P.Algorithm(n), n < 3 \n } \n Step(0, 0).while, tick()
+def case_special__huntA3Cache3C303tPropertyTwinLoop : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "Step" (alg ["n", "acc"] [] [privateProp "P" (alg [] [] [] [(.call (.resolve "Pick") [(.call (.resolve "tick") [])])])] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.dotCall (.resolve "P") "Algorithm" (some [.param "n"]))), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache3C303tPropertyTwinLoop == "ok raw=S[S[3, 30], 4] n=2"
+
+-- special__huntA3Cache3C304tPropertyTwinLocalLoop: Cap(meta r) = r \n Mul(t) = t * 10 \n Pick(t) = if(t > 0, Cap(Mul(t)), Cap(Mul(0))) \n Step(n, acc) = { \n   P = Pick(tick() + n * 0) \n   n + 1, acc + P.Algorithm(n), n < 3 \n } \n Step(0, 0).while, tick()
+def case_special__huntA3Cache3C304tPropertyTwinLocalLoop : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Mul" (alg ["t"] [] [] [(.binary .mul (.param "t") (.num 10))]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "Mul") [.num 0])])])]), privateProp "Step" (alg ["n", "acc"] [] [{ (privateLocalProp "P" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "n") (.num 0)))])])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.dotCall (.resolve "P") "Algorithm" (some [.param "n"]))), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache3C304tPropertyTwinLocalLoop == "ok raw=S[S[3, 30], 4] n=2"
+
+-- special__huntA3Cache3C305AliasCellReadAndCall: Cap(meta r) = r \n K(t) = t \n Pick(t) = if(t > 0, Cap(K(t)), Cap(K(0))) \n F(k) = { \n   A = Pick(tick() + k * 0).Algorithm \n   A(k), A(k + 1) \n } \n F(5), F(6), tick()
+def case_special__huntA3Cache3C305AliasCellReadAndCall : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "K" (alg ["t"] [] [] [.param "t"]), privateProp "Pick" (alg ["t"] [] [] [(.call (.resolve "if") [(.comparison (.param "t") [{ op := .gt, operand := (.num 0) }]), (.call (.resolve "Cap") [(.call (.resolve "K") [.param "t"])]), (.call (.resolve "Cap") [(.call (.resolve "K") [.num 0])])])]), privateProp "F" (alg ["k"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["k"]) (.alias none [] [] ((.dotCall (.call (.resolve "Pick") [(.binary .add (.call (.resolve "tick") []) (.binary .mul (.param "k") (.num 0)))]) "Algorithm" none)))) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "A") [.param "k"]), (.call (.resolve "A") [(.binary .add (.param "k") (.num 1))])])] [(.call (.resolve "F") [.num 5]), (.call (.resolve "F") [.num 6]), (.call (.resolve "tick") [])])
+#guard obs case_special__huntA3Cache3C305AliasCellReadAndCall == "ok raw=S[S[5, 6], S[6, 7], 3] n=3"
+
+-- special__huntA4Loops1L01WhileBasic: Step(n, acc) = n - 1, acc + n, n > 1 \n Step(5, 0).while
+def case_special__huntA4Loops1L01WhileBasic : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .sub (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.call (.resolve "Step") [.num 5, .num 0]) "while" none)])
+#guard obs case_special__huntA4Loops1L01WhileBasic == "ok raw=S[1, 14] n=1"
+
+-- special__huntA4Loops1L08FamilyStep: Coll(0, acc) = 0, acc \n Coll(n, acc) = n - 1, acc + n \n Coll(4, 0).repeat(3)
+def case_special__huntA4Loops1L08FamilyStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (.conditional none [] [⟨.sequenceValue [.litInt 0, .bind "acc"], (alg [] [] [] [.num 0, .param "acc"])⟩, ⟨.sequenceValue [.bind "n", .bind "acc"], (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n"))])⟩])] [(.dotCall (.call (.resolve "Coll") [.num 4, .num 0]) "repeat" (some [.num 3]))])
+#guard obs case_special__huntA4Loops1L08FamilyStep == "ok raw=S[1, 9] n=1"
+
+-- special__huntA4Loops1L10AliasStep: Inc(x) = x + 1 \n A = Inc \n A(5).repeat(3)
+def case_special__huntA4Loops1L10AliasStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Inc")), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.call (.resolve "A") [.num 5]) "repeat" (some [.num 3]))])
+#guard obs case_special__huntA4Loops1L10AliasStep == "ok raw=8 n=1"
+
+-- special__huntA4Loops1L13LoopOneValue: F(x, y) = x + 1, y \n R = F(0, 5).repeat(2) \n R, count(R)
+def case_special__huntA4Loops1L13LoopOneValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.dotCall (.call (.resolve "F") [.num 0, .num 5]) "repeat" (some [.num 2]))]), privateProp "F" (alg ["x", "y"] [] [] [(.binary .add (.param "x") (.num 1)), .param "y"])] [.resolve "R", (.call (.resolve "count") [.resolve "R"])])
+#guard obs case_special__huntA4Loops1L13LoopOneValue == "ok raw=S[S[2, 5], 2] n=2"
+
+-- special__huntA4Loops1L14ForwardStep: W(step) = while(step) \n Step(n) = n + 1, n < 3 \n W(Step(0))
+def case_special__huntA4Loops1L14ForwardStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "W" (alg ["step"] [] [] [(.call (.resolve "while") [.param "step"])]), privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "W") [(.call (.resolve "Step") [.num 0])])])
+#guard obs case_special__huntA4Loops1L14ForwardStep == "ok raw=3 n=1"
+
+-- special__huntA4Loops1L16QualifiedStep: Box = { public S(n) = n + 1, n < 3 } \n Box.S(0).while
+def case_special__huntA4Loops1L16QualifiedStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "S" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [])] [(.dotCall (.dotCall (.resolve "Box") "S" (some [.num 0])) "while" none)])
+#guard obs case_special__huntA4Loops1L16QualifiedStep == "ok raw=3 n=1"
+
+-- special__huntA5Select1S03StringCount: count('abc')
+def case_special__huntA5Select1S03StringCount : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [.stringLiteral "abc"])])
+#guard obs case_special__huntA5Select1S03StringCount == "ok raw=1 n=1"
+
+-- special__huntA5Select1S04EmptyStringSelect: ''[0]
+def case_special__huntA5Select1S04EmptyStringSelect : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.stringLiteral "") [.num 0])])
+#guard obs case_special__huntA5Select1S04EmptyStringSelect == "ok raw='' n=1"
+
+-- special__huntA5Select1S05StringOnePosition: 'abc'[1]
+def case_special__huntA5Select1S05StringOnePosition : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.stringLiteral "abc") [.num 1])])
+#guard obs case_special__huntA5Select1S05StringOnePosition == "err index"
+
+#guard errorObs case_special__huntA5Select1S05StringOnePosition == .matched (some { kind := "index", names := [], counts := [] })
+-- special__huntA5Select1S06ScalarSelf: 5[0]
+def case_special__huntA5Select1S06ScalarSelf : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.num 5) [.num 0])])
+#guard obs case_special__huntA5Select1S06ScalarSelf == "ok raw=5 n=1"
+
+-- special__huntA5Select1S07ScalarOut: 5[1]
+def case_special__huntA5Select1S07ScalarOut : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.num 5) [.num 1])])
+#guard obs case_special__huntA5Select1S07ScalarOut == "err index"
+
+#guard errorObs case_special__huntA5Select1S07ScalarOut == .matched (some { kind := "index", names := [], counts := [] })
+-- special__huntA6Spread1P01CollTable: Coll(*xs) = xs \n Coll(()), Coll((1, 2)), Coll((1, 2)*), (1, 2).Coll, Coll(), Coll([1, 2]), Coll([1, 2]*), Coll([(1, 2)]*), Coll([()]*), Coll((), 3)
+def case_special__huntA6Spread1P01CollTable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "Coll") [(.emptySequence 0)]), (.call (.resolve "Coll") [(.capture [.num 1, .num 2])]), (.call (.resolve "Coll") [(.sequenceSpread (.capture [.num 1, .num 2]))]), (.dotCall (.capture [.num 1, .num 2]) "Coll" none), (.call (.resolve "Coll") []), (.call (.resolve "Coll") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "Coll") [(.sequenceSpread (.listLiteral [.num 1, .num 2]))]), (.call (.resolve "Coll") [(.sequenceSpread (.listLiteral [(.capture [.num 1, .num 2])]))]), (.call (.resolve "Coll") [(.sequenceSpread (.listLiteral [(.emptySequence 0)]))]), (.call (.resolve "Coll") [(.emptySequence 0), .num 3])])
+#guard obs case_special__huntA6Spread1P01CollTable == "ok raw=S[L[S[]], L[S[1, 2]], L[1, 2], L[S[1, 2]], L[], L[L[1, 2]], L[1, 2], L[S[1, 2]], L[S[]], L[S[], 3]] n=10"
+
+-- special__huntA6Spread1P02Cnt: Cnt(*xs) = xs.count \n Cnt((10, 7)), Cnt((10, 7)*)
+def case_special__huntA6Spread1P02Cnt : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)])] [(.call (.resolve "Cnt") [(.capture [.num 10, .num 7])]), (.call (.resolve "Cnt") [(.sequenceSpread (.capture [.num 10, .num 7]))])])
+#guard obs case_special__huntA6Spread1P02Cnt == "ok raw=S[1, 2] n=2"
+
+-- special__huntA6Spread1P03CntValue: CntValue(x) = x.count \n CntValue((10, 7))
+def case_special__huntA6Spread1P03CntValue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "CntValue" (alg ["x"] [] [] [(.dotCall (.param "x") "count" none)])] [(.call (.resolve "CntValue") [(.capture [.num 10, .num 7])])])
+#guard obs case_special__huntA6Spread1P03CntValue == "ok raw=2 n=1"
+
+-- special__huntA6Spread1P04Withhead: WithHead(x, *rest) = rest \n F(*xs, z) = xs \n WithHead(0, (1, 2)), F((1, 2), 3)
+def case_special__huntA6Spread1P04Withhead : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "WithHead" (algWithParameters [{ name := "x" }, { name := "rest", kind := .collecting }] [] [] [.param "rest"]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }, { name := "z" }] [] [] [.param "xs"])] [(.call (.resolve "WithHead") [.num 0, (.capture [.num 1, .num 2])]), (.call (.resolve "F") [(.capture [.num 1, .num 2]), .num 3])])
+#guard obs case_special__huntA6Spread1P04Withhead == "ok raw=S[L[S[1, 2]], L[S[1, 2]]] n=2"
+
+-- special__huntA6Spread1P05IdPair: Id(v) = v \n Id((1, 2))
+def case_special__huntA6Spread1P05IdPair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Id" (alg ["v"] [] [] [.param "v"])] [(.call (.resolve "Id") [(.capture [.num 1, .num 2])])])
+#guard obs case_special__huntA6Spread1P05IdPair == "ok raw=S[1, 2] n=1"
+
+-- special__huntA6Spread1P06AddPair: Add(a, b) = a + b \n Add((1, 2))
+def case_special__huntA6Spread1P06AddPair : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.call (.resolve "Add") [(.capture [.num 1, .num 2])])])
+#guard obs case_special__huntA6Spread1P06AddPair == "err arity"
+
+#guard errorObs case_special__huntA6Spread1P06AddPair == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntA7Dot1D01ChainFallback: A(x) = x * 10 \n B(x) = x + 1 \n 3.A.B
+def case_special__huntA7Dot1D01ChainFallback : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))]), privateProp "B" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.dotCall (.num 3) "A" none) "B" none)])
+#guard obs case_special__huntA7Dot1D01ChainFallback == "ok raw=31 n=1"
+
+-- special__huntA7Dot1D02DeclaredString: Box = { public string = 7 } \n Box.string
+def case_special__huntA7Dot1D02DeclaredString : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [publicProp "string" (alg [] [] [] [.num 7])] [])] [(.dotCall (.resolve "Box") "string" none)])
+#guard obs case_special__huntA7Dot1D02DeclaredString == "ok raw=7 n=1"
+
+-- special__huntA7Dot1D03LexicalStringIgnored: string(x) = 99 \n 3.string, string(3)
+def case_special__huntA7Dot1D03LexicalStringIgnored : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "string" (alg ["x"] [] [] [.num 99])] [(.dotCall (.num 3) "string" none), (.call (.resolve "string") [.num 3])])
+#guard obs case_special__huntA7Dot1D03LexicalStringIgnored == "ok raw=S['3', 99] n=2"
+
+-- special__huntA7Dot1D04BranchMember: F(0) = { \n   public X = 1 \n   X \n } \n F(n) = n \n F.X
+def case_special__huntA7Dot1D04BranchMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.resolve "X"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.dotCall (.resolve "F") "X" none)])
+#guard obs case_special__huntA7Dot1D04BranchMember == "err localOnlyProperty"
+
+#guard errorObs case_special__huntA7Dot1D04BranchMember == .matched (some { kind := "localOnlyProperty", names := ["X", "conditional"], counts := [] })
+-- special__huntA7Dot1D05PrivateStructural: Box = { \n   X = 5 \n   public Y = 6 \n } \n Box.X
+def case_special__huntA7Dot1D05PrivateStructural : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "X" (alg [] [] [] [.num 5]), publicProp "Y" (alg [] [] [] [.num 6])] [])] [(.dotCall (.resolve "Box") "X" none)])
+#guard obs case_special__huntA7Dot1D05PrivateStructural == "ok raw=5 n=1"
+
+-- special__huntA7Dot1D06SpreadReceiver: F(a, b, c) = a * 100 + b * 10 + c \n R = 1, 2 \n R*.F(3)
+def case_special__huntA7Dot1D06SpreadReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [.num 1, .num 2]), privateProp "F" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "F") [(.sequenceSpread (.resolve "R")), .num 3])])
+#guard obs case_special__huntA7Dot1D06SpreadReceiver == "ok raw=123 n=1"
+
+-- special__huntA7Anchor1H01StatedCarriedContainer: F(b, y) = { \n   p = { \n     Q = y \n     1 \n   } \n   G(g, y) = g.Q \n   G(b, 99) \n } \n F(F.p, 5)
+def case_special__huntA7Anchor1H01StatedCarriedContainer : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), privateProp "G" (alg ["g", "y"] [] [] [(.dotCall (.param "g") "Q" none)])] [(.call (.resolve "G") [.param "b", .num 99])])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 5])])
+#guard obs case_special__huntA7Anchor1H01StatedCarriedContainer == "ok raw=5 n=1"
+
+-- special__huntA7Anchor1H05OpenHeadBetween: Outer(p) = { \n   Mid = { \n     Lib = { public X = p } \n     Inner = { \n       open Lib \n       X \n     } \n     Inner \n   } \n   Mid \n } \n Outer(1), Outer(2)
+def case_special__huntA7Anchor1H05OpenHeadBetween : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [] [{ (privateLocalProp "Mid" (.localCapturedAncestorParams ["p"]) (.alias none [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (.alias none [] [] (.param "p"))) with requiredOwnerDepths := some [("p", some 2)] }] []), { (privateLocalProp "Inner" (.localCapturedAncestorParams ["p"]) (.alias none [.resolve "Lib"] [] (.resolve "X") none false)) with requiredOwnerDepths := some [("p", some 1)] }] (.resolve "Inner") none false)) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Mid"])] [(.call (.resolve "Outer") [.num 1]), (.call (.resolve "Outer") [.num 2])])
+#guard obs case_special__huntA7Anchor1H05OpenHeadBetween == "ok raw=S[1, 2] n=2"
+
+-- special__huntA7Anchor1H06CarriedViaCallback: F(b, y) = { \n   p = { \n     Q = y * 10 \n     1 \n   } \n   map([1, 2], { x * 0 + b.Q }) \n } \n F(F.p, 3)
+def case_special__huntA7Anchor1H06CarriedViaCallback : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x", "Q"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 0)) (.dotMember (.param "b") "Q" (.param "Q") none))]))])])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 3])])
+#guard obs case_special__huntA7Anchor1H06CarriedViaCallback == "err arity"
+
+#guard errorObs case_special__huntA7Anchor1H06CarriedViaCallback == .matched (some { kind := "arity", names := [], counts := [2, 1] })
+-- special__huntA7Anchor1H08CarriedThroughParamChain: F(b, y) = { \n   p = { \n     Q = y * 10 \n     1 \n   } \n   G(g) = g.Q \n   G(b) \n } \n F(F.p, 7)
+def case_special__huntA7Anchor1H08CarriedThroughParamChain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .mul (.param "y") (.num 10))])) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), privateProp "G" (alg ["g"] [] [] [(.dotCall (.param "g") "Q" none)])] [(.call (.resolve "G") [.param "b"])])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 7])])
+#guard obs case_special__huntA7Anchor1H08CarriedThroughParamChain == "ok raw=70 n=1"
+
+-- special__huntA7Anchor1H09ContainerReadAtRoot: F(b, y) = { \n   p = { \n     Q = y \n     1 \n   } \n   b.Q \n } \n F.p.Q
+def case_special__huntA7Anchor1H09ContainerReadAtRoot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] [(.dotCall (.param "b") "Q" none)])] [(.dotCall (.dotCall (.resolve "F") "p" none) "Q" none)])
+#guard obs case_special__huntA7Anchor1H09ContainerReadAtRoot == "err localOnlyProperty"
+
+#guard errorObs case_special__huntA7Anchor1H09ContainerReadAtRoot == .matched (some { kind := "localOnlyProperty", names := ["Q", "captured"], counts := [] })
+-- special__huntA7Anchor1H11ContainerThroughLoopState: F(b, y) = { \n   p = { \n     Q = y \n     1 \n   } \n   S(c, n) = c, n + c.Q, n < 10 \n   S(b, 0).while[1] \n } \n F(F.p, 4)
+def case_special__huntA7Anchor1H11ContainerThroughLoopState : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] [privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), privateProp "S" (alg ["c", "n"] [] [] [.param "c", (.binary .add (.param "n") (.dotCall (.param "c") "Q" none)), (.comparison (.param "n") [{ op := .lt, operand := (.num 10) }])])] [(.index (.dotCall (.call (.resolve "S") [.param "b", .num 0]) "while" none) [.num 1])])] [(.call (.resolve "F") [(.dotCall (.resolve "F") "p" none), .num 4])])
+#guard obs case_special__huntA7Anchor1H11ContainerThroughLoopState == "err unknownName"
+
+#guard errorObs case_special__huntA7Anchor1H11ContainerThroughLoopState == .matched (some { kind := "unknownName", names := ["Q"], counts := [] })
+-- special__huntA8Alias1X01CarrierForwards: B = { \n   public F(x) = x * x \n   public Q = 99 \n   F \n } \n B(3), B.Q
+def case_special__huntA8Alias1X01CarrierForwards : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [publicProp "Q" (alg [] [] [] [.num 99]), publicProp "F" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))])] (.resolve "F") none false)] [(.call (.resolve "B") [.num 3]), (.dotCall (.resolve "B") "Q" none)])
+#guard obs case_special__huntA8Alias1X01CarrierForwards == "ok raw=S[9, 99] n=2"
+
+-- special__huntA8Alias1X02CarrierZeroCall: B = { \n   public F(x) = x * x \n   F \n } \n B()
+def case_special__huntA8Alias1X02CarrierZeroCall : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (.alias none [] [publicProp "F" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))])] (.resolve "F") none false)] [(.call (.resolve "B") [])])
+#guard obs case_special__huntA8Alias1X02CarrierZeroCall == "err arity"
+
+#guard errorObs case_special__huntA8Alias1X02CarrierZeroCall == .matched (some { kind := "arity", names := [], counts := [1, 0] })
+-- special__huntA8Alias1X05TransparentMember: A = B \n B = { \n   public X = 1 \n   7 \n } \n A.X, A
+def case_special__huntA8Alias1X05TransparentMember : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "B")), privateProp "B" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [.num 7])] [(.dotCall (.resolve "A") "X" none), .resolve "A"])
+#guard obs case_special__huntA8Alias1X05TransparentMember == "ok raw=S[1, 7] n=2"
+
+-- special__huntA8Alias1X06CarrierNotTargetIdentity: A = 7 \n C = { A } \n Same(x, x) = 0 \n Same(C, A)
+def case_special__huntA8Alias1X06CarrierNotTargetIdentity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 7]), privateProp "C" (.alias none [] [] (.resolve "A") none false), privateProp "Same" (alg ["x", "x"] [] [] [.num 0])] [(.call (.resolve "Same") [.resolve "C", .resolve "A"])])
+#guard obs case_special__huntA8Alias1X06CarrierNotTargetIdentity == "err type"
+
+-- special__huntA9Meta1M02InvokeFresh: Cap(meta r) = r \n R = Cap(tick()) \n R.Invoke(), R.Invoke()
+def case_special__huntA9Meta1M02InvokeFresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "tick") [])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_special__huntA9Meta1M02InvokeFresh == "ok raw=S[1, 2] n=2"
+
+-- special__huntA9Meta1M05ArgumentsSelect: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(1 / 0, 2)) \n R.Arguments[1]
+def case_special__huntA9Meta1M05ArgumentsSelect : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.binary .div (.num 1) (.num 0)), .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.index (.dotCall (.resolve "R") "Arguments" none) [.num 1])])
+#guard obs case_special__huntA9Meta1M05ArgumentsSelect == "ok raw=2 n=1"
+
+-- special__huntA9Meta1M06ArgumentsSelectFail: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(1 / 0, 2)) \n R.Arguments[0]
+def case_special__huntA9Meta1M06ArgumentsSelectFail : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.binary .div (.num 1) (.num 0)), .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.index (.dotCall (.resolve "R") "Arguments" none) [.num 0])])
+#guard obs case_special__huntA9Meta1M06ArgumentsSelectFail == "err div0"
+
+#guard errorObs case_special__huntA9Meta1M06ArgumentsSelectFail == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__huntA9Meta1M08ArgumentsEmpty: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(1 / 0, 2)) \n R.Arguments[]
+def case_special__huntA9Meta1M08ArgumentsEmpty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [(.binary .div (.num 1) (.num 0)), .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.index (.dotCall (.resolve "R") "Arguments" none) [])])
+#guard obs case_special__huntA9Meta1M08ArgumentsEmpty == "ok raw=S[] n=1"
+
+-- special__huntA9Meta1M09AlgorithmFresh: Cap(meta r) = r \n Add(a, b) = a + b \n R = Cap(Add(1, 2)) \n R.Algorithm(10, 20)
+def case_special__huntA9Meta1M09AlgorithmFresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Add") [.num 1, .num 2])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "R") "Algorithm" (some [.num 10, .num 20]))])
+#guard obs case_special__huntA9Meta1M09AlgorithmFresh == "ok raw=30 n=1"
+
+-- special__huntA9Meta1M10Identity: Cap(meta r) = r \n F(x) = x \n R = Cap(F(1)) \n R2 = Cap(F(1)) \n R == R, R == R2
+def case_special__huntA9Meta1M10Identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [.num 1])])]), privateProp "R2" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [.num 1])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [.param "x"])] [(.comparison (.resolve "R") [{ op := .eq, operand := (.resolve "R") }]), (.comparison (.resolve "R") [{ op := .eq, operand := (.resolve "R2") }])])
+#guard obs case_special__huntA9Meta1M10Identity == "ok raw=S[true, false] n=2"
+
+-- special__huntA9Meta2M202ArgumentsCycle: Cap(meta r) = r \n F(x) = x + 1 \n R = Cap(F(R.Arguments[0])) \n R.Invoke()
+def case_special__huntA9Meta2M202ArgumentsCycle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [(.index (.dotCall (.resolve "R") "Arguments" none) [.num 0])])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_special__huntA9Meta2M202ArgumentsCycle == "err demandCycle"
+
+#guard errorObs case_special__huntA9Meta2M202ArgumentsCycle == .matched (some { kind := "demandCycle", names := [], counts := [] })
+-- special__huntA9Meta2M204MultiSelectView: Cap(meta r) = r \n F(a, b, c) = 0 \n R = Cap(F(10, 20, 30)) \n R.Arguments[0, 2], R.Arguments[(1, 0)*]
+def case_special__huntA9Meta2M204MultiSelectView : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [.num 10, .num 20, .num 30])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["a", "b", "c"] [] [] [.num 0])] [(.index (.dotCall (.resolve "R") "Arguments" none) [.num 0, .num 2]), (.index (.dotCall (.resolve "R") "Arguments" none) [(.sequenceSpread (.capture [.num 1, .num 0]))])])
+#guard obs case_special__huntA9Meta2M204MultiSelectView == "ok raw=S[S[10, 30], S[20, 10]] n=2"
+
+-- special__huntA9Meta2M205RebuildCall: Cap(meta r) = r \n Sub(a, b) = a - b \n R = Cap(Sub(tick(), 10)) \n R.Algorithm(R.Arguments*), R.Invoke(), R.Arguments[0]
+def case_special__huntA9Meta2M205RebuildCall : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "Sub") [(.call (.resolve "tick") []), .num 10])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Sub" (alg ["a", "b"] [] [] [(.binary .sub (.param "a") (.param "b"))])] [(.dotCall (.resolve "R") "Algorithm" (some [(.sequenceSpread (.dotCall (.resolve "R") "Arguments" none))])), (.dotCall (.resolve "R") "Invoke" (some [])), (.index (.dotCall (.resolve "R") "Arguments" none) [.num 0])])
+#guard obs case_special__huntA9Meta2M205RebuildCall == "ok raw=S[-9, -9, 1] n=3"
+
+-- special__huntA9Meta2M206SameRefs: Cap(meta r) = r \n F(x) = x \n R = Cap(F(1)) \n Same(x, x) = 1 \n Same(R, R)
+def case_special__huntA9Meta2M206SameRefs : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [.num 1])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [.param "x"]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.call (.resolve "Same") [.resolve "R", .resolve "R"])])
+#guard obs case_special__huntA9Meta2M206SameRefs == "ok raw=1 n=1"
+
+-- special__huntA9Meta2M207SameDifferentRefs: Cap(meta r) = r \n F(x) = x \n R1 = Cap(F(1)) \n R2 = Cap(F(1)) \n Same(x, x) = 1 \n Same(R1, R2)
+def case_special__huntA9Meta2M207SameDifferentRefs : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R1" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [.num 1])])]), privateProp "R2" (alg [] [] [] [(.call (.resolve "Cap") [(.call (.resolve "F") [.num 1])])]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [.param "x"]), privateProp "Same" (alg ["x", "x"] [] [] [.num 1])] [(.call (.resolve "Same") [.resolve "R1", .resolve "R2"])])
+#guard obs case_special__huntA9Meta2M207SameDifferentRefs == "err type"
+
+-- special__huntA9Meta2M208ForwardedReference: Cap(meta r) = r \n F(x) = x * 2 \n Fw(meta r) = Inner(r) \n Inner(q) = q.Invoke() \n Fw(F(21))
+def case_special__huntA9Meta2M208ForwardedReference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "F" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "Fw" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [(.call (.resolve "Inner") [.param "r"])]), privateProp "Inner" (alg ["q"] [] [] [(.dotCall (.param "q") "Invoke" (some []))])] [(.call (.resolve "Fw") [(.call (.resolve "F") [.num 21])])])
+#guard obs case_special__huntA9Meta2M208ForwardedReference == "ok raw=42 n=1"
+
+-- special__huntA10Fe1F01CountFormula: C = count + 0 \n C((1, 2, 3))
+def case_special__huntA10Fe1F01CountFormula : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (alg ["collection"] [] [] [(.binary .add (.call (.resolve "count") [.param "collection"]) (.num 0))])] [(.call (.resolve "C") [(.capture [.num 1, .num 2, .num 3])])])
+#guard obs case_special__huntA10Fe1F01CountFormula == "ok raw=3 n=1"
+
+-- special__huntA10Fe1F02IfFormula: G = if + 0 \n G(true, 5, 7), G(false, 5, 7)
+def case_special__huntA10Fe1F02IfFormula : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["condition", "whenTrue", "whenFalse"] [] [] [(.binary .add (.call (.resolve "if") [.param "condition", .param "whenTrue", .param "whenFalse"]) (.num 0))])] [(.call (.resolve "G") [.boolLiteral true, .num 5, .num 7]), (.call (.resolve "G") [.boolLiteral false, .num 5, .num 7])])
+#guard obs case_special__huntA10Fe1F02IfFormula == "ok raw=S[5, 7] n=2"
+
+-- special__huntA10Fe1F03RepeatFormula: Inc(x) = x + 1 \n G = repeat + 0 \n G(Inc(1), 2)
+def case_special__huntA10Fe1F03RepeatFormula : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["step", "count"] [] [] [(.binary .add (.call (.resolve "repeat") [.param "step", .param "count"]) (.num 0))]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "G") [(.call (.resolve "Inc") [.num 1]), .num 2])])
+#guard obs case_special__huntA10Fe1F03RepeatFormula == "ok raw=3 n=1"
+
+-- special__huntA10Fe1F05rMutualLiftReordered: B = A + z \n A = if(tick() > 3, x + y, B + 1) \n A(1, 2, 3)
+def case_special__huntA10Fe1F05rMutualLiftReordered : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg ["z", "x", "y"] [] [] [(.binary .add (.call (.resolve "A") [.param "x", .param "y", .param "z"]) (.param "z"))]), privateProp "A" (alg ["x", "y", "z"] [] [] [(.call (.resolve "if") [(.comparison (.call (.resolve "tick") []) [{ op := .gt, operand := (.num 3) }]), (.binary .add (.param "x") (.param "y")), (.binary .add (.call (.resolve "B") [.param "z", .param "x", .param "y"]) (.num 1))])])] [(.call (.resolve "A") [.num 1, .num 2, .num 3])])
+#guard obs case_special__huntA10Fe1F05rMutualLiftReordered == "ok raw=15 n=1"
+
+-- special__huntA10Fe1F07WhileRepeatFormula: S(n) = n + 1, n < 3 \n K = while + repeat \n K(S(0), 0)
+def case_special__huntA10Fe1F07WhileRepeatFormula : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["step", "count"] [] [] [(.binary .add (.call (.resolve "while") [.param "step"]) (.call (.resolve "repeat") [.param "step", .param "count"]))]), privateProp "S" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "K") [(.call (.resolve "S") [.num 0]), .num 0])])
+#guard obs case_special__huntA10Fe1F07WhileRepeatFormula == "ok raw=3 n=1"
+
+-- special__huntA10Fe1F08BareForwardSameName: F(p) = p * 2 \n A(p) = F \n A(5)
+def case_special__huntA10Fe1F08BareForwardSameName : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["p"] [] [] [(.binary .mul (.param "p") (.num 2))]), privateProp "A" (alg ["p"] [] [] [(.call (.resolve "F") [.param "p"])])] [(.call (.resolve "A") [.num 5])])
+#guard obs case_special__huntA10Fe1F08BareForwardSameName == "ok raw=10 n=1"
+
+-- special__huntA10Spread1W01ArgSlot: A(x, y)* = x, y \n F(a, b, c) = a * 100 + b * 10 + c \n F(A(1, 2), 3)
+def case_special__huntA10Spread1W01ArgSlot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "F" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "F") [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), .num 3])])
+#guard obs case_special__huntA10Spread1W01ArgSlot == "ok raw=123 n=1"
+
+-- special__huntA10Spread1W01xArgSlotExplicit: A(x, y) = x, y \n F(a, b, c) = a * 100 + b * 10 + c \n F(A(1, 2)*, 3)
+def case_special__huntA10Spread1W01xArgSlotExplicit : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"]), privateProp "F" (alg ["a", "b", "c"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "a") (.num 100)) (.binary .mul (.param "b") (.num 10))) (.param "c"))])] [(.call (.resolve "F") [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), .num 3])])
+#guard obs case_special__huntA10Spread1W01xArgSlotExplicit == "ok raw=123 n=1"
+
+-- special__huntA10Spread1W02List: A(x, y)* = x, y \n [A(1, 2), 3]
+def case_special__huntA10Spread1W02List : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.listLiteral [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), .num 3])])
+#guard obs case_special__huntA10Spread1W02List == "ok raw=L[1, 2, 3] n=1"
+
+-- special__huntA10Spread1W03Group: A(x, y)* = x, y \n (A(1, 2), 3)
+def case_special__huntA10Spread1W03Group : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.capture [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2])), .num 3])])
+#guard obs case_special__huntA10Spread1W03Group == "ok raw=S[1, 2, 3] n=1"
+
+-- special__huntA10Spread1W04RootRow: A(x, y)* = x, y \n A(1, 2)
+def case_special__huntA10Spread1W04RootRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2]))])
+#guard obs case_special__huntA10Spread1W04RootRow == "ok raw=S[1, 2] n=2"
+
+-- special__huntA10Spread1W04xRootRowExplicit: A(x, y) = x, y \n A(1, 2)*
+def case_special__huntA10Spread1W04xRootRowExplicit : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg ["x", "y"] [] [] [.param "x", .param "y"])] [(.sequenceSpread (.call (.resolve "A") [.num 1, .num 2]))])
+#guard obs case_special__huntA10Spread1W04xRootRowExplicit == "ok raw=S[1, 2] n=2"
+
+-- special__huntA10Fwd1Fw08ForwardCollectorIntoCollector: Coll(*xs) = xs \n A(*xs) = Coll \n A((1, 2))
+def case_special__huntA10Fwd1Fw08ForwardCollectorIntoCollector : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "A" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "Coll") [(.sequenceSpread (.param "xs"))])])] [(.call (.resolve "A") [(.capture [.num 1, .num 2])])])
+#guard obs case_special__huntA10Fwd1Fw08ForwardCollectorIntoCollector == "ok raw=L[S[1, 2]] n=1"
+
+-- special__huntA10Fwd1Fw15ForwardingChain: F(x) = x * 2 \n G(x) = F \n H(x) = G \n H(4)
+def case_special__huntA10Fwd1Fw15ForwardingChain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))]), privateProp "G" (alg ["x"] [] [] [(.call (.resolve "F") [.param "x"])]), privateProp "H" (alg ["x"] [] [] [(.call (.resolve "G") [.param "x"])])] [(.call (.resolve "H") [.num 4])])
+#guard obs case_special__huntA10Fwd1Fw15ForwardingChain == "ok raw=8 n=1"
+
+-- special__huntA10Fwd1Fw18ForwardIf: G(condition, whenTrue, whenFalse) = if \n G(true, 1, 2), G(false, 1, 2)
+def case_special__huntA10Fwd1Fw18ForwardIf : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["condition", "whenTrue", "whenFalse"] [] [] [(.call (.resolve "if") [.param "condition", .param "whenTrue", .param "whenFalse"])])] [(.call (.resolve "G") [.boolLiteral true, .num 1, .num 2]), (.call (.resolve "G") [.boolLiteral false, .num 1, .num 2])])
+#guard obs case_special__huntA10Fwd1Fw18ForwardIf == "ok raw=S[1, 2] n=2"
+
+-- special__huntA10Fwd1Fw19AliasOfMap: M = map \n M([1, 2], { x * 3 })
+def case_special__huntA10Fwd1Fw19AliasOfMap : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "M" (.alias none [] [] (.resolve "map"))] [(.call (.resolve "M") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 3))]))])])
+#guard obs case_special__huntA10Fwd1Fw19AliasOfMap == "ok raw=L[3, 6] n=1"
+
+-- special__huntA10Fwd1Fw20ClosedFormulaBuiltin: K(collection) = count + 1 \n K([1])
+def case_special__huntA10Fwd1Fw20ClosedFormulaBuiltin : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "K" (alg ["collection"] [] [] [(.binary .add (.call (.resolve "count") [.param "collection"]) (.num 1))])] [(.call (.resolve "K") [(.listLiteral [.num 1])])])
+#guard obs case_special__huntA10Fwd1Fw20ClosedFormulaBuiltin == "ok raw=2 n=1"
+
+-- special__huntA11Cmp1K03TotalEquality: true == 1
+def case_special__huntA11Cmp1K03TotalEquality : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.boolLiteral true) [{ op := .eq, operand := (.num 1) }])])
+#guard obs case_special__huntA11Cmp1K03TotalEquality == "ok raw=false n=1"
+
+-- special__huntA11Cmp1K04IfNumber: if(1, 2, 3)
+def case_special__huntA11Cmp1K04IfNumber : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [.num 1, .num 2, .num 3])])
+#guard obs case_special__huntA11Cmp1K04IfNumber == "err type"
+
+-- special__huntA11Cmp1K05TickOnce: tick() < tick() < tick()
+def case_special__huntA11Cmp1K05TickOnce : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.call (.resolve "tick") []) [{ op := .lt, operand := (.call (.resolve "tick") []) }, { op := .lt, operand := (.call (.resolve "tick") []) }])])
+#guard obs case_special__huntA11Cmp1K05TickOnce == "ok raw=true n=1"
+
+-- special__huntA11Cmp1K06TickEq: tick() == tick()
+def case_special__huntA11Cmp1K06TickEq : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.call (.resolve "tick") []) [{ op := .eq, operand := (.call (.resolve "tick") []) }])])
+#guard obs case_special__huntA11Cmp1K06TickEq == "ok raw=false n=1"
+
+-- special__huntA12Builtins1B01IfLazy: if(true, 1, 1 / 0), if(false, 1 / 0, 2)
+def case_special__huntA12Builtins1B01IfLazy : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [.boolLiteral true, .num 1, (.binary .div (.num 1) (.num 0))]), (.call (.resolve "if") [.boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2])])
+#guard obs case_special__huntA12Builtins1B01IfLazy == "ok raw=S[1, 2] n=2"
+
+-- special__huntA12Builtins1B02IfCondFail: if(1 / 0, 1, 2)
+def case_special__huntA12Builtins1B02IfCondFail : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "if") [(.binary .div (.num 1) (.num 0)), .num 1, .num 2])])
+#guard obs case_special__huntA12Builtins1B02IfCondFail == "err div0"
+
+#guard errorObs case_special__huntA12Builtins1B02IfCondFail == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__huntA12Builtins1B04MapTwoRows: map([1, 2], { x, x })
+def case_special__huntA12Builtins1B04MapTwoRows : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [.param "x", .param "x"]))])])
+#guard obs case_special__huntA12Builtins1B04MapTwoRows == "ok raw=L[S[1, 1], S[2, 2]] n=1"
+
+-- special__huntA12Builtins1B05MapEmptyRow: map([1, 2], { if(x > 0, (), ()) })
+def case_special__huntA12Builtins1B05MapEmptyRow : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [(.call (.resolve "if") [(.comparison (.param "x") [{ op := .gt, operand := (.num 0) }]), (.emptySequence 0), (.emptySequence 0)])]))])])
+#guard obs case_special__huntA12Builtins1B05MapEmptyRow == "ok raw=L[S[], S[]] n=1"
+
+-- special__huntA12Builtins1B06FilterNonbool: filter([1, 2], { x })
+def case_special__huntA12Builtins1B06FilterNonbool : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "filter") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x"] [] [] [.param "x"]))])])
+#guard obs case_special__huntA12Builtins1B06FilterNonbool == "err type"
+
+-- special__huntA12Edge2G01WhileEmptySpreadOnly: Step(n) = ()* \n Step(0).while
+def case_special__huntA12Edge2G01WhileEmptySpreadOnly : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.sequenceSpread (.emptySequence 0))])] [(.dotCall (.call (.resolve "Step") [.num 0]) "while" none)])
+#guard obs case_special__huntA12Edge2G01WhileEmptySpreadOnly == "err arity"
+
+#guard errorObs case_special__huntA12Edge2G01WhileEmptySpreadOnly == .matched (some { kind := "badArity", names := [], counts := [] })
+-- special__huntA12Edge2G02WhileEmptyRow: Step(n) = () \n Step(0).while
+def case_special__huntA12Edge2G02WhileEmptyRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.emptySequence 0)])] [(.dotCall (.call (.resolve "Step") [.num 0]) "while" none)])
+#guard obs case_special__huntA12Edge2G02WhileEmptyRow == "err type"
+
+-- special__huntA12Edge2G03WhileListFlag: Step(n) = n + 1, [true] \n Step(0).while
+def case_special__huntA12Edge2G03WhileListFlag : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.listLiteral [.boolLiteral true])])] [(.dotCall (.call (.resolve "Step") [.num 0]) "while" none)])
+#guard obs case_special__huntA12Edge2G03WhileListFlag == "err type"
+
+-- special__huntA12Edge2G04RepeatZeroRowStep: Step(n) = ()* \n Step(0).repeat(1)
+def case_special__huntA12Edge2G04RepeatZeroRowStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["n"] [] [] [(.sequenceSpread (.emptySequence 0))])] [(.dotCall (.call (.resolve "Step") [.num 0]) "repeat" (some [.num 1]))])
+#guard obs case_special__huntA12Edge2G04RepeatZeroRowStep == "ok raw=S[] n=1"
+
+-- special__huntA12Edge2G05RepeatEmptyState: Z(*xs) = xs.count \n Z().repeat(2)
+def case_special__huntA12Edge2G05RepeatEmptyState : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Z" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)])] [(.dotCall (.call (.resolve "Z") []) "repeat" (some [.num 2]))])
+#guard obs case_special__huntA12Edge2G05RepeatEmptyState == "ok raw=1 n=1"
+
+-- special__huntA12Edge2G06FamilyBool: F(true) = 1 \n F(false) = 0 \n F(1 > 0), F(1 < 0)
+def case_special__huntA12Edge2G06FamilyBool : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litBool true, (alg [] [] [] [.num 1])⟩, ⟨.litBool false, (alg [] [] [] [.num 0])⟩])] [(.call (.resolve "F") [(.comparison (.num 1) [{ op := .gt, operand := (.num 0) }])]), (.call (.resolve "F") [(.comparison (.num 1) [{ op := .lt, operand := (.num 0) }])])])
+#guard obs case_special__huntA12Edge2G06FamilyBool == "ok raw=S[1, 0] n=2"
+
+-- special__huntA12Shadow1Sh01UserFilterCount: filter(xs, p) = [100, 200, 300] \n count(x) = 7 \n [1, 2, 3].filter({ x > 1 }).count
+def case_special__huntA12Shadow1Sh01UserFilterCount : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "filter" (alg ["xs", "p"] [] [] [(.listLiteral [.num 100, .num 200, .num 300])]), privateProp "count" (alg ["x"] [] [] [.num 7])] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]))])) "count" none)])
+#guard obs case_special__huntA12Shadow1Sh01UserFilterCount == "ok raw=7 n=1"
+
+-- special__huntA12Shadow1Sh02UserFilterBuiltinCount: filter(xs, p) = [100, 200, 300] \n [1, 2, 3].filter({ x > 1 }).count
+def case_special__huntA12Shadow1Sh02UserFilterBuiltinCount : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "filter" (alg ["xs", "p"] [] [] [(.listLiteral [.num 100, .num 200, .num 300])])] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 2, .num 3]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]))])) "count" none)])
+#guard obs case_special__huntA12Shadow1Sh02UserFilterBuiltinCount == "ok raw=3 n=1"
+
+-- special__huntA12Shadow1Sh03BuiltinFilterUserCount: count(x) = 7 \n filter([1, 2, 3], { x > 1 }).count
+def case_special__huntA12Shadow1Sh03BuiltinFilterUserCount : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "count" (alg ["x"] [] [] [.num 7])] [(.dotCall (.call (.resolve "filter") [(.listLiteral [.num 1, .num 2, .num 3]), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]))]) "count" none)])
+#guard obs case_special__huntA12Shadow1Sh03BuiltinFilterUserCount == "ok raw=7 n=1"
+
+-- special__huntA12Shadow1Sh04UserCountCallForm: count(x) = 7 \n count(filter([1, 2, 3], { x > 1 }))
+def case_special__huntA12Shadow1Sh04UserCountCallForm : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "count" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "count") [(.call (.resolve "filter") [(.listLiteral [.num 1, .num 2, .num 3]), (.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]))])])])
+#guard obs case_special__huntA12Shadow1Sh04UserCountCallForm == "ok raw=7 n=1"
+
+-- special__huntA12Shadow1Sh05UserRange: range(a, b) = [a * 10, b * 10] \n range(1, 3).filter({ x > 15 }).count
+def case_special__huntA12Shadow1Sh05UserRange : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "range" (alg ["a", "b"] [] [] [(.listLiteral [(.binary .mul (.param "a") (.num 10)), (.binary .mul (.param "b") (.num 10))])])] [(.dotCall (.dotCall (.call (.resolve "range") [.num 1, .num 3]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .gt, operand := (.num 15) }])]))])) "count" none)])
+#guard obs case_special__huntA12Shadow1Sh05UserRange == "ok raw=1 n=1"
+
+-- special__huntA12Shadow1Sh06UserIfInLoop: if(c, a, b) = a * 1000 \n Step(n, acc) = n + 1, acc + if(n > 1, 1, 2), n < 3 \n Step(0, 0).while
+def case_special__huntA12Shadow1Sh06UserIfInLoop : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "if" (alg ["c", "a", "b"] [] [] [(.binary .mul (.param "a") (.num 1000))]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.call (.resolve "if") [(.comparison (.param "n") [{ op := .gt, operand := (.num 1) }]), .num 1, .num 2])), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.call (.resolve "Step") [.num 0, .num 0]) "while" none)])
+#guard obs case_special__huntA12Shadow1Sh06UserIfInLoop == "ok raw=S[3, 3000] n=1"
+
+-- special__huntA13Arith1R01DivSigns: -7 div 2, -7 mod 2, 7 div -2, 7 mod -2, -7 div -2, -7 mod -2
+def case_special__huntA13Arith1R01DivSigns : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .idiv (.unary .minus (.num 7)) (.num 2)), (.binary .mod (.unary .minus (.num 7)) (.num 2)), (.binary .idiv (.num 7) (.unary .minus (.num 2))), (.binary .mod (.num 7) (.unary .minus (.num 2))), (.binary .idiv (.unary .minus (.num 7)) (.unary .minus (.num 2))), (.binary .mod (.unary .minus (.num 7)) (.unary .minus (.num 2)))])
+#guard obs case_special__huntA13Arith1R01DivSigns == "ok raw=S[-3, -1, -3, 1, 3, -1] n=6"
+
+-- special__huntA13Arith1R02ExactDiv: 6 / 3, -12 / 4, 0 / 5
+def case_special__huntA13Arith1R02ExactDiv : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .div (.num 6) (.num 3)), (.binary .div (.unary .minus (.num 12)) (.num 4)), (.binary .div (.num 0) (.num 5))])
+#guard obs case_special__huntA13Arith1R02ExactDiv == "ok raw=S[2, -3, 0] n=3"
+
+-- special__huntA13Arith1R03Pow: 2 ^ 10, (-2) ^ 3, -2 ^ 2, 0 ^ 0
+def case_special__huntA13Arith1R03Pow : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .pow (.num 2) (.num 10)), (.binary .pow (.unary .minus (.num 2)) (.num 3)), (.unary .minus (.binary .pow (.num 2) (.num 2))), (.binary .pow (.num 0) (.num 0))])
+#guard obs case_special__huntA13Arith1R03Pow == "ok raw=S[1024, -8, -4, 1] n=4"
+
+-- special__huntA13Arith1R04ZeroNegPow: 0 ^ -1
+def case_special__huntA13Arith1R04ZeroNegPow : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .pow (.num 0) (.unary .minus (.num 1)))])
+#guard obs case_special__huntA13Arith1R04ZeroNegPow == "err illegalInEval"
+
+-- special__huntA13Arith1R05ModZero: 10 mod 0
+def case_special__huntA13Arith1R05ModZero : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .mod (.num 10) (.num 0))])
+#guard obs case_special__huntA13Arith1R05ModZero == "err div0"
+
+#guard errorObs case_special__huntA13Arith1R05ModZero == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__huntA13Arith1R06DivZero: 5 div 0
+def case_special__huntA13Arith1R06DivZero : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .idiv (.num 5) (.num 0))])
+#guard obs case_special__huntA13Arith1R06DivZero == "err div0"
+
+#guard errorObs case_special__huntA13Arith1R06DivZero == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__huntA14Open1O01SameProviderTwice: open M, M \n M = { public X = 1 } \n X
+def case_special__huntA14Open1O01SameProviderTwice : Expr :=
+  .algorithmExpr (alg [] [.resolve "M", .resolve "M"] [privateProp "M" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [])] [.resolve "X"])
+#guard obs case_special__huntA14Open1O01SameProviderTwice == "ok raw=1 n=1"
+
+-- special__huntA14Open1O02SameProviderGrouped: open M, (M) \n M = { public X = 1 } \n X
+def case_special__huntA14Open1O02SameProviderGrouped : Expr :=
+  .algorithmExpr (alg [] [.resolve "M", .resolve "M"] [privateProp "M" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] [])] [.resolve "X"])
+#guard obs case_special__huntA14Open1O02SameProviderGrouped == "ok raw=1 n=1"
+
+-- special__huntA14Open1O03AliasProviderSame: open Sub, Lib.Sub \n Lib = { public Sub = { public X = 2 } } \n Sub = Lib.Sub \n X
+def case_special__huntA14Open1O03AliasProviderSame : Expr :=
+  .algorithmExpr (alg [] [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 2])] [])] []), privateProp "Sub" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))] [.resolve "X"])
+#guard obs case_special__huntA14Open1O03AliasProviderSame == "ok raw=2 n=1"
+
+-- special__huntA14Open1O05CountShadow: count = 5 \n count
+def case_special__huntA14Open1O05CountShadow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "count" (alg [] [] [] [.num 5])] [.resolve "count"])
+#guard obs case_special__huntA14Open1O05CountShadow == "ok raw=5 n=1"
+
+-- special__huntA14Open1O06CountUserCallable: count(x) = x * 2 \n count(3), 5.count
+def case_special__huntA14Open1O06CountUserCallable : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "count" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 2))])] [(.call (.resolve "count") [.num 3]), (.dotCall (.num 5) "count" none)])
+#guard obs case_special__huntA14Open1O06CountUserCallable == "ok raw=S[6, 10] n=2"
+
+-- special__huntA14Open1O09OpenPrivateNotProvided: open Box \n Box = { X = 5 } \n X
+def case_special__huntA14Open1O09OpenPrivateNotProvided : Expr :=
+  .algorithmExpr (alg ["X"] [.resolve "Box"] [privateProp "Box" (alg [] [] [privateProp "X" (alg [] [] [] [.num 5])] [])] [.param "X"])
+#guard obs case_special__huntA14Open1O09OpenPrivateNotProvided == "err unresolvedImplicitParams"
+
+#guard errorObs case_special__huntA14Open1O09OpenPrivateNotProvided == .matched (some { kind := "unresolvedImplicitParams", names := ["X"], counts := [] })
+-- 2808 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -15865,9 +17192,266 @@ def surfaceCaseIds : List String := [
   "special__bareForwardingReusesEnclosingBinding",
   "special__bareForwardingRepeatedName",
   "special__writtenCallInfersWrittenNames",
-  "special__writtenCallIgnoresCalleeBinderNames"
+  "special__writtenCallIgnoresCalleeBinderNames",
+  "special__huntGenLoopsAG0000",
+  "special__huntGenLoopsAG0001",
+  "special__huntGenLoopsAG0002",
+  "special__huntGenLoopsAG0003",
+  "special__huntGenLoopsAG0004",
+  "special__huntGenLoopsAG0005",
+  "special__huntGenLoopsAG0006",
+  "special__huntGenLoopsAG0007",
+  "special__huntGenLoopsAG0008",
+  "special__huntGenLoopsAG0009",
+  "special__huntGenLoopsAG0010",
+  "special__huntGenLoopsAG0011",
+  "special__huntGenLoopsAG0012",
+  "special__huntGenLoopsAG0013",
+  "special__huntGenLoopsAG0014",
+  "special__huntGenLoopsAG0015",
+  "special__huntGenLoopsAG0016",
+  "special__huntGenLoopsAG0017",
+  "special__huntGenLoopsAG0018",
+  "special__huntGenLoopsAG0019",
+  "special__huntGenLoopsAG0020",
+  "special__huntGenLoopsAG0021",
+  "special__huntGenLoopsAG0022",
+  "special__huntGenLoopsAG0023",
+  "special__huntGenLoopsAG0024",
+  "special__huntGenFusionAU0000",
+  "special__huntGenFusionAU0001",
+  "special__huntGenFusionAU0002",
+  "special__huntGenFusionAU0003",
+  "special__huntGenFusionAU0004",
+  "special__huntGenFusionAU0005",
+  "special__huntGenFusionAU0006",
+  "special__huntGenFusionAU0007",
+  "special__huntGenFusionAU0008",
+  "special__huntGenFusionAU0009",
+  "special__huntGenFusionAU0010",
+  "special__huntGenFusionAU0011",
+  "special__huntGenFusionAU0012",
+  "special__huntGenFusionAU0013",
+  "special__huntGenFusionAU0014",
+  "special__huntGenFusionAU0015",
+  "special__huntGenFusionAU0016",
+  "special__huntGenFusionAU0017",
+  "special__huntGenFusionAU0018",
+  "special__huntGenFusionAU0019",
+  "special__huntGenFaultsAF0000",
+  "special__huntGenFaultsAF0001",
+  "special__huntGenFaultsAF0002",
+  "special__huntGenFaultsAF0003",
+  "special__huntGenFaultsAF0004",
+  "special__huntGenFaultsAF0005",
+  "special__huntGenFaultsAF0006",
+  "special__huntGenFaultsAF0007",
+  "special__huntGenFaultsAF0008",
+  "special__huntGenFaultsAF0009",
+  "special__huntGenFaultsAF0010",
+  "special__huntGenFaultsAF0011",
+  "special__huntGenFaultsAF0012",
+  "special__huntGenFaultsAF0013",
+  "special__huntGenFaultsAF0014",
+  "special__huntGenFaultsAF0015",
+  "special__huntGenFaultsAF0016",
+  "special__huntGenFaultsAF0017",
+  "special__huntGenFaultsAF0018",
+  "special__huntGenFaultsAF0019",
+  "special__huntGenInferAI0000Base",
+  "special__huntGenInferAI0001Base",
+  "special__huntGenInferAI0002Base",
+  "special__huntGenInferAI0003Base",
+  "special__huntGenInferAI0004Base",
+  "special__huntGenInferAI0005Base",
+  "special__huntGenInferAI0006Base",
+  "special__huntGenInferAI0007Base",
+  "special__huntGenInferAI0008Base",
+  "special__huntGenInferAI0009Base",
+  "special__huntGenInferAI0010Base",
+  "special__huntGenInferAI0011Base",
+  "special__huntGenInferAI0012Base",
+  "special__huntGenInferAI0013Base",
+  "special__huntGenInferAI0014Base",
+  "special__huntGenInferAI0015Base",
+  "special__huntGenInferAI0016Base",
+  "special__huntGenInferAI0017Base",
+  "special__huntGenInferAI0018Base",
+  "special__huntGenInferAI0019Base",
+  "special__huntGenEqAQ0000",
+  "special__huntGenEqAQ0001",
+  "special__huntGenEqAQ0002",
+  "special__huntGenEqAQ0003",
+  "special__huntGenEqAQ0004",
+  "special__huntGenEqAQ0005",
+  "special__huntGenEqAQ0006",
+  "special__huntGenEqAQ0007",
+  "special__huntGenEqAQ0008",
+  "special__huntGenEqAQ0009",
+  "special__huntGenEqAQ0010",
+  "special__huntGenEqAQ0011",
+  "special__huntGenEqAQ0012",
+  "special__huntGenEqAQ0013",
+  "special__huntGenEqAQ0014",
+  "special__huntGenExpoAX0000Pair",
+  "special__huntGenExpoAX0001Pair",
+  "special__huntGenExpoAX0002Pair",
+  "special__huntGenExpoAX0003Pair",
+  "special__huntGenExpoAX0004Pair",
+  "special__huntGenExpoAX0005Pair",
+  "special__huntGenExpoAX0006Pair",
+  "special__huntGenExpoAX0007Pair",
+  "special__huntGenExpoAX0008Pair",
+  "special__huntGenExpoAX0009Pair",
+  "special__huntGenExpo2AY0000Pair",
+  "special__huntGenExpo2AY0001Pair",
+  "special__huntGenExpo2AY0002Pair",
+  "special__huntGenExpo2AY0003Pair",
+  "special__huntGenExpo2AY0004Pair",
+  "special__huntGenExpo2AY0005Pair",
+  "special__huntGenChaosGZ0000",
+  "special__huntGenChaosGZ0001",
+  "special__huntGenChaosGZ0002",
+  "special__huntGenChaosGZ0005",
+  "special__huntGenChaosGZ0006",
+  "special__huntGenChaosGZ0010",
+  "special__huntGenChaosGZ0013",
+  "special__huntGenChaosGZ0015",
+  "special__huntGenChaosGZ0017",
+  "special__huntGenChaosGZ0020",
+  "special__huntA1Expo1E01Direct",
+  "special__huntA1Expo1E02Member",
+  "special__huntA1Expo1E05Alias",
+  "special__huntA1Expo1E07RuntimeAliasParam",
+  "special__huntA1Expo1E09DeconBoth",
+  "special__huntA1Expo1E10ClauseBinder",
+  "special__huntA2Need1N01UndemandedSecond",
+  "special__huntA2Need1N02DemandOrder",
+  "special__huntA2Need1N03AtMostOnce",
+  "special__huntA2Need1N04NeverDemanded",
+  "special__huntA2Need1N05ForwardingNoForce",
+  "special__huntA2Need1N06CardinalityFirst",
+  "special__huntA2Need2T01MemberPathTransport",
+  "special__huntA2Need2T02AliasChainTransport",
+  "special__huntA2Need2T03ParamHoldingReference",
+  "special__huntA2Need2T04CountThroughAlias",
+  "special__huntA2Need2T05FirstThroughAlias",
+  "special__huntA2Need2T06SelectThroughMember",
+  "special__huntA3Cache1C01ReentrantQ37",
+  "special__huntA3Cache1C02CollectingAliasOnce",
+  "special__huntA3Cache1C03AliasRead",
+  "special__huntA3Cache1C04AliasCallEstablishes",
+  "special__huntA3Cache1C06CarrierCalls",
+  "special__huntA3Cache1C07RuntimeMemberValueOnly",
+  "special__huntA3Cache2C203FormulaOwnerReadFirst",
+  "special__huntA3Cache2C204ExportedOwner",
+  "special__huntA3Cache2C205CallbackMemberRead",
+  "special__huntA3Cache2C206AliasCellExported",
+  "special__huntA3Cache2C207AliasCellLocal",
+  "special__huntA3Cache2C208AliasCellInLoopStep",
+  "special__huntA3Cache3C301tPropertyTwinExported",
+  "special__huntA3Cache3C302tPropertyTwinLocal",
+  "special__huntA3Cache3C303AliasCellLoop",
+  "special__huntA3Cache3C303tPropertyTwinLoop",
+  "special__huntA3Cache3C304tPropertyTwinLocalLoop",
+  "special__huntA3Cache3C305AliasCellReadAndCall",
+  "special__huntA4Loops1L01WhileBasic",
+  "special__huntA4Loops1L08FamilyStep",
+  "special__huntA4Loops1L10AliasStep",
+  "special__huntA4Loops1L13LoopOneValue",
+  "special__huntA4Loops1L14ForwardStep",
+  "special__huntA4Loops1L16QualifiedStep",
+  "special__huntA5Select1S03StringCount",
+  "special__huntA5Select1S04EmptyStringSelect",
+  "special__huntA5Select1S05StringOnePosition",
+  "special__huntA5Select1S06ScalarSelf",
+  "special__huntA5Select1S07ScalarOut",
+  "special__huntA6Spread1P01CollTable",
+  "special__huntA6Spread1P02Cnt",
+  "special__huntA6Spread1P03CntValue",
+  "special__huntA6Spread1P04Withhead",
+  "special__huntA6Spread1P05IdPair",
+  "special__huntA6Spread1P06AddPair",
+  "special__huntA7Dot1D01ChainFallback",
+  "special__huntA7Dot1D02DeclaredString",
+  "special__huntA7Dot1D03LexicalStringIgnored",
+  "special__huntA7Dot1D04BranchMember",
+  "special__huntA7Dot1D05PrivateStructural",
+  "special__huntA7Dot1D06SpreadReceiver",
+  "special__huntA7Anchor1H01StatedCarriedContainer",
+  "special__huntA7Anchor1H05OpenHeadBetween",
+  "special__huntA7Anchor1H06CarriedViaCallback",
+  "special__huntA7Anchor1H08CarriedThroughParamChain",
+  "special__huntA7Anchor1H09ContainerReadAtRoot",
+  "special__huntA7Anchor1H11ContainerThroughLoopState",
+  "special__huntA8Alias1X01CarrierForwards",
+  "special__huntA8Alias1X02CarrierZeroCall",
+  "special__huntA8Alias1X05TransparentMember",
+  "special__huntA8Alias1X06CarrierNotTargetIdentity",
+  "special__huntA9Meta1M02InvokeFresh",
+  "special__huntA9Meta1M05ArgumentsSelect",
+  "special__huntA9Meta1M06ArgumentsSelectFail",
+  "special__huntA9Meta1M08ArgumentsEmpty",
+  "special__huntA9Meta1M09AlgorithmFresh",
+  "special__huntA9Meta1M10Identity",
+  "special__huntA9Meta2M202ArgumentsCycle",
+  "special__huntA9Meta2M204MultiSelectView",
+  "special__huntA9Meta2M205RebuildCall",
+  "special__huntA9Meta2M206SameRefs",
+  "special__huntA9Meta2M207SameDifferentRefs",
+  "special__huntA9Meta2M208ForwardedReference",
+  "special__huntA10Fe1F01CountFormula",
+  "special__huntA10Fe1F02IfFormula",
+  "special__huntA10Fe1F03RepeatFormula",
+  "special__huntA10Fe1F05rMutualLiftReordered",
+  "special__huntA10Fe1F07WhileRepeatFormula",
+  "special__huntA10Fe1F08BareForwardSameName",
+  "special__huntA10Spread1W01ArgSlot",
+  "special__huntA10Spread1W01xArgSlotExplicit",
+  "special__huntA10Spread1W02List",
+  "special__huntA10Spread1W03Group",
+  "special__huntA10Spread1W04RootRow",
+  "special__huntA10Spread1W04xRootRowExplicit",
+  "special__huntA10Fwd1Fw08ForwardCollectorIntoCollector",
+  "special__huntA10Fwd1Fw15ForwardingChain",
+  "special__huntA10Fwd1Fw18ForwardIf",
+  "special__huntA10Fwd1Fw19AliasOfMap",
+  "special__huntA10Fwd1Fw20ClosedFormulaBuiltin",
+  "special__huntA11Cmp1K03TotalEquality",
+  "special__huntA11Cmp1K04IfNumber",
+  "special__huntA11Cmp1K05TickOnce",
+  "special__huntA11Cmp1K06TickEq",
+  "special__huntA12Builtins1B01IfLazy",
+  "special__huntA12Builtins1B02IfCondFail",
+  "special__huntA12Builtins1B04MapTwoRows",
+  "special__huntA12Builtins1B05MapEmptyRow",
+  "special__huntA12Builtins1B06FilterNonbool",
+  "special__huntA12Edge2G01WhileEmptySpreadOnly",
+  "special__huntA12Edge2G02WhileEmptyRow",
+  "special__huntA12Edge2G03WhileListFlag",
+  "special__huntA12Edge2G04RepeatZeroRowStep",
+  "special__huntA12Edge2G05RepeatEmptyState",
+  "special__huntA12Edge2G06FamilyBool",
+  "special__huntA12Shadow1Sh01UserFilterCount",
+  "special__huntA12Shadow1Sh02UserFilterBuiltinCount",
+  "special__huntA12Shadow1Sh03BuiltinFilterUserCount",
+  "special__huntA12Shadow1Sh04UserCountCallForm",
+  "special__huntA12Shadow1Sh05UserRange",
+  "special__huntA12Shadow1Sh06UserIfInLoop",
+  "special__huntA13Arith1R01DivSigns",
+  "special__huntA13Arith1R02ExactDiv",
+  "special__huntA13Arith1R03Pow",
+  "special__huntA13Arith1R04ZeroNegPow",
+  "special__huntA13Arith1R05ModZero",
+  "special__huntA13Arith1R06DivZero",
+  "special__huntA14Open1O01SameProviderTwice",
+  "special__huntA14Open1O02SameProviderGrouped",
+  "special__huntA14Open1O03AliasProviderSame",
+  "special__huntA14Open1O05CountShadow",
+  "special__huntA14Open1O06CountUserCallable",
+  "special__huntA14Open1O09OpenPrivateNotProvided"
 ]
-#guard surfaceCaseIds.length == 2551
+#guard surfaceCaseIds.length == 2808
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards
@@ -16012,5 +17596,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 19
 
 -- 19 internal-node cases.
--- Total: 2570 case guards (2551 surface + 19 internal-node).
+-- Total: 2827 case guards (2808 surface + 19 internal-node).
 end SemanticExplorerCases

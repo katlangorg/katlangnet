@@ -23,11 +23,11 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4161
-- guarded: 4023 (511 may capture calls, 3512 cannot)
+- corpus programs: 4556
+- guarded: 4418 (629 may capture calls, 3789 cannot)
 - excluded: 138
-  language-spec: 654 programs, 541 guarded (49 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
-  explorer: 2564 programs, 2551 guarded (53 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
+  language-spec: 792 programs, 679 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+  explorer: 2821 programs, 2808 guarded (131 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
   host-parent: 134 programs, 134 guarded (8 may capture calls)
@@ -589,6 +589,144 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_outside == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_inside == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_outside == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_inline_block_head_per_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_opened_member_read_per_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_carrier_of_dependent_property_per_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_deconstruction_target_per_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_lifted_formula_uses_enclosing_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_bare_forwarding_clause_uses_enclosing_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_inline_open_target_lifted_with_enclosing_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_self_contained_property_fresh_in_every_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_dependent_property_evaluated_per_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_call_reference_property_per_call == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_exposure_member_mixes_exported_and_dependent == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_carrier_call_fresh_bare_read_target == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_deconstruction_call_establishes_target_entry == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_collecting_only_owner_read_and_calls == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_collecting_only_owner_exported_member == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_collecting_owner_dependent_member_refused_at_root == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_declared_algorithm_member_grouped_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_alias_of_member_path_shares_member_entry == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_carrier_own_member_and_forwarded_read == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_explicit_call_establishes_inner_reads_cached == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_reentrant_explicit_call_inside_owner == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_carrier_call_uses_declaring_activation == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_explicit_owner_call_binds_fresh_activation == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_explicit_call_owns_empty_key == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_deconstruction_in_loop_step_per_round == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_alias_of_collecting_owner == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_cache_carrier_forwards_supplied_calls_fresh == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_exported == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_local == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_per_loop_round == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_spread_formed_before_ordinary_cells == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_collector_selection_demands_one_cell_once == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_repeated_name_value_contribution_anchors == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_family_shares_one_supply_across_clauses == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_unused_fixed_argument_never_runs == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_need_callback_argument_evaluated_once == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_while_false_round_forms_no_earlier_rows == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_while_empty_trailing_spread_passed_over == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_while_single_item_state_and_flag == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_repeat_prepares_supply_before_count == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_repeat_zero_never_projects_step == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_repeat_step_without_callable == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_builtin_step_result_is_one_row == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_carrier_step_forwards == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_nested_loop_is_one_slot == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_meta_parameter_cannot_forward_step == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_bare_member_path_is_no_step == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_local_step_temporary_per_round == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_step_temporary_read_then_call == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_exported_temporary_call_is_fresh == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_step_structural_head_binds_state == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_step_collecting_head_collects_state == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_loop_step_repeated_name_must_agree == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_selection_invalid_position_stops_before_later_selector == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_selection_selectors_demanded_left_to_right == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_selection_negative_index_is_bad_index == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_selection_boolean_selector_is_type == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_selection_first_selector_failure_wins == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_selection_scalar_boolean_selects_itself == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_capture_is_inert == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_invoke_reuses_sticky_supply == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_arguments_count_demands_nothing == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_arguments_selection_validates_before_reading == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_extension_route_receiver_first == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_intrinsic_route_refuses_invocation == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_arguments_and_invoke_share_cells == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_member_route_invoke_is_fresh == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_sticky_supply_self_demand_cycle == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_arguments_count_inside_own_argument == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_invoke_body_fresh_arguments_sticky == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_algorithm_call_takes_fresh_supply == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_cycle_settles_as_one_signature == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_cycle_declaration_order_unobservable == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_mutual_recursion_settles == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_recursive_formula_settles == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_grace_postfix_moves_ysx == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_grace_three_postfix_markers == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_grace_three_prefix_markers == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_grace_mixed_markers == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_group_pattern_first_occurrence == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_group_pattern_second_occurrence == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_group_of_one_binder_is_the_binder == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_list_group_keeps_kind == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_shared_collector_name_is_one_binding == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_new_parameter_beside_property_read == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_dot_call_order_receiver_member_arguments == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_grace_on_dot_receiver == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_clause_family_plain_binder_slot == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_through_alias_chain == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_if_branch_lifts_whether_selected == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_lifting_list_element_value_role == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_marked_family == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_bare_read_is_one_value == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_zero_supply_call_spreads == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_if_slot_no_exemption == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_selector_slot == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_step_row_spreads == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_unmarked_step_row_is_one_slot == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_marked_step_call_is_two_arguments == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_through_transparent_alias == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_not_through_carrier == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_member_path_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_empty_rows_supply_nothing == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_nested_marked_calls == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_repeat_count_slot == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_output_spread_extension_receiver == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_carried_container_reads_the_current_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_static_owner_above_activation_refused == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_container_written_in_other_call_refused == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_root_alias_of_container == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_container_through_call_reference == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_open_member_and_carried_container == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_anchoring_recursive_owner_innermost_call == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_open_owner_walk_before_opens == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_open_prelude_before_opens == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_open_nested_levels_inner_first == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_open_overlap_without_use_is_legal == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_builtin_reduce_demands_initial_on_empty == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_builtin_filter_count_predicate_per_item == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_meta_family_redispatch_on_new_supply == true
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_family_repeated_name_identity_nonmatch == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_family_empty_and_pair_sequence_patterns == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_comparison_chain_operands_once == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_logical_operands_both_evaluated == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_builtin_map_callbacks_run_in_collection_order == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_own_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_closed_formula_reuses_enclosing_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_branch_formula_reuses_enclosing_parameter == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_closed_list_without_source_is_a_demand == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_collector_to_collector_respreads == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_fixed_binding_passed_whole == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_collecting_only_callee_is_read == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_grace_block_inside_closed_branch == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_builtin_parameter_by_name == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_enclosing_bindings_at_two_levels == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_nearest_parameter_binding_wins == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_hunt_forwarding_property_is_never_a_source == false
 
 /-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
     expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
@@ -1133,10 +1271,148 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_inside,
   LanguageSpecCases.case_exposure_shape_inline_head_open_of_reference_member_capture_outside,
   LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_inside,
-  LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_outside
+  LanguageSpecCases.case_exposure_shape_inline_head_enclosing_open_member_capture_outside,
+  LanguageSpecCases.case_hunt_exposure_inline_block_head_per_call,
+  LanguageSpecCases.case_hunt_exposure_opened_member_read_per_call,
+  LanguageSpecCases.case_hunt_exposure_carrier_of_dependent_property_per_call,
+  LanguageSpecCases.case_hunt_exposure_deconstruction_target_per_call,
+  LanguageSpecCases.case_hunt_exposure_lifted_formula_uses_enclosing_parameter,
+  LanguageSpecCases.case_hunt_exposure_bare_forwarding_clause_uses_enclosing_parameter,
+  LanguageSpecCases.case_hunt_exposure_inline_open_target_lifted_with_enclosing_parameter,
+  LanguageSpecCases.case_hunt_exposure_self_contained_property_fresh_in_every_call,
+  LanguageSpecCases.case_hunt_exposure_dependent_property_evaluated_per_call,
+  LanguageSpecCases.case_hunt_exposure_call_reference_property_per_call,
+  LanguageSpecCases.case_hunt_exposure_member_mixes_exported_and_dependent,
+  LanguageSpecCases.case_hunt_cache_carrier_call_fresh_bare_read_target,
+  LanguageSpecCases.case_hunt_cache_deconstruction_call_establishes_target_entry,
+  LanguageSpecCases.case_hunt_cache_collecting_only_owner_read_and_calls,
+  LanguageSpecCases.case_hunt_cache_collecting_only_owner_exported_member,
+  LanguageSpecCases.case_hunt_collecting_owner_dependent_member_refused_at_root,
+  LanguageSpecCases.case_hunt_cache_declared_algorithm_member_grouped_call,
+  LanguageSpecCases.case_hunt_cache_alias_of_member_path_shares_member_entry,
+  LanguageSpecCases.case_hunt_cache_carrier_own_member_and_forwarded_read,
+  LanguageSpecCases.case_hunt_cache_explicit_call_establishes_inner_reads_cached,
+  LanguageSpecCases.case_hunt_cache_reentrant_explicit_call_inside_owner,
+  LanguageSpecCases.case_hunt_cache_carrier_call_uses_declaring_activation,
+  LanguageSpecCases.case_hunt_cache_explicit_owner_call_binds_fresh_activation,
+  LanguageSpecCases.case_hunt_cache_explicit_call_owns_empty_key,
+  LanguageSpecCases.case_hunt_cache_deconstruction_in_loop_step_per_round,
+  LanguageSpecCases.case_hunt_cache_alias_of_collecting_owner,
+  LanguageSpecCases.case_hunt_cache_carrier_forwards_supplied_calls_fresh,
+  LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_exported,
+  LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_local,
+  LanguageSpecCases.case_hunt_runtime_alias_cell_lifetime_per_loop_round,
+  LanguageSpecCases.case_hunt_need_spread_formed_before_ordinary_cells,
+  LanguageSpecCases.case_hunt_need_collector_selection_demands_one_cell_once,
+  LanguageSpecCases.case_hunt_need_repeated_name_value_contribution_anchors,
+  LanguageSpecCases.case_hunt_need_family_shares_one_supply_across_clauses,
+  LanguageSpecCases.case_hunt_need_unused_fixed_argument_never_runs,
+  LanguageSpecCases.case_hunt_need_callback_argument_evaluated_once,
+  LanguageSpecCases.case_hunt_loop_while_false_round_forms_no_earlier_rows,
+  LanguageSpecCases.case_hunt_loop_while_empty_trailing_spread_passed_over,
+  LanguageSpecCases.case_hunt_loop_while_single_item_state_and_flag,
+  LanguageSpecCases.case_hunt_loop_repeat_prepares_supply_before_count,
+  LanguageSpecCases.case_hunt_loop_repeat_zero_never_projects_step,
+  LanguageSpecCases.case_hunt_loop_repeat_step_without_callable,
+  LanguageSpecCases.case_hunt_loop_builtin_step_result_is_one_row,
+  LanguageSpecCases.case_hunt_loop_carrier_step_forwards,
+  LanguageSpecCases.case_hunt_loop_nested_loop_is_one_slot,
+  LanguageSpecCases.case_hunt_loop_meta_parameter_cannot_forward_step,
+  LanguageSpecCases.case_hunt_loop_bare_member_path_is_no_step,
+  LanguageSpecCases.case_hunt_loop_local_step_temporary_per_round,
+  LanguageSpecCases.case_hunt_loop_step_temporary_read_then_call,
+  LanguageSpecCases.case_hunt_loop_exported_temporary_call_is_fresh,
+  LanguageSpecCases.case_hunt_loop_step_structural_head_binds_state,
+  LanguageSpecCases.case_hunt_loop_step_collecting_head_collects_state,
+  LanguageSpecCases.case_hunt_loop_step_repeated_name_must_agree,
+  LanguageSpecCases.case_hunt_selection_invalid_position_stops_before_later_selector,
+  LanguageSpecCases.case_hunt_selection_selectors_demanded_left_to_right,
+  LanguageSpecCases.case_hunt_selection_negative_index_is_bad_index,
+  LanguageSpecCases.case_hunt_selection_boolean_selector_is_type,
+  LanguageSpecCases.case_hunt_selection_first_selector_failure_wins,
+  LanguageSpecCases.case_hunt_selection_scalar_boolean_selects_itself,
+  LanguageSpecCases.case_hunt_meta_capture_is_inert,
+  LanguageSpecCases.case_hunt_meta_invoke_reuses_sticky_supply,
+  LanguageSpecCases.case_hunt_meta_arguments_count_demands_nothing,
+  LanguageSpecCases.case_hunt_meta_arguments_selection_validates_before_reading,
+  LanguageSpecCases.case_hunt_meta_extension_route_receiver_first,
+  LanguageSpecCases.case_hunt_meta_intrinsic_route_refuses_invocation,
+  LanguageSpecCases.case_hunt_meta_arguments_and_invoke_share_cells,
+  LanguageSpecCases.case_hunt_meta_member_route_invoke_is_fresh,
+  LanguageSpecCases.case_hunt_meta_sticky_supply_self_demand_cycle,
+  LanguageSpecCases.case_hunt_meta_arguments_count_inside_own_argument,
+  LanguageSpecCases.case_hunt_meta_invoke_body_fresh_arguments_sticky,
+  LanguageSpecCases.case_hunt_meta_algorithm_call_takes_fresh_supply,
+  LanguageSpecCases.case_hunt_lifting_cycle_settles_as_one_signature,
+  LanguageSpecCases.case_hunt_lifting_cycle_declaration_order_unobservable,
+  LanguageSpecCases.case_hunt_lifting_mutual_recursion_settles,
+  LanguageSpecCases.case_hunt_lifting_recursive_formula_settles,
+  LanguageSpecCases.case_hunt_grace_postfix_moves_ysx,
+  LanguageSpecCases.case_hunt_grace_three_postfix_markers,
+  LanguageSpecCases.case_hunt_grace_three_prefix_markers,
+  LanguageSpecCases.case_hunt_grace_mixed_markers,
+  LanguageSpecCases.case_hunt_lifting_group_pattern_first_occurrence,
+  LanguageSpecCases.case_hunt_lifting_group_pattern_second_occurrence,
+  LanguageSpecCases.case_hunt_lifting_group_of_one_binder_is_the_binder,
+  LanguageSpecCases.case_hunt_lifting_list_group_keeps_kind,
+  LanguageSpecCases.case_hunt_lifting_shared_collector_name_is_one_binding,
+  LanguageSpecCases.case_hunt_forwarding_new_parameter_beside_property_read,
+  LanguageSpecCases.case_hunt_lifting_dot_call_order_receiver_member_arguments,
+  LanguageSpecCases.case_hunt_grace_on_dot_receiver,
+  LanguageSpecCases.case_hunt_lifting_clause_family_plain_binder_slot,
+  LanguageSpecCases.case_hunt_lifting_through_alias_chain,
+  LanguageSpecCases.case_hunt_lifting_if_branch_lifts_whether_selected,
+  LanguageSpecCases.case_hunt_lifting_list_element_value_role,
+  LanguageSpecCases.case_hunt_output_spread_marked_family,
+  LanguageSpecCases.case_hunt_output_spread_bare_read_is_one_value,
+  LanguageSpecCases.case_hunt_output_spread_zero_supply_call_spreads,
+  LanguageSpecCases.case_hunt_output_spread_if_slot_no_exemption,
+  LanguageSpecCases.case_hunt_output_spread_selector_slot,
+  LanguageSpecCases.case_hunt_output_spread_step_row_spreads,
+  LanguageSpecCases.case_hunt_output_spread_unmarked_step_row_is_one_slot,
+  LanguageSpecCases.case_hunt_output_spread_marked_step_call_is_two_arguments,
+  LanguageSpecCases.case_hunt_output_spread_through_transparent_alias,
+  LanguageSpecCases.case_hunt_output_spread_not_through_carrier,
+  LanguageSpecCases.case_hunt_output_spread_member_path_call,
+  LanguageSpecCases.case_hunt_output_spread_empty_rows_supply_nothing,
+  LanguageSpecCases.case_hunt_output_spread_nested_marked_calls,
+  LanguageSpecCases.case_hunt_output_spread_repeat_count_slot,
+  LanguageSpecCases.case_hunt_output_spread_extension_receiver,
+  LanguageSpecCases.case_hunt_anchoring_carried_container_reads_the_current_call,
+  LanguageSpecCases.case_hunt_anchoring_static_owner_above_activation_refused,
+  LanguageSpecCases.case_hunt_anchoring_container_written_in_other_call_refused,
+  LanguageSpecCases.case_hunt_anchoring_root_alias_of_container,
+  LanguageSpecCases.case_hunt_anchoring_container_through_call_reference,
+  LanguageSpecCases.case_hunt_anchoring_open_member_and_carried_container,
+  LanguageSpecCases.case_hunt_anchoring_recursive_owner_innermost_call,
+  LanguageSpecCases.case_hunt_open_owner_walk_before_opens,
+  LanguageSpecCases.case_hunt_open_prelude_before_opens,
+  LanguageSpecCases.case_hunt_open_nested_levels_inner_first,
+  LanguageSpecCases.case_hunt_open_overlap_without_use_is_legal,
+  LanguageSpecCases.case_hunt_builtin_reduce_demands_initial_on_empty,
+  LanguageSpecCases.case_hunt_builtin_filter_count_predicate_per_item,
+  LanguageSpecCases.case_hunt_meta_family_redispatch_on_new_supply,
+  LanguageSpecCases.case_hunt_family_repeated_name_identity_nonmatch,
+  LanguageSpecCases.case_hunt_family_empty_and_pair_sequence_patterns,
+  LanguageSpecCases.case_hunt_comparison_chain_operands_once,
+  LanguageSpecCases.case_hunt_logical_operands_both_evaluated,
+  LanguageSpecCases.case_hunt_builtin_map_callbacks_run_in_collection_order,
+  LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter,
+  LanguageSpecCases.case_hunt_forwarding_closed_bare_row_uses_own_parameter,
+  LanguageSpecCases.case_hunt_forwarding_closed_formula_reuses_enclosing_parameter,
+  LanguageSpecCases.case_hunt_forwarding_branch_formula_reuses_enclosing_parameter,
+  LanguageSpecCases.case_hunt_forwarding_closed_list_without_source_is_a_demand,
+  LanguageSpecCases.case_hunt_forwarding_collector_to_collector_respreads,
+  LanguageSpecCases.case_hunt_forwarding_fixed_binding_passed_whole,
+  LanguageSpecCases.case_hunt_forwarding_collecting_only_callee_is_read,
+  LanguageSpecCases.case_hunt_grace_block_inside_closed_branch,
+  LanguageSpecCases.case_hunt_forwarding_builtin_parameter_by_name,
+  LanguageSpecCases.case_hunt_forwarding_enclosing_bindings_at_two_levels,
+  LanguageSpecCases.case_hunt_forwarding_nearest_parameter_binding_wins,
+  LanguageSpecCases.case_hunt_forwarding_property_is_never_a_source
 ]
-#guard languageSpecPrograms.length == 541
-#guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 49
+#guard languageSpecPrograms.length == 679
+#guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 89
 
 /-! ## explorer -/
 
@@ -3691,6 +3967,263 @@ def languageSpecPrograms : List Expr := [
 #guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__bareForwardingRepeatedName == false
 #guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__writtenCallInfersWrittenNames == false
 #guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__writtenCallIgnoresCalleeBinderNames == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0000 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0001 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0002 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0003 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0004 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0005 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0006 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0007 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0008 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0009 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0010 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0011 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0012 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0013 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0014 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0015 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0016 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0017 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0018 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0019 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0020 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0021 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0022 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0023 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenLoopsAG0024 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0000 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0001 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0002 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0003 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0004 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0005 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0006 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0007 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0008 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0009 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0010 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0011 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0012 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0013 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0014 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0015 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0016 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0017 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0018 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFusionAU0019 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0000 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0001 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0002 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0003 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0004 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0005 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0006 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0007 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0008 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0009 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0010 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0011 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0012 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0013 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0014 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0015 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0016 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0017 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0018 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenFaultsAF0019 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0000Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0001Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0002Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0003Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0004Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0005Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0006Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0007Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0008Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0009Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0010Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0011Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0012Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0013Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0014Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0015Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0016Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0017Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0018Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenInferAI0019Base == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0000 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0001 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0002 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0003 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0004 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0005 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0006 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0007 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0008 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0009 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0010 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0011 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0012 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0013 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenEqAQ0014 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0000Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0001Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0002Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0003Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0004Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0005Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0006Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0007Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0008Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpoAX0009Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpo2AY0000Pair == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpo2AY0001Pair == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpo2AY0002Pair == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpo2AY0003Pair == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpo2AY0004Pair == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenExpo2AY0005Pair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0000 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0001 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0002 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0005 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0006 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0010 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0013 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0015 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0017 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntGenChaosGZ0020 == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA1Expo1E01Direct == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA1Expo1E02Member == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA1Expo1E05Alias == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA1Expo1E07RuntimeAliasParam == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA1Expo1E09DeconBoth == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA1Expo1E10ClauseBinder == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need1N01UndemandedSecond == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need1N02DemandOrder == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need1N03AtMostOnce == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need1N04NeverDemanded == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need1N05ForwardingNoForce == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need1N06CardinalityFirst == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need2T01MemberPathTransport == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need2T02AliasChainTransport == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need2T03ParamHoldingReference == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need2T04CountThroughAlias == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need2T05FirstThroughAlias == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA2Need2T06SelectThroughMember == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache1C01ReentrantQ37 == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache1C02CollectingAliasOnce == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache1C03AliasRead == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache1C04AliasCallEstablishes == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache1C06CarrierCalls == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache1C07RuntimeMemberValueOnly == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache2C203FormulaOwnerReadFirst == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache2C204ExportedOwner == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache2C205CallbackMemberRead == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache2C206AliasCellExported == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache2C207AliasCellLocal == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache2C208AliasCellInLoopStep == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache3C301tPropertyTwinExported == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache3C302tPropertyTwinLocal == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache3C303AliasCellLoop == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache3C303tPropertyTwinLoop == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache3C304tPropertyTwinLocalLoop == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA3Cache3C305AliasCellReadAndCall == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA4Loops1L01WhileBasic == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA4Loops1L08FamilyStep == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA4Loops1L10AliasStep == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA4Loops1L13LoopOneValue == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA4Loops1L14ForwardStep == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA4Loops1L16QualifiedStep == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA5Select1S03StringCount == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA5Select1S04EmptyStringSelect == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA5Select1S05StringOnePosition == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA5Select1S06ScalarSelf == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA5Select1S07ScalarOut == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA6Spread1P01CollTable == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA6Spread1P02Cnt == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA6Spread1P03CntValue == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA6Spread1P04Withhead == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA6Spread1P05IdPair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA6Spread1P06AddPair == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Dot1D01ChainFallback == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Dot1D02DeclaredString == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Dot1D03LexicalStringIgnored == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Dot1D04BranchMember == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Dot1D05PrivateStructural == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Dot1D06SpreadReceiver == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Anchor1H01StatedCarriedContainer == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Anchor1H05OpenHeadBetween == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Anchor1H06CarriedViaCallback == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Anchor1H08CarriedThroughParamChain == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Anchor1H09ContainerReadAtRoot == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA7Anchor1H11ContainerThroughLoopState == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA8Alias1X01CarrierForwards == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA8Alias1X02CarrierZeroCall == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA8Alias1X05TransparentMember == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA8Alias1X06CarrierNotTargetIdentity == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta1M02InvokeFresh == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta1M05ArgumentsSelect == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta1M06ArgumentsSelectFail == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta1M08ArgumentsEmpty == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta1M09AlgorithmFresh == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta1M10Identity == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta2M202ArgumentsCycle == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta2M204MultiSelectView == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta2M205RebuildCall == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta2M206SameRefs == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta2M207SameDifferentRefs == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA9Meta2M208ForwardedReference == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fe1F01CountFormula == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fe1F02IfFormula == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fe1F03RepeatFormula == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fe1F05rMutualLiftReordered == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fe1F07WhileRepeatFormula == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fe1F08BareForwardSameName == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Spread1W01ArgSlot == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Spread1W01xArgSlotExplicit == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Spread1W02List == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Spread1W03Group == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Spread1W04RootRow == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Spread1W04xRootRowExplicit == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fwd1Fw08ForwardCollectorIntoCollector == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fwd1Fw15ForwardingChain == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fwd1Fw18ForwardIf == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fwd1Fw19AliasOfMap == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA10Fwd1Fw20ClosedFormulaBuiltin == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA11Cmp1K03TotalEquality == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA11Cmp1K04IfNumber == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA11Cmp1K05TickOnce == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA11Cmp1K06TickEq == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Builtins1B01IfLazy == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Builtins1B02IfCondFail == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Builtins1B04MapTwoRows == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Builtins1B05MapEmptyRow == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Builtins1B06FilterNonbool == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Edge2G01WhileEmptySpreadOnly == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Edge2G02WhileEmptyRow == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Edge2G03WhileListFlag == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Edge2G04RepeatZeroRowStep == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Edge2G05RepeatEmptyState == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Edge2G06FamilyBool == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Shadow1Sh01UserFilterCount == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Shadow1Sh02UserFilterBuiltinCount == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Shadow1Sh03BuiltinFilterUserCount == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Shadow1Sh04UserCountCallForm == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Shadow1Sh05UserRange == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA12Shadow1Sh06UserIfInLoop == true
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA13Arith1R01DivSigns == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA13Arith1R02ExactDiv == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA13Arith1R03Pow == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA13Arith1R04ZeroNegPow == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA13Arith1R05ModZero == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA13Arith1R06DivZero == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA14Open1O01SameProviderTwice == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA14Open1O02SameProviderGrouped == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA14Open1O03AliasProviderSame == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA14Open1O05CountShadow == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA14Open1O06CountUserCallable == false
+#guard Expr.mayCaptureCalls SemanticExplorerCases.case_special__huntA14Open1O09OpenPrivateNotProvided == false
 
 /-- The guarded programs of this corpus, listed by the loop that emits the guards above; the
     expected totals are computed independently from the corpus partition and from C#'s verdicts. -/
@@ -6245,10 +6778,267 @@ def explorerPrograms : List Expr := [
   SemanticExplorerCases.case_special__bareForwardingReusesEnclosingBinding,
   SemanticExplorerCases.case_special__bareForwardingRepeatedName,
   SemanticExplorerCases.case_special__writtenCallInfersWrittenNames,
-  SemanticExplorerCases.case_special__writtenCallIgnoresCalleeBinderNames
+  SemanticExplorerCases.case_special__writtenCallIgnoresCalleeBinderNames,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0000,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0001,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0002,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0003,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0004,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0005,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0006,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0007,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0008,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0009,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0010,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0011,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0012,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0013,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0014,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0015,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0016,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0017,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0018,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0019,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0020,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0021,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0022,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0023,
+  SemanticExplorerCases.case_special__huntGenLoopsAG0024,
+  SemanticExplorerCases.case_special__huntGenFusionAU0000,
+  SemanticExplorerCases.case_special__huntGenFusionAU0001,
+  SemanticExplorerCases.case_special__huntGenFusionAU0002,
+  SemanticExplorerCases.case_special__huntGenFusionAU0003,
+  SemanticExplorerCases.case_special__huntGenFusionAU0004,
+  SemanticExplorerCases.case_special__huntGenFusionAU0005,
+  SemanticExplorerCases.case_special__huntGenFusionAU0006,
+  SemanticExplorerCases.case_special__huntGenFusionAU0007,
+  SemanticExplorerCases.case_special__huntGenFusionAU0008,
+  SemanticExplorerCases.case_special__huntGenFusionAU0009,
+  SemanticExplorerCases.case_special__huntGenFusionAU0010,
+  SemanticExplorerCases.case_special__huntGenFusionAU0011,
+  SemanticExplorerCases.case_special__huntGenFusionAU0012,
+  SemanticExplorerCases.case_special__huntGenFusionAU0013,
+  SemanticExplorerCases.case_special__huntGenFusionAU0014,
+  SemanticExplorerCases.case_special__huntGenFusionAU0015,
+  SemanticExplorerCases.case_special__huntGenFusionAU0016,
+  SemanticExplorerCases.case_special__huntGenFusionAU0017,
+  SemanticExplorerCases.case_special__huntGenFusionAU0018,
+  SemanticExplorerCases.case_special__huntGenFusionAU0019,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0000,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0001,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0002,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0003,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0004,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0005,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0006,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0007,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0008,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0009,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0010,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0011,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0012,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0013,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0014,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0015,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0016,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0017,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0018,
+  SemanticExplorerCases.case_special__huntGenFaultsAF0019,
+  SemanticExplorerCases.case_special__huntGenInferAI0000Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0001Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0002Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0003Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0004Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0005Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0006Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0007Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0008Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0009Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0010Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0011Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0012Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0013Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0014Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0015Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0016Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0017Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0018Base,
+  SemanticExplorerCases.case_special__huntGenInferAI0019Base,
+  SemanticExplorerCases.case_special__huntGenEqAQ0000,
+  SemanticExplorerCases.case_special__huntGenEqAQ0001,
+  SemanticExplorerCases.case_special__huntGenEqAQ0002,
+  SemanticExplorerCases.case_special__huntGenEqAQ0003,
+  SemanticExplorerCases.case_special__huntGenEqAQ0004,
+  SemanticExplorerCases.case_special__huntGenEqAQ0005,
+  SemanticExplorerCases.case_special__huntGenEqAQ0006,
+  SemanticExplorerCases.case_special__huntGenEqAQ0007,
+  SemanticExplorerCases.case_special__huntGenEqAQ0008,
+  SemanticExplorerCases.case_special__huntGenEqAQ0009,
+  SemanticExplorerCases.case_special__huntGenEqAQ0010,
+  SemanticExplorerCases.case_special__huntGenEqAQ0011,
+  SemanticExplorerCases.case_special__huntGenEqAQ0012,
+  SemanticExplorerCases.case_special__huntGenEqAQ0013,
+  SemanticExplorerCases.case_special__huntGenEqAQ0014,
+  SemanticExplorerCases.case_special__huntGenExpoAX0000Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0001Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0002Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0003Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0004Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0005Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0006Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0007Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0008Pair,
+  SemanticExplorerCases.case_special__huntGenExpoAX0009Pair,
+  SemanticExplorerCases.case_special__huntGenExpo2AY0000Pair,
+  SemanticExplorerCases.case_special__huntGenExpo2AY0001Pair,
+  SemanticExplorerCases.case_special__huntGenExpo2AY0002Pair,
+  SemanticExplorerCases.case_special__huntGenExpo2AY0003Pair,
+  SemanticExplorerCases.case_special__huntGenExpo2AY0004Pair,
+  SemanticExplorerCases.case_special__huntGenExpo2AY0005Pair,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0000,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0001,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0002,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0005,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0006,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0010,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0013,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0015,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0017,
+  SemanticExplorerCases.case_special__huntGenChaosGZ0020,
+  SemanticExplorerCases.case_special__huntA1Expo1E01Direct,
+  SemanticExplorerCases.case_special__huntA1Expo1E02Member,
+  SemanticExplorerCases.case_special__huntA1Expo1E05Alias,
+  SemanticExplorerCases.case_special__huntA1Expo1E07RuntimeAliasParam,
+  SemanticExplorerCases.case_special__huntA1Expo1E09DeconBoth,
+  SemanticExplorerCases.case_special__huntA1Expo1E10ClauseBinder,
+  SemanticExplorerCases.case_special__huntA2Need1N01UndemandedSecond,
+  SemanticExplorerCases.case_special__huntA2Need1N02DemandOrder,
+  SemanticExplorerCases.case_special__huntA2Need1N03AtMostOnce,
+  SemanticExplorerCases.case_special__huntA2Need1N04NeverDemanded,
+  SemanticExplorerCases.case_special__huntA2Need1N05ForwardingNoForce,
+  SemanticExplorerCases.case_special__huntA2Need1N06CardinalityFirst,
+  SemanticExplorerCases.case_special__huntA2Need2T01MemberPathTransport,
+  SemanticExplorerCases.case_special__huntA2Need2T02AliasChainTransport,
+  SemanticExplorerCases.case_special__huntA2Need2T03ParamHoldingReference,
+  SemanticExplorerCases.case_special__huntA2Need2T04CountThroughAlias,
+  SemanticExplorerCases.case_special__huntA2Need2T05FirstThroughAlias,
+  SemanticExplorerCases.case_special__huntA2Need2T06SelectThroughMember,
+  SemanticExplorerCases.case_special__huntA3Cache1C01ReentrantQ37,
+  SemanticExplorerCases.case_special__huntA3Cache1C02CollectingAliasOnce,
+  SemanticExplorerCases.case_special__huntA3Cache1C03AliasRead,
+  SemanticExplorerCases.case_special__huntA3Cache1C04AliasCallEstablishes,
+  SemanticExplorerCases.case_special__huntA3Cache1C06CarrierCalls,
+  SemanticExplorerCases.case_special__huntA3Cache1C07RuntimeMemberValueOnly,
+  SemanticExplorerCases.case_special__huntA3Cache2C203FormulaOwnerReadFirst,
+  SemanticExplorerCases.case_special__huntA3Cache2C204ExportedOwner,
+  SemanticExplorerCases.case_special__huntA3Cache2C205CallbackMemberRead,
+  SemanticExplorerCases.case_special__huntA3Cache2C206AliasCellExported,
+  SemanticExplorerCases.case_special__huntA3Cache2C207AliasCellLocal,
+  SemanticExplorerCases.case_special__huntA3Cache2C208AliasCellInLoopStep,
+  SemanticExplorerCases.case_special__huntA3Cache3C301tPropertyTwinExported,
+  SemanticExplorerCases.case_special__huntA3Cache3C302tPropertyTwinLocal,
+  SemanticExplorerCases.case_special__huntA3Cache3C303AliasCellLoop,
+  SemanticExplorerCases.case_special__huntA3Cache3C303tPropertyTwinLoop,
+  SemanticExplorerCases.case_special__huntA3Cache3C304tPropertyTwinLocalLoop,
+  SemanticExplorerCases.case_special__huntA3Cache3C305AliasCellReadAndCall,
+  SemanticExplorerCases.case_special__huntA4Loops1L01WhileBasic,
+  SemanticExplorerCases.case_special__huntA4Loops1L08FamilyStep,
+  SemanticExplorerCases.case_special__huntA4Loops1L10AliasStep,
+  SemanticExplorerCases.case_special__huntA4Loops1L13LoopOneValue,
+  SemanticExplorerCases.case_special__huntA4Loops1L14ForwardStep,
+  SemanticExplorerCases.case_special__huntA4Loops1L16QualifiedStep,
+  SemanticExplorerCases.case_special__huntA5Select1S03StringCount,
+  SemanticExplorerCases.case_special__huntA5Select1S04EmptyStringSelect,
+  SemanticExplorerCases.case_special__huntA5Select1S05StringOnePosition,
+  SemanticExplorerCases.case_special__huntA5Select1S06ScalarSelf,
+  SemanticExplorerCases.case_special__huntA5Select1S07ScalarOut,
+  SemanticExplorerCases.case_special__huntA6Spread1P01CollTable,
+  SemanticExplorerCases.case_special__huntA6Spread1P02Cnt,
+  SemanticExplorerCases.case_special__huntA6Spread1P03CntValue,
+  SemanticExplorerCases.case_special__huntA6Spread1P04Withhead,
+  SemanticExplorerCases.case_special__huntA6Spread1P05IdPair,
+  SemanticExplorerCases.case_special__huntA6Spread1P06AddPair,
+  SemanticExplorerCases.case_special__huntA7Dot1D01ChainFallback,
+  SemanticExplorerCases.case_special__huntA7Dot1D02DeclaredString,
+  SemanticExplorerCases.case_special__huntA7Dot1D03LexicalStringIgnored,
+  SemanticExplorerCases.case_special__huntA7Dot1D04BranchMember,
+  SemanticExplorerCases.case_special__huntA7Dot1D05PrivateStructural,
+  SemanticExplorerCases.case_special__huntA7Dot1D06SpreadReceiver,
+  SemanticExplorerCases.case_special__huntA7Anchor1H01StatedCarriedContainer,
+  SemanticExplorerCases.case_special__huntA7Anchor1H05OpenHeadBetween,
+  SemanticExplorerCases.case_special__huntA7Anchor1H06CarriedViaCallback,
+  SemanticExplorerCases.case_special__huntA7Anchor1H08CarriedThroughParamChain,
+  SemanticExplorerCases.case_special__huntA7Anchor1H09ContainerReadAtRoot,
+  SemanticExplorerCases.case_special__huntA7Anchor1H11ContainerThroughLoopState,
+  SemanticExplorerCases.case_special__huntA8Alias1X01CarrierForwards,
+  SemanticExplorerCases.case_special__huntA8Alias1X02CarrierZeroCall,
+  SemanticExplorerCases.case_special__huntA8Alias1X05TransparentMember,
+  SemanticExplorerCases.case_special__huntA8Alias1X06CarrierNotTargetIdentity,
+  SemanticExplorerCases.case_special__huntA9Meta1M02InvokeFresh,
+  SemanticExplorerCases.case_special__huntA9Meta1M05ArgumentsSelect,
+  SemanticExplorerCases.case_special__huntA9Meta1M06ArgumentsSelectFail,
+  SemanticExplorerCases.case_special__huntA9Meta1M08ArgumentsEmpty,
+  SemanticExplorerCases.case_special__huntA9Meta1M09AlgorithmFresh,
+  SemanticExplorerCases.case_special__huntA9Meta1M10Identity,
+  SemanticExplorerCases.case_special__huntA9Meta2M202ArgumentsCycle,
+  SemanticExplorerCases.case_special__huntA9Meta2M204MultiSelectView,
+  SemanticExplorerCases.case_special__huntA9Meta2M205RebuildCall,
+  SemanticExplorerCases.case_special__huntA9Meta2M206SameRefs,
+  SemanticExplorerCases.case_special__huntA9Meta2M207SameDifferentRefs,
+  SemanticExplorerCases.case_special__huntA9Meta2M208ForwardedReference,
+  SemanticExplorerCases.case_special__huntA10Fe1F01CountFormula,
+  SemanticExplorerCases.case_special__huntA10Fe1F02IfFormula,
+  SemanticExplorerCases.case_special__huntA10Fe1F03RepeatFormula,
+  SemanticExplorerCases.case_special__huntA10Fe1F05rMutualLiftReordered,
+  SemanticExplorerCases.case_special__huntA10Fe1F07WhileRepeatFormula,
+  SemanticExplorerCases.case_special__huntA10Fe1F08BareForwardSameName,
+  SemanticExplorerCases.case_special__huntA10Spread1W01ArgSlot,
+  SemanticExplorerCases.case_special__huntA10Spread1W01xArgSlotExplicit,
+  SemanticExplorerCases.case_special__huntA10Spread1W02List,
+  SemanticExplorerCases.case_special__huntA10Spread1W03Group,
+  SemanticExplorerCases.case_special__huntA10Spread1W04RootRow,
+  SemanticExplorerCases.case_special__huntA10Spread1W04xRootRowExplicit,
+  SemanticExplorerCases.case_special__huntA10Fwd1Fw08ForwardCollectorIntoCollector,
+  SemanticExplorerCases.case_special__huntA10Fwd1Fw15ForwardingChain,
+  SemanticExplorerCases.case_special__huntA10Fwd1Fw18ForwardIf,
+  SemanticExplorerCases.case_special__huntA10Fwd1Fw19AliasOfMap,
+  SemanticExplorerCases.case_special__huntA10Fwd1Fw20ClosedFormulaBuiltin,
+  SemanticExplorerCases.case_special__huntA11Cmp1K03TotalEquality,
+  SemanticExplorerCases.case_special__huntA11Cmp1K04IfNumber,
+  SemanticExplorerCases.case_special__huntA11Cmp1K05TickOnce,
+  SemanticExplorerCases.case_special__huntA11Cmp1K06TickEq,
+  SemanticExplorerCases.case_special__huntA12Builtins1B01IfLazy,
+  SemanticExplorerCases.case_special__huntA12Builtins1B02IfCondFail,
+  SemanticExplorerCases.case_special__huntA12Builtins1B04MapTwoRows,
+  SemanticExplorerCases.case_special__huntA12Builtins1B05MapEmptyRow,
+  SemanticExplorerCases.case_special__huntA12Builtins1B06FilterNonbool,
+  SemanticExplorerCases.case_special__huntA12Edge2G01WhileEmptySpreadOnly,
+  SemanticExplorerCases.case_special__huntA12Edge2G02WhileEmptyRow,
+  SemanticExplorerCases.case_special__huntA12Edge2G03WhileListFlag,
+  SemanticExplorerCases.case_special__huntA12Edge2G04RepeatZeroRowStep,
+  SemanticExplorerCases.case_special__huntA12Edge2G05RepeatEmptyState,
+  SemanticExplorerCases.case_special__huntA12Edge2G06FamilyBool,
+  SemanticExplorerCases.case_special__huntA12Shadow1Sh01UserFilterCount,
+  SemanticExplorerCases.case_special__huntA12Shadow1Sh02UserFilterBuiltinCount,
+  SemanticExplorerCases.case_special__huntA12Shadow1Sh03BuiltinFilterUserCount,
+  SemanticExplorerCases.case_special__huntA12Shadow1Sh04UserCountCallForm,
+  SemanticExplorerCases.case_special__huntA12Shadow1Sh05UserRange,
+  SemanticExplorerCases.case_special__huntA12Shadow1Sh06UserIfInLoop,
+  SemanticExplorerCases.case_special__huntA13Arith1R01DivSigns,
+  SemanticExplorerCases.case_special__huntA13Arith1R02ExactDiv,
+  SemanticExplorerCases.case_special__huntA13Arith1R03Pow,
+  SemanticExplorerCases.case_special__huntA13Arith1R04ZeroNegPow,
+  SemanticExplorerCases.case_special__huntA13Arith1R05ModZero,
+  SemanticExplorerCases.case_special__huntA13Arith1R06DivZero,
+  SemanticExplorerCases.case_special__huntA14Open1O01SameProviderTwice,
+  SemanticExplorerCases.case_special__huntA14Open1O02SameProviderGrouped,
+  SemanticExplorerCases.case_special__huntA14Open1O03AliasProviderSame,
+  SemanticExplorerCases.case_special__huntA14Open1O05CountShadow,
+  SemanticExplorerCases.case_special__huntA14Open1O06CountUserCallable,
+  SemanticExplorerCases.case_special__huntA14Open1O09OpenPrivateNotProvided
 ]
-#guard explorerPrograms.length == 2551
-#guard (explorerPrograms.filter Expr.mayCaptureCalls).length == 53
+#guard explorerPrograms.length == 2808
+#guard (explorerPrograms.filter Expr.mayCaptureCalls).length == 131
 
 /-! ## explorer-internal -/
 
@@ -8162,5 +8952,5 @@ def plannedLoopTempPrograms : List Expr := [
 #guard plannedLoopTempPrograms.length == 36
 #guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
 
--- 4023 gate guards over 4161 corpus programs.
+-- 4418 gate guards over 4556 corpus programs.
 end KatLang.MayCaptureCallsCorpus
