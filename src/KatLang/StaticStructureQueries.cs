@@ -277,11 +277,14 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
 
     public bool IsClosureObserver(StaticQueryKey key) => key.Projection is StaticQueryProjection.OpenMemberAbsence
         or StaticQueryProjection.EmptyOpenNamespace or StaticQueryProjection.FallbackParticipation or StaticQueryProjection.PreservedOpenPresence
-        or StaticQueryProjection.ReceiverExpansionVerdict or StaticQueryProjection.OpenReceiverExpansionVerdict;
+        or StaticQueryProjection.ReceiverExpansionVerdict or StaticQueryProjection.OpenReceiverExpansionVerdict
+        or StaticQueryProjection.DeferredOpenPresence;
 
     // A receiver-expansion verdict decides structure; the namespace certificates over-approximate undecided structure.
+    // A deferred open presence decides a name's opened binding (from the settled index, or else its witnesses), so it
+    // too runs before the certificates its witnesses would otherwise queue ahead of it.
     public bool IsDecisionObserver(StaticQueryKey key) => key.Projection is StaticQueryProjection.ReceiverExpansionVerdict
-        or StaticQueryProjection.OpenReceiverExpansionVerdict;
+        or StaticQueryProjection.OpenReceiverExpansionVerdict or StaticQueryProjection.DeferredOpenPresence;
 
     public StaticFact Initial(StaticQueryKey key) => StaticFact.Unknown;
     public StaticFact PathCycleValue => StaticFact.Refused;
@@ -338,6 +341,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
                 new NamespaceCertificate(this, reader).FallbackParticipation(key.Scope, (Expr.DotCall)key.Node!),
             StaticQueryKind.Members => new StaticFact(StaticFactKind.Members, key.Scope, Data: context.Members),
             StaticQueryKind.Binding when key.Projection == StaticQueryProjection.OpenMatches => OpenMatches(context, key, reader),
+            StaticQueryKind.Binding when key.Projection == StaticQueryProjection.DeferredOpenPresence => DeferredOpenPresence(context, key, reader),
             StaticQueryKind.Binding when key.Projection == StaticQueryProjection.OpenPresenceWitnesses => OpenPresenceWitnesses(context, key, reader),
             StaticQueryKind.Binding => Binding(context, key.Name!, key.Stratum, key.Projection, reader),
             StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.MemberSelection => MemberSelection(key.Scope, (Expr.DotCall)key.Node!, key.Stratum, reader),

@@ -26,20 +26,70 @@ internal sealed partial class StaticStructureQueries
     /// A bounded-fan-in name projection over Q2's leaves. Known presence is useful even while another provider is
     /// unresolved: promotion is impossible whether that later provider makes the name ambiguous or leaves it single.
     /// Two distinct known providers decide ambiguity immediately. The full ordered Q2 list remains separate.
+    /// The level's closed member index answers once it is known; until then the name waits on
+    /// <see cref="StaticQueryProjection.DeferredOpenPresence"/>, never on a witness range of its own.
     /// </summary>
     private StaticFact OpenMatches(BodyContext context, StaticQueryKey key, StaticQueryReader<StaticQueryKey, StaticFact> reader)
     {
         if (key.Offset != 0 || key.Length != context.Body.Opens.Count)
             throw new ArgumentException("Open selection describes a whole level; partial ranges are presence witnesses.", nameof(key));
         var index = reader.Read(Project(StaticQueryKind.OpenProviders, context.Key, StaticQueryProjection.OpenMemberIndex, stratum: key.Stratum));
-        if (!index.IsUnknown)
-        {
-            var selected = ((OpenMemberIndex)index.Data!).Members;
-            return !selected.TryGetValue(key.Name!, out var provider) ? EmptyMatches
-                : provider is null ? StaticFact.Ambiguous : new(StaticFactKind.OpenMatch, Data: new StaticOpenMatch(provider, false));
-        }
+        if (!index.IsUnknown) return IndexedOpenMatch((OpenMemberIndex)index.Data!, key.Name!);
+        return reader.Read(StaticQueryKey.Project(StaticQueryKind.Binding, context.Key, StaticQueryProjection.DeferredOpenPresence,
+            key.Name, key.Stratum, offset: key.Offset, length: key.Length));
+    }
+
+    /// <summary>
+    /// THE DEFERRED PRESENCE OF ONE NAME AT ONE LEVEL (November 2026). A decision observer
+    /// (<see cref="IsDecisionObserver"/>): the engine computes it only once ordinary work is quiescent. By then the
+    /// level's closed member index has settled unless one of its providers still waits — on a decision the level's own
+    /// opened names make, or on an observer (a receiver-expansion verdict, a namespace certificate) — so it answers from
+    /// the index exactly as <see cref="OpenMatches"/> does and the name builds no witness range. Only while the index is
+    /// still unknown does it read the name's presence witnesses (<see cref="OpenPresenceWitnesses"/>), which can decide
+    /// presence and ambiguity before the whole provider list settles. Read first, the index made every name of a
+    /// K-target level build its own 2K − 1 witness ranges (and, for a repeated target, preserved-presence certificates
+    /// over every earlier view, O(K²) per name) while the one index was still settling. This is scheduling only: the
+    /// index's answer is the conclusive one the witnesses refine to, and the witnesses still answer while it is unknown.
+    /// A level whose index waits on its own names still builds witnesses for each name whose deferred presence runs
+    /// before the index settles.
+    /// </summary>
+    private StaticFact DeferredOpenPresence(BodyContext context, StaticQueryKey key, StaticQueryReader<StaticQueryKey, StaticFact> reader)
+    {
+        if (key.Offset != 0 || key.Length != context.Body.Opens.Count)
+            throw new ArgumentException("Deferred open presence describes a whole level; partial ranges are presence witnesses.", nameof(key));
+        var index = reader.Read(Project(StaticQueryKind.OpenProviders, context.Key, StaticQueryProjection.OpenMemberIndex, stratum: key.Stratum));
+        if (!index.IsUnknown) return IndexedOpenMatch((OpenMemberIndex)index.Data!, key.Name!);
         return reader.Read(StaticQueryKey.Project(StaticQueryKind.Binding, context.Key, StaticQueryProjection.OpenPresenceWitnesses,
             key.Name, key.Stratum, offset: key.Offset, length: key.Length));
+    }
+
+    /// <summary>The closed index's answer for one name: absent, one provider, or ambiguous.</summary>
+    private static StaticFact IndexedOpenMatch(OpenMemberIndex index, string name)
+        => !index.Members.TryGetValue(name, out var provider) ? EmptyMatches
+            : provider is null ? StaticFact.Ambiguous : new(StaticFactKind.OpenMatch, Data: new StaticOpenMatch(provider, false));
+
+    /// <summary>
+    /// Answers an absent or unique name from a final level index in this solve or its frozen continuation.
+    /// A unique hit uses the same public declaration that Q1 selects. The caller scans for ambiguity to recover
+    /// every provider in written order, for a null host name, or while the level has no closed index.
+    /// </summary>
+    internal bool TrySettledOpenMember(StaticScopeKey scope, StaticCycleCheck stratum, string? name,
+        out (StaticScopeKey Provider, PropertyLookupHit Hit)? selected)
+    {
+        EnsureUsable();
+        selected = null;
+        if (name is null) return false;
+        var key = Project(StaticQueryKind.OpenProviders, scope, StaticQueryProjection.OpenMemberIndex, stratum: stratum);
+        if (!_engine.TryGetFinal(key, out var fact) && (_snapshot is null || !_snapshot.Facts.TryGetValue(key, out fact)))
+            return false;
+        if (fact.Data is not OpenMemberIndex index) return false;
+        if (!index.Members.TryGetValue(name, out var provider)) return true;
+        if (provider is null) return false;
+        var context = ContextOf(provider);
+        var property = context.Members.Public(name)
+            ?? throw new InvalidOperationException("The settled open index selected a provider without the public declaration.");
+        selected = (provider, new(context.Body, property));
+        return true;
     }
 
     private sealed class OpenMemberIndex(Dictionary<string, StaticScopeKey?> members)

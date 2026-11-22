@@ -174,6 +174,23 @@ counter doubles with N. The verdict walk itself:
   proves never creates the summaries, so a ring of first expansions (`Xi = X(i+1).abs`) keeps exactly its unfixed
   cost (the historical candidate read the summaries while the recipe was still Unknown and was quadratic there).
 
+**Deferred open presence (November 2026).** Q1's opened binding of a name reads the level's closed member index
+(`OpenMemberIndex`, one per distinct provider sequence) and, while that index is Unknown, the name's presence
+witnesses: a range tree of 2K − 1 queries over the level's K targets, whose leaves decide known presence before the
+list settles. Every key starts Unknown, so each name's first read found the index still settling and built its own
+tree, though the one index settled a few rounds later: N names under K opens made N(2K − 1) witness entries, and a
+target repeated K times added each leaf's preserved-presence certificate over every earlier position (O(N·K²)
+certificate work). `open L0` written 48 times with 64 names exhausted the program-scaled work bound (814,080) and was
+refused as `StaticStructureLimitExceeded`. The witnesses are now behind a decision observer, `DeferredOpenPresence`:
+it runs once ordinary work is quiescent, answers from the index when the index has settled, and reads the witnesses
+only while it has not. Scheduling only: the index's answer is the conclusive one the witnesses refine to. Measured on
+detection of one body (Release harness): K = 128, N = 256 inferred names went from 141,567 evaluations, 70,913 entries
+and 51 MB to 10,623, 5,633 and 6.4 MB, and the 48-fold repeat with 64 names from refusal to 2,630 evaluations and
+2,579 certificate units (about 53 per written target, none per name). A level whose index waits on its own names (a
+provider whose structure depends on whether one of the level's opened names is an input) still builds witnesses for
+the names whose deferred presence runs before it settles (K = N = 128: 33,924 witness entries, before 34,441).
+`OpenLevelPresenceReuseTests`, `StaticStructureWitnessTests`.
+
 The production admission policy is deterministic for equivalent source, configured resource policy and
 compilation phase. `SourceProcessingLimits.MaxStaticStructureBytes` may lower the fixed 1-GiB ceiling;
 values must be positive, larger requests clamp to the ceiling, and null selects that ceiling. No GC

@@ -345,6 +345,7 @@ internal enum StaticQueryProjection : byte
     InvocationTarget,
     OpenReferencePath,
     OpenReferenceReceiver,
+    DeferredOpenPresence,
 }
 
 /// <summary>

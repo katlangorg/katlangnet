@@ -1687,12 +1687,19 @@ internal static class ElaboratedScopeLookup
     /// THE per-level opened-name rule over a level's published providers: the matches of
     /// <paramref name="name"/> at <paramref name="level"/> alone, each provider's public member in provider order.
     /// A caller whose walk interleaves another check reads this level by level; every other caller reads
-    /// <see cref="SelectFirstOpenLevel"/>.
+    /// <see cref="SelectFirstOpenLevel"/>. A level of an admitting operation selects through that operation, which
+    /// answers a wide level from its settled member index (<c>StaticStructureOperation.SelectOpenLevel</c>); every
+    /// other level scans its providers (<see cref="ScanOpenLevel"/>).
     /// </summary>
     internal static OpenNameSelection SelectOpenLevel(
         ElaboratedPropertyScope level, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
+        => level.StaticContext is { } context
+            ? context.Operation.SelectOpenLevel(level, context.Key, name, stratum)
+            : ScanOpenLevel(level, level.GetResolvedOpenProviders(stratum), name);
+
+    /// <summary>The ordered scan of <see cref="SelectOpenLevel(ElaboratedPropertyScope, string, StaticCycleCheck)"/>: every provider of <paramref name="level"/>, in order.</summary>
+    internal static OpenNameSelection ScanOpenLevel(ElaboratedPropertyScope level, IReadOnlyList<ResolvedOpenProvider> providers, string name)
     {
-        var providers = level.GetResolvedOpenProviders(stratum);
         OpenMemberMatch first = default;
         List<OpenMemberMatch>? later = null;
         var found = false;

@@ -36,7 +36,8 @@ internal sealed partial class StaticStructureOperation
     {
         if (level.StaticContext is not { } context || !ReferenceEquals(context.Operation, this))
             throw new InvalidOperationException("The physical level belongs to another structural operation.");
-        if (!_lookupLevels.ContainsKey(context.Key)) Queries.Resources.Metadata(8);
+        if (!_lookupLevels.TryGetValue(context.Key, out var registered)) Queries.Resources.Metadata(8);
+        else if (!ReferenceEquals(registered, level)) _lookupLevelReplacements++;
         _lookupLevels[context.Key] = level;
     }
 
@@ -109,17 +110,42 @@ internal sealed partial class StaticStructureOperation
             _ => LexicalFallbackSelection.Conditional,
         };
 
+    // The providers of each level the lookup adapters asked about, per stratum (RetainedLevelProviders), and how many
+    // times a registered level replaced another one for the same context (RegisterLevel): a retained list is current
+    // while every provider's declaring level is still the one its context registers.
+    private readonly Dictionary<(StaticScopeKey Scope, StaticCycleCheck Stratum), RetainedLevelProviders> _levelProviders = new();
+    private long _lookupLevelReplacements;
+
+    /// <summary>
+    /// THE PROVIDERS OF ONE LEVEL as the lookup adapters read them (<see cref="ElaboratedPropertyScope.GetResolvedOpenProviders"/>):
+    /// every written target's Q2 provider in written order, one per language identity (the first target that reaches it is
+    /// its <see cref="ResolvedOpenProvider.Written"/> provenance, a duplicate spelling adds nothing), each declared at its
+    /// context's registered level. Built once per level and stratum from final Q2 facts and retained by the operation
+    /// (November 2026): every name a body writes asks its open levels (the Q-29 ambiguity check, a Grace marker's reason,
+    /// a structural member provider), and a rebuild per question allocated a new provider, identity and declaring chain
+    /// for every provider of every level the question reached, and charged their four ledger slots again, a K-provider
+    /// level costing O(K) for every name written below it. The list is charged once, where it is built. A retained list
+    /// is served while each provider's declaring level is still the one registered for its context; a detector level that
+    /// replaced it (<see cref="RegisterLevel"/>) makes the next read rebuild the list, as every read used to. A read of a
+    /// failed or cancelled operation throws as before (<see cref="SourceOf"/>), and a build that throws retains nothing.
+    /// </summary>
     internal IReadOnlyList<ResolvedOpenProvider> Providers(StaticScopeKey scope, StaticCycleCheck stratum)
+        => RetainedProviders(scope, stratum)?.Providers ?? [];
+
+    private RetainedLevelProviders? RetainedProviders(StaticScopeKey scope, StaticCycleCheck stratum)
     {
         var source = SourceOf(scope);
+        if (source.Opens.Count == 0) return null;
+        if (_levelProviders.TryGetValue((scope, stratum), out var retained) && retained.IsCurrent(this)) return retained;
         var providers = new List<ResolvedOpenProvider>();
+        var keys = new List<StaticScopeKey>();
         var seen = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
         foreach (var expression in source.Opens)
         {
             var fact = Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, scope, StaticQueryProjection.OpenTarget,
                 stratum: stratum, node: expression));
-            if (fact.Data is not StaticScopeKey[] keys) continue;
-            foreach (var key in keys)
+            if (fact.Data is not StaticScopeKey[] targets) continue;
+            foreach (var key in targets)
             {
                 var identity = Queries.Keys.ProviderScope(key, Queries.Resources, Queries.OperationToken);
                 if (seen.Contains(identity)) continue;
@@ -131,9 +157,86 @@ internal sealed partial class StaticStructureOperation
                 {
                     Written = expression,
                 });
+                keys.Add(key);
             }
         }
-        return providers;
+        Queries.Resources.Metadata(2, cancellationToken: Queries.OperationToken);
+        retained = new(providers, [.. keys], _lookupLevelReplacements);
+        _levelProviders[(scope, stratum)] = retained;
+        Queries.Observations?.RecordStaticLevelProvidersBuild(providers.Count);
+        return retained;
+    }
+
+    /// <summary>
+    /// THE OPENED-NAME RULE AT ONE LEVEL of this operation (<see cref="ElaboratedScopeLookup.SelectOpenLevel(ElaboratedPropertyScope, string, StaticCycleCheck)"/>):
+    /// each provider's public member of <paramref name="name"/>, in provider order. A level of more than
+    /// <see cref="Evaluator.OpenProviderLinearIndexLimit"/> providers whose closed member index
+    /// (<see cref="StaticQueryProjection.OpenMemberIndex"/>, Q1's own selection) is already final answers a name no
+    /// provider offers, or exactly one offers, from that index — the index lists every public name of exactly these
+    /// providers, with the one provider that offers it or none when two do — without asking each provider; an ambiguous
+    /// name, a smaller level, an index not yet settled and every other case scan the providers in order, which is what
+    /// every level did. The index is only read, never computed here.
+    /// </summary>
+    internal OpenNameSelection SelectOpenLevel(ElaboratedPropertyScope level, StaticScopeKey scope, string name, StaticCycleCheck stratum)
+    {
+        if (RetainedProviders(scope, stratum) is not { } retained) return default;
+        var providers = retained.Providers;
+        if (providers.Count > Evaluator.OpenProviderLinearIndexLimit
+            && Queries.TrySettledOpenMember(scope, stratum, name, out var selected))
+        {
+            OpenNameSelection selection = default;
+            if (selected is { } match)
+            {
+                var position = retained.PositionOf(match.Provider, Queries.Resources, Queries.OperationToken);
+                selection = new(level, new(providers[position], match.Hit), null);
+            }
+            Queries.Observations?.RecordStaticSettledOpenSelection();
+            return selection;
+        }
+        return ElaboratedScopeLookup.ScanOpenLevel(level, providers, name);
+    }
+
+    /// <summary>A level's retained providers (<see cref="Providers"/>), their Q2 keys in the same order, and where each one is.</summary>
+    private sealed class RetainedLevelProviders(List<ResolvedOpenProvider> providers, StaticScopeKey[] keys, long replacements)
+    {
+        private long _replacements = replacements;
+        private Dictionary<StaticScopeKey, int>? _positions;
+
+        internal List<ResolvedOpenProvider> Providers { get; } = providers;
+
+        /// <summary>
+        /// Whether every provider's declaring level is still the one registered for its context: nothing replaced a level
+        /// since this list was built or last checked, or every replacement concerned another context.
+        /// </summary>
+        internal bool IsCurrent(StaticStructureOperation operation)
+        {
+            if (_replacements == operation._lookupLevelReplacements) return true;
+            for (var index = 0; index < keys.Length; index++)
+            {
+                operation.Queries.Resources.Metadata(0, cancellationToken: operation.Queries.OperationToken);
+                if (!operation._lookupLevels.TryGetValue(keys[index].Parent ?? operation.Queries.Keys.Root, out var registered)
+                    || !ReferenceEquals(registered, Providers[index].Level)) return false;
+            }
+            _replacements = operation._lookupLevelReplacements;
+            return true;
+        }
+
+        /// <summary>The position of a provider selected from this same Q2 sequence. The table is built and charged once.</summary>
+        internal int PositionOf(StaticScopeKey provider, StaticQueryResourceBudget resources, CancellationToken cancellationToken)
+        {
+            if (_positions is null)
+            {
+                resources.Metadata(2L * keys.Length, work: 0, cancellationToken);
+                var positions = new Dictionary<StaticScopeKey, int>(keys.Length, ReferenceEqualityComparer.Instance);
+                for (var index = 0; index < keys.Length; index++)
+                {
+                    resources.Metadata(0, cancellationToken: cancellationToken);
+                    positions.Add(keys[index], index);
+                }
+                _positions = positions;
+            }
+            return _positions[provider];
+        }
     }
 
     internal string[] UndecidedInputs(StaticScopeKey scope)

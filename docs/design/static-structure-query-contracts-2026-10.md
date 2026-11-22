@@ -147,7 +147,11 @@ The original seven-family key catalog is too coarse to name distinct equations t
 - Range/occurrence projections provide bounded fan-in for large lists and repeated dependencies where needed.
 
 Q2 provider ranges use immutable trees and flatten/deduplicate once, avoiding repeated wide scans as shared reference
-tails settle. Q1's name-match ranges can decide known presence/ambiguity before the full list settles. Unknown identity
+tails settle. Q1's name-match ranges can decide known presence/ambiguity before the full list settles; a name reads
+them only while its level's closed member index is still Unknown once ordinary work is quiescent (`DeferredOpenPresence`,
+a decision observer), so a level whose list settles before that observer runs builds no per-name range. A wide-level
+adapter can also read a closed index from the unit's frozen facts. A unique hit uses Q4's first public declaration
+and the current unit's provider for the same key, preserving its written target and declaring scope. Unknown identity
 must not be treated as missing: it blocks target selection but can already rule out promotion. Pure member/input-syntax
 indexes are shared across contextual instances of a host DAG; contextual bindings and activation facts are not shared.
 

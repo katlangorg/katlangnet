@@ -88,6 +88,27 @@ internal sealed class FrontEndTraversalObservations
     public long StaticOpenIndexMemberVisits { get; private set; }
     internal void RecordStaticOpenIndexBuild() => StaticOpenIndexBuilds++;
     internal void RecordStaticOpenIndexMemberVisit() => StaticOpenIndexMemberVisits++;
+
+    /// <summary>
+    /// Provider lists the operation built for its lookup adapters (<c>StaticStructureOperation.Providers</c>: one per level
+    /// and stratum, again only after a registered level replaced a provider's declaring level), and the providers they hold.
+    /// A retained list served again adds nothing.
+    /// </summary>
+    public long StaticLevelProviderBuilds { get; private set; }
+    public long StaticLevelProviderEntries { get; private set; }
+    internal void RecordStaticLevelProvidersBuild(int providers)
+    {
+        StaticLevelProviderBuilds++;
+        StaticLevelProviderEntries += providers;
+    }
+
+    /// <summary>
+    /// Opened-name selections at a level of more than eight providers that its settled closed member index answered: a
+    /// name no provider offers, or exactly one offers (<c>StaticStructureOperation.SelectOpenLevel</c>). An ambiguous
+    /// name, a smaller level and a level whose index is not final scan the providers and record nothing here.
+    /// </summary>
+    public long StaticSettledOpenSelections { get; private set; }
+    internal void RecordStaticSettledOpenSelection() => StaticSettledOpenSelections++;
     internal void RecordStaticQueryEvaluation(StaticQueryKey key)
     {
         StaticQueryEvaluationCount++;
