@@ -1629,8 +1629,8 @@ public static partial class Evaluator
                     CountedTopLevelValues(countedR.Value)));
         }
 
-        if (DuplicatePropertyName(alg, ctx.Budget) is { } dupProp)
-            return new EvalError.DuplicateProperty(dupProp);
+        if (FirstDuplicateProperty(alg, ctx.Budget) is { } duplicate)
+            return new EvalError.DuplicateProperty(duplicate.Name);
 
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
             return conditionalError;
@@ -1888,8 +1888,8 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok(CountedTopLevelValues(countedR.Value));
         }
 
-        if (DuplicatePropertyName(alg, ctx.Budget) is { } duplicateName)
-            return new EvalError.DuplicateProperty(duplicateName);
+        if (FirstDuplicateProperty(alg, ctx.Budget) is { } duplicate)
+            return new EvalError.DuplicateProperty(duplicate.Name);
 
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
             return conditionalError;

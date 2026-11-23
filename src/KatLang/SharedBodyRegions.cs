@@ -103,49 +103,72 @@ internal sealed class SharedBodyCensus
 /// reference, and an over-approximation on purpose: a parameter the body infers or a member it opens stays in the set, so a
 /// region key can only be finer than necessary, never coarser. An open list is read outside the level that writes it, so a
 /// level's declarations never remove its own open heads.
+/// <para>For host alias preflight the free-name set also tracks the null name. It has its own bit alongside the
+/// interned strings and follows the same union and shadowing rules as every written name.</para>
 /// </summary>
 internal sealed class RegionFreeNames(NameSetInterner names)
 {
-    private readonly Dictionary<object, CanonicalNameSet> _memo = new(ReferenceEqualityComparer.Instance);
+    internal readonly record struct FreeNames(CanonicalNameSet Named, bool HasNull);
+
+    private readonly Dictionary<object, FreeNames> _memo = new(ReferenceEqualityComparer.Instance);
 
     internal NameSetInterner Names { get; } = names;
 
-    internal CanonicalNameSet Of(object node)
+    internal CanonicalNameSet Of(object node) => IncludingNull(node).Named;
+
+    internal FreeNames IncludingNull(object node)
     {
         if (_memo.TryGetValue(node, out var known)) return known;
         var set = node switch
         {
             Algorithm body => Body(body),
-            Expr.Resolve(var name) => Names.With(NameSetInterner.Empty, [name]),
-            Expr.Param(var name) => Names.With(NameSetInterner.Empty, [name]),
+            Expr.Resolve(var name) => Add(default, name),
+            Expr.Param(var name) => Add(default, name),
             _ => Children(node),
         };
         if (node is Expr.DotCall { EffectiveLexicalFallback: Expr.Resolve(var fallback) })
-            set = Names.With(set, [fallback]);
+            set = Add(set, fallback);
         _memo[node] = set;
         return set;
     }
 
-    private CanonicalNameSet Children(object node)
+    private FreeNames Add(FreeNames set, string name)
+        => name is null ? set with { HasNull = true } : set with { Named = Names.With(set.Named, [name]) };
+
+    private FreeNames Union(FreeNames left, FreeNames right)
+        => new(Names.Union(left.Named, right.Named), left.HasNull || right.HasNull);
+
+    private FreeNames Children(object node)
     {
-        var set = NameSetInterner.Empty;
+        FreeNames set = default;
         for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
             if (child is Expr or Algorithm or OutputBundle)
-                set = Names.Union(set, Of(child));
+                set = Union(set, IncludingNull(child));
         return set;
     }
 
-    private CanonicalNameSet Body(Algorithm body)
+    private FreeNames Body(Algorithm body)
     {
-        var opens = NameSetInterner.Empty;
-        foreach (var open in body.Opens) opens = Names.Union(opens, Of(open));
-        var own = NameSetInterner.Empty;
-        foreach (var row in body.Output) own = Names.Union(own, Of(row));
-        foreach (var property in body.Properties) own = Names.Union(own, Of(property.Value));
-        foreach (var branch in body.Branches) own = Names.Union(own, Of(branch.Body));
+        FreeNames opens = default;
+        foreach (var open in body.Opens) opens = Union(opens, IncludingNull(open));
+        FreeNames own = default;
+        foreach (var row in body.Output) own = Union(own, IncludingNull(row));
+        foreach (var property in body.Properties) own = Union(own, IncludingNull(property.Value));
+        foreach (var branch in body.Branches) own = Union(own, IncludingNull(branch.Body));
         if (body.Properties.Count > 0)
-            own = Names.Except(own, Names.With(NameSetInterner.Empty, body.Properties.Select(property => property.Name)));
-        return Names.Union(opens, own);
+        {
+            own = new(Names.Except(own.Named, Names.With(NameSetInterner.Empty, DeclaredNames(body.Properties))),
+                own.HasNull && !body.Properties.Any(static property => property.Name is null));
+        }
+        return Union(opens, own);
+    }
+
+    // The string-valued names to intern. The null declaration shadows the separate bit in Body.
+    private static IEnumerable<string> DeclaredNames(IReadOnlyList<Property> properties)
+    {
+        foreach (var property in properties)
+            if (property.Name is { } name)
+                yield return name;
     }
 }
 

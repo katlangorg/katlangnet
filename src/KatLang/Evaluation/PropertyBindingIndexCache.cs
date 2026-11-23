@@ -173,13 +173,13 @@ internal sealed class PropertyBindingIndexCache
         }
     }
 
-    // The duplicate-name verdicts of this run's WIDE property lists (FirstDuplicateName), keyed by the list
+    // The duplicate-name verdicts of this run's WIDE property lists (FirstDuplicate), keyed by the list
     // itself like every index above, in ONE table created by the first wide list, so a run without one pays a
     // single null field. Guarded by the declaration indexes' gate: unlike the sequential name lookups, the
     // table must stay sound if two flows of one run ever meet in it. The verdict served last is read outside it.
     private DuplicateVerdictTable? _duplicateVerdicts;
 
-    private sealed record DuplicateVerdict(IReadOnlyList<Property> Properties, string? FirstDuplicate);
+    private sealed record DuplicateVerdict(IReadOnlyList<Property> Properties, Property? FirstDuplicate);
 
     private sealed class DuplicateVerdictTable() : Dictionary<IReadOnlyList<Property>, DuplicateVerdict>(ReferenceEqualityComparer.Instance)
     {
@@ -189,10 +189,11 @@ internal sealed class PropertyBindingIndexCache
     }
 
     /// <summary>
-    /// The runtime duplicate-property check of a body (Lean <c>Algorithm.findDuplicatePropName</c>): the name of
-    /// the first property of <paramref name="properties"/>, in declaration order, whose name an earlier property
-    /// already has, or null — exactly <see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>, which decides
-    /// it. The evaluator asks on every evaluation of a body, so the verdict of a list longer than
+    /// The runtime duplicate-property check of a body (Lean <c>Algorithm.findDuplicatePropName</c>): the first
+    /// property of <paramref name="properties"/>, in declaration order, whose name an earlier property already
+    /// has, or null — exactly <see cref="AlgorithmAccessors.FirstDuplicateProperty"/>, which decides it, a second
+    /// nameless property of a host-built list included. The evaluator asks on every evaluation of a body, so the
+    /// verdict of a list longer than
     /// <see cref="AlgorithmAccessors.LinearDuplicatePropertyScanLimit"/> — the one that builds a name set — is
     /// retained once per run per list and reused by later evaluations of a body over that list (2026-11-22,
     /// finding <c>evaluator-runtime-duplicate-check-hashset-per-body-evaluation</c>: a wide body evaluated K
@@ -203,15 +204,15 @@ internal sealed class PropertyBindingIndexCache
     /// is observed. The verdict is a pure function of the list, computed outside the lock: a racing reader
     /// computes the same value, and the first stored one is served.
     /// </summary>
-    internal string? FirstDuplicateName(IReadOnlyList<Property> properties)
+    internal Property? FirstDuplicate(IReadOnlyList<Property> properties)
     {
         if (properties.Count <= AlgorithmAccessors.LinearDuplicatePropertyScanLimit)
-            return AlgorithmAccessors.FirstDuplicatePropertyName(properties);
-        return WideFirstDuplicateName(properties);
+            return AlgorithmAccessors.FirstDuplicateProperty(properties);
+        return WideFirstDuplicate(properties);
     }
 
-    // The memo path of FirstDuplicateName, out of line: a wide list's first evaluation in the run decides it.
-    private string? WideFirstDuplicateName(IReadOnlyList<Property> properties)
+    // The memo path of FirstDuplicate, out of line: a wide list's first evaluation in the run decides it.
+    private Property? WideFirstDuplicate(IReadOnlyList<Property> properties)
     {
         var table = Volatile.Read(ref _duplicateVerdicts);
         if (table is not null && Volatile.Read(ref table.Last) is { } last && ReferenceEquals(last.Properties, properties))
@@ -226,7 +227,7 @@ internal sealed class PropertyBindingIndexCache
 
         if (verdict is null)
         {
-            var decided = new DuplicateVerdict(properties, AlgorithmAccessors.FirstDuplicatePropertyName(properties));
+            var decided = new DuplicateVerdict(properties, AlgorithmAccessors.FirstDuplicateProperty(properties));
             lock (_declarationIndexGate)
             {
                 if ((table = _duplicateVerdicts) is null)
@@ -240,7 +241,7 @@ internal sealed class PropertyBindingIndexCache
         return verdict.FirstDuplicate;
     }
 
-    /// <summary>The number of wide property lists with a stored duplicate verdict in this run (<see cref="FirstDuplicateName"/>); a test observation.</summary>
+    /// <summary>The number of wide property lists with a stored duplicate verdict in this run (<see cref="FirstDuplicate"/>); a test observation.</summary>
     internal int DuplicateVerdictCount
     {
         get

@@ -183,43 +183,60 @@ internal static class AlgorithmAccessors
     internal const int LinearDuplicatePropertyScanLimit = 16;
 
     /// <summary>
-    /// The name of the first property, in declaration order, whose name an EARLIER property of the
-    /// list already has (ordinal comparison), or <c>null</c> when every name is unique. Lean:
-    /// <c>Algorithm.findDuplicatePropName</c>.
+    /// The first property, in declaration order, whose name an EARLIER property of the list already
+    /// has (ordinal comparison), or <c>null</c> when every name is unique. Lean:
+    /// <c>Algorithm.findDuplicatePropName</c>, whose answer is this property's name.
+    /// <para>A host-built list can hold a property whose name is null (no front end builds one). The
+    /// check compares that name like any other, as name lookup does: a second nameless property is a
+    /// duplicate of the first, and the verdict is that property — its null name is no answer of its own,
+    /// since null also means "no duplicate" (2026-11-23: the name-valued verdict hid a nameless pair,
+    /// and with it a later duplicate, so <c>[null, null, D, D]</c> was not refused). The empty name is an
+    /// ordinary name, distinct from null.</para>
     /// <para>The evaluator asks for this verdict on every body evaluation
-    /// (<see cref="Evaluator.DuplicatePropertyName"/>), where the list is usually empty or short, so up
+    /// (<see cref="Evaluator.FirstDuplicateProperty"/>), where the list is usually empty or short, so up
     /// to <see cref="LinearDuplicatePropertyScanLimit"/> properties are compared pairwise without
     /// allocating (2026-11 allocation attribution: the former per-call set was one heap object per call
     /// even for an empty list). A longer list uses a set sized for it, and the evaluator decides such a
-    /// list once per run (<see cref="Evaluation.PropertyBindingIndexCache.FirstDuplicateName"/>). Both
+    /// list once per run (<see cref="Evaluation.PropertyBindingIndexCache.FirstDuplicate"/>). Both
     /// forms meet the properties in declaration order and stop at the same one.</para>
     /// </summary>
-    internal static string? FirstDuplicatePropertyName(IReadOnlyList<Property> properties)
+    internal static Property? FirstDuplicateProperty(IReadOnlyList<Property> properties)
     {
         var count = properties.Count;
         if (count <= LinearDuplicatePropertyScanLimit)
         {
             for (var index = 0; index < count; index++)
             {
-                var name = properties[index].Name;
+                var property = properties[index];
+                var name = property.Name;
                 for (var earlier = 0; earlier < index; earlier++)
                 {
                     if (string.Equals(properties[earlier].Name, name, StringComparison.Ordinal))
-                        return name;
+                        return property;
                 }
             }
 
             return null;
         }
 
+        // A set admits one null element, so a second nameless property is found like any repeated name.
         var seen = new HashSet<string>(count, StringComparer.Ordinal);
         for (var index = 0; index < count; index++)
         {
-            var name = properties[index].Name;
-            if (!seen.Add(name))
-                return name;
+            var property = properties[index];
+            if (!seen.Add(property.Name))
+                return property;
         }
 
         return null;
     }
+
+    /// <summary>
+    /// The NAME of <see cref="FirstDuplicateProperty"/>'s verdict, or <c>null</c> when every name is
+    /// unique: the answer of the public <see cref="Algorithm.User.FindDuplicatePropName"/>. A host-built
+    /// list whose first duplicate is a nameless property also answers null here; every evaluator check
+    /// asks <see cref="FirstDuplicateProperty"/>, which tells the two apart.
+    /// </summary>
+    internal static string? FirstDuplicatePropertyName(IReadOnlyList<Property> properties)
+        => FirstDuplicateProperty(properties)?.Name;
 }

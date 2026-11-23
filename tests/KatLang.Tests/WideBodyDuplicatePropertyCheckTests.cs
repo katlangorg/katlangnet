@@ -11,12 +11,14 @@ namespace KatLang.Tests;
 /// more than <see cref="AlgorithmAccessors.LinearDuplicatePropertyScanLimit"/> properties built a name set each
 /// time, so a wide body evaluated K times built K sets (2026-11-21 adversarial performance and reliability
 /// investigation, baseline <c>8947d21e</c>, finding <c>evaluator-runtime-duplicate-check-hashset-per-body-evaluation</c>).
-/// Since 2026-11-22 every evaluator site asks <see cref="Evaluator.DuplicatePropertyName"/>: a short list keeps the
+/// Since 2026-11-22 every evaluator site asks <see cref="Evaluator.FirstDuplicateProperty"/>: a short list keeps the
 /// allocation-free pairwise scan, and a wide list is decided once per run per LIST REFERENCE
-/// (<see cref="PropertyBindingIndexCache.FirstDuplicateName"/>). Implementation-only: the verdict is the former
+/// (<see cref="PropertyBindingIndexCache.FirstDuplicate"/>). Implementation-only: the verdict is the former
 /// one for every list, a <c>with</c> copy that replaces the list gets its own, and a host edit between runs is
 /// observed by the next run. These tests pin the verdict against the former set scan, the once-per-run work
-/// count, the reuse without allocation, and the diagnostics on every engine.
+/// count, the reuse without allocation, and the diagnostics on every engine. Since 2026-11-23 the verdict is the
+/// duplicating property rather than its name, so a pair of host-built nameless properties is a duplicate the
+/// evaluator refuses (<c>NamelessHostPropertyPreflightTests</c> pins the programs).
 /// </summary>
 public class WideBodyDuplicatePropertyCheckTests
 {
@@ -26,14 +28,15 @@ public class WideBodyDuplicatePropertyCheckTests
     private static List<Property> Constants(int count, string prefix = "P")
         => Enumerable.Range(0, count).Select(i => Constant(prefix + i, i)).ToList();
 
-    // The former implementation, kept here as the reference: a set over the names in declaration order.
-    private static string? ReferenceFirstDuplicate(IReadOnlyList<Property> properties)
+    // The former implementation, kept here as the reference: a set over the names in declaration order, answering
+    // the property that repeats a name rather than the name, which is null for a host-built nameless property.
+    private static Property? ReferenceFirstDuplicate(IReadOnlyList<Property> properties)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in properties)
         {
             if (!seen.Add(property.Name))
-                return property.Name;
+                return property;
         }
         return null;
     }
@@ -53,7 +56,7 @@ public class WideBodyDuplicatePropertyCheckTests
 
     [Theory]
     [MemberData(nameof(Lengths))]
-    public void FirstDuplicateName_IsTheFormerSetScan_AndOneRunAnswersEveryListByItsOwnVerdict(int length)
+    public void FirstDuplicate_IsTheFormerSetScan_AndOneRunAnswersEveryListByItsOwnVerdict(int length)
     {
         // ONE run-local cache answers many lists — unique ones, a duplicated pair at many positions, two pairs,
         // names differing only in case, a null name — asked twice each and interleaved, so neither the
@@ -83,6 +86,15 @@ public class WideBodyDuplicatePropertyCheckTests
             twoNulls[0] = Constant(null!, 0);
             twoNulls[^1] = Constant(null!, 1);
             lists.Add(twoNulls);
+            // The empty name is an ordinary name, distinct from null: one of each is no duplicate, two empty names are.
+            var nullAndEmpty = Constants(length);
+            nullAndEmpty[0] = Constant(null!, 0);
+            nullAndEmpty[^1] = Constant("", 1);
+            lists.Add(nullAndEmpty);
+            var twoEmpty = Constants(length);
+            twoEmpty[0] = Constant("", 0);
+            twoEmpty[^1] = Constant("", 1);
+            lists.Add(twoEmpty);
         }
         if (length >= 4)
         {
@@ -91,6 +103,17 @@ public class WideBodyDuplicatePropertyCheckTests
             twoPairs[^1] = Constant(twoPairs[0].Name, -1);
             twoPairs[2] = Constant(twoPairs[1].Name, -1);
             lists.Add(twoPairs);
+            // The same with a nameless pair first and a named one after it, and the other way round.
+            var namelessPairFirst = Constants(length);
+            namelessPairFirst[0] = Constant(null!, 0);
+            namelessPairFirst[1] = Constant(null!, 1);
+            namelessPairFirst[^1] = Constant(namelessPairFirst[2].Name, -1);
+            lists.Add(namelessPairFirst);
+            var namedPairFirst = Constants(length);
+            namedPairFirst[2] = Constant(namedPairFirst[0].Name, -1);
+            namedPairFirst[1] = Constant(null!, 1);
+            namedPairFirst[^1] = Constant(null!, -1);
+            lists.Add(namedPairFirst);
         }
 
         foreach (var round in new[] { 0, 1 })
@@ -98,10 +121,25 @@ public class WideBodyDuplicatePropertyCheckTests
             foreach (var list in round == 0 ? lists : Enumerable.Reverse(lists))
             {
                 var expected = ReferenceFirstDuplicate(list);
-                Assert.Equal(expected, cache.FirstDuplicateName(list));
-                Assert.Equal(expected, cache.FirstDuplicateName(list));
-                Assert.Equal(expected, AlgorithmAccessors.FirstDuplicatePropertyName(list));
+                Assert.Same(expected, cache.FirstDuplicate(list));
+                Assert.Same(expected, cache.FirstDuplicate(list));
+                Assert.Same(expected, AlgorithmAccessors.FirstDuplicateProperty(list));
+                Assert.Equal(expected?.Name, AlgorithmAccessors.FirstDuplicatePropertyName(list));
             }
+        }
+
+        // The nameless verdicts are properties, never the "no duplicate" null their null names would read as.
+        if (length >= 2)
+        {
+            Assert.Null(cache.FirstDuplicate(lists.Single(list => list[0].Name is null && list[^1].Name == "")));
+            Assert.Same(lists.Single(list => list[0].Name is null && list[^1].Name is null)[^1],
+                cache.FirstDuplicate(lists.Single(list => list[0].Name is null && list[^1].Name is null)));
+            Assert.Equal("", cache.FirstDuplicate(lists.Single(list => list[0].Name == "" && list[^1].Name == ""))!.Name);
+        }
+        if (length >= 4)
+        {
+            Assert.Same(lists[^2][1], cache.FirstDuplicate(lists[^2]));
+            Assert.Same(lists[^1][2], cache.FirstDuplicate(lists[^1]));
         }
 
         // One verdict per WIDE list of the run, decided once however often it was asked; short lists keep the scan.
@@ -119,16 +157,16 @@ public class WideBodyDuplicatePropertyCheckTests
         var cache = new PropertyBindingIndexCache();
         for (var round = 0; round < 10; round++)
         {
-            Assert.Null(cache.FirstDuplicateName(first));
-            Assert.Equal("P3", cache.FirstDuplicateName(second));
-            Assert.Equal("P3", cache.FirstDuplicateName(second));
+            Assert.Null(cache.FirstDuplicate(first));
+            Assert.Same(properties[17], cache.FirstDuplicate(second));
+            Assert.Same(properties[17], cache.FirstDuplicate(second));
         }
         Assert.Equal(32, first.Reads);
         Assert.Equal(18, second.Reads);
     }
 
     [Fact]
-    public void DuplicatePropertyName_IsTheTotalLeanAccessor_OnEveryAlgorithmKind()
+    public void FirstDuplicateProperty_IsTheTotalLeanAccessor_OnEveryAlgorithmKind()
     {
         var budget = Evaluator.EvalCtx.Empty.Budget;
         var narrowDuplicate = Constants(5);
@@ -149,11 +187,12 @@ public class WideBodyDuplicatePropertyCheckTests
         ];
         foreach (var algorithm in algorithms)
         {
-            Assert.Equal(algorithm.FindDuplicatePropName(), Evaluator.DuplicatePropertyName(algorithm, budget));
-            Assert.Equal(algorithm.FindDuplicatePropName(), Evaluator.DuplicatePropertyName(algorithm, budget));
+            Assert.Equal(algorithm.FindDuplicatePropName(), Evaluator.FirstDuplicateProperty(algorithm, budget)?.Name);
+            Assert.Same(AlgorithmAccessors.FirstDuplicateProperty(algorithm.Properties), Evaluator.FirstDuplicateProperty(algorithm, budget));
         }
-        Assert.Equal("P7", Evaluator.DuplicatePropertyName(algorithms[1], budget));
-        Assert.Equal("P1", Evaluator.DuplicatePropertyName(algorithms[2], budget));
+        Assert.Same(wideDuplicate[33], Evaluator.FirstDuplicateProperty(algorithms[1], budget));
+        Assert.Same(narrowDuplicate[4], Evaluator.FirstDuplicateProperty(algorithms[2], budget));
+        Assert.Same(wideDuplicate[33], Evaluator.FirstDuplicateProperty(algorithms[4], budget));
     }
 
     // ── Programs on every engine ────────────────────────────────────────────────────────────────────
@@ -307,22 +346,22 @@ public class WideBodyDuplicatePropertyCheckTests
         var second = new Algorithm.User(null, [], [], Constants(64, "Q"), [new Expr.Num(1)]);
         var narrow = new Algorithm.User(null, [], [], Constants(AlgorithmAccessors.LinearDuplicatePropertyScanLimit), [new Expr.Num(1)]);
         var budget = Evaluator.EvalCtx.Empty.Budget;
-        _ = Evaluator.DuplicatePropertyName(narrow, budget); // warm-up of the narrow path
-        string? found = "unset";
-        var decided = Bytes(() => found = Evaluator.DuplicatePropertyName(first, budget));
+        _ = Evaluator.FirstDuplicateProperty(narrow, budget); // warm-up of the narrow path
+        Property? found = first.Properties[0];
+        var decided = Bytes(() => found = Evaluator.FirstDuplicateProperty(first, budget));
         Assert.Null(found);
         Assert.True(decided > 0, $"the first decision of a wide list builds its set ({decided} bytes)");
-        _ = Evaluator.DuplicatePropertyName(second, budget);
-        _ = Evaluator.DuplicatePropertyName(first, budget);
+        _ = Evaluator.FirstDuplicateProperty(second, budget);
+        _ = Evaluator.FirstDuplicateProperty(first, budget);
 
         var reused = Bytes(() =>
         {
             for (var i = 0; i < 100; i++)
             {
-                found = Evaluator.DuplicatePropertyName(first, budget);   // the last verdict
-                found ??= Evaluator.DuplicatePropertyName(first, budget);
-                found ??= Evaluator.DuplicatePropertyName(second, budget); // the table
-                found ??= Evaluator.DuplicatePropertyName(narrow, budget); // the pairwise scan
+                found = Evaluator.FirstDuplicateProperty(first, budget);   // the last verdict
+                found ??= Evaluator.FirstDuplicateProperty(first, budget);
+                found ??= Evaluator.FirstDuplicateProperty(second, budget); // the table
+                found ??= Evaluator.FirstDuplicateProperty(narrow, budget); // the pairwise scan
             }
         });
         Assert.Null(found);

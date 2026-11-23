@@ -173,8 +173,8 @@ public static partial class Evaluator
     /// </summary>
     private static EvalError? OutputRowsAccessError(Algorithm alg, in EvalCtx ctx)
     {
-        if (DuplicatePropertyName(alg, ctx.Budget) is { } duplicateName)
-            return new EvalError.DuplicateProperty(duplicateName);
+        if (FirstDuplicateProperty(alg, ctx.Budget) is { } duplicate)
+            return new EvalError.DuplicateProperty(duplicate.Name);
         if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
             return conditionalError;
         return alg is Algorithm.User { Output.Count: 0 } ? new EvalError.MissingOutput() : null;
@@ -184,18 +184,21 @@ public static partial class Evaluator
     /// The runtime duplicate-property check of a body evaluation (Lean <c>Algorithm.findDuplicatePropName</c>,
     /// total: <c>none</c> for a builtin or a family, whose property list is empty): host-API defense, since the
     /// front end rejects a duplicate property before evaluation. Every evaluator site that enters a body asks
-    /// it here. A short list keeps the allocation-free pairwise scan
-    /// (<see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>); a wide one is decided once per run per
-    /// list (<see cref="PropertyBindingIndexCache.FirstDuplicateName"/>), so repeated evaluation of a wide body
-    /// builds no name set per evaluation. Out of line, so the body-entry frames that ask it keep no scan state.
+    /// it here and refuses a body with a verdict as <see cref="EvalError.DuplicateProperty"/> of the verdict's
+    /// name. The verdict is the duplicating PROPERTY, never its name: a host-built list can hold nameless
+    /// properties, and a second one is a duplicate whose name is null, which a name-valued verdict could not
+    /// tell from "no duplicate" (<see cref="AlgorithmAccessors.FirstDuplicateProperty"/>). A short list keeps
+    /// the allocation-free pairwise scan; a wide one is decided once per run per list
+    /// (<see cref="PropertyBindingIndexCache.FirstDuplicate"/>), so repeated evaluation of a wide body builds no
+    /// name set per evaluation. Out of line, so the body-entry frames that ask it keep no scan state.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    internal static string? DuplicatePropertyName(Algorithm alg, EvaluationBudget budget)
+    internal static Property? FirstDuplicateProperty(Algorithm alg, EvaluationBudget budget)
     {
         var properties = alg.Properties;
         return properties.Count <= AlgorithmAccessors.LinearDuplicatePropertyScanLimit
-            ? AlgorithmAccessors.FirstDuplicatePropertyName(properties)
-            : budget.PropertyBindings.FirstDuplicateName(properties);
+            ? AlgorithmAccessors.FirstDuplicateProperty(properties)
+            : budget.PropertyBindings.FirstDuplicate(properties);
     }
 
     /// <summary>

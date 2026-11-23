@@ -3878,7 +3878,10 @@ public closed record Algorithm
         /// constructors have no properties). Allocation-free for a short property list
         /// (<see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>). The evaluator asks on
         /// every body evaluation through its run-local verdict of a long list
-        /// (<see cref="Evaluator.DuplicatePropertyName"/>), which answers exactly this.
+        /// (<see cref="Evaluator.FirstDuplicateProperty"/>), whose property this names. A host-built
+        /// list can hold a property whose name is null: when the first duplicate is such a nameless
+        /// property, the duplicated name is itself null, so this also returns null, while the
+        /// evaluator refuses the body (<see cref="EvalError.DuplicateProperty"/> with a null name).
         /// </summary>
         public string? FindDuplicatePropName()
             => AlgorithmAccessors.FirstDuplicatePropertyName(Properties);
@@ -4780,7 +4783,8 @@ internal closed record PreEvaluationAstViolation
 internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = null)
 {
     private readonly HashSet<AliasSite> _settled = [];
-    private readonly Dictionary<IReadOnlyList<Property>, Dictionary<string, Property>> _indexes = new(ReferenceEqualityComparer.Instance);
+    // Per property list: name -> the FIRST property of that name, and, kept apart, the first nameless property (Lookup).
+    private readonly Dictionary<IReadOnlyList<Property>, (Dictionary<string, Property> Named, Property? Unnamed)> _indexes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<int, Dictionary<IReadOnlyList<Property>, int>> _contexts = [];
     private readonly Dictionary<IReadOnlyList<Property>, bool> _relevantScopes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<(int Region, string Head, int Context), int> _regions = [];
@@ -4798,19 +4802,30 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
     internal int RegionOf(object node, IReadOnlyList<Algorithm> chain)
     {
         var region = 0;
-        foreach (var name in _freeNames.Of(node).Names)
+        var free = _freeNames.IncludingNull(node);
+        foreach (var name in free.Named.Names)
         {
             if (targetHeads?.Contains(name) == false) continue;
-            var context = -1;
-            for (var level = chain.Count - 1; level >= 0 && context < 0; level--)
-                if (Lookup(chain[level], name) is not null)
-                    context = ContextOf(chain, level + 1);
-            if (!_regions.TryGetValue((region, name, context), out var next))
-                _regions.Add((region, name, context), next = _regions.Count + 1);
-            region = next;
+            region = RegionWith(region, name, chain);
         }
 
+        if (free.HasNull && targetHeads?.Contains(null!) != false)
+            region = RegionWith(region, null!, chain);
+
         return region;
+    }
+
+    // The region after `region` that also records where `name` is declared on `chain`: the chain prefix ending at
+    // the innermost scope that declares it, or none.
+    private int RegionWith(int region, string name, IReadOnlyList<Algorithm> chain)
+    {
+        var context = -1;
+        for (var level = chain.Count - 1; level >= 0 && context < 0; level--)
+            if (Lookup(chain[level], name) is not null)
+                context = ContextOf(chain, level + 1);
+        if (!_regions.TryGetValue((region, name, context), out var next))
+            _regions.Add((region, name, context), next = _regions.Count + 1);
+        return next;
     }
 
     private int ContextOf(IReadOnlyList<Algorithm> chain, int count)
@@ -4996,6 +5011,15 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
         return true;
     }
 
+    /// <summary>
+    /// The first property of <paramref name="owner"/>, of any visibility, named <paramref name="name"/>, or null:
+    /// what the ordered scan selects (Lean <c>Algorithm.lookupPropDefAny?</c>), from an index built once per
+    /// property list. A host-built list can hold a property whose name is null (no front end builds one), which
+    /// the scan compares like any other name: a named lookup never selects it, and a null lookup selects the
+    /// first one. The index keeps that property apart from its name dictionary, which refuses a null key
+    /// (2026-11-23: indexing such a list threw <see cref="ArgumentNullException"/> in pre-evaluation validation
+    /// of a tree with a callable alias, at every width), as <c>PropertyBindingIndexCache.Lookup</c> does.
+    /// </summary>
     private Property? Lookup(Algorithm owner, string name)
     {
         var properties = owner.Properties;
@@ -5003,13 +5027,18 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
             return null;
         if (!_indexes.TryGetValue(properties, out var index))
         {
-            index = new Dictionary<string, Property>(StringComparer.Ordinal);
+            index = (new Dictionary<string, Property>(StringComparer.Ordinal), null);
             foreach (var property in properties)
-                index.TryAdd(property.Name, property);
+            {
+                if (property.Name is null)
+                    index.Unnamed ??= property;
+                else
+                    index.Named.TryAdd(property.Name, property);
+            }
             _indexes.Add(properties, index);
         }
 
-        return index.TryGetValue(name, out var found) ? found : null;
+        return name is null ? index.Unnamed : index.Named.GetValueOrDefault(name);
     }
 }
 
