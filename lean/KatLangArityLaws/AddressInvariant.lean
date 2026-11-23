@@ -103,6 +103,7 @@ def ItemLV (h : Array NeedCell) (items : List CallableCallItem) : Prop := ∀ x 
 def SuffixV (h : Array NeedCell) : PreparedSequenceBuiltinSuffixArg → Prop
   | .needAlgorithm a => a < h.size
   | .value r => RV h r
+  | .deferred item => ItemV h item
   | _ => True
 
 def SuffixLV (h : Array NeedCell) (xs : List PreparedSequenceBuiltinSuffixArg) : Prop :=
@@ -133,6 +134,7 @@ def SuspV (h : Array NeedCell) : NeedSuspension → Prop
   | .expression _ caller values => ValidCtx h caller ∧ VEV h values
   | .collector slice => ValidAddresses h slice
   | .ready value => CRV h value
+  | .applied _ cells caller values _ => ValidSourced h cells ∧ ValidCtx h caller ∧ VEV h values
 
 /-- A completed VALUE outcome. -/
 def StateV (h : Array NeedCell) : NeedState → Prop
@@ -209,6 +211,7 @@ theorem SuffixV.mono {x : PreparedSequenceBuiltinSuffixArg} (v : SuffixV h x) : 
   cases x with
   | needAlgorithm a => exact Nat.lt_of_lt_of_le v g
   | value r => exact RV.mono g v
+  | deferred item => exact ItemV.mono g v
   | algorithm _ => trivial
   | wholeNumber _ => trivial
 theorem SuffixLV.mono {xs : List PreparedSequenceBuiltinSuffixArg} (v : SuffixLV h xs) : SuffixLV h' xs :=
@@ -229,6 +232,7 @@ theorem SuspV.mono {s : NeedSuspension} (v : SuspV h s) : SuspV h' s := by
   | expression _ c vals => exact ⟨ValidCtx.mono g v.1, VEV.mono g v.2⟩
   | collector _ => exact ValidAddresses.mono g v
   | ready _ => exact CRV.mono g v
+  | applied _ cells c vals _ => exact ⟨ValidSourced.mono g v.1, ValidCtx.mono g v.2.1, VEV.mono g v.2.2⟩
 theorem StateV.mono {s : NeedState} (v : StateV h s) : StateV h' s := by
   cases s with
   | completed o => cases o with
@@ -771,12 +775,10 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .evalConditionalCallbackCallCounted _ args ctx env _ => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalUserCallbackCallCounted _ args ctx env => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalResolvedCallbackCallCounted _ args ctx env _ => fun h => CRLV h args ∧ ValidCtx h ctx ∧ VEV h env
-  | .evalSequenceReduceStepCounted _ element accumulator ctx env _ => fun h =>
-      CRV h element ∧ RV h accumulator ∧ ValidCtx h ctx ∧ VEV h env
   | .demandSequenceBuiltinCallItemValue item ctx env => fun h => ItemV h item ∧ ValidCtx h ctx ∧ VEV h env
   | .bindSequenceBuiltinArguments _ _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
-  | .evalReduceCounted collection _ initial ctx env => fun h =>
-      CRLV h collection ∧ RV h initial ∧ ValidCtx h ctx ∧ VEV h env
+  | .evalReduceCounted collection _ start ctx env => fun h =>
+      CRLV h collection ∧ start.1 < h.size ∧ ValidCtx h ctx ∧ VEV h env
   | .evalFilterCounted items _ ctx env => fun h => CRLV h items ∧ ValidCtx h ctx ∧ VEV h env
   | .evalMapCounted collection _ ctx env => fun h => CRLV h collection ∧ ValidCtx h ctx ∧ VEV h env
   | .applyBuiltinCountedSequence _ _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
@@ -858,7 +860,6 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .evalConditionalCallbackCallCounted .., r, h => CRV h r
   | .evalUserCallbackCallCounted .., r, h => CRV h r
   | .evalResolvedCallbackCallCounted .., r, h => CRV h r
-  | .evalSequenceReduceStepCounted .., r, h => CRV h r
   | .demandSequenceBuiltinCallItemValue .., item, h => ItemV h item
   | .bindSequenceBuiltinArguments .., b, h => BoundV h b
   | .evalReduceCounted .., r, h => CRV h r

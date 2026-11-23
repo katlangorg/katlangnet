@@ -739,6 +739,12 @@ inductive SequenceBuiltinSuffixArgKind where
 structure SequenceBuiltinSuffixArgDescriptor where
   name : Ident
   kind : SequenceBuiltinSuffixArgKind := .algorithm
+  /-- A DEFERRED control (lazy `reduce` accumulators, November 2026): binding does NOT demand it.
+      The builtin retains the supplied computation and demands it itself, at most once, when its
+      execution needs the value (`reduce`'s `initial`: demanded when the fold reaches its start).
+      The slot's ROLE is unchanged — it is still the `kind` it declares, for formula lifting and
+      the zero-argument value-demand law alike. C#: `SuffixArgDescriptor.Deferred`. -/
+  deferred : Bool := false
   deriving Repr, BEq
 
 /-- What a collection builtin does with an EMPTY one-level collection view
@@ -771,6 +777,11 @@ def SequenceBuiltinMetadata.parameters (metadata : SequenceBuiltinMetadata) : Li
 def SequenceBuiltinMetadata.signature (builtinName : Ident) (metadata : SequenceBuiltinMetadata)
     : CallableSignature :=
   { name := builtinName, parameters := metadata.parameters }
+
+/-- `reduce`'s `initial` control: a VALUE the fold demands itself, at most once, when it reaches
+    its start (`SequenceBuiltinSuffixArgDescriptor.deferred`). -/
+def reduceInitialDescriptor : SequenceBuiltinSuffixArgDescriptor :=
+  { name := "initial", kind := .value, deferred := true }
 
 /-- Metadata for collection builtins.
   A collection builtin is an ordinary fixed-arity native callable: exactly one
@@ -828,10 +839,11 @@ def sequenceBuiltinMetadata? : Builtin -> Option SequenceBuiltinMetadata
     }
   | .reduceBuiltin => some {
       -- The reducer is a callback the builtin INVOKES; the initial accumulator is
-      -- an ordinary VALUE, demanded once (HO-04).
+      -- an ordinary VALUE, demanded AT MOST once (HO-04) and only when the fold
+      -- reaches its start: a DEFERRED control, never demanded at binding.
       suffixArgs := [
         { name := "reducer" },
-        { name := "initial", kind := .value }
+        reduceInitialDescriptor
       ]
     }
   | _ => none
@@ -2331,6 +2343,18 @@ inductive NeedSuspension where
   | collector (slice : List Nat)
   -- Produced data is a calculation value and carries no callable identity.
   | ready (value : CountedResult)
+  -- A DEFERRED APPLICATION (lazy `reduce` accumulators, November 2026): a RESOLVED callee over an
+  -- already FORMED supply (each cell with its written slot, as `NeedSupply.Sourced`), not yet
+  -- invoked. Its VALUE is that one invocation through the ordinary dispatch of a formed supply
+  -- (`NeedPlan.Route.dispatch`, production `evalSuppliedCallCounted`) in the captured context,
+  -- named `calleeName`, at the ordinary value boundary; it runs on the first VALUE demand and is
+  -- memoized like every cell. The cell is VALUE-ONLY: no CALLABLE identity
+  -- (`NeedProjection.suspended`), no invocation plan and so no META capture
+  -- (`NeedPlan.ofSuspension?`), no retained slice (`retainedCellSlice?`). A `reduce` fold
+  -- allocates one per accumulator slot (`EvalBody.evalReduceCounted`).
+  -- C#: the fold's accumulator cells (`Evaluator.ReduceFold`).
+  | applied (callee : Algorithm) (cells : List (Nat × Option Expr)) (caller : EvalCtx) (values : ValEnv)
+      (calleeName : String)
   deriving Repr
 
 /-- The invocation-plan supply of ONE supplied call computation (CallReference M1.5,
@@ -4976,12 +5000,15 @@ structure PreparedSequenceBuiltinInput where
     no value — it was never value-evaluated — only its callable: a supplied cell's
     address (`.needAlgorithm`, projected when the builtin invokes it), or, for an
     argument without a cell (the hand-built fixture seam), the algorithm it invokes
-    (`.algorithm`). A VALUE control carries the value its one demand established. -/
+    (`.algorithm`). A VALUE control carries the value its one demand established. A
+    DEFERRED control (`SequenceBuiltinSuffixArgDescriptor.deferred`) carries its
+    undemanded call item, which the builtin demands itself when it needs the value. -/
 inductive PreparedSequenceBuiltinSuffixArg where
   | algorithm (value : Algorithm)
   | needAlgorithm (address : Nat)
   | value (value : Result)
   | wholeNumber (value : Int)
+  | deferred (item : CallableCallItem)
   deriving Repr
 
 structure BoundSequenceBuiltinArguments where
@@ -5054,7 +5081,8 @@ structure ResolvedArgumentAlgorithm where
     cannot fail and cannot recurse (`map([], A)` never reads `A`, exactly as
     `Run(f) = repeat(f(5), 0)` / `Run(A)` never runs `A`); a VALUE slot is demanded only when the builtin
     executes it, after the arity check, through its cell and at most once, so no later
-    read retries it (`reduce`'s `initial` included, HO-04;
+    read retries it (`reduce`'s `initial` included, HO-04, whose demand is DEFERRED to the
+    fold's start, `SequenceBuiltinSuffixArgDescriptor.deferred`;
     `demandSequenceBuiltinCallItemValue`); a SURPLUS slot is never demanded: the call
     reports its arity error first (NEED-05). An argument without a cell (the
     hand-built fixture seam) is never evaluated standalone either: a VALUE slot judges
@@ -6262,14 +6290,42 @@ def sequenceBuiltinValueDemandError? (item : CallableCallItem) : Option Error :=
 def reduceInitialAccumulatorRequiresValueError : Error :=
   Error.withContext "while preparing reduce initial accumulator" Error.badArity
 
-/-- `reduce`'s `initial` is an ordinary VALUE slot (HO-04), demanded once like
-    every other value slot; only the REPORT of a zero-argument demand rejection is
+/-- The evaluation frame of a `reduce` fold's steps (`EvalBody.evalReduceCounted`): ONE frame
+    around the demand of the last step, which every step that demand runs is under — a failure
+    never gains one frame per fold level, however many accumulators its demand crossed. -/
+def reduceStepContext : String :=
+  "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)"
+
+/-- `reduce`'s `initial` is an ordinary VALUE slot (HO-04), demanded at most once like
+    every other value slot — when the fold reaches its start (a DEFERRED control), never at
+    binding; only the REPORT of a zero-argument demand rejection is
     reduce's own. A rejected callable that declares parameters is the reducer
     written where the initial accumulator belongs (`reduce(xs, Add, Inc)`), so it
     gets reduce's dedicated accumulator report; any other rejection (a clause
     family's `noMatchingBranch`) keeps the law's report. -/
 def reduceInitialRejection (alg : Algorithm) (err : Error) : Error :=
   if (Algorithm.params alg).isEmpty then err else reduceInitialAccumulatorRequiresValueError
+
+/-- The VALUE a `.value` control's demand established, or that demand's report: the item's
+    retained failure, refined for `reduce`'s `initial` (`reduceInitialRejection`), else the slot's
+    own requirement. The item was demanded before (`demandSequenceBuiltinCallItemValue`): at
+    binding, or — a DEFERRED control — by the builtin when its execution needed the value; nothing
+    is evaluated here. -/
+def demandedSequenceBuiltinValue
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor)
+    (item : CallableCallItem) : EvalM Result :=
+  match item.value? with
+  | some value => pure value
+  | none =>
+      let refine : Algorithm -> Error -> Error := match b with
+        | .reduceBuiltin => reduceInitialRejection
+        | _ => fun _ err => err
+      match sequenceBuiltinValueDemandErrorWith? refine item with
+      | some err => .error err
+      | none =>
+      .error (Error.withContext
+        (sequenceBuiltinSuffixArgErrorContext b descriptor)
+        Error.badArity)
 
 def prepareSequenceBuiltinSuffixArgItem
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor)
@@ -6289,18 +6345,10 @@ def prepareSequenceBuiltinSuffixArgItem
           (sequenceBuiltinSuffixArgErrorContext b descriptor)
           Error.badArity)
   | .value =>
-    match item.value? with
-    | some value => pure (.value value)
-    | none =>
-        let refine : Algorithm -> Error -> Error := match b with
-          | .reduceBuiltin => reduceInitialRejection
-          | _ => fun _ err => err
-        match sequenceBuiltinValueDemandErrorWith? refine item with
-        | some err => .error err
-        | none =>
-        .error (Error.withContext
-          (sequenceBuiltinSuffixArgErrorContext b descriptor)
-          Error.badArity)
+    -- A DEFERRED value control was not demanded: binding retains its call item as supplied, and
+    -- the builtin demands it when its execution needs the value (`reduce`'s `initial`).
+    if descriptor.deferred then return .deferred item
+    return .value (<- demandedSequenceBuiltinValue b descriptor item)
   | .wholeNumber =>
     match item.value? with
     | some value =>
@@ -6359,6 +6407,19 @@ def expectPreparedSequenceBuiltinValueSuffixArg
     | _ =>
         internalSequenceBuiltinSuffixArgMetadataError b
           s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .value}"
+
+/-- The undemanded call item of a DEFERRED value control: the builtin demands it itself
+    (`demandSequenceBuiltinCallItemValue`, then `demandedSequenceBuiltinValue`). -/
+def expectPreparedSequenceBuiltinDeferredSuffixArg
+    (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
+    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat)
+    : EvalM CallableCallItem :=
+  expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .value fun descriptor arg =>
+    match arg with
+    | .deferred item => pure item
+    | _ =>
+        internalSequenceBuiltinSuffixArgMetadataError b
+          s!"prepared suffix argument {index + 1} ({descriptor.name}) is not a deferred {sequenceBuiltinSuffixArgKindDesc .value}"
 
 def expectPreparedNumericItems (b : Builtin)
     (prepared : PreparedSequenceBuiltinInput) : EvalM (List Int) :=
@@ -7257,6 +7318,8 @@ def suspended (written : Expr → EvalCtx → EvalM (Option Algorithm)) :
     NeedSuspension → EvalM (Option Algorithm)
   | .ready _ => pure none
   | .collector _ => pure none
+  -- A deferred application is a calculation: its result is a value, never a callable.
+  | .applied .. => pure none
   | .expression source caller _ =>
     if shouldWrapArgExprAsValue source then pure none else written source caller
 
@@ -8637,6 +8700,14 @@ def suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
   -- Materializing a collector constructs a list; its elements are subordinate computations.
   -- Store their failures as nested in this cell, without changing the original element cells.
   | .collector slice => withNestedMissingOutput (materialize demand slice)
+  -- A deferred application is ONE ordinary invocation of its resolved callee over its formed
+  -- supply (`route.dispatch`, with no callee origin: the application names no property binding),
+  -- counted at the call's value boundary. The invocation is a subordinate computation of whichever
+  -- consumer demands this cell, so its own missing output is stored as nested, like a collector's
+  -- element.
+  | .applied callee cells caller values calleeName =>
+    reCountValueBoundary <$> withNestedMissingOutput
+      (route.dispatch .none callee cells caller values calleeName)
 
 def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
@@ -8894,10 +8965,9 @@ inductive EvalCall : Type where
   | evalConditionalCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalUserCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv)
   | evalResolvedCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-  | evalSequenceReduceStepCounted (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | demandSequenceBuiltinCallItemValue (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv)
   | bindSequenceBuiltinArguments (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalReduceCounted (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv)
+  | evalReduceCounted (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv)
   | evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | applyBuiltinCountedSequence (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -8978,7 +9048,6 @@ inductive EvalCall : Type where
   | .evalConditionalCallbackCallCounted .. => CountedResult
   | .evalUserCallbackCallCounted .. => CountedResult
   | .evalResolvedCallbackCallCounted .. => CountedResult
-  | .evalSequenceReduceStepCounted .. => CountedResult
   | .demandSequenceBuiltinCallItemValue .. => CallableCallItem
   | .bindSequenceBuiltinArguments .. => BoundSequenceBuiltinArguments
   | .evalReduceCounted .. => CountedResult
@@ -9112,14 +9181,12 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalUserCallbackCallCounted callee args ctx env)
 @[inline] def EvalRec.evalResolvedCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   rec (.evalResolvedCallbackCallCounted callee args ctx env calleeName)
-@[inline] def EvalRec.evalSequenceReduceStepCounted (rec : EvalRec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-  rec (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)
 @[inline] def EvalRec.demandSequenceBuiltinCallItemValue (rec : EvalRec) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem :=
   rec (.demandSequenceBuiltinCallItemValue item ctx env)
 @[inline] def EvalRec.bindSequenceBuiltinArguments (rec : EvalRec) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM BoundSequenceBuiltinArguments :=
   rec (.bindSequenceBuiltinArguments b metadata args ctx env)
-@[inline] def EvalRec.evalReduceCounted (rec : EvalRec) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  rec (.evalReduceCounted collection stepAlg initial ctx env)
+@[inline] def EvalRec.evalReduceCounted (rec : EvalRec) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  rec (.evalReduceCounted collection stepAlg start ctx env)
 @[inline] def EvalRec.evalFilterCounted (rec : EvalRec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalFilterCounted items predicateAlg ctx env)
 @[inline] def EvalRec.evalMapCounted (rec : EvalRec) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
@@ -9730,10 +9797,6 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCallbackCallCounted callee args ctx env calleeName) :=
   fun _ _ h => hrec _ _ h _
-@[partial_fixpoint_monotone] theorem EvalRec.evalSequenceReduceStepCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalSequenceReduceStepCounted callee element accumulator ctx env calleeName) :=
-  fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.demandSequenceBuiltinCallItemValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).demandSequenceBuiltinCallItemValue item ctx env) :=
@@ -9743,8 +9806,8 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     Lean.Order.monotone (fun ρ => (recOf ρ).bindSequenceBuiltinArguments b metadata args ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalReduceCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalReduceCounted collection stepAlg initial ctx env) :=
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalReduceCounted collection stepAlg start ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalFilterCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -11123,23 +11186,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         rec.evalResolvedCallbackCallCounted target args ctx env calleeName
     | _ => rec.evalUserCallbackCallCounted callee args ctx env
 
-  /-- Evaluate a `reduce` step on one collected iteration item. The reducer is
-      an ordinary two-argument callback (THE CALLBACK LAW): it receives the
-      element and the accumulator as exactly two arguments, each ONE value —
-      `reduce(xs, R, init)` calls `R(E, Acc)` — so a collecting parameter on
-      either side collects those argument values exactly and a structured
-      accumulator is opened only by the reducer's own explicit pattern
-      (`R(x, (a, b))`). The accumulator is always one value: the initial
-      accumulator is reified at the value boundary, and each step's result is
-      its ordinary call result, passed whole as the next accumulator (HO-03).
-      C#: `EvalSequenceReduceStepCounted`. -/
-  def EvalBody.evalSequenceReduceStepCounted (rec : EvalRec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-    rec.evalResolvedCallbackCallCounted callee
-      [ countedSequenceCallbackItem element
-      , (accumulator, Result.valueCount accumulator)
-      ]
-      ctx env calleeName
-
   /-- Demand ONE collection-builtin call item that binding has placed in a VALUE
       position: the demand happens HERE, once the descriptor has decided the slot is
       a value (a CALLBACK item is never demanded — a CALLBACK slot receives the
@@ -11255,6 +11301,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         match cell.suspension with
         | .collector slice => pure (some slice)
         | .ready _ => pure none
+        | .applied .. => pure none
         | .expression source caller _ =>
           match <- EvalBody.transparentRetainedCell? rec source caller with
           | some next => EvalBody.retainedCellSlice? rec fuel next
@@ -11301,11 +11348,13 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           | descriptor :: descriptors, item :: rest => do
               -- A `.value` / `.wholeNumber` control is a VALUE position, so it is
               -- demanded through the ONE law; an `.algorithm` control is a
-              -- CALLBACK slot and is never demanded.
+              -- CALLBACK slot and is never demanded. A DEFERRED value control
+              -- (`reduce`'s `initial`) is retained undemanded: the builtin demands
+              -- it through the same law when its execution needs the value.
               let item <-
                 match descriptor.kind with
                 | .algorithm => pure item
-                | _ => rec.demandSequenceBuiltinCallItemValue item ctx env
+                | _ => if descriptor.deferred then pure item else rec.demandSequenceBuiltinCallItemValue item ctx env
               let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor item
               let tail <- prepareControls descriptors rest
               pure (prepared :: tail)
@@ -11352,42 +11401,62 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           suffixArgs := suffixArgs
         }
 
-    /-- Evaluate `reduce` over the bound collection argument's viewed items.
-      `reduce(collection, reducer, initial)` processes top-level
-      collection elements from left to right.
-      `step(element, accumulator)` receives each item exactly as collected
-      from the post-binding collection view and the accumulator as ONE value —
-      two ordinary callback arguments (THE CALLBACK LAW); nested sequence
-      values stay intact, and only the reducer's own explicit pattern opens a
-      structured element or accumulator. Each step's result is its ORDINARY
-      call result (HO-03, Q-25 resolved October 2026) — the one value the call
-      boundary delivers: several rows arrive as one sequence value, `()` and
-      `[]` are ordinary values — passed whole, never spread, as the next
-      accumulator with its value-boundary count (`reCountValueBoundary`), so
-      `reduce([a, b], R, i)` is `R(b, R(a, i))`.
+    /-- Evaluate `reduce` over the bound collection argument's viewed items, with
+      ACCUMULATORS EVALUATED ON DEMAND (lazy `reduce`, November 2026).
+      `reduce(collection, reducer, initial)` associates its top-level collection
+      elements as a left fold, `reduce([a, b], R, i)` is `R(b, R(a, i))`, and
+      demands ONLY ITS LAST STEP: each step is the ordinary invocation
+      `step(element, accumulator)` over its already evaluated element — exactly as
+      collected from the post-binding collection view, one Ready value — and ONE
+      DEFERRED accumulator cell. Demanding that cell runs the preceding step, or
+      evaluates the start; a reducer that never demands it skips every step that
+      only it would have reached, and the initial expression with them.
 
-      The initial accumulator is an ordinary VALUE slot (HO-04): binding has
-      already demanded it ONCE — a failure there is the call's failure and is
-      never retried — so this function receives its value, never an algorithm
-      to evaluate again. A callable that cannot supply a zero-argument value was
-      rejected at binding (`reduceInitialRejection`). The value occupies one
-      written accumulator slot, reified at the ordinary value boundary before
-      reduction, so empty collections return the initial accumulator as ONE
-      value. -/
-  def EvalBody.evalReduceCounted (rec : EvalRec) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let rec reduceLoop : List CountedResult -> CountedResult -> EvalM CountedResult
-      | [], acc => pure acc
-      | item :: rest, (accValue, _) => do
-          let stepOut <- withCtx
-            "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)" <|
-            rec.evalSequenceReduceStepCounted stepAlg item accValue ctx env "reduce step"
-          reduceLoop rest (reCountValueBoundary stepOut)
-    -- The initial accumulator occupies ONE written accumulator slot: its value
-    -- is reified as one persistent value at the ordinary value boundary
-    -- (`Result.valueCount`, what `reCountValueBoundary` computes) BEFORE
-    -- reduction begins, so an initial expression that emitted multiple items
-    -- cannot leak that supply through the empty-collection return.
-    reduceLoop collection (initial, Result.valueCount initial)
+      The fold is a chain of DEFERRED APPLICATIONS (`NeedSuspension.applied`),
+      allocated left to right over the collection without evaluating anything:
+      * the START is the fold of the empty prefix — the deferred application of
+        `reduce` itself to an empty collection and the ORIGINAL supplied `initial`
+        cell with its written slot. Its VALUE is therefore `reduce`'s own empty
+        case (`applyBuiltinCountedSequence`): the initial computation demanded
+        once through the one value-slot law, with `reduce`'s initial-accumulator
+        report (`reduceInitialRejection`), at the ordinary value boundary; the
+        reducer slot it carries is never projected. The start is a NEW cell: the
+        original computation is demanded, never replayed, and its callable
+        identity, retained slice and written-call plan stay behind;
+      * each STEP is the deferred application of the resolved reducer to the
+        element's Ready cell and the preceding accumulator cell — ONE ordinary
+        invocation through the dispatch of a formed supply
+        (`evalSuppliedCallCounted`: a user algorithm's binder, a clause family's
+        dispatch, a builtin's argument roles, an alias as its target), so an
+        inspecting pattern, a clause head or a strict builtin demands the
+        accumulator exactly where its ordinary call would demand that argument.
+      Every accumulator cell is VALUE-ONLY and memoizes its counted value or its
+      ordinary failure; forwarding passes the cell unevaluated. A step's result
+      is its ORDINARY call result (HO-03, Q-25) at the call's value boundary, so
+      `()`, a list or several rows occupy ONE accumulator slot with their
+      ordinary value shape, and only the reducer's own explicit pattern opens a
+      structured element or accumulator (THE CALLBACK LAW).
+
+      The fold's result is the VALUE of the last cell: the last step, demanded
+      under the ONE reduce step frame (`reduceStepContext`, whatever earlier
+      steps and start that demand goes on to run), or — an empty collection —
+      the start. C#: `Evaluator.EvalReduceCounted`. -/
+  def EvalBody.evalReduceCounted (rec : EvalRec) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let rec chain : Nat -> List CountedResult -> EvalM Nat
+      | accumulator, [] => pure accumulator
+      | accumulator, item :: rest => do
+          let element <- readyNeed (countedSequenceCallbackItem item)
+          let step <- allocateNeed
+            (.applied stepAlg [(element, none), (accumulator, none)] ctx env "reduce step")
+          chain step rest
+    let empty <- readyNeed (Result.sequenceValue [], 0)
+    let initial <- allocateNeed
+      (.applied (.builtin .reduceBuiltin) [(empty, none), (empty, none), start] ctx env "reduce")
+    let last <- chain initial collection
+    let result <-
+      if collection.isEmpty then rec.demandNeedRecursive last
+      else withCtx reduceStepContext (rec.demandNeedRecursive last)
+    pure (reCountValueBoundary result)
 
     /-- Evaluate `filter(collection, predicate)`.
       The fixed `collection` argument supplies the items through the
@@ -11522,12 +11591,30 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
               evalAvgCounted numbers
         | .reduceBuiltin =>
             withPreparedSuffixArgs fun preparedSuffixArgs => do
+              -- `initial` is a DEFERRED control: binding retained the supplied computation
+              -- undemanded. Its one VALUE demand is the value-slot law's
+              -- (`demandSequenceBuiltinCallItemValue`), reported by `reduce`'s own
+              -- initial-accumulator rule (`demandedSequenceBuiltinValue`), and the value
+              -- occupies ONE accumulator slot at the ordinary value boundary.
               let initial <-
-                expectPreparedSequenceBuiltinValueSuffixArg b metadata.suffixArgs preparedSuffixArgs 1
-              if bound.iterationItems.isEmpty then return (initial, Result.valueCount initial)
+                expectPreparedSequenceBuiltinDeferredSuffixArg b metadata.suffixArgs preparedSuffixArgs 1
+              let demandInitial : EvalM CountedResult := do
+                let demanded <- rec.demandSequenceBuiltinCallItemValue initial ctx env
+                let value <- demandedSequenceBuiltinValue b reduceInitialDescriptor demanded
+                pure (value, Result.valueCount value)
+              -- AN EMPTY COLLECTION demands the start once and returns its value; the fold
+              -- finishes without projecting the reducer.
+              if bound.iterationItems.isEmpty then return (<- demandInitial)
               let stepAlg <-
                 rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              rec.evalReduceCounted bound.iterationItems stepAlg initial ctx env
+              -- The fold defers the ORIGINAL supplied cell with its written slot. An argument
+              -- WITHOUT a cell (the hand-built fixture seam) has no computation to retain: it
+              -- is demanded here, once, and its value supplied as produced data.
+              let start : NeedSupply.Sourced <-
+                match initial.need? with
+                | some address => pure (address, initial.source?)
+                | none => do pure ((<- readyNeed (<- demandInitial)), none)
+              rec.evalReduceCounted bound.iterationItems stepAlg start ctx env
         | _ =>
             .error (builtinArityError b args.length)
 
@@ -12642,10 +12729,9 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .evalConditionalCallbackCallCounted callee args ctx env calleeName => EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName
   | .evalUserCallbackCallCounted callee args ctx env => EvalBody.evalUserCallbackCallCounted rec callee args ctx env
   | .evalResolvedCallbackCallCounted callee args ctx env calleeName => EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName
-  | .evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName
   | .demandSequenceBuiltinCallItemValue item ctx env => EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env
   | .bindSequenceBuiltinArguments b metadata args ctx env => EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env
-  | .evalReduceCounted collection stepAlg initial ctx env => EvalBody.evalReduceCounted rec collection stepAlg initial ctx env
+  | .evalReduceCounted collection stepAlg start ctx env => EvalBody.evalReduceCounted rec collection stepAlg start ctx env
   | .evalFilterCounted items predicateAlg ctx env => EvalBody.evalFilterCounted rec items predicateAlg ctx env
   | .evalMapCounted collection transformAlg ctx env => EvalBody.evalMapCounted rec collection transformAlg ctx env
   | .applyBuiltinCountedSequence b metadata args ctx env => EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env
@@ -12849,8 +12935,6 @@ def evalUserCallbackCallCounted (callee : Algorithm) (args : List CountedResult)
 def evalResolvedCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
   evalUnbounded (.evalResolvedCallbackCallCounted callee args ctx env calleeName)
 
-def evalSequenceReduceStepCounted (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-  evalUnbounded (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)
 
 def demandSequenceBuiltinCallItemValue (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) : EvalM CallableCallItem :=
   evalUnbounded (.demandSequenceBuiltinCallItemValue item ctx env)
@@ -12858,8 +12942,8 @@ def demandSequenceBuiltinCallItemValue (item : CallableCallItem) (ctx : EvalCtx)
 def bindSequenceBuiltinArguments (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM BoundSequenceBuiltinArguments :=
   evalUnbounded (.bindSequenceBuiltinArguments b metadata args ctx env)
 
-def evalReduceCounted (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  evalUnbounded (.evalReduceCounted collection stepAlg initial ctx env)
+def evalReduceCounted (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  evalUnbounded (.evalReduceCounted collection stepAlg start ctx env)
 
 def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalFilterCounted items predicateAlg ctx env)

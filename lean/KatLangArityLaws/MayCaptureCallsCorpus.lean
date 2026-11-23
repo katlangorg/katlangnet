@@ -23,10 +23,10 @@ the tree C# decided (imported above; no program is re-emitted here), so both ver
 of the same elaborated tree. This file depends on no proof.
 
 Partition (machine-checked by the `*.length` guards below; nothing is sampled):
-- corpus programs: 4562
-- guarded: 4424 (629 may capture calls, 3795 cannot)
+- corpus programs: 4564
+- guarded: 4426 (629 may capture calls, 3797 cannot)
 - excluded: 138
-  language-spec: 798 programs, 685 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
+  language-spec: 800 programs, 687 guarded (89 may capture calls), 89 excluded: the source does not parse (Lean has no surface parser), 24 excluded: C#-only by the corpus's reviewed reason
   explorer: 2821 programs, 2808 guarded (131 may capture calls), 13 excluded: the source does not parse (Lean has no surface parser)
   explorer-internal: 19 programs, 19 guarded (0 may capture calls)
   generated: 744 programs, 735 guarded (365 may capture calls), 9 excluded: invalid front-end programs (Lean has no surface front end)
@@ -308,8 +308,10 @@ open KatLang
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_clause_family_multirow_reduce_step_is_one_value == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_clause_family_callback_single_value_accepted == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_callback_result_is_the_ordinary_call_result == false
-#guard Expr.mayCaptureCalls LanguageSpecCases.case_reduce_demands_initial_before_iteration == false
-#guard Expr.mayCaptureCalls LanguageSpecCases.case_nested_reducer_calls_may_skip_unused_initial == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_reduce_accumulators_are_evaluated_on_demand == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_reduce_demands_only_the_steps_it_needs == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_reduce_effects_follow_accumulator_demand == false
+#guard Expr.mayCaptureCalls LanguageSpecCases.case_reduce_empty_collection_demands_initial_once == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_map_demands_collection_before_transforms == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_expanded_map_calls_may_skip_indexed_arguments == false
 #guard Expr.mayCaptureCalls LanguageSpecCases.case_map_identity_preserves_empty_elements == false
@@ -997,8 +999,10 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_clause_family_multirow_reduce_step_is_one_value,
   LanguageSpecCases.case_clause_family_callback_single_value_accepted,
   LanguageSpecCases.case_callback_result_is_the_ordinary_call_result,
-  LanguageSpecCases.case_reduce_demands_initial_before_iteration,
-  LanguageSpecCases.case_nested_reducer_calls_may_skip_unused_initial,
+  LanguageSpecCases.case_reduce_accumulators_are_evaluated_on_demand,
+  LanguageSpecCases.case_reduce_demands_only_the_steps_it_needs,
+  LanguageSpecCases.case_reduce_effects_follow_accumulator_demand,
+  LanguageSpecCases.case_reduce_empty_collection_demands_initial_once,
   LanguageSpecCases.case_map_demands_collection_before_transforms,
   LanguageSpecCases.case_expanded_map_calls_may_skip_indexed_arguments,
   LanguageSpecCases.case_map_identity_preserves_empty_elements,
@@ -1423,7 +1427,7 @@ def languageSpecPrograms : List Expr := [
   LanguageSpecCases.case_selective_collector_take_count_error_precedes_elements,
   LanguageSpecCases.case_decon_target_calls_reuse_the_shared_source
 ]
-#guard languageSpecPrograms.length == 685
+#guard languageSpecPrograms.length == 687
 #guard (languageSpecPrograms.filter Expr.mayCaptureCalls).length == 89
 
 /-! ## explorer -/
@@ -8964,5 +8968,5 @@ def plannedLoopTempPrograms : List Expr := [
 #guard plannedLoopTempPrograms.length == 36
 #guard (plannedLoopTempPrograms.filter Expr.mayCaptureCalls).length == 36
 
--- 4424 gate guards over 4562 corpus programs.
+-- 4426 gate guards over 4564 corpus programs.
 end KatLang.MayCaptureCallsCorpus

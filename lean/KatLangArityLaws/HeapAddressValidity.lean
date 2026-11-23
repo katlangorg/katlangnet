@@ -45,7 +45,8 @@ Coverage of the invariant `StateValid` (precisely these fields, nothing else):
 
 NOT covered HERE (they can hold addresses even in a Ready cell; all but the `headScope` indices
 are clauses of FG-H1-FU-01's stronger invariant `Inv`, `AddressInvariant.lean`): addresses inside a `Result`
-(`callRef`, `argView`, completed VALUE outcomes), the `.ready` payload, prepared plan supplies,
+(`callRef`, `argView`, completed VALUE outcomes), the `.ready` payload, a deferred application's
+formed supply and caller tier (`NeedSuspension.applied`), prepared plan supplies,
 `NeedCell.callee` / `receiver`, `EvalState.aliasCells`, the value environment
 `ValEnv`, and `EvalCtx.headScope` activation indices. No acyclicity of VALUE/CALLABLE
 dependencies is claimed: backward collector edges are one edge kind only. `Error.fuelExhausted`
@@ -87,11 +88,13 @@ structure StateValid (s : EvalState) : Prop where
   activations : ValidActivations s.needs s.lexicalActivations
 
 /-- The references a suspension about to be STORED carries: an expression's caller tier, a
-    collector's members (inside the heap BEFORE the push). A Ready payload is not inspected. -/
+    collector's members (inside the heap BEFORE the push). A Ready payload is not inspected, nor
+    is a deferred application's supply and caller tier (`Inv`'s `SuspV` covers both). -/
 def SuspensionValid (heap : Array NeedCell) : NeedSuspension → Prop
   | .expression _ caller _ => ValidCtx heap caller
   | .collector slice => ValidAddresses heap slice
   | .ready _ => True
+  | .applied .. => True
 
 /-- What a binder source contributes, inside `heap`. -/
 def ValidSource (heap : Array NeedCell) : NeedSource Nat → Prop
@@ -331,6 +334,7 @@ theorem push_valid (s : EvalState) (suspension : NeedSuspension) (vs : StateVali
       | expression _ c _ => cases hsub; exact ValidCtx.mono grow hs
       | collector _ => cases hsub
       | ready _ => cases hsub
+      | applied _ _ _ _ _ => cases hsub
     · exact ValidCtx.mono grow (vs.suspensionEnvs a cell hcell source caller values hsub)
 
 /-- `allocateNeed` over a valid suspension: the returned address is the previous heap size,
@@ -446,6 +450,10 @@ theorem slice_run (operand : Expr) (caller : EvalCtx) (s : EvalState) :
           simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
           rfl
         | ready v =>
+          refine ⟨.ok none, ?_, fun _ h => by cases h⟩
+          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          rfl
+        | applied _ _ _ _ _ =>
           refine ⟨.ok none, ?_, fun _ h => by cases h⟩
           simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
           rfl

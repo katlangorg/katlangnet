@@ -1478,7 +1478,7 @@ That the evaluator applies these helpers is stated per caller in
 `KatLangArityLaws/EvaluatorInstallation.lean`: the `.index` arm of `evalCounted` (`index_arm`), the
 `first`/`last` builtin dispatch (`first_arm`, `last_arm`) with its empty policy
 (`empty_selection_is_refused_by_the_policy`), and the callback dispatch (`callback_item_installs`,
-`reduce_step_installs`, `callback_slot_installs`). CoreTests `SelectionValueBoundary` /
+`reduce_chain_step`, `deferred_application_installs`, `callback_slot_installs`). CoreTests `SelectionValueBoundary` /
 `VariadicSelection` run whole programs.
 -/
 
@@ -1619,7 +1619,7 @@ theorem invoking_slot_roles_follow_the_shared_vocabulary :
 /-- The helper the callback builtins apply to each iterated item (`countedSequenceCallbackItem`)
 re-counts it at the ordinary value boundary, whatever count the iteration supplied. (That the
 callback dispatch applies it: `EvaluatorInstallation.callback_item_installs` for `map` and `filter`,
-`reduce_step_installs` for `reduce`.) -/
+`reduce_chain_step` for `reduce`.) -/
 theorem callback_item_is_a_value_boundary (item : Result) (n : Nat) :
     countedSequenceCallbackItem (item, n) = (item, Result.valueCount item) := rfl
 
@@ -3882,26 +3882,70 @@ theorem callback_control_transports_need_address
   simp [prepareSequenceBuiltinSuffixArgItem, hk, hn]
   rfl
 
-/-- A VALUE control binds the one value its demand established. -/
+/-- A VALUE control that binding demands binds the one value its demand established. -/
 theorem value_control_binds_its_established_value
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
-    (v : Result) (hk : descriptor.kind = .value) (hv : item.value? = some v) :
+    (v : Result) (hk : descriptor.kind = .value) (hd : descriptor.deferred = false)
+    (hv : item.value? = some v) :
     runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor item) = .ok (.value v) := by
-  simp [prepareSequenceBuiltinSuffixArgItem, hk, hv, runEvalM]
+  simp [prepareSequenceBuiltinSuffixArgItem, demandedSequenceBuiltinValue, hk, hd, hv, runEvalM]
   rfl
 
 /-- A VALUE control item carrying ONLY a recorded failure reports that failure: preparation
-never evaluates the slot again, so a failure cannot be retried into a different outcome (PV-05 —
-`reduce`'s `initial` included). (Production items, whose placeholder algorithm accepts zero
-arguments, behave the same by inspection; not proved here.) -/
+never evaluates the slot again, so a failure cannot be retried into a different outcome (PV-05).
+(Production items, whose placeholder algorithm accepts zero arguments, behave the same by
+inspection; not proved here.) -/
 theorem value_control_reports_a_bare_recorded_failure
     (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (err : Error)
-    (hk : descriptor.kind = .value) :
+    (hk : descriptor.kind = .value) (hd : descriptor.deferred = false) :
     runEvalM (prepareSequenceBuiltinSuffixArgItem b descriptor { error? := some err })
       = .error err := by
   cases b <;>
-    simp [prepareSequenceBuiltinSuffixArgItem, hk, sequenceBuiltinValueDemandErrorWith?,
+    simp [prepareSequenceBuiltinSuffixArgItem, demandedSequenceBuiltinValue, hk, hd,
+      sequenceBuiltinValueDemandErrorWith?, CallableCallItem.named?, runEvalM] <;> rfl
+
+/-- A DEFERRED value control (lazy `reduce` accumulators, November 2026) is retained exactly as
+supplied: preparation consults neither its value nor its failure, demands nothing, and leaves
+the heap unchanged — so binding never evaluates `reduce`'s `initial`. -/
+theorem deferred_value_control_retains_its_item
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
+    (state : EvalState) (hk : descriptor.kind = .value) (hd : descriptor.deferred = true) :
+    (prepareSequenceBuiltinSuffixArgItem b descriptor item).run state =
+      .ok (.deferred item, state) := by
+  simp [prepareSequenceBuiltinSuffixArgItem, hk, hd]
+  rfl
+
+/-- The builtin's own read of a DEMANDED value control is the value that demand established. -/
+theorem demanded_value_control_reads_its_established_value
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (item : CallableCallItem)
+    (v : Result) (hv : item.value? = some v) :
+    runEvalM (demandedSequenceBuiltinValue b descriptor item) = .ok v := by
+  simp [demandedSequenceBuiltinValue, hv, runEvalM]
+  rfl
+
+/-- ... and of one carrying ONLY a recorded failure, that failure: the demand is never repeated,
+so `reduce`'s `initial` reports the failure its one demand established (PV-05). -/
+theorem demanded_value_control_reports_a_bare_recorded_failure
+    (b : Builtin) (descriptor : SequenceBuiltinSuffixArgDescriptor) (err : Error) :
+    runEvalM (demandedSequenceBuiltinValue b descriptor { error? := some err }) = .error err := by
+  cases b <;>
+    simp [demandedSequenceBuiltinValue, sequenceBuiltinValueDemandErrorWith?,
       CallableCallItem.named?, runEvalM] <;> rfl
+
+/-- `reduce`'s controls: the reducer is a callback, and `initial` is the ONE deferred value. -/
+theorem reduce_initial_is_a_deferred_value_control :
+    (sequenceBuiltinMetadata? .reduceBuiltin).map
+        (fun metadata => metadata.suffixArgs.map (fun d => (d.name, d.kind, d.deferred)))
+      = some [("reducer", .algorithm, false), ("initial", .value, true)]
+    ∧ (sequenceBuiltinMetadata? .reduceBuiltin).map (fun metadata => metadata.suffixArgs[1]?)
+      = some (some reduceInitialDescriptor) := ⟨rfl, rfl⟩
+
+/-- No other collection builtin defers a control: every other value and whole-number control is
+demanded at binding, exactly as before. -/
+theorem only_reduce_defers_a_control (b : Builtin) (hb : b ≠ .reduceBuiltin) :
+    ((sequenceBuiltinMetadata? b).map
+        (fun metadata => metadata.suffixArgs.all (fun d => !d.deferred))).getD true = true := by
+  cases b <;> first | rfl | exact absurd rfl hb
 
 /-
 ## The unified formula-lifting law (decided 2026-09-30)

@@ -508,12 +508,12 @@ theorem disc_prepareControls (b : Builtin) (ctx : EvalCtx) (env : ValEnv)
   | nil => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; disc_tac_base)
   | cons d rest ih => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; disc_tac_base)
 
-theorem disc_reduceLoop (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-    (items : List CountedResult) (acc : CountedResult) :
-    Disciplined (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) := by
-  induction items generalizing acc with
-  | nil => unfold EvalBody.evalReduceCounted.reduceLoop; disc_tac_base
-  | cons i rest ih => unfold EvalBody.evalReduceCounted.reduceLoop; disc_tac_base
+theorem disc_reduceChain (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (items : List CountedResult) (accumulator : Nat) :
+    Disciplined (EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator items) := by
+  induction items generalizing accumulator with
+  | nil => unfold EvalBody.evalReduceCounted.chain; disc_tac_base
+  | cons i rest ih => unfold EvalBody.evalReduceCounted.chain; disc_tac_base
 
 theorem disc_filterLoop (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (index : Nat) (items : List CountedResult) :
@@ -640,7 +640,7 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply disc_listLiteralCollect rec hrec)
   | (with_reducible apply disc_sequenceConstructLoop rec hrec)
   | (with_reducible apply disc_prepareControls rec hrec)
-  | (with_reducible apply disc_reduceLoop rec hrec)
+  | (with_reducible apply disc_reduceChain)
   | (with_reducible apply disc_filterLoop rec hrec)
   | (with_reducible apply disc_mapLoop rec hrec)
   | (with_reducible apply disc_repeatLoop rec hrec)
@@ -884,10 +884,6 @@ theorem EvalBody.evalResolvedCallbackCallCounted_disciplined (rec : EvalRec) (hr
     Disciplined (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; disc_tac
 
-theorem EvalBody.evalSequenceReduceStepCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
-  unfold EvalBody.evalSequenceReduceStepCounted; disc_tac
-
 theorem EvalBody.demandSequenceBuiltinCallItemValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; disc_tac
@@ -925,8 +921,8 @@ theorem EvalBody.bindSequenceBuiltinArguments_disciplined (rec : EvalRec) (hrec 
     Disciplined (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; disc_tac
 
-theorem EvalBody.evalReduceCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalReduceCounted rec collection stepAlg initial ctx env) := by
+theorem EvalBody.evalReduceCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    Disciplined (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; disc_tac
 
 theorem EvalBody.evalFilterCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -1105,10 +1101,9 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_disciplined rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_disciplined rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_disciplined rec hrec callee args ctx env calleeName
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_disciplined rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_disciplined rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_disciplined rec hrec b metadata args ctx env
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_disciplined rec hrec collection stepAlg initial ctx env
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_disciplined rec hrec collection stepAlg start ctx env
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_disciplined rec hrec items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_disciplined rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_disciplined rec hrec b metadata args ctx env

@@ -127,6 +127,7 @@ theorem RecRes.resSusp {rec : EvalRec} (h : RecRes rec) : ResSusp rec := by
   cases x with
   | ready v => cases hr
   | collector sl => cases hr
+  | applied _ _ _ _ _ => cases hr
   | expression source caller values =>
     simp only [NeedProjection.suspended] at hr
     split at hr

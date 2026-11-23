@@ -92,7 +92,7 @@ public class TickBuiltinTests
     [InlineData("A = tick()\nB = tick()\nB, A, B", "S[1, 2, 1]")]
     // Each `map` callback invocation is a fresh call of the transform.
     [InlineData("map([10, 20, 30], { x + tick() })", "L[11, 22, 33]")]
-    // `reduce` demands its initial value first, then each step.
+    // Both steps read their accumulator, so the initial tick runs once before the final tick.
     [InlineData("reduce([1, 2], { e * 10 + a }, tick()), tick()", "S[31, 2]")]
     public async Task TheCounterObservesTheExistingDemandOrder(string source, string expected)
         => Assert.Equal(expected, await OkAsync(source));

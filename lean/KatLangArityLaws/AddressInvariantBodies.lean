@@ -6,7 +6,7 @@ open KatLang.CallPlan (bind_run get_run pure_run modify_run throw_run lift_run e
 /-!
 # FG-H1-FU-01 (M3): the per-body obligation
 
-For EVERY evaluator body `EvalBody.X` (one per `EvalCall` constructor, 82 in all; a DERIVED answer —
+For EVERY evaluator body `EvalBody.X` (one per `EvalCall` constructor, 81 in all; a DERIVED answer —
 a projection of its twin's answer or a pure forward, such as `rec.eval …` — has no body and no
 contract: the procedure unfolds it to its twin's call), from an answer
 `rec` that keeps the call contract (`RecSound rec`), the body keeps the contract of its own call:
@@ -56,7 +56,9 @@ theorem SuffixV.of_need {h : Array NeedCell} {a : Nat} (v : a < h.size) : Suffix
 theorem SuffixV.of_value {h : Array NeedCell} {r : Result} (v : RV h r) : SuffixV h (.value r) := v
 theorem SuffixV.of_algorithm {h : Array NeedCell} {a : Algorithm} : SuffixV h (.algorithm a) := trivial
 theorem SuffixV.of_whole {h : Array NeedCell} {n : Int} : SuffixV h (.wholeNumber n) := trivial
-attribute [ht_lemmas] SuffixV.of_need SuffixV.of_value SuffixV.of_algorithm SuffixV.of_whole CRV.rv
+theorem SuffixV.of_deferred {h : Array NeedCell} {item : CallableCallItem} (v : ItemV h item) :
+    SuffixV h (.deferred item) := v
+attribute [ht_lemmas] SuffixV.of_need SuffixV.of_value SuffixV.of_algorithm SuffixV.of_whole SuffixV.of_deferred CRV.rv
 
 theorem ItemV.with_value {h : Array NeedCell} {item : CallableCallItem} {r : Result} (v : ItemV h item)
     (hv : RV h r) : ItemV h { item with value? := some r } :=
@@ -188,6 +190,7 @@ theorem SuffixLV.getElem? {xs : List PreparedSequenceBuiltinSuffixArg} {i : Nat}
   v x (List.mem_of_getElem? e)
 theorem SuffixV.need {a : Nat} (v : SuffixV h (.needAlgorithm a)) : a < h.size := v
 theorem SuffixV.value {r : Result} (v : SuffixV h (.value r)) : RV h r := v
+theorem SuffixV.deferred {item : CallableCallItem} (v : SuffixV h (.deferred item)) : ItemV h item := v
 theorem OptRLV.some' {xs : List Result} (v : OptRLV h (some xs)) : RLV h xs := v xs rfl
 theorem OptRLV.nothing : OptRLV h none := fun _ e => by cases e
 theorem OptRLV.of_rlv {xs : List Result} (v : RLV h xs) : OptRLV h (some xs) := fun _ e => by cases e; exact v
@@ -204,10 +207,10 @@ end Aux
 
 attribute [ht_lemmas] PreparedV.counted' PreparedV.slots PreparedV.mk' RAV.need RAV.mk ItemV.need
   ItemV.value ItemV.mk' BoundV.items BoundV.iteration BoundV.suffix BoundV.view BoundV.slice SuffixLV.nil'
-  SuffixLV.cons' SuffixLV.getElem? SuffixV.need SuffixV.value OptRLV.some' OptRLV.nothing OptRLV.of_rlv
+  SuffixLV.cons' SuffixLV.getElem? SuffixV.need SuffixV.value SuffixV.deferred OptRLV.some' OptRLV.nothing OptRLV.of_rlv
   OriginV.cell' OriginV.written' OriginV.none' OriginV.bound' CRLV.map_ready
 attribute [ht_fwd] PreparedV.counted' PreparedV.slots RAV.need ItemV.need ItemV.value BoundV.items
-  BoundV.iteration BoundV.suffix BoundV.view BoundV.slice SuffixLV.getElem? OptRLV.some'
+  BoundV.iteration BoundV.suffix BoundV.view BoundV.slice SuffixLV.getElem? SuffixV.deferred OptRLV.some'
 
 theorem RALV.map_need {h : Array NeedCell} {α : Type} {xs : List α} {f : α → ResolvedArgumentAlgorithm}
     (v : ∀ x ∈ xs, OptAddr h (f x).need?) : RALV h (xs.map f) := by
@@ -294,14 +297,15 @@ theorem prepareControls_spec (b : Builtin) (ctx : EvalCtx) (env : ValEnv) :
     intro P hP items hreq
     cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; ht_tac)
 
-theorem reduceLoop_spec (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (_hP : HMono P) (acc : CountedResult)
-      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items ∧ CRV h acc),
-    SoundI P (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) (fun r h => CRV h r) := by
+omit hrec in
+theorem reduceChain_spec (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (_hP : HMono P) (accumulator : Nat)
+      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items ∧ accumulator < h.size),
+    SoundI P (EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator items) (fun a h => a < h.size) := by
   intro items
   induction items with
-  | nil => intro P hP acc hreq; unfold EvalBody.evalReduceCounted.reduceLoop; ht_tac
-  | cons i rest ih => intro P hP acc hreq; unfold EvalBody.evalReduceCounted.reduceLoop; ht_tac
+  | nil => intro P hP accumulator hreq; unfold EvalBody.evalReduceCounted.chain; ht_tac
+  | cons i rest ih => intro P hP accumulator hreq; unfold EvalBody.evalReduceCounted.chain; ht_tac
 
 theorem filterLoop_spec (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (_hP : HMono P) (index : Nat)
@@ -360,11 +364,11 @@ theorem prepareControls_app {rec : EvalRec} (hrec : RecSound rec) {b : Builtin} 
     SoundI P (EvalBody.bindSequenceBuiltinArguments.prepareControls rec b ctx env descriptors items)
       (fun xs h => SuffixLV h xs) :=
   fun hP => prepareControls_spec hrec b ctx env descriptors hP items hreq hP
-theorem reduceLoop_app {rec : EvalRec} (hrec : RecSound rec) {stepAlg : Algorithm} {ctx : EvalCtx} {env : ValEnv}
-    {items : List CountedResult} {P : Array NeedCell → Prop} {acc : CountedResult}
-    (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items ∧ CRV h acc) :
-    SoundI P (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) (fun r h => CRV h r) :=
-  fun hP => reduceLoop_spec hrec stepAlg ctx env items hP acc hreq hP
+theorem reduceChain_app {stepAlg : Algorithm} {ctx : EvalCtx} {env : ValEnv}
+    {items : List CountedResult} {P : Array NeedCell → Prop} {accumulator : Nat}
+    (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items ∧ accumulator < h.size) :
+    SoundI P (EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator items) (fun a h => a < h.size) :=
+  fun hP => reduceChain_spec stepAlg ctx env items hP accumulator hreq hP
 theorem filterLoop_app {rec : EvalRec} (hrec : RecSound rec) {predicateAlg : Algorithm} {ctx : EvalCtx}
     {env : ValEnv} {items : List CountedResult} {P : Array NeedCell → Prop} {index : Nat}
     (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items) :
@@ -383,7 +387,7 @@ theorem repeatLoop_app {rec : EvalRec} (hrec : RecSound rec) {ctx : EvalCtx} {en
   fun hP => repeatLoop_spec hrec ctx env step stepName remaining hP cells hreq hP
 
 attribute [ht_spec] outputRowsCollect_app explicitRowsCollect_app listLiteralCollect_app
-  sequenceConstructLoop_app prepareControls_app reduceLoop_app filterLoop_app mapLoop_app repeatLoop_app
+  sequenceConstructLoop_app prepareControls_app reduceChain_app filterLoop_app mapLoop_app repeatLoop_app
 
 /-- The bare read at a VALUE terminal (OD-E, M4★): one evaluator call per terminal kind, each with the
     terminal's own context and environment. -/
@@ -644,10 +648,6 @@ theorem EvalBody.evalResolvedCallbackCallCounted_sound (rec : EvalRec) (hrec : R
     SoundI (CallPre (.evalResolvedCallbackCallCounted callee args ctx env calleeName)) (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) (CallPost (.evalResolvedCallbackCallCounted callee args ctx env calleeName)) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; ht_tac
 
-theorem EvalBody.evalSequenceReduceStepCounted_sound (rec : EvalRec) (hrec : RecSound rec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    SoundI (CallPre (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)) (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) (CallPost (.evalSequenceReduceStepCounted callee element accumulator ctx env calleeName)) := by
-  unfold EvalBody.evalSequenceReduceStepCounted; ht_tac
-
 theorem EvalBody.demandSequenceBuiltinCallItemValue_sound (rec : EvalRec) (hrec : RecSound rec) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.demandSequenceBuiltinCallItemValue item ctx env)) (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) (CallPost (.demandSequenceBuiltinCallItemValue item ctx env)) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; ht_tac
@@ -698,6 +698,9 @@ theorem retainedCellSlice_spec {rec : EvalRec} (hrec : RecSound rec) (fuel addre
         simp only
         exact SoundAt.pure (Q := fun r h => OptSliceV h r) (some slice) vs (fun _ e => by cases e; exact hcell)
       | ready _ =>
+        simp only
+        exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
+      | applied _ _ _ _ _ =>
         simp only
         exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
       | expression source caller values =>
@@ -754,8 +757,8 @@ theorem EvalBody.bindSequenceBuiltinArguments_sound (rec : EvalRec) (hrec : RecS
     SoundI (CallPre (.bindSequenceBuiltinArguments b metadata args ctx env)) (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) (CallPost (.bindSequenceBuiltinArguments b metadata args ctx env)) := by
   unfold EvalBody.bindSequenceBuiltinArguments; ht_tac
 
-theorem EvalBody.evalReduceCounted_sound (rec : EvalRec) (hrec : RecSound rec) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalReduceCounted collection stepAlg initial ctx env)) (EvalBody.evalReduceCounted rec collection stepAlg initial ctx env) (CallPost (.evalReduceCounted collection stepAlg initial ctx env)) := by
+theorem EvalBody.evalReduceCounted_sound (rec : EvalRec) (hrec : RecSound rec) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    SoundI (CallPre (.evalReduceCounted collection stepAlg start ctx env)) (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) (CallPost (.evalReduceCounted collection stepAlg start ctx env)) := by
   unfold EvalBody.evalReduceCounted; ht_tac
 
 theorem EvalBody.evalFilterCounted_sound (rec : EvalRec) (hrec : RecSound rec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -863,6 +866,9 @@ theorem collectorSliceAt_spec {P : Array NeedCell → Prop} {address : Nat} :
       simp only
       exact SoundAt.pure (Q := fun r h => OptSliceV h r) (some slice) vs (fun _ e => by cases e; exact hcell)
     | ready _ =>
+      simp only
+      exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
+    | applied _ _ _ _ _ =>
       simp only
       exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
     | expression _ _ _ =>
@@ -1045,10 +1051,9 @@ theorem evalStep_sound : BodySound := by
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_sound rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_sound rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_sound rec hrec callee args ctx env calleeName
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_sound rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_sound rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_sound rec hrec b metadata args ctx env
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_sound rec hrec collection stepAlg initial ctx env
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_sound rec hrec collection stepAlg start ctx env
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_sound rec hrec items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_sound rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_sound rec hrec b metadata args ctx env

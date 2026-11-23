@@ -113,10 +113,14 @@ def shiftNeedEnv (σ : Site) (env : NeedEnv) : NeedEnv := env.map (fun p => (p.1
     levels, which carry no need address.) -/
 def shiftCtx (σ : Site) (c : EvalCtx) : EvalCtx := { c with needEnv := shiftNeedEnv σ c.needEnv }
 
+def shiftSourced (σ : Site) (cells : List NeedSupply.Sourced) : List NeedSupply.Sourced :=
+  cells.map (fun p => (σ.addr p.1, p.2))
+
 def shiftSuspension (σ : Site) : NeedSuspension → NeedSuspension
   | .expression e c v => .expression e (shiftCtx σ c) (shiftValEnv σ v)
   | .collector slice => .collector (slice.map σ.addr)
   | .ready v => .ready (shiftCounted σ v)
+  | .applied callee cells c v name => .applied callee (shiftSourced σ cells) (shiftCtx σ c) (shiftValEnv σ v) name
 
 /-- An outcome with its value shifted; an error carries no need address. -/
 def shiftExcept {α : Type} (f : α → α) : Except Error α → Except Error α
@@ -126,9 +130,6 @@ def shiftExcept {α : Type} (f : α → α) : Except Error α → Except Error �
 def shiftNeedState (σ : Site) : NeedState → NeedState
   | .completed o => .completed (shiftExcept (shiftCounted σ) o)
   | s => s
-
-def shiftSourced (σ : Site) (cells : List NeedSupply.Sourced) : List NeedSupply.Sourced :=
-  cells.map (fun p => (σ.addr p.1, p.2))
 
 def shiftPlan (σ : Site) : NeedPlanSupply → NeedPlanSupply
   | .prepared (.ok cells) => .prepared (.ok (shiftSourced σ cells))
@@ -278,6 +279,9 @@ theorem shiftSuspension_valid {s : NeedSuspension} (v : SuspV heap s) : shiftSus
   | ready value =>
     show NeedSuspension.ready (shiftCounted σ value) = _
     rw [shiftCounted_valid hσ v]
+  | applied callee cells c vals name =>
+    show NeedSuspension.applied callee (shiftSourced σ cells) (shiftCtx σ c) (shiftValEnv σ vals) name = _
+    rw [shiftSourced_valid hσ v.1, shiftCtx_valid hσ v.2.1, shiftValEnv_valid hσ v.2.2]
 
 theorem shiftNeedState_valid {s : NeedState} (v : StateV heap s) : shiftNeedState σ s = s := by
   cases s with
@@ -484,6 +488,7 @@ theorem ofSuspension_shift_isSome (σ : Site) (susp : NeedSuspension) :
     | _ => rfl
   | collector slice => rfl
   | ready value => rfl
+  | applied _ _ _ _ _ => rfl
 
 /-! ## Inserting at a valid state's heap size appends -/
 

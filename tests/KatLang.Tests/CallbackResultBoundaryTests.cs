@@ -11,9 +11,10 @@ namespace KatLang.Tests;
 /// and <c>[]</c> are ordinary values, <c>map</c> stores the result whole as ONE list element and <c>reduce</c>
 /// passes it whole as the next accumulator; nothing is spread, and no cardinality or non-empty restriction is
 /// added. For pure, deterministic, total computations, <c>map(L, F)</c> is <c>[F(L[0]), F(L[1]), …]</c> and
-/// <c>reduce([a, b], R, i)</c> is <c>R(b, R(a, i))</c> in result value. Map demands its collection; sequential reduction demands its initial
-/// value and every step; nested Model-C calls retain their ordinary demand order. Failures of the invocation
-/// propagate unchanged (an output-less algorithm is still
+/// <c>reduce([a, b], R, i)</c> is <c>R(b, R(a, i))</c> in result value. Map demands its collection; a fold demands its
+/// collection and then only its last step, each step receiving ONE deferred accumulator (issue #203, November 2026:
+/// <see cref="LazyReduceAccumulatorTests"/>), so the fold also shares the nested calls' accumulator demand. Failures of
+/// the invocation propagate unchanged (an output-less algorithm is still
 /// <c>MissingOutput</c>, VAL-05); <c>filter</c> keeps its Boolean contract and loop steps their row protocol.
 /// <para>Every program runs on the six established routes (synchronous engine, asynchronous engine, asynchronous
 /// engine with genuinely suspending host operations, the generic and optimized evaluators, and the forced async
@@ -115,7 +116,7 @@ public sealed class CallbackResultBoundaryTests
         { "ADV-attack-B-ADV-B1-reduce-empty-skip-discards-state", "Keep(x, acc) = if(x < 0, (), (acc*, x))\nreduce([1, 2, -1, 3], Keep, ())", "ok 3", "" },
         { "ADV-attack-B-ADV-B2-accidental-row-never-detected", "Net(x) = {\n  x * 2\n  -2\n}\n[1, 2, 3].map(Net).filter({v != 0}).count", "ok 3", "" },
         { "ADV-attack-B-ADV-B3-lookup-shape-depends-on-match-count", "Data = [10, 20, 20]\nFind(k) = { filter(Data, {v == k})* }\nmap([10, 20, 30], Find)", "ok L[10, S[20, 20], S[]]", "" },
-        { "ADV-attack-B-ADV-B4-reduce-debug-row-displaced-blame", "Total(x, acc) = trace(x), acc + x\nreduce([1, 2, 3], Total, 0)", "err TypeMismatch", "trace(1) | trace(2)" },
+        { "ADV-attack-B-ADV-B4-reduce-debug-row-displaced-blame", "Total(x, acc) = trace(x), acc + x\nreduce([1, 2, 3], Total, 0)", "err TypeMismatch", "trace(3) | trace(2) | trace(1)" },
         { "ADV-attack-B-ADV-B5-structured-fold-empty-skip-same-code-new-site", "Acc(x, (s, n)) = if(x < 0, (), (s + x, n + 1))\nreduce([4, -1, 6], Acc, (0, 0))", "err ArityMismatch", "" },
         { "ADV-attack-B-ADV-B6-empty-element-fails-in-another-callback", "Opt(x) = if(x > 1, trace(x), ())\nfilter(map([1, 2, 3], Opt), {v > 1})", "err TypeMismatch", "trace(2) | trace(3)" },
         { "ADV-attack-B-ADV-B7-family-empty-branch-then-container", "Lib = { public V = 1 }\nF(0) = { []* }\nF(n) = Lib\nmap([0, 1], F)", "err MissingOutput", "" },
@@ -362,12 +363,13 @@ public sealed class CallbackResultBoundaryTests
     // ── 9. Model-C demand, effects, randomness and limits are unchanged ──────────────────────────────────
 
     [Fact]
-    public async Task Demand_IsUnchanged_UnusedCallbacksRunNothing_InitialIsDemandedOnce()
+    public async Task Demand_UnusedCallbacksRunNothing_InitialIsDemandedOnceByTheStepThatReadsIt()
     {
         var (observation, _) = await AllRoutesAsync(
             "F(x) = trace(x), x\nR(x, acc) = trace(x), acc\n[map([], F), reduce([], R, trace(7)), reduce([1], R, trace(8))]");
         Assert.Equal("ok L[L[], 7, S[1, 8]]", observation.Outcome);
-        Assert.Equal(["trace(7)", "trace(8)", "trace(1)"], observation.HostCalls);
+        // An empty fold demands its start itself; a step demands it where it reads its accumulator.
+        Assert.Equal(["trace(7)", "trace(1)", "trace(8)"], observation.HostCalls);
     }
 
     [Fact]
@@ -443,46 +445,57 @@ public sealed class CallbackResultBoundaryTests
     }
 
     [Fact]
-    public async Task Independent_ReduceDemandsItsInitial_WhileNestedOrdinaryCallsMayIgnoreIt()
+    public async Task Independent_ReduceLeavesAnUnusedInitialUndemanded_LikeTheNestedOrdinaryCalls()
     {
         const string reducer = "R(x, acc) = x\n";
         var (fold, _) = await AllRoutesAsync(reducer + "reduce([1, 2], R, 1 / 0)");
         var (nested, _) = await AllRoutesAsync(reducer + "R(2, R(1, 1 / 0))");
-        Assert.Equal("err DivisionByZero", fold.Outcome);
+        Assert.Equal("ok 2", fold.Outcome);
         Assert.Equal("ok 2", nested.Outcome);
     }
 
     [Fact]
-    public async Task Independent_ReduceRunsEarlierSteps_WhileNestedOrdinaryCallsMaySkipThem()
+    public async Task Independent_ReduceSkipsUnusedEarlierSteps_LikeTheNestedOrdinaryCalls()
     {
         const string reducer = "R(x, acc) = if(x == 1, 1 / 0, x)\n";
         var (fold, _) = await AllRoutesAsync(reducer + "reduce([1, 2], R, 0)");
         var (nested, _) = await AllRoutesAsync(reducer + "R(2, R(1, 0))");
-        Assert.Equal("err DivisionByZero", fold.Outcome);
+        Assert.Equal("ok 2", fold.Outcome);
         Assert.Equal("ok 2", nested.Outcome);
     }
 
     [Fact]
-    public async Task Independent_ReduceAndNestedOrdinaryCalls_HaveTheirOwnDemandOrder()
+    public async Task Independent_ReduceAndNestedOrdinaryCalls_ShareTheirAccumulatorDemandOrder()
     {
         const string reducer = "R(x, acc) = trace(x), acc\n";
         var (fold, _) = await AllRoutesAsync(reducer + "reduce([1, 2], R, 0)");
         var (nested, _) = await AllRoutesAsync(reducer + "R(2, R(1, 0))");
         Assert.Equal(fold.Outcome, nested.Outcome);
-        Assert.Equal(new[] { "trace(1)", "trace(2)" }, fold.HostCalls);
-        Assert.Equal(new[] { "trace(2)", "trace(1)" }, nested.HostCalls);
+        Assert.Equal(new[] { "trace(2)", "trace(1)" }, fold.HostCalls);
+        Assert.Equal(fold.HostCalls, nested.HostCalls);
     }
 
     [Fact]
-    public async Task Independent_ReduceAndNestedOrdinaryCalls_CanDifferOnSuccessfulEffectfulValues()
+    public async Task Independent_ReduceAndNestedOrdinaryCalls_AgreeOnEffectfulAccumulators()
     {
         const string reducer = "R(x, acc) = tock() * x + acc\n";
         var (fold, _) = await AllRoutesAsync(reducer + "reduce([1, 2], R, 0)");
         var (nested, _) = await AllRoutesAsync(reducer + "R(2, R(1, 0))");
-        Assert.Equal("ok 5", fold.Outcome);
+        Assert.Equal("ok 4", fold.Outcome);
         Assert.Equal("ok 4", nested.Outcome);
         Assert.Equal(new[] { "tock#1", "tock#2" }, fold.HostCalls);
         Assert.Equal(fold.HostCalls, nested.HostCalls);
+    }
+
+    [Fact]
+    public async Task Independent_ReduceComputesItsElementsFirst_WhileNestedOrdinaryCallsDemandThemInPlace()
+    {
+        const string reducer = "Sub(x, acc) = x - acc\n";
+        var (fold, _) = await AllRoutesAsync(reducer + "reduce([tock(), tock()], Sub, 0)");
+        var (nested, _) = await AllRoutesAsync(reducer + "Sub(tock(), Sub(tock(), 0))");
+        // The fold: elements 1 and 2, then Sub(2, Sub(1, 0)). The nest: the outer element draws first.
+        Assert.Equal("ok 1", fold.Outcome);
+        Assert.Equal("ok -1", nested.Outcome);
     }
 
     [Fact]

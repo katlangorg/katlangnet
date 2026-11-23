@@ -81,8 +81,8 @@ internal static class SemanticTickShapes
             "the predicate runs from the last element to the first",
             Filter, Context: IfFalse),
         new("callback", "reduce",
-            "reduce demands its collection, then its initial value once, then runs each step to its ordinary call result, left to right",
-            "each step's accumulator is the suspended previous step (the nested-call unfolding)",
+            "reduce demands its collection, then only its last step: each step's accumulator is the deferred previous step, run at its accumulator read, back to the initial value (the nested-call unfolding)",
+            "reduce demands its initial value once, then runs each step to its ordinary call result, left to right",
             Reduce, Context: Wrapper),
         new("callback", "map-fault",
             "a failing transform ends the map and the run: no later transform or row element runs",
@@ -238,8 +238,10 @@ internal static class SemanticTickShapes
 
     /// <summary>
     /// <c>L = [tick(), tick()]</c>, <c>R(x, acc) = tick() * x + acc</c>, row <c>[reduce(L, R, tick()), tick()]</c>. The
-    /// collection is demanded before the initial value (the bound collection, then the initial VALUE slot: Lean
-    /// <c>applyBuiltinCounted</c>'s <c>.reduceBuiltin</c> arm), and the initial value before the first step.
+    /// collection is demanded whole first; then the fold demands only its LAST step, whose accumulator read runs the
+    /// step before it, back to the initial value (lazy <c>reduce</c> accumulators, issue #203: Lean
+    /// <c>EvalBody.evalReduceCounted</c>). The rejected reading is the former eager loop: the initial value, then
+    /// every step from the first element to the last.
     /// </summary>
     private static SemanticFragment Reduce(SemanticGrammar.Gen g, bool alternative)
     {
@@ -258,11 +260,6 @@ internal static class SemanticTickShapes
         int folded;
         if (!alternative)
         {
-            folded = clock.Next();
-            foreach (var item in items) folded = clock.Next() * item + folded;
-        }
-        else
-        {
             // R(x_n, R(x_{n-1}, … R(x_1, initial))): the outer step runs first, each inner one at its accumulator read.
             folded = Nested(items.Length - 1);
 
@@ -271,6 +268,11 @@ internal static class SemanticTickShapes
                 var head = clock.Next() * items[k];
                 return head + (k == 0 ? clock.Next() : Nested(k - 1));
             }
+        }
+        else
+        {
+            folded = clock.Next();
+            foreach (var item in items) folded = clock.Next() * item + folded;
         }
 
         f.Value = new Result.ListValue([Res(folded), Res(clock.Next())]);

@@ -756,6 +756,8 @@ def rirNeutralFrame (message : String) : Option String :=
     some ("property " ++ (message.drop propertyPrefix.length).toString)
   else if message == "while preparing reduce initial accumulator" then
     some "reduceInitial"
+  else if message == KatLang.reduceStepContext then
+    some "reduceStep"
   else if message.startsWith "expected " && message.endsWith " arguments" then
     none
   else
@@ -800,31 +802,31 @@ def rirObserve (program : Expr) : String :=
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, Inc)` / `Probe(0)` -/
 def rirReduceInitialProperty : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialProperty == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialProperty == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `K(x) = 5` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, K)` / `Probe(0)` -/
 def rirReduceInitialIgnoredParameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "K" (alg ["x"] [] [] [.num 5]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "K"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialIgnoredParameter == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialIgnoredParameter == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, { x + 1 })` / `Probe(0)` -/
 def rirReduceInitialBlock : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialBlock == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialBlock == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, { Inc })` / `Probe(0)` —
     the written `{ Inc }` is a structural forwarding carrier (M4★); its failed slot names the carrier's
     VALUE terminal, Inc, so it reports exactly as the written `Inc` does: reduce's hint (FA-OQ-1). -/
 def rirReduceInitialInlineAlias : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (.alias none [] [] (.resolve "Inc") none false))])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialInlineAlias == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialInlineAlias == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `C = { Inc }` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, C)` / `Probe(0)` —
     a NAMED carrier is judged on its VALUE terminal too (FA-OQ-1 under M4★), while every other value slot keeps
     the law's report keyed by the written `C` (`count(C)`). -/
 def rirReduceInitialNamedCarrier : Expr :=
   .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "Inc") none false), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "C"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialNamedCarrier == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialNamedCarrier == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `C = { Inc }` / `Probe(unused) = count(C)` / `Probe(0)` -/
 def rirCountNamedCarrier : Expr :=
@@ -836,33 +838,33 @@ def rirCountNamedCarrier : Expr :=
     alias (`W = q`), which C# pre-marks: its failed slot still names the carrier's VALUE terminal (FA-OQ-1). -/
 def rirReduceInitialNamedCarrierPremarked : Expr :=
   .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "Inc") none false), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Unused" (alg ["q"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["q"]) (.alias none [] [] (.param "q"))) with requiredOwnerDepths := some [("q", some 0)] }] [.resolve "W"]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "C"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialNamedCarrierPremarked == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialNamedCarrierPremarked == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Unused(q) = { W = q ⏎ W }` /
     `Probe(unused) = reduce([1, 2], Add, { Inc })` / `Probe(0)` — the inline carrier in the same pre-marked program. -/
 def rirReduceInitialInlineAliasPremarked : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Unused" (alg ["q"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["q"]) (.alias none [] [] (.param "q"))) with requiredOwnerDepths := some [("q", some 0)] }] [.resolve "W"]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (.alias none [] [] (.resolve "Inc") none false))])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialInlineAliasPremarked == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialInlineAliasPremarked == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `A = Inc` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, A)` / `Probe(0)` -/
 def rirReduceInitialAlias : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Inc")), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "A"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialAlias == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialAlias == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Lib = { public M(a) = a }` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, Lib.M)` / `Probe(0)` -/
 def rirReduceInitialMember : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "M" (alg ["a"] [] [] [.param "a"])] []), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.dotCall (.resolve "Lib") "M" none)])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialMember == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialMember == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `P((p, q)) = p` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, P)` / `Probe(0)` -/
 def rirReduceInitialStructuralPattern : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "p" }, .capture { name := "q" }]] [] [] [.param "p"]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "P"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialStructuralPattern == "call Probe > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialStructuralPattern == "call Probe > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = [1, 2].reduce(Add, Inc)` / `Probe(0)` -/
 def rirReduceInitialDotted : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.dotCall (.listLiteral [.num 1, .num 2]) "reduce" (some [.resolve "Add", .resolve "Inc"]))])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialDotted == "call Probe > dotCall .reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialDotted == "call Probe > dotCall .reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([], Add, Inc)` / `Probe(0)` -/
 def rirReduceInitialEmptyCollection : Expr :=
@@ -872,7 +874,7 @@ def rirReduceInitialEmptyCollection : Expr :=
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `G(*xs) = reduce([1, 2], Add, xs*)` / `G(Inc)` -/
 def rirReduceInitialCollectorTransport : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "G" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.sequenceSpread (.param "xs"))])])] [(.call (.resolve "G") [.resolve "Inc"])])
-#guard rirObserve rirReduceInitialCollectorTransport == "call G > call reduce > reduceInitial > badArity"
+#guard rirObserve rirReduceInitialCollectorTransport == "call G > call reduce > reduceStep > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `G(*xs) = count(xs*)` / `G(Inc)` -/
 def rirCountCollectorTransport : Expr :=
@@ -882,12 +884,12 @@ def rirCountCollectorTransport : Expr :=
 /-- `F(0) = 1` / `F(n) = n` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, F)` / `Probe(0)` -/
 def rirReduceInitialFamily : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "F"])])] [(.call (.resolve "Probe") [.num 0])])
-#guard rirObserve rirReduceInitialFamily == "call Probe > call reduce > noMatchingBranch F"
+#guard rirObserve rirReduceInitialFamily == "call Probe > call reduce > reduceStep > noMatchingBranch F"
 
 /-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `G(v) = reduce([1, 2], Add, v)` / `G(Inc)` -/
 def rirReduceInitialThroughParameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "G" (alg ["v"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .param "v"])])] [(.call (.resolve "G") [.resolve "Inc"])])
-#guard rirObserve rirReduceInitialThroughParameter == "call G > call reduce > property Inc > arityMismatch 1 0"
+#guard rirObserve rirReduceInitialThroughParameter == "call G > call reduce > reduceStep > property Inc > arityMismatch 1 0"
 
 /-- `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, 7)` / `Probe(0)` -/
 def rirReduceInitialValue : Expr :=
@@ -921,15 +923,21 @@ def rirCountMemberThroughParameter : Expr :=
 
 -- A written parameter's failed VALUE demand is reported as the argument's own (CALL-06) and
 -- performs NO callable projection, like the parameter branch of C#'s
--- `FinishNeedCallItemDemand`: after `G(v) = reduce([1, 2], Add, v)` / `G(Inc)` fails, no
--- supplied cell holds a projection (the reducer `Add` is never projected either: binding
--- fails at the initial accumulator before any invocation).
+-- `FinishNeedCallItemDemand`: after `G(v) = reduce([1, 2], Add, v)` / `G(Inc)` fails, the one
+-- supplied cell that holds a projection is the reducer's own (`Add`: the fold resolves its
+-- reducer before a step reads the start, lazy `reduce`, November 2026); the cell of the failed
+-- argument `Inc` and every other cell hold none.
 def rirParameterSlotProjectsNothing : Bool :=
+  let writes (name : String) (cell : KatLang.NeedCell) : Bool := match cell.suspension with
+    | .expression (.resolve written) _ _ => written == name
+    | _ => false
   match KatLang.runEvalM (do
       let outcome <- KatLang.evalAttempt (KatLang.runResultM rirReduceInitialThroughParameter)
       let state <- get
-      pure (outcome.isOk, state.needs.all (fun cell => cell.callable matches .unprojected))) with
-  | .ok (false, true) => true
+      pure (outcome.isOk,
+        state.needs.all (fun cell => writes "Add" cell || cell.callable matches .unprojected),
+        state.needs.any (writes "Inc") && state.needs.any (writes "Add"))) with
+  | .ok (false, true, true) => true
   | _ => false
 #guard rirParameterSlotProjectsNothing
 

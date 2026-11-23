@@ -274,7 +274,8 @@ public class ErrorTaxonomyPolicyTests
         { "map([1], 5, 6)", "ArityMismatch" },          // builtin call arity before callback validity
         { "map(1 / 0, 5)", "DivisionByZero" },          // the collection VALUE before callback validity
         { "map(trace(1) / 0, 5)", "DivisionByZero" },
-        { "reduce([1], 5, 1 / 0)", "DivisionByZero" },  // reduce's initial VALUE before reducer projection
+        { "reduce([1], 5, 1 / 0)", "NotAnAlgorithm" },  // a nonempty fold projects its reducer; only a step can demand the initial VALUE
+        { "reduce([], 5, 1 / 0)", "DivisionByZero" },   // an empty fold demands its initial VALUE and never projects the reducer
         { "Run(f) = repeat(f(0), 'x')\nRun(5)", "TypeMismatch" },  // the repeat count's kind before step projection
         { "Run(f) = repeat(f(0), -1)\nRun(5)", "IllegalInEval" },  // the repeat count's domain before step projection
         { "Run(f) = repeat(f(0), 1.5)\nRun(5)", "IllegalInEval" },

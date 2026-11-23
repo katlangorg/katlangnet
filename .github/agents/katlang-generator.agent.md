@@ -1027,11 +1027,11 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`,
 
 - Use it when the task needs a custom accumulator shape or custom folding logic
 - `reduce` takes exactly three arguments — the initial accumulator is required, so `reduce((1, 2, 3), Add)` is a two-argument arity error, and inline items such as `reduce(2, 3, 4, Append, 1)` are a five-argument arity error (group the collection: `reduce((2, 3, 4), Append, 1)`). The dotted `collection.reduce(Add)` form recognizes a visibly parameterized reducer and adds a targeted missing-initial hint; the plain form remains an ordinary arity error.
-- Builtin arguments follow their role: the initial accumulator (like the collection, a `take` count or a `contains` item) is an ordinary value evaluated once — if it fails, `reduce` fails with that error, even over an empty collection — while the reducer, mapper, and predicate are callbacks that run only when called (an empty collection never evaluates them). A spread argument whose value fails makes the whole call fail with that error before its arguments are counted.
+- Builtin arguments follow their role: the collection, a `take` count and a `contains` item are ordinary values evaluated once, while the reducer, mapper, and predicate are callbacks that run only when called (an empty collection never evaluates them). `reduce`'s initial accumulator is an ordinary value too, evaluated at most once and only when the fold needs it: an empty collection returns it, and otherwise the first reducer call that reads its accumulator evaluates it — if that evaluation fails, `reduce` fails with that error. A spread argument whose value fails makes the whole call fail with that error before its arguments are counted.
 - `reducer(element, accumulator)` receives the current item as one selected value — exactly what `S[i]` returns
 - The reducer returns its ORDINARY call result, and that one value becomes the next accumulator whole: several output rows are ONE sequence accumulator (`R(x, acc) = x, acc` makes `reduce([1, 2], R, 0)` the nested `(2, (1, 0))`, which is `R(2, R(1, 0))` — never flattened), and `()` and `[]` are ordinary accumulators (`Keep(x, acc) = acc` over the initial `()` gives `()`). `()` never means "keep the previous accumulator". An unintended extra output row is valid and nests an unexpected sequence accumulator, so write exactly the state you mean, such as `(total + x, itemCount + 1)`
 - The accumulator is ONE ordinary argument, bound by the reducer's parameter pattern: a normal parameter receives the accumulator value whole, a structural pattern such as `(total, itemCount)` or `(*history)` opens it, and a top-level collecting accumulator parameter collects it as one item (`[accumulator]`)
-- The map/reduce unfolding equations compare result values for pure, deterministic, total computations. Reduce processes elements from left to right and preserves each complete ordinary call result as the next accumulator; it demands the initial value and every earlier step. Map demands its collection. Expanded Model-C calls may skip unused arguments or inner calls, so the equations do not guarantee identical effects, argument demand, random draws, resource consumption or error timing
+- `reduce` evaluates its accumulators on demand: it computes its whole collection first, then asks only for the last reducer call, and each call receives its accumulator unevaluated — reading it runs the call before it, back to the initial value, and each accumulator is evaluated at most once. So `reduce([a, b], R, i)` is `R(b, R(a, i))` in value and in which accumulators are evaluated: a reducer that ignores its accumulator (`Last(x, acc) = x`) skips every earlier call and the initial value, and effects inside the reducer happen for the LAST element first. Each complete ordinary call result is the next accumulator. The map unfolding equation compares result values for pure, deterministic, total computations: map demands its collection first, while expanded calls may skip unused arguments, so it does not guarantee identical effects, argument demand, random draws, resource consumption or error timing
 - When the accumulator is a sequence-value state such as `(n, found)` or `(sum, count)`, the final result's fields are selected directly with `[0]` and `[1]`. Do not write `reduce(...)[0][1]` unless the first accumulator field is itself a sequence value and its second member is needed
 - A sequence value inside the opened collection contributes one fold step; the element is passed intact as one value, never opened or flattened
 - Prefer this over hand-written loops when the task is still just a fold
@@ -1698,7 +1698,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (181 of the 798-case canonical language specification,
+Verified reference examples (181 of the 800-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -3001,10 +3001,10 @@ Regenerate this block from the repo root with:
     [(1, 1)]
     true
 
-[nested-reducer-calls-may-skip-unused-initial] An ordinary call may leave an unused accumulator undemanded. Reduce evaluates its initial value and every earlier step. The reduce unfolding equation is a result-structure law for pure, deterministic, total computations, preserving Model-C demand and effect order.
+[reduce-accumulators-are-evaluated-on-demand] `reduce` evaluates its accumulators on demand: it demands only its last step, and each step receives its accumulator unevaluated, so `reduce([a, b], R, i)` is `R(b, R(a, i))` in value and in the demand of its accumulators. A reducer that ignores its accumulator skips every earlier step and the initial expression; one that reads it evaluates it once.
 
-    R(x, acc) = x
-    R(2, R(1, 1 / 0))
+    Pick(item, acc) = item
+    reduce([1, 2], Pick, 1 / 0)
 
   Displays:
     2

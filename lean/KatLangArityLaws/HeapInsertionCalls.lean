@@ -9,7 +9,7 @@ The non-observation contract of `PlanAlgorithmBridge.lean` relates the plan-side
 computation with its production-side run. For the PER-BODY obligations — every evaluator body
 simulates whenever its recursive answer does — the two sides run DIFFERENT calls: the plan side's
 arguments are the production side's with every need address shifted past the inserted cells. This
-module is that shift, for all 82 calls of the total core (a derived answer — `eval`, `applyBuiltin`, … —
+module is that shift, for all 81 calls of the total core (a derived answer — `eval`, `applyBuiltin`, … —
 is no call: its shift is its twin's, and the shift of a counted result shifts its value):
 
 * the address-bearing auxiliary types of the evaluator — a resolved builtin argument's supplied
@@ -55,6 +55,7 @@ def shiftItem (σ : Site) (item : CallableCallItem) : CallableCallItem :=
 def shiftSuffix (σ : Site) : PreparedSequenceBuiltinSuffixArg → PreparedSequenceBuiltinSuffixArg
   | .needAlgorithm address => .needAlgorithm (σ.addr address)
   | .value value => .value (shiftResult σ value)
+  | .deferred item => .deferred (shiftItem σ item)
   | arg => arg
 
 def shiftBound (σ : Site) (b : BoundSequenceBuiltinArguments) : BoundSequenceBuiltinArguments :=
@@ -123,10 +124,9 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .evalConditionalCallbackCallCounted callee args ctx env calleeName => .evalConditionalCallbackCallCounted callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .evalUserCallbackCallCounted callee args ctx env => .evalUserCallbackCallCounted callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalResolvedCallbackCallCounted callee args ctx env calleeName => .evalResolvedCallbackCallCounted callee (args.map (shiftCounted σ)) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
-  | .evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => .evalSequenceReduceStepCounted callee (shiftCounted σ element) (shiftResult σ accumulator) (shiftCtx σ ctx) (shiftValEnv σ env) calleeName
   | .demandSequenceBuiltinCallItemValue item ctx env => .demandSequenceBuiltinCallItemValue (shiftItem σ item) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .bindSequenceBuiltinArguments b metadata args ctx env => .bindSequenceBuiltinArguments b metadata (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalReduceCounted collection stepAlg initial ctx env => .evalReduceCounted (collection.map (shiftCounted σ)) stepAlg (shiftResult σ initial) (shiftCtx σ ctx) (shiftValEnv σ env)
+  | .evalReduceCounted collection stepAlg start ctx env => .evalReduceCounted (collection.map (shiftCounted σ)) stepAlg (σ.addr start.1, start.2) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalFilterCounted items predicateAlg ctx env => .evalFilterCounted (items.map (shiftCounted σ)) predicateAlg (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalMapCounted collection transformAlg ctx env => .evalMapCounted (collection.map (shiftCounted σ)) transformAlg (shiftCtx σ ctx) (shiftValEnv σ env)
   | .applyBuiltinCountedSequence b metadata args ctx env => .applyBuiltinCountedSequence b metadata (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -208,7 +208,6 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .evalConditionalCallbackCallCounted .., r => shiftCounted σ r
   | .evalUserCallbackCallCounted .., r => shiftCounted σ r
   | .evalResolvedCallbackCallCounted .., r => shiftCounted σ r
-  | .evalSequenceReduceStepCounted .., r => shiftCounted σ r
   | .demandSequenceBuiltinCallItemValue .., r => shiftItem σ r
   | .bindSequenceBuiltinArguments .., r => shiftBound σ r
   | .evalReduceCounted .., r => shiftCounted σ r

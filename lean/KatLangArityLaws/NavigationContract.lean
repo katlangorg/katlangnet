@@ -82,7 +82,7 @@ on its completed runs is approximated by its completed part, which is sound on e
 ## NOT proved here (B2)
 
 That such a contract EXISTS for the production evaluator: `K.BodySound` for a concrete `K` is a
-proof family over all 82 bodies, with a value contract on every algorithm-returning call. The
+proof family over all 81 bodies, with a value contract on every algorithm-returning call. The
 proposed state half is `StoredOK` (every stored caller and every published CALLABLE is `CtxOK` /
 `AlgOK`); it is stated, holds of the empty state, and is NOT proved to be kept. In particular
 `ParamRowOwned` is not a consequence of binder facts: it needs the local-only law — a member that

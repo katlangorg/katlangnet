@@ -2085,15 +2085,15 @@ def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Ffilter_reorder : Expr :=
 -- sem2b/v1/sys/tick/callback/reduce: v1 = [tick(), tick()] \n v2(v3, v4) = (tick() * v3) + v4 \n v5(v6) = v6 \n v5([reduce(v1, v2, tick()), tick()]) \n 997
 def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3", "v4"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "v3")) (.param "v4"))]), privateProp "v5" (alg ["v6"] [] [] [.param "v6"])] [(.call (.resolve "v5") [(.listLiteral [(.call (.resolve "reduce") [.resolve "v1", .resolve "v2", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])]), .num 997])
-#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce == "ok raw=S[L[17, 6], 997] n=2"
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce == "ok raw=S[L[15, 6], 997] n=2"
 -- sem2b/v1/sys/tick/callback/reduce [alpha-rename]
 def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha : Expr :=
   .algorithmExpr (alg [] [] [privateProp "w1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "w2" (alg ["w3", "w4"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "w3")) (.param "w4"))]), privateProp "w5" (alg ["w6"] [] [] [.param "w6"])] [(.call (.resolve "w5") [(.listLiteral [(.call (.resolve "reduce") [.resolve "w1", .resolve "w2", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])]), .num 997])
-#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha == "ok raw=S[L[17, 6], 997] n=2"
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_alpha == "ok raw=S[L[15, 6], 997] n=2"
 -- sem2b/v1/sys/tick/callback/reduce [declaration-reorder]
 def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v5" (alg ["v6"] [] [] [.param "v6"]), privateProp "v2" (alg ["v3", "v4"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "v3")) (.param "v4"))])] [(.call (.resolve "v5") [(.listLiteral [(.call (.resolve "reduce") [.resolve "v1", .resolve "v2", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])]), .num 997])
-#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder == "ok raw=S[L[17, 6], 997] n=2"
+#guard obs case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Freduce_reorder == "ok raw=S[L[15, 6], 997] n=2"
 
 -- sem2b/v1/sys/tick/callback/map-fault: v1 = [1, 0, 2] \n v2(v3) = trace(tick()) / v3 \n [map(v1, v2), trace(tick())] \n 997
 def case_sem2b_2Fv1_2Fsys_2Ftick_2Fcallback_2Fmap_2Dfault : Expr :=

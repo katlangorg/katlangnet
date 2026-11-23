@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 798
+- specification surface cases: 800
 - excluded parse-level cases (Lean has no surface parser): 89
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 685
-- probe observations (C#-only by design): 1643
+- Lean-guarded cases: 687
+- probe observations (C#-only by design): 1655
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 681 programs have no cache observation, which is not an empty cache;
+  the other 683 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -1548,15 +1548,25 @@ def case_callback_result_is_the_ordinary_call_result : Expr :=
   .algorithmExpr (alg [] [] [privateProp "D" (alg ["x"] [] [] [.param "x", .param "x"]), privateProp "G" (alg ["x"] [] [] [(.call (.resolve "D") [.param "x"])]), privateProp "H" (alg ["x"] [] [] [(.capture [.param "x", .param "x"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "D"]), (.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "G"]), (.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "H"]), (.comparison (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .resolve "D"]) [{ op := .eq, operand := (.listLiteral [(.call (.resolve "D") [.num 1]), (.call (.resolve "D") [.num 2])]) }])])
 #guard obs case_callback_result_is_the_ordinary_call_result == "ok raw=S[L[S[1, 1]], L[S[1, 1]], L[S[1, 1]], true] n=4"
 
--- reduce-demands-initial-before-iteration [collection-builtins]: R(x, acc) = x \n reduce([1, 2], R, 1 / 0)
-def case_reduce_demands_initial_before_iteration : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "R" (alg ["x", "acc"] [] [] [.param "x"])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "R", (.binary .div (.num 1) (.num 0))])])
-#guard obs case_reduce_demands_initial_before_iteration == "err div0"
+-- reduce-accumulators-are-evaluated-on-demand [collection-builtins]: Pick(item, acc) = item \n reduce([1, 2], Pick, 1 / 0)
+def case_reduce_accumulators_are_evaluated_on_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pick" (alg ["item", "acc"] [] [] [.param "item"])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Pick", (.binary .div (.num 1) (.num 0))])])
+#guard obs case_reduce_accumulators_are_evaluated_on_demand == "ok raw=2 n=1"
 
--- nested-reducer-calls-may-skip-unused-initial [collection-builtins]: R(x, acc) = x \n R(2, R(1, 1 / 0))
-def case_nested_reducer_calls_may_skip_unused_initial : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "R" (alg ["x", "acc"] [] [] [.param "x"])] [(.call (.resolve "R") [.num 2, (.call (.resolve "R") [.num 1, (.binary .div (.num 1) (.num 0))])])])
-#guard obs case_nested_reducer_calls_may_skip_unused_initial == "ok raw=2 n=1"
+-- reduce-demands-only-the-steps-it-needs [collection-builtins]: R(item, acc) = if(item == 1, 1 / 0, item) \n reduce([1, 2], R, 0)
+def case_reduce_demands_only_the_steps_it_needs : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg ["item", "acc"] [] [] [(.call (.resolve "if") [(.comparison (.param "item") [{ op := .eq, operand := (.num 1) }]), (.binary .div (.num 1) (.num 0)), .param "item"])])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "R", .num 0])])
+#guard obs case_reduce_demands_only_the_steps_it_needs == "ok raw=2 n=1"
+
+-- reduce-effects-follow-accumulator-demand [collection-builtins]: R(item, acc) = tick() * item + acc \n reduce([1, 2], R, 0)
+def case_reduce_effects_follow_accumulator_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg ["item", "acc"] [] [] [(.binary .add (.binary .mul (.call (.resolve "tick") []) (.param "item")) (.param "acc"))])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "R", .num 0])])
+#guard obs case_reduce_effects_follow_accumulator_demand == "ok raw=4 n=1"
+
+-- reduce-empty-collection-demands-initial-once [collection-builtins]: Pick(item, acc) = item \n reduce([], Pick, tick()), tick()
+def case_reduce_empty_collection_demands_initial_once : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pick" (alg ["item", "acc"] [] [] [.param "item"])] [(.call (.resolve "reduce") [(.listLiteral []), .resolve "Pick", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])
+#guard obs case_reduce_empty_collection_demands_initial_once == "ok raw=S[1, 2] n=2"
 
 -- map-demands-collection-before-transforms [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n map(L, F)
 def case_map_demands_collection_before_transforms : Expr :=
@@ -3683,7 +3693,7 @@ def case_decon_target_calls_reuse_the_shared_source : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), (.call (.resolve "a") []), .resolve "b"])
 #guard obs case_decon_target_calls_reuse_the_shared_source == "ok raw=S[1, 1, 20] n=3"
 
--- 685 canonical Lean-guarded specification cases.
+-- 687 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3951,8 +3961,10 @@ def specCaseIds : List String := [
   "clause-family-multirow-reduce-step-is-one-value",
   "clause-family-callback-single-value-accepted",
   "callback-result-is-the-ordinary-call-result",
-  "reduce-demands-initial-before-iteration",
-  "nested-reducer-calls-may-skip-unused-initial",
+  "reduce-accumulators-are-evaluated-on-demand",
+  "reduce-demands-only-the-steps-it-needs",
+  "reduce-effects-follow-accumulator-demand",
+  "reduce-empty-collection-demands-initial-once",
   "map-demands-collection-before-transforms",
   "expanded-map-calls-may-skip-indexed-arguments",
   "map-identity-preserves-empty-elements",
@@ -4377,7 +4389,7 @@ def specCaseIds : List String := [
   "selective-collector-take-count-error-precedes-elements",
   "decon-target-calls-reuse-the-shared-source"
 ]
-#guard specCaseIds.length == 685
+#guard specCaseIds.length == 687
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards

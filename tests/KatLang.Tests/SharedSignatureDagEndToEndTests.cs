@@ -467,7 +467,9 @@ public class SharedSignatureDagEndToEndTests(ITestOutputHelper output)
             "tooMany" => new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(1), new Expr.Num(2)]),
             "oneArgument" => new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(1)]),
             "block" => new Expr.AlgorithmExpr(callee),
-            "reduceInitial" => new Expr.Call(new Expr.Resolve("reduce"), [new Expr.Num(1), new Expr.Resolve("F"), new Expr.Resolve("F")]),
+            // An empty collection: the fold demands its initial accumulator itself (a nonempty one would invoke
+            // the reducer first, and only a step that reads its accumulator would demand the start).
+            "reduceInitial" => new Expr.Call(new Expr.Resolve("reduce"), [new Expr.EmptySequence(0), new Expr.Resolve("F"), new Expr.Resolve("F")]),
             "dotReceiver" => new Expr.DotCall(new Expr.Resolve("F"), "x"),
             _ => new Expr.Resolve("F"),
         };

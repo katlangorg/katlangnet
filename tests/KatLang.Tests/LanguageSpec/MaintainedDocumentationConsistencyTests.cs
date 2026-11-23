@@ -430,6 +430,18 @@ public class MaintainedDocumentationConsistencyTests
             + @"logical operators have no short circuit|`and` (?:cannot|does not) protect a calculation",
             "eager `and`/`or` (superseded 2026-11-22 by the short circuit; only `xor` and comparison chains evaluate every operand)"
         },
+        // Eager `reduce` (superseded 2026-11-23, issue #203): `reduce` evaluates its accumulators on
+        // demand. It demands its collection and then only its last step; the initial value and every
+        // earlier step run only when a later step reads its accumulator. So no current text says that
+        // `reduce` demands or evaluates its initial value before iterating, or its initial value and
+        // every step, and the per-step evaluator operation of the eager loop is gone (the scan is
+        // case-insensitive, so the name covers its Lean and C# spellings).
+        {
+            @"`?\breduce`?\s+(?:demands|evaluates)\s+its\s+initial\s+value\s+(?:once\s+before|and\s+every)\b|"
+            + @"\bdemands\s+the\s+initial\s+value\s+and\s+every\s+earlier\s+step\b|"
+            + @"(?<![\w?])evalSequenceReduceStepCounted(?:Async)?(?![\w?])",
+            "eager `reduce` (superseded 2026-11-23 by accumulators evaluated on demand: only the steps an accumulator read reaches run)"
+        },
     };
 
     [Theory]

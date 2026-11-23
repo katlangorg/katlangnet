@@ -147,6 +147,7 @@ theorem ofSuspension_ctx {susp : NeedSuspension} {shape : NeedPlan.CallShape}
     exact ⟨e, by rw [h1, h2]⟩
   | collector _ => cases h
   | ready _ => cases h
+  | applied _ _ _ _ _ => cases h
 
 theorem CellV.shape_ctx {h : Array NeedCell} {c : NeedCell} (v : CellV h c) {shape : NeedPlan.CallShape}
     (hs : NeedPlan.ofSuspension? c.suspension = some shape) : ValidCtx h shape.caller := by

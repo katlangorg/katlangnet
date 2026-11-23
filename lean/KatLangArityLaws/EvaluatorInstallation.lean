@@ -489,8 +489,9 @@ theorem sequence_builtin_binding_installs (rec : EvalRec) (b : Builtin)
           }) :
         EvalM BoundSequenceBuiltinArguments) := rfl
 
-/-- The installed control-preparation helper transports a callback slot and demands an executed
-    VALUE/control slot through the one per-slot demand, before preparing the next control. -/
+/-- The installed control-preparation helper transports a callback slot, retains a DEFERRED value
+    control undemanded (`reduce`'s `initial`) and demands every other executed VALUE/control slot
+    through the one per-slot demand, before preparing the next control. -/
 theorem sequence_builtin_control_step (rec : EvalRec) (b : Builtin) (ctx : EvalCtx) (env : ValEnv)
     (descriptor : SequenceBuiltinSuffixArgDescriptor) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
     (item : CallableCallItem) (rest : List CallableCallItem) :
@@ -498,7 +499,7 @@ theorem sequence_builtin_control_step (rec : EvalRec) (b : Builtin) (ctx : EvalC
         (descriptor :: descriptors) (item :: rest) = ((do
       let item <- match descriptor.kind with
         | .algorithm => pure item
-        | _ => rec.demandSequenceBuiltinCallItemValue item ctx env
+        | _ => if descriptor.deferred then pure item else rec.demandSequenceBuiltinCallItemValue item ctx env
       let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor item
       let tail <- EvalBody.bindSequenceBuiltinArguments.prepareControls rec b ctx env descriptors rest
       pure (prepared :: tail)) : EvalM (List PreparedSequenceBuiltinSuffixArg)) := rfl
@@ -593,14 +594,64 @@ theorem callback_item_installs (rec : EvalRec) (callee : Algorithm) (item : Coun
     rec.evalSequenceCallbackCallCounted callee item ctx env calleeName =
       rec.evalResolvedCallbackCallCounted callee [countedSequenceCallbackItem item] ctx env calleeName := rfl
 
-/-- The `reduce` step receives the element through the same helper and the accumulator as ONE
-    value at its value boundary. -/
-theorem reduce_step_installs (rec : EvalRec) (callee : Algorithm) (element : CountedResult)
-    (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName =
-      rec.evalResolvedCallbackCallCounted callee
-        [countedSequenceCallbackItem element, (accumulator, Result.valueCount accumulator)]
-        ctx env calleeName := rfl
+/-- A DEFERRED APPLICATION's VALUE (lazy `reduce` accumulators, November 2026) is ONE dispatch of its
+    resolved callee over its formed supply, with no callee origin, its own missing output stored
+    as nested, at the call's value boundary — whatever the written-expression evaluator and the
+    recursive demand are: neither is read. -/
+theorem deferred_application_installs (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat) (callee : Algorithm)
+    (cells : List NeedSupply.Sourced) (caller : EvalCtx) (values : ValEnv) (calleeName : String) :
+    NeedDemand.suspendedValue ev route demand a (.applied callee cells caller values calleeName) =
+      reCountValueBoundary <$> withNestedMissingOutput
+        (route.dispatch .none callee cells caller values calleeName) := rfl
+
+/-- ... and the production route's dispatch is the ordinary dispatch of a formed supply: a user
+    algorithm's binder, a clause family's dispatch, a builtin's argument roles, an alias as its
+    target (`evalSuppliedCallCounted`). -/
+theorem deferred_application_dispatch_installs (rec : EvalRec) :
+    rec.planRoute.dispatch = rec.evalSuppliedCallCounted := rfl
+
+/-- A deferred application has no CALLABLE identity, whatever the written resolver is. -/
+theorem deferred_application_has_no_callable (written : Expr → EvalCtx → EvalM (Option Algorithm))
+    (callee : Algorithm) (cells : List NeedSupply.Sourced) (caller : EvalCtx) (values : ValEnv)
+    (calleeName : String) :
+    NeedProjection.suspended written (.applied callee cells caller values calleeName) = pure none := rfl
+
+/-- ... and is no invocation plan, so META capture refuses it. -/
+theorem deferred_application_is_no_plan (callee : Algorithm) (cells : List NeedSupply.Sourced)
+    (caller : EvalCtx) (values : ValEnv) (calleeName : String) :
+    NeedPlan.ofSuspension? (.applied callee cells caller values calleeName) = none := rfl
+
+/-- One link of a fold's chain evaluates nothing: the element's Ready cell, then the DEFERRED
+    APPLICATION of the reducer to that cell and the preceding accumulator cell. -/
+theorem reduce_chain_step (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (accumulator : Nat)
+    (item : CountedResult) (rest : List CountedResult) :
+    EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator (item :: rest) = ((do
+      let element <- readyNeed (countedSequenceCallbackItem item)
+      let step <- allocateNeed
+        (.applied stepAlg [(element, none), (accumulator, none)] ctx env "reduce step")
+      EvalBody.evalReduceCounted.chain stepAlg ctx env step rest) : EvalM Nat) := rfl
+
+/-- The chain of no items is its accumulator. -/
+theorem reduce_chain_end (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) (accumulator : Nat) :
+    EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator [] = pure accumulator := rfl
+
+/-- THE LAZY FOLD installs: the START is the deferred application of `reduce` itself to an empty
+    collection and the supplied `initial` cell with its written slot — so its VALUE is `reduce`'s
+    own empty case, and the reducer slot it carries is never projected —, the chain allocates one
+    deferred step per element, and ONLY THE LAST cell is demanded: under the one reduce step frame
+    when the collection has an element, as the start itself when it has none. -/
+theorem reduce_fold_installs (rec : EvalRec) (collection : List CountedResult) (stepAlg : Algorithm)
+    (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    EvalBody.evalReduceCounted rec collection stepAlg start ctx env = ((do
+      let empty <- readyNeed (Result.sequenceValue [], 0)
+      let initial <- allocateNeed
+        (.applied (.builtin .reduceBuiltin) [(empty, none), (empty, none), start] ctx env "reduce")
+      let last <- EvalBody.evalReduceCounted.chain stepAlg ctx env initial collection
+      let result <-
+        if collection.isEmpty then rec.demandNeedRecursive last
+        else withCtx reduceStepContext (rec.demandNeedRecursive last)
+      pure (reCountValueBoundary result)) : EvalM CountedResult) := rfl
 
 /-- THE INVOKING SLOT of a `while` round: the step is the loop step cell's CALLABLE read through
     `projectInvokingSlot`, then ONE condition-first round (`WhileRound.advance`). The `repeat`

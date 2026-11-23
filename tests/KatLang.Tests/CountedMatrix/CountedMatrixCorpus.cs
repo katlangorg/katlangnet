@@ -1031,7 +1031,7 @@ public static class CountedMatrixCorpus
         Raw("cb/reduce-collecting-accumulator-is-one-argument", CallbackContract, Two, NamedReference,
             "App(item, *hist) = (hist*, item)\nInit = 1, 2\nreduce((9), App, Init)",
             "S[S[1, 2], 9]", 1,
-            "the reducer is an ordinary two-argument callback: the accumulator (1, 2) is ONE argument, so the collecting accumulator parameter collects hist = [(1, 2)] (evalSequenceReduceStepCounted)"),
+            "the reducer is an ordinary two-argument callback: the accumulator (1, 2) is ONE argument, so the collecting accumulator parameter collects hist = [(1, 2)] (evalReduceCounted: a step is the ordinary dispatch of its two-cell supply)"),
         Err("cb/filter-nonatomic-rejected", CallbackContract, Two, CaptureWrapped,
             "filter((1, 2), {(x, x)})",
             "type",

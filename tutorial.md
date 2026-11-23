@@ -1842,7 +1842,7 @@ The `Tax` row was only meant as a check; without it the result is `[120, 60]`.
 
 ### Folding with `reduce`
 
-`reduce(collection, reducer, initial)` combines the elements into one value. It starts with `initial` and calls `reducer(element, accumulator)` for each element in turn, and each result becomes the next accumulator:
+`reduce(collection, reducer, initial)` combines the elements into one value. For two elements `a` and `b`, the calls nest as `reducer(b, reducer(a, initial))`. Reading the accumulator in the outer call evaluates the inner call.
 
 ```
 Numbers = [1, 2, 3, 4]
@@ -1877,7 +1877,19 @@ Clear(x, acc) = ()
 
 The first fold is `Pair(2, Pair(1, 0))`: each pair is passed on whole, never flattened.
 
-`initial` is an ordinary value: `reduce` evaluates it once, before the first element. If that evaluation fails, `reduce` fails with the same error, even for an empty collection:
+An accumulator is calculated only when a call uses it. `reduce` computes its whole collection first and then asks only for the last call; that call receives its accumulator uncalculated, and reading it runs the call before it, back to `initial`. Each accumulator is calculated at most once, however many times it is read. So a reducer that does not use its accumulator skips every earlier call and `initial` as well:
+
+```
+Last(x, acc) = x
+
+[1, 2, 3].reduce(Last, 1 / 0)
+```
+
+**Result:** `3`
+
+Only `Last(3, …)` runs here. The division by zero is never calculated, because nothing reads the accumulator.
+
+A reducer that does read its accumulator calculates `initial` when the first call needs it, and an empty collection has no call at all, so its result is `initial` itself. If that calculation fails, `reduce` fails with the same error:
 
 ```
 [].reduce({x + total}, 1 / 0)
@@ -1885,7 +1897,7 @@ The first fold is `Pair(2, Pair(1, 0))`: each pair is passed on whole, never fla
 
 **Result:** error — division by zero, in the initial accumulator.
 
-`reduce` computes its collection first and then makes the calls from the first element to the last, so the nest of calls above is a picture, not an exact equivalent: with `Sub(x, acc) = x - acc`, `[tick(), tick()].reduce(Sub, 0)` is `1`, while `Sub(tick(), Sub(tick(), 0))` is `-1`.
+The elements are different: `reduce` computes its collection before any call, so the nest of calls above is a picture of the accumulators, not of the elements. With `Sub(x, acc) = x - acc`, `[tick(), tick()].reduce(Sub, 0)` is `1`, while `Sub(tick(), Sub(tick(), 0))` is `-1`.
 
 ### Flattening with `atoms`
 

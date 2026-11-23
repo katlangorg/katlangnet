@@ -220,7 +220,7 @@ public static class ReceiverLaws
         [ReceiverLaw.CALLBACK_NESTED_SEQUENCE_PATTERN_OPENS_ONLY_A_SEQUENCE] =
             "KatLang.lean bindNeedOne's .sequence arm (formerly bindCountedParameterPattern .sequenceValue; Result.sequencePatternItems?: a SEQUENCE value's elements; a list or any other value is structuralPatternKindMismatch — the SAME rule for the ordinary call and the callback); KatLangArityLaws: sequence_pattern_items_never_open_a_list, sequence_pattern_items_never_open_a_scalar",
         [ReceiverLaw.REDUCE_INITIAL_IS_WRITTEN_VALUE_SLOT] =
-            "KatLang.lean reduceLoop (reCountValueBoundary initOut); AGENTS.md written-slot reification incl. reduce initial accumulator",
+            "KatLang.lean demandedSequenceBuiltinValue over reduce's deferred initial control, at the fold's value boundary (EvalBody.evalReduceCounted: reCountValueBoundary); AGENTS.md written-slot reification incl. reduce initial accumulator",
         [ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS] =
             "KatLang.lean evalInitialLoopStateSlots (each explicit init argument is one initial state slot); tutorial repeat/while init-slot rule",
         [ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE] =

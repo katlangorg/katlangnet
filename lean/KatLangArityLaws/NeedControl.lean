@@ -561,6 +561,7 @@ theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
   cases hs : cell.suspension with
   | expression e ctx env => rfl
   | ready v => rfl
+  | applied _ _ _ _ _ => rfl
   | collector slice => exact (kind slice hs).elim
 
 theorem source_expression_any_state (e : Expr) (ctx : EvalCtx) (env : ValEnv)
@@ -1020,7 +1021,7 @@ theorem transparent_projection_is_marker_free (project : NeedSuspension → Eval
   rw [unprojected_publishes project a s _ cell _ hc hs (ht s .projecting) hcomplete, setCallable_twice]
 
 /-- The production suspension arms that need no written resolution are transparent:
-    produced data, a collector slice and a capture carry no identity. -/
+    produced data, a collector slice, a deferred application and a capture carry no identity. -/
 theorem suspended_transparent_without_written
     (written : Expr → EvalCtx → EvalM (Option Algorithm)) (a : Nat) (suspension : NeedSuspension)
     (h : ∀ source caller values, suspension = .expression source caller values →
@@ -1029,12 +1030,13 @@ theorem suspended_transparent_without_written
   cases suspension with
   | ready _ => exact transparent_pure a none
   | collector _ => exact transparent_pure a none
+  | applied _ _ _ _ _ => exact transparent_pure a none
   | expression source caller values =>
     simp only [NeedProjection.suspended, h source caller values rfl, ite_true]
     exact transparent_pure a none
 
-/-- P10 instance on the production arms: projecting a Ready, collector or capture cell is
-    the successful absence of identity, published without any other state change, for every
+/-- P10 instance on the production arms: projecting a Ready, collector, deferred-application or
+    capture cell is the successful absence of identity, published without any other state change, for every
     written resolver (so for `projectNeedCallable`'s `projectNeedWritten`). -/
 theorem identityless_projection (written : Expr → EvalCtx → EvalM (Option Algorithm)) (a : Nat)
     (s : EvalState) (cell : NeedCell)
@@ -1047,6 +1049,7 @@ theorem identityless_projection (written : Expr → EvalCtx → EvalM (Option Al
     cases hsus : cell.suspension with
     | ready _ => rfl
     | collector _ => rfl
+    | applied _ _ _ _ _ => rfl
     | expression source caller values =>
       simp only [NeedProjection.suspended, h source caller values hsus, ite_true]
       rfl

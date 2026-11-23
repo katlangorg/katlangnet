@@ -1702,12 +1702,25 @@ public static partial class Evaluator
     /// asynchronous route their twins: one implementation of each driver per family. Lean:
     /// <c>evalUserCallbackCallCounted</c> / <c>evalConditionalCallbackCallCounted</c>.
     /// </summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackBody(
+    private static ValueTask<EvalResult<CountedResult>> EvalNeedCallbackBody(
         Algorithm callee, IReadOnlyList<CountedResult> arguments, EvalCtx ctx, ValEnv values,
         string name, bool asynchronous)
-    {
         // Direct array fills, in argument order: no LINQ iterator or delegate per invocation.
-        var supply = ReadyCells(arguments);
+        => EvalNeedCallbackSupply(callee, ReadyCells(arguments), ctx, values, name, asynchronous);
+
+    /// <summary>
+    /// One callback invocation over an ALREADY FORMED supply: the dispatch of
+    /// <see cref="EvalNeedCallbackBody"/>, whose cells are all Ready, and of a <c>reduce</c> step,
+    /// whose accumulator cell is DEFERRED (lazy <c>reduce</c> accumulators, November 2026:
+    /// <see cref="ReduceFold"/>). The callee binds the cells through its own ordinary machinery —
+    /// a user algorithm's binder, a clause family's dispatch, a builtin's argument roles — so a
+    /// cell is demanded exactly where the ordinary call would demand that argument, and never
+    /// here. Lean: the dispatch of a formed supply, <c>evalSuppliedCallCounted</c>.
+    /// </summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupply(
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
+        string name, bool asynchronous)
+    {
         if (callee is Algorithm.Builtin builtin)
         {
             var resolved = ResolvedSupply(supply);

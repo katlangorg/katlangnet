@@ -9,7 +9,7 @@ open Lean.Order
 
 `lean/KatLang.lean` § The fuel-indexed evaluator core defines the recursive evaluator as the
 functional `evalStep : EvalRec → EvalRec` over the call universe `EvalCall` (one constructor per
-recursive evaluator operation plus the `while` round, 82 in all; the 22 derived `EvalRec`
+recursive evaluator operation plus the `while` round, 81 in all; the 22 derived `EvalRec`
 operations forward or project a call's answer without adding a constructor), iterated by
 `evalFuel n`, and runs production as the fuel search
 `evalUnbounded` over the same core. This module proves, with standard axioms only:
@@ -135,7 +135,7 @@ macro "evalrec_unfold" cfg:Lean.Parser.Tactic.optConfig " [" extra:Lean.Parser.T
     EvalRec.evalAlgOutputCountedCore, EvalRec.evalZeroArgumentDemandOutputCounted,
     EvalRec.evalArgumentValueCounted, EvalRec.evalZeroArgPropertyAccessCounted,
     EvalRec.evalConditionalCallbackCallCounted, EvalRec.evalUserCallbackCallCounted,
-    EvalRec.evalResolvedCallbackCallCounted, EvalRec.evalSequenceReduceStepCounted,
+    EvalRec.evalResolvedCallbackCallCounted,
     EvalRec.demandSequenceBuiltinCallItemValue, EvalRec.bindSequenceBuiltinArguments,
     EvalRec.evalReduceCounted, EvalRec.evalFilterCounted, EvalRec.evalMapCounted,
     EvalRec.applyBuiltinCountedSequence, EvalRec.applyBuiltinCounted, EvalRec.evalExplicitSequenceValueItems,
@@ -323,6 +323,7 @@ variable {γ : Type} [PartialOrder γ]
   cases s with
   | ready _ => exact Lean.Order.PartialOrder.rel_refl
   | collector _ => exact Lean.Order.PartialOrder.rel_refl
+  | applied _ _ _ _ _ => exact Lean.Order.PartialOrder.rel_refl
   | expression source caller values =>
     show NeedProjection.suspended (written x) (.expression source caller values) ⊑
       NeedProjection.suspended (written y) (.expression source caller values)
@@ -429,6 +430,11 @@ theorem monotone_suspendedValue
   | ready v => exact monotone_const _
   | collector slice =>
     exact monotone_withNestedMissingOutput _ (monotone_demandMaterialize demand hd slice)
+  | applied callee cells caller values calleeName =>
+    -- A deferred application is the route's dispatch of its formed supply.
+    exact monotone_map_evalM _ _ (monotone_withNestedMissingOutput _
+      (monotone_apply _ _ (monotone_apply _ _ (monotone_apply _ _ (monotone_apply _ _
+        (monotone_apply _ _ (monotone_apply _ _ hroute.dispatch)))))))
   | expression e c v =>
     simp only [NeedDemand.suspendedValue]
     cases NeedPlan.callShape? e c v with
@@ -699,13 +705,6 @@ include h
   induction descriptors generalizing items with
   | nil => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; mono_tac)
   | cons d rest ih => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; mono_tac)
-
-@[partial_fixpoint_monotone] theorem monotone_reduceLoop (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-    (items : List CountedResult) (acc : CountedResult) :
-    monotone (fun ρ => EvalBody.evalReduceCounted.reduceLoop (recOf ρ) stepAlg ctx env items acc) := by
-  induction items generalizing acc with
-  | nil => unfold EvalBody.evalReduceCounted.reduceLoop; mono_tac
-  | cons i rest ih => unfold EvalBody.evalReduceCounted.reduceLoop; mono_tac
 
 @[partial_fixpoint_monotone] theorem monotone_filterLoop (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (index : Nat) (items : List CountedResult) :
@@ -982,10 +981,6 @@ theorem EvalBody.evalResolvedCallbackCallCounted_mono (callee : Algorithm) (args
     monotone (fun rec : EvalRec => EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; mono_tac
 
-theorem EvalBody.evalSequenceReduceStepCounted_mono (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    monotone (fun rec : EvalRec => EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
-  unfold EvalBody.evalSequenceReduceStepCounted; mono_tac
-
 theorem EvalBody.demandSequenceBuiltinCallItemValue_mono (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; mono_tac
@@ -1022,8 +1017,8 @@ theorem EvalBody.bindSequenceBuiltinArguments_mono (b : Builtin) (metadata : Seq
   have := EvalBody.retainedSliceAt_mono
   unfold EvalBody.bindSequenceBuiltinArguments; mono_tac
 
-theorem EvalBody.evalReduceCounted_mono (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalReduceCounted rec collection stepAlg initial ctx env) := by
+theorem EvalBody.evalReduceCounted_mono (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    monotone (fun rec : EvalRec => EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; mono_tac
 
 theorem EvalBody.evalFilterCounted_mono (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -1206,10 +1201,9 @@ theorem evalStep_monotone : monotone evalStep := by
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_mono callee args ctx env calleeName _ _ h
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_mono callee args ctx env _ _ h
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_mono callee args ctx env calleeName _ _ h
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_mono callee element accumulator ctx env calleeName _ _ h
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_mono item ctx env _ _ h
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_mono b metadata args ctx env _ _ h
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_mono collection stepAlg initial ctx env _ _ h
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_mono collection stepAlg start ctx env _ _ h
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_mono items predicateAlg ctx env _ _ h
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_mono collection transformAlg ctx env _ _ h
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_mono b metadata args ctx env _ _ h

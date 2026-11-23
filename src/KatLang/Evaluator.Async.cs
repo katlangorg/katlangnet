@@ -2723,9 +2723,10 @@ public static partial class Evaluator
             // A Value / WholeNumber control is a VALUE position, so it is demanded here —
             // asynchronously, before the shared synchronous preparation reads it (the
             // preparer's own demand then finds the item already resolved). An Algorithm
-            // control is a CALLBACK slot and is never demanded.
+            // control is a CALLBACK slot and is never demanded, and a DEFERRED value control
+            // (reduce's initial) is retained undemanded by the shared preparation.
             var controlItem = items[1 + index];
-            if (metadata.SuffixArgs[index].Kind != SequenceBuiltinSuffixArgKind.Algorithm)
+            if (metadata.SuffixArgs[index] is { Kind: not SequenceBuiltinSuffixArgKind.Algorithm, Deferred: false })
                 controlItem = await DemandSequenceBuiltinCallItemValueAsync(controlItem, ctx, valEnv).ConfigureAwait(false);
 
             var preparedArgR = PrepareSequenceBuiltinSuffixArg(
@@ -2788,24 +2789,27 @@ public static partial class Evaluator
 
             case BuiltinId.@reduce:
                 {
-                    var initialR = ExpectPreparedValueSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        1);
+                    // `initial` is a DEFERRED control: binding retained the supplied computation
+                    // undemanded, and the fold demands it when it reaches its start.
+                    var initialR = ExpectPreparedDeferredSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 1);
                     if (initialR.IsError) return initialR.Error;
-                    if (collectionItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+                    // An empty collection demands the start once and returns its value; the fold
+                    // finishes without projecting the reducer.
+                    if (collectionItems.Count == 0)
+                        return await EvalReduceInitialAsync(initialR.Value, metadata.SuffixArgs[1], ctx, valEnv).ConfigureAwait(false);
 
                     // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
                     var stepR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (stepR.IsError) return stepR.Error;
 
-                    return await EvalReduceCountedAsync(
+                    return await EvalReduceCounted(
                         new CollectionIterationItems(collectionItems),
                         stepR.Value,
                         initialR.Value,
+                        metadata.SuffixArgs[1],
                         ctx,
-                        valEnv).ConfigureAwait(false);
+                        valEnv,
+                        asynchronous: true).ConfigureAwait(false);
                 }
 
             default:
@@ -2863,47 +2867,15 @@ public static partial class Evaluator
         string calleeName = "conditional")
         => EvalResolvedCallbackCallCountedAsync(callee, [CountedSequenceCallbackItem(item)], ctx, valEnv, calleeName);
 
-    /// <summary>MIRROR OF <see cref="EvalSequenceReduceStepCounted"/> — keep in lock-step.</summary>
-    private static ValueTask<EvalResult<CountedResult>> EvalSequenceReduceStepCountedAsync(
-        Algorithm callee,
-        CountedResult element,
-        Result accumulator,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        string calleeName = "conditional")
-        => EvalResolvedCallbackCallCountedAsync(
-            callee,
-            [CountedSequenceCallbackItem(element), new CountedResult(accumulator, accumulator.ValueCount())],
-            ctx,
-            valEnv,
-            calleeName);
-
     // ── map/filter/reduce twins ─────────────────────────────────────────────
 
-    /// <summary>MIRROR OF <see cref="EvalReduceCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalReduceCountedAsync(
-        IReadOnlyList<CountedResult> items,
-        Algorithm stepAlg,
-        Result initial,
+    /// <summary>MIRROR OF <see cref="EvalReduceInitial"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalReduceInitialAsync(
+        VariadicCallItem initial,
+        SequenceBuiltinSuffixArgDescriptor descriptor,
         EvalCtx ctx,
         ValEnv valEnv)
-    {
-        // The initial accumulator is an ordinary VALUE slot that binding already demanded
-        // once; it occupies ONE written accumulator slot — see the synchronous twin.
-        var accumulator = new CountedResult(initial, initial.ValueCount());
-        foreach (var item in items)
-        {
-            var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                await EvalSequenceReduceStepCountedAsync(stepAlg, item, accumulator.Value, ctx, valEnv, ReduceStepFrameName).ConfigureAwait(false));
-            if (stepR.IsError) return stepR.Error;
-
-            // The step's ordinary call result, whole, with its value-boundary count (HO-03).
-            accumulator = ReCountValueBoundary(stepR.Value);
-        }
-
-        return EvalResult<CountedResult>.Ok(accumulator);
-    }
+        => ReduceInitialValue(descriptor, await DemandSequenceBuiltinCallItemValueAsync(initial, ctx, valEnv).ConfigureAwait(false));
 
     /// <summary>MIRROR OF <see cref="EvalFilterCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalFilterCountedAsync(

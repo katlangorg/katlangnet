@@ -37,7 +37,7 @@ namespace KatLang.Tests.AsyncEvaluation;
 /// 2026-11-14 after an entry-by-entry review of each normalized difference against its helpers; the acceptance covers
 /// exactly the pinned entries (pair, classes, hash) and grants no new exception.</para>
 ///
-/// <para><b>Second pattern.</b> About eighteen methods are ONE body with a <c>bool asynchronous</c> flag (the
+/// <para><b>Second pattern.</b> About twenty-five methods are ONE body with a <c>bool asynchronous</c> flag (the
 /// synchronous family completes them with <c>.GetAwaiter().GetResult()</c>). They have no twin to compare, so
 /// <see cref="FlagBranchPoints"/> pins every read of the flag that selects behavior, with a reason; an await-or-call
 /// branch (<c>asynchronous ? await XAsync(..) : X(..)</c>) is additionally checked to have arms that normalize
@@ -80,7 +80,11 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         /// <summary>Twin-only <c>if (StackHop.HostStackIsLow()) await new StackHop();</c> before a shared probe
         /// (Q-09a; <c>StackHop</c>). The synchronous family never hops. In a flag body the hop is guarded by the
         /// flag (<c>if (asynchronous &amp;&amp; StackHop.HostStackIsLow()) …</c>: the loop entry,
-        /// <c>Evaluator.EvalNeedLoop</c>), a branch point of this class.</summary>
+        /// <c>Evaluator.EvalNeedLoop</c>, and a <c>reduce</c> step, <c>Evaluator.ReduceFold.Step</c>), a branch point
+        /// of this class. So is the one synchronous counterpart of the hop: a lazy <c>reduce</c> fold opens its
+        /// fresh-stack accounting only on the synchronous run (<c>!asynchronous &amp;&amp;
+        /// FoldContinuationStack.Enter()</c>, <c>Evaluator.ReduceFold.Last</c>), where suspended steps stay on the
+        /// host stack instead of the heap.</summary>
         StackHop = 1 << 5,
 
         /// <summary>The twin family mirrors only the COUNTED family (AGENTS.md): where the synchronous side calls the
@@ -243,9 +247,9 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalArgumentAlgOutputCountedAsync", "Evaluator.EvalArgumentAlgOutputCounted", "bc79101f8c8e0ddd", SH, HopReason),
         new("Evaluator.BindSequenceBuiltinArgumentsAsync", "Evaluator.BindSequenceBuiltinArguments", "6e924d2648ef04b8", IH | RA,
             "BindSequenceBuiltinCollectionValue's body (demand, then SequenceBuiltinValueDemandError ?? BadArity) is inline; the retained collector's slice is read through RetainedCellSliceAsync(cell, ctx), the ResolveAsync adapter of RetainedCellSlice"),
-        new("Evaluator.PrepareSequenceBuiltinControlsAsync", "Evaluator.PrepareSequenceBuiltinControls", "6ec4d04fbd5a8fe5", RA,
-            "a VALUE control is demanded asynchronously before the shared synchronous preparer reads it"),
-        new("Evaluator.ApplyBuiltinCountedSequenceAsync", "Evaluator.ApplyBuiltinCountedSequence", "201d5afb7fb3a7d9", RA,
+        new("Evaluator.PrepareSequenceBuiltinControlsAsync", "Evaluator.PrepareSequenceBuiltinControls", "01ebd0bb09207b20", RA,
+            "a VALUE control that binding demands is demanded asynchronously before the shared synchronous preparer reads it (a deferred control, reduce's initial, is demanded by neither side: the shared preparer retains it)"),
+        new("Evaluator.ApplyBuiltinCountedSequenceAsync", "Evaluator.ApplyBuiltinCountedSequence", "5282e7b7f698d71e", RA,
             "algorithm controls are projected through ExpectPreparedAlgorithmSuffixArgAsync(..., ctx)"),
         new("Evaluator.EvalResolvedCallbackCallCountedAsync", "Evaluator.EvalResolvedCallbackCallCounted", "380c1a7f233a624c", SH, HopReason),
         new("Evaluator.EvalFilterPredicateTruthAsync", "Evaluator.EvalFilterPredicateTruth", "2e702caf4ca5d95a", CO,
@@ -352,14 +356,19 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.InvokeLoopStepSupply", 2, "08985556eb02434b", AC, "the alias step's target"),
         new("Evaluator.ReadLoopStepRows", 0, "ccc8e5cf06970882", AC, "the while verdict rows"),
         new("Evaluator.ReadLoopStepRows", 1, "c71d04fc631fff1f", AC, "the output rows"),
-        new("Evaluator.EvalNeedCallbackBody", 0, "5a5cdc57a0ea488a", AC, "the builtin callback"),
-        new("Evaluator.EvalNeedCallbackBody", 1, "40eee9248c95941d", AC, "the family callback's driver"),
-        new("Evaluator.EvalNeedCallbackBody", 2, "a1733cfe57da7715", AC, "the user callback's driver"),
+        new("Evaluator.EvalNeedCallbackSupply", 0, "5a5cdc57a0ea488a", AC, "the builtin callback"),
+        new("Evaluator.EvalNeedCallbackSupply", 1, "40eee9248c95941d", AC, "the family callback's driver"),
+        new("Evaluator.EvalNeedCallbackSupply", 2, "a1733cfe57da7715", AC, "the user callback's driver"),
         new("Evaluator.EvalNeedLoop", 0, "7981bb5f399044bc", SH, "the twin-only stack hop before the shared loop-entry probe (EvaluationBudget.TryAdmitLoopEntry); the synchronous run never hops"),
         new("Evaluator.EvalNeedLoop", 1, "c613b240dc6307dc", RA, "the asynchronous step projection takes ctx for its adapter"),
         new("Evaluator.EvalNeedLoop", 2, "83cadc7942d61e81", AC, "the alias step's target"),
         new("Evaluator.EvalNeedLoop", 3, "70563d5fe6206b30", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step); its handover continues, synchronously, in the one round kernel"),
         new("Evaluator.EvalNeedLoop", 4, "c3141958221e536e", OP, "the loop diagnostics report the pinned strategy for the asynchronous run"),
+        new("Evaluator.EvalReduceCounted", 0, "3e74ef431c3c8c07", AC, "the start of a fold whose initial argument has no cell (a hand-built plan): demanded before the fold"),
+        new("Evaluator.ReduceFold.Evaluate", 0, "44913f0c39a63a2a", AC, "the start: the value demand of reduce's deferred initial accumulator"),
+        new("Evaluator.ReduceFold.Last", 0, "3f551c9eb42fae7b", SH, "only the synchronous run opens the fresh-stack accounting of its fold (FoldContinuationStack, the synchronous counterpart of the hop); the twin keeps suspended steps on the heap"),
+        new("Evaluator.ReduceFold.Step", 0, "08985556eb02434b", AC, "the alias reducer's target"),
+        new("Evaluator.ReduceFold.Step", 1, "7981bb5f399044bc", SH, "the twin-only stack hop before the step's invocation chokepoint (EvaluationBudget.TryEnterInvocation); the synchronous run never hops"),
     ];
 
     /// <summary>
@@ -417,8 +426,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         "Evaluator.DemandSequenceBuiltinCallItemValueAsync ~ Evaluator.DemandSequenceBuiltinCallItemValue",
         "Evaluator.EvalResolvedCallbackCallCountedCoreAsync ~ Evaluator.EvalResolvedCallbackCallCountedCore",
         "Evaluator.EvalSequenceCallbackCallCountedAsync ~ Evaluator.EvalSequenceCallbackCallCounted",
-        "Evaluator.EvalSequenceReduceStepCountedAsync ~ Evaluator.EvalSequenceReduceStepCounted",
-        "Evaluator.EvalReduceCountedAsync ~ Evaluator.EvalReduceCounted",
+        "Evaluator.EvalReduceInitialAsync ~ Evaluator.EvalReduceInitial",
         "Evaluator.EvalFilterCountedAsync ~ Evaluator.EvalFilterCounted",
         "Evaluator.EvalMapCountedAsync ~ Evaluator.EvalMapCounted",
         "Evaluator.EvalDotReferenceIntrinsicReceiverAsync ~ Evaluator.EvalDotReferenceIntrinsicReceiver",

@@ -737,31 +737,6 @@ public static partial class Evaluator
             valEnv);
 
     /// <summary>
-    /// Evaluate a <c>reduce</c> step on one collected iteration item. The reducer is an
-    /// ordinary two-argument callback (THE CALLBACK LAW): it receives the element and the
-    /// accumulator as exactly two arguments, each ONE value — <c>reduce(xs, R, init)</c>
-    /// calls <c>R(E, Acc)</c> — so a collecting parameter on either side collects those
-    /// argument values exactly and a structured accumulator is opened only by the
-    /// reducer's own explicit pattern (<c>R(x, (a, b))</c>). The accumulator is always one
-    /// value: the initial accumulator is reified at the value boundary and every step returns
-    /// its ordinary call result — ONE value, whatever rows produced it, <c>()</c> included
-    /// (HO-03, Q-25). Lean: <c>evalSequenceReduceStepCounted</c>.
-    /// </summary>
-    private static EvalResult<CountedResult> EvalSequenceReduceStepCounted(
-        Algorithm callee,
-        CountedResult element,
-        Result accumulator,
-        EvalCtx ctx,
-        ValEnv valEnv,
-        string calleeName = "conditional")
-        => EvalResolvedCallbackCallCounted(
-            callee,
-            [CountedSequenceCallbackItem(element), new CountedResult(accumulator, accumulator.ValueCount())],
-            ctx,
-            valEnv,
-            calleeName);
-
-    /// <summary>
     /// Recover the top-level values emitted at one algorithm boundary from a
     /// counted result.
     /// A sequence value emitted as one top-level result stays intact, while a
@@ -1406,6 +1381,27 @@ public static partial class Evaluator
             : item with { Value = demandedR.Value.Value };
     }
 
+    /// <summary>
+    /// The VALUE a value control's demand established, or that demand's report: the item's
+    /// retained failure, refined for <c>reduce</c>'s <c>initial</c>
+    /// (<see cref="ReduceInitialRejection"/>), else the slot's own requirement. The item was
+    /// demanded before (<see cref="DemandSequenceBuiltinCallItemValue"/>): at binding, or — a
+    /// DEFERRED control — by the builtin when its execution needed the value; nothing is
+    /// evaluated here. Lean: <c>demandedSequenceBuiltinValue</c>.
+    /// </summary>
+    private static EvalResult<Result> DemandedSequenceBuiltinValue(
+        BuiltinId builtin,
+        SequenceBuiltinSuffixArgDescriptor descriptor,
+        VariadicCallItem item)
+    {
+        if (item.Value is not null) return EvalResult<Result>.Ok(item.Value);
+
+        return SequenceBuiltinValueDemandError(item, reduceInitial: builtin == BuiltinId.@reduce)
+            ?? new EvalError.WithContext(
+                SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
+                new EvalError.BadArity());
+    }
+
     private static EvalResult<PreparedSequenceBuiltinSuffixArg> PrepareSequenceBuiltinSuffixArg(
         BuiltinId builtin,
         SequenceBuiltinSuffixArgDescriptor descriptor,
@@ -1413,6 +1409,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // A DEFERRED value control (reduce's initial) is retained undemanded: the builtin
+        // demands it through the same law when its execution needs the value.
+        if (descriptor is { Kind: SequenceBuiltinSuffixArgKind.Value, Deferred: true })
+            return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(new PreparedSequenceBuiltinSuffixArg.DeferredArg(item));
+
         // A Value / WholeNumber control is a VALUE position, so it is demanded through
         // the ONE law; an Algorithm control is a CALLBACK slot and is never demanded.
         if (descriptor.Kind != SequenceBuiltinSuffixArgKind.Algorithm)
@@ -1430,16 +1431,12 @@ public static partial class Evaluator
                 }
 
             case SequenceBuiltinSuffixArgKind.Value:
-                if (item.Value is not null)
                 {
-                    return EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(
-                        new PreparedSequenceBuiltinSuffixArg.ValueArg(item.Value));
+                    var valueR = DemandedSequenceBuiltinValue(builtin, descriptor, item);
+                    return valueR.IsError
+                        ? valueR.Error
+                        : EvalResult<PreparedSequenceBuiltinSuffixArg>.Ok(new PreparedSequenceBuiltinSuffixArg.ValueArg(valueR.Value));
                 }
-
-                return SequenceBuiltinValueDemandError(item, reduceInitial: builtin == BuiltinId.@reduce)
-                    ?? new EvalError.WithContext(
-                        SequenceBuiltinSuffixArgErrorContext(builtin, descriptor),
-                        new EvalError.BadArity());
 
             case SequenceBuiltinSuffixArgKind.WholeNumber:
                 {
@@ -1515,55 +1512,6 @@ public static partial class Evaluator
         => new EvalError.WithContext(
             new ReduceInitialAccumulatorContext(SafeReadOnlyCollection.Over(ParameterPattern.CaptureNamesSkippingBarrenNodes(initialAlg.ParameterPatterns))),
             new EvalError.BadArity());
-
-    /// <summary>
-    /// Evaluate <c>reduce(collection, reducer, initial)</c>. The fixed <c>collection</c>
-    /// argument supplies the items through the post-binding collection view; the reducer
-    /// and initial accumulator are fixed control arguments.
-    /// The current item is passed to the reducer exactly as collected and the
-    /// accumulator as ONE value — two ordinary callback arguments (THE CALLBACK
-    /// LAW); nested sequence values stay intact, and only the reducer's own
-    /// explicit pattern opens a structured element or accumulator.
-    /// Each step's result is its ORDINARY call result (HO-03, Q-25 resolved October 2026):
-    /// the one value the call boundary delivers — several rows arrive as one sequence value,
-    /// <c>()</c> and <c>[]</c> are ordinary values — passed whole as the next accumulator with
-    /// its value-boundary count (<see cref="ReCountValueBoundary(CountedResult)"/>).
-    /// For pure, deterministic, total computations, <c>reduce([a, b], R, i)</c> has the same result value as
-    /// <c>R(b, R(a, i))</c>. Reduction demands the initial value and every step in order;
-    /// nested Model-C calls retain their ordinary demand order. Nothing is spread.
-    /// The initial accumulator is an ordinary VALUE slot (HO-04): binding already
-    /// demanded it ONCE — a failure there is the call's failure and is never retried —
-    /// so this function receives its <paramref name="initial"/> value, never an
-    /// algorithm to evaluate again. A callable that cannot supply a zero-argument value
-    /// was rejected at binding, with reduce's dedicated hint when it declares parameters
-    /// (<see cref="SequenceBuiltinValueDemandError"/>).
-    /// Lean: <c>evalReduceCounted</c>.
-    /// </summary>
-    private static EvalResult<CountedResult> EvalReduceCounted(
-        IReadOnlyList<CountedResult> items,
-        Algorithm stepAlg,
-        Result initial,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        // The initial accumulator occupies ONE written accumulator slot: its value is
-        // reified as one persistent value at the ordinary value boundary (the count
-        // ReCountValueBoundary computes) BEFORE reduction begins, so an initial
-        // expression that emitted multiple items cannot leak that supply through the
-        // empty-collection return.
-        var accumulator = new CountedResult(initial, initial.ValueCount());
-        foreach (var item in items)
-        {
-            var stepR = WithCtx(
-                "while evaluating reduce step (reduce passes each iterated collection item as collected and the accumulator as one value; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                EvalSequenceReduceStepCounted(stepAlg, item, accumulator.Value, ctx, valEnv, ReduceStepFrameName));
-            if (stepR.IsError) return stepR.Error;
-
-            accumulator = ReCountValueBoundary(stepR.Value);
-        }
-
-        return EvalResult<CountedResult>.Ok(accumulator);
-    }
 
     /// <summary>
     /// Evaluate <c>filter(collection, predicate)</c>. The fixed
@@ -2184,6 +2132,23 @@ public static partial class Evaluator
         var valueR = ExpectPreparedSequenceBuiltinSuffixArgAt<PreparedSequenceBuiltinSuffixArg.ValueArg>(
             builtin, descriptors, args, index, SequenceBuiltinSuffixArgKind.Value);
         return valueR.IsError ? valueR.Error : EvalResult<Result>.Ok(valueR.Value.ResultValue);
+    }
+
+    /// <summary>
+    /// The undemanded call item of a DEFERRED value control: the builtin demands it itself
+    /// (<see cref="DemandSequenceBuiltinCallItemValue"/>, then
+    /// <see cref="DemandedSequenceBuiltinValue"/>). Lean:
+    /// <c>expectPreparedSequenceBuiltinDeferredSuffixArg</c>.
+    /// </summary>
+    private static EvalResult<VariadicCallItem> ExpectPreparedDeferredSuffixArg(
+        BuiltinId builtin,
+        IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
+        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> args,
+        int index)
+    {
+        var deferredR = ExpectPreparedSequenceBuiltinSuffixArgAt<PreparedSequenceBuiltinSuffixArg.DeferredArg>(
+            builtin, descriptors, args, index, SequenceBuiltinSuffixArgKind.Value);
+        return deferredR.IsError ? deferredR.Error : EvalResult<VariadicCallItem>.Ok(deferredR.Value.Item);
     }
 
     private static EvalResult<SingleAtomicNumberItems> ExpectPreparedNumericItems(
@@ -2957,13 +2922,14 @@ public static partial class Evaluator
 
             case BuiltinId.@reduce:
                 {
-                    var initialR = ExpectPreparedValueSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        1);
+                    // `initial` is a DEFERRED control: binding retained the supplied computation
+                    // undemanded, and the fold demands it when it reaches its start.
+                    var initialR = ExpectPreparedDeferredSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 1);
                     if (initialR.IsError) return initialR.Error;
-                    if (collectionItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+                    // An empty collection demands the start once and returns its value; the fold
+                    // finishes without projecting the reducer.
+                    if (collectionItems.Count == 0)
+                        return EvalReduceInitial(initialR.Value, metadata.SuffixArgs[1], ctx, valEnv);
 
                     var stepR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
                     if (stepR.IsError) return stepR.Error;
@@ -2972,8 +2938,10 @@ public static partial class Evaluator
                         new CollectionIterationItems(collectionItems),
                         stepR.Value,
                         initialR.Value,
+                        metadata.SuffixArgs[1],
                         ctx,
-                        valEnv);
+                        valEnv,
+                        asynchronous: false).GetAwaiter().GetResult();
                 }
 
             default:

@@ -68,12 +68,13 @@ def storedRefs (x : EvalState) : List Nat :=
     (match cell.suspension with
      | .ready (v, _) => refsOf v
      | .expression _ _ values => envRefs values
+     | .applied _ _ _ values _ => envRefs values
      | .collector _ => [])) ++
   (x.zeroArgPropertyCache.flatMap fun (_, (v, _)) => refsOf v) ++
   (x.lexicalActivations.toList.flatMap fun act => envRefs act.values)
 
-/-- The cells one step from cell `b`: its recorded supply, its collector slice, its recorded
-    callee and receiver cells. -/
+/-- The cells one step from cell `b`: its recorded supply, its collector slice, a deferred
+    application's formed supply, its recorded callee and receiver cells. -/
 def edges (x : EvalState) (b : Nat) : List Nat :=
   match x.needs[b]? with
   | some cell =>
@@ -82,6 +83,7 @@ def edges (x : EvalState) (b : Nat) : List Nat :=
      | _ => []) ++
     (match cell.suspension with
      | .collector slice => slice
+     | .applied _ cells _ _ _ => cells.map Prod.fst
      | _ => []) ++
     cell.callee.toList ++ cell.receiver.toList
   | none => []

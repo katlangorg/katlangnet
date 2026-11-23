@@ -16,9 +16,19 @@ internal enum SequenceBuiltinSuffixArgKind
     WholeNumber,
 }
 
+/// <summary>
+/// One fixed control argument of a collection builtin. <paramref name="Deferred"/> (lazy
+/// <c>reduce</c> accumulators, November 2026) marks a control that binding does NOT demand: the
+/// builtin retains the supplied computation and demands it itself, at most once, when its
+/// execution needs the value (<c>reduce</c>'s <c>initial</c>, demanded when the fold reaches its
+/// start). The slot's role is unchanged: it is still the <paramref name="Kind"/> it declares, for
+/// formula lifting and the zero-argument value-demand law alike. Lean:
+/// <c>SequenceBuiltinSuffixArgDescriptor</c>.
+/// </summary>
 internal readonly record struct SequenceBuiltinSuffixArgDescriptor(
     string Name,
-    SequenceBuiltinSuffixArgKind Kind = SequenceBuiltinSuffixArgKind.Algorithm);
+    SequenceBuiltinSuffixArgKind Kind = SequenceBuiltinSuffixArgKind.Algorithm,
+    bool Deferred = false);
 
 /// <summary>
 /// What a collection builtin does with an EMPTY one-level collection view (Q-27). Lean:
@@ -299,9 +309,10 @@ internal static class BuiltinRegistry
         new([], SequenceBuiltinEmptyPolicy.RequireAnyItem, SequenceBuiltinItemShapeConstraint.SingleNumeric);
 
     // The reducer is a callback the builtin INVOKES; the initial accumulator is an
-    // ordinary VALUE, demanded once (HO-04).
+    // ordinary VALUE, demanded AT MOST once (HO-04) and only when the fold reaches its
+    // start: a DEFERRED control, never demanded at binding. Lean: reduceInitialDescriptor.
     private static readonly SequenceBuiltinMetadata ReduceSequenceMetadata =
-        new([new("reducer"), new("initial", SequenceBuiltinSuffixArgKind.Value)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
+        new([new("reducer"), new("initial", SequenceBuiltinSuffixArgKind.Value, Deferred: true)], SequenceBuiltinEmptyPolicy.AllowEmpty, SequenceBuiltinItemShapeConstraint.Any);
 
     private static readonly BuiltinDescriptor[] Builtins =
     [

@@ -287,6 +287,7 @@ theorem first_projection_normal (a : Nat) (s t : EvalState) (o : Option Algorith
       cases hsusp : cell.suspension with
       | ready v => rw [hsusp] at hsus; cases hsus
       | collector sl => rw [hsusp] at hsus; cases hsus
+      | applied _ _ _ _ _ => rw [hsusp] at hsus; cases hsus
       | expression source caller values =>
         rw [hsusp] at hsus
         simp only [Bool.and_eq_true] at hsus

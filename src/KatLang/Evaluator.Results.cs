@@ -183,7 +183,7 @@ public static partial class Evaluator
 
     /// <summary>
     /// One prepared suffix argument of a sequence builtin (Lean:
-    /// <c>PreparedSequenceBuiltinSuffixArg</c>): a C# <c>closed</c> record whose three sealed
+    /// <c>PreparedSequenceBuiltinSuffixArg</c>): a C# <c>closed</c> record whose four sealed
     /// nested records are its only kinds. Its consumers are the per-kind projectors
     /// (<c>ExpectPrepared…SuffixArg</c>), which check the prepared kind against the
     /// builtin's registered metadata kind — a mismatch is an internal metadata error, not
@@ -214,5 +214,12 @@ public static partial class Evaluator
         public sealed record ValueArg(Result ResultValue) : PreparedSequenceBuiltinSuffixArg;
 
         public sealed record WholeNumberArg(Decimal128 WholeNumberValue) : PreparedSequenceBuiltinSuffixArg;
+
+        /// <summary>
+        /// A DEFERRED value control (<see cref="SequenceBuiltinSuffixArgDescriptor.Deferred"/>): the
+        /// call item exactly as supplied, undemanded. The builtin demands it itself when its
+        /// execution needs the value (<c>reduce</c>'s <c>initial</c>). Lean: <c>.deferred</c>.
+        /// </summary>
+        public sealed record DeferredArg(VariadicCallItem Item) : PreparedSequenceBuiltinSuffixArg;
     }
 }

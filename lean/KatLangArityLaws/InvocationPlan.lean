@@ -737,6 +737,9 @@ theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM C
     exact Disciplined.withNestedMissingOutput
       (Disciplined.bind (disciplined_mapM _ (fun b => Disciplined.map _ (hdemand b)) slice)
         (fun _ => disciplined_pure _))
+  | applied callee cells caller values calleeName =>
+    -- A deferred application is the route's dispatch of its formed supply.
+    exact Disciplined.map _ (Disciplined.withNestedMissingOutput (hdispatch _ _ _ _ _ _))
 
 /-- The completion-shell state write, as a state function. -/
 def withState (a : Nat) (st : NeedState) (s : EvalState) : EvalState :=
@@ -1072,6 +1075,7 @@ theorem invoke_and_value_share_cells (ev : Expr → EvalCtx → ValEnv → EvalM
         exact ⟨e, c, v, rfl, hshape⟩
       | ready _ => rw [hsus] at hshape; cases hshape
       | collector _ => rw [hsus] at hshape; cases hshape
+      | applied _ _ _ _ _ => rw [hsus] at hshape; cases hshape
     have hr' := execute_prepared route htarget hnormal hclassify hproject a shape (withState a .evaluating s)
       { cell with state := .evaluating } r cells he hr hi hp
     have hv := suspendedValue_recorded ev route demand a e c v shape hcs (withState a .evaluating s)

@@ -39,8 +39,11 @@ public class CollectionBuiltinDispatchTests
         { "reduce([], Add, trace(7)), map([], Square), filter([], Square)", "ok (7, [], [])", "7", true },
         // The collection is demanded before the controls, the controls in written order.
         { "reduce(trace([1, 2]), Add, trace(0)), take(trace((1, 2, 3)), trace(2))", "ok (3, [1, 2])", "[1, 2],0,(1, 2, 3),2", true },
-        // A failing control ends preparation: the later controls are neither demanded nor projected.
-        { "reduce(trace([1]), 5, trace([1][5]))", "err BadIndex | while evaluating call to reduce: while evaluating call to trace: Bad index @[23:33, 23:34)", "[1]", true },
+        // reduce's initial is demanded by the fold, never at binding: a nonempty collection projects the
+        // reducer first, and an initial expression no step reads is never evaluated.
+        { "reduce(trace([1]), 5, trace([1][5]))", "err NotAnAlgorithm | while evaluating call to reduce: The reduce reducer is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }. @[23:20, 23:21)", "[1]", true },
+        // An empty collection demands the initial value itself, and never projects the reducer.
+        { "reduce(trace([]), 5, trace([1][5]))", "err BadIndex | while evaluating call to reduce: while evaluating call to trace: Bad index @[23:32, 23:33)", "[]", true },
         { "take([1, 2], 1.5)", "err IllegalInEval | while evaluating call to take: Illegal in eval: take count must be exactly one whole-number value, but was 1.5 @[23:1, 23:18)", "", true },
         { "take([1, 2], (1, 2))", "err TypeMismatch | while evaluating call to take: Type mismatch: take count must be exactly one whole-number value, but was a sequence value with 2 sequence elements: (1, 2) @[23:1, 23:21)", "", true },
         { "reduce([1, 2], 5, 0)", "err NotAnAlgorithm | while evaluating call to reduce: The reduce reducer is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }. @[23:16, 23:17)", "", true },
@@ -294,10 +297,11 @@ public class CollectionBuiltinDispatchTests
     [Fact]
     public void ControlReadingDispatch_AllocatesNoClosureOrDelegate_GcIsolatedChild()
     {
-        // reduce([], Add, 0) prepares its callback and VALUE control and reads the initial accumulator,
-        // which is its result: the dispatch allocates exactly the call items, the exact control array and the
-        // two prepared controls. An empty collection is never iterated, so no iteration view is made (before
-        // 2026-11-18 every collection-builtin call made one at binding, 24 bytes).
+        // reduce([], Add, 0) prepares its callback and its DEFERRED VALUE control, then demands the initial
+        // accumulator, which is its result: the dispatch allocates exactly the call items, the exact control
+        // array and the two prepared controls (the deferred one retains the call item undemanded, lazy
+        // `reduce`, November 2026). An empty collection is never iterated, so no iteration view and no fold
+        // is made (before 2026-11-18 every collection-builtin call made a view at binding, 24 bytes).
         if (!GcIsolatedAllocation.EnterChild())
             return;
 
@@ -314,7 +318,7 @@ public class CollectionBuiltinDispatchTests
         Assert.Equal(0m, Assert.IsType<Result.Atom>(warm.Value.Value).Value);
 
         var expected = ArrayBytes(ItemType, 3) + ArrayBytes(PreparedType, 2)
-            + InstanceSize.Of(PreparedType.GetNestedType("AlgorithmArg")!) + InstanceSize.Of(PreparedType.GetNestedType("ValueArg")!);
+            + InstanceSize.Of(PreparedType.GetNestedType("AlgorithmArg")!) + InstanceSize.Of(PreparedType.GetNestedType("DeferredArg")!);
         Assert.Equal(expected, Bytes(() => _ = Apply(BuiltinId.reduce, args, ctx, values)));
         GcIsolatedAllocation.Complete();
     }

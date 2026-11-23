@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 /// one element and <c>reduce</c> passes it whole as the next accumulator. A <c>filter</c> predicate's value must
 /// be a Boolean. PAT-11: a clause family is an ordinary callable, so its callback result is its ordinary call
 /// result, exactly like a user algorithm's (D1 first aligned the C# family callback path with the user path;
-/// since Q-25 both use the ordinary call boundary in <c>EvalNeedCallbackBody</c>, like Lean's
+/// since Q-25 both use the ordinary call boundary in <c>EvalNeedCallbackSupply</c>, like Lean's
 /// <c>evalConditionalCallbackCallCounted</c>). The source observer matrix runs on the six established routes,
 /// requiring the same value, emitted count, errors (code, message, span) and host-call log and identical budget
 /// counters on the three evaluator routes. The optimizer instrumentation facts compare generic/optimized

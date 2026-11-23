@@ -64,6 +64,9 @@ def brKeepAlg : Algorithm := alg ["e", "a"] [] [] [param "a"]
 /-- `Add(e, a) = e + a`. -/
 def brAddAlg : Algorithm := alg ["e", "a"] [] [] [.binary .add (param "e") (param "a")]
 
+/-- `Pick(e, a) = e`: a reducer that never reads its accumulator. -/
+def brPickAlg : Algorithm := alg ["e", "a"] [] [] [param "e"]
+
 /-- `Inc(z) = z + 1`. -/
 def brIncAlg : Algorithm := alg ["z"] [] [] [.binary .add (param "z") (num 1)]
 
@@ -84,7 +87,7 @@ def brRoot (out : List KatLang.Expr) : KatLang.Expr :=
     [ ("Id", brIdAlg), ("Bad", brBadAlg), ("A", brGoodAlg), ("BadType", brBadTypeAlg)
     , ("BadIndex", brBadIndexAlg), ("L", brLoopAlg), ("E", brEmptyAlg), ("D", brSelfFilterAlg)
     , ("Keep", brKeepAlg), ("Add", brAddAlg), ("Inc", brIncAlg), ("G", brForwardInitialAlg)
-    , ("T", brTakeWrapperAlg), ("Pair", brPairAlg) ]
+    , ("T", brTakeWrapperAlg), ("Pair", brPairAlg), ("Pick", brPickAlg) ]
     out)
 
 /-- The outcome of a run, the binding contexts it opened, and whether it stored any
@@ -155,9 +158,15 @@ def brReduceEmpty (initial : KatLang.Expr) : KatLang.Expr :=
 -- `reduce([1, 2], Add, Id(5))` is 8: one context for the initial, one per reducer call.
 #guard brSucceedsWith [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Add", brCall "Id" [num 5]]] (.atom 8)
 #guard brContexts [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Add", brCall "Id" [num 5]]] == 3
--- A non-empty reduce fails with the initial's own failure before any reducer call.
+-- A non-empty reduce whose reducer reads its accumulator fails with the initial's own failure,
+-- demanded ONCE by the step that reaches the start (lazy `reduce`, November 2026): both reducer
+-- calls are entered first — the step for 2, then the step for 1 its accumulator read demands.
 #guard brFails innermostIsDivByZero [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Add", resolve "Bad"]]
-#guard brContexts [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Add", resolve "Bad"]] == 1
+#guard brContexts [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Add", resolve "Bad"]] == 3
+-- A reducer that never reads its accumulator never demands the initial: ONE reducer call, the
+-- step for the last element, and `Bad` is not read.
+#guard brSucceedsWith [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Pick", resolve "Bad"]] (.atom 2)
+#guard brContexts [brCall "reduce" [.listLiteral [num 1, num 2], resolve "Pick", resolve "Bad"]] == 1
 
 /-- `reduce([], Keep, reduce([], Keep, … Id(1) / 0))`, `depth` levels deep. -/
 def brNestedInitial : Nat -> KatLang.Expr

@@ -770,12 +770,12 @@ theorem pres_prepareControls (b : Builtin) (ctx : EvalCtx) (env : ValEnv)
   | nil => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; pres_tac_mid)
   | cons d rest ih => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; pres_tac_mid)
 
-theorem pres_reduceLoop (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-    (items : List CountedResult) (acc : CountedResult) :
-    Preserves R (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) := by
-  induction items generalizing acc with
-  | nil => unfold EvalBody.evalReduceCounted.reduceLoop; pres_tac_mid
-  | cons i rest ih => unfold EvalBody.evalReduceCounted.reduceLoop; pres_tac_mid
+theorem pres_reduceChain (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (items : List CountedResult) (accumulator : Nat) :
+    Preserves R (EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator items) := by
+  induction items generalizing accumulator with
+  | nil => unfold EvalBody.evalReduceCounted.chain; pres_tac_mid
+  | cons i rest ih => unfold EvalBody.evalReduceCounted.chain; pres_tac_mid
 
 theorem pres_filterLoop (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (index : Nat) (items : List CountedResult) :
@@ -865,7 +865,7 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_listLiteralCollect rec hrec)
   | (with_reducible apply pres_sequenceConstructLoop rec hrec)
   | (with_reducible apply pres_prepareControls rec hrec)
-  | (with_reducible apply pres_reduceLoop rec hrec)
+  | (with_reducible apply pres_reduceChain)
   | (with_reducible apply pres_filterLoop rec hrec)
   | (with_reducible apply pres_mapLoop rec hrec)
   | (with_reducible apply pres_repeatLoop rec hrec)
@@ -1085,10 +1085,6 @@ theorem EvalBody.evalResolvedCallbackCallCounted_pres (rec : EvalRec) (hrec : �
     Preserves R (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; pres_tac
 
-theorem EvalBody.evalSequenceReduceStepCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
-  unfold EvalBody.evalSequenceReduceStepCounted; pres_tac
-
 theorem EvalBody.demandSequenceBuiltinCallItemValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; pres_tac
@@ -1126,8 +1122,8 @@ theorem EvalBody.bindSequenceBuiltinArguments_pres (rec : EvalRec) (hrec : ∀ c
     Preserves R (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; pres_tac
 
-theorem EvalBody.evalReduceCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalReduceCounted rec collection stepAlg initial ctx env) := by
+theorem EvalBody.evalReduceCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    Preserves R (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; pres_tac
 
 theorem EvalBody.evalFilterCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -1310,10 +1306,9 @@ theorem evalStep_preserves
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pres rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pres rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_pres rec hrec callee args ctx env calleeName
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_pres rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pres rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pres rec hrec b metadata args ctx env
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_pres rec hrec collection stepAlg initial ctx env
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_pres rec hrec collection stepAlg start ctx env
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pres rec hrec items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pres rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pres rec hrec b metadata args ctx env
@@ -1402,10 +1397,9 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pres rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pres rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_pres rec hrec callee args ctx env calleeName
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_pres rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pres rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pres rec hrec b metadata args ctx env
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_pres rec hrec collection stepAlg initial ctx env
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_pres rec hrec collection stepAlg start ctx env
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pres rec hrec items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pres rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pres rec hrec b metadata args ctx env

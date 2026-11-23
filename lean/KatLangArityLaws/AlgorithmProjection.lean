@@ -622,6 +622,9 @@ theorem receiverCell_canonical (a r : Nat) (s t : EvalState)
       | collector slice =>
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp] at h
         cases h
+      | applied _ _ _ _ _ =>
+        simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp] at h
+        cases h
 
 /-- **CR-15, inert establishment.** Establishing the receiver cell evaluates nothing: every
     existing cell keeps its suspension, VALUE state, CALLABLE state and plan supply. -/
@@ -657,6 +660,9 @@ theorem receiverCell_inert (a : Nat) (s : EvalState) :
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]
         exact HeapCore.refl _
       | collector slice =>
+        simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]
+        exact HeapCore.refl _
+      | applied _ _ _ _ _ =>
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]
         exact HeapCore.refl _
 

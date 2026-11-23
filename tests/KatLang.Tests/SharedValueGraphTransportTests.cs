@@ -207,7 +207,9 @@ public class SharedValueGraphTransportTests
         var source = scenario switch
         {
             0 => DagProgram("Run(f, *s) = while(f(s*))\nRun(A*, 1)"),
-            1 => DagProgram("((), ()).reduce(map, A)"),
+            // `contains` demands its item: the fold's deferred accumulator, whose start is the graph `A`
+            // (`map` never reads the mapper slot of an empty collection, so it would leave `A` unevaluated).
+            1 => DagProgram("((), ()).reduce(contains, A)"),
             2 => MultiEmissionDagProgram("Loop(f, s) = while(f(s))\n[(B*)].reduce(Loop, 1)"),
             3 => DagProgram("Loop(f, s) = while(f(s))\n[([A, 1], [A, 2])].reduce(Loop, 1)", ShallowDepth),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),

@@ -205,6 +205,14 @@ public class AsyncHostTerminationTests
 
     private static async Task<Outcome> RunOnTwinRoute(Host host, string source, EvaluationLimits? limits = null)
     {
+        // Every run starts at the base of a thread's stack. Code that awaits a run resumes where that run's
+        // last continuation ran: inline, as deep on the completing thread as the runtime's reserve check
+        // still allows, so the next run of a loop or of the next theory row would start wherever the
+        // previous one happened to end (measured in November 2026: 245 KB of a 1.5 MiB stack left after
+        // the depth-60 callback run, 800 KB in another build). The front end refuses a run that starts
+        // inside the reserve (Q-09a, a parse failure) — a property of where the caller stands, which no
+        // test of this class is about and which moved with every change to a twin frame's size.
+        await Task.Yield();
         using var throws = new OutcomeThrows(host);
         RunResult? result = null;
         Exception? thrown = null;

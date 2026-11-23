@@ -261,6 +261,8 @@ theorem suspendedValue_coh (ev : Expr → EvalCtx → ValEnv → EvalM CountedRe
         ((NeedDemand.suspendedValue ev route recur' a sp).runState s)
   | .ready _ => coh_refl _
   | .expression _ _ _ => coh_refl _
+  -- A deferred application runs the route's dispatch only: the recursive demand is not read.
+  | .applied _ _ _ _ _ => coh_refl _
   | .collector slice => by
       show Coh (runEval (withNestedMissingOutput (NeedDemand.materialize recur slice)) s)
         (runEval (withNestedMissingOutput (NeedDemand.materialize recur' slice)) s)

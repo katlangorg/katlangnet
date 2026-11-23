@@ -33,14 +33,14 @@ public sealed class LocalOnlyCacheRetentionTests(ITestOutputHelper output)
     private const string ReduceProgram = """
         F(x) = { V = x + 1
          V * 1 }
-        Sum(acc, x) = acc + F(x)
+        Sum(x, acc) = acc + F(x)
         reduce(range(1, 20000), Sum, 0) + probe() * 0
         """;
 
     private const string DeconstructionReduceProgram = """
         F(x) = { a, b = x + 1, x
          a * 1 }
-        Sum(acc, x) = acc + F(x)
+        Sum(x, acc) = acc + F(x)
         reduce(range(1, 20000), Sum, 0) + probe() * 0
         """;
 
@@ -465,7 +465,7 @@ public sealed class LocalOnlyCachePeakMemoryProcessTests(ITestOutputHelper outpu
 
         var reduces = int.Parse(Environment.GetEnvironmentVariable(Reduces)!, CultureInfo.InvariantCulture);
         // Every reduce reads the one range the root property Xs holds for the run (see the class remarks).
-        var source = "F(x) = { V = x + 1\n V * 1 }\nSum(acc, x) = acc + F(x)\nXs = range(1, 100000)\n"
+        var source = "F(x) = { V = x + 1\n V * 1 }\nSum(x, acc) = acc + F(x)\nXs = range(1, 100000)\n"
             + string.Join(" + ", Enumerable.Repeat("reduce(Xs, Sum, 0)", reduces));
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
         // sum over x = 1..100000 of (x + 1), once per reduce

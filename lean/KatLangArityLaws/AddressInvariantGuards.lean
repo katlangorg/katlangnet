@@ -53,6 +53,9 @@ def cellOk (n a : Nat) (c : NeedCell) : Bool :=
     | .expression _ caller values =>
       caller.needEnv.all (fun p => decide (p.2 < n)) && values.all (fun p => resultOk n p.2)
     | .collector slice => slice.all (fun b => decide (b < a))
+    | .applied _ cells caller values _ =>
+      cells.all (fun p => decide (p.1 < n)) && caller.needEnv.all (fun p => decide (p.2 < n)) &&
+        values.all (fun p => resultOk n p.2)
     | .ready v => resultOk n v.1) &&
   (match c.state with
     | .completed (.ok r) => resultOk n r.1

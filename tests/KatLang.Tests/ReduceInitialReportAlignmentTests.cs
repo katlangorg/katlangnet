@@ -46,22 +46,22 @@ public class ReduceInitialReportAlignmentTests
         // gets reduce's dedicated report, whatever names or spells it.
         FromSource("reduce-initial-property",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, Inc)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-ignored-parameter",
             "K(x) = 5\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, K)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-block",
             "Add(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, { x + 1 })\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         // M4★: a written `{ Inc }` is a structural forwarding carrier; its failed slot names the
         // carrier's VALUE terminal, Inc, so it reports exactly as the written `Inc` does (FA-OQ-1) —
         // and so does a named carrier, while `count(C)` keeps the law's report keyed by the written `C`.
         FromSource("reduce-initial-inline-alias",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, { Inc })\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-named-carrier",
             "C = { Inc }\nInc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, C)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("count-named-carrier",
             "C = { Inc }\nInc(x) = x + 1\nProbe(unused) = count(C)\nProbe(0)",
             "call Probe > call count > property C > arityMismatch 1 0"),
@@ -70,22 +70,22 @@ public class ReduceInitialReportAlignmentTests
         // VALUE terminal, by observing the chase the failed demand already ran (C#'s non-initiating PeekResolve).
         FromSource("reduce-initial-named-carrier-premarked",
             "C = { Inc }\nInc(x) = x + 1\nAdd(e, a) = e + a\nUnused(q) = {\n    W = q\n    W\n}\nProbe(unused) = reduce([1, 2], Add, C)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-inline-alias-premarked",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nUnused(q) = {\n    W = q\n    W\n}\nProbe(unused) = reduce([1, 2], Add, { Inc })\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-alias",
             "Inc(x) = x + 1\nA = Inc\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, A)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-member",
             "Lib = { public M(a) = a }\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, Lib.M)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-structural-pattern",
             "P((p, q)) = p\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, P)\nProbe(0)",
-            "call Probe > call reduce > reduceInitial > badArity"),
+            "call Probe > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-dotted",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = [1, 2].reduce(Add, Inc)\nProbe(0)",
-            "call Probe > dotCall .reduce > reduceInitial > badArity"),
+            "call Probe > dotCall .reduce > reduceStep > reduceInitial > badArity"),
         FromSource("reduce-initial-empty-collection",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = reduce([], Add, Inc)\nProbe(0)",
             "call Probe > call reduce > reduceInitial > badArity"),
@@ -93,7 +93,7 @@ public class ReduceInitialReportAlignmentTests
         // and keyed by that source in every other value slot (Inc's property frame).
         FromSource("reduce-initial-collector-transport",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nG(*xs) = reduce([1, 2], Add, xs*)\nG(Inc)",
-            "call G > call reduce > reduceInitial > badArity"),
+            "call G > call reduce > reduceStep > reduceInitial > badArity"),
         FromSource("count-collector-transport",
             "Inc(x) = x + 1\nG(*xs) = count(xs*)\nG(Inc)",
             "call G > call count > property Inc > arityMismatch 1 0"),
@@ -101,10 +101,10 @@ public class ReduceInitialReportAlignmentTests
         // (CALL-06), and a value.
         FromSource("reduce-initial-family",
             "F(0) = 1\nF(n) = n\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, F)\nProbe(0)",
-            "call Probe > call reduce > noMatchingBranch F"),
+            "call Probe > call reduce > reduceStep > noMatchingBranch F"),
         FromSource("reduce-initial-through-parameter",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nG(v) = reduce([1, 2], Add, v)\nG(Inc)",
-            "call G > call reduce > property Inc > arityMismatch 1 0"),
+            "call G > call reduce > reduceStep > property Inc > arityMismatch 1 0"),
         FromSource("reduce-initial-value",
             "Add(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, 7)\nProbe(0)",
             "ok 10"),
@@ -246,8 +246,10 @@ public class ReduceInitialReportAlignmentTests
     /// <summary>
     /// The neutral tree shared with the Lean table (<c>rirObserve</c>): the call, dot-call and
     /// property frames by kind — a dot-call frame without its receiver description, whose Lean
-    /// <c>(kind)</c> spelling is a documented presentation difference — and reduce's
-    /// initial-accumulator frame as <c>reduceInitial</c>; then the leaf with its payload. Omitted
+    /// <c>(kind)</c> spelling is a documented presentation difference — reduce's
+    /// initial-accumulator frame as <c>reduceInitial</c> and the frame of a fold's steps as
+    /// <c>reduceStep</c> (a nonempty fold demands its start when a step reads its accumulator); then
+    /// the leaf with its payload. Omitted
     /// are the documented presentation differences: C#'s <see cref="ImplicitParameterContext"/> and
     /// output-less argument blame frames (<see cref="ArgumentEvaluationContext"/>,
     /// <see cref="ParameterEvaluationContext"/>), which have no Lean counterpart, and — on the
@@ -272,6 +274,10 @@ public class ReduceInitialReportAlignmentTests
                     break;
                 case ReduceInitialAccumulatorContext:
                     parts.Add("reduceInitial");
+                    break;
+                // The one frame of a fold's steps: a nonempty fold demands its start inside a step.
+                case TextErrorContext text when text.Message.StartsWith("while evaluating reduce step", StringComparison.Ordinal):
+                    parts.Add("reduceStep");
                     break;
                 case ImplicitParameterContext or ArgumentEvaluationContext or ParameterEvaluationContext:
                     break;

@@ -45,8 +45,12 @@ public class SemanticTickShapeTests
     /// SHA-256 over <see cref="SemanticPathCoverageTests.CanonicalLine"/> of every tick case, in corpus order,
     /// recorded when the block was added. A change means an existing tick id now renders a different program or
     /// expectation, which needs a recipe-version bump instead.
+    /// <para>Re-recorded in November 2026 for a LANGUAGE change, not a recipe change: issue #203 made
+    /// <c>reduce</c> evaluate its accumulators on demand, so <c>sys/tick/callback/reduce</c> renders the same
+    /// program with the expectation of the new semantics (its former expectation is now its rejected reading).
+    /// No other tick case changed.</para>
     /// </summary>
-    private const string TickBlockDigest = "sha256:c1fbbccd47eca9b1d5b097513cc7860722b66851346cff7e832b9b5507844f95";
+    private const string TickBlockDigest = "sha256:395f9c549cb5d0600cc0629b20cab803ad3e39a50cb4629cc0c2e48229ff7038";
 
     /// <summary>Declaration-reorder members of the block: one per case whose root has two or more declarations.</summary>
     private const int ExpectedReorderMembers = 11;

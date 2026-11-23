@@ -1002,6 +1002,74 @@ internal sealed class EvaluationBudget
         _depth--;
     }
 
+    /// <summary>
+    /// Opens the depth level of an invocation whose step and limits <see cref="TryEnterInvocation"/>
+    /// already charged and checked, and whose level was released again before its body ran: the
+    /// streamed <c>reduce</c> fold charges every step first, in the order the nested demands of the
+    /// general fold would make them, and runs each body afterwards (<c>Evaluator.ReduceFold</c>).
+    /// It charges nothing and checks nothing; balance it with <see cref="ExitInvocation"/>.
+    /// </summary>
+    internal void EnterChargedInvocation()
+    {
+        _depth++;
+        if (_depth > PeakDepth) PeakDepth = _depth;
+    }
+
+    /// <summary>
+    /// FOLD CONTINUATIONS ARE ACCOUNTED SEPARATELY FROM NESTED CALLS (lazy <c>reduce</c>
+    /// accumulators, November 2026; C#-only budget policy, no Lean counterpart). A <c>reduce</c>
+    /// step that demands its accumulator suspends until the preceding step, or the start, has run:
+    /// that suspended step is a fold CONTINUATION. It is one level of the FOLD, never a level of
+    /// call nesting: the reducer did not call the preceding step, the fold demanded it. So the
+    /// demanded accumulator is evaluated at the depth its fold runs every step at
+    /// (<paramref name="foldDepth"/>, the depth open when the fold began), and the suspended
+    /// step's own levels are restored when it resumes.
+    ///
+    /// <para>The dynamic depth of a fold is therefore that of ONE step however long its chain
+    /// of accumulators: a fold over any admitted collection stays within
+    /// <see cref="EvaluationLimits.MaxDepth"/> exactly when one step does, as it did while every
+    /// step ran in a loop. Genuine nesting still counts from that depth: a reducer that calls
+    /// itself, or starts another fold, opens its own levels through
+    /// <see cref="TryEnterInvocation"/> and <see cref="TryEnterArgumentEvaluation"/>, and reaches
+    /// the same ceiling. Nothing is charged: steps, items and string units are untouched, and
+    /// every executed step still charges its own invocation.</para>
+    ///
+    /// <para>Returns the suspended depth for <see cref="ExitFoldContinuation"/>, which the caller
+    /// invokes from a <c>finally</c>. <see cref="ActiveFoldContinuations"/> and
+    /// <see cref="PeakFoldContinuations"/> count the continuations suspended at once.</para>
+    /// </summary>
+    internal int EnterFoldContinuation(int foldDepth)
+    {
+        var suspendedDepth = _depth;
+        _depth = foldDepth;
+        if (++ActiveFoldContinuations > PeakFoldContinuations) PeakFoldContinuations = ActiveFoldContinuations;
+        return suspendedDepth;
+    }
+
+    /// <summary>
+    /// Resumes the step <see cref="EnterFoldContinuation"/> suspended. The demanded accumulator's
+    /// own levels are balanced by then (every enter is released by its <c>finally</c>), so the
+    /// depth is the fold's again; a difference is an evaluator ownership bug, reported like a
+    /// depth underflow.
+    /// </summary>
+    internal void ExitFoldContinuation(int foldDepth, int suspendedDepth)
+    {
+        if (_depth != foldDepth || ActiveFoldContinuations <= 0)
+            throw new InvalidOperationException("A fold continuation was resumed at a depth its accumulator did not leave balanced.");
+
+        ActiveFoldContinuations--;
+        _depth = suspendedDepth;
+    }
+
+    /// <summary>
+    /// Fold continuations currently suspended by this run: <c>reduce</c> steps waiting for an
+    /// accumulator they demanded. Observation only, like <see cref="CurrentDepth"/>.
+    /// </summary>
+    internal int ActiveFoldContinuations { get; private set; }
+
+    /// <summary>The most fold continuations this run had suspended at once. Observation only.</summary>
+    internal int PeakFoldContinuations { get; private set; }
+
     /// <summary>The enforced single-collection item limit.</summary>
     internal int MaxCollectionItems => _maxCollectionItems;
 

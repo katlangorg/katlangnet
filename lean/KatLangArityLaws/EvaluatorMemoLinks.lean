@@ -516,6 +516,9 @@ theorem linkDisc_receiverCell (a : Nat) : LinkDisc (NeedLink.receiverCell a) := 
       | collector sl =>
         apply hother (.illegalInEval "not a link")
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]; rfl
+      | applied _ _ _ _ _ =>
+        apply hother (.illegalInEval "not a link")
+        simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]; rfl
 
 
 /-! ## The shared link decoder and its two channels -/
@@ -624,6 +627,9 @@ theorem linkDisc_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM Coun
     exact LinkDisc.withNestedMissingOutput
       (LinkDisc.bind (linkDisc_mapM _ (fun b => LinkDisc.map _ (hdemand b)) slice)
         (fun _ => linkDisc_pure _))
+  | applied callee cells caller values calleeName =>
+    -- A deferred application is the route's dispatch of its formed supply.
+    exact LinkDisc.map _ (LinkDisc.withNestedMissingOutput (hdispatch _ _ _ _ _ _))
 
 /-- The VALUE completion shell writes only the VALUE state: a frame over its computation. -/
 theorem linkDisc_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
@@ -1082,12 +1088,12 @@ theorem link_prepareControls (b : Builtin) (ctx : EvalCtx) (env : ValEnv)
   | nil => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; link_tac_base)
   | cons d rest ih => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; link_tac_base)
 
-theorem link_reduceLoop (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-    (items : List CountedResult) (acc : CountedResult) :
-    LinkDisc (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) := by
-  induction items generalizing acc with
-  | nil => unfold EvalBody.evalReduceCounted.reduceLoop; link_tac_base
-  | cons i rest ih => unfold EvalBody.evalReduceCounted.reduceLoop; link_tac_base
+theorem link_reduceChain (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (items : List CountedResult) (accumulator : Nat) :
+    LinkDisc (EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator items) := by
+  induction items generalizing accumulator with
+  | nil => unfold EvalBody.evalReduceCounted.chain; link_tac_base
+  | cons i rest ih => unfold EvalBody.evalReduceCounted.chain; link_tac_base
 
 theorem link_filterLoop (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (index : Nat) (items : List CountedResult) :
@@ -1186,7 +1192,7 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply link_listLiteralCollect rec hrec)
   | (with_reducible apply link_sequenceConstructLoop rec hrec)
   | (with_reducible apply link_prepareControls rec hrec)
-  | (with_reducible apply link_reduceLoop rec hrec)
+  | (with_reducible apply link_reduceChain)
   | (with_reducible apply link_filterLoop rec hrec)
   | (with_reducible apply link_mapLoop rec hrec)
   | (with_reducible apply link_repeatLoop rec hrec)
@@ -1423,10 +1429,6 @@ theorem EvalBody.evalResolvedCallbackCallCounted_linkDisc (rec : EvalRec) (hrec 
     LinkDisc (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; link_tac
 
-theorem EvalBody.evalSequenceReduceStepCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    LinkDisc (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
-  unfold EvalBody.evalSequenceReduceStepCounted; link_tac
-
 theorem EvalBody.demandSequenceBuiltinCallItemValue_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; link_tac
@@ -1464,8 +1466,8 @@ theorem EvalBody.bindSequenceBuiltinArguments_linkDisc (rec : EvalRec) (hrec : �
     LinkDisc (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; link_tac
 
-theorem EvalBody.evalReduceCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalReduceCounted rec collection stepAlg initial ctx env) := by
+theorem EvalBody.evalReduceCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    LinkDisc (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; link_tac
 
 theorem EvalBody.evalFilterCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -1644,10 +1646,9 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_linkDisc rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_linkDisc rec hrec callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_linkDisc rec hrec callee args ctx env calleeName
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_linkDisc rec hrec callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_linkDisc rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_linkDisc rec hrec b metadata args ctx env
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_linkDisc rec hrec collection stepAlg initial ctx env
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_linkDisc rec hrec collection stepAlg start ctx env
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_linkDisc rec hrec items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_linkDisc rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_linkDisc rec hrec b metadata args ctx env

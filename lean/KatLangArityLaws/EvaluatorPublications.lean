@@ -547,6 +547,9 @@ theorem pubDisc_receiverCell (a : Nat) : PubDisc (NeedLink.receiverCell a) := by
       | collector sl =>
         apply hother (.illegalInEval "not a link")
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]; rfl
+      | applied _ _ _ _ _ =>
+        apply hother (.illegalInEval "not a link")
+        simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]; rfl
 
 
 /-! ## The shared link decoder and its two channels -/
@@ -655,6 +658,9 @@ theorem pubDisc_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM Count
     exact PubDisc.withNestedMissingOutput
       (PubDisc.bind (pubDisc_mapM _ (fun b => PubDisc.map _ (hdemand b)) slice)
         (fun _ => pubDisc_pure _))
+  | applied callee cells caller values calleeName =>
+    -- A deferred application is the route's dispatch of its formed supply.
+    exact PubDisc.map _ (PubDisc.withNestedMissingOutput (hdispatch _ _ _ _ _ _))
 
 /-- The VALUE completion shell writes only the VALUE state: a frame over its computation. -/
 theorem pubDisc_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
@@ -1114,12 +1120,12 @@ theorem pub_prepareControls (b : Builtin) (ctx : EvalCtx) (env : ValEnv)
   | nil => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; pub_tac_base)
   | cons d rest ih => cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; pub_tac_base)
 
-theorem pub_reduceLoop (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-    (items : List CountedResult) (acc : CountedResult) :
-    PubDisc (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) := by
-  induction items generalizing acc with
-  | nil => unfold EvalBody.evalReduceCounted.reduceLoop; pub_tac_base
-  | cons i rest ih => unfold EvalBody.evalReduceCounted.reduceLoop; pub_tac_base
+theorem pub_reduceChain (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (items : List CountedResult) (accumulator : Nat) :
+    PubDisc (EvalBody.evalReduceCounted.chain stepAlg ctx env accumulator items) := by
+  induction items generalizing accumulator with
+  | nil => unfold EvalBody.evalReduceCounted.chain; pub_tac_base
+  | cons i rest ih => unfold EvalBody.evalReduceCounted.chain; pub_tac_base
 
 theorem pub_filterLoop (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (index : Nat) (items : List CountedResult) :
@@ -1219,7 +1225,7 @@ macro "pub_tac" : tactic => `(tactic| without_info_trees ((try pub_unfold_rec) <
   | (with_reducible apply pub_listLiteralCollect rec hrec hres)
   | (with_reducible apply pub_sequenceConstructLoop rec hrec hres)
   | (with_reducible apply pub_prepareControls rec hrec hres)
-  | (with_reducible apply pub_reduceLoop rec hrec hres)
+  | (with_reducible apply pub_reduceChain)
   | (with_reducible apply pub_filterLoop rec hrec hres)
   | (with_reducible apply pub_mapLoop rec hrec hres)
   | (with_reducible apply pub_repeatLoop rec hrec hres)
@@ -1456,10 +1462,6 @@ theorem EvalBody.evalResolvedCallbackCallCounted_pubDisc (rec : EvalRec) (hrec :
     PubDisc (EvalBody.evalResolvedCallbackCallCounted rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCallbackCallCounted; pub_tac
 
-theorem EvalBody.evalSequenceReduceStepCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (callee : Algorithm) (element : CountedResult) (accumulator : Result) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    PubDisc (EvalBody.evalSequenceReduceStepCounted rec callee element accumulator ctx env calleeName) := by
-  unfold EvalBody.evalSequenceReduceStepCounted; pub_tac
-
 theorem EvalBody.demandSequenceBuiltinCallItemValue_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; pub_tac
@@ -1497,8 +1499,8 @@ theorem EvalBody.bindSequenceBuiltinArguments_pubDisc (rec : EvalRec) (hrec : �
     PubDisc (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; pub_tac
 
-theorem EvalBody.evalReduceCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalReduceCounted rec collection stepAlg initial ctx env) := by
+theorem EvalBody.evalReduceCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) :
+    PubDisc (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; pub_tac
 
 theorem EvalBody.evalFilterCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -1677,10 +1679,9 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pubDisc rec hrec hres callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pubDisc rec hrec hres callee args ctx env
   | evalResolvedCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallbackCallCounted_pubDisc rec hrec hres callee args ctx env calleeName
-  | evalSequenceReduceStepCounted callee element accumulator ctx env calleeName => exact EvalBody.evalSequenceReduceStepCounted_pubDisc rec hrec hres callee element accumulator ctx env calleeName
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pubDisc rec hrec hres item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pubDisc rec hrec hres b metadata args ctx env
-  | evalReduceCounted collection stepAlg initial ctx env => exact EvalBody.evalReduceCounted_pubDisc rec hrec hres collection stepAlg initial ctx env
+  | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_pubDisc rec hrec hres collection stepAlg start ctx env
   | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pubDisc rec hrec hres items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pubDisc rec hrec hres collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pubDisc rec hrec hres b metadata args ctx env

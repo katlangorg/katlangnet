@@ -5042,26 +5042,86 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "reduce-demands-initial-before-iteration",
+            Id = "reduce-accumulators-are-evaluated-on-demand",
             Category = "collection-builtins",
-            Source = "R(x, acc) = x\nreduce([1, 2], R, 1 / 0)",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "div0",
-            Probes = [new SpecProbe("R(x, acc) = x\nR(2, R(1, 1 / 0))", "ok raw=2 n=1")],
-            Explanation = "Reduce demands its initial value once before iteration, even when the reducer ignores it. Its unfolding equation compares result values for pure, deterministic, total computations; ordinary nested Model-C calls can skip unused computations.",
-        },
-        new()
-        {
-            Id = "nested-reducer-calls-may-skip-unused-initial",
-            Category = "collection-builtins",
-            Source = "R(x, acc) = x\nR(2, R(1, 1 / 0))",
+            Source = "Pick(item, acc) = item\nreduce([1, 2], Pick, 1 / 0)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2",
             ExpectedRaw = "2",
             ExpectedEmittedCount = 1,
-            Probes = [new SpecProbe("R(x, acc) = x\nreduce([1, 2], R, 1 / 0)", "err div0")],
+            Probes =
+            [
+                // The fold is the nest of ordinary calls in its accumulators: neither demands the unused one.
+                new SpecProbe("Pick(item, acc) = item\nPick(2, Pick(1, 1 / 0))", "ok raw=2 n=1"),
+                // A demanded initial value fails where it is demanded.
+                new SpecProbe("Add(item, acc) = item + acc\nreduce([1, 2], Add, 1 / 0)", "err div0"),
+                // The association is the left fold.
+                new SpecProbe("Digits(item, acc) = acc * 10 + item\nreduce([1, 2, 3], Digits, 0)", "ok raw=123 n=1"),
+                // The dotted spelling is the same call.
+                new SpecProbe("Pick(item, acc) = item\n[1, 2].reduce(Pick, 1 / 0)", "ok raw=2 n=1"),
+            ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "An ordinary call may leave an unused accumulator undemanded. Reduce evaluates its initial value and every earlier step. The reduce unfolding equation is a result-structure law for pure, deterministic, total computations, preserving Model-C demand and effect order.",
+            Explanation = "`reduce` evaluates its accumulators on demand: it demands only its last step, and each step receives its accumulator unevaluated, so `reduce([a, b], R, i)` is `R(b, R(a, i))` in value and in the demand of its accumulators. A reducer that ignores its accumulator skips every earlier step and the initial expression; one that reads it evaluates it once.",
+        },
+        new()
+        {
+            Id = "reduce-demands-only-the-steps-it-needs",
+            Category = "collection-builtins",
+            Source = "R(item, acc) = if(item == 1, 1 / 0, item)\nreduce([1, 2], R, 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A step that does read its accumulator runs the step before it, whose failure is the fold's.
+                new SpecProbe("R(item, acc) = if(item == 1, 1 / 0, item + acc)\nreduce([1, 2], R, 0)", "err div0"),
+                // An inspecting pattern demands the accumulator when the step is bound.
+                new SpecProbe("R(item, (a, b)) = item\nreduce([1, 2], R, 1 / 0)", "err div0"),
+                // A clause head that inspects the accumulator demands it during dispatch; one that does not, does not.
+                new SpecProbe("R(item, 0) = item\nR(item, acc) = item + acc\nreduce([1, 2], R, 1 / 0)", "err div0"),
+                new SpecProbe("R(0, acc) = 0\nR(item, acc) = item\nreduce([1, 2], R, 1 / 0)", "ok raw=2 n=1"),
+            ],
+            Explanation = "Only the last step of a fold is demanded. The body of an earlier step runs when a later step reads its accumulator — in an expression, through an inspecting pattern, or through a clause head — and never otherwise.",
+        },
+        new()
+        {
+            Id = "reduce-effects-follow-accumulator-demand",
+            Category = "collection-builtins",
+            Source = "R(item, acc) = tick() * item + acc\nreduce([1, 2], R, 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "4",
+            ExpectedRaw = "4",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The nested ordinary calls draw in the same order.
+                new SpecProbe("R(item, acc) = tick() * item + acc\nR(2, R(1, 0))", "ok raw=4 n=1"),
+                // A demanded accumulator is evaluated once, however often it is read: one draw for the start and one per step.
+                new SpecProbe("R(item, acc) = tick() + acc + acc\nreduce([1, 2], R, tick())", "ok raw=17 n=1"),
+                // The elements are different: the collection is computed before any step.
+                new SpecProbe("Sub(x, acc) = x - acc\n[tick(), tick()].reduce(Sub, 0), Sub(tick(), Sub(tick(), 0))", "ok raw=S[1, -1] n=2"),
+            ],
+            Explanation = "Effects follow actual demand: the step for the last element runs first, so with `R(item, acc) = tick() * item + acc` the fold over `[1, 2]` draws `1` for the element `2` and is `4`. Each accumulator is a memoized computation, read as often as needed and evaluated once.",
+        },
+        new()
+        {
+            Id = "reduce-empty-collection-demands-initial-once",
+            Category = "collection-builtins",
+            Source = "Pick(item, acc) = item\nreduce([], Pick, tick()), tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2",
+            ExpectedRaw = "S[1, 2]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("Pick(item, acc) = item\nreduce([], Pick, 1 / 0)", "err div0"),
+                // The reducer of an empty fold is never used, so it need not be callable.
+                new SpecProbe("reduce([], 1 / 0, 7)", "ok raw=7 n=1"),
+                // The collection is demanded whole before any step and before the initial value.
+                new SpecProbe("Pick(item, acc) = item\nreduce([1 / 0, 2], Pick, 0)", "err div0"),
+            ],
+            Explanation = "A fold over an empty collection demands its initial value once and returns it; the reducer is not used. A nonempty collection is demanded whole first, so a failing element fails the fold before any step.",
         },
         new()
         {

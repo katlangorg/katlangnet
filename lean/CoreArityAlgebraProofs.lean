@@ -887,8 +887,8 @@ theorem bindPats_trailing_collecting (a : String) (x : Val) (r : String) (mid : 
 
 /-- In the algebra, a two-item callback supply binds `[x, *acc]` with the trailing collector
 collecting the one accumulator value, a sequence or a list alike (modelling
-`reduce([e], R, (1, 2))` with `R(x, *acc)` binding `acc = [(1, 2)]`; the production reducer
-passes exactly those two arguments, `EvaluatorInstallation.reduce_step_installs`, and its
+`reduce([e], R, (1, 2))` with `R(x, *acc)` binding `acc = [(1, 2)]`; the production fold
+supplies each step exactly those two cells, `EvaluatorInstallation.reduce_chain_step`, and its
 evaluation is guard-checked). -/
 theorem callback_accumulator_is_one_ordinary_argument (x r : String) (e acc : Val) :
     bindCallback [Pat.name x, Pat.collecting r] [e, acc] = some [(x, e), (r, collect [acc])] :=

@@ -117,6 +117,8 @@ def allocationEvent (suspension : NeedSuspension) (address : Nat) : NeedEvent :=
   | .collector slice => .collector address slice
   | .ready _ => .ready address
   | .expression _ _ _ => .expression address
+  -- A deferred application is a suspended computation; no binder allocates one.
+  | .applied .. => .expression address
 
 /-- THE PROTECTED TRACING of production capabilities: each VALUE / CALLABLE invocation records
     its event and then runs the production operation; each allocation runs the production
