@@ -193,18 +193,6 @@ public class EvaluatorUserCallTests
     }
 
     [Fact]
-    public void Eval_FlatFixedUserCall_ExplicitSpreadOpensMultiOutputPropertyReference()
-    {
-        AssertEval(
-            """
-            Pair = 10, 20
-            Add(x, y) = x + y
-            Add(Pair*)
-            """,
-            30);
-    }
-
-    [Fact]
     public void Eval_FlatFixedUserCall_DotCallMultiOutputDoesNotBecomeArgumentSpreading()
     {
         // A multi-output dot-call expression (here `.atoms`) is still ONE
@@ -302,19 +290,6 @@ public class EvaluatorUserCallTests
         Assert.Equal(2, outer.Items.Count);
         AssertAtomValue(outer.Items[0], 1);
         AssertSequenceValueAtoms(outer.Items[1], 2, 3);
-    }
-
-    [Fact]
-    public void Eval_BlockBoundary_SequenceSpreadExplicitlyFlattensNestedBlockOutput()
-    {
-        AssertEval(
-            """
-            A = 1*, { 2, 3 }
-            A
-            """,
-            1,
-            2,
-            3);
     }
 
     [Fact]

@@ -790,18 +790,6 @@ public class EvaluatorLoopTests
     // ── While/repeat multi-item init boundaries ──────────────────────────────────
 
     [Fact]
-    public void Eval_While_DotCall_BareComma_Works()
-    {
-        // Algo(x, 0).while with bare comma starts with two explicit state slots.
-        var source = """
-            Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
-            Sum = Algo(x, 0).while[1]
-            Sum(999)
-            """;
-        AssertEval(source, 233168);
-    }
-
-    [Fact]
     public void Eval_While_DotCall_ParenSequenceValueInit_IsOneSlot()
     {
         var source = """
@@ -819,17 +807,6 @@ public class EvaluatorLoopTests
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
             Init = x, 0
             Sum = Algo(Init(x)[0], Init(x)[1]).while[1]
-            Sum(999)
-            """;
-        AssertEval(source, 233168);
-    }
-
-    [Fact]
-    public void Eval_While_DotCall_BareComma_NoParams()
-    {
-        var source = """
-            Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
-            Sum = Algo(x, 0).while[1]
             Sum(999)
             """;
         AssertEval(source, 233168);

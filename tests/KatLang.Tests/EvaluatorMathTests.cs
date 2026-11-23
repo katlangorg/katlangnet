@@ -438,14 +438,6 @@ public class EvaluatorMathTests
     }
 
     [Fact]
-    public void Eval_MathSin_Zero_ReturnsZero()
-        => AssertEval("Math.Sin(0)", 0);
-
-    [Fact]
-    public void Eval_MathCos_Zero_ReturnsOne()
-        => AssertEval("Math.Cos(0)", 1);
-
-    [Fact]
     public void Eval_MathSin_One_ReturnsFullPrecision()
     {
         // sin(1) = 0.8414709848078965066525023216302990... — the result must

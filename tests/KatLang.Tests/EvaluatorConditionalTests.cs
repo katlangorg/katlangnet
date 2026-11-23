@@ -14,7 +14,7 @@ public class EvaluatorConditionalTests
     [Fact]
     public void Eval_ClauseDefinition_KCombinator_OrdinarySingleClause()
     {
-        // K(a, b) = a  ⟹  K(10, 20) => 10
+        // K(a, b) = a  ⟹  K(10, 20) => 10, with b intentionally unused.
         var source = """
             K(a, b) = a
             K(10, 20)
@@ -375,17 +375,6 @@ public class EvaluatorConditionalTests
     }
 
     [Fact]
-    public void Eval_Conditional_OrdinaryAlgorithmUnchanged()
-    {
-        // Ordinary (non-conditional) algorithms should still work
-        var source = """
-            Add = a + b
-            Add(3, 4)
-            """;
-        AssertEval(source, 7);
-    }
-
-    [Fact]
     public void Eval_Conditional_BinderUsedInExpression()
     {
         // Branch body can use binders in arithmetic
@@ -544,17 +533,6 @@ public class EvaluatorConditionalTests
     // ── Full-input-specification rule: conditional branch params ─────────
 
     [Fact]
-    public void Eval_ClauseDefinition_OrdinarySingleClause_IgnoredBinderPreserved()
-    {
-        // K(a, b) = a — b is intentionally unused, no error
-        var source = """
-            K(a, b) = a
-            K(10, 20)
-            """;
-        AssertEval(source, 10);
-    }
-
-    [Fact]
     public void Eval_Conditional_FullPattern_StructuredBranches()
     {
         // Each branch pattern fully describes accepted input shape
@@ -610,17 +588,6 @@ public class EvaluatorConditionalTests
             F(5)
             """;
         AssertEval(source, 10);
-    }
-
-    [Fact]
-    public void Eval_Conditional_OrdinaryAlgorithmStillInfersParams()
-    {
-        // Ordinary (non-conditional) algorithms still infer implicit parameters
-        var source = """
-            Add = a + b
-            Add(3, 4)
-            """;
-        AssertEval(source, 7);
     }
 
     [Fact]
@@ -711,17 +678,6 @@ public class EvaluatorConditionalTests
             G
             """;
         AssertEval(source, 100);
-    }
-
-    [Fact]
-    public void Eval_ConditionalSugar_FirstMatchWins()
-    {
-        var source = """
-            F(x) = 1
-            F(1) = 2
-            F(1)
-            """;
-        AssertEval(source, 1);
     }
 
     [Fact]

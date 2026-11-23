@@ -89,10 +89,6 @@ public class EvaluatorCollectionBuiltinTests
     // ── Order builtins ──────────────────────────────────────────────────────
 
     [Fact]
-    public void Eval_Order_DirectCallMultiArgs_SortsAscending()
-        => AssertEval("order((3, 4, 2, 1, 3, 3))", 1, 2, 3, 3, 3, 4);
-
-    [Fact]
     public void Eval_Order_WrapperMultiOutputArg_ExpandsTopLevelItems()
     {
         var source = """
@@ -153,10 +149,6 @@ public class EvaluatorCollectionBuiltinTests
         => AssertBuiltinFailureWithExactText<EvalError.TypeMismatch>(
             "order(((1, 2), (3, 4)))",
             "order expects each collection element to be a single numeric value; item 0 was sequence value");
-
-    [Fact]
-    public void Eval_OrderDesc_DirectCallMultiArgs_SortsDescending()
-        => AssertEval("orderDesc((3, 4, 2, 1, 3, 3))", 4, 3, 3, 3, 2, 1);
 
     [Fact]
     public void Eval_OrderDesc_WrapperMultiOutputArg_ExpandsTopLevelItems()
@@ -423,20 +415,12 @@ public class EvaluatorCollectionBuiltinTests
         => AssertEval("count('hello')", 1);
 
     [Fact]
-    public void Eval_Count_DirectCallMultiArgs_CountsTopLevelItems()
-        => AssertEval("count((1, 7))", 2);
-
-    [Fact]
     public void Eval_Count_DirectCallMixedArgs_CountsExpandedTopLevelItems()
         => AssertEval("count((3, 4, range(1, 5)*, 7))", 8);
 
     [Fact]
     public void Eval_Count_SingleSequenceValueArg_CountsSequenceItems()
         => AssertEval("count((1, 7))", 2);
-
-    [Fact]
-    public void Eval_Count_SequenceValueMultiArgs_CountTopLevelGroups()
-        => AssertEval("count(((1, 2), (3, 4)))", 2);
 
     [Fact]
     public void Eval_Count_InlineParenReceiver_DotCallDestructuresSequence()

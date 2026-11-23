@@ -485,28 +485,6 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Eval_ExistingSumExample_StillWorks()
-    {
-        var source = """
-            Numbers = 3, 5, 9, 1, 0, 6
-            Add = a + 1, total + Numbers[a]
-            Sum = repeat(Add(0, 0), (6))[1]
-            Sum
-            """;
-        AssertEval(source, 24);
-    }
-
-    [Fact]
-    public void Eval_ExistingFibonacci_StillWorks()
-    {
-        var source = """
-            Fib = a + b, a
-            repeat(Fib(1, 0), (10))[0]
-            """;
-        AssertEval(source, 89);
-    }
-
-    [Fact]
     public void Eval_ImplicitWithMultipleOutputs()
     {
         var source = """

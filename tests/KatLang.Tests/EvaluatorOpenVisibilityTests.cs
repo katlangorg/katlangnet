@@ -390,18 +390,6 @@ public class EvaluatorOpenVisibilityTests
     // â”€â”€ Open-specific tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
-    public void Eval_Open_MultipleOpens()
-    {
-        var source = """
-            open A, B
-            A = { public X = 1 }
-            B = { public Y = 2 }
-            X + Y
-            """;
-        AssertEvalAllPublic(source, 3);
-    }
-
-    [Fact]
     public void Eval_Open_UnbracketedCommaList_ResolvesFromSecondLib()
     {
         // open Lib2, Lib3 → two separate opens; Val3 resolves from Lib3
