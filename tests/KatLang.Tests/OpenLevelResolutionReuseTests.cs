@@ -432,17 +432,17 @@ public class OpenLevelResolutionReuseTests
     public async Task AFailingLinkCarrierThroughAParameter_AgreesOnBothRoutes_ButTheAsyncRetryReadsItsLevelOnceMore()
     {
         // NEGATIVE CONTROL of OnBothRoutesAsync's count parity, recovered from the 2026-11-18 open-lookup review. The
-        // carrier `A` reaches `Sub.Algorithm` through its own `open Lib`, and `Run` invokes it through a parameter,
-        // so no binding memo serves the chase. `Sub` has no output row, so the link's receiver demand fails at
-        // `f(1)`, before any argument is demanded.
+        // carrier `A` reaches `Sub.Algorithm` through its own `open Lib`. `Run` reserves three list positions
+        // and returns. Reading the first position then invokes `A` through the parameter `f`, so no binding
+        // memo serves the chase. The link's receiver `Sub` has no output, so `f(1)` fails before demanding 1.
         const string failingCarrier = "Lib = {\n    public Sub = {\n        public F(x) = x * 10\n    }\n}\n"
             + "A = {\n    open Lib\n    Sub.Algorithm\n}\n";
         const string source = failingCarrier + "Run(f) = [f(1), f(2), f(3)]\nRun(A)";
-        const string publicError = "MissingOutput: while evaluating call to Run: while evaluating call to f: Property 'Sub' has no defined output.\n"
+        const string publicError = "MissingOutput: while evaluating call to f: Property 'Sub' has no defined output.\n"
             + "Add an output expression to 'Sub', or use `()` if the empty sequence value was intended. "
             + "To use one of its properties, write `Sub.X`. @ [8:5, 8:8)";
         // Every frame carries the position of `Sub` in the carrier's row; the innermost error has none.
-        const string missingOutput = "err [while evaluating call to Run @ [8:5, 8:8)] [while evaluating call to f @ [8:5, 8:8)] "
+        const string missingOutput = "err [while evaluating call to f @ [8:5, 8:8)] "
             + "[while evaluating property Sub @ [8:5, 8:8)] MissingOutput { Span = , IsResourceLimit = False, Code = MissingOutput } @  | "
             + publicError;
         var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
@@ -450,7 +450,7 @@ public class OpenLevelResolutionReuseTests
         var asynchronous = await ObserveRouteAsync(program, forcedAsync: true);
 
         // Both routes report the same structured error, publish nothing and charge the same two steps.
-        Assert.Equal((missingOutput, 0, "steps 2, depth 2, items 0, chars 0, ticks 0"), synchronous.Agreed);
+        Assert.Equal((missingOutput, 0, "steps 2, depth 1, items 3, chars 0, ticks 0"), synchronous.Agreed);
         Assert.Equal(synchronous.Agreed, asynchronous.Agreed);
 
         // Both routes resolve the same two level states of the carrier's `open Lib`, the head level the chase
@@ -478,7 +478,7 @@ public class OpenLevelResolutionReuseTests
             Assert.Equal(
                 maxSteps == 1
                     ? ("err EvaluationStepLimitExceeded { Span = [2:12, 2:15), IsResourceLimit = True, Code = EvaluationStepLimitExceeded, Limit = 1 } @ [2:12, 2:15)"
-                        + " | EvaluationStepLimitExceeded: Evaluation step limit of 1 was exceeded @ [2:12, 2:15)", 0, "steps 1, depth 1, items 0, chars 0, ticks 0")
+                        + " | EvaluationStepLimitExceeded: Evaluation step limit of 1 was exceeded @ [2:12, 2:15)", 0, "steps 1, depth 1, items 3, chars 0, ticks 0")
                     : synchronous.Agreed,
                 limited.Agreed);
         }
