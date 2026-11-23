@@ -117,17 +117,20 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     /// An error raised INSIDE a multi-row callback is the ordinary call's error, reported under the call frames of
     /// the written callback use and the callback operation's own frame (the frames the former rejection used), and
     /// the family reports it exactly as its user twin does: family source, user twin, and the family's message.
+    /// A <c>map</c> runs its callback when a position of its result is read (lazy collections, issue #204): the
+    /// failure keeps the frame of the <c>map</c> call that built the list, while a call that only RETURNED that
+    /// list (<c>Apply</c>, an outer transform) has ended and adds none.
     /// </summary>
     public static TheoryData<string, string, string> FailureFrames() => new()
     {
         { "F(0) = 1, 1 / 0\nF(n) = n, n\n[0, 3].map(F)", "U(x) = 1, 1 / 0\n[0, 3].map(U)",
             $"DivisionByZero: while evaluating dotCall .map of [0, 3]: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
         { "F(0) = 1, 1 / 0\nF(n) = n, n\nApply(f, xs) = map(xs, f)\nApply(F, [0])", "U(x) = 1, 1 / 0\nApply(f, xs) = map(xs, f)\nApply(U, [0])",
-            $"DivisionByZero: while evaluating call to Apply: while evaluating call to map: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
+            $"DivisionByZero: while evaluating call to map: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
         { "R(e, 0) = e, e / 0\nR(e, acc) = e, acc\nFold(r, xs) = xs.reduce(r, 0)\nFold(R, [1])", "Ru(e, acc) = e, e / 0\nFold(r, xs) = xs.reduce(r, 0)\nFold(Ru, [1])",
             $"DivisionByZero: while evaluating call to Fold: while evaluating dotCall .reduce of xs: {ReduceStepFrame}: Division by zero @ [1:14, 1:19)" },
         { "F(0) = 1, 1 / 0\nF(n) = n, n\nmap([[0]], { map(x, F) })", "U(x) = 1, 1 / 0\nmap([[0]], { map(x, U) })",
-            $"DivisionByZero: while evaluating call to map: {MapTransformFrame}: while evaluating call to map: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
+            $"DivisionByZero: while evaluating call to map: {MapTransformFrame}: Division by zero @ [1:11, 1:16)" },
     };
 
     [Theory]
@@ -406,8 +409,10 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     [Fact]
     public async Task AcceptedFamilyCallbacks_InvokeOncePerItem()
     {
+        // Both output rows are evaluated first (the second draws 1); the callbacks run when the
+        // mapped list is read, once per item (lazy collections, issue #204).
         var (observation, _) = await AllRoutesAsync("F(0) = tock()\nF(n) = (tock(), n)\nmap([0, 5], F), tock()");
-        Assert.Equal(("ok", "S[L[1, S[2, 5]], 3]"), (observation.Kind, observation.Value));
+        Assert.Equal(("ok", "S[L[2, S[3, 5]], 1]"), (observation.Kind, observation.Value));
         Assert.Equal(["tock#1", "tock#2", "tock#3"], observation.HostCalls);
     }
 

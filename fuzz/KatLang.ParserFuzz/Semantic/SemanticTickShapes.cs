@@ -73,8 +73,8 @@ internal static class SemanticTickShapes
     [
         // ── Callbacks (Q-25 operational order, call-by-need) ────────────────────────────────────────
         new("callback", "map",
-            "map demands its whole collection before any transform, then runs one transform per element, left to right",
-            "each element is demanded inside its own transform",
+            "map runs nothing by itself: reading a mapped position reads its source position, then runs its transform, position by position",
+            "map demands its whole collection before any transform, then runs one transform per element",
             Map, Context: PropertyDouble),
         new("callback", "filter",
             "filter reads its predicate's VALUE once per element, from the first element to the last; kept elements keep their order",
@@ -113,8 +113,8 @@ internal static class SemanticTickShapes
 
         // ── Selectors (variadic postfix selection (E), NEED-07) ─────────────────────────────────────
         new("select", "receiver-first",
-            "selection demands its receiver once, then its selectors left to right",
-            "the selectors are demanded before the receiver",
+            "selection over a written list reads only the selected positions: each selector is demanded, then its position read, left to right",
+            "the receiver's elements all run before any selector is demanded",
             ReceiverFirst, Partner: "cache", PartnerFirst: true),
         new("select", "spread-formation",
             "a spread selector runs during supply formation, before any ordinary selector is demanded",
@@ -178,7 +178,9 @@ internal static class SemanticTickShapes
     internal static SemanticFragment Build(Shape shape, SemanticGrammar.Gen g, bool alternative)
     {
         using var span = g.Span("production");
-        return shape.Build(g, alternative);
+        var fragment = shape.Build(g, alternative);
+        SemanticGrammar.DeferListRow(fragment);
+        return fragment;
     }
 
     internal static bool IsTickBlock(string localId) => localId.StartsWith(LocalPrefix, StringComparison.Ordinal);
@@ -196,20 +198,23 @@ internal static class SemanticTickShapes
         f.Decls.Add(new MDecl.Func(fn, [new MParam(x, false)], new MExpr.Add(Times(new MExpr.Ref(x), 10), Tick())));
         f.Row = new MExpr.ListLit([new MExpr.Prim("map", [new MExpr.Ref(l), new MExpr.Ref(fn)]), Tick()]);
 
+        // The written list L defers its elements and `map` its transforms (lazy collections,
+        // issue #204): each mapped position is read when the row's list is — its source element
+        // first, then its transform. The rejected reading is the former eager map.
         var clock = new TickClock();
         var mapped = new List<int>();
         if (!alternative)
-        {
-            int[] elements = [clock.Next(), clock.Next()];
-            foreach (var element in elements) mapped.Add(element * 10 + clock.Next());
-        }
-        else
         {
             for (var i = 0; i < 2; i++)
             {
                 var element = clock.Next();
                 mapped.Add(element * 10 + clock.Next());
             }
+        }
+        else
+        {
+            int[] elements = [clock.Next(), clock.Next()];
+            foreach (var element in elements) mapped.Add(element * 10 + clock.Next());
         }
 
         f.Value = new Result.ListValue([Ints(mapped), Res(clock.Next())]);
@@ -479,21 +484,27 @@ internal static class SemanticTickShapes
         MExpr Selector() => new MExpr.Binary("mod", Tick(), Atom(3));
         f.Row = new MExpr.ListLit([new MExpr.Select(new MExpr.Ref(receiver), [Selector(), Selector()]), Tick()]);
 
+        // The written list R defers its elements (lazy collections, issue #204): a position runs
+        // when a selector first selects it, right after that selector. The rejected reading is the
+        // former eager receiver.
         var clock = new TickClock();
-        int[] elements;
-        int[] indices;
+        var selected = new List<int>();
         if (!alternative)
         {
-            elements = [clock.Next(), clock.Next(), clock.Next()];
-            indices = [clock.Next() % 3, clock.Next() % 3];
+            var elements = new int?[3];
+            for (var s = 0; s < 2; s++)
+            {
+                var index = clock.Next() % 3;
+                selected.Add(elements[index] ??= clock.Next());
+            }
         }
         else
         {
-            indices = [clock.Next() % 3, clock.Next() % 3];
-            elements = [clock.Next(), clock.Next(), clock.Next()];
+            int[] elements = [clock.Next(), clock.Next(), clock.Next()];
+            for (var s = 0; s < 2; s++) selected.Add(elements[clock.Next() % 3]);
         }
 
-        f.Value = new Result.ListValue([new Result.SequenceValue([.. indices.Select(i => (Result)Res(elements[i]))]), Res(clock.Next())]);
+        f.Value = new Result.ListValue([new Result.SequenceValue([.. selected.Select(v => (Result)Res(v))]), Res(clock.Next())]);
         return f;
     }
 

@@ -293,8 +293,10 @@ def test68 : Bool :=
 #guard test68
 
 -- Every non-Boolean predicate result is the ONE Boolean-requirement error
--- naming the result (`booleanRequiredMessage "filter predicate result"`),
--- raised inside the per-item filter context.
+-- naming the result (`booleanRequiredMessage "filter predicate result"`).
+-- The verdict is a deferred step (lazy collections, issue #204): `filter` returns its stage, and
+-- the requirement is raised when the run reads the first position — so the model's error
+-- carries no written-call frame. (C# reports the step under the call that built its stage.)
 def filterPredicateRejected (predicate : Algorithm) (description : String) : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Bad", predicate)] [
     .call (resolve "filter") [
@@ -303,7 +305,6 @@ def filterPredicateRejected (predicate : Algorithm) (description : String) : Boo
     ]
   ])) with
   | Except.error err =>
-      hasContext "while evaluating call to filter" err &&
       innermostIsBooleanRequired "filter predicate result" description err
   | _ => false
 

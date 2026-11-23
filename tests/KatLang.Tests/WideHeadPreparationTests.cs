@@ -863,7 +863,9 @@ public class WideHeadPreparationTests
             ticks = 0;
             return (new Expr.AlgorithmExpr(root), operations);
         });
-        Assert.StartsWith($"ok ({1000 + 1 + width}, {2000 + 1 + width}, [{3000 + 2}, {4000 + 4}], 5000, 6000) n=", outcome, StringComparison.Ordinal);
+        // The `map` row is a stage: its two calls run when the run reads its result, after the rows
+        // below it were calculated (lazy collections, issue #204), so they draw the last two ticks.
+        Assert.StartsWith($"ok ({1000 + 1 + width}, {2000 + 1 + width}, [{5000 + 2}, {6000 + 4}], 3000, 4000) n=", outcome, StringComparison.Ordinal);
     }
 
     [Fact]

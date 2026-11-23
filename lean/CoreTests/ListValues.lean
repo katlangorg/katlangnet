@@ -128,7 +128,9 @@ def ifConditionRejected (cond : KatLang.Expr) (description : String) : Bool :=
 #guard ifConditionRejected (.listLiteral [.num 1]) "a list value with 1 element: [1]"
 #guard ifConditionRejected (.listLiteral []) "a list value with 0 elements: []"
 #guard ifConditionRejected (.listLiteral [.num 0]) "a list value with 1 element: [0]"
-#guard ifConditionRejected (.listLiteral [.listLiteral [.num 1]]) "a list value with 1 element: [[1]]"
+-- A nested list literal is a deferred element: the diagnostic names it without reading it
+-- (lazy collections, issue #204).
+#guard ifConditionRejected (.listLiteral [.listLiteral [.num 1]]) "a list value with 1 element: [<deferred>]"
 -- Numbers have NO truth value: neither `1` nor `0` selects a branch.
 #guard ifConditionRejected (.num 1) "numeric value 1"
 #guard ifConditionRejected (.num 0) "numeric value 0"

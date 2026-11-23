@@ -75,7 +75,10 @@ internal sealed class RootPropertyObservationSink
     /// (<see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/>, with one
     /// completed-verdict memo across the snapshot so shared structure is scanned once): a value containing a call reference
     /// anywhere becomes <see cref="PropertyValueStatus.Withheld"/> and is not retained; every other
-    /// value is shared as is. Classification charges nothing and observes no token.
+    /// value is shared as is — except that a list evaluated on demand (issue #204) is shown as the
+    /// whole concrete form the run built for it, and a value holding a list the run never read
+    /// whole is <see cref="PropertyValueStatus.Withheld"/> too (<see cref="Evaluator.TrySnapshotValue"/>:
+    /// an observation reads nothing). Classification charges nothing and observes no token.
     /// </summary>
     internal PropertyObservations Complete()
     {
@@ -88,12 +91,16 @@ internal sealed class RootPropertyObservationSink
         for (var i = 0; i < observations.Length; i++)
         {
             var (binding, published) = _records[i];
-            var available = !Evaluator.ContainsCallReference(published.Value, completed);
+            // A published value may hold a list evaluated on demand (issue #204). An observation
+            // reads nothing: it shows the concrete form the run built for such a list, and
+            // withholds a value some list of which the run never read whole.
+            var available = Evaluator.TrySnapshotValue(published.Value, out var snapshot)
+                && !Evaluator.ContainsCallReference(snapshot, completed);
             observations[i] = new PropertyValueObservation(
                 binding.Name,
                 binding.FirstDeclarationSpan!.Value,
                 available ? PropertyValueStatus.Available : PropertyValueStatus.Withheld,
-                available ? published.Value : null,
+                available ? snapshot : null,
                 published.EmittedCount);
         }
 

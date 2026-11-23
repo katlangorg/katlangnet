@@ -117,8 +117,10 @@ theorem dot_arm (rec : EvalRec) (target : Expr) (name : Ident) (fallback : Expr)
 /-- VARIADIC POSTFIX SELECTION, installed: the `.index` arm reads a retained collector receiver
     without a VALUE demand, otherwise demands the receiver ONCE; forms the selector supply like a
     call's (`NeedSupply.addresses` over the evaluator's spread capability); and instantiates the
-    total selection core (`selectWith`, or `selectViewWith` for an argument view and a retained
-    slice) with the recursive VALUE demand of a selector cell, returning `selectionResult`. -/
+    total selection core (`selectPositionsWith` over the receiver's positions — a pending list
+    discovered up to the selected position, only that position read (issue #204) —, or
+    `selectViewWith` for an argument view and a retained slice) with the recursive VALUE demand of a
+    selector cell, returning `selectionResult`. -/
 theorem index_arm (rec : EvalRec) (receiver : Expr) (selectors : OutputBundle) (ctx : EvalCtx)
     (env : ValEnv) :
     EvalBody.evalCounted rec (.index receiver selectors) ctx env = withNestedMissingOutput ((do
@@ -133,7 +135,11 @@ theorem index_arm (rec : EvalRec) (receiver : Expr) (selectors : OutputBundle) (
         | .argView a =>
             selectViewWith (fun cell => Prod.fst <$> rec.demandNeedRecursive cell)
               (rec.argumentViewCells a) (fun cell => Prod.fst <$> rec.demandNeedRecursive cell) cells
-        | _ => selectWith (fun cell => Prod.fst <$> rec.demandNeedRecursive cell) value cells
+        | _ =>
+            selectPositionsWith (fun cell => Prod.fst <$> rec.demandNeedRecursive cell)
+              (fun n => do
+                pure (<- discoveredPositions rec.demandNeedRecursive (some (n + 1)) value)[n]?)
+              (forcePosition rec.demandNeedRecursive) cells
       pure (selectionResult selected)) : EvalM CountedResult) := rfl
 
 /-! ## 2. The VALUE and CALLABLE shells -/
@@ -447,7 +453,9 @@ theorem sequence_builtin_installs (rec : EvalRec) (b : Builtin) (metadata : Sequ
   unfold EvalBody.applyBuiltinCounted
   simp only [h]
 
-/-- Collection binding installs the post-binding one-level value view and the argument-view and
+/-- Collection binding installs the post-binding one-level value view (`collectionPositions`: a
+    builtin that reads positions gets them as stored, a strict builtin reads every position in
+    order — issue #204), the pending-list transport of a lazy stage and the argument-view and
     retained-collector readers. Ordinary VALUE/control slots use the same per-slot demand; callback
     slots are transported. The cardinality gate precedes every demand. -/
 theorem sequence_builtin_binding_installs (rec : EvalRec) (b : Builtin)
@@ -478,7 +486,10 @@ theorem sequence_builtin_binding_installs (rec : EvalRec) (b : Builtin)
               return { preparedInput := { items := [] }, iterationItems := [], suffixArgs := [], view? := some a }
             else
               .error (Error.typeMismatch (argumentViewUnsupportedMessage (builtinDisplayName b)))
-          let collectionValues := builtinCollectionItems collectionValue
+          if let some candidates := pendingStageCandidates? b collectionValue then
+            let suffixArgs <- prepareControls metadata.suffixArgs controlItems
+            return { preparedInput := { items := [] }, iterationItems := [], suffixArgs := suffixArgs, pending? := some candidates }
+          let collectionValues <- collectionPositions rec.demandNeedRecursive b collectionValue
           let collected : CollectedSequenceBuiltinInput := { items := collectionValues }
           let preparedInput <- prepareSequenceBuiltinInput b metadata collected
           let suffixArgs <- prepareControls metadata.suffixArgs controlItems
@@ -538,7 +549,8 @@ theorem sequence_builtin_item_demand_installs (rec : EvalRec) (item : CallableCa
 
 /-- The `first` dispatch: an argument view and a retained collector are read through their own
     selective readers; every other bound collection is `evalFirstCounted` of its prepared
-    items. -/
+    positions, the first one read (`forcePosition`, issue #204). A pending list is never bound
+    pending to it (`pendingStageCandidates?`). -/
 theorem first_arm (rec : EvalRec) (metadata : SequenceBuiltinMetadata)
     (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     EvalBody.applyBuiltinCountedSequence rec .firstBuiltin metadata args ctx env = ((do
@@ -547,7 +559,11 @@ theorem first_arm (rec : EvalRec) (metadata : SequenceBuiltinMetadata)
         return <- rec.evalArgumentViewBuiltin .firstBuiltin a
       if let some slice := bound.slice? then
         return <- retainedCollectorBuiltin rec.demandNeedRecursive .firstBuiltin metadata bound.suffixArgs slice
-      evalFirstCounted bound.preparedInput.items) : EvalM CountedResult) := rfl
+      if let some _ := bound.pending? then
+        .error (builtinArityError .firstBuiltin args.length)
+      match bound.preparedInput.items with
+      | first :: rest => do evalFirstCounted ((<- forcePosition rec.demandNeedRecursive first) :: rest)
+      | [] => evalFirstCounted []) : EvalM CountedResult) := rfl
 
 /-- The `count` dispatch, likewise: an argument view and a retained collector are counted without a
     VALUE demand of their cells; every other bound collection is `evalCountCounted` of its prepared
@@ -560,6 +576,8 @@ theorem count_arm (rec : EvalRec) (metadata : SequenceBuiltinMetadata)
         return <- rec.evalArgumentViewBuiltin .countBuiltin a
       if let some slice := bound.slice? then
         return <- retainedCollectorBuiltin rec.demandNeedRecursive .countBuiltin metadata bound.suffixArgs slice
+      if let some _ := bound.pending? then
+        .error (builtinArityError .countBuiltin args.length)
       evalCountCounted bound.preparedInput.items) : EvalM CountedResult) := rfl
 
 /-- The `last` twin of `first_arm`. -/
@@ -571,7 +589,11 @@ theorem last_arm (rec : EvalRec) (metadata : SequenceBuiltinMetadata)
         return <- rec.evalArgumentViewBuiltin .lastBuiltin a
       if let some slice := bound.slice? then
         return <- retainedCollectorBuiltin rec.demandNeedRecursive .lastBuiltin metadata bound.suffixArgs slice
-      evalLastCounted bound.preparedInput.items) : EvalM CountedResult) := rfl
+      if let some _ := bound.pending? then
+        .error (builtinArityError .lastBuiltin args.length)
+      match bound.preparedInput.items.getLast? with
+      | some last => do evalLastCounted [<- forcePosition rec.demandNeedRecursive last]
+      | none => evalLastCounted []) : EvalM CountedResult) := rfl
 
 /-- The prepared input of a collection builtin passes its EMPTY POLICY first: an empty collection
     under `requireSelectablePosition` (`first`, `last`) is `badIndex` under the "selects from an
@@ -682,13 +704,14 @@ theorem callback_slot_installs (rec : EvalRec) (b : Builtin)
             internalSequenceBuiltinSuffixArgMetadataError b
               s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}" := rfl
 
-/-- The `atoms` arm returns `atomsBuiltinResultForLaw` of its argument's VALUE (an argument view
-    is refused). -/
+/-- The `atoms` arm returns `atomsBuiltinResultForLaw` of its argument's VALUE, materialized
+    (issue #204: `atoms` reads the whole value; an argument view is refused first). -/
 theorem atoms_arm (rec : EvalRec) (a : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     EvalBody.applyBuiltinCounted rec .atomsBuiltin [a] ctx env = withNestedMissingOutput ((do
       let r <- rec.evalArgumentValue a ctx env
       if let .argView _ := r then
         .error (Error.typeMismatch (argumentViewUnsupportedMessage "atoms"))
+      let r <- materializeVia rec.demandNeedRecursive r
       pure (atomsBuiltinResultForLaw r)) : EvalM CountedResult) := rfl
 
 /-- The `if` arm reads its condition through the Boolean view `Result.asBool?` — a number is a
@@ -853,13 +876,15 @@ theorem algorithm_intrinsic_installs (rec : EvalRec) (val : Result) (args? : Opt
         EvalM CountedResult) := rfl
 
 /-- The spread evaluation: the operand is evaluated ONCE (one `evalSequenceSpreadOperandValue` of
-    the peeled operand), and every further written star is the total checked opening
-    `openSpreadItems`; the result is `spreadSupplyResult`. -/
+    the peeled operand), every level a written star opens is read in order (`peelSpreadLayers` over
+    `forceLevel`, issue #204), and the opening is the total checked `openSpreadItems`; the result
+    is `spreadSupplyResult`. -/
 theorem spread_installs (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     EvalBody.evalSequenceSpreadCounted rec e ctx env = ((do
       let (operand, layers) := peelSequenceSpreadLayers e 0
       let value <- rec.evalSequenceSpreadOperandValue operand ctx env
-      let supplied <- openSpreadItems (layers - 1) value
+      let (remaining, opened) <- peelSpreadLayers (forceLevel rec.demandNeedRecursive) (layers - 1) value
+      let supplied <- openSpreadItems remaining opened
       pure (spreadSupplyResult supplied)) : EvalM CountedResult) := rfl
 
 /-- The spread capability of supply formation: a transparent reference to a retained collector
@@ -874,7 +899,8 @@ theorem supply_spread_installs (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env :
       | none =>
         let (operand, layers) := peelSequenceSpreadLayers e 0
         let value <- rec.evalSequenceSpreadOperandValue operand ctx env
-        match <- openSupplySpread (layers - 1) value with
+        let (remaining, opened) <- peelSpreadLayers (forceLevel rec.demandNeedRecursive) (layers - 1) value
+        match <- openSupplySpread remaining opened with
         | .items supplied => pure (.items (countedTopLevelValues (spreadSupplyResult supplied)))
         | .view a => NeedPlan.viewSupply rec.evalSupplySpread rec.planRoute.classify a) :
         EvalM SpreadSupply) := rfl

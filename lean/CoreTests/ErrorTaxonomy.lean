@@ -51,14 +51,19 @@ def runCountedM (e : Expr) : EvalM CountedResult := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg] }
-  match e with
-  | .algorithmExpr a =>
-      let wired := wireToCaller ctx a
-      if Algorithm.acceptsZeroSuppliedArguments wired then
-        evalZeroArgumentDemandOutputCounted wired ctx []
-      else
-        .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-  | _ => evalCounted e ctx []
+  let counted <- match e with
+    | .algorithmExpr a =>
+        let wired := wireToCaller ctx a
+        if Algorithm.acceptsZeroSuppliedArguments wired then
+          evalZeroArgumentDemandOutputCounted wired ctx []
+        else
+          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+    | _ => evalCounted e ctx []
+  -- A run value is materialized before it leaves the run (lazy collections, issue #204), exactly
+  -- as `runResultM` materializes it: a `map` / `filter` stage reads its callback only when a
+  -- position is read, so a slot without CALLABLE capability is `notAnAlgorithm` here.
+  let value <- materializeVia demandNeedRecursive counted.fst
+  pure (value, counted.snd)
 
 def obsFine (e : Expr) : String :=
   match runCountedM e |>.run EvalState.empty with

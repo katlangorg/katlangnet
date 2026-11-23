@@ -361,7 +361,7 @@ elab "pres_intro" : tactic => do
     shared list `evalrec_unfold`, `EvaluatorCore`); the plan route and the binding channels are
     their records. -/
 macro "pres_unfold_rec" : tactic => `(tactic| evalrec_unfold (config := { proj := false })
-  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell, NeedChannels.capabilities])
+  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell])
 
 /-- A relation-specific closer for a write the field frame does not cover (extended per relation
     by `macro_rules`; fails by default). -/
@@ -604,18 +604,76 @@ theorem pres_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀
   | nil => unfold selectViewWith; pres_tac_mid
   | cons c rest ih => unfold selectViewWith; pres_tac_mid
 
+/-! ### Lazy collections (issue #204): the recursive positional helpers -/
+
+theorem pres_lazyDiscover (demand : Nat → EvalM CountedResult) (hd : ∀ a, Preserves R (demand a))
+    (visit : Nat → EvalM Result) (hv : ∀ a, Preserves R (visit a))
+    (limit : Option Nat) (candidates : List (Nat × Nat)) :
+    Preserves R (LazyList.discover demand visit limit candidates) := by
+  induction candidates generalizing limit with
+  | nil => unfold LazyList.discover; pres_tac_mid
+  | cons c rest ih => unfold LazyList.discover; pres_tac_mid
+
+theorem pres_selectPositionsWith {α : Type} (demand : α → EvalM Result) (hd : ∀ a, Preserves R (demand a))
+    (positionAt : Nat → EvalM (Option Result)) (hp : ∀ n, Preserves R (positionAt n))
+    (read : Result → EvalM Result) (hr : ∀ item, Preserves R (read item)) (selectors : List α) :
+    Preserves R (selectPositionsWith demand positionAt read selectors) := by
+  induction selectors with
+  | nil => unfold selectPositionsWith; pres_tac_mid
+  | cons c rest ih => unfold selectPositionsWith; pres_tac_mid
+
+theorem pres_peelSpreadLayers (force : Result → EvalM Result) (hf : ∀ value, Preserves R (force value))
+    (layers : Nat) (value : Result) : Preserves R (peelSpreadLayers force layers value) := by
+  induction layers generalizing value with
+  | zero => unfold peelSpreadLayers; pres_tac_mid
+  | succ n ih => unfold peelSpreadLayers; pres_tac_mid
+
 /-- Capabilities whose every field is disciplined. -/
 structure CapsPres (R : EvalState → EvalState → Prop) (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, Preserves R (caps.value a)
   callable : ∀ a, Preserves R (caps.callable a)
   allocate : ∀ s, Preserves R (caps.allocate s)
   reference : ∀ a, Preserves R (caps.reference a)
+  positions : ∀ a, Preserves R (caps.positions a)
+  whole : ∀ a, Preserves R (caps.whole a)
+
+/-- The read a structural pattern opens its cell through (issue #204) is one of two disciplined
+    capabilities. -/
+theorem pres_structuralRead (caps : NeedCapabilities EvalM) (hc : CapsPres R caps)
+    (pattern : NeedPattern) (address : Nat) :
+    Preserves R (NeedBinder.structuralRead caps pattern address) := by
+  cases pattern <;> first | exact hc.value address | exact hc.positions address
+
+/-- THE PRODUCTION CAPABILITIES over disciplined channels are disciplined: the allocator and the
+    META capability as before, and the two lazy-collection reads (issue #204), each the VALUE channel
+    followed by a positional helper over that same channel. Stated once, so that a binder call
+    site proves its two channels only. -/
+theorem pres_capabilities (channels : NeedChannels) (hv : ∀ a, Preserves R (channels.value a))
+    (hc : ∀ a, Preserves R (channels.callable a)) : CapsPres R channels.capabilities := by
+  refine ⟨hv, hc, ?_, ?_, ?_, ?_⟩
+  · intro s; show Preserves R (allocateNeed s); pres_tac_mid
+  · intro a; show Preserves R (NeedPlan.reference a); pres_tac_mid
+  · intro a
+    have hpos : ∀ candidates, Preserves R (LazyList.positions channels.value none candidates) :=
+      fun candidates => pres_lazyDiscover channels.value hv _ (fun _ => by pres_tac_mid) none candidates
+    show Preserves R (do
+      let (value, count) <- channels.value a
+      match value with
+      | .pendingList candidates =>
+          pure (Result.listValue (<- LazyList.positions channels.value none candidates), count)
+      | _ => pure (value, count))
+    pres_tac_mid
+  · intro a
+    show Preserves R (do
+      let (value, count) <- channels.value a
+      pure (<- materializeVia channels.value value, count))
+    pres_tac_mid
 
 /-- NEED-04's data-anchor check demands only through the VALUE capability. -/
 theorem pres_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsPres R caps) (name : Ident)
     (anchor : CountedResult) (family : Bool) (cells : List Nat) :
     Preserves R (NeedBinder.checkAnchor caps name anchor family cells) := by
-  have hv := hc.value
+  have hv := hc.whole
   induction cells with
   | nil => unfold NeedBinder.checkAnchor; pres_tac_mid
   | cons c rest ih => unfold NeedBinder.checkAnchor; pres_tac_mid
@@ -627,6 +685,7 @@ theorem pres_binder (caps : NeedCapabilities EvalM) (hc : CapsPres R caps) (repe
     (∀ patterns sources current,
       Preserves R (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hwh := hc.whole; have hread := pres_structuralRead caps hc
   have hck := pres_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
@@ -841,6 +900,9 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_discover)
   | (with_reducible apply pres_selectWith)
   | (with_reducible apply pres_selectViewWith)
+  | (with_reducible apply pres_lazyDiscover)
+  | (with_reducible apply pres_selectPositionsWith)
+  | (with_reducible apply pres_peelSpreadLayers)
   | (with_reducible apply pres_bindPatterns)
   | (with_reducible apply pres_selectFamily)
   | (with_reducible apply pres_collectSingleAtomicNumbers)
@@ -869,6 +931,7 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_filterLoop rec hrec)
   | (with_reducible apply pres_mapLoop rec hrec)
   | (with_reducible apply pres_repeatLoop rec hrec)
+  | (with_reducible apply pres_capabilities)
   | (with_reducible apply CapsPres.mk)
   | split
   | pres_intro
@@ -1126,14 +1189,16 @@ theorem EvalBody.evalReduceCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves
     Preserves R (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; pres_tac
 
-theorem EvalBody.evalFilterCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (EvalBody.evalFilterCounted rec items predicateAlg ctx env) := by
+theorem EvalBody.evalFilterCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Preserves R (EvalBody.evalFilterCounted rec start items predicateAlg ctx env) := by
   unfold EvalBody.evalFilterCounted; pres_tac
 
 theorem EvalBody.evalMapCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalMapCounted rec collection transformAlg ctx env) := by
   unfold EvalBody.evalMapCounted; pres_tac
 
+-- Lazy collections (issue #204) enlarged this body (the pending-list stages); the same tactic needs more time.
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.applyBuiltinCountedSequence_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env) := by
   unfold EvalBody.applyBuiltinCountedSequence; pres_tac
@@ -1208,6 +1273,9 @@ theorem EvalBody.evalArgumentViewBuiltin_pres (rec : EvalRec) (hrec : ∀ c, Pre
 theorem EvalBody.evalSequenceSpreadOperandValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalSequenceSpreadOperandValue rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadOperandValue; pres_tac
+theorem EvalBody.evalRunValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    Preserves R (EvalBody.evalRunValue rec e ctx env) := by
+  unfold EvalBody.evalRunValue; pres_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
@@ -1309,7 +1377,7 @@ theorem evalStep_preserves
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pres rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pres rec hrec b metadata args ctx env
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_pres rec hrec collection stepAlg start ctx env
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pres rec hrec items predicateAlg ctx env
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pres rec hrec start items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pres rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pres rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_pres rec hrec b args ctx env
@@ -1329,6 +1397,7 @@ theorem evalStep_preserves
   | argumentViewCells a => exact EvalBody.argumentViewCells_pres rec hrec a
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_pres rec hrec b a
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_pres rec hrec e ctx env
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_pres rec hrec e ctx env
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_pres rec hrec e ctx env
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_pres rec hrec e ctx env
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_pres rec hrec elements ctx env
@@ -1400,7 +1469,7 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pres rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pres rec hrec b metadata args ctx env
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_pres rec hrec collection stepAlg start ctx env
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pres rec hrec items predicateAlg ctx env
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pres rec hrec start items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pres rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pres rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_pres rec hrec b args ctx env
@@ -1420,6 +1489,7 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | argumentViewCells a => exact EvalBody.argumentViewCells_pres rec hrec a
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_pres rec hrec b a
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_pres rec hrec e ctx env
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_pres rec hrec e ctx env
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_pres rec hrec e ctx env
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_pres rec hrec e ctx env
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_pres rec hrec elements ctx env

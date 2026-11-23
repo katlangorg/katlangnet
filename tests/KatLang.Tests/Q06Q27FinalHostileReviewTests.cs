@@ -77,8 +77,10 @@ public class Q06Q27FinalHostileReviewTests
                 Assert.Same(cell, Evaluator.SupplyCell(new Expr.Param("f"), first, []));
                 Assert.Same(cell, Evaluator.SupplyCell(new Expr.Param("f"), second, []));
             }
-            sync = Task.Run(() => Evaluator.EvalCounted(Consumer(BuiltinId.@map), first, []));
-            twin = Task.Run(async () => await EvaluateTwin(Consumer(BuiltinId.@filter), second));
+            // The stage is built without projecting; reading its result whole, as a run does, is what
+            // projects the callback (lazy collections, issue #204).
+            sync = Task.Run(() => Evaluator.WholeValueForTesting(Evaluator.EvalCounted(Consumer(BuiltinId.@map), first, []), first));
+            twin = Task.Run(async () => await Evaluator.WholeValueForTestingAsync(await EvaluateTwin(Consumer(BuiltinId.@filter), second), second));
             var results = await Task.WhenAll(sync, twin).WaitAsync(WaitLimit);
             Assert.All(results, result => Assert.Equal(hasCallable ? KatLangErrorCode.ArityMismatch : KatLangErrorCode.NotAnAlgorithm, result.Error.Code));
             if (!hasCallable) Assert.All(results, result => Assert.Equal(originalSpan, Inner(result.Error).Span));
@@ -221,8 +223,26 @@ public class Q06Q27FinalHostileReviewTests
     }
 
     [Theory]
-    [InlineData("map([1], f)", 21)]
-    [InlineData("filter([1], f)", 24)]
+    // A `map` / `filter` stage is RETURNED through the three calls and read by the run (lazy
+    // collections, issue #204): the refusal is still fresh, at the same occurrence, and it is
+    // reported under the call that built the stage — the calls it was returned through have ended.
+    [InlineData("map([1], f)", 21, "while evaluating call to map")]
+    [InlineData("filter([1], f)", 24, "while evaluating call to filter")]
+    public async Task AStageReturnedThroughForwardingLevels_BlamesTheInvokingOccurrenceUnderItsOwnCall(string use, int column, string frame)
+    {
+        var source = $"Inner(f) = {use}\nMiddle(g) = Inner(g)\nOuter(h) = Middle(h)\nOuter(1 / 0)";
+        await SixRouteAgreement.OnEveryRouteAsync(source);
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors).Source!;
+        Assert.IsType<EvalError.NotAnAlgorithm>(Inner(error));
+        Assert.Equal(new SourceSpan(1, column, 1, column + 1), error.Span);
+        var frames = new List<string>();
+        while (error is EvalError.WithContext context) { frames.Add(context.Context); error = context.Inner; }
+        Assert.Equal(frame, frames[0]);
+        Assert.DoesNotContain(frames, text => text.Contains("for item", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("reduce([1], f, 0)", 24)]
     [InlineData("repeat(f(0), 1)", 19)]
     [InlineData("count(filter(range(1, 3), f))", 38)]

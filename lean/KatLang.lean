@@ -728,6 +728,17 @@ inductive Builtin where
   | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | containsBuiltin | firstBuiltin | lastBuiltin | distinctBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
   -- `tick()`: the zero-argument run-local diagnostic counter (`EvalState.tickCounter`, `runTick`).
   | tickBuiltin
+  -- INTERNAL PIPELINE STEPS (lazy collections, issue #204, November 2026). No name in any scope
+  -- resolves to one of these (they are absent from `preludeAlg`), and no written call reaches
+  -- them: each is the callee of a DEFERRED APPLICATION (`NeedSuspension.applied`) that a lazy
+  -- stage allocates for ONE position, so its VALUE is computed on first demand and memoized
+  -- by the ordinary need-cell protocol (`LazyList` below, `applyBuiltinCounted`).
+  -- * `mappedBuiltin [item, mapper]`: one `map` position — the source item's VALUE, then the
+  --   mapper's projection (on first use), then the ordinary callback invocation.
+  -- * `keptBuiltin [predicate, item, marker, source, offset]`: one `filter` VERDICT.
+  -- * `takenBuiltin [limit, own, source, offset]`: one `take` VERDICT over a pending list.
+  -- * `materializedBuiltin [value, path]`: the fully materialized form of a value.
+  | mappedBuiltin | keptBuiltin | takenBuiltin | materializedBuiltin
   deriving Repr, BEq, DecidableEq
 
 inductive SequenceBuiltinSuffixArgKind where
@@ -904,6 +915,11 @@ def builtinDisplayName : Builtin -> String
   | .avgBuiltin => "avg"
   | .reduceBuiltin => "reduce"
   | .tickBuiltin => "tick"
+  -- The internal pipeline steps have no source name; these texts only describe them.
+  | .mappedBuiltin => "map element"
+  | .keptBuiltin => "filter verdict"
+  | .takenBuiltin => "take verdict"
+  | .materializedBuiltin => "materialized value"
 
 /-- THE ONE AUTHORITATIVE BUILTIN SIGNATURE (META-S3-3, October 2026): a builtin's ordinary
     parameter patterns, read by its runtime arity (`builtinAcceptsArity`), the META binding of
@@ -927,6 +943,11 @@ def builtinSignature (b : Builtin) : List ParameterPattern :=
       | .rangeBuiltin => fixed ["start", "stop"]
       -- `tick()` declares no parameter: its only accepted call supplies nothing.
       | .tickBuiltin => []
+      -- The internal pipeline steps: the fixed supply each deferred application is formed with.
+      | .mappedBuiltin => fixed ["item", "mapper"]
+      | .keptBuiltin => fixed ["predicate", "item", "marker", "source", "offset"]
+      | .takenBuiltin => fixed ["limit", "own", "source", "offset"]
+      | .materializedBuiltin => fixed ["value", "path"]
       | _ => []
 
 /-- Whether a builtin's signature declares a META parameter (META-S3-3): such a builtin binds
@@ -1882,6 +1903,25 @@ inductive Result where
   -- ordering), equal only to itself (`Result.beq`), and never leaves its run
   -- (`containsCallRef`). C#: `Result.CallReference` with `IsArgumentView`.
   | argView : Nat -> Result
+  -- DEFERRED LIST ITEM (lazy collections, issue #204, November 2026): one POSITION of a list
+  -- whose value is the VALUE of the need cell at this address, not yet read into the list.
+  -- It occurs ONLY as a direct item of a `listValue` (a list literal's non-constant element, a
+  -- `map` position, a discovered `filter` position) and in the Ready cell a structural
+  -- pattern binds such an item to; it is never a value in hand: every operation that takes
+  -- an item out of a list reads the position (`forcePosition`, one VALUE demand of the cell,
+  -- memoized like every cell), and a Ready cell holding one IS that position
+  -- (`NeedDemand.suspendedValue`). The list's cardinality and kind never depend on it.
+  -- C#: a `Result.ListValue` position that is still a `NeedCell`.
+  | deferred : Nat -> Result
+  -- PENDING LIST (lazy collections, issue #204): a list value whose positions are not yet
+  -- discovered — the result of `filter`, and of `map` / `take` over one. Each CANDIDATE is a
+  -- position cell paired with the VERDICT cell that decides whether the candidate belongs to
+  -- the list (a Boolean VALUE, memoized: a `filter` predicate's result for that candidate, or a
+  -- `take` quota check). Discovery (`LazyList.discover`) demands the verdicts in candidate
+  -- order and stops at the requested position, at exhaustion or at the first failure, which
+  -- stays memoized in its verdict cell. It is a LIST value (one value, never a sequence).
+  -- C#: `Result.ListValue` over a scanning source.
+  | pendingList : List (Nat × Nat) -> Result
 
 /-- The `Repr` printer of `Result`: total, the derived one written out (§ Total `Repr`
     printers). -/
@@ -1895,6 +1935,8 @@ def reprResultPrec : Result → Nat → Std.Format
       [reprFormatList (a.map (fun r => reprResultPrec r 0))] prec
   | .callRef a, prec => reprCtorFormat "KatLang.Result.callRef" [reprArg a] prec
   | .argView a, prec => reprCtorFormat "KatLang.Result.argView" [reprArg a] prec
+  | .deferred a, prec => reprCtorFormat "KatLang.Result.deferred" [reprArg a] prec
+  | .pendingList a, prec => reprCtorFormat "KatLang.Result.pendingList" [reprArg a] prec
 termination_by r => sizeOf r
 decreasing_by all_goals (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp only [Result.sequenceValue.sizeOf_spec, Result.listValue.sizeOf_spec]; omega)
 
@@ -1920,6 +1962,11 @@ mutual
     | .listValue xs, .listValue ys => Result.beqList xs ys
     | .callRef a, .callRef b => a == b
     | .argView a, .argView b => a == b
+    -- Lazy forms compare by the cells they name: no evaluator work is done here. The
+    -- evaluator's own equality materializes both operands first (`materializeVia`), so it
+    -- never compares one.
+    | .deferred a, .deferred b => a == b
+    | .pendingList xs, .pendingList ys => xs == ys
     | _, _ => false
 
   /-- `List`'s elementwise `==` over `Result.beq` (the derived comparison's list fields). -/
@@ -1947,6 +1994,8 @@ namespace Result
     | listValue rs => listValue (rs.map normalize)
     | callRef a => callRef a
     | argView a => argView a
+    | deferred a => deferred a
+    | pendingList cs => pendingList cs
 
   /-- Language-level atom collection for the `atoms` builtin: recursively
       collect numeric atoms depth-first, left-to-right, through BOTH sequence
@@ -1965,6 +2014,9 @@ namespace Result
     | listValue rs => rs.flatMap languageAtoms
     | callRef _ => []
     | argView _ => []
+    -- `atoms` materializes its argument first, so it never reads a lazy form.
+    | deferred _ => []
+    | pendingList _ => []
 
   /-- Host-boundary numeric flattening used by `runFlat`: the numeric atoms
       reachable through sequence AND exact list boundaries, so collection-
@@ -1984,6 +2036,9 @@ namespace Result
     | listValue rs => rs.flatMap hostAtoms
     | callRef _ => []
     | argView _ => []
+    -- A run result is materialized before it leaves the run, so it holds no lazy form.
+    | deferred _ => []
+    | pendingList _ => []
 
   /-- Canonical text of a Boolean value: lowercase `true` / `false`, the same
       spelling as the literals. C#: `ValueTextRenderer.FormatBool`. -/
@@ -2028,6 +2083,8 @@ namespace Result
     | listValue _ => none   -- lists never coerce to numbers, not even `[5]`
     | callRef _ => none     -- a call reference is no number
     | argView _ => none     -- nor is an argument view
+    | deferred _ => none    -- a deferred item is read before it is used
+    | pendingList _ => none -- a pending list is a list
 
   /-- Top-level items of a MULTI-ITEM counted result: a sequence value's items;
       any other value is itself. This is not an opening operation — call
@@ -2051,6 +2108,8 @@ namespace Result
     | listValue rs => [listValue rs]
     | callRef a => [callRef a]
     | argView a => [argView a]
+    | deferred a => [deferred a]
+    | pendingList cs => [pendingList cs]
 
   /-- Item view used by the spread expression (`expr*`): spread opens exactly ONE
       structure boundary. Sequence values and exact list values open to their
@@ -2162,6 +2221,23 @@ namespace Result
     def anyContainsCallRef : List Result -> Bool
       | [] => false
       | r :: rs => containsCallRef r || anyContainsCallRef rs
+  end
+
+  mutual
+    /-- Whether a value holds a LAZY form at any depth (issue #204): a deferred list item or a
+        pending list. A value without one is CONCRETE: materializing it is the identity and
+        allocates nothing (`materializeVia`). C#: `Evaluator.IsConcreteValue` (negated). -/
+    def isLazy : Result -> Bool
+      | deferred _ => true
+      | pendingList _ => true
+      | sequenceValue rs => anyIsLazy rs
+      | listValue rs => anyIsLazy rs
+      | _ => false
+
+    /-- Whether some value of a list holds a lazy form. -/
+    def anyIsLazy : List Result -> Bool
+      | [] => false
+      | r :: rs => isLazy r || anyIsLazy rs
   end
 end Result
 
@@ -4278,6 +4354,10 @@ mutual
     | .listValue items => "[" ++ String.intercalate ", " (resultDiagnosticStrings items) ++ "]"
     | .callRef _ => "a call reference"
     | .argView _ => "an argument view"
+    -- DIAGNOSTICS FORCE NOTHING (issue #204): a deferred item is shown as the fixed text
+    -- `<deferred>` whether or not its cell has been read, and a pending list by its kind only.
+    | .deferred _ => "<deferred>"
+    | .pendingList _ => "[<deferred>...]"
 
   /-- `items.map resultDiagnosticString` (`PatternHelpers.resultDiagnosticStrings_eq_map`). -/
   def resultDiagnosticStrings : List Result -> List String
@@ -4296,6 +4376,9 @@ def operandDescription : Result -> String
   | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
   | .callRef _ => "a call reference"
   | .argView _ => "an argument view"
+  | .deferred _ => "a deferred list element"
+  -- A pending list's length is not known without discovery, which a diagnostic never runs.
+  | .pendingList _ => "a list value whose elements are not yet evaluated"
 
 /-! CallReference S1 diagnostics (October 2026). C#: `CallReferenceMessages`. -/
 
@@ -4975,6 +5058,8 @@ def describeSequenceItem : Result -> String
   | .listValue _ => "list value"
   | .callRef _ => "call reference"
   | .argView _ => "argument view"
+  | .deferred _ => "deferred list element"
+  | .pendingList _ => "list value"
 
 def numericSequenceItemErrorContext (b : Builtin) (index : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; item {index} was {describeSequenceItem item}"
@@ -5022,7 +5107,33 @@ structure BoundSequenceBuiltinArguments where
       `take` (selective collector reads, November 2026): the builtin then reads those cells
       (`retainedCollectorBuiltin`), not a collection value. -/
   slice? : Option (List Nat) := none
+  /-- The candidates of a PENDING LIST bound as the whole collection of `map`, `filter` or `take`
+      (lazy collections, issue #204): the builtin then returns a lazy stage over those candidates
+      (`LazyList.mapCandidates`, …) and discovers none of them. -/
+  pending? : Option (List (Nat × Nat)) := none
   deriving Repr
+
+/-- The collection builtins that read their collection's POSITIONS (issue #204): binding hands
+    them the positional view as stored — a deferred item unread — and each reads only what its
+    result needs: `count` the cardinality, `first` / `last` one position, `take` a prefix of
+    positions, `map` / `filter` one deferred step per position. Every other collection builtin
+    is STRICT: binding reads every position of its collection, in order (`forceLevel`).
+    C#: `Evaluator.ReadsCollectionPositions`. -/
+def Builtin.readsPositions : Builtin -> Bool
+  | .countBuiltin | .firstBuiltin | .lastBuiltin | .takeBuiltin | .mapBuiltin | .filterBuiltin => true
+  | _ => false
+
+/-- The collection builtins that keep a PENDING list pending (issue #204): their result is a
+    lazy stage over its candidates. `count`, `first` and `last` discover it instead. -/
+def Builtin.keepsPendingList : Builtin -> Bool
+  | .takeBuiltin | .mapBuiltin | .filterBuiltin => true
+  | _ => false
+
+/-- The candidates of a PENDING LIST that a lazy stage keeps pending (issue #204): `map`, `filter`
+    and `take` over one; `none` for every other builtin and every other value. -/
+def pendingStageCandidates? (b : Builtin) : Result -> Option (List (Nat × Nat))
+  | .pendingList candidates => if b.keepsPendingList then some candidates else none
+  | _ => none
 
 /-- The collection builtins that observe a retained collector selectively: `count` reads its
     length, `first`/`last` demand one cell and `take` demands its prefix. Every other builtin
@@ -7631,6 +7742,285 @@ def reference (a : Nat) : EvalM Nat := do
 
 end NeedPlan
 
+/-! ### Lazy collections (issue #204, November 2026)
+
+A LIST EVALUATES ITS ELEMENTS ON DEMAND. A list literal stores each written constant as its
+value and every other non-spread element as a DEFERRED item (`Result.deferred`) over the need
+cell of that element's supplied computation, captured in the literal's own environment
+(`evalListLiteralCounted`); `map` stores one deferred item per source position; `filter`
+returns a PENDING list (`Result.pendingList`), whose positions are discovered by demanding one
+memoized VERDICT cell per candidate, in order. Every position is ONE need cell, so the ordinary
+need-cell protocol (`NeedDemand.step`) gives each collection instance its sharing: one
+evaluation, one memoized value or ordinary failure, one in-flight demand (a re-entered position
+is `demandCycle`), for every reader that received that instance through a property, an
+argument or a call result.
+
+The operations here are TOTAL and parametrized by the cell VALUE demand (production
+`demandNeedRecursive`), so the evaluator recursion core instantiates them and their laws are
+theorems. They are the ONE positional reading every consumer uses:
+
+* KNOWN CARDINALITY — a `listValue`'s items are its positions, whether read or not, so `count`,
+  bounds checks and pattern cardinality demand no element;
+* POSITION DISCOVERY — `LazyList.discover` over a pending list's candidates, stopped at the
+  position requested (`discoveredPositions`);
+* INDEXED VALUE DEMAND — `forcePosition` on the one item selected (`selectPositionsWith`);
+* MATERIALIZATION — one level (`forceLevel`: explicit spread and the strict collection builtins)
+  or the whole value (`materializeVia`: evaluator equality, `atoms`, and the run result).
+
+The stage steps themselves — one mapped element, one filter or take verdict, one materialized
+value — are DEFERRED APPLICATIONS (`NeedSuspension.applied`) of the internal pipeline builtins
+(`Builtin.mappedBuiltin`, …), executed by `applyBuiltinCounted` on first demand. C#:
+`Evaluator.LazyLists.cs`. -/
+
+/-- INDEXED VALUE DEMAND: the VALUE one list position holds. A deferred item is its cell's one
+    VALUE demand (memoized; the element's computation is a subordinate computation of whichever
+    consumer reads the list, so its own missing output is nested, Q-36); any other item is a
+    value already. C#: `Evaluator.ForcePosition`. -/
+def forcePosition (demand : Nat → EvalM CountedResult) : Result → EvalM Result
+  | .deferred cell => withNestedMissingOutput (Prod.fst <$> demand cell)
+  | value => pure value
+
+namespace LazyList
+
+/-- The verdict a verdict cell's VALUE states. A `filter` predicate must return a Boolean value: a
+    numeric result is the value-kind error, never a nonzero truth test. -/
+def verdict (value : Result) : EvalM Bool :=
+  match Result.asBool? value with
+  | some accepted => pure accepted
+  | none => .error (Error.typeMismatch (booleanRequiredMessage "filter predicate result" value))
+
+/-- POSITION DISCOVERY of a pending list: its candidates in order, each verdict cell's VALUE
+    demanded (a memo read once it completed, so an inspected candidate — accepted or rejected —
+    is never inspected again) and each ACCEPTED candidate's position cell handed to `visit`
+    before the next candidate is looked at. It stops after `limit` accepted positions (`none`:
+    at exhaustion) and at the first failure, which its verdict cell keeps: every later
+    discovery that reaches that candidate re-raises it, while the positions accepted before it
+    stay readable. Structural recursion over the candidates. C#: `LazyListScan.Discover`. -/
+def discover (demand : Nat → EvalM CountedResult) (visit : Nat → EvalM Result) :
+    Option Nat → List (Nat × Nat) → EvalM (List Result)
+  | _, [] => pure []
+  | limit, (cell, verdictCell) :: rest =>
+      if limit == some 0 then pure []
+      else do
+        if ← verdict (← demand verdictCell).fst then
+          let item ← visit cell
+          let tail ← discover demand visit (limit.map (· - 1)) rest
+          pure (item :: tail)
+        else discover demand visit limit rest
+
+/-- The first `limit` positions of a pending list (`none`: all of them) as deferred items: no
+    element VALUE is demanded. -/
+def positions (demand : Nat → EvalM CountedResult) (limit : Option Nat)
+    (candidates : List (Nat × Nat)) : EvalM (List Result) :=
+  discover demand (fun cell => pure (.deferred cell)) limit candidates
+
+/-- The VALUES of a pending list, each position discovered AND read before the next candidate
+    is looked at (left to right). -/
+def values (demand : Nat → EvalM CountedResult) (candidates : List (Nat × Nat)) :
+    EvalM (List Result) :=
+  discover demand (fun cell => forcePosition demand (.deferred cell)) none candidates
+
+/-- A composed filter or prefix shares its source candidates across its verdict cells.
+    Each cell records its own offset. Reading the earlier verdicts builds a temporary prefix
+    on demand, in source order, and reuses each verdict's memoized outcome. -/
+def earlierPositions (demand : Nat → EvalM CountedResult) (limit : Option Nat)
+    (source : Result) (before : Int) : EvalM (List Result) :=
+  match source with
+  | .pendingList candidates => positions demand limit (candidates.take before.toNat)
+  | _ => .error (Error.illegalInEval "invalid collection stage source")
+
+/-- The cell a stage reads one source item through: a deferred item's own cell — SHARED with
+    the source list, so both read one completion — and a fresh Ready cell for an item that is
+    a value already. -/
+def itemCell : Result → EvalM Nat
+  | .deferred cell => pure cell
+  | value => readyNeed (value, Result.valueCount value)
+
+/-- ONE `map` position: the deferred application of the map step to the source position's
+    cell and the ORIGINAL mapper cell with its written slot. Allocating it evaluates nothing
+    and projects nothing. -/
+def mappedCell (mapper : Nat × Option Expr) (caller : EvalCtx) (values : ValEnv) (item : Nat) : EvalM Nat :=
+  allocateNeed (.applied (.builtin .mappedBuiltin) [(item, none), mapper] caller values "map transform")
+
+/-- `map` over known positions: one deferred item per source position, in order (the source's
+    cardinality is the result's). -/
+def mapItems (mapper : Nat × Option Expr) (caller : EvalCtx) (values : ValEnv)
+    (items : List Result) : EvalM Result := do
+  let mapped ← items.mapM (fun item => do
+    pure (Result.deferred (← mappedCell mapper caller values (← itemCell item))))
+  pure (.listValue mapped)
+
+/-- `map` over a pending list: every candidate keeps its verdict cell and gets a mapped
+    position cell, so discovering the mapped list scans exactly what the source scans and
+    invokes no mapper. -/
+def mapCandidates (mapper : Nat × Option Expr) (caller : EvalCtx) (values : ValEnv)
+    (candidates : List (Nat × Nat)) : EvalM Result := do
+  let mapped ← candidates.mapM (fun candidate => do
+    pure (← mappedCell mapper caller values candidate.fst, candidate.snd))
+  pure (.pendingList mapped)
+
+/-- `filter` over known positions: one candidate per source position, its verdict the deferred
+    application of the filter step to the predicate cell, the position's cell, its source
+    index (the `marker`, a Ready number) and no earlier verdicts. Nothing is evaluated or
+    projected. -/
+def filterItems (predicate : Nat × Option Expr) (caller : EvalCtx) (values : ValEnv)
+    (items : List Result) : EvalM Result := do
+  let source ← readyNeed (.pendingList [], 1)
+  let candidates ← items.zipIdx.mapM (fun entry => do
+    let cell ← itemCell entry.fst
+    let marker ← readyNeed (Result.atom (Int.ofNat entry.snd), 1)
+    let verdictCell ← allocateNeed
+      (.applied (.builtin .keptBuiltin) [predicate, (cell, none), (marker, none), (source, none), (marker, none)]
+        caller values "filter predicate")
+    pure (cell, verdictCell))
+  pure (.pendingList candidates)
+
+/-- `filter` over a pending list: a candidate is kept when its OWN source verdict accepts it
+    and the predicate holds; its verdict cell carries that source verdict as the marker and
+    the source verdicts of the earlier candidates, whose accepted count is its source index. -/
+def filterCandidates (predicate : Nat × Option Expr) (caller : EvalCtx) (values : ValEnv)
+    (candidates : List (Nat × Nat)) : EvalM Result := do
+  let source ← readyNeed (.pendingList candidates, 1)
+  let filtered ← candidates.zipIdx.mapM (fun entry => do
+    let before ← readyNeed (Result.atom (Int.ofNat entry.snd), 1)
+    let verdictCell ← allocateNeed
+      (.applied (.builtin .keptBuiltin)
+        [predicate, (entry.fst.fst, none), (entry.fst.snd, none), (source, none), (before, none)]
+        caller values "filter predicate")
+    pure (entry.fst.fst, verdictCell))
+  pure (.pendingList filtered)
+
+/-- `take` over a pending list: every candidate keeps its position cell; its verdict accepts it
+    while fewer than `count` earlier candidates were accepted and its own source verdict holds,
+    and it reads no source verdict once the quota is full. A non-positive count takes nothing
+    and allocates nothing. -/
+def takeCandidates (count : Int) (candidates : List (Nat × Nat)) : EvalM Result := do
+  if count <= 0 then return .listValue []
+  let limit ← readyNeed (Result.atom count, 1)
+  let source ← readyNeed (.pendingList candidates, 1)
+  let taken ← candidates.zipIdx.mapM (fun entry => do
+    let before ← readyNeed (Result.atom (Int.ofNat entry.snd), 1)
+    let verdictCell ← allocateNeed
+      (.applied (.builtin .takenBuiltin)
+        [(limit, none), (entry.fst.snd, none), (source, none), (before, none)] EvalCtx.empty [] "take")
+    pure (entry.fst.fst, verdictCell))
+  pure (.pendingList taken)
+
+/-- The callback control a pipeline step invokes: the stage's ORIGINAL callback cell, which the
+    step projects on first use, or — for an argument without a cell — its algorithm. -/
+def callbackSlot (slot : ResolvedArgumentAlgorithm) : PreparedSequenceBuiltinSuffixArg :=
+  match slot.need? with
+  | some address => .needAlgorithm address
+  | none => .algorithm slot.algorithm
+
+end LazyList
+
+/-- THE IMMEDIATE POSITIONAL VIEW, DISCOVERED: the positions `count`, `first`, `last` and postfix
+    selection read (`Result.projectionItems`), a pending list's found by discovery up to `limit`
+    accepted positions. The items are returned as stored — a deferred item is not read. -/
+def discoveredPositions (demand : Nat → EvalM CountedResult) (limit : Option Nat) :
+    Result → EvalM (List Result)
+  | .pendingList candidates => LazyList.positions demand limit candidates
+  | value => pure value.projectionItems
+
+/-- ONE LEVEL of a list made concrete: every position of a list value read in order, a pending
+    list's positions discovered and read one by one. The items' own contents stay as they are (a
+    nested list keeps its deferred items). An explicit spread opens this level, and the strict
+    collection builtins read their collection through it. Every other value is itself. -/
+def forceLevel (demand : Nat → EvalM CountedResult) : Result → EvalM Result
+  | .listValue items => Result.listValue <$> items.mapM (forcePosition demand)
+  | .pendingList candidates => Result.listValue <$> LazyList.values demand candidates
+  | value => pure value
+
+/-- THE ONE-LEVEL COLLECTION VIEW A COLLECTION BUILTIN BINDS (issue #204), read as its builtin
+    reads it: a builtin that reads POSITIONS (`Builtin.readsPositions`) gets the view as stored —
+    a pending list's positions discovered (`first` stops at the first one), no element read; a
+    STRICT builtin reads every position, in order, here (`forceLevel`). On a value without
+    deferred items both are `builtinCollectionItems` (`positional_view_is_shared`). -/
+def collectionPositions (demand : Nat → EvalM CountedResult) (b : Builtin) (value : Result) :
+    EvalM (List Result) :=
+  if b.readsPositions then
+    discoveredPositions demand (if b == .firstBuiltin then some 1 else none) value
+  else builtinCollectionItems <$> forceLevel demand value
+
+/-- VARIADIC POSTFIX SELECTION over positions (issue #204): `selectWith`'s order with the
+    receiver's positions read on demand. Each supplied selector is demanded and validated
+    (`selectorIndex`); THEN the position it names is found (`positionAt`: a bounds check against
+    a known cardinality, or a pending list's discovery up to that position — `badIndex` when
+    there is none) and ONLY that position's VALUE is read (`read`), before the next selector is
+    demanded. A repeated selector reads the position's completed value again. The first failure
+    ends the selection. C#: `Evaluator.AdvanceSelection`. -/
+def selectPositionsWith {α : Type} (demand : α → EvalM Result)
+    (positionAt : Nat → EvalM (Option Result)) (read : Result → EvalM Result) :
+    List α → EvalM (List Result)
+  | [] => pure []
+  | selector :: rest => do
+      let n ← selectorIndex (← demand selector)
+      let selected ←
+        match ← positionAt n with
+        | some item => read item
+        | none => .error Error.badIndex
+      let tail ← selectPositionsWith demand positionAt read rest
+      pure (selected :: tail)
+
+/-- The written stars of a spread, opened ONE LEVEL AT A TIME over values made concrete
+    (`force`, production `forceLevel`): every star but the last opens the forced value and
+    re-captures its items (`openSpreadItems`'s step), and the value the LAST star opens is
+    returned forced with the number of stars still to apply — zero, unless an argument view was
+    reached early, which the pure openers then refuse exactly as before. With `force = pure` it
+    is `openSpreadItems` (`KatLangArityLaws.lean` § Lazy collections). -/
+def peelSpreadLayers (force : Result → EvalM Result) : Nat → Result → EvalM (Nat × Result)
+  | 0, value => do pure (0, ← force value)
+  | n + 1, value => do
+      let opened ← force value
+      match opened with
+      | .argView _ => pure (n + 1, opened)
+      | _ => peelSpreadLayers force n (Result.normalize (Result.sequenceValue opened.spreadItems))
+
+/-- THE MATERIALIZED FORM of a value (issue #204): the value with every list position read and
+    every pending list discovered, at every depth, left to right and depth first — a CONCRETE
+    value (`Result.isLazy` is false), which is what evaluator equality compares, `atoms`
+    collects from and a run result is. A concrete value is returned unchanged and allocates
+    nothing. A lazy one is the VALUE of ONE deferred application of the internal
+    `materializedBuiltin` to a Ready cell holding it (`applyBuiltinCounted`), so the recursion
+    into nested values runs through the cell VALUE demand, like every other position.
+
+    `visiting` are the position cells whose values this materialization is INSIDE (innermost
+    first; none at its start). A list can hold itself through a deferred position (`L = [L]`:
+    building `L` reads nothing), so reaching a position that is being materialized already is a
+    cycle of the value, reported as `demandCycle` (`materializePosition`) instead of an
+    unbounded materialization. The path travels with the application as its second supplied
+    cell: a Ready list of the cells' addresses. C#: `Evaluator.MaterializeValue`. -/
+def materializeVia (demand : Nat → EvalM CountedResult) (value : Result) (visiting : List Nat := []) :
+    EvalM Result :=
+  if value.isLazy then do
+    let source ← readyNeed (value, Result.valueCount value)
+    let path ← readyNeed (Result.listValue (visiting.map (fun cell => Result.atom (Int.ofNat cell))), 1)
+    let cell ← allocateNeed
+      (.applied (.builtin .materializedBuiltin) [(source, none), (path, none)] EvalCtx.empty []
+        "materialized value")
+    Prod.fst <$> demand cell
+  else pure value
+
+/-- The position cells a materialization path names (`materializeVia`'s `visiting`, read back
+    from its Ready cell). -/
+def materializationPath : Result → List Nat
+  | .listValue items => items.filterMap (fun item =>
+      match item with
+      | .atom cell => some cell.toNat
+      | _ => none)
+  | _ => []
+
+/-- ONE POSITION materialized: a deferred item's cell is read (`forcePosition`) and its value
+    materialized with that cell added to the path; a position already on the path is the
+    value's own cycle (`demandCycle`). An item that is a value already is materialized on the
+    same path. -/
+def materializePosition (demand : Nat → EvalM CountedResult) (visiting : List Nat) : Result → EvalM Result
+  | .deferred cell =>
+      if visiting.contains cell then .error Error.demandCycle
+      else do materializeVia demand (← forcePosition demand (.deferred cell)) (cell :: visiting)
+  | value => materializeVia demand value visiting
+
 /-! ### The Model-C binder core (FORMAL-07, October 2026)
 
 The ONE inspecting binder (NEED-04, PAT-10) and the clause-family dispatcher are
@@ -7713,6 +8103,17 @@ structure NeedCapabilities (m : Type → Type) where
       allocate the Ready adapter cell holding its reference. Only a `.metaRef` pattern invokes
       it. Production: `NeedPlan.reference`. -/
   reference : Nat → m Nat
+  /-- The supplied cell's VALUE WITH ITS LIST POSITIONS KNOWN (issue #204): what a LIST pattern and
+      the unpacking receiver open. Production: the VALUE demand, then a pending list's discovery
+      (`LazyList.positions`: no element is read) — every other value unchanged
+      (`NeedChannels.capabilities`). A literal and a sequence pattern read `value`, so they
+      reject a pending list by kind without scanning it. A record that does not distinguish the
+      reads (a model over concrete values) leaves it at its default, the VALUE demand. -/
+  positions : Nat → m CountedResult := value
+  /-- The supplied cell's WHOLE VALUE (issue #204): what repeated-name agreement compares.
+      Production: the VALUE demand, then the value materialized (`materializeVia`) — a concrete
+      value unchanged. Default: the VALUE demand. -/
+  whole : Nat → m CountedResult := value
 
 /-- The two capabilities the binder may use on a supplied cell: its VALUE demand
     and its CALLABLE projection (which never forces this cell's VALUE, NEED-06). The evaluator passes
@@ -7726,7 +8127,16 @@ structure NeedChannels where
 /-- The production capabilities of the binder core: the evaluator's two channels and the
     one allocator `allocateNeed`. -/
 def NeedChannels.capabilities (channels : NeedChannels) : NeedCapabilities EvalM :=
-  ⟨channels.value, channels.callable, allocateNeed, NeedPlan.reference⟩
+  ⟨channels.value, channels.callable, allocateNeed, NeedPlan.reference,
+   fun address => do
+     let (value, count) <- channels.value address
+     match value with
+     | .pendingList candidates =>
+         pure (Result.listValue (<- LazyList.positions channels.value none candidates), count)
+     | _ => pure (value, count),
+   fun address => do
+     let (value, count) <- channels.value address
+     pure (<- materializeVia channels.value value, count)⟩
 
 /-- What one top-level pattern of a level is bound from: one supplied cell, the exact slice
     a collecting binding collects, or nothing (an unreachable position, `badArity`). -/
@@ -7878,7 +8288,7 @@ def checkAnchor (capabilities : NeedCapabilities m) (name : Ident) (anchor : Cou
     (family : Bool) : List Nat → m Bool
   | [] => pure true
   | cell :: rest => do
-      let own <- capabilities.value cell
+      let own <- capabilities.whole cell
       if own == anchor then checkAnchor capabilities name anchor family rest
       else if family then pure false
       else throw (Error.withContext (repeatedParameterContext name) Error.badArity)
@@ -7913,7 +8323,7 @@ def bindName (capabilities : NeedCapabilities m) (name : Ident) (address : Nat)
             | none => pure true
           if agreed then pure (some (state.withCallable name address identity)) else pure none
     | none => do
-        let own <- capabilities.value address
+        let own <- capabilities.whole address
         match group.anchor with
         | some anchor =>
             if own == anchor then pure (some state)
@@ -7922,6 +8332,14 @@ def bindName (capabilities : NeedCapabilities m) (name : Ident) (address : Nat)
             let agreed <- checkAnchor capabilities name own family group.pending
             if agreed then pure (some (state.withAnchor name address own)) else pure none
   else pure (some (state.withPlain name address))
+
+/-- THE READ A STRUCTURAL PATTERN OPENS ITS CELL THROUGH (issue #204): a LIST pattern and the
+    unpacking receiver read the cell's VALUE with its list positions known (`positions`: a
+    pending list discovered, no element read); a SEQUENCE pattern reads the VALUE as it is
+    (`value`), so it rejects a pending list by kind without scanning it — as a literal does. -/
+def structuralRead (capabilities : NeedCapabilities m) : NeedPattern → Nat → m CountedResult
+  | .sequence _ => capabilities.value
+  | _ => capabilities.positions
 
 mutual
   /-- One pattern against one supplied cell: a name is `bindName`; a literal, a
@@ -7946,7 +8364,7 @@ mutual
         let (value, _) <- capabilities.value address
         pure (if (matchPattern literal value).isSome then some bound else none)
     | .sequence ps | .list ps | .unpack ps => do
-        let (value, _) <- capabilities.value address
+        let (value, _) <- structuralRead capabilities pattern address
         let items? := match pattern with
           | .list _ => Result.listPatternItems? value
           | .sequence _ => Result.sequencePatternItems? value
@@ -8687,7 +9105,14 @@ def materialize
 def suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
     (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat) :
     NeedSuspension → EvalM CountedResult
-  | .ready value => pure value
+  -- A Ready cell holding a DEFERRED list item IS that position (issue #204): a structural pattern
+  -- binds a name to such a cell (`NeedBinder.bindOne` allocates one Ready cell per opened item),
+  -- and its VALUE is the position cell's own VALUE demand — the position's one completion,
+  -- shared with the list. Every other Ready cell is its value.
+  | .ready value =>
+    match value.fst with
+    | .deferred cell => demand cell
+    | _ => pure value
   | .expression e ctx env =>
     match NeedPlan.callShape? e ctx env with
     | some shape => do
@@ -8968,7 +9393,7 @@ inductive EvalCall : Type where
   | demandSequenceBuiltinCallItemValue (item : CallableCallItem) (ctx : EvalCtx) (env : ValEnv)
   | bindSequenceBuiltinArguments (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalReduceCounted (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv)
-  | evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+  | evalFilterCounted (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | applyBuiltinCountedSequence (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | applyBuiltinCounted (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
@@ -8988,6 +9413,7 @@ inductive EvalCall : Type where
   | argumentViewCells (a : Nat)
   | evalArgumentViewBuiltin (b : Builtin) (a : Nat)
   | evalSequenceSpreadOperandValue (e : Expr) (ctx : EvalCtx) (env : ValEnv)
+  | evalRunValue (e : Expr) (ctx : EvalCtx) (env : ValEnv)
   | evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
   | evalSupplySpread (e : Expr) (ctx : EvalCtx) (env : ValEnv)
   | evalListLiteralCounted (elements : List Expr) (ctx : EvalCtx) (env : ValEnv)
@@ -9071,6 +9497,7 @@ inductive EvalCall : Type where
   | .argumentViewCells .. => (List NeedSupply.Sourced)
   | .evalArgumentViewBuiltin .. => CountedResult
   | .evalSequenceSpreadOperandValue .. => Result
+  | .evalRunValue .. => Result
   | .evalSequenceSpreadCounted .. => CountedResult
   | .evalSupplySpread .. => SpreadSupply
   | .evalListLiteralCounted .. => CountedResult
@@ -9187,8 +9614,8 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.bindSequenceBuiltinArguments b metadata args ctx env)
 @[inline] def EvalRec.evalReduceCounted (rec : EvalRec) (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalReduceCounted collection stepAlg start ctx env)
-@[inline] def EvalRec.evalFilterCounted (rec : EvalRec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  rec (.evalFilterCounted items predicateAlg ctx env)
+@[inline] def EvalRec.evalFilterCounted (rec : EvalRec) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  rec (.evalFilterCounted start items predicateAlg ctx env)
 @[inline] def EvalRec.evalMapCounted (rec : EvalRec) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalMapCounted collection transformAlg ctx env)
 @[inline] def EvalRec.applyBuiltinCountedSequence (rec : EvalRec) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
@@ -9227,6 +9654,8 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalArgumentViewBuiltin b a)
 @[inline] def EvalRec.evalSequenceSpreadOperandValue (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   rec (.evalSequenceSpreadOperandValue e ctx env)
+@[inline] def EvalRec.evalRunValue (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  rec (.evalRunValue e ctx env)
 @[inline] def EvalRec.evalSequenceSpreadCounted (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalSequenceSpreadCounted e ctx env)
 @[inline] def EvalRec.evalSupplySpread (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM SpreadSupply :=
@@ -9810,8 +10239,8 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     Lean.Order.monotone (fun ρ => (recOf ρ).evalReduceCounted collection stepAlg start ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalFilterCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalFilterCounted items predicateAlg ctx env) :=
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalFilterCounted start items predicateAlg ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalMapCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -9888,6 +10317,10 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
 @[partial_fixpoint_monotone] theorem EvalRec.evalSequenceSpreadOperandValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Lean.Order.monotone (fun ρ => (recOf ρ).evalSequenceSpreadOperandValue e ctx env) :=
+  fun _ _ h => hrec _ _ h _
+@[partial_fixpoint_monotone] theorem EvalRec.evalRunValue_mono {γ : Type} [Lean.Order.PartialOrder γ]
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalRunValue e ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalSequenceSpreadCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
@@ -11386,12 +11819,21 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             return { preparedInput := { items := [] }, iterationItems := [], suffixArgs := [], view? := some a }
           else
             .error (Error.typeMismatch (argumentViewUnsupportedMessage (builtinDisplayName b)))
+        -- A PENDING LIST bound as the collection of a lazy stage (issue #204) stays pending: the
+        -- controls are demanded and validated, and no candidate is inspected.
+        if let some candidates := pendingStageCandidates? b collectionValue then
+          let suffixArgs <- prepareControls metadata.suffixArgs controlItems
+          return { preparedInput := { items := [] }, iterationItems := [], suffixArgs := suffixArgs, pending? := some candidates }
         -- The one-level builtin collection view applies AFTER binding, to the
         -- bound collection value only: a lone sequence or exact list value
         -- opens to its immediate items, and any other value is a one-element
         -- collection (`count(7)` is 1). Opening is never recursive — nested
         -- sequence/list elements stay intact as single items.
-        let collectionValues := builtinCollectionItems collectionValue
+        -- LAZY COLLECTIONS (issue #204): a builtin that reads POSITIONS (`readsPositions`) gets
+        -- the view as stored — a pending list's positions discovered (`first` stops at the
+        -- first one), no element read; a STRICT builtin reads every position, in order, here
+        -- (`collectionPositions`).
+        let collectionValues <- collectionPositions rec.demandNeedRecursive b collectionValue
         let collected : CollectedSequenceBuiltinInput := { items := collectionValues }
         let preparedInput <- prepareSequenceBuiltinInput b metadata collected
         let suffixArgs <- prepareControls metadata.suffixArgs controlItems
@@ -11466,7 +11908,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       list values stay intact. The kept items remain the original collection
       items and are materialized as one list value, so keeping
       exactly `(1, 2)` yields `[(1, 2)]`. -/
-  def EvalBody.evalFilterCounted (rec : EvalRec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+  def EvalBody.evalFilterCounted (rec : EvalRec) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let rec filterLoop : Nat -> List CountedResult -> EvalM (List Result)
       | _, [] => pure []
       | index, item :: rest => do
@@ -11487,7 +11929,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
               | none =>
                   .error (Error.typeMismatch
                     (booleanRequiredMessage "filter predicate result" pr))
-    let kept <- filterLoop 0 items
+    let kept <- filterLoop start items
     pure (makeCollectionListResult kept)
 
   /-- Evaluate `map(collection, mapper)`.
@@ -11519,6 +11961,36 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         return <- rec.evalArgumentViewBuiltin b a
       if let some slice := bound.slice? then
         return <- retainedCollectorBuiltin rec.demandNeedRecursive b metadata bound.suffixArgs slice
+      -- The values of positions an eager step needs, read in order (issue #204).
+      let readPositions (items : List Result) : EvalM (List Result) :=
+        items.mapM (forcePosition rec.demandNeedRecursive)
+      -- A PENDING LIST under a lazy stage (issue #204): `take` keeps a quota of its candidates,
+      -- `map` gives every candidate a mapped position and `filter` a second verdict; no candidate
+      -- is inspected and no callback projected. A callback WITHOUT a cell (the hand-built fixture
+      -- seam) has no computation to defer: the pending list is read and the eager loop runs.
+      if let some candidates := bound.pending? then
+        match b, bound.suffixArgs with
+        | .takeBuiltin, _ => do
+            let count <-
+              expectPreparedSequenceBuiltinWholeNumberSuffixArg b metadata.suffixArgs bound.suffixArgs 0
+            return (<- LazyList.takeCandidates count candidates, 1)
+        | .mapBuiltin, [.needAlgorithm mapper] =>
+            return (<- LazyList.mapCandidates (mapper, none) ctx env candidates, 1)
+        | .filterBuiltin, [.needAlgorithm predicate] =>
+            return (<- LazyList.filterCandidates (predicate, none) ctx env candidates, 1)
+        | .mapBuiltin, _ => do
+            let items <- LazyList.values rec.demandNeedRecursive candidates
+            if items.isEmpty then return makeCollectionListResult []
+            let transformAlg <-
+              rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs bound.suffixArgs 0
+            return <- rec.evalMapCounted (items.map (fun item => (item, 1))) transformAlg ctx env
+        | .filterBuiltin, _ => do
+            let items <- LazyList.values rec.demandNeedRecursive candidates
+            if items.isEmpty then return makeCollectionListResult []
+            let predicateAlg <-
+              rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs bound.suffixArgs 0
+            return <- rec.evalFilterCounted 0 (items.map (fun item => (item, 1))) predicateAlg ctx env
+        | _, _ => .error (builtinArityError b args.length)
       let withPreparedItems
           (k : List Result -> EvalM CountedResult) : EvalM CountedResult :=
         k bound.preparedInput.items
@@ -11529,18 +12001,33 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           (k : List PreparedSequenceBuiltinSuffixArg -> EvalM CountedResult) : EvalM CountedResult :=
         k bound.suffixArgs
         match b with
+        -- LAZY `filter` / `map` (issue #204): the result is a stage over the collection's
+        -- positions — a pending list of candidates with one deferred verdict each, a list of
+        -- deferred mapped items — and building it reads no element and projects no callback.
+        -- An EMPTY collection is `[]` at once. A callback WITHOUT a cell (the hand-built fixture
+        -- seam) has no computation to defer: its positions are read and the eager loop runs.
         | .filterBuiltin =>
             withPreparedSuffixArgs fun preparedSuffixArgs => do
               if bound.iterationItems.isEmpty then return makeCollectionListResult []
-              let predicateAlg <-
-                rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              rec.evalFilterCounted bound.iterationItems predicateAlg ctx env
+              match preparedSuffixArgs with
+              | [.needAlgorithm predicate] =>
+                  pure (<- LazyList.filterItems (predicate, none) ctx env bound.preparedInput.items, 1)
+              | _ => do
+                  let predicateAlg <-
+                    rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
+                  let items <- readPositions bound.preparedInput.items
+                  rec.evalFilterCounted 0 (items.map (fun item => (item, 1))) predicateAlg ctx env
         | .mapBuiltin =>
             withPreparedSuffixArgs fun preparedSuffixArgs => do
               if bound.iterationItems.isEmpty then return makeCollectionListResult []
-              let transformAlg <-
-                rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              rec.evalMapCounted bound.iterationItems transformAlg ctx env
+              match preparedSuffixArgs with
+              | [.needAlgorithm mapper] =>
+                  pure (<- LazyList.mapItems (mapper, none) ctx env bound.preparedInput.items, 1)
+              | _ => do
+                  let transformAlg <-
+                    rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
+                  let items <- readPositions bound.preparedInput.items
+                  rec.evalMapCounted (items.map (fun item => (item, 1))) transformAlg ctx env
         | .orderBuiltin =>
             withPreparedNumericItems fun numbers =>
               evalOrderCounted numbers
@@ -11554,17 +12041,25 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             withPreparedSuffixArgs fun preparedSuffixArgs => do
               let searched <-
                 expectPreparedSequenceBuiltinValueSuffixArg b metadata.suffixArgs preparedSuffixArgs 0
-              withPreparedItems fun items =>
-                evalContainsCounted items searched
+              -- EVALUATOR EQUALITY COMPARES WHOLE VALUES (issue #204): the items, then the
+              -- searched value, are materialized before the comparison.
+              withPreparedItems fun items => do
+                let items <- items.mapM (materializeVia rec.demandNeedRecursive)
+                evalContainsCounted items (<- materializeVia rec.demandNeedRecursive searched)
         | .distinctBuiltin =>
-            withPreparedItems fun items =>
-              evalDistinctCounted items
+            withPreparedItems fun items => do
+              evalDistinctCounted (<- items.mapM (materializeVia rec.demandNeedRecursive))
+        -- `first` / `last` read exactly the ONE position they select (issue #204).
         | .firstBuiltin =>
             withPreparedItems fun items =>
-              evalFirstCounted items
+              match items with
+              | first :: rest => do evalFirstCounted ((<- forcePosition rec.demandNeedRecursive first) :: rest)
+              | [] => evalFirstCounted []
         | .lastBuiltin =>
             withPreparedItems fun items =>
-              evalLastCounted items
+              match items.getLast? with
+              | some last => do evalLastCounted [<- forcePosition rec.demandNeedRecursive last]
+              | none => evalLastCounted []
         | .takeBuiltin =>
             withPreparedSuffixArgs fun preparedSuffixArgs => do
               let count <-
@@ -11704,6 +12199,72 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         -- `tick()`: the accepted zero-argument call executes the primitive once (`runTick`). A
         -- supplied argument is the final arm's arity rejection, before anything is demanded.
         | .tickBuiltin, [] => runTick
+        -- THE INTERNAL PIPELINE STEPS (lazy collections, issue #204): each is reached only as the
+        -- callee of the deferred application a lazy stage allocated for one position
+        -- (`LazyList`), so it runs on that position's first VALUE demand, in the stage's captured
+        -- context, and its outcome is memoized by the cell.
+        -- ONE `map` POSITION: the source item's VALUE first; then the mapper, projected here on
+        -- first use (its cell keeps the projection); then the ordinary callback invocation, whose
+        -- whole result is the position's value.
+        | .mappedBuiltin, [item, mapper] => do
+            let value <- rec.evalArgumentValueCounted item ctx env
+            let transformAlg <- rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg .mapBuiltin
+              [{ name := "mapper" }] [LazyList.callbackSlot mapper] 0
+            match (<- rec.evalMapCounted [value] transformAlg ctx env).fst with
+            | .listValue [mapped] => pure (mapped, Result.valueCount mapped)
+            | _ => .error (Error.illegalInEval "a map step produces exactly one element")
+        -- ONE `filter` VERDICT. The marker says whether the candidate is a position of the
+        -- source at all and which one: a number is its index in a source of known positions; a
+        -- source verdict admits it or not, its index being the count of earlier accepted source
+        -- verdicts (all completed: discovery reads verdicts in order). An admitted candidate's
+        -- VALUE is read, the predicate projected on first use and invoked on it.
+        | .keptBuiltin, [predicate, item, marker, source, offset] => do
+            let index? <-
+              match <- rec.evalArgumentValue marker ctx env with
+              | .atom index => pure (some index.toNat)
+              | admitted => do
+                  if <- LazyList.verdict admitted then
+                    let before <- LazyList.earlierPositions rec.demandNeedRecursive none
+                      (<- rec.evalArgumentValue source ctx env) (<- expectInt (<- rec.evalArgumentValue offset ctx env))
+                    pure (some before.length)
+                  else pure none
+            match index? with
+            | none => pure (Result.bool false, 1)
+            | some index => do
+                let value <- rec.evalArgumentValueCounted item ctx env
+                let predicateAlg <- rec.expectPreparedSequenceBuiltinAlgorithmSuffixArg .filterBuiltin
+                  [{ name := "predicate" }] [LazyList.callbackSlot predicate] 0
+                match (<- rec.evalFilterCounted index [value] predicateAlg ctx env).fst with
+                | .listValue [] => pure (Result.bool false, 1)
+                | _ => pure (Result.bool true, 1)
+        -- ONE `take` VERDICT over a pending list: rejected, reading no source verdict, once
+        -- `limit` earlier candidates were accepted; otherwise the candidate's own source verdict.
+        | .takenBuiltin, [limit, own, source, offset] => do
+            let quota := (<- expectInt (<- rec.evalArgumentValue limit ctx env)).toNat
+            let taken <- LazyList.earlierPositions rec.demandNeedRecursive (some quota)
+              (<- rec.evalArgumentValue source ctx env) (<- expectInt (<- rec.evalArgumentValue offset ctx env))
+            if taken.length >= quota then pure (Result.bool false, 1)
+            else do
+              let accepted <- LazyList.verdict (<- rec.evalArgumentValue own ctx env)
+              pure (Result.bool accepted, 1)
+        -- THE MATERIALIZED FORM of one value: a list's positions read in order, a pending list's
+        -- discovered and read one by one, and every item materialized (`materializePosition`: the
+        -- nested demand, on the path of positions this materialization is inside) before the
+        -- next position is looked at — left to right, depth first.
+        | .materializedBuiltin, [slot, path] => do
+            let visiting := materializationPath (<- rec.evalArgumentValue path ctx env)
+            let position := materializePosition rec.demandNeedRecursive visiting
+            match <- rec.evalArgumentValue slot ctx env with
+            | .listValue items => do
+                pure (Result.listValue (<- items.mapM position), 1)
+            | .pendingList candidates => do
+                let concrete <- LazyList.discover rec.demandNeedRecursive
+                  (fun cell => position (.deferred cell)) none candidates
+                pure (Result.listValue concrete, 1)
+            | .sequenceValue items => do
+                let concrete := Result.sequenceValue (<- items.mapM position)
+                pure (concrete, Result.valueCount concrete)
+            | value => pure (value, Result.valueCount value)
         | .ifBuiltin, [c,t,e] => do
             let cr <- rec.evalArgumentValue c ctx env
             -- The selected branch is one argument expression, so `if` observes it
@@ -11730,6 +12291,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             -- An argument view has no atoms to collect without materializing it (S2).
             if let .argView _ := r then
               .error (Error.typeMismatch (argumentViewUnsupportedMessage "atoms"))
+            -- `atoms` reads the WHOLE value (issue #204): it is materialized first.
+            let r <- materializeVia rec.demandNeedRecursive r
             -- `atoms` materializes a collection: one list of
             -- the recursively collected numeric atoms (sequence AND list
             -- boundaries open; strings and Boolean values contribute none).
@@ -12292,7 +12855,10 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let value <- rec.evalSequenceSpreadOperandValue operand ctx env
     -- The written stars open the operand VALUE one boundary each (`reopenSpreadLayers`); a
     -- star that would open an argument view into values is refused (`openSpreadItems`, S2).
-    let supplied <- openSpreadItems (layers - 1) value
+    -- AN EXPLICIT SPREAD READS THE LEVEL IT OPENS (issue #204): the positions of each opened
+    -- list are read in order (`forceLevel`, a pending list discovered) and supplied as values.
+    let (remaining, opened) <- peelSpreadLayers (forceLevel rec.demandNeedRecursive) (layers - 1) value
+    let supplied <- openSpreadItems remaining opened
     pure (spreadSupplyResult supplied)
 
   /-- THE KNOWN SLICE OF A SINGLE-STAR SPREAD OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit
@@ -12337,7 +12903,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     | none =>
       let (operand, layers) := peelSequenceSpreadLayers e 0
       let value <- rec.evalSequenceSpreadOperandValue operand ctx env
-      match <- openSupplySpread (layers - 1) value with
+      let (remaining, opened) <- peelSpreadLayers (forceLevel rec.demandNeedRecursive) (layers - 1) value
+      match <- openSupplySpread remaining opened with
       | .items supplied => pure (.items (countedTopLevelValues (spreadSupplyResult supplied)))
       | .view a => NeedPlan.viewSupply rec.evalSupplySpread rec.planRoute.classify a
 
@@ -12358,8 +12925,18 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let rec collect : List Expr -> List Result -> EvalM (List Result)
       | [], acc => pure acc.reverse
       | e :: rest, acc => do
-          let values <- rec.evalExplicitSequenceValueExprSlots e ctx env
-          collect rest (values.reverse ++ acc)
+          match e with
+          -- An explicit spread is formed during construction (its operand's level is read
+          -- now), and a written constant is its value: neither has a computation to defer.
+          | .sequenceSpread _ | .num _ | .stringLiteral _ | .boolLiteral _ | .emptySequence _ => do
+              let values <- rec.evalExplicitSequenceValueExprSlots e ctx env
+              collect rest (values.reverse ++ acc)
+          -- Every other written element is ONE DEFERRED position: the need cell of its supplied
+          -- computation in this environment (`supplyNeed`, as a call argument is supplied), read
+          -- when the position's value is first needed.
+          | _ => do
+              let cell <- supplyNeed e ctx env
+              collect rest (Result.deferred cell :: acc)
     let items <- collect elements []
     pure (Result.listValue items, 1)
 
@@ -12541,6 +13118,15 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     | [] => pure (Result.bool holds, 1)
     | link :: rest => do
         let next <- rec.eval link.operand ctx env
+        -- EVALUATOR EQUALITY COMPARES WHOLE VALUES (issue #204): `==` / `!=` materialize the left
+        -- operand, then the right one, before the comparison; an ordering link reads neither.
+        let (previous, next) <-
+          match link.op with
+          | .eq | .ne => do
+              let left <- materializeVia rec.demandNeedRecursive previous
+              let right <- materializeVia rec.demandNeedRecursive next
+              pure (left, right)
+          | _ => pure (previous, next)
         let linkHolds <- applyComparison link.op previousExpr link.operand previous next
         rec.evalComparisonLinksCounted link.operand next (holds && linkHolds) rest ctx env
 
@@ -12643,7 +13229,13 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           | .argView a =>
               selectViewWith (fun cell => Prod.fst <$> rec.demandNeedRecursive cell)
                 (rec.argumentViewCells a) (fun cell => Prod.fst <$> rec.demandNeedRecursive cell) cells
-          | _ => selectWith (fun cell => Prod.fst <$> rec.demandNeedRecursive cell) value cells
+          -- LAZY POSITIONS (issue #204): each selector is validated, its position found (a
+          -- pending list discovered up to it) and ONLY that position read, in written order.
+          | _ =>
+              selectPositionsWith (fun cell => Prod.fst <$> rec.demandNeedRecursive cell)
+                (fun n => do
+                  pure (<- discoveredPositions rec.demandNeedRecursive (some (n + 1)) value)[n]?)
+                (forcePosition rec.demandNeedRecursive) cells
         -- (4) SELECTION IS A VALUE BOUNDARY: the selected values are captured by
         -- ordinary normalization of the result grouping and re-counted.
         -- C#: the Index case of `EvalExpressionSpineCounted`.
@@ -12662,6 +13254,23 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     | .comparison first links =>
         withNestedMissingOutput (rec.evalComparisonCounted first links ctx env)
 
+
+/-- THE RUN VALUE (lazy collections, issue #204): the value a run returns for the root expression
+    `e`. The root's output is ASSEMBLED first — a root algorithm through the one zero-argument
+    demand funnel (`evalProgramOutput`, its rows left to right), any other expression as its
+    value — and only THEN materialized, while the run is still active (`materializeVia`): every
+    list position is read and every pending list discovered, within one value each position
+    completed before the next, left to right and depth first. So an output row that executes a
+    computation runs while the output is assembled, and an element of a list the output holds
+    runs afterwards (`L = [tick()]` with the rows `L, tick()` is `[2], 1`). ONE evaluator call,
+    so a public run is one root call (`KatLangArityLaws/PublicRunBridge.lean`).
+    C#: `Evaluator.MaterializeRunValue`. -/
+def EvalBody.evalRunValue (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  let value <-
+    match e with
+    | .algorithmExpr a => rec.evalProgramOutput (wireToCaller ctx a) ctx env
+    | _ => rec.eval e ctx env
+  materializeVia rec.demandNeedRecursive value
 
 /-- One condition-first `while` round and, on a true verdict, the next round (LOOP-06,
     `WhileRound.advance`): a false verdict finishes with the cells that entered the round (R1: zero
@@ -12732,7 +13341,7 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .demandSequenceBuiltinCallItemValue item ctx env => EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env
   | .bindSequenceBuiltinArguments b metadata args ctx env => EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env
   | .evalReduceCounted collection stepAlg start ctx env => EvalBody.evalReduceCounted rec collection stepAlg start ctx env
-  | .evalFilterCounted items predicateAlg ctx env => EvalBody.evalFilterCounted rec items predicateAlg ctx env
+  | .evalFilterCounted start items predicateAlg ctx env => EvalBody.evalFilterCounted rec start items predicateAlg ctx env
   | .evalMapCounted collection transformAlg ctx env => EvalBody.evalMapCounted rec collection transformAlg ctx env
   | .applyBuiltinCountedSequence b metadata args ctx env => EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env
   | .applyBuiltinCounted b args ctx env => EvalBody.applyBuiltinCounted rec b args ctx env
@@ -12752,6 +13361,7 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .argumentViewCells a => EvalBody.argumentViewCells rec a
   | .evalArgumentViewBuiltin b a => EvalBody.evalArgumentViewBuiltin rec b a
   | .evalSequenceSpreadOperandValue e ctx env => EvalBody.evalSequenceSpreadOperandValue rec e ctx env
+  | .evalRunValue e ctx env => EvalBody.evalRunValue rec e ctx env
   | .evalSequenceSpreadCounted e ctx env => EvalBody.evalSequenceSpreadCounted rec e ctx env
   | .evalSupplySpread e ctx env => EvalBody.evalSupplySpread rec e ctx env
   | .evalListLiteralCounted elements ctx env => EvalBody.evalListLiteralCounted rec elements ctx env
@@ -12945,8 +13555,8 @@ def bindSequenceBuiltinArguments (b : Builtin) (metadata : SequenceBuiltinMetada
 def evalReduceCounted (collection : List CountedResult) (stepAlg : Algorithm) (start : NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalReduceCounted collection stepAlg start ctx env)
 
-def evalFilterCounted (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  evalUnbounded (.evalFilterCounted items predicateAlg ctx env)
+def evalFilterCounted (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+  evalUnbounded (.evalFilterCounted start items predicateAlg ctx env)
 
 def evalMapCounted (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalMapCounted collection transformAlg ctx env)
@@ -13004,6 +13614,8 @@ def evalArgumentViewBuiltin (b : Builtin) (a : Nat) : EvalM CountedResult :=
 
 def evalSequenceSpreadOperandValue (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   evalUnbounded (.evalSequenceSpreadOperandValue e ctx env)
+def evalRunValue (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  evalUnbounded (.evalRunValue e ctx env)
 
 def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalSequenceSpreadCounted e ctx env)
@@ -14372,10 +14984,10 @@ def runResultM (e : Expr) : EvalM Result := do
       -- accepts an empty supply (a collecting-only host-built root) binds it
       -- through the shared demand funnel (`evalProgramOutput`).
       if Algorithm.acceptsZeroSuppliedArguments wired then
-        exportRunValue (<- evalProgramOutput wired ctx [])
+        exportRunValue (<- evalRunValue e ctx [])
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-  | _ => exportRunValue (<- eval e ctx [])
+  | _ => exportRunValue (<- evalRunValue e ctx [])
 
 def runResultWithState (e : Expr) : Except Error (Result × EvalState) :=
   runResultM e |>.run EvalState.empty

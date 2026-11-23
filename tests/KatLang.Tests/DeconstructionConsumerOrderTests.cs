@@ -76,8 +76,24 @@ public class DeconstructionConsumerOrderTests
             ["TARGET-CALLS"] = ("ok 14 n=1 | t(3)", 10, 40, 6, 4, 1),
             ["COLLECTOR"] = ("ok 9 n=1 | t(3)", 11, 50, 6, 7, 1),
             ["REENTRANT"] = ("ok S[3, 3] n=2 | tock#1,tock#2,tock#3,tock#4,tock#5", 21, 77, 10, 12, 5),
-            ["MISMATCH"] = ("err ArityMismatch | t(3)", 6, 30, 6, 4, 1),
-            ["MISMATCH-AFTER-READ"] = ("err ArityMismatch | t(3)", 8, 34, 6, 4, 1),
+            // The failing bind is reached from a `map` callback, which runs when the mapped position is
+            // READ (lazy collections, issue #204): the mapped list's own position is reserved (one item)
+            // and the selection has evaluated its selector (three checkpoints) before the failure,
+            // where the eager `map` failed first (LazyCollectionShift).
+            ["MISMATCH"] = ("err ArityMismatch | t(3)", 6, 33, 6, 5, 1),
+            ["MISMATCH-AFTER-READ"] = ("err ArityMismatch | t(3)", 8, 37, 6, 5, 1),
+        };
+
+    /// <summary>
+    /// Work that precedes a failure since lists are evaluated on demand (issue #204), beyond the
+    /// audit snapshot: checkpoints and materialized items. Only the two runs that FAIL inside a
+    /// <c>map</c> callback have any — a completing run does the same work in a different order.
+    /// </summary>
+    private static readonly Dictionary<string, (long Checkpoints, long Items)> LazyCollectionShift =
+        new(StringComparer.Ordinal)
+        {
+            ["MISMATCH"] = (3, 1),
+            ["MISMATCH-AFTER-READ"] = (3, 1),
         };
 
     /// <summary>
@@ -173,13 +189,14 @@ public class DeconstructionConsumerOrderTests
         foreach (var (id, after) in Expected)
         {
             var before = AuditSnapshot[id];
+            var shift = LazyCollectionShift.GetValueOrDefault(id);
             var eliminated = before.Binds - after.Binds;
             Assert.True(eliminated >= 0, id);
             if (eliminated > 0)
                 reduced.Add(id);
             Assert.Equal(eliminated, before.Steps - after.Steps);
-            Assert.Equal(eliminated, before.Checkpoints - after.Checkpoints);
-            Assert.Equal(id == "COLLECTOR" ? 2 : 0, before.Items - after.Items);
+            Assert.Equal(eliminated, before.Checkpoints - (after.Checkpoints - shift.Checkpoints));
+            Assert.Equal(id == "COLLECTOR" ? 2 : 0, before.Items - (after.Items - shift.Items));
         }
 
         Assert.Equal(

@@ -263,7 +263,9 @@ public class InlineAliasValueDemandLawTests
     [InlineData(Inc + "K(z) = count({ Inc })\nK(1)", "while evaluating call to K: while evaluating call to count: ")]
     [InlineData(Inc + "K(z) = sum({ Inc })\nK(1)", "while evaluating call to K: while evaluating call to sum: ")]
     [InlineData(Inc + "K(z) = { Inc } + 1\nK(1)", "while evaluating call to K: ")]
-    [InlineData(Inc + "K(z) = [{ Inc }]\nK(1)", "while evaluating call to K: ")]
+    // A list element is read when the run reads the list `K` returned (lazy collections, issue
+    // #204): the same report at the same reference, after the call to `K` has ended.
+    [InlineData(Inc + "K(z) = [{ Inc }]\nK(1)", "")]
     [InlineData(Inc + "K(z) = if(true, { Inc }, 0)\nK(1)", "while evaluating call to K: while evaluating call to if: ")]
     [InlineData(Inc + "K(z) = { Inc }.string\nK(1)", "while evaluating call to K: while evaluating dotCall .string of {...}: ")]
     [InlineData(Inc + "K(z) = { Inc }.count\nK(1)", "while evaluating call to K: while evaluating dotCall .count of {...}: ")]

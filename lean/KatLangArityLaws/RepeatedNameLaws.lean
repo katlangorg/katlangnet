@@ -79,6 +79,8 @@ mutual
     | .listValue xs => by simp only [Result.beq]; exact result_beqList_refl xs
     | .callRef _ => by simp [Result.beq]
     | .argView _ => by simp [Result.beq]
+    | .deferred _ => by simp [Result.beq]
+    | .pendingList _ => by simp [Result.beq]
 
   theorem result_beqList_refl : ∀ xs : List Result, Result.beqList xs xs = true
     | [] => by simp [Result.beqList]
@@ -93,6 +95,8 @@ mutual
     | .bool x, b, h => by cases b <;> simp_all [Result.beq]
     | .callRef x, b, h => by cases b <;> simp_all [Result.beq]
     | .argView x, b, h => by cases b <;> simp_all [Result.beq]
+    | .deferred x, b, h => by cases b <;> simp_all [Result.beq]
+    | .pendingList x, b, h => by cases b <;> simp_all [Result.beq]
     | .sequenceValue xs, b, h => by
         cases b with
         | sequenceValue ys =>
@@ -938,6 +942,9 @@ structure Stable (k : NeedCapabilities EvalM) (Inv : EvalState → Prop)
     (obs : Nat → CountedResult × Option Algorithm) (cells : List Nat) : Prop where
   value : ∀ a ∈ cells, ∀ s, Inv s → ∃ t, runEval (k.value a) s = (.ok (obs a).1, t) ∧ Inv t
   callable : ∀ a ∈ cells, ∀ s, Inv s → ∃ t, runEval (k.callable a) s = (.ok (obs a).2, t) ∧ Inv t
+  /-- The WHOLE-VALUE read repeated-name agreement compares (issue #204) returns the same fixed
+      observation: a stable contribution's value is concrete, so materializing it is the value. -/
+  whole : ∀ a ∈ cells, ∀ s, Inv s → ∃ t, runEval (k.whole a) s = (.ok (obs a).1, t) ∧ Inv t
 
 /-- The contribution a stable cell makes. -/
 def contrib (obs : Nat → CountedResult × Option Algorithm) (a : Nat) : Contribution :=
@@ -977,7 +984,7 @@ theorem checkAnchor_production (k : NeedCapabilities EvalM) (Inv : EvalState →
   | [], s, _, hs => ⟨s, hs, rfl⟩
   | cell :: rest, s, hc, hs => by
     rw [checkAnchor_run k name anchor family cell rest s]
-    obtain ⟨t1, h1, i1⟩ := hk.value cell (hc cell List.mem_cons_self) s hs
+    obtain ⟨t1, h1, i1⟩ := hk.whole cell (hc cell List.mem_cons_self) s hs
     simp only [h1]
     by_cases h : ((obs cell).1 == anchor) = true
     · simp only [h, ↓reduceIte, checkAnchorPure]
@@ -1098,7 +1105,7 @@ theorem name_step_production (k : NeedCapabilities EvalM) (Inv : EvalState → P
           cases checkAnchorPure obs name anchor family [address] <;> rfl
     | none =>
       simp only
-      obtain ⟨t2, h2, i2⟩ := hk.value address ha t1 i1
+      obtain ⟨t2, h2, i2⟩ := hk.whole address ha t1 i1
       rw [h2]
       simp only
       cases hanc : (bound.groupOf name).anchor with

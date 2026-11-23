@@ -79,7 +79,7 @@ internal sealed class ChoiceTreeChooser(IReadOnlyList<int> prefix) : SemanticCho
 /// <summary>
 /// Exhaustive enumeration of a FINITE recipe (<see cref="SemanticCorpus.FiniteRecipes"/>): every
 /// choice sequence of its tree in depth-first order, each generated once, deduplicated by base
-/// source. Each distinct program is identified by <c>sem2b/v1/&lt;recipe&gt;/all/&lt;choices&gt;</c>
+/// source. Each distinct program is identified by <c>sem2b/v2/&lt;recipe&gt;/all/&lt;choices&gt;</c>
 /// (<see cref="SemanticCorpus.ExhaustiveLocalId"/>), which replay, export and reduction rebuild from
 /// the id alone. Enumerating GENERATES only; nothing is evaluated.
 /// </summary>

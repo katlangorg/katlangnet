@@ -259,7 +259,13 @@ theorem suspendedValue_coh (ev : Expr → EvalCtx → ValEnv → EvalM CountedRe
     ∀ sp : NeedSuspension,
       Coh ((NeedDemand.suspendedValue ev route recur a sp).runState s)
         ((NeedDemand.suspendedValue ev route recur' a sp).runState s)
-  | .ready _ => coh_refl _
+  -- A Ready cell holding a deferred list item IS that position (issue #204): its VALUE is the
+  -- recursive demand of the position's cell, coherent by hypothesis.
+  | .ready value => by
+      obtain ⟨v, count⟩ := value
+      cases v
+      case deferred cell => exact h cell s
+      all_goals exact coh_refl _
   | .expression _ _ _ => coh_refl _
   -- A deferred application runs the route's dispatch only: the recursive demand is not read.
   | .applied _ _ _ _ _ => coh_refl _
@@ -379,11 +385,11 @@ theorem fuelDemand_succ_complete (n : Nat) (a : Nat) (s : EvalState)
 /-- **The recursive VALUE edge is a simulation at every fuel**, under the production exhaustion
     convention: by `step_sim` at each level. -/
 theorem fuelDemand_sim : ∀ (n : Nat) (t : Table) (b1 b2 : Nat), Addr t b1 b2 →
-    Sim HeapCorr (fun _ v w => v = w) t (fuelDemand n b1) (fuelDemand n b2)
+    Sim HeapCorr ValCorr t (fuelDemand n b1) (fuelDemand n b2)
   | 0, t, _, _, _ => fun _ _ hR => ⟨t, extends_refl t, hR, rfl⟩
   | Nat.succ n, t, b1, b2, hb => by
       intro s1 s2 hR
-      have hsim : RunCorr HeapCorr (fun _ v w => v = w) t ((resetShell n b1).runState s1)
+      have hsim : RunCorr HeapCorr ValCorr t ((resetShell n b1).runState s1)
           ((resetShell n b2).runState s2) :=
         step_sim (fun a => (evalFuel n).evalSuppliedAt a) (evalFuel n).planRoute (fuelDemand n)
           (fun t' c1 c2 hc => fuelDemand_sim n t' c1 c2 hc) t b1 b2 hb s1 s2 hR
@@ -449,7 +455,7 @@ theorem production_demand_eventually (a : Nat) (s : EvalState) :
     corresponding cells — completed, evaluating, Ready and collector cells alike, a collector's
     slice demanded through the same edge. -/
 theorem production_recursive_edge_sim (t : Table) (b1 b2 : Nat) (hb : Addr t b1 b2) :
-    Sim HeapCorr (fun _ v w => v = w) t (demandNeedRecursive b1) (demandNeedRecursive b2) := by
+    Sim HeapCorr ValCorr t (demandNeedRecursive b1) (demandNeedRecursive b2) := by
   intro s1 s2 hR
   obtain ⟨m1, h1⟩ := production_demand_eventually b1 s1
   obtain ⟨m2, h2⟩ := production_demand_eventually b2 s2
@@ -474,20 +480,21 @@ theorem binding_capabilities_correspond :
   heap_corr_capabilities bindingChannels (fun a => evalSuppliedAt a) productionPlanRoute
     demandNeedRecursive rfl production_recursive_edge_sim binding_callable_sim
 
-/-- LEVEL 2 AT PRODUCTION (R6): two Ready supplies of the same counted arguments, formed from ANY two
-    states and bound by the ONE production binder at the evaluator's own binder channels,
-    correspond — with NO premise on the channels. -/
+/-- LEVEL 2 AT PRODUCTION (R6): two Ready supplies of the same CONCRETE counted arguments (issue #204:
+    a lazy value names cells of its own heap), formed from ANY two states and bound by the ONE
+    production binder at the evaluator's own binder channels, correspond — with NO premise on the
+    channels. -/
 theorem production_ready_supplies_bind_correspondingly (args : List CountedResult)
-    (ps : List NeedPattern) (family : Bool) (s1 s2 : EvalState) :
+    (hargs : ∀ a ∈ args, a.1.isLazy = false) (ps : List NeedPattern) (family : Bool) (s1 s2 : EvalState) :
     RunCorr HeapCorr OptEnvCorr []
       (runEval (do let cells ← args.mapM readyNeed; bindNeedPatterns bindingChannels ps cells family) s1)
       (runEval (do let cells ← args.mapM readyNeed; bindNeedPatterns bindingChannels ps cells family) s2) :=
   ready_supplies_bind_correspondingly bindingChannels (fun a => evalSuppliedAt a) productionPlanRoute
-    demandNeedRecursive rfl production_recursive_edge_sim binding_callable_sim args ps family s1 s2
+    demandNeedRecursive rfl production_recursive_edge_sim binding_callable_sim args hargs ps family s1 s2
 
 /-- The same at the public channels `⟨demandNeed, projectNeedCallable⟩`. -/
 theorem public_ready_supplies_bind_correspondingly (args : List CountedResult)
-    (ps : List NeedPattern) (family : Bool) (s1 s2 : EvalState) :
+    (hargs : ∀ a ∈ args, a.1.isLazy = false) (ps : List NeedPattern) (family : Bool) (s1 s2 : EvalState) :
     RunCorr HeapCorr OptEnvCorr []
       (runEval (do let cells ← args.mapM readyNeed
                    bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ ps cells family) s1)
@@ -495,14 +502,15 @@ theorem public_ready_supplies_bind_correspondingly (args : List CountedResult)
                    bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩ ps cells family) s2) :=
   ready_supplies_bind_correspondingly ⟨demandNeed, projectNeedCallable⟩ (fun a => evalSuppliedAt a)
     productionPlanRoute demandNeedRecursive public_channels_value production_recursive_edge_sim
-    production_callable_sim args ps family s1 s2
+    production_callable_sim args hargs ps family s1 s2
 
 /-- The clause-family route at production: the dispatcher at the evaluator's binder channels, the
     activated body still an explicit continuation premise (`hact`), no premise on the channels. -/
 theorem production_ready_supplies_select_correspondingly {γ : Type}
     (Q : Table → γ → γ → Prop) (activate : CondBranch → NeedEnv → EvalM γ)
     (hact : ∀ t b e1 e2, EnvCorr t e1 e2 → Sim HeapCorr Q t (activate b e1) (activate b e2))
-    (callee : Algorithm) (calleeName : String) (args : List CountedResult) (s1 s2 : EvalState) :
+    (callee : Algorithm) (calleeName : String) (args : List CountedResult)
+    (hargs : ∀ a ∈ args, a.1.isLazy = false) (s1 s2 : EvalState) :
     RunCorr HeapCorr Q []
       (runEval (do let cells ← args.mapM readyNeed
                    NeedBinder.selectFamily bindingChannels.capabilities callee cells calleeName activate) s1)
@@ -510,6 +518,6 @@ theorem production_ready_supplies_select_correspondingly {γ : Type}
                    NeedBinder.selectFamily bindingChannels.capabilities callee cells calleeName activate) s2) :=
   ready_supplies_select_correspondingly bindingChannels (fun a => evalSuppliedAt a) productionPlanRoute
     demandNeedRecursive rfl production_recursive_edge_sim binding_callable_sim Q activate hact callee
-    calleeName args s1 s2
+    calleeName args hargs s1 s2
 
 end KatLang.SupplyCorrespondence.Production

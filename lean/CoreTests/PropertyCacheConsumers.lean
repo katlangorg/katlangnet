@@ -661,20 +661,22 @@ def d1CALLS : Expr :=
 -- D1-PRE (control): B first read from F's own body.
 #guard d1Run d1PRE "V" == some (.atom 9, 1, 2)
 -- D1-OPEN / D1-HELP / D1-LOOP: the opened spelling, a helper call and a `while` step share it.
-#guard d1Run d1OPEN "V" == some (.atom 20, 1, 3)
+-- (Lazy collections, issue #204: `[1, 2].map{ … }[0]` reads ONE position, so the callback opens one
+-- binding context where the eager map opened two — in every `[1, 2].map{…}[0]` program below.)
+#guard d1Run d1OPEN "V" == some (.atom 20, 1, 2)
 #guard d1Run d1HELP "V" == some (.atom 20, 1, 2)
 #guard d1Run d1LOOP "V" == some (.atom 19, 1, 3)
 -- D1-DECON: one shared right-hand side for the callback's B and the structural B.a, B.b.
-#guard d1Run d1DECON "$deconstruct$0" == some (.atom 15, 1, 5)
+#guard d1Run d1DECON "$deconstruct$0" == some (.atom 15, 1, 4)
 -- D1-ANON: the declaring owner is itself an anonymous callback.
-#guard d1Run d1ANON "V" == some (.listValue [.atom 20], 1, 3)
+#guard d1Run d1ANON "V" == some (.listValue [.atom 20], 1, 2)
 -- D1-3X: B in callback 1, B.C in callback 2, B.C.V from F: one entry (formerly three).
 #guard d1Run d1X3 "V" == some (.atom 9, 1, 3)
 #guard d1Run d1X3 "C" == some (.atom 9, 1, 3)
 -- D1-PUB: `B.V()` establishes the entry (CACHE-PUB-1); the callback's B reuses it.
 #guard d1Run d1PUB "V" == some (.atom 7, 1, 3)
 -- D1-ROOT (control): no enclosing activation; V is exported.
-#guard d1Run d1ROOT "V" == some (.atom 16, 1, 2)
+#guard d1Run d1ROOT "V" == some (.atom 16, 1, 1)
 -- Two activations of F with EQUAL arguments stay two entries.
 #guard d1Run d1TWO "V" == some (.sequenceValue [.atom 6, .atom 6], 2, 4)
 -- Explicit calls stay fresh: `B(), B()` are two contexts of their own, F's reads a third entry.
@@ -786,7 +788,7 @@ def ccBCTRL : Expr :=
 #guard d1Run ccCHELP "V" == some (.atom 20, 1, 3)
 #guard d1Run ccCLOOP "V" == some (.atom 19, 1, 4)
 -- CDECON: one shared right-hand side for the callback's Only and the structural Only.a, Only.b.
-#guard d1Run ccCDECON "$deconstruct$0" == some (.atom 15, 1, 6)
+#guard d1Run ccCDECON "$deconstruct$0" == some (.atom 15, 1, 5)
 -- CXS: the bare read still binds the EXACT empty list; V is shared by every route.
 #guard d1Run ccCXS "V" == some (.sequenceValue [.atom 3, .sequenceValue [.atom 3, .listValue []], .atom 3], 1, 3)
 -- CSHADOW: the collector shadows F's own `xs` (9) inside Only.
@@ -800,7 +802,7 @@ def ccBCTRL : Expr :=
 #guard d1Run ccCPUB "V" == some (.atom 15, 3, 3)
 #guard d1Run ccCPUB "Only" == some (.atom 15, 1, 3)
 -- CROOT (control): no enclosing activation; V is exported.
-#guard d1Run ccCROOT "V" == some (.atom 16, 1, 3)
+#guard d1Run ccCROOT "V" == some (.atom 16, 1, 2)
 
 /-! The VALUE witnesses of the D1 section, with the owner `Only(*xs)` collecting: V reads an unowned
     `d` dynamically from its consumer (a hand-built evaluator witness, not a surface example). -/

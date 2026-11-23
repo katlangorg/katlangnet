@@ -623,7 +623,7 @@ internal static class SemanticReducer
 ///
 /// <para><b>Artifacts.</b> A reduced case is written as an ordinary <c>kl-sem2b-case</c> v1 descriptor
 /// (exact sources, constructed expectation, the run's result) under the reserved id prefix
-/// <c>sem2b/v1/reduced/</c>. No recipe ever built such an id, so the v1 reader's acceptance is
+/// <c>sem2b/v2/reduced/</c>. No recipe ever built such an id, so the v1 reader's acceptance is
 /// unchanged: it parses the descriptor, <c>--exact-source</c> replays it, and recipe mode REFUSES it
 /// with an explicit message instead of reporting it as a recipe case. Beside it, a separately
 /// versioned <c>kl-sem2b-reduction</c> v1 record keeps the original id, both choice sequences, the
@@ -660,7 +660,7 @@ internal static class SemanticReduction
             $"{SemanticRecipe.GeneratorId} v{SemanticRecipe.RecipeVersion.ToString(CultureInfo.InvariantCulture)} recipe case; " +
             "replay its recorded sources with --exact-source (its kl-sem2b-reduction record names the original case).";
 
-    /// <summary><c>sem2b/v1/reduced/&lt;original local id&gt;/&lt;16 hex of the reduced sequence&gt;</c>.</summary>
+    /// <summary><c>sem2b/v2/reduced/&lt;original local id&gt;/&lt;16 hex of the reduced sequence&gt;</c>.</summary>
     internal static string ReducedCaseId(string originalCaseId, ImmutableArray<SemanticChoice> reducedChoices)
     {
         var local = originalCaseId.StartsWith(SemanticRecipe.CasePrefix, StringComparison.Ordinal)

@@ -8,6 +8,7 @@ internal static class SequencePipelineOptimizer
     private const string SourceExecutionNotExecuted = "not executed";
     private const string SourceExecutionEagerCollection = "eager source collection";
     private const string SourceExecutionDirectRange = "direct range iteration";
+    private const string SourceExecutionLazyPositions = "lazy source positions";
 
     // Canonical builtin spellings for the hot recognizer, cached once from the ONE
     // authoritative name owner (BuiltinRegistry -> BuiltinDescriptor.Name — the same
@@ -732,6 +733,11 @@ internal static class SequencePipelineOptimizer
     {
         diagnostics?.RecordFilterCountFusionHit();
 
+        // A receiver evaluated on demand (lazy collections, issue #204) is read position by
+        // position, and nothing is known about its cardinality before it is read.
+        if (plan.SourcePlan is FilterCountSourcePlan.Generic { SourceItems: Evaluator.LazyIterationItems lazySource } lazyPlan)
+            return ExecuteLazyFilterCount(plan, lazyPlan, lazySource.Positions, ctx, valEnv, diagnostics);
+
         var emptySource = plan.SourcePlan switch
         {
             FilterCountSourcePlan.Generic generic => generic.SourceItems.Count == 0,
@@ -752,6 +758,84 @@ internal static class SequencePipelineOptimizer
             FilterCountSourcePlan.Generic generic =>
                 ExecuteGenericFilterCount(plan, generic, predicate, ctx, valEnv, diagnostics),
         };
+    }
+
+    /// <summary>
+    /// The fused count over a receiver EVALUATED ON DEMAND (lazy collections, issue #204): the
+    /// generic <c>filter</c> stage's own scan, without its verdict cells. Each source position is
+    /// found and read just before its predicate runs; the predicate is projected when the first
+    /// position exists (an empty receiver projects nothing); the kept count is reserved after the
+    /// last predicate, as the completed scan reserves it.
+    /// </summary>
+    private static EvalResult<Evaluator.CountedResult> ExecuteLazyFilterCount(
+        FilterCountPipelinePlan plan,
+        FilterCountSourcePlan.Generic sourcePlan,
+        Evaluator.LazyList positions,
+        Evaluator.EvalCtx ctx,
+        ValEnv valEnv,
+        SequencePipelineDiagnostics? diagnostics)
+    {
+        var diagnosticKey = diagnostics?.RecordPipelineDiagnostic(
+            plan.Diagnostics!,
+            optimized: true,
+            fallbackReason: null,
+            sourceExecution: SourceExecutionLazyPositions,
+            sourceExecutionFallbackReason: sourcePlan.DirectRangeFallbackReason);
+
+        Algorithm? predicate = null;
+        long predicateCalls = 0;
+        long keptCount = 0;
+        var index = 0;
+        EvalError? failure = null;
+        for (; ; index++)
+        {
+            var itemR = Evaluator.ReadFilterSourcePosition(positions, index);
+            if (itemR.IsError)
+            {
+                failure = itemR.Error;
+                break;
+            }
+
+            if (itemR.Value is not { } item)
+                break;
+
+            if (predicate is null)
+            {
+                var projected = Evaluator.PrepareFilterPredicateArgument(plan.Predicate, ctx, valEnv);
+                if (projected.IsError)
+                {
+                    failure = projected.Error;
+                    break;
+                }
+
+                predicate = projected.Value;
+            }
+
+            var predicateR = Evaluator.EvalFilterPredicateTruth(predicate, item, index, ctx, valEnv);
+            predicateCalls++;
+            if (predicateR.IsError)
+            {
+                failure = predicateR.Error;
+                break;
+            }
+
+            if (predicateR.Value)
+                keptCount++;
+        }
+
+        failure ??= ReserveKeptItems(ctx, keptCount);
+        diagnostics?.RecordFilterCountPredicateCalls(predicateCalls);
+        diagnostics?.RecordPipelineExecution(
+            diagnosticKey,
+            index,
+            predicateCalls,
+            resultCount: failure is null ? keptCount : null,
+            avoidedFilteredResultMaterializationCount: keptCount,
+            avoidedSourceMaterializationCount: 0);
+        diagnostics?.RecordAvoidedFilteredResultMaterialization(keptCount);
+        return failure is not null
+            ? failure
+            : EvalResult<Evaluator.CountedResult>.Ok(new Evaluator.CountedResult(new Result.Atom(keptCount), 1));
     }
 
     private static EvalResult<Evaluator.CountedResult> ExecuteGenericFilterCount(

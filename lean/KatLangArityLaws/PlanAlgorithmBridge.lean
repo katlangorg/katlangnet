@@ -1174,6 +1174,9 @@ theorem plan_tail_run (a k rc : Nat) (shape : NeedPlan.CallShape) (msg : String)
   | atom n => rfl
   | str s => rfl
   | bool b => rfl
+  -- Lazy collections (issue #204): neither lazy form is a call reference.
+  | deferred c => rfl
+  | pendingList cs => rfl
 
 /-! ## The bridge (§ 6.3) -/
 

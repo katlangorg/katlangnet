@@ -31,7 +31,8 @@ open KatLang
 /-- Neutral raw-structure encoding shared with the C# harness:
     atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
     sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`,
-    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both). -/
+    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both),
+    deferred list item and pending list -> `Deferred` (never a run result: a run value is materialized). -/
 partial def neutral : Result -> String
   | .atom n => toString n
   | .str s => "'" ++ s ++ "'"
@@ -40,6 +41,8 @@ partial def neutral : Result -> String
   | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
   | .callRef _ => "CallReference"
   | .argView _ => "CallReference"
+  | .deferred _ => "Deferred"
+  | .pendingList _ => "Deferred"
 
 /-- Innermost-error category shared with the C# harness
     (`SemanticExplorerHarness.ErrorCategory`). -/
@@ -130,8 +133,11 @@ def runCountedM (e : Expr) : EvalM CountedResult := do
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | _ => evalCounted e ctx []
-  let _ <- exportRunValue counted.fst
-  pure counted
+  -- A run value is materialized before it leaves the run (lazy collections, issue #204),
+  -- exactly as `runResultM` materializes it; the root emitted count is kept.
+  let value <- materializeVia demandNeedRecursive counted.fst
+  let _ <- exportRunValue value
+  pure (value, counted.snd)
 
 /-- Neutral observation string shared verbatim with the C# harness.
     Also cross-checks Lean's plain (`runResult`) and counted evaluators on
@@ -13593,9 +13599,8 @@ def case_special__huntGenFaultsAF0009 : Expr :=
 -- special__huntGenFaultsAF0010: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n map([1, 2], { x * 0 + Box.Nope }) + Id(4)
 def case_special__huntGenFaultsAF0010 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.binary .add (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), (.algorithmExpr (alg ["x", "Nope"] [] [] [(.binary .add (.binary .mul (.param "x") (.num 0)) (.dotMember (.resolve "Box") "Nope" (.param "Nope") none))]))]) (.call (.resolve "Id") [.num 4]))])
-#guard obs case_special__huntGenFaultsAF0010 == "err arity"
+#guard obs case_special__huntGenFaultsAF0010 == "err type"
 
-#guard errorObs case_special__huntGenFaultsAF0010 == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__huntGenFaultsAF0011: Bad = 1 / 0 \n Inc(x) = x + 1 \n Id(v) = v \n Two(a, b) = a * 10 + b \n Box = { public K = 5 } \n Use(a, b) = a + b \n Fst(a, b) = a \n Snd(a, b) = b \n Coll(*xs) = xs \n Apply(f, v) = f(v) \n Step(n, acc) = n + 1, acc + n, n < 3 \n Fst(min([]), Inc)
 def case_special__huntGenFaultsAF0011 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Bad" (alg [] [] [] [(.binary .div (.num 1) (.num 0))]), privateProp "Box" (alg [] [] [publicProp "K" (alg [] [] [] [.num 5])] []), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Id" (alg ["v"] [] [] [.param "v"]), privateProp "Two" (alg ["a", "b"] [] [] [(.binary .add (.binary .mul (.param "a") (.num 10)) (.param "b"))]), privateProp "Use" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Fst" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Snd" (alg ["a", "b"] [] [] [.param "b"]), privateProp "Coll" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"]), privateProp "Apply" (alg ["f", "v"] [] [] [(.call (.param "f") [.param "v"])]), privateProp "Step" (alg ["n", "acc"] [] [] [(.binary .add (.param "n") (.num 1)), (.binary .add (.param "acc") (.param "n")), (.comparison (.param "n") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "Fst") [(.call (.resolve "min") [(.listLiteral [])]), .resolve "Inc"])])

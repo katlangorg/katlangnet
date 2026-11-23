@@ -56,13 +56,19 @@ namespace KatLang.AddressInvariant
 
 /-! ## Addresses inside results -/
 
-/-- `Mentions r a`: the result `r` carries the need address `a` (a call reference or an argument
-    view, at any depth of sequence and list values). -/
+/-- `Mentions r a`: the result `r` carries the need address `a` (a call reference, an argument
+    view, a deferred list item or a pending list's candidate cell, at any depth of sequence and
+    list values). -/
 inductive Mentions : Result → Nat → Prop
   | callRef (a : Nat) : Mentions (.callRef a) a
   | argView (a : Nat) : Mentions (.argView a) a
   | seq {xs : List Result} {x : Result} {a : Nat} : x ∈ xs → Mentions x a → Mentions (.sequenceValue xs) a
   | list {xs : List Result} {x : Result} {a : Nat} : x ∈ xs → Mentions x a → Mentions (.listValue xs) a
+  -- Lazy collections (issue #204): a deferred list item carries its position cell, and a pending
+  -- list the position cell and the verdict cell of every candidate.
+  | deferred (a : Nat) : Mentions (.deferred a) a
+  | pendingPosition {cs : List (Nat × Nat)} {c : Nat × Nat} : c ∈ cs → Mentions (.pendingList cs) c.1
+  | pendingVerdict {cs : List (Nat × Nat)} {c : Nat × Nat} : c ∈ cs → Mentions (.pendingList cs) c.2
 
 /-- Every need address a result carries is inside `h`. -/
 def RV (h : Array NeedCell) (r : Result) : Prop := ∀ a, Mentions r a → a < h.size
@@ -109,10 +115,15 @@ def SuffixV (h : Array NeedCell) : PreparedSequenceBuiltinSuffixArg → Prop
 def SuffixLV (h : Array NeedCell) (xs : List PreparedSequenceBuiltinSuffixArg) : Prop :=
   ∀ x ∈ xs, SuffixV h x
 
+/-- The candidates of a pending list (lazy collections, issue #204): both cells of each inside
+    the heap. -/
+def CandV (h : Array NeedCell) (cs : List (Nat × Nat)) : Prop := ∀ c ∈ cs, c.1 < h.size ∧ c.2 < h.size
+
 /-- Bound collection-builtin arguments. -/
 def BoundV (h : Array NeedCell) (b : BoundSequenceBuiltinArguments) : Prop :=
   RLV h b.preparedInput.items ∧ CRLV h b.iterationItems ∧ SuffixLV h b.suffixArgs ∧ OptAddr h b.view? ∧
-    (∀ slice, b.slice? = some slice → ValidAddresses h slice)
+    (∀ slice, b.slice? = some slice → ValidAddresses h slice) ∧
+    (∀ candidates, b.pending? = some candidates → CandV h candidates)
 
 /-- A computed spread's supply contribution: Ready items' payloads, transported cells. -/
 def SupplyV (h : Array NeedCell) : SpreadSupply → Prop
@@ -216,9 +227,11 @@ theorem SuffixV.mono {x : PreparedSequenceBuiltinSuffixArg} (v : SuffixV h x) : 
   | wholeNumber _ => trivial
 theorem SuffixLV.mono {xs : List PreparedSequenceBuiltinSuffixArg} (v : SuffixLV h xs) : SuffixLV h' xs :=
   fun x m => SuffixV.mono g (v x m)
+theorem CandV.mono {cs : List (Nat × Nat)} (v : CandV h cs) : CandV h' cs :=
+  fun c m => ⟨Nat.lt_of_lt_of_le (v c m).1 g, Nat.lt_of_lt_of_le (v c m).2 g⟩
 theorem BoundV.mono {b : BoundSequenceBuiltinArguments} (v : BoundV h b) : BoundV h' b :=
   ⟨RLV.mono g v.1, CRLV.mono g v.2.1, SuffixLV.mono g v.2.2.1, OptAddr.mono g v.2.2.2.1,
-    fun s e => ValidAddresses.mono g (v.2.2.2.2 s e)⟩
+    fun s e => ValidAddresses.mono g (v.2.2.2.2.1 s e), fun c e => CandV.mono g (v.2.2.2.2.2 c e)⟩
 theorem SupplyV.mono {x : SpreadSupply} (v : SupplyV h x) : SupplyV h' x := by
   cases x with
   | items _ => exact RLV.mono g v
@@ -280,6 +293,22 @@ theorem RV.callRef_iff {a : Nat} : RV h (.callRef a) ↔ a < h.size :=
 
 theorem RV.argView_iff {a : Nat} : RV h (.argView a) ↔ a < h.size :=
   ⟨fun v => v a (.argView a), fun v b m => by cases m; exact v⟩
+
+theorem RV.deferred_iff {a : Nat} : RV h (.deferred a) ↔ a < h.size :=
+  ⟨fun v => v a (.deferred a), fun v b m => by cases m; exact v⟩
+
+/-- A pending list is valid exactly when both cells of every candidate are inside the heap. -/
+theorem RV.pendingList_iff {cs : List (Nat × Nat)} :
+    RV h (.pendingList cs) ↔ ∀ c ∈ cs, c.1 < h.size ∧ c.2 < h.size := by
+  constructor
+  · intro v c mc; exact ⟨v _ (.pendingPosition mc), v _ (.pendingVerdict mc)⟩
+  · intro v a m; cases m with
+    | pendingPosition mc => exact (v _ mc).1
+    | pendingVerdict mc => exact (v _ mc).2
+
+theorem RV.deferred {a : Nat} (v : a < h.size) : RV h (.deferred a) := RV.deferred_iff.2 v
+theorem RV.pendingList {cs : List (Nat × Nat)} (v : ∀ c ∈ cs, c.1 < h.size ∧ c.2 < h.size) :
+    RV h (.pendingList cs) := RV.pendingList_iff.2 v
 
 theorem RV.seq {xs : List Result} (v : RLV h xs) : RV h (.sequenceValue xs) := RV.seq_iff.2 v
 theorem RV.list {xs : List Result} (v : RLV h xs) : RV h (.listValue xs) := RV.list_iff.2 v
@@ -779,7 +808,7 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .bindSequenceBuiltinArguments _ _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .evalReduceCounted collection _ start ctx env => fun h =>
       CRLV h collection ∧ start.1 < h.size ∧ ValidCtx h ctx ∧ VEV h env
-  | .evalFilterCounted items _ ctx env => fun h => CRLV h items ∧ ValidCtx h ctx ∧ VEV h env
+  | .evalFilterCounted _ items _ ctx env => fun h => CRLV h items ∧ ValidCtx h ctx ∧ VEV h env
   | .evalMapCounted collection _ ctx env => fun h => CRLV h collection ∧ ValidCtx h ctx ∧ VEV h env
   | .applyBuiltinCountedSequence _ _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
   | .applyBuiltinCounted _ args ctx env => fun h => RALV h args ∧ ValidCtx h ctx ∧ VEV h env
@@ -799,6 +828,7 @@ def CallPre : EvalCall → Array NeedCell → Prop
   | .argumentViewCells _ => fun _ => True
   | .evalArgumentViewBuiltin _ _ => fun _ => True
   | .evalSequenceSpreadOperandValue _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
+  | .evalRunValue _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalSequenceSpreadCounted _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalSupplySpread _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
   | .evalListLiteralCounted _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
@@ -883,6 +913,7 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .argumentViewCells .., cells, h => ValidSourced h cells
   | .evalArgumentViewBuiltin .., r, h => CRV h r
   | .evalSequenceSpreadOperandValue .., r, h => RV h r
+  | .evalRunValue .., r, h => RV h r
   | .evalSequenceSpreadCounted .., r, h => CRV h r
   | .evalSupplySpread .., x, h => SupplyV h x
   | .evalListLiteralCounted .., r, h => CRV h r

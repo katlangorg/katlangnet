@@ -31,6 +31,9 @@ theorem RV.normalize : ∀ {r : Result}, RV h r → RV h r.normalize
   | .bool _, v => by simpa [Result.normalize] using v
   | .callRef _, v => by simpa [Result.normalize] using v
   | .argView _, v => by simpa [Result.normalize] using v
+  -- Lazy collections (issue #204): a deferred item and a pending list are their own normal form.
+  | .deferred _, v => by simpa [Result.normalize] using v
+  | .pendingList _, v => by simpa [Result.normalize] using v
   | .sequenceValue rs, v => by
     have hs : RLV h (rs.map Result.normalize) := by
       intro x m
@@ -72,6 +75,8 @@ theorem openSpreadItems_valid : ∀ {n : Nat} {r : Result} {xs : List Result},
   | 0, .sequenceValue _, _, e, v => by simp [openSpreadItems] at e; subst e; exact RV.spreadItems v
   | 0, .listValue _, _, e, v => by simp [openSpreadItems] at e; subst e; exact RV.spreadItems v
   | 0, .callRef _, _, e, v => by simp [openSpreadItems] at e; subst e; exact RV.spreadItems v
+  | 0, .deferred _, _, e, v => by simp [openSpreadItems] at e; subst e; exact RV.spreadItems v
+  | 0, .pendingList _, _, e, v => by simp [openSpreadItems] at e; subst e; exact RV.spreadItems v
   | Nat.succ n, .atom a, xs, e, v => by
     simp only [openSpreadItems] at e
     exact openSpreadItems_valid e (RV.normalize (RV.seq (RV.spreadItems v)))
@@ -90,19 +95,27 @@ theorem openSpreadItems_valid : ∀ {n : Nat} {r : Result} {xs : List Result},
   | Nat.succ n, .callRef a, xs, e, v => by
     simp only [openSpreadItems] at e
     exact openSpreadItems_valid e (RV.normalize (RV.seq (RV.spreadItems v)))
+  | Nat.succ n, .deferred a, xs, e, v => by
+    simp only [openSpreadItems] at e
+    exact openSpreadItems_valid e (RV.normalize (RV.seq (RV.spreadItems v)))
+  | Nat.succ n, .pendingList a, xs, e, v => by
+    simp only [openSpreadItems] at e
+    exact openSpreadItems_valid e (RV.normalize (RV.seq (RV.spreadItems v)))
 
 theorem openSupplySpread_items : ∀ {n : Nat} {r : Result} {xs : List Result},
     openSupplySpread n r = .ok (.items xs) → RV h r → RLV h xs
   | 0, .argView _, _, e, _ => by simp [openSupplySpread] at e
   | Nat.succ n, .argView _, _, e, _ => by simp [openSupplySpread] at e
   | 0, .atom a, xs, e, v | 0, .str a, xs, e, v | 0, .bool a, xs, e, v
-  | 0, .sequenceValue a, xs, e, v | 0, .listValue a, xs, e, v | 0, .callRef a, xs, e, v => by
+  | 0, .sequenceValue a, xs, e, v | 0, .listValue a, xs, e, v | 0, .callRef a, xs, e, v
+  | 0, .deferred a, xs, e, v | 0, .pendingList a, xs, e, v => by
     simp only [openSupplySpread] at e
     cases ho : openSpreadItems 0 _ with
     | error _ => rw [ho] at e; cases e
     | ok ys => rw [ho] at e; cases e; exact openSpreadItems_valid ho v
   | Nat.succ n, .atom a, xs, e, v | Nat.succ n, .str a, xs, e, v | Nat.succ n, .bool a, xs, e, v
-  | Nat.succ n, .sequenceValue a, xs, e, v | Nat.succ n, .listValue a, xs, e, v | Nat.succ n, .callRef a, xs, e, v => by
+  | Nat.succ n, .sequenceValue a, xs, e, v | Nat.succ n, .listValue a, xs, e, v | Nat.succ n, .callRef a, xs, e, v
+  | Nat.succ n, .deferred a, xs, e, v | Nat.succ n, .pendingList a, xs, e, v => by
     simp only [openSupplySpread] at e
     exact openSupplySpread_items e (RV.normalize (RV.seq (RV.spreadItems v)))
 
@@ -111,13 +124,15 @@ theorem openSupplySpread_view : ∀ {n : Nat} {r : Result} {a : Nat},
   | 0, .argView b, _, e, v => by simp [openSupplySpread] at e; subst e; exact RV.argView_lt v
   | Nat.succ n, .argView _, _, e, _ => by simp [openSupplySpread] at e
   | 0, .atom a, _, e, _ | 0, .str a, _, e, _ | 0, .bool a, _, e, _
-  | 0, .sequenceValue a, _, e, _ | 0, .listValue a, _, e, _ | 0, .callRef a, _, e, _ => by
+  | 0, .sequenceValue a, _, e, _ | 0, .listValue a, _, e, _ | 0, .callRef a, _, e, _
+  | 0, .deferred a, _, e, _ | 0, .pendingList a, _, e, _ => by
     simp only [openSupplySpread] at e
     cases ho : openSpreadItems 0 _ with
     | error _ => rw [ho] at e; cases e
     | ok ys => rw [ho] at e; cases e
   | Nat.succ n, .atom a, _, e, v | Nat.succ n, .str a, _, e, v | Nat.succ n, .bool a, _, e, v
-  | Nat.succ n, .sequenceValue a, _, e, v | Nat.succ n, .listValue a, _, e, v | Nat.succ n, .callRef a, _, e, v => by
+  | Nat.succ n, .sequenceValue a, _, e, v | Nat.succ n, .listValue a, _, e, v | Nat.succ n, .callRef a, _, e, v
+  | Nat.succ n, .deferred a, _, e, v | Nat.succ n, .pendingList a, _, e, v => by
     simp only [openSupplySpread] at e
     exact openSupplySpread_view e (RV.normalize (RV.seq (RV.spreadItems v)))
 
@@ -483,6 +498,58 @@ theorem discover_spec {P : Array NeedCell → Prop} {form : Expr → EvalM (List
   fun hP => discover_aux hP hf rows hP
 
 attribute [ht_spec] selectWith_spec selectViewWith_spec formLeftToRight_spec discover_spec
+
+/-! ## Lazy collections (issue #204): positions selected, levels opened -/
+
+theorem collectionPositions_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {b : Builtin} {value : Result} (hd : DemandSpec demand) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (collectionPositions demand b value) (fun rs h => RLV h rs) := by
+  unfold collectionPositions; ht_tac
+
+attribute [ht_spec] collectionPositions_spec
+
+/-- Postfix selection over positions read on demand: the selected positions are valid values. -/
+theorem selectPositions_aux {P : Array NeedCell → Prop} (hP : HMono P) {demand : Nat → EvalM Result}
+    {need : Nat → EvalM CountedResult} {receiver : Result}
+    (hd : ∀ a, SoundI (fun h => P h ∧ a < h.size) (demand a) (fun r h => RV h r)) (hn : DemandSpec need)
+    {cells : List Nat} (hreq : ∀ h, P h → RV h receiver ∧ ValidAddresses h cells) :
+    SoundI P
+      (selectPositionsWith demand
+        (fun n => do pure (<- discoveredPositions need (some (n + 1)) receiver)[n]?)
+        (forcePosition need) cells) (fun xs h => RLV h xs) := by
+  induction cells with
+  | nil => unfold selectPositionsWith; ht_tac
+  | cons c rest ih =>
+    have ih' := ih (fun h ph => ⟨(hreq h ph).1, fun b m => (hreq h ph).2 b (List.mem_cons_of_mem _ m)⟩)
+    clear ih
+    unfold selectPositionsWith selectorIndex; ht_tac
+
+theorem selectPositions_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM Result}
+    {need : Nat → EvalM CountedResult} {receiver : Result} {cells : List Nat}
+    (hd : ∀ a, SoundI (fun h => P h ∧ a < h.size) (demand a) (fun r h => RV h r)) (hn : DemandSpec need)
+    (hreq : ∀ h, P h → RV h receiver ∧ ValidAddresses h cells) :
+    SoundI P
+      (selectPositionsWith demand
+        (fun n => do pure (<- discoveredPositions need (some (n + 1)) receiver)[n]?)
+        (forcePosition need) cells) (fun xs h => RLV h xs) :=
+  fun hP => selectPositions_aux hP hd hn hreq hP
+
+/-- The written stars of a spread peeled over levels read on demand: the value the last star
+    opens is valid. -/
+theorem peelSpreadLayers_valid {need : Nat → EvalM CountedResult} (hn : DemandSpec need) :
+    ∀ (n : Nat) (value : Result),
+      SoundI (fun h => RV h value) (peelSpreadLayers (forceLevel need) n value) (fun r h => RV h r.2) := by
+  intro n
+  induction n with
+  | zero => intro value; unfold peelSpreadLayers; ht_tac
+  | succ n ih => intro value; unfold peelSpreadLayers; ht_tac
+
+theorem peelSpreadLayers_spec {P : Array NeedCell → Prop} {need : Nat → EvalM CountedResult} {n : Nat}
+    {value : Result} (hn : DemandSpec need) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (peelSpreadLayers (forceLevel need) n value) (fun r h => RV h r.2) :=
+  SoundI.weaken (peelSpreadLayers_valid hn n value) hreq (fun _ _ g v => RV.mono g v) (fun _ _ v => v)
+
+attribute [ht_spec] selectPositions_spec peelSpreadLayers_spec
 
 /-! ## The alias write points -/
 

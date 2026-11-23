@@ -519,6 +519,19 @@ public static partial class Evaluator
     {
         if (op is ComparisonOp.Eq or ComparisonOp.Ne)
         {
+            // EQUALITY COMPARES WHOLE VALUES (lazy collections, issue #204): both operands are
+            // materialized first, the left one before the right one. The asynchronous machine has
+            // done so already (awaiting), so this is then a scan that finds nothing to read.
+            if (ctx.Budget.HasLazyLists)
+            {
+                var wholeLeft = MaterializeValueSync(leftValue, ctx);
+                if (wholeLeft.IsError) return wholeLeft.Error;
+                var wholeRight = MaterializeValueSync(rightValue, ctx);
+                if (wholeRight.IsError) return wholeRight.Error;
+                leftValue = wholeLeft.Value;
+                rightValue = wholeRight.Value;
+            }
+
             var equalR = ValueEquals(leftValue, rightValue, ctx);
             if (equalR.IsError) return equalR.Error;
             return EvalResult<bool>.Ok(equalR.Value == (op == ComparisonOp.Eq));

@@ -34,8 +34,8 @@ public class SemanticNestedWiderTests(ITestOutputHelper output)
         var enumeration = Wider.Value;
         Assert.Equal((WiderPrograms, WiderPrograms), (enumeration.Sequences, enumeration.Programs.Length));
         Assert.Equal(WiderPrograms, enumeration.Programs.Select(static p => p.CaseId).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal("sem2b/v1/seed-nested-wider/all/0.0.0.0.0.0", enumeration.Programs[0].CaseId);
-        Assert.Equal("sem2b/v1/seed-nested-wider/all/4.1.1.1.3.3.1.7", enumeration.Programs[^1].CaseId);
+        Assert.Equal("sem2b/v2/seed-nested-wider/all/0.0.0.0.0.0", enumeration.Programs[0].CaseId);
+        Assert.Equal("sem2b/v2/seed-nested-wider/all/4.1.1.1.3.3.1.7", enumeration.Programs[^1].CaseId);
 
         var bySource = Cases.Value.ToDictionary(static c => c.Source, StringComparer.Ordinal);
         for (var seed = 0x5EED_2B00_0001UL; seed <= 0x5EED_2B00_0010UL; seed++)
@@ -158,32 +158,37 @@ public class SemanticNestedWiderTests(ITestOutputHelper output)
     /// META parameter written last whose body invokes it after the structural argument ran and before the
     /// plain one; a refused META argument written after the structure; and fresh and rebuilt calls of a
     /// captured nested call, then one whose deepest structure is a scalar.
+    ///
+    /// <para>A written list defers its elements (lazy collections, issue #204), so the pinned events show
+    /// where each one runs: a written sequence's items when the sequence is evaluated; a list element when
+    /// a nested level, a repeated name or the result reads it — a name only bound, or a collector only
+    /// counted, runs nothing — and the result's own elements last, when the run's output is read.</para>
     /// </summary>
     [Theory]
     [InlineData("0.1.0.7.0.1.0.0",
         "v8((*v7, [(v1, v2, *v3), *v5, v4], v6)) = [count(v7), v1, v2, count(v3), count(v5), v4, v6]\nv8((trace(1), wait(2), [(trace(3), wait(4), trace(5), wait(6)), trace(7), wait(8), trace(9)], wait(1)))\n997",
-        "value ([2, 3, 4, 2, 2, 9, 1], 997)", "trace:1,wait:2,trace:3,wait:4,trace:5,wait:6,trace:7,wait:8,trace:9,wait:1")]
+        "value ([2, 3, 4, 2, 2, 9, 1], 997)", "trace:1,wait:2,wait:1,trace:3,wait:4,trace:5,wait:6,trace:9")]
     [InlineData("1.1.0.0.0.1.1.0",
         "v5([v1, *v3, v2], v1) = [v1, count(v3), v2]\nv5([trace(1), wait(2), trace(3), wait(4)], trace(2))\n997",
-        "error BadArity", "trace:1,wait:2,trace:3,wait:4,trace:2")]
+        "error BadArity", "trace:1,trace:2")]
     [InlineData("1.2.1.1.2.1.0",
         "v5([([v1, v1], v3), v4]) = [1, v1, v3, v4]\nv5(v6) = [0]\nv5([([trace(1), wait(2)], trace(2)), wait(3)])\n997",
-        "value ([0], 997)", "trace:1,wait:2,trace:2,wait:3")]
+        "value ([0], 997)", "trace:2,trace:1,wait:2")]
     [InlineData("2.0.0.2.1.1.1.1.0",
         "v5(([v1, *v3, v2], v4)) = [v1, count(v3), v2, v4]\nv5(([(trace(1), wait(2), wait(6))*, trace(3), wait(4)], trace(5)))\n997",
-        "value ([1, 3, 4, 5], 997)", "trace:1,wait:2,wait:6,trace:3,wait:4,trace:5")]
+        "value ([1, 3, 4, 5], 997)", "trace:1,wait:2,wait:6,trace:5,wait:4")]
     [InlineData("3.1.1.0.1.1.0.0",
         "v1(v2, v3) = v2 + v3\nv10([(v4, *v6, v5), v7], v8, meta v9) = [v9.Invoke(), v4, count(v6), v5, v7, v8]\nv10([(trace(1), wait(2), trace(3), wait(4)), trace(5)], wait(6), v1(trace(7), wait(8)))\n997",
-        "value ([15, 1, 2, 4, 5, 6], 997)", "trace:1,wait:2,trace:3,wait:4,trace:5,trace:7,wait:8,wait:6")]
+        "value ([15, 1, 2, 4, 5, 6], 997)", "trace:1,wait:2,trace:3,wait:4,trace:7,wait:8,trace:5,wait:6")]
     [InlineData("3.1.0.0.0.0.1.0",
         "v1(v2, v3) = v2 + v3\nv8([v4, v5], v6, meta v7) = [v7.Arguments.count, v4, v5, v6]\nv8([trace(1), wait(2)], trace(3), 5)\n997",
-        "error NotAnAlgorithm", "trace:1,wait:2")]
+        "error NotAnAlgorithm", "")]
     [InlineData("4.0.1.1.2.3.1.0",
         "v5([(v1, v2, *v3), v4]) = [v1, v2, count(v3), v4]\nv6(meta v7) = v7\nv8 = v6(v5([(trace(1), wait(2), trace(3), wait(4)), trace(5)]))\n[v8.Algorithm([(6, 7, 8, 9), 1]), v8.Algorithm(v8.Arguments*), v8.Algorithm([99, 2])]\n997",
         "error TypeMismatch", "trace:1,wait:2,trace:3,wait:4,trace:5")]
     public void TheWiderRecipe_ConstructsItsExpectationFromTheDemandLaws(string choices, string source, string outcome, string events)
     {
-        var id = "sem2b/v1/seed-nested-wider/all/" + choices;
+        var id = "sem2b/v2/seed-nested-wider/all/" + choices;
         Assert.Contains(id, Wider.Value.Programs.Select(static p => p.CaseId));
         Assert.True(SemanticCorpus.TryBuilder(id, SemanticRecipe.RecipeVersion, out var builder, out var problem), problem);
         var c = builder.Build();

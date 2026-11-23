@@ -141,9 +141,10 @@ public class ZeroArgPropertyCacheScopeTests
     [Fact]
     public void ExportedRootProperty_IsEvaluatedOncePerRun_AcrossCallbackInvocations()
     {
-        var (cache, result) = Run("Big = range(1, 100).sum\nF(x) = Big + x\nrange(1, 5).map(F).count");
+        // `sum` reads every mapped position (counting the stage would run no callback: issue #204).
+        var (cache, result) = Run("Big = range(1, 100).sum\nF(x) = Big + x\nrange(1, 5).map(F).sum");
 
-        Assert.Equal([5m], Atoms(result));
+        Assert.Equal([25265m], Atoms(result));
         Assert.Equal(5, cache.RequestsOf("Big"));
         Assert.Equal(1, cache.EvaluationsOf("Big"));
     }
@@ -168,7 +169,9 @@ public class ZeroArgPropertyCacheScopeTests
     [Fact]
     public void AuditShape_ExpensiveRootConstant_IsEvaluatedOnceForTwoThousandCalls()
     {
-        var (cache, result) = Run("Big = range(1, 10000).sum\nF(x) = Big + x\nrange(1, 2000).map(F).count");
+        // `skip` is a strict builtin: it reads every mapped position, so every callback runs
+        // (counting the stage alone would run none: lazy collections, issue #204).
+        var (cache, result) = Run("Big = range(1, 10000).sum\nF(x) = Big + x\nrange(1, 2000).map(F).skip(0).count");
 
         Assert.Equal([2000m], Atoms(result));
         Assert.Equal(2000, cache.RequestsOf("Big"));

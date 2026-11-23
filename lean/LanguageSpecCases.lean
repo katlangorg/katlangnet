@@ -14,16 +14,16 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 800
+- specification surface cases: 809
 - excluded parse-level cases (Lean has no surface parser): 89
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 687
-- probe observations (C#-only by design): 1655
+- Lean-guarded cases: 696
+- probe observations (C#-only by design): 1692
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 - cache-publication pilot (KL-06): 4 cases guard their published zero-argument cache entries
   (2 with entries, 2 with an empty cache; 2 of them fail);
-  the other 683 programs have no cache observation, which is not an empty cache;
+  the other 692 programs have no cache observation, which is not an empty cache;
   each expectation is HAND-WRITTEN in the corpus (`ExpectedCachePublications`), and the
   C# runner requires the same entries of C#
 
@@ -38,7 +38,8 @@ open KatLang
 /-- Neutral raw-structure encoding shared with the C# harness:
     atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
     sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`,
-    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both). -/
+    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both),
+    deferred list item and pending list -> `Deferred` (never a run result: a run value is materialized). -/
 partial def neutral : Result -> String
   | .atom n => toString n
   | .str s => "'" ++ s ++ "'"
@@ -47,6 +48,8 @@ partial def neutral : Result -> String
   | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
   | .callRef _ => "CallReference"
   | .argView _ => "CallReference"
+  | .deferred _ => "Deferred"
+  | .pendingList _ => "Deferred"
 
 /-- Innermost-error category shared with the C# harness
     (`SemanticExplorerHarness.ErrorCategory`). -/
@@ -137,8 +140,11 @@ def runCountedM (e : Expr) : EvalM CountedResult := do
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | _ => evalCounted e ctx []
-  let _ <- exportRunValue counted.fst
-  pure counted
+  -- A run value is materialized before it leaves the run (lazy collections, issue #204),
+  -- exactly as `runResultM` materializes it; the root emitted count is kept.
+  let value <- materializeVia demandNeedRecursive counted.fst
+  let _ <- exportRunValue value
+  pure (value, counted.snd)
 
 /-- Neutral observation string shared verbatim with the C# harness.
     Also cross-checks Lean's plain (`runResult`) and counted evaluators on
@@ -1548,6 +1554,51 @@ def case_callback_result_is_the_ordinary_call_result : Expr :=
   .algorithmExpr (alg [] [] [privateProp "D" (alg ["x"] [] [] [.param "x", .param "x"]), privateProp "G" (alg ["x"] [] [] [(.call (.resolve "D") [.param "x"])]), privateProp "H" (alg ["x"] [] [] [(.capture [.param "x", .param "x"])])] [(.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "D"]), (.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "G"]), (.call (.resolve "map") [(.listLiteral [.num 1]), .resolve "H"]), (.comparison (.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .resolve "D"]) [{ op := .eq, operand := (.listLiteral [(.call (.resolve "D") [.num 1]), (.call (.resolve "D") [.num 2])]) }])])
 #guard obs case_callback_result_is_the_ordinary_call_result == "ok raw=S[L[S[1, 1]], L[S[1, 1]], L[S[1, 1]], true] n=4"
 
+-- lazy-list-selection-reads-only-the-selected-position [lists]: [10, 1 / 0][0]
+def case_lazy_list_selection_reads_only_the_selected_position : Expr :=
+  .algorithmExpr (alg [] [] [] [(.index (.listLiteral [.num 10, (.binary .div (.num 1) (.num 0))]) [.num 0])])
+#guard obs case_lazy_list_selection_reads_only_the_selected_position == "ok raw=10 n=1"
+
+-- lazy-map-runs-its-mapper-only-for-the-positions-read [collection-builtins]: [1, 2].map{if(n == 1, 10, 1 / 0)}.first
+def case_lazy_map_runs_its_mapper_only_for_the_positions_read : Expr :=
+  .algorithmExpr (alg [] [] [] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 1) }]), .num 10, (.binary .div (.num 1) (.num 0))])]))])) "first" none)])
+#guard obs case_lazy_map_runs_its_mapper_only_for_the_positions_read == "ok raw=10 n=1"
+
+-- lazy-filter-discovers-only-the-matches-it-needs [collection-builtins]: [1, 0].filter{1 / n > 0}.take(1)
+def case_lazy_filter_discovers_only_the_matches_it_needs : Expr :=
+  .algorithmExpr (alg [] [] [] [(.dotCall (.dotCall (.listLiteral [.num 1, .num 0]) "filter" (some [(.algorithmExpr (alg ["n"] [] [] [(.comparison (.binary .div (.num 1) (.param "n")) [{ op := .gt, operand := (.num 0) }])]))])) "take" (some [.num 1]))])
+#guard obs case_lazy_filter_discovers_only_the_matches_it_needs == "ok raw=L[1] n=1"
+
+-- lazy-list-positions-are-shared-and-follow-demand-order [lists]: L = [tick(), tick(), tick()] \n L[2, 0, 2], L[0], tick()
+def case_lazy_list_positions_are_shared_and_follow_demand_order : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])])])] [(.index (.resolve "L") [.num 2, .num 0, .num 2]), (.index (.resolve "L") [.num 0]), (.call (.resolve "tick") [])])
+#guard obs case_lazy_list_positions_are_shared_and_follow_demand_order == "ok raw=S[S[1, 2, 1], 2, 3] n=3"
+
+-- lazy-list-run-output-is-read-after-it-is-assembled [lists]: L = [tick()] \n L, tick()
+def case_lazy_list_run_output_is_read_after_it_is_assembled : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.call (.resolve "tick") [])])])] [.resolve "L", (.call (.resolve "tick") [])])
+#guard obs case_lazy_list_run_output_is_read_after_it_is_assembled == "ok raw=S[L[2], 1] n=2"
+
+-- lazy-take-validates-its-count-before-any-position [collection-builtins]: [1 / 0, 2].take(0)
+def case_lazy_take_validates_its_count_before_any_position : Expr :=
+  .algorithmExpr (alg [] [] [] [(.dotCall (.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2]) "take" (some [.num 0]))])
+#guard obs case_lazy_take_validates_its_count_before_any_position == "ok raw=L[] n=1"
+
+-- lazy-list-pattern-checks-cardinality-before-its-fields [deconstruction]: P([a, b]) = b \n P([1 / 0, 2])
+def case_lazy_list_pattern_checks_cardinality_before_its_fields : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.listValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])] [(.call (.resolve "P") [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])])])
+#guard obs case_lazy_list_pattern_checks_cardinality_before_its_fields == "ok raw=2 n=1"
+
+-- lazy-list-equality-reads-both-operands-whole [equality-and-indexing]: [1, 2 + 1] == [1, 3]
+def case_lazy_list_equality_reads_both_operands_whole : Expr :=
+  .algorithmExpr (alg [] [] [] [(.comparison (.listLiteral [.num 1, (.binary .add (.num 2) (.num 1))]) [{ op := .eq, operand := (.listLiteral [.num 1, .num 3]) }])])
+#guard obs case_lazy_list_equality_reads_both_operands_whole == "ok raw=true n=1"
+
+-- lazy-list-holding-itself-is-a-demand-cycle-when-read-whole [errors]: L = [L] \n L
+def case_lazy_list_holding_itself_is_a_demand_cycle_when_read_whole : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [.resolve "L"])])] [.resolve "L"])
+#guard obs case_lazy_list_holding_itself_is_a_demand_cycle_when_read_whole == "err demandCycle"
+
 -- reduce-accumulators-are-evaluated-on-demand [collection-builtins]: Pick(item, acc) = item \n reduce([1, 2], Pick, 1 / 0)
 def case_reduce_accumulators_are_evaluated_on_demand : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pick" (alg ["item", "acc"] [] [] [.param "item"])] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Pick", (.binary .div (.num 1) (.num 0))])])
@@ -1568,13 +1619,11 @@ def case_reduce_empty_collection_demands_initial_once : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Pick" (alg ["item", "acc"] [] [] [.param "item"])] [(.call (.resolve "reduce") [(.listLiteral []), .resolve "Pick", (.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])
 #guard obs case_reduce_empty_collection_demands_initial_once == "ok raw=S[1, 2] n=2"
 
--- map-demands-collection-before-transforms [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n map(L, F)
-def case_map_demands_collection_before_transforms : Expr :=
+-- map-reads-each-source-position-before-its-transform [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n map(L, F)
+def case_map_reads_each_source_position_before_its_transform : Expr :=
   .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.call (.resolve "map") [.resolve "L", .resolve "F"])])
-#guard obs case_map_demands_collection_before_transforms == "err div0"
+#guard obs case_map_reads_each_source_position_before_its_transform == "err div0"
 
-#guard cacheEntries case_map_demands_collection_before_transforms "L" == some 0
-#guard cacheTotal case_map_demands_collection_before_transforms == some 0
 -- expanded-map-calls-may-skip-indexed-arguments [collection-builtins]: L = [1 / 0, 2] \n F(x) = 0 \n [F(L[0]), F(L[1])]
 def case_expanded_map_calls_may_skip_indexed_arguments : Expr :=
   .algorithmExpr (alg [] [] [privateProp "L" (alg [] [] [] [(.listLiteral [(.binary .div (.num 1) (.num 0)), .num 2])]), privateProp "F" (alg ["x"] [] [] [.num 0])] [(.listLiteral [(.call (.resolve "F") [(.index (.resolve "L") [.num 0])]), (.call (.resolve "F") [(.index (.resolve "L") [.num 1])])])])
@@ -2259,6 +2308,8 @@ def case_if_spread_builds_values_before_branch_selection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Risky" (alg [] [] [] [(.capture [.num 10, (.binary .div (.num 1) (.num 0))])])] [(.call (.resolve "if") [.boolLiteral true, (.sequenceSpread (.resolve "Risky"))])])
 #guard obs case_if_spread_builds_values_before_branch_selection == "err div0"
 
+#guard cacheEntries case_if_spread_builds_values_before_branch_selection "Risky" == some 0
+#guard cacheTotal case_if_spread_builds_values_before_branch_selection == some 0
 -- dot-string-intrinsic-rejects-arguments [strings]: A = 42 \n A.string(1)
 def case_dot_string_intrinsic_rejects_arguments : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 42])] [(.dotCall (.resolve "A") "string" (some [.num 1]))])
@@ -3611,7 +3662,7 @@ def case_hunt_logical_xor_operands_both_evaluated : Expr :=
 -- hunt-builtin-map-callbacks-run-in-collection-order [collection-builtins]: Only(*xs) = tick() + xs.count \n map([1, 2], Only), Only
 def case_hunt_builtin_map_callbacks_run_in_collection_order : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "tick") []) (.dotCall (.param "xs") "count" none))])] [(.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .resolve "Only"]), .resolve "Only"])
-#guard obs case_hunt_builtin_map_callbacks_run_in_collection_order == "ok raw=S[L[2, 3], 3] n=2"
+#guard obs case_hunt_builtin_map_callbacks_run_in_collection_order == "ok raw=S[L[3, 4], 1] n=2"
 
 -- hunt-forwarding-closed-bare-row-uses-enclosing-parameter [name-resolution]: A = y + 1 \n F(y) = { \n   H(q) = A \n   H(0) \n } \n F(5)
 def case_hunt_forwarding_closed_bare_row_uses_enclosing_parameter : Expr :=
@@ -3693,7 +3744,7 @@ def case_decon_target_calls_reuse_the_shared_source : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.call (.resolve "tick") []), .num 20]), privateProp "a" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])]), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])] [(.call (.resolve "a") []), (.call (.resolve "a") []), .resolve "b"])
 #guard obs case_decon_target_calls_reuse_the_shared_source == "ok raw=S[1, 1, 20] n=3"
 
--- 687 canonical Lean-guarded specification cases.
+-- 696 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -3961,11 +4012,20 @@ def specCaseIds : List String := [
   "clause-family-multirow-reduce-step-is-one-value",
   "clause-family-callback-single-value-accepted",
   "callback-result-is-the-ordinary-call-result",
+  "lazy-list-selection-reads-only-the-selected-position",
+  "lazy-map-runs-its-mapper-only-for-the-positions-read",
+  "lazy-filter-discovers-only-the-matches-it-needs",
+  "lazy-list-positions-are-shared-and-follow-demand-order",
+  "lazy-list-run-output-is-read-after-it-is-assembled",
+  "lazy-take-validates-its-count-before-any-position",
+  "lazy-list-pattern-checks-cardinality-before-its-fields",
+  "lazy-list-equality-reads-both-operands-whole",
+  "lazy-list-holding-itself-is-a-demand-cycle-when-read-whole",
   "reduce-accumulators-are-evaluated-on-demand",
   "reduce-demands-only-the-steps-it-needs",
   "reduce-effects-follow-accumulator-demand",
   "reduce-empty-collection-demands-initial-once",
-  "map-demands-collection-before-transforms",
+  "map-reads-each-source-position-before-its-transform",
   "expanded-map-calls-may-skip-indexed-arguments",
   "map-identity-preserves-empty-elements",
   "reduce-accumulator-may-be-empty",
@@ -4389,7 +4449,7 @@ def specCaseIds : List String := [
   "selective-collector-take-count-error-precedes-elements",
   "decon-target-calls-reuse-the-shared-source"
 ]
-#guard specCaseIds.length == 687
+#guard specCaseIds.length == 696
 
 /--
 Machine-checked KL-06 cache-publication pilot count: one id per case whose cache guards
@@ -4398,9 +4458,9 @@ a hand-written cache expectation, computed independently from the corpus.
 -/
 def cachePilotCaseIds : List String := [
   "property-value-boundary",
-  "map-demands-collection-before-transforms",
   "expanded-map-calls-may-skip-indexed-arguments",
-  "index-out-of-range"
+  "index-out-of-range",
+  "if-spread-builds-values-before-branch-selection"
 ]
 #guard cachePilotCaseIds.length == 4
 

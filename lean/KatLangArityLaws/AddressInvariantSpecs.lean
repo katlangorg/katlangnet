@@ -451,6 +451,13 @@ theorem suspendedValue_spec {P : Array NeedCell → Prop} {ev : Expr → EvalCtx
     (hreq : ∀ h, P h → SuspV h susp) :
     SoundI P (NeedDemand.suspendedValue ev route demand a susp) (fun r h => CRV h r) := by
   cases susp <;> (unfold NeedDemand.suspendedValue reCountValueBoundary; ht_tac)
+  -- A Ready cell holding a deferred list item demands that position's cell (issue #204): the
+  -- cell is inside the heap because the Ready value is valid.
+  rename_i value _ cell heq
+  intro h hp
+  have hv : RV h value.1 := hreq h hp
+  rw [heq] at hv
+  exact RV.deferred_iff.mp hv
 
 attribute [ht_spec] suspendedValue_spec
 
@@ -488,5 +495,300 @@ theorem projStep_spec {P : Array NeedCell → Prop} {project : NeedSuspension �
 
 attribute [ht_spec] projStep_spec
 attribute [ht_lemmas] projSuspended_spec
+
+/-! ## Opened items of a valid value are valid -/
+
+section Items
+variable {h : Array NeedCell}
+
+theorem RV.toItems {r : Result} (v : RV h r) : RLV h r.toItems := by
+  cases r with
+  | sequenceValue xs => exact RV.seq_iff.1 v
+  | _ => exact RLV.singleton v
+
+theorem RV.spreadItems {r : Result} (v : RV h r) : RLV h r.spreadItems := by
+  cases r with
+  | listValue xs => exact RV.list_iff.1 v
+  | _ => exact RV.toItems v
+
+theorem RV.projectionItems {r : Result} (v : RV h r) : RLV h r.projectionItems := by
+  cases r with
+  | listValue xs => exact RV.list_iff.1 v
+  | _ => exact RV.toItems v
+
+theorem RV.sequencePatternItems {r : Result} {xs : List Result} (v : RV h r)
+    (e : r.sequencePatternItems? = some xs) : RLV h xs := by
+  cases r <;> simp [Result.sequencePatternItems?] at e
+  subst e; exact RV.seq_iff.1 v
+
+theorem RV.listPatternItems {r : Result} {xs : List Result} (v : RV h r)
+    (e : r.listPatternItems? = some xs) : RLV h xs := by
+  cases r <;> simp [Result.listPatternItems?] at e
+  subst e; exact RV.list_iff.1 v
+
+theorem RV.structureItems {r : Result} {xs : List Result} (v : RV h r)
+    (e : r.structureItems? = some xs) : RLV h xs := by
+  cases r <;> simp [Result.structureItems?] at e
+  · subst e; exact RV.seq_iff.1 v
+  · subst e; exact RV.list_iff.1 v
+
+theorem RV.select {r x : Result} {i : Nat} (v : RV h r) (e : r.select? i = some x) : RV h x :=
+  (RV.projectionItems v).getElem? e
+
+end Items
+
+attribute [ht_lemmas] RV.toItems RV.spreadItems RV.projectionItems RV.sequencePatternItems
+  RV.listPatternItems RV.structureItems RV.select
+attribute [ht_fwd] RV.sequencePatternItems RV.listPatternItems RV.structureItems RV.select
+
+/-! ## Lazy collections (issue #204)
+
+A deferred list item and a pending list's candidates carry need addresses (`Mentions`), so the
+positional helpers read and allocate cells: each keeps `Inv` and returns valid values. -/
+
+theorem CandV.nil {h : Array NeedCell} : CandV h [] := fun _ m => by cases m
+theorem CandV.head {h : Array NeedCell} {c : Nat × Nat} {cs : List (Nat × Nat)} (v : CandV h (c :: cs)) :
+    c.1 < h.size ∧ c.2 < h.size := v c List.mem_cons_self
+theorem CandV.tail {h : Array NeedCell} {c : Nat × Nat} {cs : List (Nat × Nat)} (v : CandV h (c :: cs)) :
+    CandV h cs := fun x m => v x (List.mem_cons_of_mem _ m)
+theorem CandV.cons {h : Array NeedCell} {c : Nat × Nat} {cs : List (Nat × Nat)} (v1 : c.1 < h.size)
+    (v2 : c.2 < h.size) (vs : CandV h cs) : CandV h (c :: cs) := by
+  intro x m
+  rcases List.mem_cons.mp m with rfl | m
+  · exact ⟨v1, v2⟩
+  · exact vs x m
+theorem CandV.take {h : Array NeedCell} {cs : List (Nat × Nat)} (v : CandV h cs) (n : Nat) : CandV h (cs.take n) :=
+  fun c m => v c (List.mem_of_mem_take m)
+theorem CandV.diag {h : Array NeedCell} {cells : List Nat} (v : ValidAddresses h cells) :
+    CandV h (cells.map (fun cell => (cell, cell))) := by
+  intro c m
+  obtain ⟨a, ma, rfl⟩ := List.mem_map.mp m
+  exact ⟨v a ma, v a ma⟩
+theorem CandV.verdicts {h : Array NeedCell} {cs : List (Nat × Nat)} (v : CandV h cs) :
+    ValidAddresses h (cs.map Prod.snd) := by
+  intro a m
+  obtain ⟨c, mc, rfl⟩ := List.mem_map.mp m
+  exact (v c mc).2
+theorem mem_zipIdx_fst {α : Type} : ∀ (xs : List α) (n : Nat) (e : α × Nat), e ∈ xs.zipIdx n → e.1 ∈ xs
+  | [], _, e, m => by simp at m
+  | x :: rest, n, e, m => by
+    rw [List.zipIdx_cons] at m
+    rcases List.mem_cons.mp m with rfl | m
+    · exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (mem_zipIdx_fst rest _ e m)
+theorem CandV.entry {h : Array NeedCell} {cs : List (Nat × Nat)} {entry : (Nat × Nat) × Nat}
+    (m : entry ∈ cs.zipIdx) (v : CandV h cs) : entry.1.1 < h.size ∧ entry.1.2 < h.size :=
+  v entry.1 (mem_zipIdx_fst cs 0 entry m)
+theorem CandV.entry_position {h : Array NeedCell} {cs : List (Nat × Nat)} {entry : (Nat × Nat) × Nat}
+    (m : entry ∈ cs.zipIdx) (v : CandV h cs) : entry.1.1 < h.size := (CandV.entry m v).1
+theorem CandV.entry_verdict {h : Array NeedCell} {cs : List (Nat × Nat)} {entry : (Nat × Nat) × Nat}
+    (m : entry ∈ cs.zipIdx) (v : CandV h cs) : entry.1.2 < h.size := (CandV.entry m v).2
+theorem CandV.member_position {h : Array NeedCell} {cs : List (Nat × Nat)} {c : Nat × Nat}
+    (m : c ∈ cs) (v : CandV h cs) : c.1 < h.size := (v c m).1
+theorem CandV.member_verdict {h : Array NeedCell} {cs : List (Nat × Nat)} {c : Nat × Nat}
+    (m : c ∈ cs) (v : CandV h cs) : c.2 < h.size := (v c m).2
+theorem RLV.entry {h : Array NeedCell} {xs : List Result} {entry : Result × Nat}
+    (m : entry ∈ xs.zipIdx) (v : RLV h xs) : RV h entry.1 := v entry.1 (mem_zipIdx_fst xs 0 entry m)
+theorem RV.deferred_lt {h : Array NeedCell} {a : Nat} (v : RV h (.deferred a)) : a < h.size := RV.deferred_iff.1 v
+theorem RV.pending_cand {h : Array NeedCell} {cs : List (Nat × Nat)} (v : RV h (.pendingList cs)) : CandV h cs :=
+  RV.pendingList_iff.1 v
+theorem RV.of_cand {h : Array NeedCell} {cs : List (Nat × Nat)} (v : CandV h cs) : RV h (.pendingList cs) :=
+  RV.pendingList_iff.2 v
+
+/-- The empty context binds no cell (the context of an internal pipeline step). -/
+theorem ValidCtx.empty {h : Array NeedCell} : ValidCtx h EvalCtx.empty := fun _ m => by cases m
+
+attribute [ht_lemmas] RV.deferred RV.of_cand RV.deferred_lt RV.pending_cand CandV.nil CandV.head CandV.tail CandV.cons
+  CandV.take ValidCtx.empty VEV.nil CandV.diag CandV.verdicts CandV.entry_position CandV.entry_verdict
+  CandV.member_position CandV.member_verdict RLV.entry
+attribute [ht_fwd] RV.deferred_lt RV.pending_cand
+
+set_option hygiene false in
+macro_rules | `(tactic| ht_pmono) => `(tactic| (intro _ _ _ g v; exact CandV.mono g v))
+
+/-- `mapM` producing candidates. -/
+theorem SoundI.mapM_cand {α : Type} {P : Array NeedCell → Prop} {f : α → EvalM (Nat × Nat)} {xs : List α}
+    (hf : ∀ x ∈ xs, SoundI P (f x) (fun c h => c.1 < h.size ∧ c.2 < h.size)) :
+    SoundI P (xs.mapM f) (fun ys h => CandV h ys) :=
+  SoundI.mapM (q := fun (c : Nat × Nat) h => c.1 < h.size ∧ c.2 < h.size)
+    (fun _ _ _ g v => ⟨Nat.lt_of_lt_of_le v.1 g, Nat.lt_of_lt_of_le v.2 g⟩) xs hf
+
+attribute [ht_spec] SoundI.mapM_cand
+
+theorem forcePosition_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult} {value : Result}
+    (hd : DemandSpec demand) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (forcePosition demand value) (fun r h => RV h r) := by
+  unfold forcePosition; ht_tac
+
+attribute [ht_spec] forcePosition_spec
+
+theorem lazyDiscover_spec {demand : Nat → EvalM CountedResult} {visit : Nat → EvalM Result}
+    (hd : DemandSpec demand)
+    (hv : ∀ cell, SoundI (fun h => cell < h.size) (visit cell) (fun r h => RV h r)) :
+    ∀ {candidates : List (Nat × Nat)} {P : Array NeedCell → Prop} {limit : Option Nat},
+      (∀ h, P h → CandV h candidates) →
+      SoundI P (LazyList.discover demand visit limit candidates) (fun rs h => RLV h rs) := by
+  intro candidates
+  induction candidates with
+  | nil => intro P limit hreq; unfold LazyList.discover; ht_tac
+  | cons c rest ih =>
+    intro P limit hreq
+    obtain ⟨cell, verdictCell⟩ := c
+    unfold LazyList.discover
+    split
+    · exact SoundI.pure _ (fun _ _ => RLV.nil)
+    · refine SoundI.bind (hd.app (fun h ph => (hreq h ph).head.2)) (fun _ _ _ g v => CRV.mono g v) ?_
+      intro verdictValue
+      refine SoundI.bind (Q := fun _ _ => True) ?_ PMono.true ?_
+      · unfold LazyList.verdict; ht_tac
+      · intro accepted
+        split
+        · refine SoundI.bind
+            (SoundI.weaken (hv cell) (fun h ph => (hreq h ph.1.1).head.1) (hmono_lt cell) (fun _ _ v => v))
+            (fun _ _ _ g v => RV.mono g v) ?_
+          intro item
+          refine SoundI.bind (ih (fun h ph => (hreq h ph.1.1.1).tail)) (fun _ _ _ g v => RLV.mono g v) ?_
+          intro tail
+          exact SoundI.pure _ (fun h ph => RLV.cons ph.1.2 ph.2)
+        · exact ih (fun h ph => (hreq h ph.1.1).tail)
+
+theorem lazyPositions_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {limit : Option Nat} {candidates : List (Nat × Nat)} (hd : DemandSpec demand)
+    (hreq : ∀ h, P h → CandV h candidates) :
+    SoundI P (LazyList.positions demand limit candidates) (fun rs h => RLV h rs) := by
+  unfold LazyList.positions
+  exact lazyDiscover_spec hd (fun cell => SoundI.pure _ (fun _ v => RV.deferred v)) hreq
+
+theorem lazyValues_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {candidates : List (Nat × Nat)} (hd : DemandSpec demand) (hreq : ∀ h, P h → CandV h candidates) :
+    SoundI P (LazyList.values demand candidates) (fun rs h => RLV h rs) := by
+  unfold LazyList.values
+  exact lazyDiscover_spec hd (fun cell => forcePosition_spec hd (fun _ v => RV.deferred v)) hreq
+
+/-- `lazyDiscover_spec` in the procedure's contract shape (the visit is its callback). -/
+theorem lazyDiscover_app {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {visit : Nat → EvalM Result} {limit : Option Nat} {candidates : List (Nat × Nat)} (hd : DemandSpec demand)
+    (hv : ∀ cell, SoundI (fun h => cell < h.size) (visit cell) (fun r h => RV h r))
+    (hreq : ∀ h, P h → CandV h candidates) :
+    SoundI P (LazyList.discover demand visit limit candidates) (fun rs h => RLV h rs) :=
+  lazyDiscover_spec hd hv hreq
+
+attribute [ht_spec] lazyPositions_spec lazyValues_spec lazyDiscover_app
+
+/-- A counted value read back as a list, a sequence or a pending list: its parts are valid. -/
+theorem CRV.list_of_eq {h : Array NeedCell} {p : CountedResult} {items : List Result} (v : CRV h p)
+    (e : p.fst = .listValue items) : RLV h items := by
+  have v' : RV h p.fst := v
+  rw [e] at v'
+  exact RV.list_iff.1 v'
+theorem CRV.seq_of_eq {h : Array NeedCell} {p : CountedResult} {items : List Result} (v : CRV h p)
+    (e : p.fst = .sequenceValue items) : RLV h items := by
+  have v' : RV h p.fst := v
+  rw [e] at v'
+  exact RV.seq_iff.1 v'
+theorem CRV.pending_of_eq {h : Array NeedCell} {p : CountedResult} {cs : List (Nat × Nat)} (v : CRV h p)
+    (e : p.fst = .pendingList cs) : CandV h cs := by
+  have v' : RV h p.fst := v
+  rw [e] at v'
+  exact RV.pending_cand v'
+attribute [ht_lemmas] CRV.list_of_eq CRV.seq_of_eq CRV.pending_of_eq
+attribute [ht_fwd] CRV.list_of_eq CRV.seq_of_eq CRV.pending_of_eq
+
+theorem discoveredPositions_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {limit : Option Nat} {value : Result} (hd : DemandSpec demand) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (discoveredPositions demand limit value) (fun rs h => RLV h rs) := by
+  unfold discoveredPositions; ht_tac
+
+theorem forceLevel_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult} {value : Result}
+    (hd : DemandSpec demand) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (forceLevel demand value) (fun r h => RV h r) := by
+  unfold forceLevel; ht_tac
+
+attribute [ht_spec] discoveredPositions_spec forceLevel_spec
+
+theorem RLV.path {h : Array NeedCell} (visiting : List Nat) :
+    RLV h (visiting.map (fun cell => Result.atom (Int.ofNat cell))) := by
+  intro x m
+  obtain ⟨n, _, rfl⟩ := List.mem_map.mp m
+  exact RV.atom _
+attribute [ht_lemmas] RLV.path
+
+theorem materializeVia_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult} {value : Result}
+    {visiting : List Nat} (hd : DemandSpec demand) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (materializeVia demand value visiting) (fun r h => RV h r) := by
+  unfold materializeVia; ht_tac
+
+attribute [ht_spec] materializeVia_spec
+
+theorem materializePosition_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {value : Result} {visiting : List Nat} (hd : DemandSpec demand) (hreq : ∀ h, P h → RV h value) :
+    SoundI P (materializePosition demand visiting value) (fun r h => RV h r) := by
+  unfold materializePosition; ht_tac
+
+attribute [ht_spec] materializePosition_spec
+
+/-! ### The lazy stages: every cell a stage allocates is valid -/
+
+theorem itemCell_spec {P : Array NeedCell → Prop} {item : Result} (hreq : ∀ h, P h → RV h item) :
+    SoundI P (LazyList.itemCell item) (fun a h => a < h.size) := by
+  unfold LazyList.itemCell; ht_tac
+
+theorem earlierPositions_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {limit : Option Nat} {source : Result} {before : Int} (hd : DemandSpec demand)
+    (hreq : ∀ h, P h → RV h source) :
+    SoundI P (LazyList.earlierPositions demand limit source before) (fun rs h => RLV h rs) := by
+  cases source <;> unfold LazyList.earlierPositions <;> ht_tac
+
+theorem mappedCell_spec {P : Array NeedCell → Prop} {mapper : Nat × Option Expr} {caller : EvalCtx}
+    {values : ValEnv} {item : Nat}
+    (hreq : ∀ h, P h → item < h.size ∧ mapper.1 < h.size ∧ ValidCtx h caller ∧ VEV h values) :
+    SoundI P (LazyList.mappedCell mapper caller values item) (fun a h => a < h.size) := by
+  unfold LazyList.mappedCell
+  exact allocate_spec (fun h ph =>
+    ⟨ValidSourced.pair (hreq h ph).1 (ValidSourced.cons (hreq h ph).2.1 (fun _ m => by cases m)),
+      (hreq h ph).2.2.1, (hreq h ph).2.2.2⟩)
+
+attribute [ht_spec] itemCell_spec earlierPositions_spec mappedCell_spec
+
+theorem mapItems_spec {P : Array NeedCell → Prop} {mapper : Nat × Option Expr} {caller : EvalCtx}
+    {values : ValEnv} {items : List Result}
+    (hreq : ∀ h, P h → RLV h items ∧ mapper.1 < h.size ∧ ValidCtx h caller ∧ VEV h values) :
+    SoundI P (LazyList.mapItems mapper caller values items) (fun r h => RV h r) := by
+  unfold LazyList.mapItems; ht_tac
+
+theorem mapCandidates_spec {P : Array NeedCell → Prop} {mapper : Nat × Option Expr} {caller : EvalCtx}
+    {values : ValEnv} {candidates : List (Nat × Nat)}
+    (hreq : ∀ h, P h → CandV h candidates ∧ mapper.1 < h.size ∧ ValidCtx h caller ∧ VEV h values) :
+    SoundI P (LazyList.mapCandidates mapper caller values candidates) (fun r h => RV h r) := by
+  unfold LazyList.mapCandidates; ht_tac
+
+theorem filterItems_spec {P : Array NeedCell → Prop} {predicate : Nat × Option Expr} {caller : EvalCtx}
+    {values : ValEnv} {items : List Result}
+    (hreq : ∀ h, P h → RLV h items ∧ predicate.1 < h.size ∧ ValidCtx h caller ∧ VEV h values) :
+    SoundI P (LazyList.filterItems predicate caller values items) (fun r h => RV h r) := by
+  unfold LazyList.filterItems; ht_tac
+  intro h ⟨⟨⟨hp, source⟩, item⟩, marker⟩
+  obtain ⟨_, pred, context, env⟩ := hreq h hp
+  exact ⟨ValidSourced.cons pred (ValidSourced.pair item (ValidSourced.pair marker
+    (ValidSourced.pair source (ValidSourced.pair marker ValidSourced.nil)))), context, env⟩
+
+theorem filterCandidates_spec {P : Array NeedCell → Prop} {predicate : Nat × Option Expr} {caller : EvalCtx}
+    {values : ValEnv} {candidates : List (Nat × Nat)}
+    (hreq : ∀ h, P h → CandV h candidates ∧ predicate.1 < h.size ∧ ValidCtx h caller ∧ VEV h values) :
+    SoundI P (LazyList.filterCandidates predicate caller values candidates) (fun r h => RV h r) := by
+  unfold LazyList.filterCandidates; ht_tac
+  intro h ⟨⟨hp, source⟩, offset⟩
+  obtain ⟨candidatesValid, pred, context, env⟩ := hreq h hp
+  exact ⟨ValidSourced.cons pred
+    (ValidSourced.pair (CandV.entry_position (by assumption) candidatesValid)
+      (ValidSourced.pair (CandV.entry_verdict (by assumption) candidatesValid)
+        (ValidSourced.pair source (ValidSourced.pair offset ValidSourced.nil)))), context, env⟩
+
+theorem takeCandidates_spec {P : Array NeedCell → Prop} {count : Int} {candidates : List (Nat × Nat)}
+    (hreq : ∀ h, P h → CandV h candidates) :
+    SoundI P (LazyList.takeCandidates count candidates) (fun r h => RV h r) := by
+  unfold LazyList.takeCandidates; ht_tac
+
+attribute [ht_spec] mapItems_spec mapCandidates_spec filterItems_spec filterCandidates_spec takeCandidates_spec
 
 end KatLang.AddressInvariant

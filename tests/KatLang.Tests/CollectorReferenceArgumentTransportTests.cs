@@ -196,8 +196,14 @@ public sealed class CollectorReferenceArgumentTransportTests
     }
 
     [Fact]
-    public async Task ASelectorSpread_LeavesItsReceiverEager()
-        => await Fails("Sel(v) = [10, 1 / 0][v*]\n" + InF("A = xs\nSel(A)", "F(0)"), "DivisionByZero");
+    public async Task ASelectorSpread_ReadsOnlyTheSelectedPositionOfAListReceiver()
+    {
+        // Lazy collections (issue #204): the receiver list is built without reading an element,
+        // and selection reads only the position it names; a sequence receiver is evaluated whole.
+        await Ok("Sel(v) = [10, 1 / 0][v*]\n" + InF("A = xs\nSel(A)", "F(0)"), "10");
+        await Fails("Sel(v) = [10, 1 / 0][v*]\n" + InF("A = xs\nSel(A)", "F(1)"), "DivisionByZero");
+        await Fails("Sel(v) = (10, 1 / 0)[v*]\n" + InF("A = xs\nSel(A)", "F(0)"), "DivisionByZero");
+    }
 
     // ── Captured calls ──────────────────────────────────────────────────────────────────────────
 

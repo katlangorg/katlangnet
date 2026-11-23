@@ -2,8 +2,8 @@
   "format": "kl-sem2b-case",
   "formatVersion": 1,
   "generator": "sem2b-grammar",
-  "recipeVersion": 1,
-  "caseId": "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-1-dot-bare",
+  "recipeVersion": 2,
+  "caseId": "sem2b/v2/sys/path/GenericInsideOptimizedLoop/wait-1-dot-bare",
   "tier": "systematic",
   "seed": null,
   "index": 28,
@@ -95,9 +95,9 @@
     "paths": "GenericInsideOptimizedLoop, AsyncSuspension",
     "minimumCacheHits": 0
   },
-  "provenance": "KatLang 0.8.264+0fd918a2fb965cb72097ed01baead54660fef8c7; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
+  "provenance": "KatLang 0.8.276+cd9bffa4bd1fef5ed215f0d0c42b71e2f64c62c0; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
   "result": {
-    "caseId": "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-1-dot-bare",
+    "caseId": "sem2b/v2/sys/path/GenericInsideOptimizedLoop/wait-1-dot-bare",
     "verdict": "Passed",
     "findings": [],
     "pathsExercised": "GenericInsideOptimizedLoop, AsyncSuspension",

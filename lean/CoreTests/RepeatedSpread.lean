@@ -106,7 +106,11 @@ def everySpellingCollectsThePredictedSupply : Bool :=
 
 /-- Evaluate one expression directly (no root), counted. -/
 def counted (e : Expr) : Except Error CountedResult :=
-  runEvalM (evalCounted e { callStack := [preludeAlg] } [])
+  runEvalM (do
+    let (value, count) <- evalCounted e { callStack := [preludeAlg] } []
+    -- The operand value and the spread's items are compared as WHOLE values (lazy collections,
+    -- issue #204): a spread reads the level it opens, so its items are values already.
+    pure (<- materializeVia demandNeedRecursive value, count))
 
 /-- 2. A direct spread over a literal operand returns exactly `spreadSupplyResult` of the
 reopened supply — value and emitted count. -/

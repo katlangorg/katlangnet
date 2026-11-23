@@ -96,10 +96,10 @@ public class SemanticGeneratedLeanArtifactTests
     /// </summary>
     internal static readonly IReadOnlyList<(string CaseId, string Entries)> CachePublicationPilot =
     [
-        ("sem2b/v1/sys/cache/0", "v1=1"),       // v1 = wait(1) / [v1, v1()] / 997
-        ("sem2b/v1/sys/cache/2", ""),           // v1(v2) = v2 + v2 / v1(wait(1)) / 997
-        ("sem2b/v1/sys/cache-fail/0", "v1=0"),  // v1 = wait(1) / 0 / [v1, v1] / 997
-        ("sem2b/v1/sys/select-fail/3", "v1=1"), // v1 = 11, 12, 13 / v1[9] / 997
+        ("sem2b/v2/sys/cache/0", "v1=1"),       // v1 = wait(1) / [v1, v1()] / 997
+        ("sem2b/v2/sys/cache/2", ""),           // v1(v2) = v2 + v2 / v1(wait(1)) / 997
+        ("sem2b/v2/sys/cache-fail/0", "v1=0"),  // v1 = wait(1) / 0 / [v1, v1] / 997
+        ("sem2b/v2/sys/select-fail/3", "v1=1"), // v1 = 11, 12, 13 / v1[9] / 997
     ];
 
     /// <summary>The pilot cases (base members) with their neutral observation and Lean definition name, in corpus order.</summary>

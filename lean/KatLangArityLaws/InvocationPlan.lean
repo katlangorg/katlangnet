@@ -724,7 +724,12 @@ theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM C
     (hdemand : ∀ b, Disciplined (demand b)) (a : Nat) (suspension : NeedSuspension) :
     Disciplined (NeedDemand.suspendedValue ev route demand a suspension) := by
   cases suspension with
-  | ready value => exact disciplined_pure _
+  | ready value =>
+    -- A Ready cell holding a deferred list item is that position's demand (issue #204).
+    simp only [NeedDemand.suspendedValue]
+    split
+    · exact hdemand _
+    · exact disciplined_pure _
   | expression e c v =>
     simp only [NeedDemand.suspendedValue]
     split

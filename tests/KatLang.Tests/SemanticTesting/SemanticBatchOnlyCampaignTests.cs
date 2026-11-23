@@ -49,7 +49,7 @@ public class SemanticBatchOnlyCampaignTests(ITestOutputHelper output)
     {
         var success = Program(0);
         var failure = Program(8);
-        Assert.True(SemanticCorpus.TryReconstruct("sem2b/v1/sys/invalid/duplicate-property", SemanticRecipe.RecipeVersion, out var refusal, out var problem), problem);
+        Assert.True(SemanticCorpus.TryReconstruct("sem2b/v2/sys/invalid/duplicate-property", SemanticRecipe.RecipeVersion, out var refusal, out var problem), problem);
         Assert.Equal(
             [SemanticCaseKind.ValidSuccess, SemanticCaseKind.ValidRuntimeFailure, SemanticCaseKind.InvalidFrontEnd],
             new[] { success.Kind, failure.Kind, refusal.Kind });

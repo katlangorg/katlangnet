@@ -168,7 +168,7 @@ elab "disc_whnf_core" : tactic => do
     shared list `evalrec_unfold`, `EvaluatorCore`); the plan route and the binding channels are
     their records. -/
 macro "disc_unfold_rec" : tactic => `(tactic| evalrec_unfold (config := { proj := false })
-  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell, NeedChannels.capabilities])
+  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell])
 
 /-- A state write that keeps the heap is disciplined. -/
 theorem disc_modify (f : EvalState → EvalState) (h : ∀ s, HeapKept s.needs (f s).needs) :
@@ -326,18 +326,76 @@ theorem disc_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀
   | nil => unfold selectViewWith; disc_tac_base
   | cons c rest ih => unfold selectViewWith; disc_tac_base
 
+/-! ### Lazy collections (issue #204): the recursive positional helpers -/
+
+theorem disc_lazyDiscover (demand : Nat → EvalM CountedResult) (hd : ∀ a, Disciplined (demand a))
+    (visit : Nat → EvalM Result) (hv : ∀ a, Disciplined (visit a))
+    (limit : Option Nat) (candidates : List (Nat × Nat)) :
+    Disciplined (LazyList.discover demand visit limit candidates) := by
+  induction candidates generalizing limit with
+  | nil => unfold LazyList.discover; disc_tac_base
+  | cons c rest ih => unfold LazyList.discover; disc_tac_base
+
+theorem disc_selectPositionsWith {α : Type} (demand : α → EvalM Result) (hd : ∀ a, Disciplined (demand a))
+    (positionAt : Nat → EvalM (Option Result)) (hp : ∀ n, Disciplined (positionAt n))
+    (read : Result → EvalM Result) (hr : ∀ item, Disciplined (read item)) (selectors : List α) :
+    Disciplined (selectPositionsWith demand positionAt read selectors) := by
+  induction selectors with
+  | nil => unfold selectPositionsWith; disc_tac_base
+  | cons c rest ih => unfold selectPositionsWith; disc_tac_base
+
+theorem disc_peelSpreadLayers (force : Result → EvalM Result) (hf : ∀ value, Disciplined (force value))
+    (layers : Nat) (value : Result) : Disciplined (peelSpreadLayers force layers value) := by
+  induction layers generalizing value with
+  | zero => unfold peelSpreadLayers; disc_tac_base
+  | succ n ih => unfold peelSpreadLayers; disc_tac_base
+
 /-- Capabilities whose every field is disciplined. -/
 structure CapsDisc (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, Disciplined (caps.value a)
   callable : ∀ a, Disciplined (caps.callable a)
   allocate : ∀ s, Disciplined (caps.allocate s)
   reference : ∀ a, Disciplined (caps.reference a)
+  positions : ∀ a, Disciplined (caps.positions a)
+  whole : ∀ a, Disciplined (caps.whole a)
+
+/-- The read a structural pattern opens its cell through (issue #204) is one of two disciplined
+    capabilities. -/
+theorem disc_structuralRead (caps : NeedCapabilities EvalM) (hc : CapsDisc caps)
+    (pattern : NeedPattern) (address : Nat) :
+    Disciplined (NeedBinder.structuralRead caps pattern address) := by
+  cases pattern <;> first | exact hc.value address | exact hc.positions address
+
+/-- THE PRODUCTION CAPABILITIES over disciplined channels are disciplined: the allocator and the
+    META capability as before, and the two lazy-collection reads (issue #204), each the VALUE channel
+    followed by a positional helper over that same channel. Stated once, so that a binder call
+    site proves its two channels only. -/
+theorem disc_capabilities (channels : NeedChannels) (hv : ∀ a, Disciplined (channels.value a))
+    (hc : ∀ a, Disciplined (channels.callable a)) : CapsDisc channels.capabilities := by
+  refine ⟨hv, hc, ?_, ?_, ?_, ?_⟩
+  · intro s; show Disciplined (allocateNeed s); disc_tac_base
+  · intro a; show Disciplined (NeedPlan.reference a); disc_tac_base
+  · intro a
+    have hpos : ∀ candidates, Disciplined (LazyList.positions channels.value none candidates) :=
+      fun candidates => disc_lazyDiscover channels.value hv _ (fun _ => by disc_tac_base) none candidates
+    show Disciplined (do
+      let (value, count) <- channels.value a
+      match value with
+      | .pendingList candidates =>
+          pure (Result.listValue (<- LazyList.positions channels.value none candidates), count)
+      | _ => pure (value, count))
+    disc_tac_base
+  · intro a
+    show Disciplined (do
+      let (value, count) <- channels.value a
+      pure (<- materializeVia channels.value value, count))
+    disc_tac_base
 
 /-- NEED-04's data-anchor check demands only through the VALUE capability. -/
 theorem disc_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsDisc caps) (name : Ident)
     (anchor : CountedResult) (family : Bool) (cells : List Nat) :
     Disciplined (NeedBinder.checkAnchor caps name anchor family cells) := by
-  have hv := hc.value
+  have hv := hc.whole
   induction cells with
   | nil => unfold NeedBinder.checkAnchor; disc_tac_base
   | cons c rest ih => unfold NeedBinder.checkAnchor; disc_tac_base
@@ -349,6 +407,7 @@ theorem disc_binder (caps : NeedCapabilities EvalM) (hc : CapsDisc caps) (repeat
     (∀ patterns sources current,
       Disciplined (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hwh := hc.whole; have hread := disc_structuralRead caps hc
   have hck := disc_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
@@ -616,6 +675,9 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply disc_discover)
   | (with_reducible apply disc_selectWith)
   | (with_reducible apply disc_selectViewWith)
+  | (with_reducible apply disc_lazyDiscover)
+  | (with_reducible apply disc_selectPositionsWith)
+  | (with_reducible apply disc_peelSpreadLayers)
   | (with_reducible apply disc_bindPatterns)
   | (with_reducible apply disc_selectFamily)
   | (with_reducible apply disc_collectSingleAtomicNumbers)
@@ -644,6 +706,7 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply disc_filterLoop rec hrec)
   | (with_reducible apply disc_mapLoop rec hrec)
   | (with_reducible apply disc_repeatLoop rec hrec)
+  | (with_reducible apply disc_capabilities)
   | (with_reducible apply CapsDisc.mk)
 
   | split
@@ -925,14 +988,16 @@ theorem EvalBody.evalReduceCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Di
     Disciplined (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; disc_tac
 
-theorem EvalBody.evalFilterCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalFilterCounted rec items predicateAlg ctx env) := by
+theorem EvalBody.evalFilterCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Disciplined (EvalBody.evalFilterCounted rec start items predicateAlg ctx env) := by
   unfold EvalBody.evalFilterCounted; disc_tac
 
 theorem EvalBody.evalMapCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalMapCounted rec collection transformAlg ctx env) := by
   unfold EvalBody.evalMapCounted; disc_tac
 
+-- Lazy collections (issue #204) enlarged this body (the pending-list stages); the same tactic needs more time.
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.applyBuiltinCountedSequence_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env) := by
   unfold EvalBody.applyBuiltinCountedSequence; disc_tac
@@ -1007,6 +1072,9 @@ theorem EvalBody.evalArgumentViewBuiltin_disciplined (rec : EvalRec) (hrec : ∀
 theorem EvalBody.evalSequenceSpreadOperandValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalSequenceSpreadOperandValue rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadOperandValue; disc_tac
+theorem EvalBody.evalRunValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    Disciplined (EvalBody.evalRunValue rec e ctx env) := by
+  unfold EvalBody.evalRunValue; disc_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
@@ -1104,7 +1172,7 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_disciplined rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_disciplined rec hrec b metadata args ctx env
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_disciplined rec hrec collection stepAlg start ctx env
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_disciplined rec hrec items predicateAlg ctx env
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_disciplined rec hrec start items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_disciplined rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_disciplined rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_disciplined rec hrec b args ctx env
@@ -1124,6 +1192,7 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | argumentViewCells a => exact EvalBody.argumentViewCells_disciplined rec hrec a
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_disciplined rec hrec b a
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_disciplined rec hrec e ctx env
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_disciplined rec hrec e ctx env
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_disciplined rec hrec e ctx env
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_disciplined rec hrec e ctx env
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_disciplined rec hrec elements ctx env

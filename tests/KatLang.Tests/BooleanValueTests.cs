@@ -407,7 +407,8 @@ public class BooleanValueTests
     [InlineData("filter((0, 1), {x})", "numeric value 0")]
     [InlineData("filter((1, 2), {x, x})", "a sequence value with 2 sequence elements: (1, 1)")]
     [InlineData("filter((1, 2), {x.string})", "a string: '1'")]
-    [InlineData("filter((1, 2), {[x > 0]})", "a list value with 1 element: [true]")]
+    // A list result is named without reading its deferred element (lazy collections, issue #204).
+    [InlineData("filter((1, 2), {[x > 0]})", "a list value with 1 element: [<deferred>]")]
     [InlineData("filter((1, 2), {if(x > 0, (), ())})", "a sequence value with 0 sequence elements: ()")]
     public void Filter_RejectsANonBooleanPredicateResult_NamingTheValue(string source, string described)
     {

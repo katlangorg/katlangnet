@@ -123,9 +123,12 @@ public class TransientSupplyBoundTests(ITestOutputHelper output)
     public void ListLiteral_RepeatedSpread_AtTheBoundarySucceeds()
         => AssertOutcome("ok L[1, 2, 3, 1, 2, 3]", "A = [1, 2, 3]\n[A*, A*]", maxCollectionItems: 6, peak: 6);
 
+    // The written slots are still counted to the end (the refusal names all seven), but an ordinary
+    // element is deferred — it would run when the list is read, and a refused list is never read
+    // (lazy collections, issue #204).
     [Fact]
-    public void ListLiteral_OverflowedElementsStillRunInWrittenOrder()
-        => AssertOutcome("err limit 5/7 @2:1", "A = [1, 2, 3]\n[A*, A*, trace(9)]", maxCollectionItems: 5, effects: "traces=1");
+    public void ListLiteral_OverflowedSlotsAreCounted_AndItsDeferredElementsNeverRun()
+        => AssertOutcome("err limit 5/7 @2:1", "A = [1, 2, 3]\n[A*, A*, trace(9)]", maxCollectionItems: 5, effects: "traces=0");
 
     // ── T2: captures and written groups ──────────────────────────────────────
 

@@ -311,8 +311,31 @@ public static partial class Evaluator
                     hasPendingChild = false;
                     var link = links[frame.Phase - 1];
                     var previousOperand = frame.Phase == 1 ? first : links[frame.Phase - 2].Operand;
+                    var linkRight = pendingChild.Value;
+                    if (link.Op is ComparisonOp.Eq or ComparisonOp.Ne && ctx.Budget.HasLazyLists)
+                    {
+                        // EQUALITY COMPARES WHOLE VALUES (issue #204): both operands are
+                        // materialized, the left one before the right one.
+                        var wholeLeft = MaterializeValue(frame.FirstValue!, ctx, asynchronous: false).GetAwaiter().GetResult();
+                        if (wholeLeft.IsError)
+                        {
+                            completed = wholeLeft.Error;
+                            break;
+                        }
+
+                        var wholeRight = MaterializeValue(linkRight, ctx, asynchronous: false).GetAwaiter().GetResult();
+                        if (wholeRight.IsError)
+                        {
+                            completed = wholeRight.Error;
+                            break;
+                        }
+
+                        frame.FirstValue = wholeLeft.Value;
+                        linkRight = wholeRight.Value;
+                    }
+
                     var linkR = ApplyComparison(
-                        link.Op, previousOperand, link.Operand, frame.FirstValue!, pendingChild.Value, frame.Node.Span, ctx);
+                        link.Op, previousOperand, link.Operand, frame.FirstValue!, linkRight, frame.Node.Span, ctx);
                     if (linkR.IsError)
                     {
                         completed = linkR.Error;
@@ -321,7 +344,7 @@ public static partial class Evaluator
 
                     if (!linkR.Value)
                         frame.ComparisonFailed = true;
-                    frame.FirstValue = pendingChild.Value;
+                    frame.FirstValue = linkRight;
                     frame.Phase++;
                     if (frame.Phase <= links.Count)
                     {
@@ -384,68 +407,24 @@ public static partial class Evaluator
                             : AdvanceSelection(ref frame, demanded.Value.Value, ctx, out requestedChild, out _, out viewIndex);
                     }
 
-                    // A validated position of an argument view (S2) or a retained collector: read
-                    // that ONE cell, demand it.
+                    // A validated position of an argument view (S2), a retained collector or a list
+                    // evaluated on demand (issue #204): read that ONE cell, demand it.
                     if (viewIndex >= 0)
                         completed = frame.RetainedSlice is { } retained
                             ? AcceptRetainedSelection(ref frame, retained[viewIndex].Demand(), ctx)
-                            : SelectArgumentViewSync(ref frame, viewIndex, ctx);
+                            : frame.FirstValue is Result.ListValue { Lazy: { } positions }
+                                ? SelectLazyPositionSync(ref frame, positions, viewIndex, ctx)
+                                : SelectArgumentViewSync(ref frame, viewIndex, ctx);
 
                     break;
                 }
 
                 case Expr.ListLiteral(var elements):
                 {
-                    frame.ListItems ??= NewListSlots(elements);
-                    if (hasPendingChild)
-                    {
-                        // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
-                        // spread, so its counted supply contributes exactly ONE value.
-                        hasPendingChild = false;
-                        AddListSlot(frame.ListItems, pendingChild.Value, ctx.Budget);
-                        frame.Phase++;
-                    }
-
-                    while (frame.Phase < elements.Count)
-                    {
-                        var element = elements[frame.Phase];
-                        if (IsExpressionSpineNode(element))
-                            break;
-
-                        var slotsR = EvalExplicitSequenceValueExprSlots(element, ctx, valEnv);
-                        if (slotsR.IsError)
-                        {
-                            completed = slotsR.Error;
-                            break;
-                        }
-
-                        // The written slots' accumulator is transient-bounded BEFORE it grows
-                        // (SEC-01): `[A*, A*]` never retains more spread items than the list may.
-                        AddListSlots(frame.ListItems, slotsR.Value, ctx.Budget, element is Expr.SequenceSpread);
-                        frame.Phase++;
-                    }
-
-                    if (completed is not null)
-                        break;
-
-                    if (frame.Phase < elements.Count)
-                    {
-                        requestedChild = elements[frame.Phase];
-                        break;
-                    }
-
-                    // Cardinality is known once the written slots (including spread
-                    // expansion) are evaluated, so the reservation happens before the
-                    // persistent list is built.
-                    // An overflowed accumulator (SEC-01) reserves its full counted size: the same refusal.
-                    if (ReserveCollection(ctx, ListSlotTotal(frame.ListItems), frame.Node.Span) is { } limitError)
-                    {
-                        completed = limitError;
-                        break;
-                    }
-
-                    completed = EvalResult<CountedResult>.Ok(new CountedResult(
-                        Result.ListValue.TakeOwnership(frame.ListItems.ToArray()), 1));
+                    // LAZY COLLECTIONS (issue #204): the literal evaluates its explicit spreads and
+                    // constants and DEFERS every other element, so it never requests a child
+                    // frame — a nested literal is one deferred element of its parent.
+                    completed = EvalListLiteral(elements, frame.Node.Span, ctx, valEnv);
                     break;
                 }
 
@@ -650,6 +629,17 @@ public static partial class Evaluator
                 return null;
             }
 
+            if (frame.FirstValue is Result.ListValue { Lazy: not null })
+            {
+                // A LIST EVALUATED ON DEMAND (issue #204): the selector is validated here; the
+                // machine then finds the position it names and reads ONLY that position.
+                var positionR = SelectorIndex(arrived, slot, selection);
+                if (positionR.IsError)
+                    return positionR.Error;
+                viewIndex = positionR.Value;
+                return null;
+            }
+
             var selectedR = SelectPosition(frame.FirstValue!, arrived, slot, selection);
             if (selectedR.IsError)
                 return selectedR.Error;
@@ -668,6 +658,39 @@ public static partial class Evaluator
         }
 
         return CompleteSelection(frame.ListItems, ctx, selection);
+    }
+
+    /// <summary>
+    /// The synchronous machine's read of ONE validated position of a list evaluated on demand
+    /// (issue #204): the position is found — a bounds check against a known cardinality, or
+    /// discovery up to it — and only it is read. Lean: <c>selectPositionsWith</c>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult>? SelectLazyPositionSync(
+        ref ExpressionSpineFrame frame, LazyList positions, int index, EvalCtx ctx)
+        => AcceptLazySelection(ref frame, ReadLazyPosition(positions, index, asynchronous: false).GetAwaiter().GetResult(), ctx);
+
+    /// <summary>
+    /// The VALUE of position <paramref name="index"/> of a list evaluated on demand, or the
+    /// missing-position failure when the list has no such position.
+    /// </summary>
+    private static async ValueTask<EvalResult<Result>> ReadLazyPosition(LazyList positions, int index, bool asynchronous)
+    {
+        var has = await HasPosition(positions, index, asynchronous).ConfigureAwait(false);
+        if (has.IsError) return has.Error;
+        if (!has.Value) return new EvalError.BadIndex();
+        return await ForcePosition(positions.Slot(index), asynchronous).ConfigureAwait(false);
+    }
+
+    /// <summary>Accepts the read position of a lazy list; a failure is positioned at the selector in flight.</summary>
+    private static EvalResult<CountedResult>? AcceptLazySelection(
+        ref ExpressionSpineFrame frame, EvalResult<Result> read, EvalCtx ctx)
+    {
+        if (read.IsError)
+            return SelectorFailure(read.Error, frame);
+        var selection = (Expr.Index)frame.Node;
+        var total = frame.Selection?.Count ?? selection.Selectors.Count;
+        return AcceptSelected(ref frame, read.Value, total, ctx, selection);
     }
 
     /// <summary>
@@ -1543,6 +1566,11 @@ public static partial class Evaluator
         for (var i = 0; i < argNames.Count; i++)
         {
             var valueR = LookupNativeArgument(ctx, valEnv, argNames[i]);
+            if (valueR.IsError) return valueR.Error;
+            // A HOST OPERATION RECEIVES CONCRETE VALUES (issue #204): its argument is materialized
+            // here, where it is demanded, in argument order — host code never sees a list
+            // evaluated on demand.
+            valueR = MaterializeRunOutput(valueR, ctx);
             if (valueR.IsError) return valueR.Error;
             // A call reference never reaches host code (CallReference S1, J4); the scan is charged
             // structural work because it repeats for every host call (SEC-01-FU).

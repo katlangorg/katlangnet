@@ -28,6 +28,7 @@ public class LeanCoreTestsCompositionTests
         "ParityGuards",
         "ValueBoundary",
         "ListValues",
+        "LazyCollections",
         "CollectingBindings",
         "OutputBundle",
         "NameOwnership",

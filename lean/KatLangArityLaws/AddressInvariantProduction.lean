@@ -329,6 +329,13 @@ theorem production_entry_eval (e : Expr) :
   fun s vs _ => SoundOver.value (production_sound_all (.evalCounted e { callStack := [preludeAlg] } [])) s vs
     ⟨entry_ctx_valid _, VEV.nil⟩
 
+/-- **Entry (the run value).** The public run's one root call: the root assembled, then its value
+    materialized (issue #204). -/
+theorem production_entry_runValue (e : Expr) :
+    SoundOver Inv (fun _ => True) (evalRunValue e { callStack := [preludeAlg] } []) (fun r h => RV h r) :=
+  fun s vs _ => (production_sound_all (.evalRunValue e { callStack := [preludeAlg] } [])) s vs
+    ⟨entry_ctx_valid _, VEV.nil⟩
+
 /-- Both entries from the empty state. -/
 theorem production_entry_from_empty (wired : Algorithm) (e : Expr) :
     (Inv ((evalProgramOutput wired { callStack := [preludeAlg] } []).runState EvalState.empty).2 ∧

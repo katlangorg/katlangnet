@@ -261,9 +261,15 @@ public class StructuralNestingStackBackstopProcessTests
             // The widest preflight-admitted member of every kind at recursion depth 60
             // (thousands of frames per chain): the backstop must fire on the synchronous
             // family, while the twin hops to fresh stacks and completes.
+            // The alternating shape is the exception since lists are evaluated on demand
+            // (issue #204): every level returns its written list unread, and the run's result is
+            // read position by position without native recursion, so it COMPLETES — even here.
             foreach (var (kind, width, ast) in widestAtDepth60)
             {
-                AssertDirect(ast, ExpectedAtoms(kind, width, 60), strictStackError: true);
+                if (kind == "list-alternation")
+                    AssertDirect(ast, ExpectedAtoms(kind, width, 60), strictStackError: false, mustComplete: true);
+                else
+                    AssertDirect(ast, ExpectedAtoms(kind, width, 60), strictStackError: true);
                 AssertTwinCompletes(ast, ExpectedAtoms(kind, width, 60));
             }
 

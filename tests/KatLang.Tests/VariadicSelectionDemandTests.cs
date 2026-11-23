@@ -154,8 +154,11 @@ public class VariadicSelectionDemandTests
 
     [Fact]
     public async Task AFreshInvocation_IsOneInvocationForEverySelectorRepetitionsIncluded()
+        // Lazy collections (issue #204): the ONE invocation builds the list and reads nothing; each
+        // selector then reads the position it names, in written order, and a repeated selector
+        // reads that position's completed value — the unselected element never runs.
         => AssertValue(await OnEveryRouteAsync("Data = [tock(), tock(), tock()]\nData()[2, 0, 2]"),
-            "S[3, 1, 3]", "tock#1", "tock#2", "tock#3");
+            "S[1, 2, 1]", "tock#1", "tock#2");
 
     [Fact]
     public async Task ACachedRead_IsEvaluatedOnceAcrossSelections()
@@ -173,7 +176,10 @@ public class VariadicSelectionDemandTests
     [Fact]
     public async Task AnEmptySelection_StillDemandsItsReceiver()
     {
-        AssertValue(await OnEveryRouteAsync("Data = [trace(1)]\nData()[]"), "S[]", "trace(1)");
+        // The receiver is demanded: a sequence value is evaluated whole; a list is BUILT, and with
+        // no selector none of its positions is read (lazy collections, issue #204).
+        AssertValue(await OnEveryRouteAsync("Data = (trace(1), 2)\nData()[]"), "S[]", "trace(1)");
+        AssertValue(await OnEveryRouteAsync("Data = [trace(1)]\nData()[]"), "S[]");
         AssertFails(await OnEveryRouteAsync("Bad = trace(1) / 0\nBad()[]"), KatLangErrorCode.DivisionByZero, "trace(1)");
         AssertFails(await OnEveryRouteAsync("Bad = trace(1) / 0\nBad[]"), KatLangErrorCode.DivisionByZero, "trace(1)");
     }

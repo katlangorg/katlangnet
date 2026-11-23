@@ -840,7 +840,7 @@ public static partial class Evaluator
     /// error actually needs the name. This avoids both a closure and diagnostic string allocation
     /// on successful resolved calls.
     /// </summary>
-    private readonly struct CallDiagnosticName
+    internal readonly struct CallDiagnosticName
     {
         private readonly string? _knownName;
         private readonly Expr? _expression;
@@ -962,9 +962,15 @@ public static partial class Evaluator
     /// helper.</para>
     /// </summary>
     private static EvalResult<T> WithCallCtx<T>(CallDiagnosticName function, EvalCtx ctx, EvalResult<T> result)
-        => result.IsError && !result.Error.IsTerminalForRun && !function.IsDiagnosticallyTransparent
+    {
+        // A `map` / `filter` stage this call built reports its later steps under this call's
+        // frame (lazy collections, issue #204; LazyList.StageSite).
+        if (FreshStage(result) is { Site: null } stage)
+            stage.NoteSiteFrame(function, null, ctx);
+        return result.IsError && !result.Error.IsTerminalForRun && !function.IsDiagnosticallyTransparent
             ? new EvalError.WithContext(CtxCall(function, ctx), result.Error) { Span = result.Error.Span }
             : result;
+    }
 
     /// <summary>
     /// <see cref="WithCtx{T}(ErrorContext, EvalResult{T})"/> for one iterated filter item,
@@ -995,12 +1001,18 @@ public static partial class Evaluator
     /// <see cref="WithCallCtx{T}"/>).
     /// </summary>
     private static EvalResult<T> WithDotCallCtx<T>(Expr.DotCall dotCall, EvalCtx ctx, EvalResult<T> result)
-        => result.IsError && !result.Error.IsTerminalForRun
+    {
+        // A `map` / `filter` stage this dot call built reports its later steps under this
+        // frame (lazy collections, issue #204; LazyList.StageSite).
+        if (FreshStage(result) is { Site: null } stage)
+            stage.NoteSiteFrame(null, dotCall, ctx);
+        return result.IsError && !result.Error.IsTerminalForRun
             ? new EvalError.WithContext(
                 CtxDotCall(dotCall.Target, dotCall.Name, ctx),
                 result.Error)
             { Span = result.Error.Span }
             : result;
+    }
 
     /// <summary>
     /// The generic call-expression DIAGNOSTIC BOUNDARY, reusable by an optimizer that
@@ -1039,8 +1051,14 @@ public static partial class Evaluator
     /// frame on the call-recursion spine (frame-size discipline, see the parser's leaf-frame
     /// helpers).
     /// </summary>
-    internal static EvalResult<T> WithSpanOf<T>(Expr expr, EvalResult<T> result) =>
-        result.IsError ? AtSpanIfMissing(result.Error, expr.Span) : result;
+    internal static EvalResult<T> WithSpanOf<T>(Expr expr, EvalResult<T> result)
+    {
+        // The written call that built a `map` / `filter` stage positions the stage's later
+        // spanless failures (lazy collections, issue #204; LazyList.StageSite).
+        if (FreshStage(result) is { Site: { } site })
+            site.NoteSpan(expr.Span);
+        return result.IsError ? AtSpanIfMissing(result.Error, expr.Span) : result;
+    }
 
     /// <summary>
     /// <see cref="WithSpanOf{T}"/> for a capture: the expression's own span, else the first
@@ -2664,6 +2682,10 @@ public static partial class Evaluator
         Result.Str => $"a string: {FormatResultForDiagnostic(value)}",
         Result.Bool(var flag) => $"a Boolean value: {Rendering.ValueTextRenderer.FormatBool(flag)}",
         Result.Atom(var number) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(number)}",
+        // A list evaluated on demand (issue #204) is described without reading any position: its
+        // cardinality when that is known, never its unread elements.
+        Result.ListValue { Lazy: { IsPending: true } } => "a list value whose elements are not yet evaluated",
+        Result.ListValue { Lazy: { } positions } => $"a list value with {positions.Discovered} {Pluralize(positions.Discovered, "element")}: {FormatResultForDiagnostic(value)}",
         Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
         Result.CallReference { IsArgumentView: true } => "an argument view",
         Result.CallReference => "a call reference",
@@ -3999,7 +4021,7 @@ public static partial class Evaluator
         }
         else
         {
-            var outputR = EvalCounted(expr, ctx, []);
+            var outputR = MaterializeRunOutput(EvalCounted(expr, ctx, []), ctx);
             result = outputR.IsError
                 ? outputR.Error
                 : EvalResult<CountedRootProgramResult>.Ok(
@@ -4093,6 +4115,13 @@ public static partial class Evaluator
         // Read only now that the root output succeeded: counts never accompany a failure.
         var rootRowSlotCounts = rootOutputRows.TakeSlotCounts();
 
+        // THE RUN RESULT IS MATERIALIZED (issue #204): the assembled output first — before any
+        // named property is read, so the run's value is what every other entry point returns —
+        // and then each named property's value as it is read.
+        outputR = MaterializeRunOutput(outputR, ctx);
+        if (outputR.IsError)
+            return outputR.Error;
+
         // In the given order; the first failing read is the run's failure and no later name is read.
         var properties = new CountedResult?[topLevelPropertyNames.Count];
         for (var i = 0; i < properties.Length; i++)
@@ -4101,7 +4130,13 @@ public static partial class Evaluator
             if (propertyR.IsError)
                 return propertyR.Error;
 
-            properties[i] = propertyR.Value;
+            if (propertyR.Value is { } read)
+            {
+                var wholeR = MaterializeRunOutput(EvalResult<CountedResult>.Ok(read), ctx);
+                if (wholeR.IsError)
+                    return wholeR.Error;
+                properties[i] = wholeR.Value;
+            }
         }
 
         return EvalResult<CountedRootProgramResult>.Ok(

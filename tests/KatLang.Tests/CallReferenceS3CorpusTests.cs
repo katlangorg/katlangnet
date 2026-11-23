@@ -161,8 +161,8 @@ public class CallReferenceS3CorpusTests
         new("Q1", Q + "Use(x) = Apply(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // Codex, verbatim
         new("Q1b", Q + "Use(x) = x.Algorithm(0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // fresh invocation
         new("Q1c", Q + "Use(x) = (x.Algorithm)(0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // callee position
-        new("Q1d", Q + "Use(x) = [0].map(x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // map callback
-        new("Q1e", Q + "Use(x) = [0].filter(x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // filter callback
+        new("Q1d", Q + "Use(x) = [0].map(x.Algorithm).first\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // map callback, projected when its position is read
+        new("Q1e", Q + "Use(x) = [0].filter(x.Algorithm).first\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // filter callback, projected when its scan runs
         new("Q1f", Q + "Use(x) = [1, 2].reduce(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // reduce callback
         new("Q1g", Q + "Use(x) = {\n  A = x.Algorithm\n  A(0).while\n}\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // loop step
         new("Q1h", Q + "Use(x) = x.Algorithm\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // bare VALUE
@@ -202,15 +202,15 @@ public class CallReferenceS3CorpusTests
         new("E11s", "Deep(n) = if(n <= 0, Capture(Square(2)), Deep(n - 1))\nUse(p) = Apply(p.G, 0)\nUse(Deep(30).Algorithm)", "err NotAnAlgorithm", "", "0/0", "0/0", Limits: new EvaluationLimits { MaxSteps = 40 }),  // completes: static absence (Square declares no G)
         new("E11", "Deep(n) = if(n <= 0, Capture(Square(2)), Deep(n - 1))\nUse(p) = Apply(p.G, 0)\nUse(Deep(30).Algorithm), trace(1)", "err EvaluationStepLimitExceeded", "", "0/0", "0/0", Limits: new EvaluationLimits { MaxSteps = 10 }),  // receiver reaches the step limit
         new("E11b", "Deep(n) = if(n <= 0, Capture(Square(2)), Deep(n - 1))\nUse(f) = Apply(f, 0)\nUse(Deep(30).Algorithm), trace(1)", "err EvaluationStepLimitExceeded", "", "0/0", "0/0", Limits: new EvaluationLimits { MaxSteps = 10 }),
-        new("Q5", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
+        new("Q5", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(first([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5b", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].filter(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5c", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if([1].reduce(R.Arguments*, 0) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5d", "F(f) = f\nW(s) = s(0).while\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
-        new("Q5e", "F(f) = f\nM(g) = [0].map(g)\nR = Capture(F(Q.Algorithm))\nQ = if(count(M(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
-        new("Q5f", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\n[5].map(R.Arguments*)", "err DemandCycle", "", "0/0", "0/0"),
+        new("Q5e", "F(f) = f\nM(g) = [0].map(g)\nR = Capture(F(Q.Algorithm))\nQ = if(first(M(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
+        new("Q5f", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(first([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\n[5].map(R.Arguments*)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5h", "F(f) = f\nW(s) = while(s(0))\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),  // call-form loop step
         new("Q5i", "F(f) = f\nW(s) = repeat(s(0), 2)\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
-        new("Q5g", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(aflag(), if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
+        new("Q5g", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(aflag(), if(first([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("E12", "Bad = min([])\nUse(p) = Apply(p.G.H, 0)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // deeper path
         new("E14", "Bad = min([])\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm), trace(1)", "err IllegalInEval", "", "0/0", "0/0"),
     ];

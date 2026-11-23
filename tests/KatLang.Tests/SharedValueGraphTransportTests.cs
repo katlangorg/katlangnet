@@ -189,8 +189,11 @@ public class SharedValueGraphTransportTests
     [InlineData(true)]
     public void SequenceItemSlot_SharedDescendantsAreReadyDataWithNoCallableIdentity(bool optimize)
     {
+        // The element is a written SEQUENCE of sequences, so reading it evaluates the shared
+        // graph `A` twice over (a written list would keep its elements — and `A` — unread: lazy
+        // collections, issue #204).
         var run = ObserveSource(
-            DagProgram("Loop(f, s) = while(f(s))\n[([A, 1], [A, 2])].reduce(Loop, 1)", ShallowDepth),
+            DagProgram("Loop(f, s) = while(f(s))\n[((A, 1), (A, 2))].reduce(Loop, 1)", ShallowDepth),
             optimize);
 
         Assert.True(run.IsError);
@@ -211,7 +214,7 @@ public class SharedValueGraphTransportTests
             // (`map` never reads the mapper slot of an empty collection, so it would leave `A` unevaluated).
             1 => DagProgram("((), ()).reduce(contains, A)"),
             2 => MultiEmissionDagProgram("Loop(f, s) = while(f(s))\n[(B*)].reduce(Loop, 1)"),
-            3 => DagProgram("Loop(f, s) = while(f(s))\n[([A, 1], [A, 2])].reduce(Loop, 1)", ShallowDepth),
+            3 => DagProgram("Loop(f, s) = while(f(s))\n[((A, 1), (A, 2))].reduce(Loop, 1)", ShallowDepth),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         };
         var generic = ObserveSource(source, optimize: false);

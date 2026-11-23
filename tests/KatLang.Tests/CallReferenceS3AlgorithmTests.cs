@@ -463,9 +463,10 @@ public class CallReferenceS3AlgorithmTests
     [InlineData("R = Hold(R.Algorithm)\nR.Invoke()")]
     [InlineData("R1 = Hold(R2.Algorithm)\nR2 = Hold(R1.Algorithm)\nR1.Algorithm(1)")]
     [InlineData("Take(x) = x\nUse(x) = Apply(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
-    [InlineData("Take(x) = x\nUse(x) = [0].map(x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
+    // A map's callback is projected when a mapped position is read (lazy collections, issue #204).
+    [InlineData("Take(x) = x\nUse(x) = [0].map(x.Algorithm).first\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
     [InlineData("Take(x) = x\nUse(x) = {\n  A = x.Algorithm\n  A(0).while\n}\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
-    [InlineData("F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)")]
+    [InlineData("F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(first([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)")]
     public void ProjectionCycles_AreDemandCycle_OnEveryEngine(string body)
         => Assert.Equal("err DemandCycle: DemandCycle", Run("Hold(g) = Capture(g(0))\n" + body));
 

@@ -180,17 +180,20 @@ def innermostIsBooleanRequired (role description : String) : Error -> Bool :=
 
 /-- Evaluate a whole program counted, mirroring `runResultM` but preserving the
     root emitted count, so a boundary returning one value shows count 1 while the
-    root output list still shows its slot count. -/
+    root output list still shows its slot count. Like `runResultM`, the value is
+    materialized before it is returned (lazy collections, issue #204). -/
 def runCountedProgram (e : KatLang.Expr) : Except KatLang.Error KatLang.CountedResult :=
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
-  KatLang.runEvalM
-    (match e with
-     | .algorithmExpr a =>
-         let wired := KatLang.wireToCaller ctx a
-         if KatLang.Algorithm.acceptsZeroSuppliedArguments wired then
-           KatLang.evalZeroArgumentDemandOutputCounted wired ctx []
-         else
-           .error (KatLang.Error.unresolvedImplicitParams (KatLang.Algorithm.params wired))
-     | _ => KatLang.evalCounted e ctx [])
+  KatLang.runEvalM (do
+    let counted <-
+      (match e with
+       | .algorithmExpr a =>
+           let wired := KatLang.wireToCaller ctx a
+           if KatLang.Algorithm.acceptsZeroSuppliedArguments wired then
+             KatLang.evalZeroArgumentDemandOutputCounted wired ctx []
+           else
+             .error (KatLang.Error.unresolvedImplicitParams (KatLang.Algorithm.params wired))
+       | _ => KatLang.evalCounted e ctx [])
+    pure (<- KatLang.materializeVia KatLang.demandNeedRecursive counted.fst, counted.snd))
 
 end KatLangTests

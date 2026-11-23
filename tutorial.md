@@ -1453,6 +1453,45 @@ F(([10, 20], 30))
 | `[x]` | a list of exactly one element |
 | `[x, y]` | a list of exactly two elements |
 
+### Lists Are Calculated on Demand
+
+A list does not calculate its items when it is written. Each item is calculated the first time something reads it, and at most once:
+
+<!-- spec:lazy-list-selection-reads-only-the-selected-position -->
+```
+[10, 1 / 0][0]
+```
+
+**Result:** `10`
+
+Selection reads only the item it names, so the division by zero is never calculated. Counting a list reads no item at all — `[10, 1 / 0].count` is `2` — because the number of items is known as soon as the list is written.
+
+The same holds for the lists that `map`, `filter`, and `take` return (see [Working with Collections](#working-with-collections)). `map` runs its algorithm only for the items that are read, and `filter` looks for matches only as far as its reader needs:
+
+<!-- spec:lazy-map-runs-its-mapper-only-for-the-positions-read -->
+```
+[1, 2].map{if(n == 1, 10, 1 / 0)}.first
+```
+
+**Result:** `10`
+
+<!-- spec:lazy-filter-discovers-only-the-matches-it-needs -->
+```
+[1, 0].filter{1 / n > 0}.take(1)
+```
+
+**Result:** `[1]`
+
+Operations that need every item read them all, in order: adding them up with `sum`, opening the list with `*`, comparing two lists with `==`, and displaying a result. A program's results are read after all of its output rows have been calculated, so an item that fails makes the program fail even if nothing else reads it:
+
+```
+[1, 1 / 0]
+```
+
+**Result:** error — division by zero.
+
+A sequence is different: `(10, 1 / 0)` calculates both items as soon as it is written.
+
 ### Lists or Sequences?
 
 - A **sequence** is what several outputs become, and what parentheses write. It is the natural shape for results that belong together, like the area and perimeter returned by `Rectangle`.

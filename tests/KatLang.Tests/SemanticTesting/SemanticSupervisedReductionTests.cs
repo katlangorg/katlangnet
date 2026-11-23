@@ -34,7 +34,7 @@ public class SemanticSupervisedReductionTests(ITestOutputHelper output)
     /// <c>repeat</c> and passed; rejection of a passing child result is the same code path in process
     /// (<see cref="AssertLocallyMinimal"/>) and a passing child is <see cref="SemanticSupervisionTests"/>' normal worker.
     /// </summary>
-    internal const string CaseId = "sem2b/v1/sys/loop/4";
+    internal const string CaseId = "sem2b/v2/sys/loop/4";
 
     private const int MaxAttempts = 40;
 

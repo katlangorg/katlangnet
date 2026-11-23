@@ -23,7 +23,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     private const string Trigger = ".Arguments";
 
     /// <summary>A 3-fragment seeded success whose trigger sits in its first fragment (the README's block-limitation example).</summary>
-    private const string KnownShape = "sem2b/v1/seed/5EED2B000001/1";
+    private const string KnownShape = "sem2b/v2/seed/5EED2B000001/1";
 
     private const ulong Seed = 0x5EED_2B00_0001UL;
 
@@ -42,11 +42,11 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     private static readonly string[] SpanIds =
     [
         KnownShape,
-        "sem2b/v1/seed/5EED2B000003/3",
-        "sem2b/v1/seed/5EED2B000006/15",
-        "sem2b/v1/seed-nested/5EED2B000001/2",
-        "sem2b/v1/sys/meta/0",
-        "sem2b/v1/sys/triple/collect+meta+failure-fail",
+        "sem2b/v2/seed/5EED2B000003/3",
+        "sem2b/v2/seed/5EED2B000006/15",
+        "sem2b/v2/seed-nested/5EED2B000001/2",
+        "sem2b/v2/sys/meta/0",
+        "sem2b/v2/sys/triple/collect+meta+failure-fail",
     ];
 
     // ── Spans ───────────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             Assert.Equal(Listing(Path.Combine(root.FullName, "a")), Listing(Path.Combine(root.FullName, "b")));
             Assert.Equal([SemanticCampaign.SummaryFile], Listing(Path.Combine(root.FullName, "a")));
             Assert.Contains("\"stop\": \"case-budget\"", a, StringComparison.Ordinal);
-            Assert.Contains("\"firstUncovered\": \"sem2b/v1/seed/5EED2B000002/1\"", a, StringComparison.Ordinal);
+            Assert.Contains("\"firstUncovered\": \"sem2b/v2/seed/5EED2B000002/1\"", a, StringComparison.Ordinal);
             Assert.DoesNotContain(root.FullName.Replace('\\', '/'), a.Replace("\\\\", "/"), StringComparison.OrdinalIgnoreCase);
             Assert.Equal(first.Verdicts, second.Verdicts);
 
@@ -421,7 +421,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     private const string NestedTrigger = "[(";
 
     /// <summary>The nested ids of the first fixed-corpus seed; indices 0-3 are the fixed corpus's own nested cases.</summary>
-    private const string NestedIds = "sem2b/v1/seed-nested/5EED2B000001/";
+    private const string NestedIds = "sem2b/v2/seed-nested/5EED2B000001/";
 
     private static SemanticCaseResult NestedFaultyRun(SemanticCase c)
         => SemanticRunner.Run(c, c.Source.Contains(NestedTrigger, StringComparison.Ordinal) ? SemanticReductionTests.WrongValue : null);
@@ -457,7 +457,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
         foreach (var recipe in SemanticCorpus.SeededRecipes)
         {
             var id = SemanticCampaign.CaseId(0x10, 3, recipe);
-            Assert.Equal("sem2b/v1/" + recipe + "/10/3", id);
+            Assert.Equal("sem2b/v2/" + recipe + "/10/3", id);
             Assert.True(SemanticCorpus.TryBuilder(id, SemanticRecipe.RecipeVersion, out var builder, out problem), problem);
             Assert.Equal(id, builder.CaseId);
         }
@@ -494,7 +494,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             var seeded = SemanticCampaign.Run(Tiny(Path.Combine(root.FullName, "seed")), TextWriter.Null);
             output.WriteLine(first.Describe());
 
-            string[] ids = [NestedIds + "0", NestedIds + "1", "sem2b/v1/seed-nested/5EED2B000002/0"];
+            string[] ids = [NestedIds + "0", NestedIds + "1", "sem2b/v2/seed-nested/5EED2B000002/0"];
             Assert.Equal([.. ids, .. ids], executed.Select(c => c.CaseId).ToArray());
             (ulong Seed, int Index)[] pairs = [(Seed, 0), (Seed, 1), (Seed + 1, 0)];
             foreach (var ((seed, index), ran) in pairs.Zip(executed))
@@ -508,7 +508,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             Assert.Equal((4L, 3, 3), (first.Planned, first.Executed, first.Passed));
             Assert.Equal(SemanticCampaignStop.CaseBudget, first.Stop);
             Assert.Equal(ids[2], first.LastCovered);
-            Assert.Equal("sem2b/v1/seed-nested/5EED2B000002/1", first.FirstUncovered);
+            Assert.Equal("sem2b/v2/seed-nested/5EED2B000002/1", first.FirstUncovered);
             Assert.Empty(first.Failures);
             Assert.Equal(first.Verdicts, second.Verdicts);
 
@@ -517,7 +517,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             Assert.Equal(Listing(Path.Combine(root.FullName, "a")), Listing(Path.Combine(root.FullName, "b")));
             Assert.Equal([SemanticCampaign.SummaryFile], Listing(Path.Combine(root.FullName, "a")));
             Assert.Contains("\"recipe\": \"seed-nested\"", a, StringComparison.Ordinal);
-            Assert.Contains("\"firstUncovered\": \"sem2b/v1/seed-nested/5EED2B000002/1\"", a, StringComparison.Ordinal);
+            Assert.Contains("\"firstUncovered\": \"sem2b/v2/seed-nested/5EED2B000002/1\"", a, StringComparison.Ordinal);
 
             // The default recipe over the same range: the same summary apart from the recipe name and
             // the (source, profile) count, which follows each recipe's own profile selection.
@@ -557,7 +557,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
             Assert.Equal(6, ids.Length);
             foreach (var id in ids)
             {
-                Assert.StartsWith("sem2b/v1/seed-nested/", id, StringComparison.Ordinal);
+                Assert.StartsWith("sem2b/v2/seed-nested/", id, StringComparison.Ordinal);
                 var file = Path.Combine(root.FullName, SemanticReplay.SafeName(id) + ".json");
                 Assert.Equal(0, SemanticReplay.RunExport(["semantic-export", id, file]));
                 var outcome = SemanticReplay.Replay(File.ReadAllText(file), SemanticReplay.Mode.Recipe);
@@ -648,7 +648,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
                 Assert.False(record.Supervised);
                 Assert.True(record.ReducedSize.CompareTo(record.OriginalSize) < 0);
                 Assert.True(record.ReducedSize.Declarations < record.OriginalSize.Declarations, "no context declaration was removed");
-                Assert.StartsWith("sem2b/v1/reduced/seed-nested/5EED2B000001/" + index + "/", record.ReducedCaseId, StringComparison.Ordinal);
+                Assert.StartsWith("sem2b/v2/reduced/seed-nested/5EED2B000001/" + index + "/", record.ReducedCaseId, StringComparison.Ordinal);
                 Assert.Equal(record.ReducedCaseId, reduction.GetProperty("reducedCaseId").GetString());
                 Assert.Equal(record.OriginalSize.SourceLength, reduction.GetProperty("originalSourceLength").GetInt32());
                 Assert.Equal(record.ReducedSize.SourceLength, reduction.GetProperty("reducedSourceLength").GetInt32());
@@ -678,7 +678,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
                 TextWriter.Null, o => o with { InProcessRunner = NestedFaultyRun });
             var seedSummary = File.ReadAllText(Path.Combine(seedOut, SemanticCampaign.SummaryFile));
             Assert.Contains("\"recipe\": \"seed\"", seedSummary, StringComparison.Ordinal);
-            Assert.Contains("\"lastCovered\": \"sem2b/v1/seed/5EED2B000001/3\"", seedSummary, StringComparison.Ordinal);
+            Assert.Contains("\"lastCovered\": \"sem2b/v2/seed/5EED2B000001/3\"", seedSummary, StringComparison.Ordinal);
             Assert.DoesNotContain("seed-nested", seedSummary, StringComparison.Ordinal);
         }
         finally

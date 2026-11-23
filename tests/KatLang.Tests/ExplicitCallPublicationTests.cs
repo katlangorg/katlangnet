@@ -364,10 +364,13 @@ public class ExplicitCallPublicationTests
     [Fact]
     public void TheCallKeepsItsOrdinaryValueBoundary()
     {
-        // `P = 1, 2` emits two rows (one sequence value); `P()` is ONE value at the call boundary.
-        var observed = Observe("P = 1, 2\ncount([P()])");
+        // `P = 1, 2` emits two rows (one sequence value); `P()` is ONE value at the call boundary:
+        // one list position, holding both elements. The predicate reads that position (`count`
+        // alone would not evaluate it: lazy collections, issue #204).
+        var observed = Observe("P = 1, 2\n[P()].filter({ count(x) == 2 }).count");
         Assert.Equal("1", observed.Display);
         Assert.Equal(2, Assert.Single(observed.Observations).EmittedCount);
+        Assert.Empty(Observe("P = 1, 2\ncount([P()])").Observations);
     }
 
     [Fact]

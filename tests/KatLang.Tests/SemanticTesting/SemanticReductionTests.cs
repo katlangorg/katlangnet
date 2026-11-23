@@ -18,15 +18,15 @@ public class SemanticReductionTests(ITestOutputHelper output)
 
     private static readonly string[] RecordedIds =
     [
-        "sem2b/v1/seed/5EED2B000001/0",
-        "sem2b/v1/seed/5EED2B000002/5",
-        "sem2b/v1/seed/5EED2B000003/3",
-        "sem2b/v1/seed/5EED2B000006/15",
-        "sem2b/v1/seed-nested/5EED2B000001/2",
-        "sem2b/v1/sys/meta/0",
-        "sem2b/v1/sys/cancel/1",
-        "sem2b/v1/sys/invalid/duplicate-property",
-        "sem2b/v1/sys/triple/collect+meta+failure-fail",
+        "sem2b/v2/seed/5EED2B000001/0",
+        "sem2b/v2/seed/5EED2B000002/5",
+        "sem2b/v2/seed/5EED2B000003/3",
+        "sem2b/v2/seed/5EED2B000006/15",
+        "sem2b/v2/seed-nested/5EED2B000001/2",
+        "sem2b/v2/sys/meta/0",
+        "sem2b/v2/sys/cancel/1",
+        "sem2b/v2/sys/invalid/duplicate-property",
+        "sem2b/v2/sys/triple/collect+meta+failure-fail",
     ];
 
     private static SemanticCaseBuilder Builder(string caseId)
@@ -114,7 +114,10 @@ public class SemanticReductionTests(ITestOutputHelper output)
         Assert.True(digest == FixedCorpusDigest, $"SEM-2B fixed corpus digest changed: {digest}");
     }
 
-    internal const string FixedCorpusDigest = "sha256:f685889dee9d75c1c506b6cf4ed432fa2ee08ddb26bc98eece943b2a48398369";
+    // Re-recorded in November 2026 for a LANGUAGE change, not a recipe change (issue #204, lists
+    // evaluated on demand): the programs render byte-identically, their descriptors carry the
+    // expectations of the new semantics (SemanticPathCoverageTests.PreexistingDigest).
+    internal const string FixedCorpusDigest = "sha256:c7313df272cef2724ca331eed0340664b74bdc5d066a2de651507a220b04f7e8";
 
     /// <summary>
     /// The cases <see cref="FixedCorpusDigest"/> covers: the fixed corpus without the named path and tick
@@ -284,7 +287,7 @@ public class SemanticReductionTests(ITestOutputHelper output)
         {
             Assert.Equal(SemanticReduction.NothingToReduceExitCode, SemanticReduction.RunReduce(["semantic-reduce", FailingSeeded.Value.CaseId, outDir.FullName]));
             Assert.Empty(Directory.GetFiles(outDir.FullName));
-            Assert.Equal(2, SemanticReduction.RunReduce(["semantic-reduce", "sem2b/v1/sys/no-such-case", outDir.FullName]));
+            Assert.Equal(2, SemanticReduction.RunReduce(["semantic-reduce", "sem2b/v2/sys/no-such-case", outDir.FullName]));
             Assert.Equal(2, SemanticReduction.RunReduce(["semantic-reduce", FailingSeeded.Value.CaseId]));
         }
         finally

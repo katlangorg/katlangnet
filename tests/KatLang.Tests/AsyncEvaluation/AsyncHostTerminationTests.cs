@@ -581,7 +581,8 @@ public class AsyncHostTerminationTests
         "fail(1).string.count + mark(1)",
         // A callable parameter and the host operation as a callback.
         "Apply(f, x) = f(x) + mark(1)\nApply(fail, 3)",
-        "map([1, 2, 3], fail).count + mark(1)",
+        // (`sum` reads the mapped positions; counting them would invoke no callback.)
+        "map([1, 2, 3], fail).sum + mark(1)",
         "filter([1, 2, 3], fail).count + mark(1)",
         "Keep(x) = mark(x) > 0\nfilter([fail(1), 2, 3], Keep).count",
         // Loops: the first round's failure ends the loop.
@@ -589,7 +590,7 @@ public class AsyncHostTerminationTests
         "Step(x) = fail(x), mark(x) < 3\nStep(1).while",
         // Selection and laziness.
         "if(fail(1) > 0, mark(1), mark(2))",
-        "[fail(1), mark(2)].count",
+        "[fail(1), mark(2)].sum",
         "Pick(*xs) = xs[0] + mark(9)\nPick(fail(1), mark(2))",
         // The property cache, and an exported member evaluated detached.
         "A = fail(1)\nA + A + mark(1)",

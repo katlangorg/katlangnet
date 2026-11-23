@@ -1134,33 +1134,87 @@ public static partial class Evaluator
     /// last capture with the last star's item count. An ARGUMENT VIEW (CallReference S2) is never opened
     /// into values: a star that would open one is <see cref="ArgumentViewSpreadMessage"/>, except that
     /// with <paramref name="transportView"/> (an argument supply's spread slot) the view the LAST star
-    /// opens is returned in <paramref name="view"/> for its cells to be transported (the returned result
-    /// is then meaningless). Lean: <c>openSpreadItems</c> / <c>openSupplySpread</c>.
+    /// opens is returned as <see cref="OpenedSpread.View"/> for its cells to be transported (the returned
+    /// items are then meaningless). A star that opens a list evaluated on demand reads that level first
+    /// (<see cref="OpenLazySpreadLayers"/>, issue #204). Lean: <c>openSpreadItems</c> /
+    /// <c>openSupplySpread</c> after <c>peelSpreadLayers</c>.
     /// </summary>
-    private static EvalResult<CountedResult> OpenSpreadLayers(
-        Result value, int layers, Expr expr, EvalCtx ctx, bool transportView, out Result.CallReference? view)
+    private static ValueTask<OpenedSpread> OpenSpreadLayers(
+        Result value, int layers, Expr expr, EvalCtx ctx, bool transportView, bool asynchronous)
+        => ctx.Budget.HasLazyLists
+            ? OpenLazySpreadLayers(value, layers, expr, ctx, transportView, asynchronous)
+            : new(OpenConcreteSpreadLayers(value, layers, expr, ctx, transportView));
+
+    /// <summary>
+    /// What the written stars of one spread opened: its counted items, or — for an argument supply
+    /// whose LAST star opens an argument view — that view, whose original cells the supply
+    /// transports (<see cref="Items"/> is then the default success).
+    /// </summary>
+    private readonly record struct OpenedSpread(EvalResult<CountedResult> Items, Result.CallReference? View = null);
+
+    // The layers of a run that has created no list evaluated on demand: every opened value is
+    // concrete, so nothing is read.
+    private static OpenedSpread OpenConcreteSpreadLayers(
+        Result value, int layers, Expr expr, EvalCtx ctx, bool transportView)
     {
-        view = null;
         var opened = value;
         for (var layer = 0; layer < layers; layer++)
         {
             if (opened is Result.CallReference { IsArgumentView: true } argumentView)
             {
                 if (transportView && layer == layers - 1)
-                {
-                    view = argumentView;
-                    return EvalResult<CountedResult>.Ok(default);
-                }
+                    return new(EvalResult<CountedResult>.Ok(default), argumentView);
 
-                return new EvalError.TypeMismatch(ArgumentViewSpreadMessage) { Span = expr.Span };
+                return new(new EvalError.TypeMismatch(ArgumentViewSpreadMessage) { Span = expr.Span });
             }
 
             var items = opened.SpreadItems();
             var capturedR = MakeCheckedSequenceCapture(ctx, items, expr.Span);
-            if (capturedR.IsError) return capturedR.Error;
+            if (capturedR.IsError) return new(capturedR.Error);
 
             if (layer == layers - 1)
-                return EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count));
+                return new(EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count)));
+
+            opened = capturedR.Value;
+        }
+
+        throw new InvalidOperationException("Sequence spread must contain at least one layer.");
+    }
+
+    /// <summary>
+    /// AN EXPLICIT SPREAD READS THE LEVEL IT OPENS (lazy collections, issue #204): before a star
+    /// opens a list evaluated on demand, the list's positions are found and read in order
+    /// (<see cref="ForceLevel"/>) and supplied as values; the items' own contents stay as they
+    /// are. Otherwise exactly <see cref="OpenConcreteSpreadLayers"/>. One body for both evaluation
+    /// routes. Lean: <c>peelSpreadLayers</c> over <c>forceLevel</c>, then <c>openSpreadItems</c>.
+    /// </summary>
+    private static async ValueTask<OpenedSpread> OpenLazySpreadLayers(
+        Result value, int layers, Expr expr, EvalCtx ctx, bool transportView, bool asynchronous)
+    {
+        var opened = value;
+        for (var layer = 0; layer < layers; layer++)
+        {
+            // A position that fails while its level is read is that position's own failure —
+            // nested, with its own frames (Q-36): the operand itself evaluated, so no operand
+            // frame is added. Lean: `forceLevel` inside `peelSpreadLayers`.
+            var levelR = await ForceLevel(opened, ctx, asynchronous).ConfigureAwait(false);
+            if (levelR.IsError) return new(levelR.Error);
+
+            opened = levelR.Value;
+            if (opened is Result.CallReference { IsArgumentView: true } argumentView)
+            {
+                if (transportView && layer == layers - 1)
+                    return new(EvalResult<CountedResult>.Ok(default), argumentView);
+
+                return new(new EvalError.TypeMismatch(ArgumentViewSpreadMessage) { Span = expr.Span });
+            }
+
+            var items = opened.SpreadItems();
+            var capturedR = MakeCheckedSequenceCapture(ctx, items, expr.Span);
+            if (capturedR.IsError) return new(capturedR.Error);
+
+            if (layer == layers - 1)
+                return new(EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count)));
 
             opened = capturedR.Value;
         }
@@ -1188,7 +1242,8 @@ public static partial class Evaluator
         var operand = PeelSpreadLayers(expr, out var layers);
         var operandR = EvalSequenceSpreadOperandValue(operand, ctx, valEnv);
         if (operandR.IsError) return operandR.Error;
-        return OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, out _);
+        var opened = OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, asynchronous: false).GetAwaiter().GetResult();
+        return opened.Items;
     }
 
     // `ArgumentView` (CallReference S2): the view bound as the whole collection of count/first/last,
@@ -1198,11 +1253,28 @@ public static partial class Evaluator
     // The callback builtins (filter, map, reduce) iterate the prepared input's items through a
     // CollectionIterationItems view made in their own dispatch arms (implementation-only, November 2026:
     // the view was made at binding for every collection builtin, 24 bytes per call that only these read).
+    // `Positions` (lazy collections, issue #204): the positional source bound as the whole collection
+    // of a builtin that reads positions — `map` / `filter` over any collection, and
+    // `count` / `first` / `last` / `take` over a list evaluated on demand (Lean `pending?` and the
+    // `collectionPositions` view).
     private readonly record struct BoundSequenceBuiltinArguments(
         PreparedSequenceBuiltinInput PreparedInput,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs,
         Result.CallReference? ArgumentView = null,
-        IReadOnlyList<NeedCell>? RetainedSlice = null);
+        IReadOnlyList<NeedCell>? RetainedSlice = null)
+    {
+        public LazyList? Positions { get; init; }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="builtin"/> binds <paramref name="collection"/> as POSITIONS
+    /// (<see cref="EvalPositionalBuiltin"/>): the two callback stages always do, and the other
+    /// position readers do over a list evaluated on demand (over a concrete collection their
+    /// eager form reads the same positions).
+    /// </summary>
+    private static bool BindsPositions(BuiltinId builtin, Result collection)
+        => builtin is BuiltinId.@map or BuiltinId.@filter
+            || (ReadsPositions(builtin) && collection is Result.ListValue { Lazy: not null });
 
     /// <summary>
     /// The call item of an argument that assembly does not evaluate: its supplied cell, its
@@ -1499,6 +1571,9 @@ public static partial class Evaluator
         Result.Bool(var b) => $"Boolean value {Rendering.ValueTextRenderer.FormatBool(b)}",
         Result.SequenceValue(var items) when items.Count == 0 => "empty sequence value",
         Result.SequenceValue => "sequence value",
+        // A list evaluated on demand is described without reading it (issue #204).
+        Result.ListValue { Lazy: { IsPending: true } } => "list value",
+        Result.ListValue { Lazy: { } positions } => positions.Discovered == 0 ? "empty list value" : "list value",
         Result.ListValue(var items) when items.Count == 0 => "empty list value",
         Result.ListValue => "list value",
         Result.CallReference { IsArgumentView: true } => "argument view",
@@ -1514,82 +1589,17 @@ public static partial class Evaluator
             new EvalError.BadArity());
 
     /// <summary>
-    /// Evaluate <c>filter(collection, predicate)</c>. The fixed
-    /// <c>collection</c> argument supplies the items through the post-binding
-    /// collection view, and <c>predicate</c> is a fixed control argument.
-    /// Each iterated item is passed to the predicate exactly as collected;
-    /// nested sequence values and nested list values stay intact.
-    /// The kept items remain the original collection items and are
-    /// materialized as one list value.
-    /// </summary>
-    private static EvalResult<CountedResult> EvalFilterCounted(
-        IReadOnlyList<CountedResult> items,
-        Algorithm predicateAlg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var kept = NewKeptPositions(items.Count);
-        for (var index = 0; index < items.Count; index++)
-        {
-            var item = items[index];
-            var truthR = EvalFilterPredicateTruth(predicateAlg, item, index, ctx, valEnv);
-            if (truthR.IsError)
-                return truthR.Error;
-
-            if (truthR.Value)
-                MarkKeptPosition(kept, index);
-        }
-
-        return MakeFilterKeptListResult(ctx, items, kept);
-    }
-
-    /// <summary>
-    /// The kept positions of one generic <c>filter</c> or <c>distinct</c> call over
-    /// <paramref name="itemCount"/> items: one bit per item, set when its predicate is true
-    /// (<c>filter</c>) or when it is a first occurrence (<c>distinct</c>). Implementation-only
-    /// (November 2026): the kept items used to grow a <c>List&lt;Result&gt;</c> by doubling (filter)
-    /// or fill one presized to every item (distinct) and were then copied into the exact list, so
-    /// a filter keeping 100,000 items allocated about 2 MB of large-object-heap growth arrays before
-    /// its 0.8 MB list; the bit set is 1/64 of the item array and stays on the small-object heap up
-    /// to about 680,000 items.
+    /// The kept positions of one <c>distinct</c> call over <paramref name="itemCount"/> items:
+    /// one bit per item, set when it is a first occurrence. Implementation-only (November 2026):
+    /// the kept items used to fill a <c>List&lt;Result&gt;</c> presized to every item and were then
+    /// copied into the exact list; the bit set is 1/64 of the item array and stays on the
+    /// small-object heap up to about 680,000 items.
     /// </summary>
     private static ulong[] NewKeptPositions(int itemCount)
         => new ulong[(itemCount + 63) >> 6];
 
     private static void MarkKeptPosition(ulong[] kept, int index)
         => kept[index >> 6] |= 1UL << (index & 63);
-
-    /// <summary>
-    /// The generic <c>filter</c> result: exactly what <see cref="MakeCollectionListResult(EvalCtx, IReadOnlyList{Result}, SourceSpan?)"/>
-    /// makes of the kept items in source order — the same reservation of the TRUE kept count at
-    /// the same point (after the last predicate call), before the exact list is allocated, so the
-    /// charges and a refusal are unchanged; then one exact array filled from the kept positions.
-    /// The kept items are the original items: the iteration items read the immutable bound view.
-    /// Out of line: both twins' filter frames stay live during every predicate call (frame-size discipline).
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static EvalResult<CountedResult> MakeFilterKeptListResult(
-        EvalCtx ctx,
-        IReadOnlyList<CountedResult> items,
-        ulong[] kept)
-    {
-        var keptCount = 0;
-        foreach (var word in kept)
-            keptCount += BitOperations.PopCount(word);
-
-        if (ReserveCollection(ctx, keptCount) is { } error)
-            return error;
-
-        var keptItems = keptCount == 0 ? [] : new Result[keptCount];
-        var next = 0;
-        for (var wordIndex = 0; wordIndex < kept.Length; wordIndex++)
-        {
-            for (var bits = kept[wordIndex]; bits != 0; bits &= bits - 1)
-                keptItems[next++] = items[(wordIndex << 6) + BitOperations.TrailingZeroCount(bits)].Value;
-        }
-
-        return EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(keptItems), 1));
-    }
 
     /// <summary>
     /// The result list of a collection builtin whose exact item count is known before its items
@@ -1620,9 +1630,9 @@ public static partial class Evaluator
         => EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(items), 1));
 
     /// <summary>
-    /// Evaluate a filter predicate with the same callback and Boolean-result rule
-    /// used by generic <c>filter</c>; sequence optimizers call this to avoid
-    /// duplicating callback semantics.
+    /// Evaluate a filter predicate on one item with the callback and Boolean-result rule of
+    /// <c>filter</c>: the verdict step of a lazy <c>filter</c> stage (<c>FilteredList</c>) and
+    /// the sequence optimizers call it, so the callback semantics are written once.
     /// </summary>
     internal static EvalResult<bool> EvalFilterPredicateTruth(
         Algorithm predicateAlg,
@@ -1647,55 +1657,6 @@ public static partial class Evaluator
 
         return EvalResult<bool>.Ok(truth.Value);
     }
-
-    /// <summary>
-    /// Evaluate <c>map(collection, mapper)</c> while preserving the number of
-    /// top-level mapped elements. <c>mapper</c> is a fixed control argument.
-    /// Each callback item is passed to the mapper exactly as collected from
-    /// the post-binding collection view; nested sequence values and
-    /// nested list values stay intact. Each transform result is its ORDINARY call
-    /// result (HO-03, Q-25 resolved October 2026) — several rows arrive as one sequence
-    /// value, <c>()</c> and <c>[]</c> are ordinary values — and becomes ONE element of the
-    /// list result, never flattened into it. For pure, deterministic, total computations,
-    /// <c>map(L, F)</c> has the same result value as <c>[F(L[0]), …]</c>. Map demands its
-    /// collection; expanded Model-C calls may leave indexed arguments undemanded.
-    /// Lean: <c>evalMapCounted</c>.
-    /// </summary>
-    private static EvalResult<CountedResult> EvalMapCounted(
-        IReadOnlyList<CountedResult> items,
-        Algorithm transformAlg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var mapped = new Result[items.Count];
-        var index = 0;
-        foreach (var item in items)
-        {
-            var transformR = WithCtx(
-                "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                EvalSequenceCallbackCallCounted(transformAlg, item, ctx, valEnv, MapTransformFrameName));
-            if (transformR.IsError) return transformR.Error;
-
-            mapped[index++] = transformR.Value.Value;
-        }
-
-        return MakeMappedListResult(ctx, mapped);
-    }
-
-    /// <summary>
-    /// The generic <c>map</c> result: exactly what <see cref="MakeCollectionListResult(EvalCtx, IReadOnlyList{Result}, SourceSpan?)"/>
-    /// makes of the mapped items — the same reservation of the item count at the same point
-    /// (after the last transform), then the list. The exact array <see cref="EvalMapCounted"/>
-    /// filled (one slot per item, allocated before the first transform as the presized list
-    /// always was) is handed over instead of copied. Implementation-only (November 2026): the
-    /// copy was a second 0.8 MB large-object-heap array per 100,000-item map. Out of line: both
-    /// twins' map frames stay live during every transform call (frame-size discipline).
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static EvalResult<CountedResult> MakeMappedListResult(EvalCtx ctx, Result[] mapped)
-        => ReserveCollection(ctx, mapped.Length) is { } error
-            ? error
-            : EvalResult<CountedResult>.Ok(new CountedResult(Result.ListValue.TakeOwnership(mapped), 1));
 
     /// <summary>
     /// Collect top-level sequence items as single atomic numeric values.
@@ -1783,40 +1744,6 @@ public static partial class Evaluator
             $"internal sequence metadata for {BuiltinDisplayName(builtin)} {detail}",
             new EvalError.BadArity());
 
-    /// <summary>
-    /// Bind the ONE <c>collection</c> argument of a collection builtin from its
-    /// prepared call item and open it through the post-binding collection view.
-    /// A VALUE position demands the item: a callable that accepts an empty supply
-    /// is evaluated, otherwise it keeps the zero-argument value-demand rejection
-    /// (<see cref="SequenceBuiltinValueDemandError"/>); a value's retained
-    /// evaluation error surfaces as is. The one-level builtin collection view
-    /// applies AFTER binding, to the bound collection value only: a lone
-    /// sequence or exact list value opens to its immediate items, and any other
-    /// value is a one-element collection (<c>count(7)</c> is 1). Opening is never
-    /// recursive — nested sequence/list elements stay intact as single items.
-    /// Shared by generic collection-builtin binding and by the sequence-pipeline
-    /// optimizer's receiver adapter, so the dotted receiver of <c>R.filter(P)</c>
-    /// (the ordinary first argument of <c>filter(R, P)</c>) is demanded and opened
-    /// identically under both strategies.
-    /// Lean: <c>bindSequenceBuiltinArguments</c> (the collection-item step) /
-    /// <c>builtinCollectionItems</c>.
-    /// <para>An ARGUMENT VIEW (CallReference S2) is no collection value: a builtin bound to one as its
-    /// whole collection refuses it here (<see cref="ArgumentViewUnsupported"/>) unless it reads views
-    /// (<c>count</c>/<c>first</c>/<c>last</c>, which <see cref="BindSequenceBuiltinArguments"/> handles
-    /// before this view applies), so neither strategy reads a view as a one-element collection.</para>
-    /// </summary>
-    private static EvalResult<IReadOnlyList<Result>> BindSequenceBuiltinCollectionArgument(
-        BuiltinId builtin,
-        VariadicCallItem collectionItem,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var valueR = BindSequenceBuiltinCollectionValue(collectionItem, ctx, valEnv);
-        if (valueR.IsError) return valueR.Error;
-        if (IsArgumentView(valueR.Value)) return ArgumentViewUnsupported(builtin);
-        return EvalResult<IReadOnlyList<Result>>.Ok(BuiltinCollectionItems(valueR.Value));
-    }
-
     /// <summary>The demanded VALUE of a collection builtin's <c>collection</c> argument, before any view.</summary>
     private static EvalResult<Result> BindSequenceBuiltinCollectionValue(
         VariadicCallItem collectionItem,
@@ -1882,7 +1809,27 @@ public static partial class Evaluator
             return ReadsArgumentView(builtin)
                 ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], view))
                 : ArgumentViewUnsupported(builtin);
-        var collectionValues = BuiltinCollectionItems(collectionValueR.Value);
+        // LAZY COLLECTIONS (issue #204). A builtin that reads POSITIONS binds them as they are —
+        // nothing is found or read here; the controls are demanded and validated first. A STRICT
+        // builtin reads every position of a lazy list, in order, before its controls.
+        var collectionValue = collectionValueR.Value;
+        if (BindsPositions(builtin, collectionValue))
+        {
+            var positionalControls = PrepareSequenceBuiltinControls(builtin, metadata, items, ctx, valEnv);
+            return positionalControls.IsError
+                ? positionalControls.Error
+                : EvalResult<BoundSequenceBuiltinArguments>.Ok(
+                    new BoundSequenceBuiltinArguments(default!, positionalControls.Value) { Positions = PositionsOf(collectionValue) });
+        }
+
+        if (collectionValue is Result.ListValue { Lazy: not null })
+        {
+            var level = ForceLevel(collectionValue, ctx, asynchronous: false).GetAwaiter().GetResult();
+            if (level.IsError) return level.Error;
+            collectionValue = level.Value;
+        }
+
+        var collectionValues = BuiltinCollectionItems(collectionValue);
 
         var collected = new CollectedSequenceBuiltinInput(collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
@@ -2892,34 +2839,30 @@ public static partial class Evaluator
             return EvalArgumentViewBuiltin(builtin, argumentView, ctx);
         if (boundR.Value.RetainedSlice is { } retainedSlice)
             return EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: false).GetAwaiter().GetResult();
-        // An ordinary call: the view and slice routes have returned above.
+        // POSITIONS READ ON DEMAND (issue #204): `map` and `filter` build their lazy stage, and
+        // `count` / `first` / `last` / `take` read a lazy list's positions.
+        if (boundR.Value.Positions is { } positions)
+            return EvalPositionalBuiltin(builtin, metadata, boundR.Value.SuffixArgs, positions, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
+        // An ordinary call: the view, slice and position routes have returned above.
         var (preparedInput, suffixArgs, _, _) = boundR.Value;
-        // The callback arms iterate these items through a CollectionIterationItems view made in the arm.
+        // The callback arm iterates these items through a CollectionIterationItems view made in the arm.
         var collectionItems = preparedInput.FlattenedItems;
 
-        // Only the callback-driven builtins (filter, map, reduce) are dispatched here, because the
-        // asynchronous twin awaits exactly these. Every other builtin goes to the shared
+        // `contains` and `distinct` compare WHOLE values (issue #204): the collection's positions
+        // were read at binding (one level); here every item, in order, and then the searched value
+        // are materialized.
+        if (builtin is BuiltinId.@contains or BuiltinId.@distinct && ctx.Budget.HasLazyLists)
+        {
+            var comparedR = MaterializeComparedOperands(builtin, preparedInput, suffixArgs, ctx, asynchronous: false).GetAwaiter().GetResult();
+            if (comparedR.IsError) return comparedR.Error;
+            (preparedInput, suffixArgs) = comparedR.Value;
+        }
+
+        // Only the callback-driven builtin left on this route (reduce) is dispatched here, because
+        // the asynchronous twin awaits exactly it. Every other builtin goes to the shared
         // ApplyValueSequenceBuiltinCounted, which both twins call.
         switch (builtin)
         {
-            case BuiltinId.@filter:
-                {
-                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                    var predicateR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
-                    if (predicateR.IsError) return predicateR.Error;
-
-                    return EvalFilterCounted(new CollectionIterationItems(collectionItems), predicateR.Value, ctx, valEnv);
-                }
-
-            case BuiltinId.@map:
-                {
-                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                    var transformR = ExpectPreparedAlgorithmSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
-                    if (transformR.IsError) return transformR.Error;
-
-                    return EvalMapCounted(new CollectionIterationItems(collectionItems), transformR.Value, ctx, valEnv);
-                }
-
             case BuiltinId.@reduce:
                 {
                     // `initial` is a DEFERRED control: binding retained the supplied computation
@@ -3427,10 +3370,14 @@ public static partial class Evaluator
                 {
                     var atomsR = EvalResolvedArgument(args[0], ctx, valEnv);
                     if (atomsR.IsError) return atomsR.Error;
+                    // `atoms` reads the WHOLE value (issue #204): every position of every list it
+                    // holds is read first, left to right and depth first.
+                    var wholeR = MaterializeValue(atomsR.Value, ctx, asynchronous: false).GetAwaiter().GetResult();
+                    if (wholeR.IsError) return wholeR.Error;
                     // `atoms` materializes a collection: one list
                     // of the recursively collected numeric atoms (sequence AND
                     // list boundaries open; strings and Booleans contribute no atoms).
-                    return MakeLanguageAtomsResult(ctx, atomsR.Value);
+                    return MakeLanguageAtomsResult(ctx, wholeR.Value);
                 }
 
             case (BuiltinId.@range, 2):

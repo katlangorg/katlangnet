@@ -94,6 +94,16 @@ structure AgreeOutside (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM)
   /-- The same META capability (CallReference S1): production capabilities share
       `NeedPlan.reference`, which reads no channel. -/
   reference : k₁.reference = k₂.reference
+  /-- The two lazy-collection reads (issue #204) are VALUE demands of their cell: the same reads
+      on every cell outside `V`. -/
+  positions : ∀ a, ¬ V a → k₁.positions a = k₂.positions a
+  whole : ∀ a, ¬ V a → k₁.whole a = k₂.whole a
+
+/-- Agreeing records open a structural pattern's cell through the same read. -/
+theorem AgreeOutside.structuralRead {V C : Nat → Prop} {k₁ k₂ : NeedCapabilities EvalM}
+    (hk : AgreeOutside V C k₁ k₂) (p : NeedPattern) (a : Nat) (h : ¬ V a) :
+    NeedBinder.structuralRead k₁ p a = NeedBinder.structuralRead k₂ p a := by
+  cases p <;> first | exact hk.value a h | exact hk.positions a h
 
 /-- A schedule AVOIDS `V` and `C`: none of its VALUE demands is on a cell of `V`, none of its
     CALLABLE projections on a cell of `C`. -/
@@ -127,7 +137,7 @@ theorem bindOne_structural_shape (k : NeedCapabilities EvalM) (p : NeedPattern) 
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
     (bound : NeedBindState) (family : Bool) :
     NeedBinder.bindOne k p address repeated bound family = (do
-      let (value, _) <- k.value address
+      let (value, _) <- NeedBinder.structuralRead k p address
       match structuralItems p value with
       | none => if family then pure none else throw (structuralPatternKindMismatch p.toParameter value)
       | some items => do
@@ -142,7 +152,7 @@ theorem oneEvents_structural_shape (k : NeedCapabilities EvalM) (p : NeedPattern
     (bound : NeedBindState) (family : Bool) (s : EvalState) :
     oneEvents k p address repeated bound family s =
       .value address ::
-        match runEval (k.value address) s with
+        match runEval (NeedBinder.structuralRead k p address) s with
         | (.error _, _) => []
         | (.ok (value, _), s1) =>
           match structuralItems p value with
@@ -176,12 +186,12 @@ theorem checkAnchor_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilit
   | cell :: rest, s, havoid => by
     rw [checkAnchor_run k₁ name anchor family cell rest s, checkAnchor_run k₂ name anchor family cell rest s]
     simp only [anchorEvents] at havoid ⊢
-    have hva := hk.value cell (avoids_cons havoid).1
-    rcases h1 : runEval (k₁.value cell) s with ⟨e | own, s1⟩
-    · have h1' : runEval (k₂.value cell) s = (.error e, s1) := by rw [← hva, h1]
+    have hva := hk.whole cell (avoids_cons havoid).1
+    rcases h1 : runEval (k₁.whole cell) s with ⟨e | own, s1⟩
+    · have h1' : runEval (k₂.whole cell) s = (.error e, s1) := by rw [← hva, h1]
       simp only [h1']
       exact ⟨by trivial, by trivial⟩
-    · have h1' : runEval (k₂.value cell) s = (.ok own, s1) := by rw [← hva, h1]
+    · have h1' : runEval (k₂.whole cell) s = (.ok own, s1) := by rw [← hva, h1]
       simp only [h1] at havoid
       simp only [h1']
       by_cases hag : (own == anchor) = true
@@ -212,12 +222,12 @@ theorem name_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities Eva
     · have h1' : runEval (k₂.callable address) s = (.ok none, s1) := by rw [← hca, h1]
       simp only [h1] at havoid
       simp only [h1']
-      have hva := hk.value address (avoids_cons (avoids_cons havoid).2).1
-      rcases h2 : runEval (k₁.value address) s1 with ⟨e | own, s2⟩
-      · have h2' : runEval (k₂.value address) s1 = (.error e, s2) := by rw [← hva, h2]
+      have hva := hk.whole address (avoids_cons (avoids_cons havoid).2).1
+      rcases h2 : runEval (k₁.whole address) s1 with ⟨e | own, s2⟩
+      · have h2' : runEval (k₂.whole address) s1 = (.error e, s2) := by rw [← hva, h2]
         simp only [h2']
         exact ⟨by trivial, by trivial⟩
-      · have h2' : runEval (k₂.value address) s1 = (.ok own, s2) := by rw [← hva, h2]
+      · have h2' : runEval (k₂.whole address) s1 = (.ok own, s2) := by rw [← hva, h2]
         simp only [h2] at havoid
         simp only [h2']
         cases ha : (bound.groupOf name).anchor with
@@ -268,10 +278,10 @@ theorem structural_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabiliti
   rw [oneEvents_structural_shape k₁ p ps hp] at havoid
   rw [bindOne_structural_shape k₁ p ps hp, bindOne_structural_shape k₂ p ps hp,
     oneEvents_structural_shape k₁ p ps hp, oneEvents_structural_shape k₂ p ps hp]
-  have hva := hk.value address (avoids_cons havoid).1
+  have hva := hk.structuralRead p address (avoids_cons havoid).1
   have hrest := (avoids_cons havoid).2
   simp only [← hva, ← readyCells_allocator hk.allocate, ← readyEvents_allocator hk.allocate, runEval_bind]
-  rcases h1 : runEval (k₁.value address) s with ⟨e | ⟨value, count⟩, s1⟩
+  rcases h1 : runEval (NeedBinder.structuralRead k₁ p address) s with ⟨e | ⟨value, count⟩, s1⟩
   · simp
   · simp only [h1] at hrest
     simp only [thenRun_ok]
@@ -394,14 +404,26 @@ theorem results_depend_only_on_invoked_cells (V C : Nat → Prop) (k₁ k₂ : N
 
 /-- The production instance: two pairs of production channels over the one allocator
     `allocateNeed` — the evaluator's `bindingChannels` against any other pair —
-    bind every head the same way when they agree wherever the run invokes them. -/
+    bind every head the same way when they agree wherever the run invokes them. The two
+    lazy-collection reads (issue #204) are derived from the VALUE channel and may demand OTHER
+    cells (a pending list's verdict cells, the cells a materialization reads), so their agreement
+    outside `V` is a hypothesis of its own (`hp`, `hw`); it follows from `c₁.value = c₂.value`
+    (`production_lazy_reads_of_value`). -/
 theorem production_results_depend_only_on_invoked_cells (V C : Nat → Prop) (c₁ c₂ : NeedChannels)
     (hv : ∀ a, ¬ V a → c₁.value a = c₂.value a) (hc : ∀ a, ¬ C a → c₁.callable a = c₂.callable a)
+    (hp : ∀ a, ¬ V a → c₁.capabilities.positions a = c₂.capabilities.positions a)
+    (hw : ∀ a, ¬ V a → c₁.capabilities.whole a = c₂.capabilities.whole a)
     (ps : List NeedPattern) (cells : List Nat) (family : Bool) (s : EvalState)
     (havoid : Avoids V C (patternsEvents c₁.capabilities ps cells family s)) :
     (bindNeedPatterns c₁ ps cells family).runState s = (bindNeedPatterns c₂ ps cells family).runState s :=
-  (results_depend_only_on_invoked_cells V C c₁.capabilities c₂.capabilities ⟨rfl, hv, hc, rfl⟩ ps cells family s
+  (results_depend_only_on_invoked_cells V C c₁.capabilities c₂.capabilities ⟨rfl, hv, hc, rfl, hp, hw⟩ ps cells family s
     havoid).1
+
+/-- Production channels with the same VALUE demand have the same lazy-collection reads: both are
+    functions of the VALUE channel alone. -/
+theorem production_lazy_reads_of_value (c₁ c₂ : NeedChannels) (hv : c₁.value = c₂.value) :
+    c₁.capabilities.positions = c₂.capabilities.positions ∧ c₁.capabilities.whole = c₂.capabilities.whole := by
+  simp only [NeedChannels.capabilities, hv, and_self]
 
 /-- The extreme case: a run whose schedule invokes NO channel (a head of plain, non-repeated
     names, a rejected count, …) binds identically under every pair of production channels. -/
@@ -410,6 +432,7 @@ theorem production_uninvoked_channels_are_irrelevant (c₁ c₂ : NeedChannels) 
     (hnone : ∀ ev ∈ patternsEvents c₁.capabilities ps cells family s, ev.isInvocation = false) :
     (bindNeedPatterns c₁ ps cells family).runState s = (bindNeedPatterns c₂ ps cells family).runState s :=
   production_results_depend_only_on_invoked_cells (fun _ => True) (fun _ => True) c₁ c₂
+    (fun _ h => absurd trivial h) (fun _ h => absurd trivial h)
     (fun _ h => absurd trivial h) (fun _ h => absurd trivial h) ps cells family s
     (fun ev hev => by
       have := hnone ev hev
@@ -423,7 +446,9 @@ theorem production_callable_channel_is_irrelevant_without_repeated_names (c₁ c
     (h : needRepeatedNames ps = []) :
     (bindNeedPatterns c₁ ps cells family).runState s = (bindNeedPatterns c₂ ps cells family).runState s :=
   production_results_depend_only_on_invoked_cells (fun _ => False) (fun _ => True) c₁ c₂
-    (fun a _ => congrFun hv a) (fun _ h => absurd trivial h) ps cells family s
+    (fun a _ => congrFun hv a) (fun _ h => absurd trivial h)
+    (fun a _ => congrFun (production_lazy_reads_of_value c₁ c₂ hv).1 a)
+    (fun a _ => congrFun (production_lazy_reads_of_value c₁ c₂ hv).2 a) ps cells family s
     (fun ev hev => by
       have := head_without_repeated_names_projects_no_callable c₁.capabilities ps cells family s h ev hev
       cases ev <;> simp_all [Hits, NeedEvent.isCallable])
@@ -591,7 +616,7 @@ theorem bindName_pending (k : NeedCapabilities EvalM) (name : Ident) (address : 
     rcases h1 : runEval (k.callable address) s with ⟨e | (_ | identity), s1⟩
     · simp [h1] at h
     · simp only [h1] at h
-      rcases h2 : runEval (k.value address) s1 with ⟨e | own, s2⟩
+      rcases h2 : runEval (k.whole address) s1 with ⟨e | own, s2⟩
       · simp [h2] at h
       · simp only [h2] at h
         cases hanc : (bound.groupOf name).anchor with
@@ -804,7 +829,7 @@ theorem structural_origin (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : L
     rcases List.mem_cons.mp hev with rfl | hev'
     · exact Or.inl ⟨hins, rfl⟩
     · refine Or.inr ?_
-      rcases h1 : runEval (k.value address) s with ⟨e | ⟨value, count⟩, s1⟩
+      rcases h1 : runEval (NeedBinder.structuralRead k p address) s with ⟨e | ⟨value, count⟩, s1⟩
       · simp [h1] at hev'
       · simp only [h1] at hev' ⊢
         cases hi : structuralItems p value with
@@ -827,7 +852,7 @@ theorem structural_origin (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : L
   · intro next s' h a ha
     rw [bindOne_structural_shape k p ps hp] at h
     simp only [runEval_bind] at h
-    rcases h1 : runEval (k.value address) s with ⟨e | ⟨value, count⟩, s1⟩
+    rcases h1 : runEval (NeedBinder.structuralRead k p address) s with ⟨e | ⟨value, count⟩, s1⟩
     · simp [h1] at h
     · simp only [h1, thenRun_ok] at h ⊢
       cases hi : structuralItems p value with
@@ -1074,11 +1099,13 @@ theorem plain_cells_are_channel_irrelevant (P : Nat → Prop) (k₁ k₂ : NeedC
     run, bind the head identically. -/
 theorem production_plain_cells_are_channel_irrelevant (P : Nat → Prop) (c₁ c₂ : NeedChannels)
     (hv : ∀ a, ¬ P a → c₁.value a = c₂.value a) (hc : ∀ a, ¬ P a → c₁.callable a = c₂.callable a)
+    (hp : ∀ a, ¬ P a → c₁.capabilities.positions a = c₂.capabilities.positions a)
+    (hw : ∀ a, ¬ P a → c₁.capabilities.whole a = c₂.capabilities.whole a)
     (ps : List NeedPattern) (cells : List Nat) (family : Bool) (s : EvalState)
     (hplain : ∀ c, P c → c ∉ inspectedCells (needRepeatedNames ps) ps (needLevelSources ps cells))
     (hfresh : ∀ c, P c → ¬ Allocated (patternsEvents c₁.capabilities ps cells family s) c) :
     (bindNeedPatterns c₁ ps cells family).runState s = (bindNeedPatterns c₂ ps cells family).runState s :=
-  (plain_cells_are_channel_irrelevant P c₁.capabilities c₂.capabilities ⟨rfl, hv, hc, rfl⟩ ps cells family s
+  (plain_cells_are_channel_irrelevant P c₁.capabilities c₂.capabilities ⟨rfl, hv, hc, rfl, hp, hw⟩ ps cells family s
     hplain hfresh).1
 
 /-! ## (c) Mode correspondence: a clause attempt is the ordinary binding up to its first incompatibility -/
@@ -1141,7 +1168,7 @@ theorem checkAnchor_modes (k : NeedCapabilities EvalM) (name : Ident) (anchor : 
   | [], s => ⟨rfl, Or.inl ⟨rfl, rfl⟩⟩
   | cell :: rest, s => by
     rw [checkAnchor_run k name anchor true cell rest s, checkAnchor_run k name anchor false cell rest s]
-    rcases h1 : runEval (k.value cell) s with ⟨e | own, s1⟩
+    rcases h1 : runEval (k.whole cell) s with ⟨e | own, s1⟩
     · exact ⟨rfl, Or.inr (Or.inr ⟨e, rfl, rfl⟩)⟩
     · simp only
       by_cases hag : (own == anchor) = true
@@ -1188,7 +1215,7 @@ theorem name_modes (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) (
     rcases h1 : runEval (k.callable address) s with ⟨e | (_ | identity), s1⟩
     · exact ⟨by trivial, .raised e⟩
     · simp only
-      rcases h2 : runEval (k.value address) s1 with ⟨e | own, s2⟩
+      rcases h2 : runEval (k.whole address) s1 with ⟨e | own, s2⟩
       · exact ⟨by trivial, .raised e⟩
       · simp only
         cases ha : (bound.groupOf name).anchor with
@@ -1232,7 +1259,7 @@ theorem structural_modes (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : Li
   rw [bindOne_structural_shape k p ps hp _ _ _ true, bindOne_structural_shape k p ps hp _ _ _ false,
     oneEvents_structural_shape k p ps hp _ _ _ true, oneEvents_structural_shape k p ps hp _ _ _ false]
   simp only [runEval_bind]
-  rcases h1 : runEval (k.value address) s with ⟨e | ⟨value, count⟩, s1⟩
+  rcases h1 : runEval (NeedBinder.structuralRead k p address) s with ⟨e | ⟨value, count⟩, s1⟩
   · simp only [thenRun_error]
     exact ⟨by trivial, .raised e, by trivial⟩
   · simp only [thenRun_ok]
@@ -1422,7 +1449,7 @@ theorem name_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (name : 
     rcases h1 : runEval (k.callable address) s with ⟨e | (_ | identity), s1⟩
     · simp
     · simp only
-      rcases h2 : runEval (k.value address) s1 with ⟨e | own, s2⟩
+      rcases h2 : runEval (k.whole address) s1 with ⟨e | own, s2⟩
       · simp
       · simp only
         cases ha : (bound.groupOf name).anchor with
@@ -1447,7 +1474,7 @@ theorem structural_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (p
     (runEval (NeedBinder.bindOne k p address repeated bound false) s).1 ≠ .ok none := by
   rw [bindOne_structural_shape k p ps hp]
   simp only [runEval_bind]
-  rcases h1 : runEval (k.value address) s with ⟨e | ⟨value, count⟩, s1⟩
+  rcases h1 : runEval (NeedBinder.structuralRead k p address) s with ⟨e | ⟨value, count⟩, s1⟩
   · simp
   · simp only [thenRun_ok]
     cases hi : structuralItems p value with

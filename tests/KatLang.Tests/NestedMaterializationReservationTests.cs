@@ -216,26 +216,32 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
         var ordinary = Evaluator.RunCountedObserved(Root(new Expr.Capture([Element(), new Expr.Num(3)])), limits);
         var unfolded = Evaluator.RunCountedObserved(Root(new Expr.ListLiteral([Element()])), limits);
         var twin = await Suspended(Gated(Root(new Expr.ListLiteral([Element()]))), limits);
-        foreach (var outcome in new[] { ordinary, unfolded, twin })
+        foreach (var (outcome, reserved) in new[] { (ordinary, 0L), (unfolded, 1L), (twin, 1L) })
         {
             var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(outcome.Result.Error);
             Assert.Equal(2, error.Requested);
             Assert.Equal(span, error.Span);
-            Assert.Equal(0, outcome.Budget.MaterializedItems);
+            // A list reserves its own position when it is built, before its element is read
+            // (lazy collections, issue #204); the refused element reservation mutates nothing.
+            Assert.Equal(reserved, outcome.Budget.MaterializedItems);
         }
     }
 
     [Theory]
-    [InlineData("[(1,1/0)]", 0)]
-    [InlineData("[{1,1/0}]", 0)]
-    [InlineData("[(1,2),1/0]", 2)]
-    [InlineData("[{(1,2),1/0}]", 2)]
-    public async Task FailedSupply_IsNotReservedAndCompletedChildrenAreNotRefunded(string source, long completedItems)
+    // The list's one position; the failing element's two were never reserved.
+    [InlineData("[(1,1/0)]", 1, 1)]
+    [InlineData("[{1,1/0}]", 1, 1)]
+    // The list's two positions and the completed first element's two.
+    [InlineData("[(1,2),1/0]", 4, 10)]
+    // The list's one position and the completed inner sequence's two.
+    [InlineData("[{(1,2),1/0}]", 3, 10)]
+    public async Task FailedSupply_IsNotReservedAndCompletedChildrenAreNotRefunded(string source, long completedItems, int limit)
     {
-        // A failing child's incomplete supply is never reserved. Previously completed
-        // siblings retain their own reservations even though their parent never finishes.
+        // A list reserves its positions when it is built — its elements are read afterwards (lazy
+        // collections, issue #204). A failing child's incomplete supply is never reserved, and
+        // what completed before it — the list itself, earlier siblings — keeps its reservation.
         var ast = Ast(source);
-        var limits = new EvaluationLimits { MaxMaterializedItems = completedItems == 0 ? 1 : 10, MaxCollectionItems = completedItems == 0 ? 1 : 10 };
+        var limits = new EvaluationLimits { MaxMaterializedItems = limit, MaxCollectionItems = limit };
         var sync = Evaluator.RunCountedObserved(ast, limits);
         var twin = await Suspended(Gated(ast), limits);
         foreach (var outcome in new[] { sync, twin })
@@ -249,21 +255,44 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData("[(1,2),1/0]")]
-    [InlineData("[{1,2},1/0]")]
+    [InlineData("[(1,2,3),1/0]")]
+    [InlineData("[{1,2,3},1/0]")]
     public async Task CompletedInnerReservation_PrecedesLaterFailureAndKeepsFirstRowSpan(string source)
     {
+        // The list's two positions fit and are reserved when it is built; its first element's
+        // three do not, and that refusal — read before the failing second element — ends the run.
         var ast = Ast(source);
-        var limits = new EvaluationLimits { MaxCollectionItems = 1 };
+        var limits = new EvaluationLimits { MaxCollectionItems = 2 };
         var sync = Evaluator.RunCountedObserved(ast, limits);
         var twin = await Suspended(Gated(ast), limits);
         foreach (var outcome in new[] { sync, twin })
         {
             Assert.True(outcome.Result.IsError);
             var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(outcome.Result.Error);
-            Assert.Equal(2, error.Requested);
+            Assert.Equal(3, error.Requested);
             Assert.Equal(new SourceSpan(1, 3, 1, 4), error.Span);
-            Assert.Equal(0, outcome.Budget.MaterializedItems); // refused reservation mutates nothing
+            Assert.Equal(2, outcome.Budget.MaterializedItems); // the list's own; the refused reservation mutates nothing
+            Assert.Equal(0, outcome.Budget.CurrentDepth);
+        }
+    }
+
+    [Theory]
+    [InlineData("[(1,2),1/0]")]
+    [InlineData("[{1,2},1/0]")]
+    public async Task AListsOwnReservation_PrecedesEveryElement(string source)
+    {
+        // The list's two positions do not fit: it is refused where it is built, at its own span,
+        // before any element — the inner pair or the failing division — is read.
+        var ast = Ast(source);
+        var limits = new EvaluationLimits { MaxCollectionItems = 1 };
+        var sync = Evaluator.RunCountedObserved(ast, limits);
+        var twin = await Suspended(Gated(ast), limits);
+        foreach (var outcome in new[] { sync, twin })
+        {
+            var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(outcome.Result.Error);
+            Assert.Equal(2, error.Requested);
+            Assert.Equal(new SourceSpan(1, 1, 1, 12), error.Span);
+            Assert.Equal(0, outcome.Budget.MaterializedItems);
             Assert.Equal(0, outcome.Budget.CurrentDepth);
         }
     }
@@ -281,7 +310,8 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
         {
             await cache.Reached.WaitAsync(TimeSpan.FromSeconds(45));
             Assert.False(pending.IsCompleted);
-            Assert.Equal(2, cache.ObservedBudget!.MaterializedItems);
+            // The list's two positions (reserved when it was built) and the first element's two.
+            Assert.Equal(4, cache.ObservedBudget!.MaterializedItems);
             if (cancel) cancellation.Cancel();
         }
         finally { cache.Release(); }
@@ -289,7 +319,7 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
         {
             var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending.WaitAsync(TimeSpan.FromSeconds(45)));
             Assert.Equal(cancellation.Token, thrown.CancellationToken);
-            Assert.Equal(2, cache.ObservedBudget!.MaterializedItems);
+            Assert.Equal(4, cache.ObservedBudget!.MaterializedItems);
         }
         else
         {
@@ -305,9 +335,11 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
     [InlineData(true)]
     public async Task NestedChildEffects_RunOnceBeforeReservationAndLaterElementsWait(bool rejectInner)
     {
+        // [(Pulse(), 2, 3), Later()]: the list's two positions always fit; the first element's
+        // three are refused under the smaller limit — after its child ran, before `Later`.
         Expr Call(string name) => new Expr.Call(new Expr.Resolve(name), []);
-        var ast = Root(new Expr.ListLiteral([new Expr.Capture([Call("Pulse"), new Expr.Num(2)]), Call("Later")]));
-        var limits = new EvaluationLimits { MaxCollectionItems = rejectInner ? 1 : 10 };
+        var ast = Root(new Expr.ListLiteral([new Expr.Capture([Call("Pulse"), new Expr.Num(2), new Expr.Num(3)]), Call("Later")]));
+        var limits = new EvaluationLimits { MaxCollectionItems = rejectInner ? 2 : 10 };
         var syncTrace = new List<string>();
         var syncHost = HostOperations.Create(
             HostOperation.Create("Pulse", (_, _) => { syncTrace.Add("Pulse"); return new Result.Atom(7); }),
@@ -342,9 +374,9 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
         if (rejectInner)
         {
             Assert.IsType<EvalError.CollectionSizeLimitExceeded>(twin.Result.Error);
-            Assert.Equal(0, twin.Budget.MaterializedItems);
+            Assert.Equal(2, twin.Budget.MaterializedItems); // the list's own positions
         }
-        else AssertSuccess(twin.Result, twin.Budget, "L[S[7, 2], 9]", 4);
+        else AssertSuccess(twin.Result, twin.Budget, "L[S[7, 2, 3], 9]", 5);
     }
 
     [Fact]

@@ -18,6 +18,7 @@ import CoreTests.DotReceiverSegments
 import CoreTests.ParityGuards
 import CoreTests.ValueBoundary
 import CoreTests.ListValues
+import CoreTests.LazyCollections
 import CoreTests.CollectingBindings
 import CoreTests.OutputBundle
 import CoreTests.NameOwnership

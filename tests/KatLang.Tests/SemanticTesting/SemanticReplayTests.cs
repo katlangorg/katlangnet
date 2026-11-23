@@ -154,10 +154,10 @@ public class SemanticReplayTests
         Assert.Equal(SemanticVerdict.RecipeDrift, eventDrift.Verdict);
         Assert.Contains("expected events changed", eventDrift.Report, StringComparison.Ordinal);
 
-        var future = ReplaceFirst(SemanticDescriptor.Write(semanticCase), "\"recipeVersion\": 1", "\"recipeVersion\": 2");
+        var future = ReplaceFirst(SemanticDescriptor.Write(semanticCase), "\"recipeVersion\": 2", "\"recipeVersion\": 3");
         var futureRecipe = SemanticReplay.Replay(future, SemanticReplay.Mode.Recipe);
         Assert.Equal(SemanticVerdict.RecipeDrift, futureRecipe.Verdict);
-        Assert.Contains("recipe version 2 is not built", futureRecipe.Report, StringComparison.Ordinal);
+        Assert.Contains("recipe version 3 is not built", futureRecipe.Report, StringComparison.Ordinal);
         Assert.True(SemanticReplay.Replay(future, SemanticReplay.Mode.ExactSource).Passed);
     }
 
@@ -168,7 +168,7 @@ public class SemanticReplayTests
         try
         {
             Assert.Equal(2, SemanticReplay.RunReplay(["semantic-replay", empty.FullName]));
-            Assert.Equal(2, SemanticReplay.RunCorpus(["semantic-corpus", "--only", "sem2b/v1/no-such-prefix", "--out", empty.FullName]));
+            Assert.Equal(2, SemanticReplay.RunCorpus(["semantic-corpus", "--only", "sem2b/v2/no-such-prefix", "--out", empty.FullName]));
         }
         finally
         {

@@ -313,6 +313,8 @@ partial def dsrNeutralResult : Result -> String
   -- A run result never holds a call reference (the run boundary refuses it).
   | .callRef _ => "CallReference"
   | .argView _ => "CallReference"
+  | .deferred _ => "Deferred"
+  | .pendingList _ => "Deferred"
 
 /-- The neutral observation of a program: `ok <value>`, or its neutral error tree. -/
 def dsrObserve (program : Expr) : String :=

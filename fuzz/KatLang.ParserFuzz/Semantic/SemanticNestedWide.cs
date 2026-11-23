@@ -24,10 +24,16 @@ namespace KatLang.ParserFuzz;
 ///
 /// <para><b>Expectation</b> follows the call-by-need laws (docs/design/language-rules/call-by-need.md):
 /// cardinality is checked before any argument is demanded (NEED-05); a structural pattern demands
-/// its argument's WHOLE eager value, so every leaf of it runs, in source order, before the body
-/// (NEED-04); a plain parameter keeps its cell until the body demands it, and a collected argument
-/// slice read only by <c>count</c> runs nothing (NEED-07). The body lists every binder in written
-/// order (a collector as its <c>count</c>). Failures: a non-structure where a structure is expected
+/// its argument's value (NEED-04) — a written SEQUENCE evaluates its items in source order, a written
+/// LIST defers its elements, each run when it is first read (lazy collections, issue #204) — and
+/// inspects it level by level: kind, count, then the items in written order, a nested level reading
+/// its position, a literal reading its position, a name and a collector binding theirs unread; a
+/// plain parameter keeps its cell until the body demands it, and a collected slice read only by
+/// <c>count</c> runs nothing (NEED-07). The body is a written list of every binder in written order
+/// (a collector as its <c>count</c>): its elements run when the result is READ — for a root row,
+/// when the run's assembled output is read (<see cref="SemanticFragment.LateEvents"/>). The
+/// expectation is computed by a reference evaluation of the written data (<see cref="Reference"/>),
+/// never by running the implementation. Failures: a non-structure where a structure is expected
 /// and a list for a sequence (or the reverse) are <c>TypeMismatch</c>; too many items for a level
 /// without a collector, too many arguments, and a deconstruction that cannot bind are
 /// <c>ArityMismatch</c>; a family none of whose clauses matches is <c>NoMatchingBranch</c>. Clauses
@@ -72,7 +78,11 @@ internal static class SemanticNestedWide
     {
         SemanticFragment fragment;
         using (g.Span("production"))
+        {
             fragment = Production(g);
+            SemanticGrammar.DeferListRow(fragment);
+        }
+
         if (fragment.Refusal is null)
         {
             using var contextSpan = g.Span("context");
@@ -136,12 +146,39 @@ internal static class SemanticNestedWide
         }
         else
         {
-            // The structural parameter is inspected at the call; plain parameters wait for the body.
-            head.Demand(parameters ? head.StructuralArgument : head.AllLeaves, f);
-            if (outcome != 0) f.FailureCategory = outcome == 3 ? "ArityMismatch" : "TypeMismatch";
+            var reference = new Reference(f);
+            var binding = new Binding();
+            string? error = null;
+            if (parameters)
+            {
+                // A parameter list binds in written order: the structural parameter is inspected
+                // at the call; plain parameters and collected arguments keep their cells.
+                var at = 0;
+                foreach (var item in top.Items())
+                {
+                    if (item == Item.Rest)
+                    {
+                        at += width;
+                        continue;
+                    }
+
+                    var argument = new Cell(data[at++]);
+                    if (item != Item.Child) binding.Bound[top.Tail] = argument;
+                    else if ((error = Match(top.Child!, argument, binding, reference)) is not null) break;
+                }
+            }
             else
             {
-                if (parameters) head.Demand(head.TailArgument, f);
+                error = Match(top, new Cell(data[0]), binding, reference);
+            }
+
+            var expected = outcome switch { 0 => null, 3 => "ArityMismatch", _ => "TypeMismatch" };
+            if (error != expected)
+                throw new InvalidOperationException($"wide data is refused as {error ?? "nothing"}, its outcome says {expected ?? "nothing"}");
+            if (outcome != 0) f.FailureCategory = expected;
+            else
+            {
+                reference.ReadBody(body, binding);
                 f.Value = new Result.ListValue([.. body.Select(static b => b.Value)]);
                 if (parameters && outerCollects && width > 0) f.Paths |= SemanticPath.LazyTransport;
             }
@@ -211,11 +248,24 @@ internal static class SemanticNestedWide
         f.Row = new MExpr.Call(function, [data]);
         Features(f, kinds, depth, false, false, 1);
 
-        // The first clause's structural inspection demands the whole argument once; later clauses reuse it.
-        writer.Demand(writer.AllLeaves, f);
+        // The clauses are tried in order against ONE argument cell: what a refused clause read
+        // stays read, and the next clause reads only what it inspects beyond that.
+        var reference = new Reference(f);
+        var argument = new Cell(data);
+        var matched = -1;
+        var binding = new Binding();
+        for (var c = 0; c < 2 && matched < 0; c++)
+        {
+            binding = new Binding();
+            if (Match(tops[c], argument, binding, reference) is null) matched = c;
+        }
+
+        if (matched != (target == 2 ? -1 : chosen))
+            throw new InvalidOperationException($"wide clause data matches clause {matched}, its target says {target}");
         if (target != 2)
         {
             var body = writer.Body(tops[chosen]);
+            reference.ReadBody(body, binding);
             f.Value = new Result.ListValue([SemanticGrammar.Res(chosen + 1), .. body.Select(static b => b.Value)]);
         }
         else if (catchAll)
@@ -256,8 +306,14 @@ internal static class SemanticNestedWide
         f.Row = new MExpr.ListLit([new MExpr.Ref(p), new MExpr.Ref(q)]);
         Features(f, kinds, depth, outerCollects, innerCollects, 1);
 
-        // The first read of p computes the shared right-hand side: the call, then its whole sequence.
-        head.Demand(head.AllLeaves, f);
+        // The row is a written list, read when the run's output is (DeferListRow). Its first
+        // element p computes the shared right-hand side: the call — its pattern, then its body, a
+        // written SEQUENCE, which reads every bound position in body order.
+        var reference = new Reference(f);
+        var binding = new Binding();
+        if (Match(top, new Cell(data), binding, reference) is { } refused)
+            throw new InvalidOperationException($"wide deconstruction data is refused as {refused}");
+        reference.ReadPositions(body, binding);
         if (collecting)
         {
             f.Value = new Result.ListValue([body[0].Value, new Result.ListValue([.. body.Skip(1).Select(static b => b.Value)])]);
@@ -291,7 +347,8 @@ internal static class SemanticNestedWide
         var q = g.Fresh();
         var rows = new List<MExpr>();
         var values = new List<Result>();
-        foreach (var item in head.Body(top))
+        var bodyItems = head.Body(top);
+        foreach (var item in bodyItems)
         {
             if (item.Collector == inner.Rest)
             {
@@ -317,14 +374,35 @@ internal static class SemanticNestedWide
         f.Row = new MExpr.Call(function, [data]);
         Features(f, kinds, depth, outerCollects, true, 1);
 
-        head.Demand(head.AllLeaves, f);
-        if (width > 0) f.Value = new Result.ListValue(values);
-        else
+        var reference = new Reference(f);
+        var binding = new Binding();
+        if (Match(top, new Cell(data), binding, reference) is { } refused)
+            throw new InvalidOperationException($"wide deconstruction data is refused as {refused}");
+
+        // The body's list is read when the result is: each name in order, and at the inner
+        // collector's place `p` — the deconstruction's first position (`count(q)` reads none).
+        // An empty collector cannot bind `p`: that read is the failure, after the names before it.
+        reference.ReadResult();
+        foreach (var item in bodyItems)
         {
-            f.FailureCategory = "ArityMismatch"; // `p, *q` needs at least one collected item
-            f.Features.UnionWith(["failure", "wide-outcome-deconstruction-arity"]);
+            if (item.Collector != inner.Rest)
+            {
+                reference.Read(item, binding);
+                continue;
+            }
+
+            if (width == 0)
+            {
+                f.FailureCategory = "ArityMismatch"; // `p, *q` needs at least one collected item
+                f.FailsLate = true;
+                f.Features.UnionWith(["failure", "wide-outcome-deconstruction-arity"]);
+                break;
+            }
+
+            reference.Whole(binding.Collected[inner.Rest][0]);
         }
 
+        if (width > 0) f.Value = new Result.ListValue(values);
         return f;
     }
 
@@ -475,11 +553,8 @@ internal static class SemanticNestedWide
         Extra,
     }
 
-    /// <summary>One body item: its expression, its constructed value, and the collector it counts (if any).</summary>
-    private sealed record BodyItem(MExpr Expr, Result Value, Sym? Collector);
-
-    /// <summary>One written host effect and the top-level argument it belongs to.</summary>
-    private sealed record Leaf(int Value, bool Wait, int Argument);
+    /// <summary>One body item: its expression, its constructed value, and the name it reads or the collector it counts.</summary>
+    private sealed record BodyItem(MExpr Expr, Result Value, Sym? Collector, Sym? Binder = null);
 
     /// <summary>
     /// Writes one head, the matching call data and the expectation. Effects alternate trace and wait
@@ -489,19 +564,7 @@ internal static class SemanticNestedWide
     {
         private readonly Dictionary<Sym, int> _bound = [];
         private readonly Dictionary<Sym, List<int>> _collected = [];
-        private readonly List<Leaf> _leaves = [];
-        private int _argument;
-
-        /// <summary>The top-level argument index of the structural parameter (parameter-list heads).</summary>
-        private int _structuralArgument;
-
-        private int _tailArgument;
-
-        public Func<Leaf, bool> AllLeaves => static _ => true;
-
-        public Func<Leaf, bool> StructuralArgument => leaf => leaf.Argument == _structuralArgument;
-
-        public Func<Leaf, bool> TailArgument => leaf => leaf.Argument == _tailArgument;
+        private int _leaves;
 
         public List<int> CollectedValues(Sym collector) => _collected[collector];
 
@@ -561,15 +624,7 @@ internal static class SemanticNestedWide
         {
             var arguments = new List<MExpr>();
             foreach (var item in top.Items())
-            {
-                if (item == Item.Child) _structuralArgument = _argument;
-                if (item == Item.Tail) _tailArgument = _argument;
-                foreach (var data in ItemData(top, item, mutation, width))
-                {
-                    arguments.Add(data);
-                    _argument++;
-                }
-            }
+                arguments.AddRange(ItemData(top, item, mutation, width));
 
             if (mutation.ExtraAt == 1) arguments.Add(Effect(null, g.Digit()));
             return arguments;
@@ -607,8 +662,7 @@ internal static class SemanticNestedWide
 
         private MExpr Effect(Sym? binder, int value)
         {
-            var wait = _leaves.Count % 2 == 1;
-            _leaves.Add(new Leaf(value, wait, _argument));
+            var wait = _leaves++ % 2 == 1;
             if (binder is { } bound) _bound[bound] = value;
             return SemanticGrammar.Effect(wait, value);
         }
@@ -632,22 +686,156 @@ internal static class SemanticNestedWide
                         break;
                     default:
                         var binder = item switch { Item.Head => level.Head, Item.Tail => level.Tail, _ => level.Extra!.Value };
-                        items.Add(new BodyItem(new MExpr.Ref(binder), SemanticGrammar.Res(_bound.GetValueOrDefault(binder)), null));
+                        items.Add(new BodyItem(new MExpr.Ref(binder), SemanticGrammar.Res(_bound.GetValueOrDefault(binder)), null, binder));
                         break;
                 }
             }
 
             return items;
         }
+    }
 
-        /// <summary>Appends the selected leaves' events, in source order.</summary>
-        public void Demand(Func<Leaf, bool> selected, SemanticFragment f)
+    // ── The reference evaluation ────────────────────────────────────────────
+
+    /// <summary>A value: a number, or a sequence/list of positions (a <see cref="V"/>, or an unread <see cref="Cell"/>).</summary>
+    private abstract record V;
+
+    private sealed record VScalar(int Value) : V;
+
+    private sealed record VSeq(bool IsList, ImmutableArray<object> Items) : V;
+
+    /// <summary>
+    /// A deferred position — a written list's element, or a supplied argument — whose written
+    /// data runs when the position is first read, once.
+    /// </summary>
+    private sealed class Cell(MExpr written)
+    {
+        public MExpr Written { get; } = written;
+
+        public V? Value { get; set; }
+    }
+
+    /// <summary>The position each name is bound to, and the positions each collector took: all unread.</summary>
+    private sealed class Binding
+    {
+        public Dictionary<Sym, object> Bound { get; } = [];
+
+        public Dictionary<Sym, ImmutableArray<object>> Collected { get; } = [];
+    }
+
+    /// <summary>
+    /// The reference evaluation of written data: each host effect is recorded when it runs — while
+    /// the row is evaluated, or (after <see cref="ReadResult"/>) while the row's result is read.
+    /// </summary>
+    private sealed class Reference(SemanticFragment f)
+    {
+        private List<string> _events = f.Events;
+
+        /// <summary>From here on the row's RESULT is being read: its effects are the fragment's late events.</summary>
+        public void ReadResult()
         {
-            foreach (var leaf in _leaves.Where(selected))
+            _events = f.LateEvents;
+            f.ReadsLate = true;
+        }
+
+        /// <summary>
+        /// A written item's value. A sequence evaluates its items in order; a list defers every
+        /// element that is not a literal number.
+        /// </summary>
+        public V Eval(MExpr written)
+        {
+            switch (written)
             {
-                f.Events.Add((leaf.Wait ? "wait:" : "trace:") + leaf.Value.ToString(CultureInfo.InvariantCulture));
-                if (leaf.Wait) f.Features.Add("async");
+                case MExpr.Atom atom:
+                    return new VScalar((int)atom.Value);
+                case MExpr.Prim { Name: "trace" or "wait" } effect:
+                {
+                    var value = (int)((MExpr.Atom)effect.Args[0]).Value;
+                    _events.Add(effect.Name + ":" + value.ToString(CultureInfo.InvariantCulture));
+                    if (effect.Name == "wait") f.Features.Add("async");
+                    return new VScalar(value);
+                }
+
+                case MExpr.Group group:
+                    return new VSeq(false, [.. group.Items.Select(item => (object)Eval(item))]);
+                case MExpr.ListLit list:
+                    return new VSeq(true, [.. list.Items.Select(item => item is MExpr.Atom ? (object)Eval(item) : new Cell(item))]);
+                default:
+                    throw new InvalidOperationException("not written data");
             }
         }
+
+        /// <summary>A position's value: an unread cell runs now.</summary>
+        public V Force(object position) => position is Cell cell ? cell.Value ??= Eval(cell.Written) : (V)position;
+
+        /// <summary>A position's WHOLE value: every position below it read too, in order, depth first.</summary>
+        public V Whole(object position)
+        {
+            var value = Force(position);
+            if (value is VSeq sequence)
+            {
+                foreach (var below in sequence.Items) Whole(below);
+            }
+
+            return value;
+        }
+
+        /// <summary>One body item is read: a name reads its position whole; a collector's <c>count</c> reads none.</summary>
+        public void Read(BodyItem item, Binding binding)
+        {
+            if (item.Binder is { } name) Whole(binding.Bound[name]);
+        }
+
+        /// <summary>The body's items are read in order, where the evaluation currently stands.</summary>
+        public void ReadPositions(IEnumerable<BodyItem> body, Binding binding)
+        {
+            foreach (var item in body) Read(item, binding);
+        }
+
+        /// <summary>The body is a written list: its elements are read when the result is.</summary>
+        public void ReadBody(IEnumerable<BodyItem> body, Binding binding)
+        {
+            ReadResult();
+            ReadPositions(body, binding);
+        }
+    }
+
+    /// <summary>
+    /// One level against a position: its kind (the position is read), its count (exact, or at least
+    /// the fixed items when it collects), then its items in written order, depth first — a nested
+    /// level and a literal read their position, a name and a collector bind theirs unread. Returns
+    /// the category of the first refusal (<c>NoMatch</c> for a literal that differs).
+    /// </summary>
+    private static string? Match(Level level, object position, Binding binding, Reference reference)
+    {
+        var value = reference.Force(position);
+        if (value is not VSeq sequence || sequence.IsList != level.IsList) return "TypeMismatch";
+        var items = level.Items().ToList();
+        var fixedCount = items.Count(static item => item != Item.Rest);
+        var count = sequence.Items.Length;
+        if (level.Collects ? count < fixedCount : count != fixedCount) return "ArityMismatch";
+        var at = 0;
+        foreach (var item in items)
+        {
+            switch (item)
+            {
+                case Item.Rest:
+                    binding.Collected[level.Rest] = [.. sequence.Items.Skip(at).Take(count - fixedCount)];
+                    at += count - fixedCount;
+                    break;
+                case Item.Child:
+                    if (Match(level.Child!, sequence.Items[at++], binding, reference) is { } refused) return refused;
+                    break;
+                case Item.Head when level.HeadLiteral is { } literal:
+                    if (reference.Force(sequence.Items[at++]) is not VScalar scalar || scalar.Value != literal) return "NoMatch";
+                    break;
+                default:
+                    var name = item switch { Item.Head => level.Head, Item.Tail => level.Tail, _ => level.Extra!.Value };
+                    binding.Bound[name] = sequence.Items[at++];
+                    break;
+            }
+        }
+
+        return null;
     }
 }

@@ -25,7 +25,7 @@ public class BoundedDiagnosticSourceIntegrationTests
     /// <summary>The doubling-DAG program, deep enough that the pre-fix message was unbuildable.</summary>
     private static string DagProgram(string body, int depth = 40)
         => $"""
-            Wrap = [x, x]
+            Wrap = [(x, x)*]
             A = Wrap(1).repeat({depth})
             {body}
             """;

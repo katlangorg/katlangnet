@@ -127,7 +127,7 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .demandSequenceBuiltinCallItemValue item ctx env => .demandSequenceBuiltinCallItemValue (shiftItem σ item) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .bindSequenceBuiltinArguments b metadata args ctx env => .bindSequenceBuiltinArguments b metadata (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalReduceCounted collection stepAlg start ctx env => .evalReduceCounted (collection.map (shiftCounted σ)) stepAlg (σ.addr start.1, start.2) (shiftCtx σ ctx) (shiftValEnv σ env)
-  | .evalFilterCounted items predicateAlg ctx env => .evalFilterCounted (items.map (shiftCounted σ)) predicateAlg (shiftCtx σ ctx) (shiftValEnv σ env)
+  | .evalFilterCounted start items predicateAlg ctx env => .evalFilterCounted start (items.map (shiftCounted σ)) predicateAlg (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalMapCounted collection transformAlg ctx env => .evalMapCounted (collection.map (shiftCounted σ)) transformAlg (shiftCtx σ ctx) (shiftValEnv σ env)
   | .applyBuiltinCountedSequence b metadata args ctx env => .applyBuiltinCountedSequence b metadata (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
   | .applyBuiltinCounted b args ctx env => .applyBuiltinCounted b (args.map (shiftArgument σ)) (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -147,6 +147,7 @@ def shiftCall (σ : Site) : EvalCall → EvalCall
   | .argumentViewCells a => .argumentViewCells (σ.addr a)
   | .evalArgumentViewBuiltin b a => .evalArgumentViewBuiltin b (σ.addr a)
   | .evalSequenceSpreadOperandValue e ctx env => .evalSequenceSpreadOperandValue e (shiftCtx σ ctx) (shiftValEnv σ env)
+  | .evalRunValue e ctx env => .evalRunValue e (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalSequenceSpreadCounted e ctx env => .evalSequenceSpreadCounted e (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalSupplySpread e ctx env => .evalSupplySpread e (shiftCtx σ ctx) (shiftValEnv σ env)
   | .evalListLiteralCounted elements ctx env => .evalListLiteralCounted elements (shiftCtx σ ctx) (shiftValEnv σ env)
@@ -231,6 +232,7 @@ def shiftRet (σ : Site) : (c : EvalCall) → c.Ret → (shiftCall σ c).Ret
   | .argumentViewCells .., r => shiftSourced σ r
   | .evalArgumentViewBuiltin .., r => shiftCounted σ r
   | .evalSequenceSpreadOperandValue .., r => shiftResult σ r
+  | .evalRunValue .., r => shiftResult σ r
   | .evalSequenceSpreadCounted .., r => shiftCounted σ r
   | .evalSupplySpread .., r => shiftSupply σ r
   | .evalListLiteralCounted .., r => shiftCounted σ r

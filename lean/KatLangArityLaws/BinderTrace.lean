@@ -135,6 +135,11 @@ def traced (k : NeedCapabilities EvalM) : NeedCapabilities TraceM where
     let adapter <- liftEval (k.reference address)
     emit (.reference address adapter)
     pure adapter
+  -- The two lazy-collection reads (issue #204) are VALUE demands of the cell at the binder
+  -- boundary: the same `VALUE(a)` event. What they do after the demand — a pending list's
+  -- discovery, a value's materialization — is work inside the capability, which is not observed.
+  positions address := do emit (.value address); liftEval (k.positions address)
+  whole address := do emit (.value address); liftEval (k.whole address)
 
 /-! ### Run equations -/
 
@@ -177,6 +182,16 @@ def traced (k : NeedCapabilities EvalM) : NeedCapabilities TraceM where
 @[simp] theorem runTrace_value (k : NeedCapabilities EvalM) (address : Nat) (s : EvalState) (tr : List NeedEvent) :
     runTrace ((traced k).value address) ⟨s, tr⟩
       = ((runEval (k.value address) s).1, ⟨(runEval (k.value address) s).2, tr ++ [.value address]⟩) := by
+  simp [traced]
+
+@[simp] theorem runTrace_positions (k : NeedCapabilities EvalM) (address : Nat) (s : EvalState) (tr : List NeedEvent) :
+    runTrace ((traced k).positions address) ⟨s, tr⟩
+      = ((runEval (k.positions address) s).1, ⟨(runEval (k.positions address) s).2, tr ++ [.value address]⟩) := by
+  simp [traced]
+
+@[simp] theorem runTrace_whole (k : NeedCapabilities EvalM) (address : Nat) (s : EvalState) (tr : List NeedEvent) :
+    runTrace ((traced k).whole address) ⟨s, tr⟩
+      = ((runEval (k.whole address) s).1, ⟨(runEval (k.whole address) s).2, tr ++ [.value address]⟩) := by
   simp [traced]
 
 @[simp] theorem runTrace_callable (k : NeedCapabilities EvalM) (address : Nat) (s : EvalState) (tr : List NeedEvent) :
@@ -244,7 +259,7 @@ def anchorEvents (k : NeedCapabilities EvalM) (anchor : CountedResult) : List Na
   | [], _ => []
   | cell :: rest, s =>
     .value cell ::
-      match runEval (k.value cell) s with
+      match runEval (k.whole cell) s with
       | (.error _, _) => []
       | (.ok own, s1) => if own == anchor then anchorEvents k anchor rest s1 else []
 
@@ -270,7 +285,7 @@ def repeatedNameEvents (k : NeedCapabilities EvalM) (address : Nat) (group : Rep
         | none => []
     | (.ok none, s1) =>
       .value address ::
-        match runEval (k.value address) s1 with
+        match runEval (k.whole address) s1 with
         | (.error _, _) => []
         | (.ok own, s2) =>
           match group.anchor with
@@ -344,7 +359,7 @@ mutual
                 else []
     | .list ps, address, repeated, bound, family, s =>
       .value address ::
-        match runEval (k.value address) s with
+        match runEval (k.positions address) s with
         | (.error _, _) => []
         | (.ok (value, _), s1) =>
           match Result.listPatternItems? value with
@@ -359,7 +374,7 @@ mutual
                 else []
     | .unpack ps, address, repeated, bound, family, s =>
       .value address ::
-        match runEval (k.value address) s with
+        match runEval (k.positions address) s with
         | (.error _, _) => []
         | (.ok (value, _), s1) =>
           readyEvents k (Result.spreadItems value) s1 ++
@@ -433,8 +448,8 @@ theorem traced_checkAnchor (k : NeedCapabilities EvalM) (name : Ident) (anchor :
   | nil => intro s tr; simp [NeedBinder.checkAnchor, anchorEvents]
   | cons cell rest ih =>
     intro s tr
-    simp only [NeedBinder.checkAnchor, anchorEvents, runTrace_bind, runEval_bind, runTrace_value]
-    rcases h1 : runEval (k.value cell) s with ⟨_ | own, s1⟩
+    simp only [NeedBinder.checkAnchor, anchorEvents, runTrace_bind, runEval_bind, runTrace_whole]
+    rcases h1 : runEval (k.whole cell) s with ⟨_ | own, s1⟩
     · simp
     · simp only [thenRun_ok]
       by_cases hagree : (own == anchor) = true
@@ -455,8 +470,8 @@ theorem traced_name (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) 
       runEval_bind, runTrace_callable]
     rcases h1 : runEval (k.callable address) s with ⟨_ | (_ | identity), s1⟩
     · simp
-    · simp only [thenRun_ok, runTrace_bind, runEval_bind, runTrace_value]
-      rcases h2 : runEval (k.value address) s1 with ⟨_ | own, s2⟩
+    · simp only [thenRun_ok, runTrace_bind, runEval_bind, runTrace_whole]
+      rcases h2 : runEval (k.whole address) s1 with ⟨_ | own, s2⟩
       · simp
       · simp only [thenRun_ok]
         cases ha : (bound.groupOf name).anchor with
@@ -526,7 +541,7 @@ mutual
         rw [traced_name k name adapter repeated bound family s1]
         simp
     | sequence ps =>
-      simp only [NeedBinder.bindOne, oneEvents]
+      simp only [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents]
       rcases h1 : runEval (k.value address) s with ⟨_ | ⟨value, count⟩, s1⟩
       · simp [h1]
       · cases hi : Result.sequencePatternItems? value with
@@ -546,14 +561,14 @@ mutual
               rw [traced_sources k ps (needLevelSources ps cells) repeated bound family s2]
               simp
     | list ps =>
-      simp only [NeedBinder.bindOne, oneEvents]
-      rcases h1 : runEval (k.value address) s with ⟨_ | ⟨value, count⟩, s1⟩
+      simp only [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents]
+      rcases h1 : runEval (k.positions address) s with ⟨_ | ⟨value, count⟩, s1⟩
       · simp [h1]
       · cases hi : Result.listPatternItems? value with
         | none => cases family <;> simp [h1, hi]
         | some items =>
           simp only [readyCells] at *
-          simp only [h1, hi, runTrace_bind, runEval_bind, runTrace_value, thenRun_ok]
+          simp only [h1, hi, runTrace_bind, runEval_bind, runTrace_positions, thenRun_ok]
           rw [traced_ready k items s1 (tr ++ [NeedEvent.value address])]
           rcases h2 : runEval (readyCells k items) s1 with ⟨_ | cells, s2⟩
           · simp only [readyCells] at h2
@@ -566,11 +581,11 @@ mutual
               rw [traced_sources k ps (needLevelSources ps cells) repeated bound family s2]
               simp
     | unpack ps =>
-      simp only [NeedBinder.bindOne, oneEvents]
-      rcases h1 : runEval (k.value address) s with ⟨_ | ⟨value, count⟩, s1⟩
+      simp only [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents]
+      rcases h1 : runEval (k.positions address) s with ⟨_ | ⟨value, count⟩, s1⟩
       · simp [h1]
       · simp only [readyCells] at *
-        simp only [h1, runTrace_bind, runEval_bind, runTrace_value, thenRun_ok]
+        simp only [h1, runTrace_bind, runEval_bind, runTrace_positions, thenRun_ok]
         rw [traced_ready k (Result.spreadItems value) s1 (tr ++ [NeedEvent.value address])]
         rcases h2 : runEval (readyCells k (Result.spreadItems value)) s1 with ⟨_ | cells, s2⟩
         · simp only [readyCells] at h2
@@ -862,29 +877,38 @@ def inspectsAt (_repeated : List Ident) : NeedPattern → Bool
   | .metaRef _ => false
   | _ => true
 
+/-- THE READ OF AN INSPECTING OCCURRENCE (issue #204): a list pattern and the unpacking receiver read
+    their cell's VALUE with its list positions known (`positions`); a literal and a sequence
+    pattern read the VALUE as it is. Either is ONE `VALUE(a)` event at the binder boundary. On a
+    structural pattern it is the binder's own `NeedBinder.structuralRead`. -/
+def inspectionRead (k : NeedCapabilities EvalM) : NeedPattern → Nat → EvalM CountedResult
+  | .list _ => k.positions
+  | .unpack _ => k.positions
+  | _ => k.value
+
 /-- (5, 6) A FAILED DEMAND OF AN INSPECTING OCCURRENCE'S OWN CELL IS FINAL: the binder raises
     exactly that error, in exactly the state the demand left, and the trace ends with that one
     VALUE event — nothing was projected, allocated or bound. (That the demand comes FIRST in every
     outcome is `inspecting_occurrence_demands_its_cell_first`.) -/
 theorem traced_inspection_failure (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
     (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState) (tr : List NeedEvent)
-    (e : Error) (hi : inspectsAt repeated p = true) (h : runEval (k.value address) s = (.error e, t)) :
+    (e : Error) (hi : inspectsAt repeated p = true) (h : runEval (inspectionRead k p address) s = (.error e, t)) :
     runTrace (NeedBinder.bindOne (traced k) p address repeated bound family) ⟨s, tr⟩
       = (.error e, ⟨t, tr ++ [.value address]⟩) := by
   rw [traced_one k p address repeated bound family s tr]
   cases p with
   | bind name collecting => simp [inspectsAt] at hi
-  | literal literal => simp [NeedBinder.bindOne, oneEvents, h]
-  | sequence ps => simp [NeedBinder.bindOne, oneEvents, h]
-  | list ps => simp [NeedBinder.bindOne, oneEvents, h]
-  | unpack ps => simp [NeedBinder.bindOne, oneEvents, h]
+  | literal literal => simp only [inspectionRead] at h; simp [NeedBinder.bindOne, oneEvents, h]
+  | sequence ps => simp only [inspectionRead] at h; simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, h]
+  | list ps => simp only [inspectionRead] at h; simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, h]
+  | unpack ps => simp only [inspectionRead] at h; simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, h]
   | metaRef name => simp [inspectsAt] at hi
 
 /-- The production face of `traced_inspection_failure`: the occurrence's schedule is exactly its one
     VALUE event and the production run is that error in that state. -/
 theorem inspection_failure_schedule (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
     (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState) (e : Error)
-    (hi : inspectsAt repeated p = true) (h : runEval (k.value address) s = (.error e, t)) :
+    (hi : inspectsAt repeated p = true) (h : runEval (inspectionRead k p address) s = (.error e, t)) :
     oneEvents k p address repeated bound family s = [.value address]
     ∧ runEval (NeedBinder.bindOne k p address repeated bound family) s = (.error e, t) := by
   have h1 := traced_one k p address repeated bound family s []
@@ -909,7 +933,7 @@ theorem traced_failure_at_any_position (k : NeedCapabilities EvalM) (before afte
     (hbefore : runEval (NeedBinder.bindSources k before sources repeated bound family) s
       = (.ok (some bound'), s1))
     (hsource : (sources.drop before.length).headD .missing = .cell address)
-    (hi : inspectsAt repeated p = true) (hfail : runEval (k.value address) s1 = (.error e, t)) :
+    (hi : inspectsAt repeated p = true) (hfail : runEval (inspectionRead k p address) s1 = (.error e, t)) :
     runTrace (NeedBinder.bindSources (traced k) (before ++ p :: after) sources repeated bound family) ⟨s, tr⟩
       = (.error e, ⟨t, tr ++ (sourcesEvents k before sources repeated bound family s ++ [.value address])⟩) := by
   obtain ⟨hevents, hrun⟩ := inspection_failure_schedule k p address repeated bound' family s1 t e hi hfail
@@ -924,7 +948,7 @@ theorem traced_failure_at_any_position (k : NeedCapabilities EvalM) (before afte
 theorem traced_wrong_kind (k : NeedCapabilities EvalM) (ps : List NeedPattern) (asList : Bool)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState)
     (tr : List NeedEvent) (value : Result) (count : Nat)
-    (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (hv : runEval ((if asList then k.positions else k.value) address) s = (.ok (value, count), t))
     (hk : (if asList then Result.listPatternItems? value else Result.sequencePatternItems? value) = none) :
     runTrace (NeedBinder.bindOne (traced k) (if asList then .list ps else .sequence ps) address
         repeated bound family) ⟨s, tr⟩
@@ -933,8 +957,8 @@ theorem traced_wrong_kind (k : NeedCapabilities EvalM) (ps : List NeedPattern) (
             (if asList then NeedPattern.list ps else NeedPattern.sequence ps).toParameter value),
         ⟨t, tr ++ [.value address]⟩) := by
   rw [traced_one k _ address repeated bound family s tr]
-  cases asList <;> simp only [Bool.false_eq_true, ↓reduceIte] at hk ⊢ <;>
-    cases family <;> simp [NeedBinder.bindOne, oneEvents, hv, hk]
+  cases asList <;> simp only [Bool.false_eq_true, ↓reduceIte] at hk hv ⊢ <;>
+    cases family <;> simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, hv, hk]
 
 /-- The items a structural pattern opens from its demanded value: the binder's own kind view
     (a sequence pattern opens sequence values only, a list pattern list values only, the
@@ -965,7 +989,7 @@ theorem traced_nested_count_rejected_after_ready_allocation (k : NeedCapabilitie
     (p : NeedPattern) (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s t t' : EvalState) (tr : List NeedEvent) (value : Result) (count : Nat) (items : List Result)
-    (cells : List Nat) (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (cells : List Nat) (hv : runEval (NeedBinder.structuralRead k p address) s = (.ok (value, count), t))
     (hk : structuralItems p value = some items)
     (ha : runEval (readyCells k items) t = (.ok cells, t'))
     (hrej : needAcceptsCardinality ps cells.length = false) :
@@ -975,12 +999,13 @@ theorem traced_nested_count_rejected_after_ready_allocation (k : NeedCapabilitie
         ⟨t', tr ++ .value address :: readyEvents k items t⟩) := by
   rw [traced_one k _ address repeated bound family s tr]
   simp only [readyCells] at ha
-  rcases hp with rfl | rfl | rfl <;> simp only [structuralItems, Option.some.injEq] at hk
+  rcases hp with rfl | rfl | rfl <;> simp only [structuralItems, Option.some.injEq] at hk <;>
+    simp only [NeedBinder.structuralRead] at hv
   all_goals first
     | (cases family <;>
-        simp [NeedBinder.bindOne, oneEvents, readyCells, hv, hk, ha, NeedBinder.cardinalityGate, hrej])
+        simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, readyCells, hv, hk, ha, NeedBinder.cardinalityGate, hrej])
     | (subst hk; cases family <;>
-        simp [NeedBinder.bindOne, oneEvents, readyCells, hv, ha, NeedBinder.cardinalityGate, hrej])
+        simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, readyCells, hv, ha, NeedBinder.cardinalityGate, hrej])
 
 /-! ### Repeated names: the order, the representative, the verdict (NEED-04, group-aware) -/
 
@@ -1007,7 +1032,7 @@ theorem anchorEvents_prefix (k : NeedCapabilities EvalM) (anchor : CountedResult
   | nil => exact List.prefix_refl _
   | cons cell rest ih =>
     simp only [anchorEvents, List.map_cons]
-    rcases runEval (k.value cell) s with ⟨_ | own, s1⟩
+    rcases runEval (k.whole cell) s with ⟨_ | own, s1⟩
     · exact ⟨rest.map NeedEvent.value, rfl⟩
     · dsimp only
       by_cases h : (own == anchor) = true
@@ -1029,7 +1054,7 @@ theorem repeated_events_are_a_prefix_of_the_canonical_order (k : NeedCapabilitie
   · exact List.nil_prefix
   · dsimp only
     refine (List.prefix_cons_inj _).mpr ?_
-    rcases runEval (k.value address) s1 with ⟨_ | own, s2⟩
+    rcases runEval (k.whole address) s1 with ⟨_ | own, s2⟩
     · exact List.nil_prefix
     · dsimp only
       cases group.anchor with
@@ -1071,7 +1096,7 @@ theorem repeated_name_binding (k : NeedCapabilities EvalM) (name : Ident) (addre
                 (.ok (if agreed then some (bound.withCallable name address identity) else none), t)
             | none => (.ok (some (bound.withCallable name address identity)), s1)
         | (.ok none, s1) =>
-          match runEval (k.value address) s1 with
+          match runEval (k.whole address) s1 with
           | (.error e, t) => (.error e, t)
           | (.ok own, s2) =>
             match (bound.groupOf name).anchor with
@@ -1088,7 +1113,7 @@ theorem repeated_name_binding (k : NeedCapabilities EvalM) (name : Ident) (addre
   rcases h1 : runEval (k.callable address) s with ⟨_ | (_ | identity), s1⟩
   · simp
   · simp only [thenRun_ok, runEval_bind]
-    rcases h2 : runEval (k.value address) s1 with ⟨_ | own, s2⟩
+    rcases h2 : runEval (k.whole address) s1 with ⟨_ | own, s2⟩
     · simp
     · simp only [thenRun_ok]
       cases ha : (bound.groupOf name).anchor with
@@ -1119,14 +1144,14 @@ theorem repeated_name_binding (k : NeedCapabilities EvalM) (name : Ident) (addre
 theorem checkAnchor_run (k : NeedCapabilities EvalM) (name : Ident) (anchor : CountedResult)
     (family : Bool) (cell : Nat) (rest : List Nat) (s : EvalState) :
     runEval (NeedBinder.checkAnchor k name anchor family (cell :: rest)) s
-      = match runEval (k.value cell) s with
+      = match runEval (k.whole cell) s with
         | (.error e, t) => (.error e, t)
         | (.ok own, t) =>
           if (own == anchor) = true then runEval (NeedBinder.checkAnchor k name anchor family rest) t
           else (if family then .ok false
             else .error (Error.withContext (repeatedParameterContext name) Error.badArity), t) := by
   simp only [NeedBinder.checkAnchor, runEval_bind]
-  rcases runEval (k.value cell) s with ⟨_ | own, t⟩
+  rcases runEval (k.whole cell) s with ⟨_ | own, t⟩
   · simp
   · simp only [thenRun_ok]
     by_cases h : (own == anchor) = true
@@ -1151,7 +1176,7 @@ theorem traced_repeated_failure_points (k : NeedCapabilities EvalM) (name : Iden
             else .error (Error.typeMismatch "Repeated bind equality requires the same callable identity"),
           ⟨s1, tr ++ [.callable address]⟩))
     ∧ (∀ s1 e t, runEval (k.callable address) s = (.ok none, s1) →
-      runEval (k.value address) s1 = (.error e, t) →
+      runEval (k.whole address) s1 = (.error e, t) →
       runTrace (NeedBinder.bindName (traced k) name address repeated bound family) ⟨s, tr⟩
         = (.error e, ⟨t, tr ++ [.callable address, .value address]⟩)) := by
   have base := traced_name k name address repeated bound family s tr
@@ -1188,7 +1213,7 @@ theorem traced_nested_level_is_the_parents_run (k : NeedCapabilities EvalM) (p :
     (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t t' : EvalState)
     (tr : List NeedEvent) (value : Result) (count : Nat) (items : List Result) (cells : List Nat)
-    (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (hv : runEval (NeedBinder.structuralRead k p address) s = (.ok (value, count), t))
     (hk : structuralItems p value = some items)
     (ha : runEval (readyCells k items) t = (.ok cells, t'))
     (hacc : needAcceptsCardinality ps cells.length = true) :
@@ -1198,10 +1223,11 @@ theorem traced_nested_level_is_the_parents_run (k : NeedCapabilities EvalM) (p :
   rw [traced_one k _ address repeated bound family s tr,
     traced_sources k ps _ repeated bound family t' _]
   simp only [readyCells] at ha
-  rcases hp with rfl | rfl | rfl <;> simp only [structuralItems, Option.some.injEq] at hk
+  rcases hp with rfl | rfl | rfl <;> simp only [structuralItems, Option.some.injEq] at hk <;>
+    simp only [NeedBinder.structuralRead] at hv
   all_goals first
-    | simp [NeedBinder.bindOne, oneEvents, readyCells, hv, hk, ha, NeedBinder.cardinalityGate, hacc]
-    | (subst hk; simp [NeedBinder.bindOne, oneEvents, readyCells, hv, ha, NeedBinder.cardinalityGate, hacc])
+    | simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, readyCells, hv, hk, ha, NeedBinder.cardinalityGate, hacc]
+    | (subst hk; simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, readyCells, hv, ha, NeedBinder.cardinalityGate, hacc])
 
 /-- A READY ALLOCATION FAILING PARTWAY is final (any allocator; `allocateNeed` never fails): after
     the parent's VALUE event, the trace holds the ready events of the items allocated BEFORE the
@@ -1211,17 +1237,18 @@ theorem traced_ready_allocation_failure (k : NeedCapabilities EvalM) (p : NeedPa
     (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t t' : EvalState)
     (tr : List NeedEvent) (value : Result) (count : Nat) (items : List Result) (e : Error)
-    (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (hv : runEval (NeedBinder.structuralRead k p address) s = (.ok (value, count), t))
     (hk : structuralItems p value = some items)
     (ha : runEval (readyCells k items) t = (.error e, t')) :
     runTrace (NeedBinder.bindOne (traced k) p address repeated bound family) ⟨s, tr⟩
       = (.error e, ⟨t', tr ++ .value address :: readyEvents k items t⟩) := by
   rw [traced_one k _ address repeated bound family s tr]
   simp only [readyCells] at ha
-  rcases hp with rfl | rfl | rfl <;> simp only [structuralItems, Option.some.injEq] at hk
+  rcases hp with rfl | rfl | rfl <;> simp only [structuralItems, Option.some.injEq] at hk <;>
+    simp only [NeedBinder.structuralRead] at hv
   all_goals first
-    | simp [NeedBinder.bindOne, oneEvents, readyCells, hv, hk, ha]
-    | (subst hk; simp [NeedBinder.bindOne, oneEvents, readyCells, hv, ha])
+    | simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, readyCells, hv, hk, ha]
+    | (subst hk; simp [NeedBinder.bindOne, NeedBinder.structuralRead, oneEvents, readyCells, hv, ha])
 
 /-- A FAILED COLLECTOR ALLOCATION is final with no event (allocation events follow success
     only), in the state the allocator left; the pattern is never bound. (The production
@@ -1437,7 +1464,7 @@ theorem production_nested_rejection_keeps_its_ready_cells (k : NeedCapabilities 
     (hk : k.allocate = allocateNeed) (p : NeedPattern) (ps : List NeedPattern)
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
     (bound : NeedBindState) (family : Bool) (s t : EvalState) (tr : List NeedEvent) (value : Result)
-    (count : Nat) (items : List Result) (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (count : Nat) (items : List Result) (hv : runEval (NeedBinder.structuralRead k p address) s = (.ok (value, count), t))
     (hk' : structuralItems p value = some items)
     (hrej : needAcceptsCardinality ps items.length = false) :
     runTrace (NeedBinder.bindOne (traced k) p address repeated bound family) ⟨s, tr⟩
@@ -1556,18 +1583,19 @@ def traceReadingValue (k : NeedCapabilities EvalM) (forged : CountedResult) : Ne
 
 /-- A production-shaped record whose every cell holds `()`. -/
 def emptyValues : NeedCapabilities EvalM :=
-  ⟨fun _ => pure (.sequenceValue [], 0), fun _ => pure none, allocateNeed, NeedPlan.reference⟩
+  ⟨fun _ => pure (.sequenceValue [], 0), fun _ => pure none, allocateNeed, NeedPlan.reference,
+   fun _ => pure (.sequenceValue [], 0), fun _ => pure (.sequenceValue [], 0)⟩
 
-/-- Over the trace-reading operation ERASURE FAILS: from a nonempty prefix the unpacking
-    receiver sees the forged one-item value, allocates a ready cell and is rejected by its
+/-- Over the trace-reading operation ERASURE FAILS: from a nonempty prefix the empty sequence
+    pattern sees the forged one-item value, allocates a ready cell and is rejected by its
     nested gate, while the production run binds `()` and succeeds. -/
 theorem trace_reading_value_breaks_erasure (s : EvalState) :
     eraseTrace (NeedBinder.bindOne (traceReadingValue emptyValues (.sequenceValue [.atom 1], 1))
-        (.unpack []) 0 [] {} false) s [.ready 0]
-      ≠ runEval (NeedBinder.bindOne emptyValues (.unpack []) 0 [] {} false) s := by
+        (.sequence []) 0 [] {} false) s [.ready 0]
+      ≠ runEval (NeedBinder.bindOne emptyValues (.sequence []) 0 [] {} false) s := by
   have traced : (eraseTrace (NeedBinder.bindOne (traceReadingValue emptyValues (.sequenceValue [.atom 1], 1))
-      (.unpack []) 0 [] {} false) s [.ready 0]).1 = .error (Error.arityMismatch 0 1) := rfl
-  have production : (runEval (NeedBinder.bindOne emptyValues (.unpack []) 0 [] {} false) s).1
+      (.sequence []) 0 [] {} false) s [.ready 0]).1 = .error (Error.arityMismatch 0 1) := rfl
+  have production : (runEval (NeedBinder.bindOne emptyValues (.sequence []) 0 [] {} false) s).1
       = .ok (some {}) := rfl
   intro h
   have h1 := congrArg Prod.fst h

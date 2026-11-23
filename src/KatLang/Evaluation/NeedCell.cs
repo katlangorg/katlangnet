@@ -602,6 +602,23 @@ internal sealed class NeedCell : NeedNode
         get { lock (this) return _completed is not null || _exception is not null; }
     }
 
+    /// <summary>
+    /// Whether this cell's VALUE computation has neither completed nor started: the next VALUE
+    /// demand would run it. A snapshot — another flow may start the computation right after —
+    /// used only to choose an evaluation ORDER that the demand itself would also reach
+    /// (<c>Evaluator.ReadStagePosition</c>); nothing is decided by it.
+    /// </summary>
+    internal bool IsValueUnstarted
+    {
+        get { lock (this) return _completed is null && _exception is null && _flight is null; }
+    }
+
+    /// <summary>
+    /// The object whose methods compute this cell's VALUE, for a cell built from one object's
+    /// computation (a <c>map</c> stage's position); <c>null</c> for every other cell.
+    /// </summary>
+    internal object? ValueComputation => _evaluate?.Target;
+
     // Test observation only: whether this cell's VALUE computation is in flight (its completion
     // is released once the outcome is published).
     internal bool HasValueInFlight

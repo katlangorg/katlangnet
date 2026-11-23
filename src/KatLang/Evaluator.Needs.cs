@@ -137,6 +137,32 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The cell of one DEFERRED LIST ELEMENT (lazy collections, issue #204): the supplied cell of
+    /// the written element (<see cref="SupplyCell"/> — a parameter element is the parameter's own
+    /// cell), except that a plainly suspended expression is an <see cref="ElementSuspension"/>: an
+    /// element is no argument, so its failure is reported as the element's own, exactly as the
+    /// literal reported it when it evaluated its elements itself.
+    /// </summary>
+    internal static NeedCell SupplyElementCell(Expr element, EvalCtx caller, ValEnv values)
+    {
+        var cell = SupplyCell(element, caller, values, unobserved: true);
+        // Only a cell formed HERE for this element is re-suspended as an element. A parameter
+        // element resolved to the parameter's EXISTING cell (its source is the argument written
+        // at the call, never this element): that cell is the position, whatever kind of
+        // suspension the call gave it — a plain expression or an invocation plan alike.
+        return ReferenceEquals(cell.Source, element)
+            && cell.Suspension is { } suspension && suspension.GetType() == typeof(ExpressionSuspension) && !cell.HasRuntimeProjection
+            ? new NeedCell(element, new ElementSuspension(caller, values), caller.Budget, runtimeProjection: false, caller.Budget.CancellationToken)
+            : cell;
+    }
+
+    /// <summary>
+    /// The suspension of a deferred LIST ELEMENT: an ordinary suspended expression whose value
+    /// boundary blames no argument slot (<see cref="FinishSuppliedValue"/>).
+    /// </summary>
+    internal sealed class ElementSuspension(EvalCtx caller, ValEnv values) : ExpressionSuspension(caller, values);
+
+    /// <summary>
     /// The written REFERENCE shapes whose identity resolution normalizes a callable alias (FWD-02): a
     /// name, an argumentless dot path, and an inline alias block. Every other written expression is a
     /// value with no identity, or a parameter, whose own cell is transported.
@@ -288,7 +314,9 @@ public static partial class Evaluator
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> FinishSuppliedValue(Expr source, ExpressionSuspension suspension, EvalResult<CountedResult> result)
         => suspension.Caller.Head is Algorithm.Alias ? result
-            : result.IsError ? BlameWrittenArgumentSlot(source, result.Error) : ReCountValueBoundary(result);
+            // A deferred list element is no argument (issue #204): its failure is its own.
+            : result.IsError ? (suspension is ElementSuspension ? result : BlameWrittenArgumentSlot(source, result.Error))
+            : ReCountValueBoundary(result);
 
     // A link's VALUE under an alias head is the property body's row `X.Algorithm`: its failure carries
     // the row's dot-call context and position, exactly as evaluating the row reports it.
@@ -492,8 +520,9 @@ public static partial class Evaluator
             ? await EvalSequenceSpreadOperandValueAsync(operand, caller, values).ConfigureAwait(false)
             : EvalSequenceSpreadOperandValue(operand, caller, values);
         if (operandR.IsError) return new(operandR.Error, bound);
-        var opened = OpenSpreadLayers(operandR.Value, layers, argument, caller, transportView: true, out var view);
-        if (view is not null)
+        var openedSpread = await OpenSpreadLayers(operandR.Value, layers, argument, caller, transportView: true, asynchronous).ConfigureAwait(false);
+        var opened = openedSpread.Items;
+        if (openedSpread.View is { } view)
         {
             var cells = asynchronous
                 ? await PrepareArgumentViewAsync(view, caller).ConfigureAwait(false)
@@ -1230,7 +1259,7 @@ public static partial class Evaluator
                         if (group.HasAnchor)
                         {
                             // Once the group has a data anchor, its own counted VALUE must agree.
-                            var own = asynchronous ? await cell.DemandAsync().ConfigureAwait(false) : cell.Demand();
+                            var own = await DemandWhole(cell, ctx, asynchronous).ConfigureAwait(false);
                             if (own.IsError) return own.Error;
                             var agreed = RepeatedCountedValueAgrees(ref repeatedValues, group.Anchor, own.Value, ctx);
                             if (agreed.IsError) return agreed.Error;
@@ -1251,8 +1280,10 @@ public static partial class Evaluator
                         continue;
                     }
 
-                    // A value-only contribution demands its own counted VALUE.
-                    var value = asynchronous ? await cell.DemandAsync().ConfigureAwait(false) : cell.Demand();
+                    // A value-only contribution demands its own counted VALUE — the WHOLE value
+                    // (issue #204): agreement compares it, so a list evaluated on demand is
+                    // materialized first.
+                    var value = await DemandWhole(cell, ctx, asynchronous).ConfigureAwait(false);
                     if (value.IsError) return value.Error;
                     if (group.HasAnchor)
                     {
@@ -1273,7 +1304,7 @@ public static partial class Evaluator
                         group.Pending = null;
                         foreach (var earlier in waiting)
                         {
-                            var own = asynchronous ? await earlier.DemandAsync().ConfigureAwait(false) : earlier.Demand();
+                            var own = await DemandWhole(earlier, ctx, asynchronous).ConfigureAwait(false);
                             if (own.IsError) return own.Error;
                             var agreed = RepeatedCountedValueAgrees(ref repeatedValues, value.Value, own.Value, ctx);
                             if (agreed.IsError) return agreed.Error;
@@ -1300,6 +1331,26 @@ public static partial class Evaluator
                     return EvalResult<NeedEnv?>.Ok(null);
                 continue;
             }
+            if ((pattern.Unpacking || pattern.List) && inspected is Result.ListValue { Lazy: { } positions })
+            {
+                // A LIST EVALUATED ON DEMAND (issue #204): a list pattern and the unpacking
+                // receiver check its kind and its cardinality — every position is FOUND, none is
+                // read — before any field, and bind the nested level to the list's own positions.
+                if (await positions.Discover(LazyList.Everything, asynchronous).ConfigureAwait(false) is { } discoveryFailure)
+                    return discoveryFailure;
+                var found = positions.Discovered;
+                var positionArity = NeedLevelArity(pattern.Children!);
+                if (!positionArity.Accepts(found))
+                    return family ? EvalResult<NeedEnv?>.Ok(null) : pattern.Unpacking
+                        ? new EvalError.ArityMismatch(positionArity.Minimum, found)
+                        : StructuralPatternArityMismatch(pattern.Original!, positionArity.Minimum, found);
+                var positionCells = new NeedCell[found];
+                for (var position = 0; position < found; position++)
+                    positionCells[position] = PositionCell(positions.Slot(position), ctx.Budget);
+                PushLevel(pattern.Children!, positionCells);
+                continue;
+            }
+
             var items = pattern.Unpacking ? inspected.SpreadItems() : pattern.List ? inspected.ListPatternItems() : inspected.SequencePatternItems();
             if (items is null)
                 return family ? EvalResult<NeedEnv?>.Ok(null) : StructuralPatternKindMismatch(pattern.Original!, inspected);
@@ -1446,6 +1497,10 @@ public static partial class Evaluator
                     ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
                     : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values));
                 if (result.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, result.Error);
+                // A `map` / `filter` stage this step built reports its later steps under the step's
+                // own call, as a written call's stage does (lazy collections, issue #204).
+                if (FreshStage(result) is { Site: null } stage)
+                    stage.NoteSiteFrame(stepName, null, ctx);
                 return conditionFirst
                     ? WhileVerdictOfSupply([result.Value.Value])
                     : EvalResult<IReadOnlyList<Result>?>.Ok([result.Value.Value]);

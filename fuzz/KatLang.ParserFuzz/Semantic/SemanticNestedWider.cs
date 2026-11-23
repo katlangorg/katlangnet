@@ -30,18 +30,23 @@ namespace KatLang.ParserFuzz;
 ///
 /// <para><b>Expectation</b> is computed by a reference binder over the written data (never by running
 /// the implementation), following docs/design/language-rules/call-by-need.md and the sequence rules:
-/// a structural pattern demands its argument's WHOLE eager value, every leaf in source order, before
-/// it inspects anything (NEED-04); a written group's spread items are spliced in place and a sequence
-/// of exactly one item is that item; a level checks its kind (<c>TypeMismatch</c>), then its count —
-/// exact, or at least the fixed items when it collects (<c>ArityMismatch</c>) — then its items left to
-/// right, depth first, a collector taking the items between the fixed items before and after it; the
-/// later occurrence of a repeated name compares with the first (<c>BadArity</c> when they differ,
+/// a structural pattern demands its argument's value (NEED-04): a written SEQUENCE evaluates its
+/// items in source order, while a written LIST defers its ordinary elements — each is one cell, run
+/// when it is first read — and evaluates only its spread operands (lazy collections, issue #204); a
+/// written group's spread items are spliced in place and a sequence of exactly one item is that item;
+/// a level checks its kind (<c>TypeMismatch</c>), then its count — exact, or at least the fixed items
+/// when it collects (<c>ArityMismatch</c>) — then its items left to right, depth first: a nested
+/// level reads its position, a name binds its position UNREAD, and a collector takes the positions
+/// between the fixed items before and after it, unread; the later occurrence of a repeated name
+/// compares WHOLE values, the first occurrence's and then its own (<c>BadArity</c> when they differ,
 /// a non-match in a clause family). A parameter list binds in written order: a structural parameter is
-/// inspected whole, a repeated plain parameter demands its own value, a META parameter captures its
+/// inspected as above, a repeated plain parameter is compared as above, a META parameter captures its
 /// written call without running anything (a value is refused, <c>NotAnAlgorithm</c>), and a plain
 /// parameter waits for the body; the first failure stops binding. A captured call's argument cells are
-/// demanded at most once across <c>Invoke</c> and the rebuilt call. The body lists every name in written
-/// order, depth first, once (a collector as its <c>count</c>).</para>
+/// demanded at most once across <c>Invoke</c> and the rebuilt call. The body is a written list of
+/// every name in written order, depth first, once (a collector as its <c>count</c>, which reads no
+/// position): its elements run when the result is READ — for a root row, when the run's assembled
+/// output is read, after every row has been evaluated (<see cref="SemanticFragment.LateEvents"/>).</para>
 ///
 /// <para>Every decision is a named pick, so the recipe is finite and <see cref="SemanticExhaustive"/>
 /// enumerates it. No program is an intended refusal: every one parses cleanly.</para>
@@ -291,18 +296,21 @@ internal static class SemanticNestedWider
         var r = g.Fresh();
         f.Decls.Add(new MDecl.Value(r, [new MExpr.Call(cap, [new MExpr.Call(target, [Render(original)])])]));
 
-        Result Invocation(DItem argument)
+        // Every operation is an element of the row's list: each runs, and its result is read
+        // whole, before the next one (the row is deferred as a whole by its production).
+        var reference = new Reference(f);
+        var captured = new Cell(original); // the captured argument cell runs once
+        Result Invocation(Cell argument)
         {
             var binding = new Binding();
-            if (Match(head, Eval(argument), binding) is { } error)
+            if (Match(head, argument, binding, reference) is { } error)
                 throw new InvalidOperationException($"meta-target data does not match its head ({error})");
-            return new Result.ListValue([.. body.Select(s => BodyValue(s, binding))]);
+            return new Result.ListValue([.. body.Select(s => BodyValue(s, binding, reference))]);
         }
 
         MExpr Arguments() => new MExpr.Dot(new MExpr.Ref(r), "Arguments", null);
         var rows = new List<MExpr>();
         var values = new List<Result>();
-        var demanded = false;
         foreach (var kind in ops)
         {
             f.Features.Add("meta-op-" + MetaOps[kind]);
@@ -317,15 +325,13 @@ internal static class SemanticNestedWider
                     rows.Add(kind == 1
                         ? new MExpr.Dot(new MExpr.Ref(r), "Invoke", [])
                         : new MExpr.Dot(new MExpr.Ref(r), "Algorithm", [new MExpr.Spread(Arguments())]));
-                    if (!demanded) Demand(f, Leaves(original)); // the captured argument cell runs once
-                    demanded = true;
-                    values.Add(Invocation(original));
+                    values.Add(Invocation(captured));
                     break;
                 default:
                 {
                     var fresh = data.Of(head, width, literal: true);
                     rows.Add(new MExpr.Dot(new MExpr.Ref(r), "Algorithm", [Render(fresh)]));
-                    values.Add(Invocation(fresh));
+                    values.Add(Invocation(new Cell(fresh)));
                     break;
                 }
             }
@@ -344,6 +350,7 @@ internal static class SemanticNestedWider
         }
 
         f.Row = new MExpr.ListLit(rows);
+        f.DeferRow();
         HeadFeatures(f, head, parameters: false);
         return f;
     }
@@ -353,7 +360,8 @@ internal static class SemanticNestedWider
     /// <summary>
     /// <c>F((…)) = [names]</c> (and with <paramref name="clauses"/> a second, catch-all clause
     /// <c>F(x) = [0]</c>, the first clause's body led by <c>1</c>) called with <paramref name="argument"/>.
-    /// The structural pattern demands the whole argument first, so every leaf runs whatever the binding's outcome.
+    /// The structural pattern demands its argument and reads what its levels inspect; the body's
+    /// names run when the result is read.
     /// </summary>
     private static void PatternCall(SemanticGrammar.Gen g, SemanticFragment f, Level head, DItem argument, bool clauses)
     {
@@ -369,9 +377,9 @@ internal static class SemanticNestedWider
 
         f.Decls.Add(new MDecl.Family(function, family));
         f.Row = new MExpr.Call(function, [Render(argument)]);
-        Demand(f, Leaves(argument));
+        var reference = new Reference(f);
         var binding = new Binding();
-        if (Match(head, Eval(argument), binding) is { } error)
+        if (Match(head, new Cell(argument), binding, reference) is { } error)
         {
             if (clauses) f.Value = new Result.ListValue([SemanticGrammar.Res(CatchAllMarker)]);
             else Fail(f, error, error switch { "TypeMismatch" => "type", "BadArity" => "repeat-differs", _ => "arity" });
@@ -380,13 +388,15 @@ internal static class SemanticNestedWider
         }
 
         Result[] first = clauses ? [SemanticGrammar.Res(1)] : [];
-        f.Value = new Result.ListValue([.. first, .. body.Select(s => BodyValue(s, binding))]);
+        reference.ReadResult();
+        f.Value = new Result.ListValue([.. first, .. body.Select(s => BodyValue(s, binding, reference))]);
     }
 
     /// <summary>
     /// A parameter-list head <c>F(p1, …)</c> called with one argument per parameter, bound in written
     /// order (<see cref="SemanticNestedWider"/>); on success the body — the META use first, when
-    /// <paramref name="use"/> names one — runs left to right, a waiting plain parameter's leaves at its place.
+    /// <paramref name="use"/> names one — is read left to right when the result is read, a waiting
+    /// plain parameter's leaves at its place.
     /// </summary>
     private static void ParameterCall(
         SemanticGrammar.Gen g, SemanticFragment f, Level head, IReadOnlyList<DItem> arguments, (Sym Meta, bool Invoke, DCall? Captured)? use)
@@ -404,8 +414,8 @@ internal static class SemanticNestedWider
         f.Decls.Add(new MDecl.Family(function, [new MClause(ParameterHead(head), new MExpr.ListLit([.. lead, .. body.Select(BodyExpr)]))]));
         f.Row = new MExpr.Call(function, [.. arguments.Select(Render)]);
 
+        var reference = new Reference(f);
         var binding = new Binding();
-        var waiting = new Dictionary<Sym, DItem>();
         for (var i = 0; i < head.Slots.Count; i++)
         {
             var slot = head.Slots[i];
@@ -417,16 +427,13 @@ internal static class SemanticNestedWider
                     if (argument is not DCall) error = "NotAnAlgorithm"; // the capture is inert; a value is refused
                     break;
                 case SlotKind.Child:
-                    Demand(f, Leaves(argument));
-                    error = Match(head.Child!, Eval(argument), binding);
+                    error = Match(head.Child!, new Cell(argument), binding, reference);
                     break;
                 case SlotKind.Binder when slot.Repeat:
-                    Demand(f, Leaves(argument)); // a repeated name inspects its own value
-                    error = Bind(binding, slot, Eval(argument));
+                    error = Bind(binding, slot, new Cell(argument), reference); // a repeated name compares whole values
                     break;
                 case SlotKind.Binder:
-                    binding.Bound[slot.Symbol] = Eval(argument);
-                    waiting[slot.Symbol] = argument; // a plain parameter waits for the body
+                    binding.Bound[slot.Symbol] = new Cell(argument); // a plain parameter waits for the body
                     break;
                 default:
                     throw new InvalidOperationException("no collecting parameter at level 1");
@@ -439,13 +446,14 @@ internal static class SemanticNestedWider
             }
         }
 
+        reference.ReadResult();
         var values = new List<Result>();
         if (use is { } used)
         {
             var captured = used.Captured ?? throw new InvalidOperationException("a used META parameter captured a call");
             if (used.Invoke)
             {
-                Demand(f, captured.Args.SelectMany(Leaves)); // x + y: x, then y
+                foreach (var argument in captured.Args) reference.Eval(argument); // x + y: x, then y
                 values.Add(SemanticGrammar.Res(captured.Args.Sum(static a => ((DLeaf)a).Value)));
             }
             else
@@ -455,10 +463,7 @@ internal static class SemanticNestedWider
         }
 
         foreach (var slot in body)
-        {
-            if (waiting.TryGetValue(slot.Symbol, out var deferred)) Demand(f, Leaves(deferred));
-            values.Add(BodyValue(slot, binding));
-        }
+            values.Add(BodyValue(slot, binding, reference));
 
         f.Value = new Result.ListValue(values);
     }
@@ -467,15 +472,6 @@ internal static class SemanticNestedWider
     {
         f.FailureCategory = category;
         f.Features.UnionWith(["failure", "wider-outcome-" + what]);
-    }
-
-    private static void Demand(SemanticFragment f, IEnumerable<DLeaf> leaves)
-    {
-        foreach (var leaf in leaves)
-        {
-            f.Events.Add((leaf.Wait ? "wait:" : "trace:") + leaf.Value.ToString(CultureInfo.InvariantCulture));
-            if (leaf.Wait) f.Features.Add("async");
-        }
     }
 
     private static int Depth(SemanticGrammar.Gen g) => 2 + g.Pick("wider.depth", 2);
@@ -594,8 +590,10 @@ internal static class SemanticNestedWider
     private static MExpr BodyExpr(Slot slot)
         => slot.Kind == SlotKind.Rest ? new MExpr.Prim("count", [new MExpr.Ref(slot.Symbol)]) : new MExpr.Ref(slot.Symbol);
 
-    private static Result BodyValue(Slot slot, Binding binding)
-        => slot.Kind == SlotKind.Rest ? SemanticGrammar.Res(binding.Collected[slot.Symbol]) : ToResult(binding.Bound[slot.Symbol]);
+    private static Result BodyValue(Slot slot, Binding binding, Reference reference)
+        => slot.Kind == SlotKind.Rest
+            ? SemanticGrammar.Res(binding.Collected[slot.Symbol]) // `count` reads no position
+            : ToResult(reference.Whole(binding.Bound[slot.Symbol]));
 
     // ── Data ────────────────────────────────────────────────────────────────
 
@@ -688,53 +686,116 @@ internal static class SemanticNestedWider
         _ => throw new InvalidOperationException("unknown data item"),
     };
 
-    /// <summary>The effects in source order.</summary>
-    private static IEnumerable<DLeaf> Leaves(DItem item) => item switch
-    {
-        DLeaf leaf => [leaf],
-        DGroup group => group.Items.SelectMany(Leaves),
-        DSpread spread => spread.Items.SelectMany(Leaves),
-        DCall call => call.Args.SelectMany(Leaves),
-        _ => [],
-    };
-
     // ── The reference binder ────────────────────────────────────────────────
 
-    /// <summary>A completed value: a number, or a sequence/list of values.</summary>
+    /// <summary>A value: a number, or a sequence/list of positions (a <see cref="V"/>, or an unread <see cref="Cell"/>).</summary>
     private abstract record V;
 
     private sealed record VScalar(int Value) : V;
 
-    private sealed record VSeq(bool IsList, ImmutableArray<V> Items) : V;
+    private sealed record VSeq(bool IsList, ImmutableArray<object> Items) : V;
 
-    /// <summary>A group's value: spreads spliced in place, and a sequence of one item is that item.</summary>
-    private static V Eval(DItem item) => item switch
+    /// <summary>
+    /// A deferred position — a written list's ordinary element, or a supplied argument — whose
+    /// written data runs when the position is first read, once.
+    /// </summary>
+    private sealed class Cell(DItem item)
     {
-        DLeaf leaf => new VScalar(leaf.Value),
-        DAtom atom => new VScalar(atom.Value),
-        DGroup group => Collapse(new VSeq(group.IsList, [.. Flatten(group.Items).Select(Eval)])),
-        _ => throw new InvalidOperationException("not a data value"),
-    };
+        public DItem Item { get; } = item;
 
-    private static IEnumerable<DItem> Flatten(IEnumerable<DItem> items)
-        => items.SelectMany(item => item is DSpread spread ? Flatten(spread.Items) : [item]);
+        public V? Value { get; set; }
+    }
 
-    private static V Collapse(VSeq sequence) => !sequence.IsList && sequence.Items.Length == 1 ? sequence.Items[0] : sequence;
+    /// <summary>
+    /// The reference evaluation of written data: each host effect is recorded when it runs — while
+    /// the row is evaluated, or (after <see cref="ReadResult"/>) while the row's result is read.
+    /// </summary>
+    private sealed class Reference(SemanticFragment f)
+    {
+        private List<string> _events = f.Events;
+
+        /// <summary>From here on the row's RESULT is being read: its effects are the fragment's late events.</summary>
+        public void ReadResult()
+        {
+            _events = f.LateEvents;
+            f.ReadsLate = true;
+        }
+
+        /// <summary>
+        /// A written item's value. A sequence evaluates its items in order; a list defers its
+        /// ordinary elements and evaluates only its spread operands; spread items are spliced in
+        /// place, and a sequence of one item is that item.
+        /// </summary>
+        public V Eval(DItem item)
+        {
+            switch (item)
+            {
+                case DLeaf leaf:
+                    _events.Add((leaf.Wait ? "wait:" : "trace:") + leaf.Value.ToString(CultureInfo.InvariantCulture));
+                    if (leaf.Wait) f.Features.Add("async");
+                    return new VScalar(leaf.Value);
+                case DAtom atom:
+                    return new VScalar(atom.Value);
+                case DGroup group:
+                {
+                    var items = ImmutableArray.CreateBuilder<object>();
+                    foreach (var written in group.Items)
+                    {
+                        if (written is DSpread spread)
+                            items.AddRange(Opened(Eval(new DGroup(false, spread.Items)), spread.Items.Count));
+                        else if (group.IsList && written is not DAtom)
+                            items.Add(new Cell(written));
+                        else
+                            items.Add(Eval(written));
+                    }
+
+                    var sequence = new VSeq(group.IsList, items.ToImmutable());
+                    return !sequence.IsList && sequence.Items.Length == 1 ? Force(sequence.Items[0]) : sequence;
+                }
+
+                default:
+                    throw new InvalidOperationException("not a data value");
+            }
+        }
+
+        // The items a spread splices: its operand's (a written group of zero, two or more items).
+        private static IEnumerable<object> Opened(V operand, int written)
+            => written == 1 ? throw new InvalidOperationException("a generated spread never has exactly one item")
+                : ((VSeq)operand).Items;
+
+        /// <summary>A position's value: an unread cell runs now.</summary>
+        public V Force(object position) => position is Cell cell ? cell.Value ??= Eval(cell.Item) : (V)position;
+
+        /// <summary>A position's WHOLE value: every position below it read too, in order, depth first.</summary>
+        public V Whole(object position)
+        {
+            var value = Force(position);
+            if (value is VSeq sequence)
+            {
+                foreach (var below in sequence.Items) Whole(below);
+            }
+
+            return value;
+        }
+    }
 
     private sealed class Binding
     {
-        public Dictionary<Sym, V> Bound { get; } = [];
+        /// <summary>The position each name is bound to, unread.</summary>
+        public Dictionary<Sym, object> Bound { get; } = [];
 
         public Dictionary<Sym, int> Collected { get; } = [];
     }
 
     /// <summary>
-    /// One level against a completed value: its kind, its count (exact, or at least the fixed items
-    /// when it collects), then its items in written order, depth first — the collector taking the items
-    /// between the fixed items before and after it. Returns the error category of the first failure.
+    /// One level against a position: its kind (the position is read), its count (exact, or at least
+    /// the fixed items when it collects), then its items in written order, depth first — the collector
+    /// taking the items between the fixed items before and after it, unread. Returns the error
+    /// category of the first failure.
     /// </summary>
-    private static string? Match(Level level, V value, Binding binding)
+    private static string? Match(Level level, object position, Binding binding, Reference reference)
     {
+        var value = reference.Force(position);
         if (value is not VSeq sequence || sequence.IsList != level.IsList) return "TypeMismatch";
         var count = sequence.Items.Length;
         var fixedCount = level.FixedCount;
@@ -749,10 +810,10 @@ internal static class SemanticNestedWider
                     at += count - fixedCount;
                     break;
                 case SlotKind.Child:
-                    if (Match(level.Child!, sequence.Items[at++], binding) is { } error) return error;
+                    if (Match(level.Child!, sequence.Items[at++], binding, reference) is { } error) return error;
                     break;
                 default:
-                    if (Bind(binding, slot, sequence.Items[at++]) is { } failure) return failure;
+                    if (Bind(binding, slot, sequence.Items[at++], reference) is { } failure) return failure;
                     break;
             }
         }
@@ -760,16 +821,19 @@ internal static class SemanticNestedWider
         return null;
     }
 
-    /// <summary>A name binds; its repeated occurrence compares with the first (a difference is <c>BadArity</c>).</summary>
-    private static string? Bind(Binding binding, Slot slot, V value)
+    /// <summary>
+    /// A name binds its position unread; its repeated occurrence compares WHOLE values — the first
+    /// occurrence's, then its own (a difference is <c>BadArity</c>).
+    /// </summary>
+    private static string? Bind(Binding binding, Slot slot, object position, Reference reference)
     {
         if (!slot.Repeat)
         {
-            binding.Bound[slot.Symbol] = value;
+            binding.Bound[slot.Symbol] = position;
             return null;
         }
 
-        return binding.Bound[slot.Symbol] is VScalar first && value is VScalar later
+        return reference.Whole(binding.Bound[slot.Symbol]) is VScalar first && reference.Whole(position) is VScalar later
             ? first.Value == later.Value ? null : "BadArity"
             : throw new InvalidOperationException("a repeated name compares numbers only");
     }

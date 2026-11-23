@@ -708,6 +708,70 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal bool HasDeferredModuleRegions { get; private set; }
 
+    // Whether this run has created a list evaluated on demand (lazy collections, issue #204): a
+    // list literal with a deferred element or a `map` / `filter` / `take` stage. While it has
+    // not, every value of the run is concrete, so the consumers that need a whole value
+    // (evaluator equality, `atoms`, the run result, a host-operation argument) skip the scan
+    // that looks for one. Set once and never cleared; a stale read can only miss a list created
+    // by another flow that this flow could not hold yet.
+    private volatile bool _hasLazyLists;
+
+    /// <summary>Whether this run has created a list evaluated on demand (issue #204).</summary>
+    internal bool HasLazyLists => _hasLazyLists;
+
+    /// <summary>Records that this run created a list evaluated on demand (issue #204).</summary>
+    internal void NoteLazyList() => _hasLazyLists = true;
+
+    // The whole-value read in force (see TryEnterNestedRead): the generation of the list whose
+    // position is being read, and the step count when that read began. Outside every such read
+    // the generation is -1, so a list created there is generation 0 whatever the step count.
+    private int _readListGeneration = -1;
+    private long _readEntrySteps;
+
+    /// <summary>
+    /// The generation a list created NOW belongs to (<see cref="TryEnterNestedRead"/>): <c>0</c>
+    /// for a list the program builds outside every whole-value read; inside the read of a
+    /// position of a generation-<c>g</c> list, <c>g</c> while that read has charged no step (a
+    /// literal written inside the element is part of the same written structure) and
+    /// <c>g + 1</c> once it has — the list was built by a call or a loop round the read started.
+    /// </summary>
+    internal int ReadGeneration
+        => _readListGeneration < 0 ? 0 : _steps != _readEntrySteps ? _readListGeneration + 1 : _readListGeneration;
+
+    /// <summary>
+    /// LISTS BUILT WHILE A VALUE IS READ WHOLE ARE BOUNDED LIKE RECURSION (lazy collections, issue
+    /// #204; C#-only resource policy, no Lean counterpart). Reading a value whole — the run's
+    /// result, an equality operand, <c>atoms</c>, a host argument — reads each position of each
+    /// list it holds, and a position's computation may build a list that is read the same way.
+    /// That reader is a loop, not a recursion: a result that nests itself forever
+    /// (<c>F(x) = [x].map(F)</c>, the infinite recursion the eager evaluator refused at
+    /// <see cref="EvaluationLimits.MaxDepth"/>) would be read forever, each level a fresh
+    /// invocation that returns at once. So a list built by a call or a loop round that the read
+    /// of a generation-<c>g</c> list's position started is generation <c>g + 1</c>, and a list of
+    /// generation <see cref="EvaluationLimits.MaxDepth"/> is not read: the run ends with
+    /// <see cref="EvalError.EvaluationDepthExceeded"/>, the failure the same program had as an
+    /// eager recursion. Two kinds of structure are never refused here, however deep: one that was
+    /// BUILT before it is read — by calls, by a loop — is generation 0 throughout; and one that is
+    /// WRITTEN nested (<c>[[[1]]]</c>) stays in its list's generation, because reading a nested
+    /// literal's position charges no step (the structural depth limit of the source bounds it).
+    ///
+    /// <para>Charges nothing. On <c>null</c>, balance with <see cref="ExitNestedRead"/> from a
+    /// <c>finally</c>; on an error nothing changed.</para>
+    /// </summary>
+    internal EvalError? TryEnterNestedRead(int listGeneration, out (int Generation, long Steps) suspended)
+    {
+        suspended = (_readListGeneration, _readEntrySteps);
+        if (listGeneration >= _maxDepth)
+            return RetainTerminal(new EvalError.EvaluationDepthExceeded(_maxDepth));
+        _readListGeneration = listGeneration;
+        _readEntrySteps = _steps;
+        return null;
+    }
+
+    /// <summary>Leaves the read <see cref="TryEnterNestedRead"/> entered.</summary>
+    internal void ExitNestedRead((int Generation, long Steps) suspended)
+        => (_readListGeneration, _readEntrySteps) = suspended;
+
     /// <summary>
     /// [HOST] B2c: the run's structural admission of materialized deferred bodies
     /// (<see cref="DeferredBodyAdmission"/>), recorded by run preparation only for a program whose

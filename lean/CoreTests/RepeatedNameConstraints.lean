@@ -38,9 +38,11 @@ def rnIdAlg : Algorithm := alg ["y"] [] [] [param "y"]
 /-- `Bad = Id(1) / 0`: one context, then `divByZero`. -/
 def rnBadAlg : Algorithm := alg [] [] [] [.binary .div (.call (resolve "Id") [num 1]) (num 0)]
 
-/-- `Missing = [Id(1)][5]`: one context, then `badIndex` — a second failure KIND. -/
+/-- `Missing = (Id(1), 2)[5]`: one context, then `badIndex` — a second failure KIND. A sequence
+    value is built eagerly; a list literal would defer `Id(1)` (lazy collections, issue #204) and
+    report `badIndex` without opening a context. -/
 def rnMissingAlg : Algorithm :=
-  alg [] [] [] [.index (.listLiteral [.call (resolve "Id") [num 1]]) [num 5]]
+  alg [] [] [] [.index (.capture [.call (resolve "Id") [num 1], num 2]) [num 5]]
 
 /-- `A = Id(5)` and `B = Id(5) + 0`: equal values, two distinct callables. -/
 def rnAAlg : Algorithm := alg [] [] [] [.call (resolve "Id") [num 5]]

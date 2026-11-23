@@ -1646,11 +1646,11 @@ arguments and branches, cardinality before demand, the first failing list elemen
 cells, waited properties, ordered waits, a META view over waited arguments, a failure after a wait).
 The bounded nested-pattern production composes exact-list and sequence patterns in both orders,
 with a collecting inner binder, successful and wrong-inner-kind outcomes, host effects and nested
-consumer contexts. Its additional seeded identities are `sem2b/v1/seed-nested/<hex>/<index>`;
+consumer contexts. Its additional seeded identities are `sem2b/v2/seed-nested/<hex>/<index>`;
 existing `seed/<hex>/<index>` recipes retain their sources and expectations.
 
 The WIDE nested-pattern production (`Semantic/SemanticNestedWide.cs`, recipe `seed-nested-wide`,
-ids `sem2b/v1/seed-nested-wide/<hex>/<index>`) writes one definition per program in six shapes:
+ids `sem2b/v2/seed-nested-wide/<hex>/<index>`) writes one definition per program in six shapes:
 `pattern` (a pattern group as level 1, `F(((a, b), z))`), `parameters` (the explicit parameter list
 as level 1, `F(z, (a, b), *s)`, the structural argument first or last), `clauses` (a family of two
 clauses sharing the head name, differing at the deepest level by kind, item count or a literal head,
@@ -1661,10 +1661,15 @@ empty), plus `refusal`. Every head has two or three levels of list or sequence g
 the inner level may collect (no, or two, collected items); every group is written in one of three
 extents — tight `(a, b)`, padded `( a , b )` or one item per line — and a family's second clause takes
 the next extent. Leaves are `trace`/`wait`, alternating in source order. The expectation follows the
-call-by-need laws: cardinality is checked before any argument runs (NEED-05); a structural pattern
-demands its argument's whole eager value, every leaf in source order, before the body (NEED-04); a
-plain parameter waits for the body, and a collected argument slice read only by `count` never runs
-(NEED-07); a family's later clauses reuse the argument the first clause demanded. Runtime failures
+call-by-need laws, computed by a reference evaluation of the written data: cardinality is checked
+before any argument runs (NEED-05); a structural pattern demands its argument's value (NEED-04) — a
+written sequence evaluates its items in source order, a written list defers its elements, each run
+when it is first read (lazy collections, issue #204) — and inspects it level by level (kind, count,
+then the items in written order: a nested level and a literal read their position, a name and a
+collector bind theirs unread); a plain parameter waits for the body, and a collected slice read only
+by `count` never runs (NEED-07); a family's clauses are tried in order against one argument cell, so
+what a refused clause read stays read; the body's list of names is read when the result is — for a
+root row, when the run's assembled output is read. Runtime failures
 are a scalar or the other kind where a structure is expected (`TypeMismatch`), one item too many at a
 level without a collector, one argument too many and a deconstruction that cannot bind
 (`ArityMismatch`), and a family no clause of which matches (`NoMatchingBranch`). The four intended
@@ -1679,7 +1684,7 @@ consumer contexts (refusals bare). The structural model gains `MPattern.Structur
 `MPattern.ParameterList` for it; every earlier production renders byte-identically.
 
 The WIDER nested-pattern production (`Semantic/SemanticNestedWider.cs`, recipe `seed-nested-wider`,
-ids `sem2b/v1/seed-nested-wider/<hex>/<index>`) writes what the wide one does not, in five shapes, each
+ids `sem2b/v2/seed-nested-wider/<hex>/<index>`) writes what the wide one does not, in five shapes, each
 in one of the eight consumer contexts. `placement`: a two- or three-level pattern whose levels collect
 by any subset — the third level included — each collector placed first, in the middle or last (one
 choice, rotated per level), with two or no collected items, an extra item at the deepest
@@ -1695,8 +1700,11 @@ scalar where the deepest structure is expected. `meta-target`: `r = Cap(T(data))
 `T`, then two operations among `r.Arguments.count`, `r.Invoke()`, a fresh `r.Algorithm(…)` and the
 rebuilt `r.Algorithm(r.Arguments*)`, optionally followed by a fresh call whose deepest structure is a
 scalar. The expectation is computed by a reference binder over the written data: a structural pattern
-demands its whole argument first, every leaf in source order (NEED-04); spreads are spliced in place
-and a sequence of exactly one item is that item; a level checks its kind (`TypeMismatch`), then its
+demands its argument's value (NEED-04) — a written sequence evaluates its items in source order, a
+written list defers its ordinary elements (each a cell, run when first read) and evaluates only its
+spread operands (lazy collections, issue #204); a name binds its position unread, a collector takes
+its positions unread, and a repeated name compares whole values, the first occurrence's and then its
+own; spreads are spliced in place and a sequence of exactly one item is that item; a level checks its kind (`TypeMismatch`), then its
 count (`ArityMismatch`), then its items left to right, depth first; a repeated name that differs is
 `BadArity` (a non-match in a family); a parameter list binds in written order — a structural
 parameter whole, a repeated plain parameter its own value, a META parameter by inert capture (a value
@@ -1707,7 +1715,7 @@ choice sequence (2,432 `placement`, 960 `repeated`, 1,872 `spread`, 1,152 `meta-
 and `MPattern.Meta` (a META parameter in a parameter-list head); every earlier production renders
 byte-identically.
 
-The 34 cases in `sem2b/v1/sys/path/<Path>/<shape>` (`SemanticCorpus.PathVariants`, following
+The 34 cases in `sem2b/v2/sys/path/<Path>/<shape>` (`SemanticCorpus.PathVariants`, following
 the original systematic cases) widen the thin optimizer loop paths. Each case is the `loop`
 production with its kind, fallback shape, count, `wait`/`trace` choice and `repeat` spelling forced
 by `SemanticChooser.Forcing` (every other dimension is the ordinary systematic chooser's), placed
@@ -1720,7 +1728,7 @@ traced and waited steps at every count 1–4. `SemanticPathCoverageTests` pins a
 pre-existing case (sources, expectation, paths, profiles), checks that the block adds only
 `sys/path/` ids, and requires every claim of a path case to be admitted on evidence.
 
-The named tick block `sem2b/v1/sys/tick/<group>/<shape>` (`Semantic/SemanticTickShapes.cs`,
+The named tick block `sem2b/v2/sys/tick/<group>/<shape>` (`Semantic/SemanticTickShapes.cs`,
 appended after the path block) adds the productions § 7 of the 2026-11-20 C#/Lean differential bug
 hunt found uncovered: 23 fixed programs, each observed through `tick()`. The run's one counter is
 genuine language state that Lean models, and its values are part of the RESULT. The identity-prelude
@@ -1735,7 +1743,7 @@ fragment, whose `trace(d)` values would collide with the traced ticks.
 
 | Id (`sys/tick/…`) | Rule (expectation) | Intended result (Lean and C#) | C# host events / paths | Rejected reading |
 | --- | --- | --- | --- | --- |
-| `callback/map` (property-double) | collection first, then one transform per element | `[[13, 24], 5]` | — / CacheHit | elements demanded inside each transform: `[[12, 34], 5]` |
+| `callback/map` (property-double) | a mapped position reads its source position, then runs its transform, position by position | `[[12, 34], 5]` | — / CacheHit | the former eager map (collection first, then the transforms): `[[13, 24], 5]` |
 | `callback/filter` (if-false) | predicate per element, first to last | `[[2, 5], 4]` | — / DeadComputationUntouched | last to first: `[[5], 4]` |
 | `callback/reduce` (wrapper) | collection, then initial once, then each step's result, left to right | `[17, 6]` | — | nested-call unfolding: `[15, 6]` |
 | `callback/map-fault` | a failing transform ends the run | `DivByZero` | `trace:1, trace:2` / FirstFailureStops | every transform runs: adds `trace:3` |
@@ -1744,7 +1752,7 @@ fragment, whose `trace(d)` values would collide with the traced ticks.
 | `loop/while-flag-first` (list) | flag first, transition after a true flag | `[2, 4]` | — / GenericInsideOptimizedLoop | step-first order: `[1, 5]` |
 | `loop/while-dead-transition` (meta partner first) | a false first flag forms no transition row | `[0, 1]` | partner's `trace:1` / OptimizedLoop | transition first: `[0, 2]` |
 | `loop/while-fault` | a failing flag ends the loop before its round's transition | `DivByZero` | `trace:1..3` / GenericInsideOptimizedLoop, FirstFailureStops | step-first: success `1`, `trace:1..4` |
-| `select/receiver-first` (cache partner first) | receiver once, then selectors left to right | `[(2, 3), 6]` | partner's `wait:1` / AsyncSuspension (the partner's) | selectors first: `[(4, 5), 6]` |
+| `select/receiver-first` (cache partner first) | selection over a written list reads only the selected positions, each right after its selector | `[(2, 4), 5]` | partner's `wait:1` / AsyncSuspension (the partner's) | the former eager receiver (every element first): `[(2, 3), 6]` |
 | `select/spread-formation` (brace) | spread selectors run during formation | `[(13, 12, 13), 4]` | — | written order: `[(11, 13, 14), 4]` |
 | `select/retained` | a retained collector demands only the selected cell | `[(1, 1), 2]` | — | whole list: `[(2, 2), 4]` |
 | `select/eager-result` | a call result is eager | `[(2, 2), 4]` | — | selected argument only: `[(1, 1), 2]` |
@@ -1916,13 +1924,18 @@ production, case kind or context has zero accepted cases, or more than 10% of ev
 claims are rejected. Counts: generated, parsed-clean, executed runs, accepted, rejected path claims,
 and one count per verdict. Both in-process and supervised full-corpus commands enforce these
 floors. Invalid programs and fragments after the first terminal failure do not satisfy semantic
-family/interaction floors. Named condition-first while guards additionally use a failing transition
+family/interaction floors. A composed expectation has two phases since lists are evaluated on demand
+(issue #204): every root row is EVALUATED in order (the first failing row ends the run), then the
+assembled output is READ WHOLE in row order — the elements of a written list no row read run here,
+and the first failing read ends the run — and only then is the value exported. A fragment therefore
+carries its evaluation events and its late (read) events separately (`SemanticFragment.Events`,
+`LateEvents`); a row that is a written list of operations is deferred as a whole. Named condition-first while guards additionally use a failing transition
 and exact waited transition events to distinguish flag evaluation from transition evaluation.
 
 ### Recipe versioning and compatibility
 
-A descriptor records format `kl-sem2b-case` v1, generator `sem2b-grammar`, recipe version 1 and a
-durable case id (`sem2b/v1/sys/…` or `sem2b/v1/seed/<hex>/<index>`; each seeded case has its own
+A descriptor records format `kl-sem2b-case` v1, generator `sem2b-grammar`, recipe version 2 and a
+durable case id (`sem2b/v2/sys/…` or `sem2b/v2/seed/<hex>/<index>`; each seeded case has its own
 SplitMix64 stream). Any generator change that would make an existing id mean a different program or
 expectation MUST bump `SemanticRecipe.RecipeVersion`. Unknown formats, versions, generators, kinds,
 profiles, paths and diagnostics are refused; empty/duplicate profiles and duplicate member roles are
@@ -1935,9 +1948,9 @@ sources against the recorded expectation and says the recipe was not re-verified
 metamorphic, UTF-16 and editor seed formats are untouched, and the original structural corpus renders
 byte-identically (pinned by digest). The SEM-2B fixed corpus itself is pinned by digest as well
 (`SemanticReductionTests.FixedCorpus_RendersByteIdentically`, every descriptor minus provenance).
-The id prefix `sem2b/v1/reduced/` is RESERVED for reduced cases (§ Reduction): no recipe builds it,
+The id prefix `sem2b/v2/reduced/` is RESERVED for reduced cases (§ Reduction): no recipe builds it,
 recipe mode refuses it with an explicit message, and `--exact-source` replays it like any descriptor.
-An ENUMERATED program of a finite recipe (§ Campaigns) is `sem2b/v1/<recipe>/all/<v0>.<v1>…`, its
+An ENUMERATED program of a finite recipe (§ Campaigns) is `sem2b/v2/<recipe>/all/<v0>.<v1>…`, its
 canonical choice sequence (a pick's value; a chance as `0` when it holds and as its percentage when
 it does not); recipe mode rebuilds it from the id alone and refuses any sequence that is not
 canonical (a value outside its dimension, a truncated or extended sequence). Its tier is
@@ -1958,7 +1971,7 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 & $fuzz semantic-corpus --supervised --out artifacts/sem2b-supervised --deadline-seconds 60
 
 # one newly generated case: export its descriptor, then replay it directly
-& $fuzz semantic-export sem2b/v1/seed/5EED2B000003/3 artifacts/sem2b/one.json --run
+& $fuzz semantic-export sem2b/v2/seed/5EED2B000003/3 artifacts/sem2b/one.json --run
 & $fuzz semantic-replay artifacts/sem2b/one.json                 # recipe mode (drift-checked)
 & $fuzz semantic-replay --exact-source artifacts/sem2b/one.json  # the recorded sources
 & $fuzz semantic-replay --supervised artifacts/sem2b/one.json    # in a supervised child
@@ -1967,7 +1980,7 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 & $fuzz semantic-replay fuzz/KatLang.ParserFuzz/SemanticTestcases
 
 # reduce a failing case (a recipe id or a descriptor), optionally one supervised child per candidate
-& $fuzz semantic-reduce sem2b/v1/seed/5EED2B000003/3 artifacts/sem2c-reduced --max-attempts 200
+& $fuzz semantic-reduce sem2b/v2/seed/5EED2B000003/3 artifacts/sem2c-reduced --max-attempts 200
 & $fuzz semantic-reduce artifacts/sem2b/one.json artifacts/sem2c-reduced --supervised
 & $fuzz semantic-replay --exact-source artifacts/sem2c-reduced   # the reduced descriptor(s)
 
@@ -2109,7 +2122,7 @@ also why the structural shrinker, driven by metamorphic rules over a model, does
   deadlines, crash detection and output bounds are unchanged.
   `SemanticSupervisedReductionTests` drives a complete supervised reduction through it: the child
   (the test assembly re-entered through `dotnet vstest`, readiness-gated) injects a wrong value on
-  `base@sync-optimized` whenever a candidate contains `repeat`, and `sem2b/v1/sys/loop/4` reduces
+  `base@sync-optimized` whenever a candidate contains `repeat`, and `sem2b/v2/sys/loop/4` reduces
   from 81 to 35 source characters through two children (original `Mismatch`, then the span move that
   minimizes the loop production, an accepted `Mismatch`; the block-only reducer needed a third, a
   rejected candidate that lost its `repeat` and `Passed`). The test requires the written record
@@ -2119,7 +2132,7 @@ also why the structural shrinker, driven by metamorphic rules over a model, does
 
 **Artifacts.** `semantic-reduce` writes two files to OUT. `<id>.json` is an ordinary `kl-sem2b-case`
 v1 descriptor (exact sources, constructed expectation, the reduced run's result) under the reserved
-id `sem2b/v1/reduced/<original local id>/<16 hex of the reduced sequence>` with tier `reduced`
+id `sem2b/v2/reduced/<original local id>/<16 hex of the reduced sequence>` with tier `reduced`
 (seed and index stay the original's, so profile selection is unchanged). The v1 reader's acceptance
 is unchanged — no recipe ever built that prefix — and recipe replay refuses it explicitly rather than
 treating it as a recipe case or as drift. `<id>.reduction.json` is a separately versioned
@@ -2133,12 +2146,12 @@ Directory replay skips `*.reduction.json`, `*.result.json` and campaign `*.signa
 beside descriptors.
 
 Example (`SemanticReductionTests`, an injected wrong value on `base@sync-optimized` whenever the
-source contains `.Arguments`; `SemanticCampaignTests`): `sem2b/v1/seed/5EED2B000001/1` reduces from 306
+source contains `.Arguments`; `SemanticCampaignTests`): `sem2b/v2/seed/5EED2B000001/1` reduces from 306
 to 74 source characters, 3 to 1 fragments and 18 to 5 declarations in 8 candidate executions, keeping
 signature `Mismatch base@sync-optimized value`. The block moves alone stop at 169 characters with
 all 3 fragments and 8 declarations after 22 candidate executions: deleting at most 8 choices cannot remove a
 whole fragment whose decisions span more, while the span moves delete it together with its count.
-`sem2b/v1/sys/loop/4` (the supervised test) still reduces from 81 to 35 characters, now in one
+`sem2b/v2/sys/loop/4` (the supervised test) still reduces from 81 to 35 characters, now in one
 execution instead of two.
 
 ### Campaigns
@@ -2154,7 +2167,7 @@ semantic-campaign --exhaustive --recipe seed-nested|seed-nested-wide|seed-nested
                   [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
 ```
 
-* **Plan.** The ids `sem2b/v1/<recipe>/<seed>/<index>` of ONE seeded recipe for every seed of the
+* **Plan.** The ids `sem2b/v2/<recipe>/<seed>/<index>` of ONE seeded recipe for every seed of the
   inclusive hexadecimal range (at most 65,536 seeds) and every index below `--cases-per-seed`
   (default 16), in seed-then-index order. These are ordinary recipe ids: any of them replays, exports
   and reduces by id. The fixed corpus's seeds are `5EED2B000001`–`5EED2B000006`; choose others to

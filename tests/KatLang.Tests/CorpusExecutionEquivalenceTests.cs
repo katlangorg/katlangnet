@@ -185,6 +185,14 @@ public class CorpusExecutionEquivalenceTests
                 continue;
             var cached = Neutral(cachedRun);
             var uncached = Neutral(Evaluator.RunCounted(program, UncachedZeroArgPropertyResultCache.CreateForRun()));
+            // A list evaluated on demand makes the cache observable for a SELF-REFERENTIAL property
+            // (issue #204): with the cache, `L = [L]` is one list instance that holds itself, and
+            // reading it whole is recognized as a demand cycle. Recomputed, every read of `L` builds a
+            // fresh list, so the same program is an unbounded recursion that a resource limit ends
+            // (the recursion limit, or the host-stack backstop). Only that pair of outcomes is
+            // excused; every other difference of a cyclic program is still a mismatch.
+            if (cached == "err demandCycle" && uncached is "err evaluationDepthExceeded" or "err evaluationStackExhausted")
+                continue;
             if (cached != uncached)
                 mismatches.Add($"{id}: cached={cached} uncached={uncached}");
         }

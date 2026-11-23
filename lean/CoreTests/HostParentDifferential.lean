@@ -34,7 +34,8 @@ set_option maxRecDepth 4096
 /-- Neutral raw-structure encoding shared with the C# harness:
     atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
     sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`,
-    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both). -/
+    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both),
+    deferred list item and pending list -> `Deferred` (never a run result: a run value is materialized). -/
 partial def neutral : Result -> String
   | .atom n => toString n
   | .str s => "'" ++ s ++ "'"
@@ -43,6 +44,8 @@ partial def neutral : Result -> String
   | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
   | .callRef _ => "CallReference"
   | .argView _ => "CallReference"
+  | .deferred _ => "Deferred"
+  | .pendingList _ => "Deferred"
 
 /-- Innermost-error category shared with the C# harness
     (`SemanticExplorerHarness.ErrorCategory`). -/
@@ -133,8 +136,11 @@ def runCountedM (e : Expr) : EvalM CountedResult := do
         else
           .error (Error.unresolvedImplicitParams (Algorithm.params wired))
     | _ => evalCounted e ctx []
-  let _ <- exportRunValue counted.fst
-  pure counted
+  -- A run value is materialized before it leaves the run (lazy collections, issue #204),
+  -- exactly as `runResultM` materializes it; the root emitted count is kept.
+  let value <- materializeVia demandNeedRecursive counted.fst
+  let _ <- exportRunValue value
+  pure (value, counted.snd)
 
 /-- Neutral observation string shared verbatim with the C# harness.
     Also cross-checks Lean's plain (`runResult`) and counted evaluators on

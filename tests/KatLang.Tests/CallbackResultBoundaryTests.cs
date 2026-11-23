@@ -118,7 +118,9 @@ public sealed class CallbackResultBoundaryTests
         { "ADV-attack-B-ADV-B3-lookup-shape-depends-on-match-count", "Data = [10, 20, 20]\nFind(k) = { filter(Data, {v == k})* }\nmap([10, 20, 30], Find)", "ok L[10, S[20, 20], S[]]", "" },
         { "ADV-attack-B-ADV-B4-reduce-debug-row-displaced-blame", "Total(x, acc) = trace(x), acc + x\nreduce([1, 2, 3], Total, 0)", "err TypeMismatch", "trace(3) | trace(2) | trace(1)" },
         { "ADV-attack-B-ADV-B5-structured-fold-empty-skip-same-code-new-site", "Acc(x, (s, n)) = if(x < 0, (), (s + x, n + 1))\nreduce([4, -1, 6], Acc, (0, 0))", "err ArityMismatch", "" },
-        { "ADV-attack-B-ADV-B6-empty-element-fails-in-another-callback", "Opt(x) = if(x > 1, trace(x), ())\nfilter(map([1, 2, 3], Opt), {v > 1})", "err TypeMismatch", "trace(2) | trace(3)" },
+        // The scan reads the first mapped position, whose empty element fails the predicate: the later
+        // positions' transforms never run (lazy collections, issue #204).
+        { "ADV-attack-B-ADV-B6-empty-element-fails-in-another-callback", "Opt(x) = if(x > 1, trace(x), ())\nfilter(map([1, 2, 3], Opt), {v > 1})", "err TypeMismatch", "" },
         { "ADV-attack-B-ADV-B7-family-empty-branch-then-container", "Lib = { public V = 1 }\nF(0) = { []* }\nF(n) = Lib\nmap([0, 1], F)", "err MissingOutput", "" },
         { "ADV-attack-B-ADV-B8-loop-step-row-is-reduce-returning-empty", "Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\n[repeat(Step(5), 1)]", "ok L[S[]]", "" },
         { "ADV-attack-C-C-split-spread", "map([[1, 2], []], {x*})", "ok L[S[1, 2], S[]]", "" },
@@ -375,8 +377,10 @@ public sealed class CallbackResultBoundaryTests
     [Fact]
     public async Task EveryRowRunsOnce_InWrittenOrder_ItemByItem()
     {
+        // Both output rows are evaluated first — `map` invokes nothing, the second row draws 1 —
+        // and the callbacks run when the mapped list is read, item by item.
         var (observation, _) = await AllRoutesAsync("F(x) = tock(), x, tock()\nmap([5, 6], F), tock()");
-        Assert.Equal("ok S[L[S[1, 5, 2], S[3, 6, 4]], 5]", observation.Outcome);
+        Assert.Equal("ok S[L[S[2, 5, 3], S[4, 6, 5]], 1]", observation.Outcome);
         Assert.Equal(["tock#1", "tock#2", "tock#3", "tock#4", "tock#5"], observation.HostCalls);
     }
 
@@ -514,7 +518,10 @@ public sealed class CallbackResultBoundaryTests
         const string definitions = "L = [tock(), tock()]\nF(x) = tock()\n";
         var (mapped, _) = await AllRoutesAsync(definitions + "map(L, F)");
         var (calls, _) = await AllRoutesAsync(definitions + "[F(L[0]), F(L[1])]");
-        Assert.Equal("ok L[3, 4]", mapped.Outcome);
+        // A mapped position reads its source position, then runs its transform (lazy collections,
+        // issue #204): draws 1 and 3 are the elements, 2 and 4 the transforms. The expanded calls
+        // never read their indexed arguments.
+        Assert.Equal("ok L[2, 4]", mapped.Outcome);
         Assert.Equal("ok L[1, 2]", calls.Outcome);
         Assert.Equal(new[] { "tock#1", "tock#2", "tock#3", "tock#4" }, mapped.HostCalls);
         Assert.Equal(new[] { "tock#1", "tock#2" }, calls.HostCalls);

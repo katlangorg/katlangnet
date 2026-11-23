@@ -115,17 +115,17 @@ public class CachePublicationPilotTests
         "#guard cacheEntries case_expanded_map_calls_may_skip_indexed_arguments \"L\" == some 0|#guard cacheTotal case_expanded_map_calls_may_skip_indexed_arguments == some 0")]
     [InlineData(Spec, "index-out-of-range", CachePilotCase.FailureAfterPublication, "err index",
         "#guard cacheEntries case_index_out_of_range \"x\" == some 1|#guard cacheTotal case_index_out_of_range == some 1")]
-    [InlineData(Spec, "map-demands-collection-before-transforms", CachePilotCase.FailureBeforePublication, "err div0",
-        "#guard cacheEntries case_map_demands_collection_before_transforms \"L\" == some 0|#guard cacheTotal case_map_demands_collection_before_transforms == some 0")]
+    [InlineData(Spec, "if-spread-builds-values-before-branch-selection", CachePilotCase.FailureBeforePublication, "err div0",
+        "#guard cacheEntries case_if_spread_builds_values_before_branch_selection \"Risky\" == some 0|#guard cacheTotal case_if_spread_builds_values_before_branch_selection == some 0")]
     // SEM-2C generated cases (identity-prelude base members; the alpha-rename member guards the total).
-    [InlineData(Generated, "sem2b/v1/sys/cache/0", CachePilotCase.SuccessWithEntries, "ok raw=S[L[1, 1], 997] n=2",
-        "#guard cacheEntries case_sem2b_2Fv1_2Fsys_2Fcache_2F0 \"v1\" == some 1|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F0 == some 1|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F0_alpha == some 1")]
-    [InlineData(Generated, "sem2b/v1/sys/cache/2", CachePilotCase.SuccessWithEmptyCache, "ok raw=S[2, 997] n=2",
-        "#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F2 == some 0|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2F2_alpha == some 0")]
-    [InlineData(Generated, "sem2b/v1/sys/select-fail/3", CachePilotCase.FailureAfterPublication, "err index",
-        "#guard cacheEntries case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 \"v1\" == some 1|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3 == some 1|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fselect_2Dfail_2F3_alpha == some 1")]
-    [InlineData(Generated, "sem2b/v1/sys/cache-fail/0", CachePilotCase.FailureBeforePublication, "err div0",
-        "#guard cacheEntries case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 \"v1\" == some 0|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0 == some 0|#guard cacheTotal case_sem2b_2Fv1_2Fsys_2Fcache_2Dfail_2F0_alpha == some 0")]
+    [InlineData(Generated, "sem2b/v2/sys/cache/0", CachePilotCase.SuccessWithEntries, "ok raw=S[L[1, 1], 997] n=2",
+        "#guard cacheEntries case_sem2b_2Fv2_2Fsys_2Fcache_2F0 \"v1\" == some 1|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fcache_2F0 == some 1|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fcache_2F0_alpha == some 1")]
+    [InlineData(Generated, "sem2b/v2/sys/cache/2", CachePilotCase.SuccessWithEmptyCache, "ok raw=S[2, 997] n=2",
+        "#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fcache_2F2 == some 0|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fcache_2F2_alpha == some 0")]
+    [InlineData(Generated, "sem2b/v2/sys/select-fail/3", CachePilotCase.FailureAfterPublication, "err index",
+        "#guard cacheEntries case_sem2b_2Fv2_2Fsys_2Fselect_2Dfail_2F3 \"v1\" == some 1|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fselect_2Dfail_2F3 == some 1|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fselect_2Dfail_2F3_alpha == some 1")]
+    [InlineData(Generated, "sem2b/v2/sys/cache-fail/0", CachePilotCase.FailureBeforePublication, "err div0",
+        "#guard cacheEntries case_sem2b_2Fv2_2Fsys_2Fcache_2Dfail_2F0 \"v1\" == some 0|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fcache_2Dfail_2F0 == some 0|#guard cacheTotal case_sem2b_2Fv2_2Fsys_2Fcache_2Dfail_2F0_alpha == some 0")]
     public void PilotCase_HasTheReviewedClassAndExactlyTheReviewedGuardLines(
         string corpus, string caseId, string expectedClass, string expectedNeutral, string expectedGuardLines)
     {

@@ -122,6 +122,9 @@ mutual
     -- Unreachable from `encode`, which refuses a value holding either.
     | .callRef _, table => (table, 0)
     | .argView _, table => (table, 0)
+    -- A lazy list form (issue #204) is run-internal too: `encode` refuses it.
+    | .deferred _, table => (table, 0)
+    | .pendingList _, table => (table, 0)
 
   /-- The ids of the items, in order. -/
   def walkItems : List Result → Table → Array Nat → Table × Array Nat
@@ -134,7 +137,7 @@ end
 /-- The `kl-struct-v1` text of a completed value; `none` for a value holding a call reference or
     argument view. The root is the last definition, as C#'s `Render` requires. -/
 def encode (value : Result) : Option String :=
-  if value.containsCallRef then none
+  if value.containsCallRef || value.isLazy then none
   else
     let (table, rootId) := walk value {}
     if rootId + 1 == table.definitions.size then
@@ -221,5 +224,9 @@ def independentPair : Result :=
 -- A call reference or argument view never leaves a run: no identity.
 #guard encode (.listValue [.atom 1, .callRef 0]) == none
 #guard encode (.argView 3) == none
+
+-- A deferred list item or a pending list is materialized before a value leaves its run: no identity.
+#guard encode (.listValue [.atom 1, .deferred 0]) == none
+#guard encode (.pendingList [(0, 1)]) == none
 
 end StructuralIdentity

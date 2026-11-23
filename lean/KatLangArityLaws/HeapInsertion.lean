@@ -91,6 +91,9 @@ mutual
     | .argView a => .argView (σ.addr a)
     | .sequenceValue rs => .sequenceValue (shiftResults σ rs)
     | .listValue rs => .listValue (shiftResults σ rs)
+    -- Lazy collections (issue #204): a deferred item's position cell, a candidate's two cells.
+    | .deferred a => .deferred (σ.addr a)
+    | .pendingList cs => .pendingList (cs.map (fun c => (σ.addr c.1, σ.addr c.2)))
     | r => r
 
   def shiftResults (σ : Site) : List Result → List Result
@@ -211,6 +214,15 @@ mutual
       rw [shiftResult, shiftResults_fix σ rs (fun x hx a m => h a (.seq hx m))]
     | .listValue rs, h => by
       rw [shiftResult, shiftResults_fix σ rs (fun x hx a m => h a (.list hx m))]
+    | .deferred a, h => by simp [shiftResult, σ.addr_lt (h a (.deferred a))]
+    | .pendingList cs, h => by
+      rw [shiftResult]
+      have hid : cs.map (fun c => (σ.addr c.1, σ.addr c.2)) = cs := by
+        conv => rhs; rw [← List.map_id cs]
+        refine List.map_congr_left (fun c mc => ?_)
+        rw [σ.addr_lt (h _ (.pendingPosition mc)), σ.addr_lt (h _ (.pendingVerdict mc))]
+        rfl
+      rw [hid]
     | .atom _, _ => rfl
     | .str _, _ => rfl
     | .bool _, _ => rfl
@@ -451,6 +463,8 @@ theorem shiftResult_callRef_inv (σ : Site) (v : Result) (p : Nat) (h : shiftRes
   | argView a => simp [shiftResult] at h
   | sequenceValue rs => simp [shiftResult] at h
   | listValue rs => simp [shiftResult] at h
+  | deferred a => simp [shiftResult] at h
+  | pendingList cs => simp [shiftResult] at h
   | atom n => simp [shiftResult] at h
   | str s => simp [shiftResult] at h
   | bool b => simp [shiftResult] at h
@@ -462,6 +476,8 @@ theorem valueCount_shift (σ : Site) (r : Result) : Result.valueCount (shiftResu
   | listValue rs => simp [shiftResult, Result.valueCount]
   | callRef a => simp [shiftResult, Result.valueCount]
   | argView a => simp [shiftResult, Result.valueCount]
+  | deferred a => simp [shiftResult, Result.valueCount]
+  | pendingList cs => simp [shiftResult, Result.valueCount]
   | atom n => rfl
   | str s => rfl
   | bool b => rfl

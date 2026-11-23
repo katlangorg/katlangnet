@@ -695,10 +695,14 @@ public sealed class NeedCellAsyncResolutionTests
     {
         var syncBudget = NewBudget();
         var syncCell = projection(syncBudget);
-        var sync = Evaluator.EvalCounted(program, Ctx(syncBudget, (name, syncCell)), []);
+        // The internal entry points return a `map` / `filter` stage unread (lazy collections, issue
+        // #204): both routes read the value whole, as a run does, so the callback runs on each.
+        var syncCtx = Ctx(syncBudget, (name, syncCell));
+        var sync = Evaluator.WholeValueForTesting(Evaluator.EvalCounted(program, syncCtx, []), syncCtx);
         var asyncBudget = NewBudget(asynchronous: true);
         var asyncCell = projection(asyncBudget);
-        var asynchronous = await EvalAsync(program, Ctx(asyncBudget, (name, asyncCell)));
+        var asyncCtx = Ctx(asyncBudget, (name, asyncCell));
+        var asynchronous = await Evaluator.WholeValueForTestingAsync(await EvalAsync(program, asyncCtx), asyncCtx);
         Assert.False(NeedCell.IsObserving);
         Assert.False(NeedNode.HasCurrentNode);
         return (new(sync, syncBudget.ConsumedSteps, syncCell.ProjectionComputations, syncBudget.ResolutionRetries),
@@ -856,7 +860,8 @@ public sealed class NeedCellAsyncResolutionTests
     {
         Expr program = consumer switch
         {
-            "map" => new Expr.Call(Builtin(BuiltinId.@map), [List(1), new Expr.Param("f")]),
+            // A mapped position projects the mapper when it is READ (lazy collections, issue #204).
+            "map" => new Expr.Call(Builtin(BuiltinId.@first), [new Expr.Call(Builtin(BuiltinId.@map), [List(1), new Expr.Param("f")])]),
             "reduce" => new Expr.Call(Builtin(BuiltinId.@reduce), [List(1), new Expr.Param("f"), new Expr.Num(0)]),
             "repeat" => new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(0)]), new Expr.Num(1)]),
             _ => new Expr.Call(new Expr.Param("f"), [new Expr.Num(3)]),
@@ -911,7 +916,8 @@ public sealed class NeedCellAsyncResolutionTests
             stop.Token.ThrowIfCancellationRequested();
             return Identity();
         }, SpanA, stop.Token);
-        var program = new Expr.Call(Builtin(BuiltinId.@map), [List(1), new Expr.Param("f")]);
+        // The mapper is projected when a mapped position is read (lazy collections, issue #204).
+        var program = new Expr.Call(Builtin(BuiltinId.@first), [new Expr.Call(Builtin(BuiltinId.@map), [List(1), new Expr.Param("f")])]);
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => EvalAsync(program, Ctx(budget, ("f", cell))));
         Assert.Equal(stop.Token, error.CancellationToken);
         Assert.False(cell.HasCallableMemo);

@@ -656,14 +656,23 @@ structure ChannelsSound (channels : NeedChannels) : Prop where
   value : ∀ a, Sound (fun h => a < h.size) (channels.value a) (fun _ _ => True)
   callable : ∀ a, Sound (fun h => a < h.size) (channels.callable a) (fun _ _ => True)
 
-/-- The four generic capabilities, each keeping the invariant; allocation and META reference
-    return valid addresses. -/
+/-- The generic capabilities, each keeping the invariant; allocation and META reference
+    return valid addresses. The two lazy-collection reads (issue #204: `positions`, `whole`) have
+    the VALUE capability's contract. -/
 structure CapsSound (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, Sound (fun h => a < h.size) (caps.value a) (fun _ _ => True)
   callable : ∀ a, Sound (fun h => a < h.size) (caps.callable a) (fun _ _ => True)
   allocate : ∀ suspension, Sound (fun h => SuspensionValid h suspension) (caps.allocate suspension)
     (fun a h => a < h.size)
   reference : ∀ a, Sound (fun _ => True) (caps.reference a) (fun r h => r < h.size)
+  positions : ∀ a, Sound (fun h => a < h.size) (caps.positions a) (fun _ _ => True)
+  whole : ∀ a, Sound (fun h => a < h.size) (caps.whole a) (fun _ _ => True)
+
+/-- The read a structural pattern opens its cell through (issue #204) keeps the invariant. -/
+theorem structuralRead_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps)
+    (pattern : NeedPattern) (address : Nat) :
+    Sound (fun h => address < h.size) (NeedBinder.structuralRead caps pattern address) (fun _ _ => True) := by
+  cases pattern <;> first | exact hc.value address | exact hc.positions address
 
 /-- An optional binding environment, valid when present. -/
 def OptEnvValid (r : Option NeedEnv) (h : Array NeedCell) : Prop :=
@@ -842,7 +851,7 @@ theorem checkAnchor_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) 
   | nil => exact Sound.pure _ (fun _ _ => trivial)
   | cons cell rest ih =>
     unfold NeedBinder.checkAnchor
-    refine Sound.bind_t (fun _ _ _ g v => ValidAddresses.mono g v) (hc.value cell)
+    refine Sound.bind_t (fun _ _ _ g v => ValidAddresses.mono g v) (hc.whole cell)
       (fun _ h => h cell List.mem_cons_self) (fun own => ?_)
     split
     · exact ih.weaken (fun _ h a m => h a (List.mem_cons_of_mem _ m)) (fun _ _ h => h)
@@ -884,7 +893,7 @@ theorem bindName_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (na
         · exact Sound.bind (mid := fun _ _ => True) hP (Sound.pure _ (fun _ _ => trivial)) tail
     | none =>
       dsimp only
-      refine Sound.bind_t hP (hc.value address) (fun _ h => h.1) (fun own => ?_)
+      refine Sound.bind_t hP (hc.whole address) (fun _ h => h.1) (fun own => ?_)
       split
       · split
         · exact Sound.pure _ (fun _ hp st he => by cases he; exact hp.2)
@@ -961,7 +970,7 @@ theorem binder_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (repe
     rcases hshape with rfl | rfl | rfl
     all_goals
       simp only [NeedBinder.bindOne]
-      refine Sound.bind_t hP (hc.value address) (fun _ h => h.1) (fun pair => ?_)
+      refine Sound.bind_t hP (structuralRead_sound caps hc _ address) (fun _ h => h.1) (fun pair => ?_)
       try dsimp only
       first
         | exact body _

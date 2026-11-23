@@ -411,9 +411,10 @@ public class DotCallValueBoundaryTests
             }
 
             Assert.Equal(baseline.Trace.Distinct(), baseline.Trace);
-            var demandOrder = patternedThird
-                ? (spread ? new[] { 1, 3, 2 } : new[] { 3, 1, 2 })
-                : new[] { 1, 2, 3 };
+            // A list pattern checks its argument's kind and cardinality and binds its names to the
+            // list's positions without evaluating them (lazy collections, issue #204): the written
+            // list's element is read where the result reads it, after the two earlier slots.
+            var demandOrder = new[] { 1, 2, 3 };
             var expectedTrace = failingSlot == 0 ? demandOrder
                 : demandOrder.Take(Array.IndexOf(demandOrder, failingSlot) + 1).ToArray();
             Assert.Equal(expectedTrace, baseline.Trace);

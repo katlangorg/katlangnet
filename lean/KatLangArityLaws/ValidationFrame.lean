@@ -684,9 +684,9 @@ theorem public_inv (e : Expr) (s : EvalState) (hs : AddressInvariant.Inv s) :
     | algorithmExpr a =>
       dsimp only
       split
-      · exact export_after_sound _ (production_entry_program _) _ hs
+      · exact export_after_sound _ (production_entry_runValue _) _ hs
       · exact ⟨hs, fun r h => by cases h⟩
-    | _ => exact export_after_sound _ (production_entry_eval _) _ hs
+    | _ => exact export_after_sound _ (production_entry_runValue _) _ hs
 
 /-- The public address invariant from the empty state. -/
 theorem public_inv_from_empty (e : Expr) :

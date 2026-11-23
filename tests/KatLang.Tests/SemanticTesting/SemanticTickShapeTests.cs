@@ -49,8 +49,12 @@ public class SemanticTickShapeTests
     /// <c>reduce</c> evaluate its accumulators on demand, so <c>sys/tick/callback/reduce</c> renders the same
     /// program with the expectation of the new semantics (its former expectation is now its rejected reading).
     /// No other tick case changed.</para>
+    /// <para>Re-recorded again in November 2026 for issue #204 (lists evaluated on demand):
+    /// <c>sys/tick/callback/map</c> and <c>sys/tick/select/receiver-first</c> render the same programs with
+    /// the expectations of the new semantics (each former expectation is now the shape's rejected reading).
+    /// No other tick case changed.</para>
     /// </summary>
-    private const string TickBlockDigest = "sha256:395f9c549cb5d0600cc0629b20cab803ad3e39a50cb4629cc0c2e48229ff7038";
+    private const string TickBlockDigest = "sha256:b452f07b510f89e0c8d8cdad8fd59b3cdfc08fe5b125d36a2f7264e8a44e787a";
 
     /// <summary>Declaration-reorder members of the block: one per case whose root has two or more declarations.</summary>
     private const int ExpectedReorderMembers = 11;
@@ -228,16 +232,19 @@ public class SemanticTickShapeTests
             var semanticCase = SemanticCorpus.TickShapeBuilder(index, alternative: false).Build();
             Assert.Contains(semanticCase.CaseId, included);
             var fragment = SemanticTickShapes.Build(shape, new SemanticGrammar.Gen(SemanticChooser.Systematic(0)), alternative: false);
+            // A shape's row is a written list, read when the run's output is: its host events are
+            // the fragment's late events (SemanticFragment.LateEvents).
+            var events = fragment.Events.Concat(fragment.LateEvents).ToList();
             if (fragment.Failing)
             {
-                Assert.NotEmpty(fragment.Events);
-                Assert.All(fragment.Events, e => Assert.StartsWith("trace:", e, StringComparison.Ordinal));
+                Assert.NotEmpty(events);
+                Assert.All(events, e => Assert.StartsWith("trace:", e, StringComparison.Ordinal));
                 Assert.Contains("failure", fragment.Features);
                 Assert.True(shape.Partner is null, $"{shape.LocalId}: a fault shape takes no partner");
             }
             else
             {
-                Assert.Empty(fragment.Events);
+                Assert.Empty(events);
                 Assert.True(fragment.Row is MExpr.ListLit { Items: [.., MExpr.Prim { Name: "tick", Args: [] }] },
                     $"{shape.LocalId}: the row does not end with its tick() count control");
             }

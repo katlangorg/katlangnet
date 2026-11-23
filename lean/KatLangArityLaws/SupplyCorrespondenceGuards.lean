@@ -93,7 +93,8 @@ def argSets : List (List CountedResult) :=
 -- 2c. LOST CALLABLE CHANNEL: the same cells and VALUES, two CALLABLE projections that differ on
 -- cell 1. `CapCorr.callable` fails between them, and the repeated name retains a different cell.
 def withCallable (callableAt : Nat → Option Algorithm) : NeedCapabilities EvalM :=
-  ⟨demandNeed, fun a => pure (callableAt a), allocateNeed, NeedPlan.reference⟩
+  { value := demandNeed, callable := fun a => pure (callableAt a), allocate := allocateNeed,
+    reference := NeedPlan.reference }
 
 def readyHeap : EvalState :=
   { needs := #[{ suspension := .ready (.atom 5, 1) }, { suspension := .ready (.atom 5, 1) }] }

@@ -537,8 +537,10 @@ public class ComparisonChainDifferentialOracleTests
             Assert.Equal(expected, asynchronous.ToDisplayString().ReplaceLineEndings("\n"));
 
             // The same chain inside a callback body: one element, the same three draws.
-            var callback = Assert.IsType<RunResult.Success>(KatLangEngine.Run(declaration + $"map([0], {{ if(x == 0, {chain}, true) }}), R()", options));
-            Assert.Equal("[false]\n" + fourth, callback.ToDisplayString().ReplaceLineEndings("\n"));
+            // `first` reads the mapped position where it is written (the stage alone would be read
+            // after the row that follows it: lazy collections, issue #204).
+            var callback = Assert.IsType<RunResult.Success>(KatLangEngine.Run(declaration + $"map([0], {{ if(x == 0, {chain}, true) }}).first, R()", options));
+            Assert.Equal("false\n" + fourth, callback.ToDisplayString().ReplaceLineEndings("\n"));
         }
     }
 

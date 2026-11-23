@@ -397,8 +397,8 @@ added, so no program text and no other artifact changed.
 | Corpus | Success with entries | Success, empty cache | Failure after a publication | Failure before any (control) |
 | --- | --- | --- | --- | --- |
 | `SemanticExplorerCases.lean` | `special__listSpreadConcat`: `A=1 B=1` | `root__p12`: nothing | `indexBig__p12`: `err index`, `x=1` | `special__repeatedNameFailedThenValue`: `err div0`, `Bad=0` |
-| `LanguageSpecCases.lean` | `property-value-boundary`: `Coordinates=1` | `expanded-map-calls-may-skip-indexed-arguments`: `L=0` | `index-out-of-range`: `err index`, `x=1` | `map-demands-collection-before-transforms`: `err div0`, `L=0` |
-| `CoreTests/SemanticGeneratedCases.lean` | `sem2b/v1/sys/cache/0`: `v1=1` | `sem2b/v1/sys/cache/2`: nothing | `sem2b/v1/sys/select-fail/3`: `err index`, `v1=1` | `sem2b/v1/sys/cache-fail/0`: `err div0`, `v1=0` |
+| `LanguageSpecCases.lean` | `property-value-boundary`: `Coordinates=1` | `expanded-map-calls-may-skip-indexed-arguments`: `L=0` | `index-out-of-range`: `err index`, `x=1` | `if-spread-builds-values-before-branch-selection`: `err div0`, `Risky=0` |
+| `CoreTests/SemanticGeneratedCases.lean` | `sem2b/v2/sys/cache/0`: `v1=1` | `sem2b/v2/sys/cache/2`: nothing | `sem2b/v2/sys/select-fail/3`: `err index`, `v1=1` | `sem2b/v2/sys/cache-fail/0`: `err div0`, `v1=0` |
 
 A name at zero is watched and unpublished. Where the expectation comes from
 follows each corpus's own oracle:
@@ -464,7 +464,7 @@ unmutated copy elaborated with no failing guard. The cells count failing
 - A wrong number fails exactly the guard that holds it; the case's other guards
   still pass.
 - The substituted program (`special__firstEmpty`, `list-index-out-of-range`,
-  `sem2b/v1/seed/5EED2B000004/8`: each `err index` with an empty cache) fails
+  `sem2b/v2/seed/5EED2B000004/8`: each `err index` with an empty cache) fails
   the case's named and total cache guards while its `obs` and `errorObs` guards
   still pass: the neutral observation cannot see the difference.
 - An observer that drops a failed run's entries fails the one-entry state guard

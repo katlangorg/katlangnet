@@ -101,7 +101,7 @@ theorem terminal_singleton (r : Result) :
 theorem terminal_of_not_singleton {r : Result} (h : ∀ x, r ≠ .sequenceValue [x]) :
     scalarViewTerminalForLaw r = r := by
   match r with
-  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ =>
+  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ | .deferred _ | .pendingList _ =>
       simp [scalarViewTerminalForLaw]
   | .sequenceValue [] => simp [scalarViewTerminalForLaw]
   | .sequenceValue [x] => exact absurd rfl (h x)
@@ -113,7 +113,7 @@ theorem terminal_not_singleton : ∀ (r x : Result),
   | .sequenceValue [r], x => by
       rw [terminal_singleton]
       exact terminal_not_singleton r x
-  | .atom _, _ | .str _, _ | .bool _, _ | .listValue _, _ | .callRef _, _ | .argView _, _ => by
+  | .atom _, _ | .str _, _ | .bool _, _ | .listValue _, _ | .callRef _, _ | .argView _, _ | .deferred _, _ | .pendingList _, _ => by
       simp [scalarViewTerminalForLaw]
   | .sequenceValue [], _ => by simp [scalarViewTerminalForLaw]
   | .sequenceValue (_ :: _ :: _), _ => by simp [scalarViewTerminalForLaw]
@@ -158,7 +158,7 @@ theorem wrap_depth_terminal : ∀ r : Result,
   | .sequenceValue [r] => by
       have ih := wrap_depth_terminal r
       simp only [singletonDepthForLaw, terminal_singleton, singletonWrapForLaw, ih]
-  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ => by
+  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ | .deferred _ | .pendingList _ => by
       simp [singletonDepthForLaw, scalarViewTerminalForLaw, singletonWrapForLaw]
   | .sequenceValue [] => by
       simp [singletonDepthForLaw, scalarViewTerminalForLaw, singletonWrapForLaw]
@@ -182,7 +182,7 @@ theorem normalize_terminal : ∀ r : Result,
   | .sequenceValue [r] => by
       rw [terminal_singleton, normalize_sequenceValue_singleton]
       exact normalize_terminal r
-  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ => by
+  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ | .deferred _ | .pendingList _ => by
       simp [scalarViewTerminalForLaw]
   | .sequenceValue [] => by simp [scalarViewTerminalForLaw]
   | .sequenceValue (_ :: _ :: _) => by simp [scalarViewTerminalForLaw]
@@ -193,7 +193,7 @@ constructor, so it is a number exactly when the value is that number. -/
 theorem normalize_eq_atom_iff_of_not_singleton {t : Result} (ht : ∀ x, t ≠ .sequenceValue [x])
     (n : Int) : t.normalize = .atom n ↔ t = .atom n := by
   match t with
-  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ =>
+  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ | .deferred _ | .pendingList _ =>
       simp [Result.normalize]
   | .sequenceValue [x] => exact absurd rfl (ht x)
   | .sequenceValue [] => simp [Result.normalize]
@@ -203,7 +203,7 @@ theorem normalize_eq_atom_iff_of_not_singleton {t : Result} (ht : ∀ x, t ≠ .
 theorem normalize_eq_bool_iff_of_not_singleton {t : Result} (ht : ∀ x, t ≠ .sequenceValue [x])
     (b : Bool) : t.normalize = .bool b ↔ t = .bool b := by
   match t with
-  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ =>
+  | .atom _ | .str _ | .bool _ | .listValue _ | .callRef _ | .argView _ | .deferred _ | .pendingList _ =>
       simp [Result.normalize]
   | .sequenceValue [x] => exact absurd rfl (ht x)
   | .sequenceValue [] => simp [Result.normalize]
@@ -314,6 +314,8 @@ theorem asInt_eq_numberOf_terminal : ∀ r : Result,
   | .listValue rs => asInt_list_none rs
   | .callRef a => asInt_callRef_none a
   | .argView a => asInt_argView_none a
+  | .deferred _ => rfl
+  | .pendingList _ => rfl
   | .sequenceValue [] => asInt_empty_sequence_none
   | .sequenceValue (a :: b :: rest) => asInt_multi_item_sequence_none a b rest
 termination_by r => sizeOf r
@@ -333,6 +335,8 @@ theorem asBool_eq_booleanOf_terminal : ∀ r : Result,
   | .listValue rs => asBool_list_none rs
   | .callRef a => asBool_callRef_none a
   | .argView a => asBool_argView_none a
+  | .deferred _ => rfl
+  | .pendingList _ => rfl
   | .sequenceValue [] => asBool_empty_sequence_none
   | .sequenceValue (a :: b :: rest) => asBool_multi_item_sequence_none a b rest
 termination_by r => sizeOf r

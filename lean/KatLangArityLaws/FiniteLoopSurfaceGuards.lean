@@ -97,26 +97,26 @@ theorem famStep_rows_bounded (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (
 /-- `Inc(x).repeat(1) = Inc(x)` BY VALUE, from the projected step alone. -/
 theorem incStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some incStep), s₁))
-    (v : CountedResult) :
+    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots incStep ctx env cells name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedUserSupply incStep (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) :=
-  count_one_user_value step ctx env name cells s s₁ incStep hi incStep_user incStep_rows v
+  count_one_user_value step ctx env name cells s s₁ incStep hi incStep_user incStep_rows v hplain
 
 /-- The two-row `while`-shaped step, by value. -/
 theorem nextStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some nextStep), s₁))
-    (v : CountedResult) :
+    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots nextStep ctx env cells name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedUserSupply nextStep (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) :=
-  count_one_user_value step ctx env name cells s s₁ nextStep hi nextStep_user nextStep_rows v
+  count_one_user_value step ctx env name cells s s₁ nextStep hi nextStep_user nextStep_rows v hplain
 
 /-- The clause family, by value. -/
 theorem famStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some famStep), s₁))
-    (v : CountedResult) :
+    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots famStep ctx env cells name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedFamilySupply famStep (cells.map Prod.fst) ctx env name).runState s₁ = (.ok v, t)) :=
-  count_one_family_value step ctx env name cells s s₁ none [] _ none hi famStep_clauses v
+  count_one_family_value step ctx env name cells s s₁ none [] _ none hi famStep_clauses v hplain
 
 /-- An alias of `Inc`, by value against the ordinary call of the ALIAS; the alias resolution is the
     one premise beyond the projection. -/
@@ -124,11 +124,12 @@ theorem aliasInc_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (e
     (c : NeedSupply.Sourced) (s s₁ s' : EvalState) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.alias none [] [] (.resolve "Inc") none false)), s₁))
     (hres : (resolveAliasTarget (.alias none [] [] (.resolve "Inc") none false) ctx).runState s₁ = (.ok incStep, s'))
-    (v : CountedResult) :
+    (v : CountedResult)
+    (hplain : PlainRows ((runNeedStepSlots (.alias none [] [] (.resolve "Inc") none false) ctx env [c] name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 [c]).runState s = (.ok v, u)) ↔
       (∃ t, (evalSuppliedCallCounted origin (.alias none [] [] (.resolve "Inc") none false) [c] ctx env name).runState s₁ = (.ok v, t)) :=
   count_one_alias_value step ctx env name c [] s s₁ none [] [] _ none false origin incStep s' hi hres
-    incStep_user incStep_rows v
+    incStep_user incStep_rows v hplain
 
 /-- A `count` step: its numeric result is canonical, so `repeat(1)` IS the call's value — the call
     over the SAME sourced supply, written slots included. -/
@@ -136,11 +137,12 @@ theorem count_step_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env
     (cells : List NeedSupply.Sourced) (s s₁ t : EvalState) (origin : CalleeOrigin) (n : Int)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .countBuiltin)), s₁))
     (hcall : (evalSuppliedCallCounted origin (.builtin .countBuiltin) cells ctx env name).runState s₁ =
-      (.ok (.atom n, 1), t)) :
+      (.ok (.atom n, 1), t))
+    (hplain : PlainRows ((runNeedStepSlots (.builtin .countBuiltin) ctx env cells name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (reCountValueBoundary (.atom n, 1)), pushCompleted t [.atom n]) :=
   count_one_builtin_ok step ctx env name cells s s₁ .countBuiltin origin hi (.atom n, 1) t
-    (scalar_canonical _ (.inl ⟨n, rfl⟩)) hcall
+    (scalar_canonical _ (.inl ⟨n, rfl⟩)) hcall hplain
 
 /-! ## Whole programs: `repeat(Step(args), 1)` against `Step(args)` -/
 

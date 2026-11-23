@@ -64,7 +64,8 @@ def Incomplete {α : Type} (o : Except Error α) : Prop := o = .error .fuelExhau
 theorem incomplete_iff {α : Type} (o : Except Error α) : Incomplete o ↔ o = .error .fuelExhausted :=
   Iff.rfl
 
-/-- `runResultM`'s body with the evaluator answer `rec` at its two root calls. -/
+/-- `runResultM`'s body with the evaluator answer `rec` at its root call (the run-value call
+    `evalRunValue`, written in both branches). -/
 def runResultWith (rec : EvalRec) (e : Expr) : EvalM Result := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
@@ -73,10 +74,10 @@ def runResultWith (rec : EvalRec) (e : Expr) : EvalM Result := do
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a
       if Algorithm.acceptsZeroSuppliedArguments wired then
-        exportRunValue (<- rec.evalProgramOutput wired ctx [])
+        exportRunValue (<- rec.evalRunValue e ctx [])
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-  | _ => exportRunValue (<- rec.eval e ctx [])
+  | _ => exportRunValue (<- rec.evalRunValue e ctx [])
 
 /-- **Drift pin.** The public entry IS the composition over production. -/
 theorem runResultM_is_production (e : Expr) : runResultM e = runResultWith evalUnbounded e := rfl
@@ -148,10 +149,10 @@ def rootRun (rec : EvalRec) (e : Expr) : EvalM Result :=
   | .algorithmExpr a =>
       let wired := wireToCaller ctx a
       if Algorithm.acceptsZeroSuppliedArguments wired then
-        rec.evalProgramOutput wired ctx [] >>= exportRunValue
+        rec.evalRunValue e ctx [] >>= exportRunValue
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-  | _ => rec.eval e ctx [] >>= exportRunValue
+  | _ => rec.evalRunValue e ctx [] >>= exportRunValue
 
 theorem runResultWith_split (rec : EvalRec) (e : Expr) :
     runResultWith rec e =
@@ -168,21 +169,14 @@ theorem rootRun_shape (e : Expr) :
   by_cases ha : ∃ a, e = .algorithmExpr a
   · obtain ⟨a, rfl⟩ := ha
     by_cases hz : Algorithm.acceptsZeroSuppliedArguments (wireToCaller { callStack := [preludeAlg] } a) = true
-    -- `rec.evalProgramOutput` is the VALUE of the one call `evalZeroArgumentDemandOutputCounted`
-    -- (a derived answer), so the projection joins the continuation.
-    · exact .inr ⟨.evalZeroArgumentDemandOutputCounted (wireToCaller { callStack := [preludeAlg] } a)
-          { callStack := [preludeAlg] } [],
-        fun out => pure out.fst >>= exportRunValue,
-        fun rec => by
-          simp only [rootRun, hz, ite_true]
-          exact EvalM.bind_assoc (rec (.evalZeroArgumentDemandOutputCounted _ _ _)) (fun out => pure out.fst)
-            exportRunValue⟩
+    -- The root call is the ONE run-value call `evalRunValue` (issue #204: the root's output assembled,
+    -- then materialized, inside that call), followed by the export check.
+    · exact .inr ⟨.evalRunValue (.algorithmExpr a) { callStack := [preludeAlg] } [], exportRunValue,
+        fun rec => by simp only [rootRun, hz, ite_true]; rfl⟩
     · exact .inl (fun _ _ => by simp only [rootRun, hz]; rfl)
-  -- likewise `rec.eval` is the value of the one call `evalCounted`.
-  · refine .inr ⟨.evalCounted e { callStack := [preludeAlg] } [], fun out => pure out.fst >>= exportRunValue,
-      fun rec => ?_⟩
+  · refine .inr ⟨.evalRunValue e { callStack := [preludeAlg] } [], exportRunValue, fun rec => ?_⟩
     cases e <;> first
-      | exact EvalM.bind_assoc (rec (.evalCounted _ _ _)) (fun out => pure out.fst) exportRunValue
+      | rfl
       | exact absurd ⟨_, rfl⟩ ha
 
 /-- `runResultWith` is one-call at every entry state, for every expression: the prefix's outcome

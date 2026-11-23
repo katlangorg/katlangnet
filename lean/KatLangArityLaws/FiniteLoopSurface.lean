@@ -250,7 +250,15 @@ theorem links_canonical (pe : Expr) (prev : Result) (holds : Bool) (links : List
     refine okSat_call (.evalComparisonLinksCounted pe prev holds (l :: rest) ctx env) Canonical ?_
     show OkSat _ (EvalBody.evalComparisonLinksCounted evalUnbounded pe prev holds (l :: rest) ctx env)
     unfold EvalBody.evalComparisonLinksCounted
-    exact okSat_bind fun _ => okSat_bind fun _ => ih _ _ _
+    refine okSat_bind fun next => ?_
+    -- An equality link materializes its two operands first (issue #204); every link then compares
+    -- and continues with the chain.
+    split <;>
+      first
+        | exact okSat_bind fun _ => okSat_bind fun _ => (by
+            simp only [EvalM.pure_bind]
+            exact okSat_bind fun _ => ih _ _ _)
+        | (simp only [EvalM.pure_bind]; exact okSat_bind fun _ => ih _ _ _)
 
 theorem comparison_canonical (first : Expr) (links : List ComparisonLink) (ctx : EvalCtx) (env : ValEnv) :
     OkSat Canonical (evalUnbounded (.evalComparisonCounted first links ctx env)) := by
@@ -626,11 +634,11 @@ theorem value_iff_of_agreement {wrap : Error → Error} {L : Except Error (List 
 theorem count_one_user_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (a : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some a), s₁)) (h : UserStep a) (hr : RowsBy scalarRow a)
-    (v : CountedResult) :
+    (v : CountedResult) (hplain : PlainRows ((runNeedStepSlots a ctx env cells name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s₁ = (.ok v, t)) := by
   obtain ⟨hag, heq⟩ := count_one_user step ctx env name cells s s₁ a hi h
-    (userRowsBounded_of_valueRows a hr.value_of_scalar ctx env (cells.map Prod.fst) s₁)
+    (userRowsBounded_of_valueRows a hr.value_of_scalar ctx env (cells.map Prod.fst) s₁) hplain
   rw [heq]
   exact value_iff_of_agreement hag (fun ys t hL => user_slots_canonical a h hr ctx env cells name s₁ ys t hL) v
 
@@ -639,13 +647,14 @@ theorem count_one_family_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx
     (name : String) (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr)
     (br : List CondBranch) (d : Option PropertyIdentity)
     (hi : (invokeNeed step).runState s = (.ok (some (.conditional p o br d)), s₁))
-    (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (v : CountedResult) :
+    (h : ∀ b ∈ br, ClauseBy scalarRow b.body) (v : CountedResult)
+    (hplain : PlainRows ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s = (.ok v, u)) ↔
       (∃ t, (evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s₁ = (.ok v, t)) := by
   have hv : ∀ b ∈ br, ClauseBy valueRow b.body := fun b hb =>
     ⟨(h b hb).user, (h b hb).props, (h b hb).rows.value_of_scalar⟩
   obtain ⟨hag, heq⟩ := count_one_family step ctx env name cells s s₁ p o br d hi
-    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env (cells.map Prod.fst) name s₁)
+    (familyRowsBounded_of_clauses (.conditional p o br d) hv ctx env (cells.map Prod.fst) name s₁) hplain
   rw [heq]
   exact value_iff_of_agreement hag
     (fun ys t hL => family_slots_canonical p o br d h ctx env cells name s₁ ys t hL) v
@@ -684,11 +693,12 @@ theorem count_one_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (en
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin b)), s₁))
     (x : Except Error CountedResult) (t : EvalState) (hx : x ≠ .error .fuelExhausted)
-    (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (x, t)) :
+    (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (x, t))
+    (hplain : PlainRows ((runNeedStepSlots (.builtin b) ctx env cells name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome (builtinStepOutcome s!"while evaluating call to {name}" (x, t)) := by
   rw [ordinary_builtin_is_step_application] at hcall
-  rw [repeat_one_round step ctx env name cells s s₁ _ hi, builtin_step_value b ctx env cells name s₁ x t hx hcall]
+  rw [repeat_one_round step ctx env name cells s s₁ _ hi hplain, builtin_step_value b ctx env cells name s₁ x t hx hcall]
 
 /-- The success case of `count_one_builtin`: on a canonical result, `repeat(1)` IS the call value
     at its value boundary. -/
@@ -696,10 +706,11 @@ theorem count_one_builtin_ok (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) 
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (b : Builtin) (origin : CalleeOrigin)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin b)), s₁))
     (out : CountedResult) (t : EvalState) (hcan : out.fst.normalize = out.fst)
-    (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (.ok out, t)) :
+    (hcall : (evalSuppliedCallCounted origin (.builtin b) cells ctx env name).runState s₁ = (.ok out, t))
+    (hplain : PlainRows ((runNeedStepSlots (.builtin b) ctx env cells name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (reCountValueBoundary out), pushCompleted t [out.fst]) := by
-  rw [count_one_builtin step ctx env name cells s s₁ b origin hi (.ok out) t nofun hcall]
+  rw [count_one_builtin step ctx env name cells s s₁ b origin hi (.ok out) t nofun hcall hplain]
   show (Except.ok (loopResultCounted [out.fst]), _) = _
   rw [loop_value_one_slot out hcan]
   rfl
@@ -729,11 +740,12 @@ theorem resolved_builtin_eq (b : Builtin) (args : List ResolvedArgumentAlgorithm
   rfl
 
 /-- `count` of a prepared ordinary collection is its top-level length, with no additional work
-    after argument binding. Views and retained collectors have separate selective routes. -/
+    after argument binding. Views and retained collectors have separate selective routes, and a
+    pending list is never bound pending to `count` (`pendingStageCandidates?`, issue #204). -/
 theorem count_application_value (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (s t : EvalState) (bound : BoundSequenceBuiltinArguments)
     (hb : (evalUnbounded (.bindSequenceBuiltinArguments .countBuiltin {} args ctx env)).runState s =
-      (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) :
+      (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) (hp : bound.pending? = none) :
     (applyBuiltinCountedResolved .countBuiltin args ctx env).runState s =
       (.ok (.atom (Int.ofNat bound.preparedInput.items.length), 1), t) := by
   let B := fun rec : EvalRec => EvalBody.applyBuiltinCountedSequence rec .countBuiltin {} args ctx env
@@ -747,13 +759,14 @@ theorem count_application_value (args : List ResolvedArgumentAlgorithm) (ctx : E
         dsimp only
         unfold argumentViewBuiltin
         exact finite_bind (finite_const _) (fun _ => finite_const _)
-      · exact finite_const _
+      · dsimp only
+        split <;> exact finite_const _
   have hseq := production_ok_of_body (.applyBuiltinCountedSequence .countBuiltin {} args ctx env) B
     (fun _ => rfl) hf s t (.atom (Int.ofNat bound.preparedInput.items.length), 1) (by
       unfold B EvalBody.applyBuiltinCountedSequence
       simp only [EvalRec.bindSequenceBuiltinArguments]
       rw [EvalM.bind_runState, hb]
-      simp only [hv, hs]
+      simp only [hv, hs, hp]
       rfl)
   rw [resolved_builtin_eq]
   exact production_ok_of_body (.applyBuiltinCounted .countBuiltin args ctx env)
@@ -766,12 +779,13 @@ theorem count_one_count_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     (name : String) (cells : List NeedSupply.Sourced) (s s₁ t : EvalState) (bound : BoundSequenceBuiltinArguments)
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .countBuiltin)), s₁))
     (hb : (evalUnbounded (.bindSequenceBuiltinArguments .countBuiltin {} (stepArguments cells) ctx env)).runState s₁ =
-      (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) :
+      (.ok bound, t)) (hv : bound.view? = none) (hs : bound.slice? = none) (hp : bound.pending? = none)
+    (hplain : PlainRows ((runNeedStepSlots (.builtin .countBuiltin) ctx env cells name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       (.ok (.atom (Int.ofNat bound.preparedInput.items.length), 1),
         pushCompleted t [.atom (Int.ofNat bound.preparedInput.items.length)]) := by
-  have hcall := count_application_value (stepArguments cells) ctx env s₁ t bound hb hv hs
-  rw [repeat_one_round step ctx env name cells s s₁ _ hi,
+  have hcall := count_application_value (stepArguments cells) ctx env s₁ t bound hb hv hs hp
+  rw [repeat_one_round step ctx env name cells s s₁ _ hi hplain,
     builtin_step_value .countBuiltin ctx env cells name s₁ (.ok _) t nofun hcall]
   simp [oneRoundOutcome, builtinStepOutcome, loopStepBuiltinRows, Result.normalize,
     loopResultCounted, loopStateResult, reCountValueBoundary, Result.valueCount]
@@ -826,7 +840,8 @@ theorem count_one_if_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (e
     (hi : (invokeNeed step).runState s = (.ok (some (.builtin .ifBuiltin)), s₁))
     (hc : (evalArgumentValue (stepCellArgument c) ctx env).runState s₁ = (.ok (.bool flag), s₂))
     (hb : (evalUnbounded (.evalArgumentValueCounted (stepCellArgument (if flag then y else n)) ctx env)).runState s₂ = (.ok out, t))
-    (hcan : out.fst.normalize = out.fst) :
+    (hcan : out.fst.normalize = out.fst)
+    (hplain : PlainRows ((runNeedStepSlots (.builtin .ifBuiltin) ctx env [c, y, n] name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 [c, y, n]).runState s =
       (.ok (reCountValueBoundary out), pushCompleted t [out.fst]) := by
   have hcall := if_application_value (stepCellArgument c) (stepCellArgument y)
@@ -834,7 +849,7 @@ theorem count_one_if_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (e
   have hargs : [stepCellArgument c, stepCellArgument y, stepCellArgument n] =
       stepArguments [c, y, n] := rfl
   rw [hargs] at hcall
-  rw [repeat_one_round step ctx env name [c, y, n] s s₁ _ hi,
+  rw [repeat_one_round step ctx env name [c, y, n] s s₁ _ hi hplain,
     builtin_step_value .ifBuiltin ctx env [c, y, n] name s₁ (.ok _) t nofun hcall]
   show (Except.ok (loopResultCounted [out.fst]), _) = _
   rw [loop_value_one_slot out hcan]
@@ -941,13 +956,14 @@ theorem count_one_alias_value (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx)
     (rf : Bool) (origin : CalleeOrigin) (target : Algorithm) (s' : EvalState)
     (hi : (invokeNeed step).runState s = (.ok (some (.alias p o pr tg d rf)), s₁))
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s₁ = (.ok target, s'))
-    (h : UserStep target) (hr : RowsBy scalarRow target) (v : CountedResult) :
+    (h : UserStep target) (hr : RowsBy scalarRow target) (v : CountedResult)
+    (hplain : PlainRows ((runNeedStepSlots (.alias p o pr tg d rf) ctx env (c :: cs) name).runState s₁)) :
     (∃ u, (repeatAfterSetup evalUnbounded step ctx env name 1 (c :: cs)).runState s = (.ok v, u)) ↔
       (∃ t, (evalSuppliedCallCounted origin (.alias p o pr tg d rf) (c :: cs) ctx env name).runState s₁ = (.ok v, t)) := by
   have hag := alias_user_step_agreement p o pr tg d rf origin c cs ctx env name s₁ target s' hres h
     (userRowsBounded_of_valueRows target hr.value_of_scalar ctx env _ s')
   have hL := alias_loop_forwards p o pr tg d rf ctx env (c :: cs) name s₁ target s' hres
-  rw [repeat_one_round step ctx env name _ s s₁ _ hi]
+  rw [repeat_one_round step ctx env name _ s s₁ _ hi hplain]
   refine value_iff_of_agreement hag (fun ys t hl => ?_) v
   have hc' := hL.completes.1 (by rw [hl]; nofun)
   rw [hL.eq hc'] at hl
@@ -963,7 +979,8 @@ theorem count_one_alias_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCt
     (hi : (invokeNeed step).runState s = (.ok (some (.alias p o pr tg d rf)), s₁))
     (hres : (resolveAliasTarget (.alias p o pr tg d rf) ctx).runState s₁ = (.ok (.builtin b), s'))
     (x : Except Error CountedResult) (t : EvalState) (hx : x ≠ .error .fuelExhausted)
-    (hcall : (evalSuppliedCallCounted origin (.alias p o pr tg d rf) cells ctx env name).runState s₁ = (x, t)) :
+    (hcall : (evalSuppliedCallCounted origin (.alias p o pr tg d rf) cells ctx env name).runState s₁ = (x, t))
+    (hplain : PlainRows ((runNeedStepSlots (.alias p o pr tg d rf) ctx env cells name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome (builtinStepOutcome s!"while evaluating call to {name}" (x, t)) := by
   have hO := alias_call_forwards origin p o pr tg d rf cells ctx env name s₁ _ s' hres
@@ -978,6 +995,6 @@ theorem count_one_alias_builtin (step : ResolvedArgumentAlgorithm) (ctx : EvalCt
     rcases x with e | out
     · cases e <;> first | exact absurd rfl hx | simp [builtinStepOutcome]
     · exact nofun
-  rw [repeat_one_round step ctx env name cells s s₁ _ hi, hL.eq hLc, hstep]
+  rw [repeat_one_round step ctx env name cells s s₁ _ hi hplain, hL.eq hLc, hstep]
 
 end KatLang.FiniteLoopSurface

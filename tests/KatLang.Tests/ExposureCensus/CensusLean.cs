@@ -32,6 +32,8 @@ internal static class CensusLean
           | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
           | .callRef _ => "CallReference"
           | .argView _ => "CallReference"
+          | .deferred _ => "Deferred"
+          | .pendingList _ => "Deferred"
 
         partial def errCategory : Error -> String
           | .withContext _ inner => errCategory inner

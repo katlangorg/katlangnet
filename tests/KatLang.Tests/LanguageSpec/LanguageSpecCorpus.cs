@@ -5042,6 +5042,192 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "lazy-list-selection-reads-only-the-selected-position",
+            Category = "lists",
+            Source = "[10, 1 / 0][0]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The position that is read is the one that fails.
+                new SpecProbe("[10, 1 / 0][1]", "err div0"),
+                // The cardinality is known when the literal is built: nothing is read.
+                new SpecProbe("[10, 1 / 0].count", "ok raw=2 n=1"),
+                new SpecProbe("[10, 1 / 0].first", "ok raw=10 n=1"),
+                // Bounds are checked against the cardinality, not by reading elements.
+                new SpecProbe("[10, 1 / 0][5]", "err index"),
+                // A sequence value is evaluated whole.
+                new SpecProbe("(10, 1 / 0)[0]", "err div0"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A list literal evaluates its elements on demand: each ordinary written element is one deferred computation, evaluated at most once, when a consumer reads that position. Selection reads only the position it names, so the failing second element is never evaluated.",
+        },
+        new()
+        {
+            Id = "lazy-map-runs-its-mapper-only-for-the-positions-read",
+            Category = "collection-builtins",
+            Source = "[1, 2].map{if(n == 1, 10, 1 / 0)}.first",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("[1, 2].map{if(n == 1, 10, 1 / 0)}.last", "err div0"),
+                // `map` keeps its positions: counting needs neither an element nor the mapper.
+                new SpecProbe("count(map([1 / 0, 2], 7))", "ok raw=2 n=1"),
+                // A position reads its source item first, then projects the mapper.
+                new SpecProbe("first(map([1 / 0], 7))", "err div0"),
+                new SpecProbe("first(map([1], 7))", "err notAnAlgorithm"),
+                // An empty stage never projects its callback.
+                new SpecProbe("map([], 7)", "ok raw=L[] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`map` preserves positions and evaluates nothing when it is called: position `i` of the result is the mapper applied to position `i` of the source, computed at most once, when it is first read. `first` reads position zero only, so the mapper never runs for the second element.",
+        },
+        new()
+        {
+            Id = "lazy-filter-discovers-only-the-matches-it-needs",
+            Category = "collection-builtins",
+            Source = "[1, 0].filter{1 / n > 0}.take(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[1]",
+            ExpectedRaw = "L[1]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("[1, 0].filter{1 / n > 0}.first", "ok raw=1 n=1"),
+                // A consumer that needs the next match, or every match, reaches the failing candidate.
+                new SpecProbe("[1, 0].filter{1 / n > 0}.take(2)", "err div0"),
+                new SpecProbe("[1, 0].filter{1 / n > 0}.count", "err div0"),
+                // The failure stays at the scan's frontier: the match before it remains readable.
+                new SpecProbe("F = [1, 0].filter{1 / n > 0}\nF.first, F.take(1)", "ok raw=S[1, L[1]] n=2"),
+                // A non-positive count reads nothing.
+                new SpecProbe("[1, 0].filter{1 / n > 0}.take(0)", "ok raw=L[] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`filter` discovers its matches in source order, only as far as its consumer asks, and never inspects a candidate twice. `take(1)` needs one match, which the first element supplies, so the predicate never runs for `0`.",
+        },
+        new()
+        {
+            Id = "lazy-list-positions-are-shared-and-follow-demand-order",
+            Category = "lists",
+            Source = "L = [tick(), tick(), tick()]\nL[2, 0, 2], L[0], tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 2, 1)\n2\n3",
+            ExpectedRaw = "S[S[1, 2, 1], 2, 3]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Two evaluations of one literal are two lists that share nothing.
+                new SpecProbe("F = [tick()]\nF()[0], F()[0]", "ok raw=S[1, 2] n=2"),
+                // A parameter element is the parameter's own computation.
+                new SpecProbe("F(a) = [a, a][1] + a\nF(tick())", "ok raw=2 n=1"),
+            ],
+            Explanation = "Each position of a list is evaluated at most once per list instance, and effects follow the order in which positions are read: position 2 draws 1, position 0 draws 2, the repeated position 2 and the later `L[0]` reuse their completed values, and the unread position 1 never runs, so the final `tick()` draws 3.",
+        },
+        new()
+        {
+            Id = "lazy-list-run-output-is-read-after-it-is-assembled",
+            Category = "lists",
+            Source = "L = [tick()]\nL, tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[2]\n1",
+            ExpectedRaw = "S[L[2], 1]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // The whole result is read left to right, depth first.
+                new SpecProbe("[tick(), [tick(), tick()]], tick()", "ok raw=S[L[2, L[3, 4]], 1] n=2"),
+                // An element that fails while the result is read fails the run.
+                new SpecProbe("[1, 1 / 0]", "err div0"),
+            ],
+            Explanation = "A run assembles its output first and then reads it whole, left to right and depth first: the list `L` is built without drawing, the second row draws 1, and reading the list afterwards draws 2.",
+        },
+        new()
+        {
+            Id = "lazy-take-validates-its-count-before-any-position",
+            Category = "collection-builtins",
+            Source = "[1 / 0, 2].take(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[]",
+            ExpectedRaw = "L[]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("[1 / 0].take('a')", "err type"),
+                new SpecProbe("[1 / 0, 2].take(1)", "err div0"),
+                // A prefix shares its source's positions.
+                new SpecProbe("L = [tick(), tick()]\nP = L.take(1)\nP[0], L[0], tick()", "ok raw=S[1, 1, 2] n=3"),
+            ],
+            Explanation = "`take` validates its count before it reads any position and returns a prefix that shares its source's positions: a non-positive count is the empty list and reads nothing, and an invalid count is reported before any element is evaluated.",
+        },
+        new()
+        {
+            Id = "lazy-list-pattern-checks-cardinality-before-its-fields",
+            Category = "deconstruction",
+            Source = "P([a, b]) = b\nP([1 / 0, 2])",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The cardinality is checked first: the failing element is never read.
+                new SpecProbe("P([a, b]) = a\nP([1 / 0])", "err arity"),
+                new SpecProbe("P([a]) = 1\nP(x) = 2\nP([1 / 0, 2])", "ok raw=2 n=1"),
+                // A scalar literal rejects a list by kind without scanning it.
+                new SpecProbe("P(0) = 1\nP(x) = 2\nP([1 / 0])", "ok raw=2 n=1"),
+                // A collecting binding keeps the original positions.
+                new SpecProbe("P([a, *rest]) = rest.count\nP([1, 1 / 0, 1 / 0])", "ok raw=2 n=1"),
+                // Deconstruction binds positions too.
+                new SpecProbe("a, b = [1 + 1, 1 / 0]\na", "ok raw=2 n=1"),
+            ],
+            Explanation = "A list pattern checks the kind and the cardinality of its list before any field and binds its names to the list's own positions, so only the position the body reads is evaluated: `b` reads the second element, and the failing first element never runs.",
+        },
+        new()
+        {
+            Id = "lazy-list-equality-reads-both-operands-whole",
+            Category = "equality-and-indexing",
+            Source = "[1, 2 + 1] == [1, 3]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true",
+            ExpectedRaw = "true",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("[1, 1 / 0] == [2, 3]", "err div0"),
+                new SpecProbe("contains([[1 + 1]], [2])", "ok raw=true n=1"),
+                // An explicit spread reads the level it opens, in order.
+                new SpecProbe("F(*xs) = xs.count\nF([1, 1 / 0]*)", "err div0"),
+                new SpecProbe("F(*xs) = xs.count\nF([1, 1 / 0])", "ok raw=1 n=1"),
+                // A strict collection builtin reads its positions in order.
+                new SpecProbe("sum([1 + 1, 2 * 3])", "ok raw=8 n=1"),
+            ],
+            Explanation = "Equality compares whole values: both operands are read completely, the left one first, before they are compared — so a failing element fails the comparison even where the first elements already differ.",
+        },
+        new()
+        {
+            Id = "lazy-list-holding-itself-is-a-demand-cycle-when-read-whole",
+            Category = "errors",
+            Source = "L = [L]\nL",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "demandCycle",
+            Probes =
+            [
+                // Building the list reads nothing, and so does counting it.
+                new SpecProbe("L = [L]\nL.count", "ok raw=1 n=1"),
+                // A position that reads itself is the ordinary demand cycle of its computation.
+                new SpecProbe("L = [L[0]]\nL", "err demandCycle"),
+                // A predicate that needs the scan it is part of.
+                new SpecProbe("S = [1].filter{S.count >= x}\nS", "err demandCycle"),
+            ],
+            Explanation = "A list can hold itself through a deferred element: building `L` reads nothing. Reading it whole reaches the list it is already inside, which is reported as a demand cycle instead of an endless read.",
+        },
+        new()
+        {
             Id = "reduce-accumulators-are-evaluated-on-demand",
             Category = "collection-builtins",
             Source = "Pick(item, acc) = item\nreduce([1, 2], Pick, 1 / 0)",
@@ -5125,15 +5311,19 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "map-demands-collection-before-transforms",
+            Id = "map-reads-each-source-position-before-its-transform",
             Category = "collection-builtins",
             Source = "L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
-            // KL-06 pilot, pre-publication control: `L` is the failing owner, so it publishes nothing.
-            ExpectedCachePublications = CachePublicationExpectation.Parse("L=0"),
-            Probes = [new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]", "ok raw=L[0, 0] n=1")],
-            Explanation = "Map demands its whole collection before invoking transforms. Expanded ordinary calls may leave indexed arguments unused, so the unfolding equation compares result values for pure, deterministic, total computations.",
+            Probes =
+            [
+                // Counting the mapped list reads no position; reading its second position reads only that one.
+                new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\ncount(map(L, F))", "ok raw=2 n=1"),
+                new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\nmap(L, F)[1]", "ok raw=0 n=1"),
+                new SpecProbe("L = [1 / 0, 2]\nF(x) = 0\n[F(L[0]), F(L[1])]", "ok raw=L[0, 0] n=1"),
+            ],
+            Explanation = "A mapped position reads its source position before it invokes the transform, even a transform that ignores its argument: reading the whole result reaches the failing first element. Counting the mapped list, or reading only its second position, never reads that element. Expanded ordinary calls may leave indexed arguments unused, so the unfolding equation compares result values for pure, deterministic, total computations.",
         },
         new()
         {
@@ -8451,6 +8641,8 @@ public static class LanguageSpecCorpus
             Source = "Risky = (10, 1 / 0)\nif(true, Risky*)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
+            // KL-06 pilot, pre-publication control: `Risky` is the failing owner, so it publishes nothing.
+            ExpectedCachePublications = CachePublicationExpectation.Parse("Risky=0"),
             Explanation = "Spread evaluates its operand before supplying argument slots, so the failing row is evaluated before builtin if can select a branch.",
         },
         // ==================== final audit (September 2026) ====================
@@ -11527,10 +11719,10 @@ public static class LanguageSpecCorpus
             Category = "collection-builtins",
             Source = "Only(*xs) = tick() + xs.count\nmap([1, 2], Only), Only",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[2, 3]\n3",
-            ExpectedRaw = "S[L[2, 3], 3]",
+            ExpectedDisplay = "[3, 4]\n1",
+            ExpectedRaw = "S[L[3, 4], 1]",
             ExpectedEmittedCount = 2,
-            Explanation = "`map` invokes its callback once per item, in collection order (ticks 1 and 2), and each invocation of `Only` is fresh; the bare `Only` afterwards is its own cached read (tick 3).",
+            Explanation = "Both rows are evaluated before the result is read: `map` builds its list without invoking the callback, so the bare `Only` is the first tick (its own cached read, `1`). Reading the result then invokes the callback once per item, in collection order (ticks 2 and 3, each plus one supplied item), and each invocation of `Only` is fresh.",
         },
         new()
         {

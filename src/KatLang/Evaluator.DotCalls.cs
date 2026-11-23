@@ -162,7 +162,7 @@ public static partial class Evaluator
     /// the ONE builtin argument funnel the generic path uses
     /// (<see cref="ResolveArgAlgsWithSequenceSpread"/> +
     /// <see cref="BuildCallableCallItems"/> +
-    /// <see cref="BindSequenceBuiltinCollectionArgument"/>, which demands the one item as
+    /// <see cref="BindSequenceBuiltinCollectionValue"/>, which demands the one item as
     /// <c>filter</c>'s VALUE slot <c>collection</c>): a named property is
     /// read through its ordinary property access (the run cache), a parameterized
     /// receiver is the collection-argument demand rejection, and the bound value opens
@@ -192,11 +192,18 @@ public static partial class Evaluator
         if (items.Count != 1)
             return new EvalError.ArityMismatch(1, items.Count);
 
-        var collectionValuesR = BindSequenceBuiltinCollectionArgument(BuiltinId.@filter, items[0], ctx, valEnv);
-        if (collectionValuesR.IsError)
-            return collectionValuesR.Error;
+        var collectionValueR = BindSequenceBuiltinCollectionValue(items[0], ctx, valEnv);
+        if (collectionValueR.IsError)
+            return collectionValueR.Error;
+        if (IsArgumentView(collectionValueR.Value))
+            return ArgumentViewUnsupported(BuiltinId.@filter);
+        // A receiver evaluated on demand (issue #204) is read position by position by the fused
+        // executor, as the generic filter stage's scan reads it; nothing is read here.
+        if (collectionValueR.Value is Result.ListValue { Lazy: { } positions })
+            return EvalResult<IReadOnlyList<CountedResult>>.Ok(new LazyIterationItems(positions));
 
-        return EvalResult<IReadOnlyList<CountedResult>>.Ok(new CollectionIterationItems(collectionValuesR.Value));
+        return EvalResult<IReadOnlyList<CountedResult>>.Ok(
+            new CollectionIterationItems(BuiltinCollectionItems(collectionValueR.Value)));
     }
 
     /// <summary>

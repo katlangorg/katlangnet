@@ -240,7 +240,7 @@ internal sealed record SemanticCampaignResult(
 
 /// <summary>
 /// <c>semantic-campaign</c> (SEM-2C, fuzz/README.md § Campaigns): a BOUNDED, deterministic search for
-/// failing generated cases. It enumerates the ids <c>sem2b/v1/&lt;recipe&gt;/&lt;seed&gt;/&lt;index&gt;</c> of ONE
+/// failing generated cases. It enumerates the ids <c>sem2b/v2/&lt;recipe&gt;/&lt;seed&gt;/&lt;index&gt;</c> of ONE
 /// seeded recipe (<c>--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider</c>, default <c>seed</c>;
 /// <see cref="SemanticCorpus.SeededRecipes"/>) for every seed of an inclusive hex range and every
 /// index below the cases-per-seed count, in that order, runs each under <see cref="SemanticSupervisor"/>
@@ -248,7 +248,7 @@ internal sealed record SemanticCampaignResult(
 /// failure with its signature, and — unless <c>--no-reduce</c> — reduces it with
 /// <see cref="SemanticReducer"/> (supervised, exact-source candidates) and writes the reduced
 /// artifacts. With <c>--exhaustive</c> the plan is instead EVERY program of a finite recipe
-/// (<see cref="SemanticExhaustive"/>, ids <c>sem2b/v1/&lt;recipe&gt;/all/&lt;choices&gt;</c>), run in
+/// (<see cref="SemanticExhaustive"/>, ids <c>sem2b/v2/&lt;recipe&gt;/all/&lt;choices&gt;</c>), run in
 /// supervised batches (one child per batch, every descriptor persisted before dispatch, every failing
 /// member and the first member the batch could not answer rerun alone), with the same failure handling —
 /// except that a failure the standalone rerun does not reproduce is classified batch-only (or

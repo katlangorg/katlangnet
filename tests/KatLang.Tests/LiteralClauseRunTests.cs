@@ -868,7 +868,10 @@ public class LiteralClauseRunTests
     {
         // The index is the only addition, built once per run; nothing is allocated per call. Its own allocation is
         // measured by building it from the same heads, and the two runs may differ from that by the counter's
-        // allocation quantum (~8 KB under a background GC) in either direction, which the bounds allow twice over.
+        // allocation quantum (~8 KB under a background GC) in either direction, which the bounds allow three times
+        // over. (Twice over until November 2026: a run of this program allocates about 40% more since a mapped
+        // position is a cell read on demand, issue #204, and at exactly this call count the two windows then sit
+        // two quanta apart — measured: the index's 51,232 bytes at 512 and at 2,048 calls, 16,384 fewer at 1,024.)
         const int Size = 512;
         var source = $"{Table("T", Size, Int, Int)}\nT(k) = -1\nrange(0, {2 * Size - 1}).map{{T(x)}}.sum";
         var expr = Program(source, null);
@@ -898,7 +901,7 @@ public class LiteralClauseRunTests
         var indexed = Best(() => Run(ordered: false));
         var ordered = Best(() => Run(ordered: true));
         Assert.InRange(index, Size * 24, Size * 200);
-        Assert.InRange(indexed - ordered - index, -16 * 1024, 16 * 1024);
+        Assert.InRange(indexed - ordered - index, -24 * 1024, 24 * 1024);
     }
 
     // ── 10. the programs the Lean model shares ───────────────────────────────────────────────────

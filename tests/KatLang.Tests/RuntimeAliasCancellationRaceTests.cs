@@ -123,7 +123,9 @@ public sealed class RuntimeAliasCancellationRaceTests
         { "parameter", Receiver + "Use(p) = {\n  A = p\n  A(5)\n}\nUse(R.Algorithm), trace(99)", "ok S[6, 99]" },
         { "parameter-chain", Receiver + "Use(p) = {\n  B = A\n  A = p\n  B(5)\n}\nUse(R.Algorithm), trace(99)", "ok S[6, 99]" },
         { "zero-parameter", "Z = tock()\nR = if(gate(), Capture(Z()), 0)\nA = R.Algorithm\nA(), trace(99)", "ok S[1, 99]" },
-        { "callback", Receiver + "A = R.Algorithm\nmap([1], A), trace(99)", "ok S[L[2], 99]" },
+        // `first` reads the mapped position in its own row, so the callback is projected before the
+        // row after it (the stage alone would be read after `trace(99)`: lazy collections, issue #204).
+        { "callback", Receiver + "A = R.Algorithm\nmap([1], A).first, trace(99)", "ok S[2, 99]" },
         { "loop-step", Receiver + "A = R.Algorithm\nA(1).repeat(2), trace(99)", "ok S[3, 99]" },
     };
 

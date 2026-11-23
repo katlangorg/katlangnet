@@ -15,51 +15,6 @@ allocates one Ready cell per opened item of that value, and `Inv` covers Ready p
 
 namespace KatLang.AddressInvariant
 
-/-! ## Opened items of a valid value are valid -/
-
-section Items
-variable {h : Array NeedCell}
-
-theorem RV.toItems {r : Result} (v : RV h r) : RLV h r.toItems := by
-  cases r with
-  | sequenceValue xs => exact RV.seq_iff.1 v
-  | _ => exact RLV.singleton v
-
-theorem RV.spreadItems {r : Result} (v : RV h r) : RLV h r.spreadItems := by
-  cases r with
-  | listValue xs => exact RV.list_iff.1 v
-  | _ => exact RV.toItems v
-
-theorem RV.projectionItems {r : Result} (v : RV h r) : RLV h r.projectionItems := by
-  cases r with
-  | listValue xs => exact RV.list_iff.1 v
-  | _ => exact RV.toItems v
-
-theorem RV.sequencePatternItems {r : Result} {xs : List Result} (v : RV h r)
-    (e : r.sequencePatternItems? = some xs) : RLV h xs := by
-  cases r <;> simp [Result.sequencePatternItems?] at e
-  subst e; exact RV.seq_iff.1 v
-
-theorem RV.listPatternItems {r : Result} {xs : List Result} (v : RV h r)
-    (e : r.listPatternItems? = some xs) : RLV h xs := by
-  cases r <;> simp [Result.listPatternItems?] at e
-  subst e; exact RV.list_iff.1 v
-
-theorem RV.structureItems {r : Result} {xs : List Result} (v : RV h r)
-    (e : r.structureItems? = some xs) : RLV h xs := by
-  cases r <;> simp [Result.structureItems?] at e
-  · subst e; exact RV.seq_iff.1 v
-  · subst e; exact RV.list_iff.1 v
-
-theorem RV.select {r x : Result} {i : Nat} (v : RV h r) (e : r.select? i = some x) : RV h x :=
-  (RV.projectionItems v).getElem? e
-
-end Items
-
-attribute [ht_lemmas] RV.toItems RV.spreadItems RV.projectionItems RV.sequencePatternItems
-  RV.listPatternItems RV.structureItems RV.select
-attribute [ht_fwd] RV.sequencePatternItems RV.listPatternItems RV.structureItems RV.select
-
 /-! ## Capabilities -/
 
 /-- The binder's capability contract under `Inv`: VALUE returns a valid result, CALLABLE keeps the
@@ -67,6 +22,10 @@ attribute [ht_fwd] RV.sequencePatternItems RV.listPatternItems RV.structureItems
 structure CapsSpec (caps : NeedCapabilities EvalM) : Prop where
   value : DemandSpec caps.value
   callable : ProjectSpec caps.callable
+  -- Lazy collections (issue #204): the list-position read and the whole-value read return valid
+  -- results too (a discovered pending list, a materialized value).
+  positions : DemandSpec caps.positions
+  whole : DemandSpec caps.whole
   allocate : ∀ susp, SoundI (fun h => SuspV h susp) (caps.allocate susp) (fun a h => a < h.size)
   reference : ∀ a, SoundI (fun h => a < h.size) (caps.reference a) (fun r h => r < h.size)
 
@@ -76,6 +35,16 @@ theorem CapsSpec.value_app {P : Array NeedCell → Prop} {caps : NeedCapabilitie
 theorem CapsSpec.callable_app {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
     {a : Nat} (hreq : ∀ h, P h → a < h.size) : SoundI P (caps.callable a) (fun _ _ => True) :=
   hc.callable.app hreq
+theorem CapsSpec.positions_app {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
+    {a : Nat} (hreq : ∀ h, P h → a < h.size) : SoundI P (caps.positions a) (fun r h => CRV h r) :=
+  hc.positions.app hreq
+theorem CapsSpec.whole_app {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
+    {a : Nat} (hreq : ∀ h, P h → a < h.size) : SoundI P (caps.whole a) (fun r h => CRV h r) :=
+  hc.whole.app hreq
+theorem CapsSpec.structuralRead_app {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
+    {pattern : NeedPattern} {a : Nat} (hreq : ∀ h, P h → a < h.size) :
+    SoundI P (NeedBinder.structuralRead caps pattern a) (fun r h => CRV h r) := by
+  cases pattern <;> first | exact hc.value.app hreq | exact hc.positions.app hreq
 theorem CapsSpec.allocate_app {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
     {susp : NeedSuspension} (hreq : ∀ h, P h → SuspV h susp) :
     SoundI P (caps.allocate susp) (fun a h => a < h.size) :=
@@ -85,6 +54,7 @@ theorem CapsSpec.reference_app {P : Array NeedCell → Prop} {caps : NeedCapabil
   SoundI.weaken (hc.reference a) hreq (hmono_lt a) (fun _ _ h => h)
 
 attribute [ht_spec] CapsSpec.value_app CapsSpec.callable_app CapsSpec.allocate_app CapsSpec.reference_app
+  CapsSpec.positions_app CapsSpec.whole_app CapsSpec.structuralRead_app
 
 theorem OptEnvValid.mono {h h' : Array NeedCell} (g : h.size ≤ h'.size) {r : Option NeedEnv}
     (v : OptEnvValid r h) : OptEnvValid r h' := fun env e => ValidNeedEnv.mono g (v env e)
@@ -139,7 +109,7 @@ theorem checkAnchor_spec {P : Array NeedCell → Prop} {caps : NeedCapabilities 
   | nil => exact SoundI.pure _ (fun _ _ => trivial)
   | cons c rest ih =>
     unfold NeedBinder.checkAnchor
-    refine SoundI.bind (hc.value_app (fun h ph => (hreq h ph) c List.mem_cons_self)) (fun _ _ _ g v => CRV.mono g v) ?_
+    refine SoundI.bind (hc.whole_app (fun h ph => (hreq h ph) c List.mem_cons_self)) (fun _ _ _ g v => CRV.mono g v) ?_
     intro own
     split
     · exact ih (fun h ph b m => (hreq h ph.1) b (List.mem_cons_of_mem _ m))
@@ -188,7 +158,7 @@ theorem bindName_spec {P : Array NeedCell → Prop} {caps : NeedCapabilities Eva
         · exact SoundI.bind (SoundI.pure _ (fun _ _ => trivial)) PMono.true tail
     | none =>
       dsimp only
-      refine SoundI.bind (hc.value_app (fun h ph => (hreq h ph.1).1)) (fun _ _ _ g v => CRV.mono g v) ?_
+      refine SoundI.bind (hc.whole_app (fun h ph => (hreq h ph.1).1)) (fun _ _ _ g v => CRV.mono g v) ?_
       intro own
       split
       · split
@@ -380,8 +350,30 @@ structure ChannelsSpec (channels : NeedChannels) : Prop where
   callable : ProjectSpec channels.callable
 
 theorem capabilities_spec {channels : NeedChannels} (hc : ChannelsSpec channels) :
-    CapsSpec (NeedChannels.capabilities channels) :=
-  ⟨hc.value, hc.callable, fun _ => allocate_spec (fun _ h => h), fun _ => reference_spec⟩
+    CapsSpec (NeedChannels.capabilities channels) where
+  value := hc.value
+  callable := hc.callable
+  positions := by
+    intro a
+    obtain ⟨demand, project⟩ := channels
+    have hd : DemandSpec demand := hc.value
+    show SoundI (fun h => a < h.size) (do
+      let (value, count) <- demand a
+      match value with
+      | .pendingList candidates =>
+          pure (Result.listValue (<- LazyList.positions demand none candidates), count)
+      | _ => pure (value, count) : EvalM CountedResult) (fun r h => CRV h r)
+    ht_tac
+  whole := by
+    intro a
+    obtain ⟨demand, project⟩ := channels
+    have hd : DemandSpec demand := hc.value
+    show SoundI (fun h => a < h.size) (do
+      let (value, count) <- demand a
+      pure (<- materializeVia demand value, count) : EvalM CountedResult) (fun r h => CRV h r)
+    ht_tac
+  allocate := fun _ => allocate_spec (fun _ h => h)
+  reference := fun _ => reference_spec
 
 attribute [ht_lemmas] capabilities_spec
 

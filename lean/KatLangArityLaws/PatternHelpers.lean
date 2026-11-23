@@ -140,7 +140,10 @@ theorem resultDiagnosticString_old_recurrence (r : Result) :
       | .sequenceValue items => "(" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ ")"
       | .listValue items => "[" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ "]"
       | .callRef _ => "a call reference"
-      | .argView _ => "an argument view" := by
+      | .argView _ => "an argument view"
+      -- Lazy collections (issue #204): a diagnostic reads no position.
+      | .deferred _ => "<deferred>"
+      | .pendingList _ => "[<deferred>...]" := by
   cases r <;> simp [resultDiagnosticString, resultDiagnosticStrings_eq_map]
 
 /-! ## Conversion: the clause-to-ordinary eligibility boundary -/
@@ -1432,17 +1435,17 @@ theorem bindOne_sequence_kind_mismatch (ps : List NeedPattern)
       = (.error (Error.typeMismatch ("sequence pattern `"
           ++ (ParameterPattern.sequenceValue (ps.map NeedPattern.toParameter)).displayName
           ++ "` expects a sequence value, but received " ++ operandDescription value)), t) := by
-  simp [NeedBinder.bindOne, hv, hk]
+  simp [NeedBinder.bindOne, NeedBinder.structuralRead, hv, hk]
   simp only [NeedPattern.toParameter]; rfl
 
 theorem bindOne_list_kind_mismatch (ps : List NeedPattern)
-    (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (hv : runEval (k.positions address) s = (.ok (value, count), t))
     (hk : Result.listPatternItems? value = none) :
     runEval (NeedBinder.bindOne k (.list ps) address repeated bound false) s
       = (.error (Error.typeMismatch ("list pattern `"
           ++ (ParameterPattern.listValue (ps.map NeedPattern.toParameter)).displayName
           ++ "` expects a list value, but received " ++ operandDescription value)), t) := by
-  simp [NeedBinder.bindOne, hv, hk]
+  simp [NeedBinder.bindOne, NeedBinder.structuralRead, hv, hk]
   simp only [NeedPattern.toParameter]; rfl
 
 /-- In a clause family the same mismatch only rejects the clause. -/
@@ -1450,13 +1453,13 @@ theorem bindOne_sequence_kind_mismatch_family (ps : List NeedPattern)
     (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hk : Result.sequencePatternItems? value = none) :
     runEval (NeedBinder.bindOne k (.sequence ps) address repeated bound true) s = (.ok none, t) := by
-  simp [NeedBinder.bindOne, hv, hk]
+  simp [NeedBinder.bindOne, NeedBinder.structuralRead, hv, hk]
 
 theorem bindOne_list_kind_mismatch_family (ps : List NeedPattern)
-    (hv : runEval (k.value address) s = (.ok (value, count), t))
+    (hv : runEval (k.positions address) s = (.ok (value, count), t))
     (hk : Result.listPatternItems? value = none) :
     runEval (NeedBinder.bindOne k (.list ps) address repeated bound true) s = (.ok none, t) := by
-  simp [NeedBinder.bindOne, hv, hk]
+  simp [NeedBinder.bindOne, NeedBinder.structuralRead, hv, hk]
 
 end Production
 

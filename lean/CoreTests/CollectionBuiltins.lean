@@ -2331,7 +2331,9 @@ def test192 : Bool :=
       ]
     ]
   ])) with
-  | Except.error err => innermostIsTypeMismatch "take count must be exactly one whole-number value, but was a list value with 0 elements: []" err
+  -- The count is a `filter` stage (lazy collections, issue #204): the report names a list whose
+  -- positions have not been found, and reads none of them.
+  | Except.error err => innermostIsTypeMismatch "take count must be exactly one whole-number value, but was a list value whose elements are not yet evaluated" err
   | _ => false
 
 #guard test192

@@ -144,7 +144,7 @@ macro "evalrec_unfold" cfg:Lean.Parser.Tactic.optConfig " [" extra:Lean.Parser.T
     EvalRec.evalCallCountedExpr, EvalRec.callLexicalWithReceiverCounted,
     EvalRec.rejectDotStringIntrinsicArguments, EvalRec.evalDotStringReceiverValue, EvalRec.evalDotCallCounted,
     EvalRec.rejectInvokeIntrinsicArguments, EvalRec.invokeCallReferenceValue, EvalRec.argumentViewCells,
-    EvalRec.evalArgumentViewBuiltin, EvalRec.evalSequenceSpreadOperandValue, EvalRec.evalSequenceSpreadCounted,
+    EvalRec.evalArgumentViewBuiltin, EvalRec.evalSequenceSpreadOperandValue, EvalRec.evalRunValue, EvalRec.evalSequenceSpreadCounted,
     EvalRec.evalSupplySpread, EvalRec.evalListLiteralCounted, EvalRec.evalSequenceConstructCounted,
     EvalRec.evalUnaryCounted, EvalRec.evalBinaryCounted, EvalRec.evalComparisonCounted,
     EvalRec.evalComparisonLinksCounted, EvalRec.evalCounted, EvalRec.evalAlgOutputCore, EvalRec.evalAlgOutput,
@@ -421,13 +421,90 @@ theorem monotone_planInvoke (route : γ → NeedPlan.Route) (h : RouteMono route
     monotone (fun x => retainedCollectorBuiltin (demand x) b metadata suffixArgs slice) := by
   unfold retainedCollectorBuiltin; mono_cb_tac
 
+/-! ### Lazy collections (issue #204): the positional helpers are monotone in the VALUE demand -/
+
+@[partial_fixpoint_monotone] theorem monotone_forcePosition
+    (demand : γ → Nat → EvalM CountedResult) (h : monotone demand) (item : Result) :
+    monotone (fun x => forcePosition (demand x) item) := by
+  unfold forcePosition; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_lazyDiscover
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand)
+    (visit : γ → Nat → EvalM Result) (hv : monotone visit)
+    (limit : Option Nat) (candidates : List (Nat × Nat)) :
+    monotone (fun x => LazyList.discover (demand x) (visit x) limit candidates) := by
+  induction candidates generalizing limit with
+  | nil => unfold LazyList.discover; mono_cb_tac
+  | cons candidate rest ih => unfold LazyList.discover; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_lazyPositions
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand)
+    (limit : Option Nat) (candidates : List (Nat × Nat)) :
+    monotone (fun x => LazyList.positions (demand x) limit candidates) := by
+  unfold LazyList.positions; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_lazyValues
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (candidates : List (Nat × Nat)) :
+    monotone (fun x => LazyList.values (demand x) candidates) := by
+  unfold LazyList.values; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_earlierPositions
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand)
+    (limit : Option Nat) (source : Result) (before : Int) :
+    monotone (fun x => LazyList.earlierPositions (demand x) limit source before) := by
+  cases source <;> unfold LazyList.earlierPositions <;> mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_discoveredPositions
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (limit : Option Nat) (value : Result) :
+    monotone (fun x => discoveredPositions (demand x) limit value) := by
+  unfold discoveredPositions; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_forceLevel
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (value : Result) :
+    monotone (fun x => forceLevel (demand x) value) := by
+  unfold forceLevel; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_collectionPositions
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (b : Builtin) (value : Result) :
+    monotone (fun x => collectionPositions (demand x) b value) := by
+  unfold collectionPositions; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_selectPositionsWith {α : Type}
+    (demand : γ → α → EvalM Result) (hd : monotone demand)
+    (positionAt : γ → Nat → EvalM (Option Result)) (hp : monotone positionAt)
+    (read : γ → Result → EvalM Result) (hr : monotone read) (selectors : List α) :
+    monotone (fun x => selectPositionsWith (demand x) (positionAt x) (read x) selectors) := by
+  induction selectors with
+  | nil => unfold selectPositionsWith; mono_cb_tac
+  | cons c rest ih => unfold selectPositionsWith; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_peelSpreadLayers
+    (force : γ → Result → EvalM Result) (hf : monotone force) (layers : Nat) (value : Result) :
+    monotone (fun x => peelSpreadLayers (force x) layers value) := by
+  induction layers generalizing value with
+  | zero => unfold peelSpreadLayers; mono_cb_tac
+  | succ n ih => unfold peelSpreadLayers; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_materializeVia
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (value : Result) (visiting : List Nat) :
+    monotone (fun x => materializeVia (demand x) value visiting) := by
+  unfold materializeVia; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_materializePosition
+    (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (visiting : List Nat) (item : Result) :
+    monotone (fun x => materializePosition (demand x) visiting item) := by
+  unfold materializePosition; mono_cb_tac
+
 theorem monotone_suspendedValue
     (ev : γ → Expr → EvalCtx → ValEnv → EvalM CountedResult) (hev : monotone ev)
     (route : γ → NeedPlan.Route) (hroute : RouteMono route)
     (demand : γ → Nat → EvalM CountedResult) (hd : monotone demand) (a : Nat) (sus : NeedSuspension) :
     monotone (fun x => NeedDemand.suspendedValue (ev x) (route x) (demand x) a sus) := by
   cases sus with
-  | ready v => exact monotone_const _
+  | ready v =>
+    -- A Ready cell holding a deferred list item is that position's demand; any other is constant.
+    simp only [NeedDemand.suspendedValue]
+    mono_cb_tac
   | collector slice =>
     exact monotone_withNestedMissingOutput _ (monotone_demandMaterialize demand hd slice)
   | applied callee cells caller values calleeName =>
@@ -488,6 +565,8 @@ structure CapsMono (caps : γ → NeedCapabilities EvalM) : Prop where
   callable : monotone (fun x => (caps x).callable)
   allocate : monotone (fun x => (caps x).allocate)
   reference : monotone (fun x => (caps x).reference)
+  positions : monotone (fun x => (caps x).positions)
+  whole : monotone (fun x => (caps x).whole)
 
 @[partial_fixpoint_monotone] theorem monotone_cardinalityGate {β : Type} (patterns : List NeedPattern) (count : Nat) (family : Bool)
     (accepted : γ → EvalM (Option β)) (h : monotone accepted) :
@@ -510,9 +589,9 @@ structure CapsMono (caps : γ → NeedCapabilities EvalM) : Prop where
   · left; unfold EvalM.IsIncompleteAt at hs; rw [hs]; rfl
   · right; rw [hs]
 
-/-- NEED-04's data-anchor check is monotone in the VALUE capability it demands through. -/
+/-- NEED-04's data-anchor check is monotone in the WHOLE-VALUE capability it demands through. -/
 @[partial_fixpoint_monotone] theorem monotone_checkAnchor (caps : γ → NeedCapabilities EvalM)
-    (hv : monotone (fun x => (caps x).value)) (name : Ident) (anchor : CountedResult) (family : Bool)
+    (hv : monotone (fun x => (caps x).whole)) (name : Ident) (anchor : CountedResult) (family : Bool)
     (cells : List Nat) :
     monotone (fun x => NeedBinder.checkAnchor (caps x) name anchor family cells) := by
   induction cells with
@@ -522,9 +601,18 @@ structure CapsMono (caps : γ → NeedCapabilities EvalM) : Prop where
 theorem monotone_bindName (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
     (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     monotone (fun x => NeedBinder.bindName (caps x) name address repeated bound family) := by
-  have hv := hc.value; have hcl := hc.callable
+  have hv := hc.whole; have hcl := hc.callable
   have hck := fun anchor cells => monotone_checkAnchor caps hv name anchor family cells
   unfold NeedBinder.bindName; mono_tac
+
+/-- The read a structural pattern opens its cell through (issue #204) is one of two monotone
+    capabilities. -/
+theorem monotone_structuralRead (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
+    (pattern : NeedPattern) (address : Nat) :
+    monotone (fun x => NeedBinder.structuralRead (caps x) pattern address) := by
+  cases pattern <;> first
+    | exact Lean.Order.monotone_apply address _ hc.value
+    | exact Lean.Order.monotone_apply address _ hc.positions
 
 theorem monotone_binder (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
     (repeated : List Ident) (family : Bool) :
@@ -533,6 +621,7 @@ theorem monotone_binder (caps : γ → NeedCapabilities EvalM) (hc : CapsMono ca
     (∀ patterns sources current,
       monotone (fun x => NeedBinder.bindSources (caps x) patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hread := monotone_structuralRead caps hc
   have hname := monotone_bindName caps hc
   have hsrc := monotone_sourceAddress (fun x => (caps x).allocate) hal
   refine NeedBinder.bindOne.mutual_induct
@@ -632,14 +721,21 @@ theorem planRoute_classify_mono : monotone (fun rec : EvalRec => rec.planRoute.c
 
 theorem bindingCaps_mono {γ : Type} [PartialOrder γ] (recOf : γ → EvalRec) (h : monotone recOf) :
     CapsMono (fun x => (recOf x).bindingChannels.capabilities) := by
-  refine ⟨?_, ?_, monotone_const _, monotone_const _⟩
-  · intro x y hxy a
+  have hvalue : monotone (fun x => (recOf x).bindingChannels.value) := by
+    intro x y hxy a
     exact monotone_demandStep (fun x => (recOf x).evalSuppliedAt a) (fun _ _ hxy _ _ _ => h _ _ hxy _)
       _ (planRoute_mono recOf h) (fun x => (recOf x).demandNeedRecursive) (fun _ _ hxy _ => h _ _ hxy _)
       a x y hxy
+  refine ⟨hvalue, ?_, monotone_const _, monotone_const _, ?_, ?_⟩
   · intro x y hxy a
     exact monotone_projectionStep _ (monotone_projectionSuspended
       (fun x => (recOf x).projectNeedWrittenAt a) (fun _ _ hxy _ _ => h _ _ hxy _)) a x y hxy
+  -- The two lazy-collection capabilities (issue #204) are the VALUE channel followed by a
+  -- positional helper over that same channel.
+  · apply Lean.Order.monotone_of_monotone_apply; intro address
+    dsimp only [NeedChannels.capabilities]; mono_cb_tac
+  · apply Lean.Order.monotone_of_monotone_apply; intro address
+    dsimp only [NeedChannels.capabilities]; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_bindNeedPatterns {γ : Type} [PartialOrder γ]
     (recOf : γ → EvalRec) (h : monotone recOf) (patterns : List NeedPattern) (cells : List Nat)
@@ -1021,8 +1117,8 @@ theorem EvalBody.evalReduceCounted_mono (collection : List CountedResult) (stepA
     monotone (fun rec : EvalRec => EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; mono_tac
 
-theorem EvalBody.evalFilterCounted_mono (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    monotone (fun rec : EvalRec => EvalBody.evalFilterCounted rec items predicateAlg ctx env) := by
+theorem EvalBody.evalFilterCounted_mono (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    monotone (fun rec : EvalRec => EvalBody.evalFilterCounted rec start items predicateAlg ctx env) := by
   unfold EvalBody.evalFilterCounted; mono_tac
 
 theorem EvalBody.evalMapCounted_mono (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -1103,6 +1199,10 @@ theorem EvalBody.evalSequenceSpreadOperandValue_mono (e : Expr) (ctx : EvalCtx) 
     monotone (fun rec : EvalRec => EvalBody.evalSequenceSpreadOperandValue rec e ctx env) := by
   have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalSequenceSpreadOperandValue; mono_tac
+theorem EvalBody.evalRunValue_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    monotone (fun rec : EvalRec => EvalBody.evalRunValue rec e ctx env) := by
+  have := EvalBody.terminalAccess_mono
+  unfold EvalBody.evalRunValue; mono_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
@@ -1204,7 +1304,7 @@ theorem evalStep_monotone : monotone evalStep := by
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_mono item ctx env _ _ h
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_mono b metadata args ctx env _ _ h
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_mono collection stepAlg start ctx env _ _ h
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_mono items predicateAlg ctx env _ _ h
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_mono start items predicateAlg ctx env _ _ h
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_mono collection transformAlg ctx env _ _ h
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_mono b metadata args ctx env _ _ h
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_mono b args ctx env _ _ h
@@ -1224,6 +1324,7 @@ theorem evalStep_monotone : monotone evalStep := by
   | argumentViewCells a => exact EvalBody.argumentViewCells_mono a _ _ h
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_mono b a _ _ h
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_mono e ctx env _ _ h
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_mono e ctx env _ _ h
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_mono e ctx env _ _ h
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_mono e ctx env _ _ h
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_mono elements ctx env _ _ h

@@ -526,10 +526,16 @@ public class CollectionMaterializationLimitsTests
         }
     }
 
+    // The range's ten items and the mapped list's ten fit; the callbacks' twenty — reserved as
+    // `atoms` reads every mapped position — do not. (Counting the mapped list would invoke no
+    // callback: lazy collections, issue #204.)
     [Fact]
     public void CumulativeBudget_IsSharedByNestedCallbacks()
-        => Assert.IsType<EvalError.MaterializationLimitExceeded>(
-            ErrorOf("Wrap(x) = [x, x]\nrange(1, 10).map(Wrap).count", Total(25)));
+    {
+        Assert.IsType<EvalError.MaterializationLimitExceeded>(
+            ErrorOf("Wrap(x) = [x, x]\natoms(range(1, 10).map(Wrap)).count", Total(25)));
+        Assert.False(Eval("Wrap(x) = [x, x]\nrange(1, 10).map(Wrap).count", Total(25)).IsError);
+    }
 
     // ── Strategy independence of the cumulative budget ───────────────────────
 

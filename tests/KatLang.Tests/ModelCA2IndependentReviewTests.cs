@@ -9,7 +9,9 @@ public class ModelCA2IndependentReviewTests
     [Theory]
     [InlineData("I01-attempts-demand-order", "F(0, x, 9) = 0\nF(1, x, 8) = x\nF(a, b, c) = 99\nF(trace(1), tock(), trace(8))", "ok 1", "trace(1) | trace(8) | tock#1")]
     [InlineData("I02-conflict-then-body", "F(x, x, 0) = 7\nF(a, b, c) = b + b\nF(tock(), tock(), 1 / 0)", "ok 4", "tock#1 | tock#2")]
-    [InlineData("I03-list-boundary", "F([0, x], y) = 7\nF(a, b) = 'miss'\nF([trace(1), trace(2)], 1 / 0)", "ok 'miss'", "trace(1) | trace(2)")]
+    // The literal reads its position; `x` only binds the second one, which nothing reads
+    // (lazy collections, issue #204).
+    [InlineData("I03-list-boundary", "F([0, x], y) = 7\nF(a, b) = 'miss'\nF([trace(1), trace(2)], 1 / 0)", "ok 'miss'", "trace(1)")]
     [InlineData("I04-nested-conflict", "F([x, x], z) = 7\nF(a, b) = b\nF(trace([1, 2]), trace(9))", "ok 9", "trace(L[1, 2]) | trace(9)")]
     [InlineData("I05-pattern-collector-read", "P(x, x, *r, z, z) = r\nP(trace(0), trace(0), trace(3), trace(4), trace(9), trace(9))", "ok L[3, 4]", "trace(0) | trace(0) | trace(9) | trace(9) | trace(3) | trace(4)")]
     [InlineData("I06-pattern-collector-unread", "P(x, *r, x) = 1\nP(trace(0), 1 / 0, trace(0))", "ok 1", "trace(0) | trace(0)")]

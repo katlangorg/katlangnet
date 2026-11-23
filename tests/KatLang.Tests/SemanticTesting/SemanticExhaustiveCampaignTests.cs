@@ -58,8 +58,8 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
                 SemanticRecipe.CasePrefix + enumeration.Recipe + "/all/" + string.Join(".", p.Choices), p.CaseId));
         }
 
-        Assert.Equal("sem2b/v1/seed-nested/all/0.0.0.0.0", Nested.Value.Programs[0].CaseId);
-        Assert.Equal("sem2b/v1/seed-nested-wide/all/0.0.0.0.0.0.0.0.0", Wide.Value.Programs[0].CaseId);
+        Assert.Equal("sem2b/v2/seed-nested/all/0.0.0.0.0", Nested.Value.Programs[0].CaseId);
+        Assert.Equal("sem2b/v2/seed-nested-wide/all/0.0.0.0.0.0.0.0.0", Wide.Value.Programs[0].CaseId);
         Assert.Throws<ArgumentException>(() => SemanticExhaustive.Enumerate(SemanticCorpus.SeedRecipe));
 
         static int Compare(ImmutableArray<int> a, ImmutableArray<int> b)
@@ -150,18 +150,18 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
             }
 
             // seed-nested: outer 0, a failing chance (0 of 25), width 0, one context, the list context.
-            Assert.True(SemanticCorpus.TryBuilder("sem2b/v1/seed-nested/all/0.0.0.0.0", SemanticRecipe.RecipeVersion, out _, out var accepted), accepted);
+            Assert.True(SemanticCorpus.TryBuilder("sem2b/v2/seed-nested/all/0.0.0.0.0", SemanticRecipe.RecipeVersion, out _, out var accepted), accepted);
             string[] refused =
             [
-                "sem2b/v1/seed-nested/all/0.24.0.0.0",   // a 25 % chance is 0 or 25
-                "sem2b/v1/seed-nested/all/2.0.0.0.0",    // nested.outer has two values
-                "sem2b/v1/seed-nested/all/0.0.0.0",      // truncated
-                "sem2b/v1/seed-nested/all/0.0.0.0.0.0",  // extended
-                "sem2b/v1/seed-nested/all/0.0.x",
-                "sem2b/v1/seed-nested/all/",
-                "sem2b/v1/seed-nested/all/0..0",
-                "sem2b/v1/seed-nested-wide/all/9",
-                "sem2b/v1/seed/all/0",                   // seed is not finite: an ordinary malformed seeded id
+                "sem2b/v2/seed-nested/all/0.24.0.0.0",   // a 25 % chance is 0 or 25
+                "sem2b/v2/seed-nested/all/2.0.0.0.0",    // nested.outer has two values
+                "sem2b/v2/seed-nested/all/0.0.0.0",      // truncated
+                "sem2b/v2/seed-nested/all/0.0.0.0.0.0",  // extended
+                "sem2b/v2/seed-nested/all/0.0.x",
+                "sem2b/v2/seed-nested/all/",
+                "sem2b/v2/seed-nested/all/0..0",
+                "sem2b/v2/seed-nested-wide/all/9",
+                "sem2b/v2/seed/all/0",                   // seed is not finite: an ordinary malformed seeded id
             ];
             foreach (var id in refused)
             {
@@ -383,7 +383,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
             output.WriteLine(log.ToString());
             Assert.Equal(1, exit);
 
-            const string id = "sem2b/v1/seed-nested/all/0.0.0.0.1";
+            const string id = "sem2b/v2/seed-nested/all/0.0.0.0.1";
             Assert.Equal(id, Nested.Value.Programs[1].CaseId);
             using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(outDir, SemanticCampaign.SummaryFile)));
             var json = document.RootElement;
@@ -405,7 +405,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
             var recordPath = Path.Combine(outDir, reduction.GetProperty("record").GetString()!);
             Assert.True(SemanticReduction.TryParseRecord(File.ReadAllText(recordPath), out var record, out problem), problem);
             Assert.Equal((id, signature), (record.OriginalCaseId, record.Signature));
-            Assert.StartsWith("sem2b/v1/reduced/seed-nested/all/0.0.0.0.1/", record.ReducedCaseId, StringComparison.Ordinal);
+            Assert.StartsWith("sem2b/v2/reduced/seed-nested/all/0.0.0.0.1/", record.ReducedCaseId, StringComparison.Ordinal);
             Assert.True(SemanticReduction.TryRebuild(record, out var reduced, out problem), problem);
             Assert.Contains(Trigger, reduced.Source, StringComparison.Ordinal);
             Assert.Equal(signature, SemanticFailureSignature.Of(FaultyRun(reduced)));
@@ -724,7 +724,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
         "refusal DuplicateBranchPattern/syntax", "")]
     public void TheWideRecipe_ConstructsItsExpectationFromTheDemandLaws(string choices, string source, string outcome, string events)
     {
-        var id = "sem2b/v1/seed-nested-wide/all/" + choices;
+        var id = "sem2b/v2/seed-nested-wide/all/" + choices;
         Assert.Contains(id, Wide.Value.Programs.Select(static p => p.CaseId));
         Assert.True(SemanticCorpus.TryBuilder(id, SemanticRecipe.RecipeVersion, out var builder, out var problem), problem);
         var c = builder.Build();

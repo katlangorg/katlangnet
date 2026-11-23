@@ -23,8 +23,13 @@ public class SemanticPathCoverageTests
     /// SHA-256 over <see cref="CanonicalLine"/> of every pre-existing case, in corpus order, computed
     /// on <c>fb1a35e6</c> BEFORE the path block was added. A change here means an existing id now
     /// renders a different program or expectation, which needs a recipe-version bump instead.
+    /// <para>Re-recorded in November 2026 for a LANGUAGE change, not a recipe change: issue #204 made
+    /// lists and collection pipelines evaluate on demand. Every pre-existing id renders the same
+    /// program; a case whose rows hold a written list now expects that list's elements to run when
+    /// the run's assembled output is read (after every root row was evaluated), and a few list
+    /// productions expect fewer events because an unread element never runs.</para>
     /// </summary>
-    private const string PreexistingDigest = "sha256:2a74e128f6e935b6801a9a15da5390a5536ecdf1a10ea8e324909b69bbedbc07";
+    private const string PreexistingDigest = "sha256:22fe9a1b11c316bb08c6031fea04e036b334eb72e58c85f9ccd8f30bd3111c7e";
 
     private static IEnumerable<SemanticCase> PathCases
         => SemanticGrammarCorpusTests.Cases.Where(c => LocalId(c).StartsWith(PathPrefix, StringComparison.Ordinal));

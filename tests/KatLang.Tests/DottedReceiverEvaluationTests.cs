@@ -664,12 +664,14 @@ public class DottedReceiverEvaluationTests
         var grouped = Observe($"N = {nested}\n(N).count + (N).count");
         var viaProperty = Observe($"N = {nested}\nV = N\nV.count + V.count");
 
+        // Only the outermost list is built: its one element — the 39 nested literals — is a deferred
+        // position that `count` never reads (lazy collections, issue #204).
         Assert.Equal("ok:2", dotted.Outcome);
-        Assert.Equal(40, dotted.Items);
+        Assert.Equal(1, dotted.Items);
         Assert.Equal(dotted, written);
         Assert.Equal(dotted, grouped);
 
         Assert.Equal("ok:2", viaProperty.Outcome);
-        Assert.Equal(40, viaProperty.Items);
+        Assert.Equal(1, viaProperty.Items);
     }
 }

@@ -1203,15 +1203,35 @@ def evaluatedAt (h : Array NeedCell) (a : Nat) (v : CountedResult) : Array NeedC
   (h.modify a (fun c => { c with state := .evaluating })).modify a
     (fun c => { c with state := .completed (.ok v) })
 
+/-- A SLOT VALUE THAT IS NOT ITSELF A LIST POSITION (lazy collections, issue #204). A Ready cell
+    holding a deferred list item IS that position — its VALUE is the position's
+    (`NeedDemand.suspendedValue`), which is how a list pattern binds a name to an element it has
+    not read. A loop's state cells hold the slots a step emitted, and those are values: every
+    premise below that reads such a cell back says so. A concrete slot is plain
+    (`plainSlot_of_concrete`), and so is a list, lazy or not. -/
+def PlainSlot (value : Result) : Prop := ∀ cell, value ≠ .deferred cell
+
+theorem plainSlot_of_concrete {value : Result} (h : value.isLazy = false) : PlainSlot value := by
+  intro cell hv
+  subst hv
+  simp [Result.isLazy] at h
+
+/-- The rows a completed step emitted are plain slots (`PlainSlot`). -/
+def PlainRows (L : Except Error (List Result) × EvalState) : Prop :=
+  ∀ ys t, L = (.ok ys, t) → ∀ y ∈ ys, PlainSlot y
+
 theorem demand_ready (a : Nat) (s : EvalState) (c : NeedCell) (v : CountedResult)
-    (hc : s.needs[a]? = some c) (hs : c.state = .suspended) (hsusp : c.suspension = .ready v) :
+    (hc : s.needs[a]? = some c) (hs : c.state = .suspended) (hsusp : c.suspension = .ready v)
+    (hv : PlainSlot v.1) :
     (demandNeedRecursive a).runState s =
       (.ok v, { s with needs := evaluatedAt s.needs a v }) := by
   refine production_of_answer_free (.demandNeedRecursive a) s _ (fun rec => ?_) nofun
   show (NeedDemand.step (rec.evalSuppliedAt a) rec.planRoute rec.demandNeedRecursive a).runState s = _
   refine KatLang.NeedControl.Memo.suspended_retains_state _ _ _ a s
     { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } c (.ok v) hc hs ?_ rfl
-  rw [hsusp]; rfl
+  rw [hsusp]
+  obtain ⟨r, count⟩ := v
+  cases r <;> first | rfl | exact absurd rfl (hv _)
 
 /-- Read a list of state cells as the loop's final slots. -/
 abbrev materialize (final : List Nat) : EvalM (List Result) :=
@@ -1220,7 +1240,7 @@ abbrev materialize (final : List Nat) : EvalM (List Result) :=
 /-- The final materialization of freshly allocated Ready cells: exactly their slots, in order; each
     cell completes, nothing else changes. -/
 theorem materialize_ready (slots : List Result) (h : Array NeedCell) (s : EvalState)
-    (hs : s.needs = h ++ (slots.map readyCell).toArray) :
+    (hs : s.needs = h ++ (slots.map readyCell).toArray) (hplain : ∀ y ∈ slots, PlainSlot y) :
     (materialize (readyAddrs h.size slots)).runState s =
       (.ok slots, { s with needs := h ++ (slots.map completedCell).toArray }) := by
   rw [KatLang.NeedControl.Schedule.mapM_schedule]
@@ -1234,6 +1254,7 @@ theorem materialize_ready (slots : List Result) (h : Array NeedCell) (s : EvalSt
     have hget : s.needs[h.size]? = some (readyCell v) := by
       rw [hs]; simp
     have hd := demand_ready h.size s (readyCell v) (v, Result.valueCount v) hget rfl rfl
+      (hplain v List.mem_cons_self)
     have hneeds : evaluatedAt s.needs h.size (v, Result.valueCount v) =
         h.push (completedCell v) ++ (rest.map readyCell).toArray := by
       rw [hs, List.map_cons, evaluatedAt, modify_suffix, modify_suffix]
@@ -1243,6 +1264,7 @@ theorem materialize_ready (slots : List Result) (h : Array NeedCell) (s : EvalSt
     rw [hm, hd]
     dsimp only
     have hi := ih (h.push (completedCell v)) { s with needs := evaluatedAt s.needs h.size (v, Result.valueCount v) } hneeds
+      (fun y hy => hplain y (List.mem_cons_of_mem _ hy))
     rw [Array.size_push] at hi
     rw [hi]
     simp [completedCell]
@@ -1780,15 +1802,17 @@ theorem repeat_binder_channel_free (ch ch' : NeedChannels) (cells : List Nat) :
     bindNeedPatterns ch ((builtinSignature .repeatBuiltin).map NeedPattern.ofParameter) cells =
       bindNeedPatterns ch' ((builtinSignature .repeatBuiltin).map NeedPattern.ofParameter) cells := by
   rw [KatLang.MetaLoopLaws.repeat_binding_patterns]
-  simp only [bindNeedPatterns, NeedBinder.bindPatterns, NeedBinder.bindLevel, repeatNames]
-  rfl
+  simp only [bindNeedPatterns, NeedBinder.bindPatterns, NeedBinder.bindLevel, repeatNames,
+    NeedBinder.bindSources, NeedBinder.bindOne, NeedBinder.bindName, NeedChannels.capabilities,
+    List.contains_nil, Bool.false_eq_true, ↓reduceIte]
 
 theorem while_binder_channel_free (ch ch' : NeedChannels) (cells : List Nat) :
     bindNeedPatterns ch ((builtinSignature .whileBuiltin).map NeedPattern.ofParameter) cells =
       bindNeedPatterns ch' ((builtinSignature .whileBuiltin).map NeedPattern.ofParameter) cells := by
   rw [KatLang.MetaLoopLaws.while_binding_patterns]
-  simp only [bindNeedPatterns, NeedBinder.bindPatterns, NeedBinder.bindLevel, whileNames]
-  rfl
+  simp only [bindNeedPatterns, NeedBinder.bindPatterns, NeedBinder.bindLevel, whileNames,
+    NeedBinder.bindSources, NeedBinder.bindOne, NeedBinder.bindName, NeedChannels.capabilities,
+    List.contains_nil, Bool.false_eq_true, ↓reduceIte]
 
 theorem finite_loopCapture (bindings : NeedEnv) : Finite (fun rec => loopCapture rec bindings) := by
   unfold loopCapture
@@ -2044,10 +2068,12 @@ def oneRoundOutcome : Except Error (List Result) × EvalState → Except Error C
     the ORIGINAL cells (`runNeedStepSlots`, whatever the callable category), the emitted slots
     allocated as the next Ready cells in order, those cells materialized, and the loop's counted
     value. The final state is the step's state with one COMPLETED Ready cell per slot appended;
-    every other field is unchanged. -/
+    every other field is unchanged. The emitted slots are values, never a bare list position
+    (`PlainRows`, issue #204): the cells that hold them complete with them. -/
 theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (alg : Algorithm)
-    (hi : (invokeNeed step).runState s = (.ok (some alg), s₁)) :
+    (hi : (invokeNeed step).runState s = (.ok (some alg), s₁))
+    (hplain : PlainRows ((runNeedStepSlots alg ctx env cells name).runState s₁)) :
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots alg ctx env cells name).runState s₁) := by
   have hdriver : (repeatDriver step ctx env name evalUnbounded 1 cells).runState s =
@@ -2063,10 +2089,11 @@ theorem repeat_one_round (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env
   show (repeatDriver step ctx env name evalUnbounded 1 cells >>= fun fc =>
     materialize (fc.map Prod.fst) >>= fun ys => pure (loopResultCounted ys)).runState s = _
   rw [EvalM.bind_runState, hdriver]
-  rcases (runNeedStepSlots alg ctx env cells name).runState s₁ with ⟨_ | ys, s₂⟩
+  generalize (runNeedStepSlots alg ctx env cells name).runState s₁ = L at hplain ⊢
+  rcases L with ⟨_ | ys, s₂⟩
   · rfl
   · simp only [EvalM.bind_runState]
-    rw [retainedSourced_fst, materialize_ready ys s₂.needs (pushReady s₂ ys) rfl]
+    rw [retainedSourced_fst, materialize_ready ys s₂.needs (pushReady s₂ ys) rfl (hplain ys s₂ rfl)]
     rfl
 
 /-- The two value observations agree exactly on canonical slots. -/
@@ -2097,26 +2124,28 @@ theorem noncanonical_counterexample :
 theorem count_one_user (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (a : Algorithm)
     (hi : (invokeNeed step).runState s = (.ok (some a), s₁)) (h : UserStep a)
-    (hrows : UserRowsBounded a ctx env (cells.map Prod.fst) s₁) :
+    (hrows : UserRowsBounded a ctx env (cells.map Prod.fst) s₁)
+    (hplain : PlainRows ((runNeedStepSlots a ctx env cells name).runState s₁)) :
     StepAgreement id ((runNeedStepSlots a ctx env cells name).runState s₁)
       ((evalNeedUserSupply a (cells.map Prod.fst) ctx env).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots a ctx env cells name).runState s₁) :=
-  ⟨user_step_agreement a h ctx env cells name s₁ hrows, repeat_one_round step ctx env name cells s s₁ a hi⟩
+  ⟨user_step_agreement a h ctx env cells name s₁ hrows, repeat_one_round step ctx env name cells s s₁ a hi hplain⟩
 
 /-- **COUNT ONE AGAINST THE ORDINARY FAMILY CALL.** -/
 theorem count_one_family (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
     (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (p : Option ScopeCtx) (o : List Expr) (br : List CondBranch)
     (d : Option PropertyIdentity)
     (hi : (invokeNeed step).runState s = (.ok (some (.conditional p o br d)), s₁))
-    (hrows : FamilyRowsBounded (.conditional p o br d) ctx env (cells.map Prod.fst) name s₁) :
+    (hrows : FamilyRowsBounded (.conditional p o br d) ctx env (cells.map Prod.fst) name s₁)
+    (hplain : PlainRows ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁)) :
     StepAgreement (Error.withContext s!"while evaluating call to {name}")
       ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁)
       ((evalNeedFamilySupply (.conditional p o br d) (cells.map Prod.fst) ctx env name).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots (.conditional p o br d) ctx env cells name).runState s₁) :=
   ⟨family_step_agreement p o br d ctx env cells name s₁ hrows,
-    repeat_one_round step ctx env name cells s s₁ _ hi⟩
+    repeat_one_round step ctx env name cells s s₁ _ hi hplain⟩
 
 /-! ## 9. The real setup at `applyBuiltinCounted` -/
 
@@ -2197,6 +2226,7 @@ theorem adapter_read (s : EvalState) (plan : Nat) :
     (demandNeedRecursive s.needs.size).runState (adapterPushed s plan) =
       (.ok (.callRef plan, 1), adapterRead s plan) :=
   demand_ready _ _ (CallReferenceLaws.adapterCell plan) _ (by simp [adapterPushed]) rfl rfl
+    (fun _ h => Result.noConfusion h)
 
 /-- The captured supply and canonical callee, as production runs from the state after the adapter
     read. Establishing them may run the captured spreads; nothing else. -/
@@ -2416,7 +2446,8 @@ theorem repeat_builtin_count_one {a c : ResolvedArgumentAlgorithm} {ctx : EvalCt
     {name : String} {alg : Algorithm}
     (h : RepeatSetup a c ctx env plan cnt s s₂ s₃ s₄ sourced stepCell 1 name)
     (hi : (invokeNeed (stepArgument stepCell)).runState s₄ = (.ok (some alg), s₅))
-    (hd : UserStep alg) (hrows : UserRowsBounded alg ctx env (sourced.map Prod.fst) s₅) :
+    (hd : UserStep alg) (hrows : UserRowsBounded alg ctx env (sourced.map Prod.fst) s₅)
+    (hplain : PlainRows ((runNeedStepSlots alg ctx env sourced name).runState s₅)) :
     let L := (runNeedStepSlots alg ctx env sourced name).runState s₅
     let O := (evalNeedUserSupply alg (sourced.map Prod.fst) ctx env).runState s₅
     (ProductionCompletes (applyBuiltinCounted .repeatBuiltin [a, c] ctx env) s ↔
@@ -2428,7 +2459,7 @@ theorem repeat_builtin_count_one {a c : ResolvedArgumentAlgorithm} {ctx : EvalCt
       (applyBuiltinCounted .repeatBuiltin [a, c] ctx env).runState s = (.error e.nestMissingOutput, t) ∧
         O = (.error e.nestMissingOutput, t)) := by
   intro L O
-  obtain ⟨hag, hone⟩ := count_one_user (stepArgument stepCell) ctx env name _ s₄ s₅ alg hi hd hrows
+  obtain ⟨hag, hone⟩ := count_one_user (stepArgument stepCell) ctx env name _ s₄ s₅ alg hi hd hrows hplain
   have hbody : (repeatBody evalUnbounded a c ctx env).runState s = oneRoundOutcome L := by
     rw [repeat_setup_stages h]; exact hone
   have hLone : (oneRoundOutcome L).1 ≠ .error .fuelExhausted ↔ L.1 ≠ .error .fuelExhausted := by

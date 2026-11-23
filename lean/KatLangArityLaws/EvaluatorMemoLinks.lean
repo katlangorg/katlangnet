@@ -614,7 +614,12 @@ theorem linkDisc_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM Coun
     (hdemand : ∀ b, LinkDisc (demand b)) (a : Nat) (suspension : NeedSuspension) :
     LinkDisc (NeedDemand.suspendedValue ev route demand a suspension) := by
   cases suspension with
-  | ready value => exact linkDisc_pure _
+  | ready value =>
+    -- A Ready cell holding a deferred list item is that position's demand (issue #204).
+    simp only [NeedDemand.suspendedValue]
+    split
+    · exact hdemand _
+    · exact linkDisc_pure _
   | expression e c v =>
     simp only [NeedDemand.suspendedValue]
     split
@@ -820,7 +825,7 @@ elab "link_whnf_core" : tactic => do
     shared list `evalrec_unfold`, `EvaluatorCore`); the plan route and the binding channels are
     their records. -/
 macro "link_unfold_rec" : tactic => `(tactic| evalrec_unfold (config := { proj := false })
-  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell, NeedChannels.capabilities])
+  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell])
 
 set_option hygiene false in
 /-- Syntax-directed link discipline (base: no recursive helper lemmas), given that `hrec`
@@ -906,18 +911,76 @@ theorem link_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀
   | nil => unfold selectViewWith; link_tac_base
   | cons c rest ih => unfold selectViewWith; link_tac_base
 
+/-! ### Lazy collections (issue #204): the recursive positional helpers -/
+
+theorem link_lazyDiscover (demand : Nat → EvalM CountedResult) (hd : ∀ a, LinkDisc (demand a))
+    (visit : Nat → EvalM Result) (hv : ∀ a, LinkDisc (visit a))
+    (limit : Option Nat) (candidates : List (Nat × Nat)) :
+    LinkDisc (LazyList.discover demand visit limit candidates) := by
+  induction candidates generalizing limit with
+  | nil => unfold LazyList.discover; link_tac_base
+  | cons c rest ih => unfold LazyList.discover; link_tac_base
+
+theorem link_selectPositionsWith {α : Type} (demand : α → EvalM Result) (hd : ∀ a, LinkDisc (demand a))
+    (positionAt : Nat → EvalM (Option Result)) (hp : ∀ n, LinkDisc (positionAt n))
+    (read : Result → EvalM Result) (hr : ∀ item, LinkDisc (read item)) (selectors : List α) :
+    LinkDisc (selectPositionsWith demand positionAt read selectors) := by
+  induction selectors with
+  | nil => unfold selectPositionsWith; link_tac_base
+  | cons c rest ih => unfold selectPositionsWith; link_tac_base
+
+theorem link_peelSpreadLayers (force : Result → EvalM Result) (hf : ∀ value, LinkDisc (force value))
+    (layers : Nat) (value : Result) : LinkDisc (peelSpreadLayers force layers value) := by
+  induction layers generalizing value with
+  | zero => unfold peelSpreadLayers; link_tac_base
+  | succ n ih => unfold peelSpreadLayers; link_tac_base
+
 /-- Capabilities whose every field is link-disciplined. -/
 structure CapsLink (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, LinkDisc (caps.value a)
   callable : ∀ a, LinkDisc (caps.callable a)
   allocate : ∀ s, LinkDisc (caps.allocate s)
   reference : ∀ a, LinkDisc (caps.reference a)
+  positions : ∀ a, LinkDisc (caps.positions a)
+  whole : ∀ a, LinkDisc (caps.whole a)
+
+/-- The read a structural pattern opens its cell through (issue #204) is one of two disciplined
+    capabilities. -/
+theorem link_structuralRead (caps : NeedCapabilities EvalM) (hc : CapsLink caps)
+    (pattern : NeedPattern) (address : Nat) :
+    LinkDisc (NeedBinder.structuralRead caps pattern address) := by
+  cases pattern <;> first | exact hc.value address | exact hc.positions address
+
+/-- THE PRODUCTION CAPABILITIES over disciplined channels are disciplined: the allocator and the
+    META capability as before, and the two lazy-collection reads (issue #204), each the VALUE channel
+    followed by a positional helper over that same channel. Stated once, so that a binder call
+    site proves its two channels only. -/
+theorem link_capabilities (channels : NeedChannels) (hv : ∀ a, LinkDisc (channels.value a))
+    (hc : ∀ a, LinkDisc (channels.callable a)) : CapsLink channels.capabilities := by
+  refine ⟨hv, hc, ?_, ?_, ?_, ?_⟩
+  · intro s; show LinkDisc (allocateNeed s); link_tac_base
+  · intro a; show LinkDisc (NeedPlan.reference a); link_tac_base
+  · intro a
+    have hpos : ∀ candidates, LinkDisc (LazyList.positions channels.value none candidates) :=
+      fun candidates => link_lazyDiscover channels.value hv _ (fun _ => by link_tac_base) none candidates
+    show LinkDisc (do
+      let (value, count) <- channels.value a
+      match value with
+      | .pendingList candidates =>
+          pure (Result.listValue (<- LazyList.positions channels.value none candidates), count)
+      | _ => pure (value, count))
+    link_tac_base
+  · intro a
+    show LinkDisc (do
+      let (value, count) <- channels.value a
+      pure (<- materializeVia channels.value value, count))
+    link_tac_base
 
 /-- NEED-04's data-anchor check demands only through the VALUE capability. -/
 theorem link_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsLink caps) (name : Ident)
     (anchor : CountedResult) (family : Bool) (cells : List Nat) :
     LinkDisc (NeedBinder.checkAnchor caps name anchor family cells) := by
-  have hv := hc.value
+  have hv := hc.whole
   induction cells with
   | nil => unfold NeedBinder.checkAnchor; link_tac_base
   | cons c rest ih => unfold NeedBinder.checkAnchor; link_tac_base
@@ -929,6 +992,7 @@ theorem link_binder (caps : NeedCapabilities EvalM) (hc : CapsLink caps) (repeat
     (∀ patterns sources current,
       LinkDisc (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hwh := hc.whole; have hread := link_structuralRead caps hc
   have hck := link_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
@@ -1168,6 +1232,9 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply link_discover)
   | (with_reducible apply link_selectWith)
   | (with_reducible apply link_selectViewWith)
+  | (with_reducible apply link_lazyDiscover)
+  | (with_reducible apply link_selectPositionsWith)
+  | (with_reducible apply link_peelSpreadLayers)
   | (with_reducible apply link_bindPatterns)
   | (with_reducible apply link_selectFamily)
   | (with_reducible apply link_collectSingleAtomicNumbers)
@@ -1196,6 +1263,7 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply link_filterLoop rec hrec)
   | (with_reducible apply link_mapLoop rec hrec)
   | (with_reducible apply link_repeatLoop rec hrec)
+  | (with_reducible apply link_capabilities)
   | (with_reducible apply CapsLink.mk)
 
   | split
@@ -1470,14 +1538,16 @@ theorem EvalBody.evalReduceCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkD
     LinkDisc (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; link_tac
 
-theorem EvalBody.evalFilterCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    LinkDisc (EvalBody.evalFilterCounted rec items predicateAlg ctx env) := by
+theorem EvalBody.evalFilterCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    LinkDisc (EvalBody.evalFilterCounted rec start items predicateAlg ctx env) := by
   unfold EvalBody.evalFilterCounted; link_tac
 
 theorem EvalBody.evalMapCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalMapCounted rec collection transformAlg ctx env) := by
   unfold EvalBody.evalMapCounted; link_tac
 
+-- Lazy collections (issue #204) enlarged this body (the pending-list stages); the same tactic needs more time.
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.applyBuiltinCountedSequence_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env) := by
   unfold EvalBody.applyBuiltinCountedSequence; link_tac
@@ -1552,6 +1622,9 @@ theorem EvalBody.evalArgumentViewBuiltin_linkDisc (rec : EvalRec) (hrec : ∀ c,
 theorem EvalBody.evalSequenceSpreadOperandValue_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalSequenceSpreadOperandValue rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadOperandValue; link_tac
+theorem EvalBody.evalRunValue_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    LinkDisc (EvalBody.evalRunValue rec e ctx env) := by
+  unfold EvalBody.evalRunValue; link_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
@@ -1649,7 +1722,7 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_linkDisc rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_linkDisc rec hrec b metadata args ctx env
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_linkDisc rec hrec collection stepAlg start ctx env
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_linkDisc rec hrec items predicateAlg ctx env
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_linkDisc rec hrec start items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_linkDisc rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_linkDisc rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_linkDisc rec hrec b args ctx env
@@ -1669,6 +1742,7 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   | argumentViewCells a => exact EvalBody.argumentViewCells_linkDisc rec hrec a
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_linkDisc rec hrec b a
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_linkDisc rec hrec e ctx env
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_linkDisc rec hrec e ctx env
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_linkDisc rec hrec e ctx env
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_linkDisc rec hrec e ctx env
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_linkDisc rec hrec elements ctx env

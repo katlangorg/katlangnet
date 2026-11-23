@@ -592,8 +592,12 @@ public class ArgumentValueOutcomeTests
         const string definitions = "Step(*xs) = if(xs.count == 0, trace(0) / 0, trace(xs.sum))\n";
         AssertOk(await OnEveryRouteAsync(definitions + "Use(f) = map([1, 2], f)\nUse(Step)"),
             "L[1, 2]", "trace(1)", "trace(2)");
-        AssertFails(await OnEveryRouteAsync(definitions + "Use(f) = map([1, 2], f), f\nUse(Step)"),
+        AssertFails(await OnEveryRouteAsync(definitions + "Use(f) = map([1, 2], f).sum, f\nUse(Step)"),
             KatLangErrorCode.DivisionByZero, "trace(1)", "trace(2)", "trace(0)");
+        // A mapped list that is only returned runs no callback before the captured failure ends
+        // the run (lazy collections, issue #204).
+        AssertFails(await OnEveryRouteAsync(definitions + "Use(f) = map([1, 2], f), f\nUse(Step)"),
+            KatLangErrorCode.DivisionByZero, "trace(0)");
     }
 
     [Fact]

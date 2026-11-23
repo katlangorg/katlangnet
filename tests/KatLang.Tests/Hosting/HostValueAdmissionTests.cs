@@ -445,10 +445,16 @@ public class HostValueAdmissionTests
     [Fact]
     public void CallbackReturn_IsAdmittedBeforeTheConsumerUsesIt()
     {
-        var outcome = Observe("map([3, 4, 3], Grow).count, Tick()", () => Num(0), Items(3));
+        // The consumer reads every callback return (`count` alone reads none of a mapped list's
+        // positions: lazy collections, issue #204).
+        var outcome = Observe("map([3, 4, 3], Grow).map({ count(x) }).sum, Tick()", () => Num(0), Items(3));
         Assert.Equal("err items 3/4", outcome.Text);
         Assert.Equal("calls=2 ticks=0", outcome.Effects);
-        Assert.Equal("ok S[3, 0]", Observe("map([3, 1, 3], Grow).count, Tick()", () => Num(0), Items(3)).Text);
+        Assert.Equal("ok S[7, 0]", Observe("map([3, 1, 3], Grow).map({ count(x) }).sum, Tick()", () => Num(0), Items(3)).Text);
+        // A cardinality question runs no callback, so nothing is there to admit.
+        var counted = Observe("map([3, 4, 3], Grow).count, Tick()", () => Num(0), Items(3));
+        Assert.Equal("ok S[3, 0]", counted.Text);
+        Assert.Equal("calls=0 ticks=1", counted.Effects);
     }
 
     [Fact]
@@ -602,9 +608,9 @@ public class HostValueAdmissionTests
         // before SEC-01-FU it was uncharged (50 × 200 nested expansions for zero units). Each call now
         // charges one unit per nested structure plus one per slot inside it (2 × 200); the host
         // returns a scalar, so admission adds nothing.
-        const string source = "Mk(i) = [i]\nX = map(range(1, 200), Mk)\nF(i) = Make(X)\nmap(range(1, 50), F).count";
+        const string source = "Mk(i) = [i]\nX = map(range(1, 200), Mk)\nF(i) = Make(X)\nmap(range(1, 50), F).sum";
         var outcome = Observe(source, () => Num(0));
-        Assert.Equal("ok 50", outcome.Text);
+        Assert.Equal("ok 0", outcome.Text);
         Assert.Equal(50 * 400, outcome.StructuralUnits);
         // Flat arguments and the run-result export charge nothing.
         Assert.Equal(0, Observe("A = [1, 2, 3]\nMake(A), Id(A)", () => Num(0)).StructuralUnits);

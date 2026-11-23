@@ -1960,18 +1960,27 @@ public static partial class Evaluator
     /// positioned at the written construct that exports the value (<see cref="RunExportSite"/>).
     /// </summary>
     internal static EvalResult<CountedResult> ExportRunValue(EvalResult<CountedResult> result, Expr? exported, EvalCtx ctx)
-        => result.IsOk && RunExportBoundaryError(result.Value.Value, ctx, out var exportedItemIndex) is { } refused
+    {
+        // The run's output is materialized first (lazy collections, issue #204): the synchronous
+        // run is still active here; the asynchronous twin has done it inside its boundary.
+        result = MaterializeRunOutput(result, ctx);
+        return result.IsOk && RunExportBoundaryError(result.Value.Value, ctx, out var exportedItemIndex) is { } refused
             ? refused with { Span = RunExportSite(exported, result.Value.Value, exportedItemIndex) }
             : result;
+    }
 
     /// <summary>
     /// The run result boundary applied to a run's value outcome (<see cref="RunExportBoundaryError"/>),
     /// positioned at the written construct that exports the value (<see cref="RunExportSite"/>).
     /// </summary>
     internal static EvalResult<Result> ExportRunValue(EvalResult<Result> result, Expr? exported, EvalCtx ctx)
-        => result.IsOk && RunExportBoundaryError(result.Value, ctx, out var exportedItemIndex) is { } refused
+    {
+        // Materialized first (issue #204) — see the counted overload.
+        result = MaterializeRunOutput(result, ctx);
+        return result.IsOk && RunExportBoundaryError(result.Value, ctx, out var exportedItemIndex) is { } refused
             ? refused with { Span = RunExportSite(exported, result.Value, exportedItemIndex) }
             : result;
+    }
 
     /// <summary>
     /// The run result boundary applied to a run's output AND its named top-level properties: all leave the

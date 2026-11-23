@@ -12,10 +12,10 @@ namespace KatLang.ParserFuzz;
 /// contexts, at most one failure, occasionally an invalid declaration). Enumerating the corpus only
 /// GENERATES; nothing is evaluated, so tests and replay can re-enumerate it cheaply.
 ///
-/// <para>Case ids are durable: <c>sem2b/v1/sys/…</c> or <c>sem2b/v1/&lt;recipe&gt;/&lt;hex&gt;/&lt;index&gt;</c>
+/// <para>Case ids are durable: <c>sem2b/v2/sys/…</c> or <c>sem2b/v2/&lt;recipe&gt;/&lt;hex&gt;/&lt;index&gt;</c>
 /// for a seeded recipe (<see cref="SeededRecipes"/>). A seeded case draws from its own stream, so
 /// <see cref="TryReconstruct"/> rebuilds exactly that case without generating any other. An
-/// enumerated program of a finite recipe is <c>sem2b/v1/&lt;recipe&gt;/all/&lt;choices&gt;</c>
+/// enumerated program of a finite recipe is <c>sem2b/v2/&lt;recipe&gt;/all/&lt;choices&gt;</c>
 /// (<see cref="ExhaustiveLocalId"/>); the campaign-only recipes are not part of this fixed corpus.</para>
 /// </summary>
 internal static class SemanticCorpus
@@ -619,10 +619,12 @@ internal static class SemanticCorpus
     // ── Assembly ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Composes fragments into one program and derives the composite expectation: root rows run in
-    /// order; the first failing row ends the run (no later row's effect); a successful run's value
-    /// is the sequence of row values followed by the root control row; an invalid declaration
-    /// stops everything in the front end.
+    /// Composes fragments into one program and derives the composite expectation: root rows are
+    /// EVALUATED in order and the first failing row ends the run (no later row's effect); the
+    /// assembled output is then READ WHOLE in row order — the elements of written lists that no
+    /// row read run here, and the first failing read ends the run (lazy collections, issue #204);
+    /// only then is the value exported. A successful run's value is the sequence of row values
+    /// followed by the root control row; an invalid declaration stops everything in the front end.
     /// </summary>
     private static SemanticBuiltCase Assemble(
         string localId,
@@ -653,31 +655,62 @@ internal static class SemanticCorpus
         var events = new List<string>();
         var values = new List<Result>();
         string? failure = null;
-        var paths = SemanticPath.None;
-        var minimumCacheHits = 0;
-        var ran = 0;
+
+        // Phase 1 — every root row is evaluated, in order.
+        var evaluated = 0;
         foreach (var fragment in ordered)
         {
-            ran++;
+            evaluated++;
             events.AddRange(fragment.Events);
-            paths |= fragment.Paths;
-            minimumCacheHits += fragment.MinimumCacheHits;
-            if (fragment.Failing)
+            if (fragment.Failing && !fragment.FailsLate && !fragment.FailsAtExport)
             {
                 failure = fragment.FailureCategory;
                 break;
             }
-
-            values.Add(fragment.Value ?? throw new InvalidOperationException($"fragment {fragment.Family} has no value"));
         }
 
-        if (failure is not null && ordered.Skip(ran).Any(f => f.Events.Count > 0))
+        // Phase 2 — the assembled output is read whole, in row order; phase 3 — it is exported.
+        var read = 0;
+        if (failure is null)
+        {
+            foreach (var fragment in ordered)
+            {
+                read++;
+                events.AddRange(fragment.LateEvents);
+                if (fragment.Failing && fragment.FailsLate)
+                {
+                    failure = fragment.FailureCategory;
+                    break;
+                }
+            }
+
+            failure ??= ordered.FirstOrDefault(static f => f.Failing)?.FailureCategory;
+        }
+
+        if (failure is null)
+            values.AddRange(ordered.Select(f => f.Value ?? throw new InvalidOperationException($"fragment {f.Family} has no value")));
+
+        // A fragment counts — its paths, its cache hits, its coverage — when everything it does
+        // ran: its evaluation, and for a fragment with a late part the read of its value too.
+        // (The failing fragment is the last one of its phase, and counts.)
+        var failed = failure is null ? null : read > 0 ? ordered[read - 1] : ordered[evaluated - 1];
+        if (failed is { Failing: false }) failed = ordered.First(static f => f.Failing);
+        var active = ordered.Where((f, at) => ReferenceEquals(f, failed) || (at < evaluated && (!f.ReadsLate || at < read))).ToList();
+        var paths = SemanticPath.None;
+        var minimumCacheHits = 0;
+        foreach (var fragment in active)
+        {
+            paths |= fragment.Paths;
+            minimumCacheHits += fragment.MinimumCacheHits;
+        }
+
+        var allEvents = ordered.Sum(static f => f.Events.Count + f.LateEvents.Count);
+        if (failure is not null && events.Count < allEvents)
             paths |= SemanticPath.FirstFailureStops;
         if (events.Any(e => e.StartsWith("wait:", StringComparison.Ordinal)))
             paths |= SemanticPath.AsyncSuspension;
 
         // Dead fragments after the first failure cannot satisfy semantic coverage floors.
-        var active = ordered.Take(ran).ToList();
         var families = active.Select(f => f.Family).Distinct().Order(StringComparer.Ordinal).ToImmutableArray();
         var features = new SortedSet<string>(active.SelectMany(f => f.Features), StringComparer.Ordinal);
         if (ordered.Count > 1)

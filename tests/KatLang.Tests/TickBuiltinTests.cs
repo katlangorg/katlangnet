@@ -88,7 +88,10 @@ public class TickBuiltinTests
     // Evaluation ORDER is observable through the counter: operands left to right, rows in order.
     [InlineData("tick() * 10 + tick()", "12")]
     [InlineData("tick() - tick()", "-1")]
-    [InlineData("[tick(), tick()], (tick(), tick())", "S[L[1, 2], S[3, 4]]")]
+    // The output is assembled first — the group's ticks run then — and the list's elements are
+    // read when the assembled output is materialized (lazy collections, issue #204).
+    [InlineData("[tick(), tick()], (tick(), tick())", "S[L[3, 4], S[1, 2]]")]
+    [InlineData("sum([tick(), tick()]), (tick(), tick())", "S[3, S[3, 4]]")]
     [InlineData("A = tick()\nB = tick()\nB, A, B", "S[1, 2, 1]")]
     // Each `map` callback invocation is a fresh call of the transform.
     [InlineData("map([10, 20, 30], { x + tick() })", "L[11, 22, 33]")]
@@ -105,7 +108,8 @@ public class TickBuiltinTests
     [InlineData("A = tick\nA")]
     [InlineData("A = tick\nA + 1")]
     [InlineData("F(x) = x + 1\nF(tick)")]
-    [InlineData("count([tick])")]
+    [InlineData("sum([tick])")]
+    [InlineData("first([tick])")]
     [InlineData("if(true, tick, 0)")]
     public async Task ABareValueDemand_RequiresTheExplicitInvocation_AndTicksNothing(string source)
     {

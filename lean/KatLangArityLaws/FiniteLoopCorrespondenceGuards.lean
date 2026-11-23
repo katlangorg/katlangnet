@@ -49,13 +49,14 @@ theorem litStep_rows (ctx : EvalCtx) (env : ValEnv) (cells : List Nat) (s : Eval
 /-- `count_one_user` holds for a concrete step, with every domain premise DISCHARGED: the only
     premise left is the projection of the retained step. -/
 theorem litStep_count_one (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (name : String)
-    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some litStep), s₁)) :
+    (cells : List NeedSupply.Sourced) (s s₁ : EvalState) (hi : (invokeNeed step).runState s = (.ok (some litStep), s₁))
+    (hplain : PlainRows ((runNeedStepSlots litStep ctx env cells name).runState s₁)) :
     StepAgreement id ((runNeedStepSlots litStep ctx env cells name).runState s₁)
       ((evalNeedUserSupply litStep (cells.map Prod.fst) ctx env).runState s₁) ∧
     (repeatAfterSetup evalUnbounded step ctx env name 1 cells).runState s =
       oneRoundOutcome ((runNeedStepSlots litStep ctx env cells name).runState s₁) :=
   count_one_user step ctx env name cells s s₁ litStep hi litStep_domain
-    (litStep_rows ctx env (cells.map Prod.fst) s₁)
+    (litStep_rows ctx env (cells.map Prod.fst) s₁) hplain
 
 /-- The slot `7` is canonical, so the value equality of the corollary applies to its row supply. -/
 theorem litStep_value : loopResultCounted [.atom 7] = ordinaryValue [.atom 7] :=
@@ -76,13 +77,14 @@ theorem two_rows_then_one
     (h₁ : (runNeedStepSlots alg₀ ctx env cells name).runState s₁ = (.ok [x, y], s₂))
     (hi₁ : (invokeNeed step).runState (pushReady s₂ [x, y]) = (.ok (some alg₀), s₃))
     (h₂ : (runNeedStepSlots alg₀ ctx env [(s₂.needs.size, none), (s₂.needs.size + 1, none)] name).runState s₃ =
-      (.ok [z], s₄)) :
+      (.ok [z], s₄)) (hz : PlainSlot z) :
     (repeatAfterSetup evalUnbounded step ctx env name 2 cells).runState s =
       (.ok (loopResultCounted [z]), pushCompleted s₄ [z]) := by
   have ht : RepeatTrace step ctx env name 2 cells s (.ok (readyState s₄.needs.size [z])) (pushReady s₄ [z]) :=
     .next hi₀ h₁ (.next hi₁ h₂ (.done _ _))
   have hm : (materialize (readyAddrs s₄.needs.size [z])).runState (pushReady s₄ [z]) =
       (.ok [z], pushCompleted s₄ [z]) := materialize_ready [z] s₄.needs (pushReady s₄ [z]) rfl
+        (fun w hw => by rw [List.mem_singleton.mp hw]; exact hz)
   exact ((repeat_after_setup_iff step ctx env name 2 cells s _ _).2 ⟨_, _, ht, .materialized hm⟩).1
 
 /-- One grouped row and two rows are ONE public value but different next states. -/

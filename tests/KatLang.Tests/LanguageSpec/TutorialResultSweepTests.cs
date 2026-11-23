@@ -54,6 +54,10 @@ public class TutorialResultSweepTests
                     "**Result:** error — division by zero, while computing `Bad*` for the call.",
                     KatLangErrorCode.DivisionByZero),
                 new(
+                    "[1, 1 / 0]",
+                    "**Result:** error — division by zero.",
+                    KatLangErrorCode.DivisionByZero),
+                new(
                     "sum(1, 2, 3)",
                     "**Result:** error — `sum` takes one collection, but three separate numbers were passed.",
                     KatLangErrorCode.ArityMismatch),

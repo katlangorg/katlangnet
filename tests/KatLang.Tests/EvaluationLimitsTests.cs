@@ -794,10 +794,15 @@ public class EvaluationLimitsTests
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
             ErrorOf("G(y) = y + 1\nInc = G(x)\nInc(0).repeat(1000)", Steps(200)));
 
+    // `sum` reads every mapped position, and each read is a charged callback invocation. Counting
+    // the mapped list invokes none (lazy collections, issue #204), so it stays within the budget.
     [Fact]
     public void CollectionCallbackPipeline_IsCharged()
-        => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("F(x) = x + 1\nrange(1, 1000).map(F).count", Steps(100)));
+    {
+        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
+            ErrorOf("F(x) = x + 1\nrange(1, 1000).map(F).sum", Steps(100)));
+        Assert.False(Eval("F(x) = x + 1\nrange(1, 1000).map(F).count", Steps(100)).IsError);
+    }
 
     [Fact]
     public void ReduceCallback_IsCharged()

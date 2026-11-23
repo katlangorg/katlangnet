@@ -80,7 +80,42 @@ theorem BoundV.mk' {h : Array NeedCell} {p : PreparedSequenceBuiltinInput} {it :
     {sa : List PreparedSequenceBuiltinSuffixArg} {view : Option Nat} {slice? : Option (List Nat)}
     (v1 : RLV h p.items) (v2 : CRLV h it) (v3 : SuffixLV h sa) (v4 : OptAddr h view) (v5 : OptSliceV h slice?) :
     BoundV h { preparedInput := p, iterationItems := it, suffixArgs := sa, view? := view, slice? := slice? } :=
-  ⟨v1, v2, v3, v4, v5⟩
+  ⟨v1, v2, v3, v4, v5, fun _ e => by cases e⟩
+/-- A pending list bound as the collection of a lazy stage (issue #204). -/
+theorem BoundV.pending' {h : Array NeedCell} {sa : List PreparedSequenceBuiltinSuffixArg}
+    {candidates : List (Nat × Nat)} (v3 : SuffixLV h sa) (v6 : CandV h candidates) :
+    BoundV h ({ preparedInput := { items := [] }, iterationItems := [], suffixArgs := sa, pending? := some candidates } : BoundSequenceBuiltinArguments) :=
+  ⟨RLV.nil, CRLV.nil, v3,
+    (fun a e => by
+      have e' : (none : Option Nat) = some a := e
+      cases e'),
+    (fun s e => by
+      have e' : (none : Option (List Nat)) = some s := e
+      cases e'),
+    (fun c e => by
+      have e' : some candidates = some c := e
+      cases e'; exact v6)⟩
+/-- The callback control a pipeline step invokes is a valid prepared control. -/
+theorem callbackSlot_valid {h : Array NeedCell} {slot : ResolvedArgumentAlgorithm} (v : RAV h slot) :
+    SuffixLV h [LazyList.callbackSlot slot] := by
+  intro x m
+  simp only [List.mem_singleton] at m
+  subst m
+  unfold LazyList.callbackSlot
+  split
+  · rename_i address e
+    show address < h.size
+    exact v address e
+  · trivial
+theorem pendingStageCandidates_valid {h : Array NeedCell} {b : Builtin} {value : Result}
+    {candidates : List (Nat × Nat)} (e : pendingStageCandidates? b value = some candidates) (v : RV h value) :
+    CandV h candidates := by
+  unfold pendingStageCandidates? at e
+  split at e
+  · split at e
+    · cases e; exact RV.pending_cand v
+    · cases e
+  · cases e
 theorem OptSliceV.nothing {h : Array NeedCell} : OptSliceV h none := fun _ e => by cases e
 theorem OptSliceV.of_valid {h : Array NeedCell} {slice : List Nat} (v : ValidAddresses h slice) :
     OptSliceV h (Option.some slice) := fun _ e => by cases e; exact v
@@ -91,7 +126,9 @@ theorem RLV.takePrefix' {h : Array NeedCell} {xs : List Result} {count : Int} (v
   split at m
   · cases m
   · exact v x (List.mem_of_mem_take m)
-attribute [ht_lemmas] BoundV.mk' OptSliceV.nothing OptSliceV.of_valid RLV.takePrefix'
+attribute [ht_lemmas] BoundV.mk' OptSliceV.nothing OptSliceV.of_valid RLV.takePrefix' BoundV.pending'
+  pendingStageCandidates_valid callbackSlot_valid
+attribute [ht_fwd] pendingStageCandidates_valid
 attribute [ht_lemmas] ItemV.with_value ItemV.with_error ItemV.with_error_callable collectItems_valid ItemLV.of_eq
 attribute [ht_fwd] collectItems_valid ItemLV.of_eq
 
@@ -177,7 +214,11 @@ theorem BoundV.suffix {b : BoundSequenceBuiltinArguments} (v : BoundV h b) : Suf
 theorem BoundV.view {b : BoundSequenceBuiltinArguments} {a : Nat} (v : BoundV h b) (e : b.view? = some a) :
     a < h.size := v.2.2.2.1 a e
 theorem BoundV.slice {b : BoundSequenceBuiltinArguments} {slice : List Nat} (v : BoundV h b)
-    (e : b.slice? = some slice) : ValidAddresses h slice := v.2.2.2.2 slice e
+    (e : b.slice? = some slice) : ValidAddresses h slice := v.2.2.2.2.1 slice e
+theorem BoundV.pending {b : BoundSequenceBuiltinArguments} {candidates : List (Nat × Nat)} (v : BoundV h b)
+    (e : b.pending? = some candidates) : CandV h candidates := v.2.2.2.2.2 candidates e
+attribute [ht_lemmas] BoundV.pending
+attribute [ht_fwd] BoundV.pending
 theorem SuffixLV.nil' : SuffixLV h [] := fun _ m => by cases m
 theorem SuffixLV.cons' {x : PreparedSequenceBuiltinSuffixArg} {xs : List PreparedSequenceBuiltinSuffixArg}
     (v : SuffixV h x) (vs : SuffixLV h xs) : SuffixLV h (x :: xs) := by
@@ -761,8 +802,8 @@ theorem EvalBody.evalReduceCounted_sound (rec : EvalRec) (hrec : RecSound rec) (
     SoundI (CallPre (.evalReduceCounted collection stepAlg start ctx env)) (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) (CallPost (.evalReduceCounted collection stepAlg start ctx env)) := by
   unfold EvalBody.evalReduceCounted; ht_tac
 
-theorem EvalBody.evalFilterCounted_sound (rec : EvalRec) (hrec : RecSound rec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    SoundI (CallPre (.evalFilterCounted items predicateAlg ctx env)) (EvalBody.evalFilterCounted rec items predicateAlg ctx env) (CallPost (.evalFilterCounted items predicateAlg ctx env)) := by
+theorem EvalBody.evalFilterCounted_sound (rec : EvalRec) (hrec : RecSound rec) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    SoundI (CallPre (.evalFilterCounted start items predicateAlg ctx env)) (EvalBody.evalFilterCounted rec start items predicateAlg ctx env) (CallPost (.evalFilterCounted start items predicateAlg ctx env)) := by
   unfold EvalBody.evalFilterCounted; ht_tac
 
 theorem EvalBody.evalMapCounted_sound (rec : EvalRec) (hrec : RecSound rec) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -843,6 +884,9 @@ theorem EvalBody.evalArgumentViewBuiltin_sound (rec : EvalRec) (hrec : RecSound 
 theorem EvalBody.evalSequenceSpreadOperandValue_sound (rec : EvalRec) (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalSequenceSpreadOperandValue e ctx env)) (EvalBody.evalSequenceSpreadOperandValue rec e ctx env) (CallPost (.evalSequenceSpreadOperandValue e ctx env)) := by
   unfold EvalBody.evalSequenceSpreadOperandValue; ht_tac
+theorem EvalBody.evalRunValue_sound (rec : EvalRec) (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    SoundI (CallPre (.evalRunValue e ctx env)) (EvalBody.evalRunValue rec e ctx env) (CallPost (.evalRunValue e ctx env)) := by
+  unfold EvalBody.evalRunValue; ht_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_sound (rec : EvalRec) (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalSequenceSpreadCounted e ctx env)) (EvalBody.evalSequenceSpreadCounted rec e ctx env) (CallPost (.evalSequenceSpreadCounted e ctx env)) := by
@@ -1054,7 +1098,7 @@ theorem evalStep_sound : BodySound := by
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_sound rec hrec item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_sound rec hrec b metadata args ctx env
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_sound rec hrec collection stepAlg start ctx env
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_sound rec hrec items predicateAlg ctx env
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_sound rec hrec start items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_sound rec hrec collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_sound rec hrec b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_sound rec hrec b args ctx env
@@ -1074,6 +1118,7 @@ theorem evalStep_sound : BodySound := by
   | argumentViewCells a => exact EvalBody.argumentViewCells_sound rec hrec a
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_sound rec hrec b a
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_sound rec hrec e ctx env
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_sound rec hrec e ctx env
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_sound rec hrec e ctx env
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_sound rec hrec e ctx env
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_sound rec hrec elements ctx env

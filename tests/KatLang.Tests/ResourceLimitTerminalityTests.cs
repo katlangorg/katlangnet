@@ -521,6 +521,8 @@ public class ResourceLimitTerminalityTests
     [InlineData("reduce([], {x + y}, DeepP)")]
     [InlineData("filter([], {x > 0}, {DeepP})")]
     [InlineData("map([], DeepP*)")]
+    // A strict builtin reads its list's positions; `count` reads none (lazy collections, issue #204).
+    [InlineData("sum([DeepP])")]
     [InlineData("count([DeepP])")]
     [InlineData("count({DeepP}, 2)")]
     [InlineData("take([1, 2], {DeepP})")]
@@ -530,7 +532,7 @@ public class ResourceLimitTerminalityTests
     public async Task EveryBindingShape_RespectsActualDemand(string program)
     {
         var result = await OnEveryRouteAsync(WithDeepPrelude(program) + ", trace(2)", limits: Shallow);
-        string[] reached = ["Q(x, x)", "P((a, b))", "F(0)", "reduce([],", "map([], DeepP*)", "count([DeepP])", "take([1, 2]", "Step(s) = s + 1\nrepeat"];
+        string[] reached = ["Q(x, x)", "P((a, b))", "F(0)", "reduce([],", "map([], DeepP*)", "sum([DeepP])", "take([1, 2]", "Step(s) = s + 1\nrepeat"];
         if (reached.Any(program.StartsWith)) AssertTerminal(result, KatLangErrorCode.EvaluationDepthExceeded, "trace(1)");
         else if (program is "5.string(DeepP)" or "filter([], {x > 0}, {DeepP})" or "count({DeepP}, 2)")
             AssertFails(result, KatLangErrorCode.ArityMismatch);

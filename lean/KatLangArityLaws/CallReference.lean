@@ -314,15 +314,15 @@ mutual
     | metaRef name => simp [NeedPattern.metaFree] at hp
     | sequence ps =>
       simp only [NeedPattern.metaFree] at hp
-      simp only [NeedBinder.bindOne]
+      simp only [NeedBinder.bindOne, NeedBinder.structuralRead]
       simp only [sources_ignore_reference k r ps hp]
     | list ps =>
       simp only [NeedPattern.metaFree] at hp
-      simp only [NeedBinder.bindOne]
+      simp only [NeedBinder.bindOne, NeedBinder.structuralRead]
       simp only [sources_ignore_reference k r ps hp]
     | unpack ps =>
       simp only [NeedPattern.metaFree] at hp
-      simp only [NeedBinder.bindOne]
+      simp only [NeedBinder.bindOne, NeedBinder.structuralRead]
       simp only [sources_ignore_reference k r ps hp]
 
   theorem sources_ignore_reference (k : NeedCapabilities EvalM) (r : Nat → EvalM Nat)

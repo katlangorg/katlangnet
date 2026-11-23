@@ -1031,6 +1031,7 @@ For `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`,
 - `reducer(element, accumulator)` receives the current item as one selected value — exactly what `S[i]` returns
 - The reducer returns its ORDINARY call result, and that one value becomes the next accumulator whole: several output rows are ONE sequence accumulator (`R(x, acc) = x, acc` makes `reduce([1, 2], R, 0)` the nested `(2, (1, 0))`, which is `R(2, R(1, 0))` — never flattened), and `()` and `[]` are ordinary accumulators (`Keep(x, acc) = acc` over the initial `()` gives `()`). `()` never means "keep the previous accumulator". An unintended extra output row is valid and nests an unexpected sequence accumulator, so write exactly the state you mean, such as `(total + x, itemCount + 1)`
 - The accumulator is ONE ordinary argument, bound by the reducer's parameter pattern: a normal parameter receives the accumulator value whole, a structural pattern such as `(total, itemCount)` or `(*history)` opens it, and a top-level collecting accumulator parameter collects it as one item (`[accumulator]`)
+- Lists and collection pipelines are evaluated on demand: a list literal `[a, b]` evaluates an element only when something reads that position, and at most once per list; `map` runs its mapper only for the positions that are read (it reads the source item first, then the mapper); `filter` looks for matches in order only as far as its reader needs and never tests an item twice; `take(n)` checks its count first and reads at most `n` items. `count` over a list of known length reads no element, `first` reads one, selection `L[i]` reads only position `i`, and a list pattern checks the list's length before it reads any field. So `[10, 1 / 0][0]` is `10`, `[1, 2].map{if(n == 1, 10, 1 / 0)}.first` is `10`, and `[1, 0].filter{1 / n > 0}.take(1)` is `[1]`. Everything else reads all positions in order: an explicit spread `xs*`, `sum`/`min`/`max`/`avg`/`order`/`skip`/`distinct`/`contains`/`reduce` (which computes its whole collection before folding), `==`/`!=`, `atoms`, and the program's result itself — output rows are computed first, then every list in the result is read left to right, so an element that fails still fails the program (`[1, 1 / 0]` is a division-by-zero error). An explicit spread element inside a list literal (`[xs*, y]`) is evaluated when the list is built. A sequence `(a, b)` is still evaluated whole. Do not rely on a list element's side effects (`tick()`, random draws) happening where the list is written: they happen when the element is first read.
 - `reduce` evaluates its accumulators on demand: it computes its whole collection first, then asks only for the last reducer call, and each call receives its accumulator unevaluated — reading it runs the call before it, back to the initial value, and each accumulator is evaluated at most once. So `reduce([a, b], R, i)` is `R(b, R(a, i))` in value and in which accumulators are evaluated: a reducer that ignores its accumulator (`Last(x, acc) = x`) skips every earlier call and the initial value, and effects inside the reducer happen for the LAST element first. Each complete ordinary call result is the next accumulator. The map unfolding equation compares result values for pure, deterministic, total computations: map demands its collection first, while expanded calls may skip unused arguments, so it does not guarantee identical effects, argument demand, random draws, resource consumption or error timing
 - When the accumulator is a sequence-value state such as `(n, found)` or `(sum, count)`, the final result's fields are selected directly with `[0]` and `[1]`. Do not write `reduce(...)[0][1]` unless the first accumulator field is itself a sequence value and its second member is needed
 - A sequence value inside the opened collection contributes one fold step; the element is passed intact as one value, never opened or flattened
@@ -1698,7 +1699,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (181 of the 800-case canonical language specification,
+Verified reference examples (184 of the 809-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -3000,6 +3001,27 @@ Regenerate this block from the repo root with:
     [(1, 1)]
     [(1, 1)]
     true
+
+[lazy-list-selection-reads-only-the-selected-position] A list literal evaluates its elements on demand: each ordinary written element is one deferred computation, evaluated at most once, when a consumer reads that position. Selection reads only the position it names, so the failing second element is never evaluated.
+
+    [10, 1 / 0][0]
+
+  Displays:
+    10
+
+[lazy-map-runs-its-mapper-only-for-the-positions-read] `map` preserves positions and evaluates nothing when it is called: position `i` of the result is the mapper applied to position `i` of the source, computed at most once, when it is first read. `first` reads position zero only, so the mapper never runs for the second element.
+
+    [1, 2].map{if(n == 1, 10, 1 / 0)}.first
+
+  Displays:
+    10
+
+[lazy-filter-discovers-only-the-matches-it-needs] `filter` discovers its matches in source order, only as far as its consumer asks, and never inspects a candidate twice. `take(1)` needs one match, which the first element supplies, so the predicate never runs for `0`.
+
+    [1, 0].filter{1 / n > 0}.take(1)
+
+  Displays:
+    [1]
 
 [reduce-accumulators-are-evaluated-on-demand] `reduce` evaluates its accumulators on demand: it demands only its last step, and each step receives its accumulator unevaluated, so `reduce([a, b], R, i)` is `R(b, R(a, i))` in value and in the demand of its accumulators. A reducer that ignores its accumulator skips every earlier step and the initial expression; one that reads it evaluates it once.
 

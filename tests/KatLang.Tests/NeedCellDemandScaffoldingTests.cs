@@ -479,6 +479,20 @@ public class NeedCellDemandScaffoldingTests
     /// bound. Each margin is smaller than every saving of 2026-11-18/19 (the inline first wait-for edge,
     /// the cell's own monitor as its gate, the projection completion created by its first joiner), so
     /// those still fail too.
+    ///
+    /// <para>On 2026-11-23 every bound was moved by the MEASURED cost of evaluating lists on demand
+    /// (issue #204), keeping its margin, so each earlier saving still fails its row. IfHeavy, MathHeavy
+    /// and RuntimeProjection map 2,000 elements, and a mapped position is now a cell read on demand:
+    /// +432.2 bytes per element in Release on both routes (+480.2 on the RuntimeProjection twin), and in
+    /// Debug +1,336.5 synchronously and +1,880.7 to +2,200.5 on the twin, where the single-body step
+    /// methods' state machines are heap objects. RecursiveCalls builds no list: only its Debug twin
+    /// moved (+251.8, the twin spine machine's state object carries the locals of its lazy-selection
+    /// and equality-materialization arms). Measured before (base <c>cd9bffa4</c>) and after with the
+    /// same harness: Debug sync 2,862.9 → 4,199.4, 3,122.0 → 3,122.0, 4,198.9 → 5,535.4, 7,464.6 →
+    /// 8,801.1; Debug twin 15,016.5 → 16,973.2, 19,803.3 → 20,055.1, 20,720.5 → 22,601.2, 27,290.4 →
+    /// 29,490.9; Release sync 2,062.1 → 2,494.3, 2,361.8 → 2,361.8, 3,294.1 → 3,726.3, 5,368.0 →
+    /// 5,800.2; Release twin 2,061.8 → 2,494.0, 2,360.7 → 2,360.7, 3,293.8 → 3,726.0, 5,904.0 →
+    /// 6,384.2 (rows in the order of the table below).</para>
     /// </summary>
     [Fact]
     public void DemandAndMathWorkloads_StayBelowTheirMeasuredBounds_GcIsolatedChild()
@@ -489,14 +503,14 @@ public class NeedCellDemandScaffoldingTests
         var failures = new List<string>();
         foreach (var (workload, asynchronous, debugBound, releaseBound) in new (string, bool, int, int)[]
         {
-            ("IfHeavy", false, 2_916, 2_108),
+            ("IfHeavy", false, 4_253, 2_540),
             ("RecursiveCalls", false, 3_203, 2_443),
-            ("MathHeavy", false, 4_218, 3_306),
-            ("RuntimeProjection", false, 7_608, 5_408),
-            ("IfHeavy", true, 15_058, 2_107),
-            ("RecursiveCalls", true, 19_864, 2_442),
-            ("MathHeavy", true, 20_732, 3_305),
-            ("RuntimeProjection", true, 27_322, 5_944),
+            ("MathHeavy", false, 5_554, 3_738),
+            ("RuntimeProjection", false, 8_944, 5_840),
+            ("IfHeavy", true, 17_015, 2_539),
+            ("RecursiveCalls", true, 20_116, 2_442),
+            ("MathHeavy", true, 22_613, 3_737),
+            ("RuntimeProjection", true, 29_523, 6_424),
         })
         {
 #if DEBUG

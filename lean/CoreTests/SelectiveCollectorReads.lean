@@ -145,9 +145,10 @@ private def relay : PropDef := privateProp "Relay" (alg ["w"] [] [reference "B" 
 -- A list handed to a helper is ordinary data.
 #guard isDiv (program [countHelper, fWith [] [.call (.resolve "Size") [.listLiteral [.sequenceSpread xs]]]] (callF [bad]))
 
--- A whole VALUE stays eager ---------------------------------------------------------------
+-- A whole VALUE is read whole; a list literal defers its elements (issue #204) -------------
 #guard isDiv (run [xs] [bad])
-#guard isDiv (runResult (.index (.listLiteral [.num 10, bad]) [.num 0]))
+-- `[10, 1 / 0][0]` is `10`: selection reads only the position it names.
+#guard isOk (n 10) (runResult (.index (.listLiteral [.num 10, bad]) [.num 0]))
 #guard isDiv (run [.index (.listLiteral [.sequenceSpread xs]) [.num 0]] [.num 10, bad])
 #guard isDiv (run [dot (.listLiteral [.sequenceSpread xs]) "count"] [bad])
 #guard isDiv (run [dot (.listLiteral [.sequenceSpread xs]) "take" (some [.num 0])] [bad])
@@ -183,8 +184,9 @@ private def relay : PropDef := privateProp "Relay" (alg ["w"] [] [reference "B" 
 -- The count is validated BEFORE a known collector's prefix (the recorded precedence change) ...
 #guard isType (run [dot (.param "xs") "take" (some [.boolLiteral true])] [bad, .num 2])
 #guard isBadIndex (run [dot xs "take" (some [.index (.listLiteral []) [.num 0]])] [bad])
--- ... and an ordinary collection's receiver still fails first.
-#guard isDiv (runResult (dot (.listLiteral [bad]) "take" (some [.boolLiteral true])))
+-- ... and over a list literal too: `take` validates its count before any position is read
+-- (lazy collections, issue #204), so the unread failing element is never reached.
+#guard isType (runResult (dot (.listLiteral [bad]) "take" (some [.boolLiteral true])))
 
 -- Effects: first-demand order, one completion per cell, skipped elements execute nothing ---
 #guard isOk (.sequenceValue [n 1, n 2, n 1]) (run [.index xs [.num 1, .num 0, .num 1]] [tick, tick])

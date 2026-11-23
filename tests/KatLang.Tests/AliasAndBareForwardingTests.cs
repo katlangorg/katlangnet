@@ -1028,7 +1028,9 @@ public class AliasAndBareForwardingTests
     [InlineData("G(a, b) = Eff3\nG(Rand, Rand), Rand", "Eff3(Rand, Rand), Rand")]
     [InlineData("G(a, b) = Eff3\nG(Rand, Rand()), Rand", "Eff3(Rand, Rand()), Rand")]
     [InlineData("Outer(a, b) = {\n  Local(q) = Eff3\n  Local(0)\n}\nOuter(trace(1), trace(2))", "Eff3(trace(1), trace(2))")]
-    [InlineData("Outer(a, b) = {\n  Local(q) = Eff3\n  Local(0), Local(1)\n}\nOuter(Rand, tock())", "Eff3(Rand, tock()), Eff3(Rand, 1)")]
+    // Both forwarded calls return their list unread and tick once; the one shared `b` cell then runs
+    // when the first list is read (the third tick), and the second list reads the same cell.
+    [InlineData("Outer(a, b) = {\n  Local(q) = Eff3\n  Local(0), Local(1)\n}\nOuter(Rand, tock())", "Eff3(Rand, tock()), Eff3(Rand, 3)")]
     public async Task ForwardingEvaluatesEveryArgumentExactlyOnce(string program, string direct)
     {
         const string prelude = Vocabulary

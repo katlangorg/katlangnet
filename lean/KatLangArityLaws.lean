@@ -2426,6 +2426,8 @@ mutual
     | .bool _ => by simp [Result.normalize]
     | .callRef _ => by simp [Result.normalize]
     | .argView _ => by simp [Result.normalize]
+    | .deferred _ => by simp [Result.normalize]
+    | .pendingList _ => by simp [Result.normalize]
     | .sequenceValue rs => by
         have hl := normalize_map_idempotent rs
         cases h : rs.map Result.normalize with
@@ -2474,6 +2476,8 @@ mutual
     | .bool _ => true
     | .callRef _ => true
     | .argView _ => true
+    | .deferred _ => true
+    | .pendingList _ => true
     | .sequenceValue rs => rs.length != 1 && orphanFreeResultList rs
     -- Exact lists carry NO singleton-orphan rule: `[x]` is literal-writable,
     -- so only the elements are checked (a sequence orphan nested inside a
@@ -2512,6 +2516,8 @@ mutual
     | .bool _ => by simp [Result.normalize, orphanFreeResult]
     | .callRef _ => by simp [Result.normalize, orphanFreeResult]
     | .argView _ => by simp [Result.normalize, orphanFreeResult]
+    | .deferred _ => by simp [Result.normalize, orphanFreeResult]
+    | .pendingList _ => by simp [Result.normalize, orphanFreeResult]
     | .sequenceValue rs => by
         have hl := orphanFreeList_map_normalize rs
         cases h : rs.map Result.normalize with
@@ -2604,6 +2610,14 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
       show captureForArityLaw [Result.argView a] = Result.argView a
       rw [capture_singleton]
       exact h
+  | deferred a =>
+      show captureForArityLaw [Result.deferred a] = Result.deferred a
+      rw [capture_singleton]
+      exact h
+  | pendingList a =>
+      show captureForArityLaw [Result.pendingList a] = Result.pendingList a
+      rw [capture_singleton]
+      exact h
   | sequenceValue rs =>
       rw [toItems_sequenceValue]
       exact h
@@ -2637,6 +2651,14 @@ theorem capture_spreadItems_of_canonical_non_list (r : Result)
       exact h
   | argView a =>
       show captureForArityLaw [Result.argView a] = Result.argView a
+      rw [capture_singleton]
+      exact h
+  | deferred a =>
+      show captureForArityLaw [Result.deferred a] = Result.deferred a
+      rw [capture_singleton]
+      exact h
+  | pendingList a =>
+      show captureForArityLaw [Result.pendingList a] = Result.pendingList a
       rw [capture_singleton]
       exact h
   | sequenceValue rs =>
@@ -2926,6 +2948,16 @@ theorem spreadItems_canonical_of_canonical {v : Result} (h : v.normalize = v) :
       simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
       subst hr
       exact h
+  | deferred a =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
+  | pendingList a =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
   | listValue rs =>
       rw [normalize_listValue] at h
       exact canonical_of_map_normalize_eq (Result.listValue.inj h)
@@ -3131,6 +3163,8 @@ theorem spreadItems_eq_nil_iff (v : Result) :
   | bool b => simp [Result.spreadItems, Result.toItems]
   | callRef a => simp [Result.spreadItems, Result.toItems]
   | argView a => simp [Result.spreadItems, Result.toItems]
+  | deferred a => simp [Result.spreadItems, Result.toItems]
+  | pendingList a => simp [Result.spreadItems, Result.toItems]
   | sequenceValue rs => simp [Result.spreadItems, Result.toItems]
   | listValue rs => simp [Result.spreadItems]
 
@@ -3238,6 +3272,8 @@ theorem spreadItems_eq_singleton_self_iff (x : Result) :
   | bool b => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | callRef a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | argView a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | deferred a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | pendingList a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | sequenceValue rs =>
       simp only [Result.structureItems?, reduceCtorEq, iff_false]
       intro h
@@ -3304,6 +3340,8 @@ private theorem spread_weight (r : Result) :
   | bool b => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | callRef a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | argView a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | deferred a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | pendingList a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | sequenceValue rs =>
       have hlt := sum_sizeOf_lt rs
       have hs : sizeOf (Result.sequenceValue rs) = 1 + sizeOf rs := by simp
@@ -3473,6 +3511,8 @@ theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .bool _ => Nat.le_refl 1
   | .callRef _ => Nat.le_refl 1
   | .argView _ => Nat.le_refl 1
+  | .deferred _ => Nat.le_refl 1
+  | .pendingList _ => Nat.le_refl 1
   | .sequenceValue [] => Nat.zero_le 1
   | .sequenceValue (_ :: _) => Nat.le_refl 1
   | .listValue _ => Nat.le_refl 1
@@ -3715,6 +3755,8 @@ mutual
     | .bool b => by rw [atoms_bool, hostAtoms_bool]
     | .callRef a => by simp [Result.languageAtoms, Result.hostAtoms]
     | .argView a => by simp [Result.languageAtoms, Result.hostAtoms]
+    | .deferred a => by simp [Result.languageAtoms, Result.hostAtoms]
+    | .pendingList a => by simp [Result.languageAtoms, Result.hostAtoms]
     | .sequenceValue rs => by
         rw [atoms_sequence, hostAtoms_sequence]
         exact languageAtomsList_eq_hostAtomsList rs
@@ -4226,7 +4268,7 @@ theorem bindNeedName_eq (c : NeedChannels) (name : Ident) (address : Nat) (repea
                 | none => pure true
               if agreed then pure (some (bound.withCallable name address identity)) else pure none
         | none => do
-            let own <- c.value address
+            let own <- c.capabilities.whole address
             match group.anchor with
             | some anchor =>
                 if own == anchor then pure (some bound)
@@ -4252,7 +4294,7 @@ theorem bindNeedOne_structural (c : NeedChannels) (pattern : NeedPattern) (ps : 
     (hp : pattern = .sequence ps ∨ pattern = .list ps ∨ pattern = .unpack ps)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne c pattern address repeated bound family = (do
-      let (value, _) <- c.value address
+      let (value, _) <- NeedBinder.structuralRead c.capabilities pattern address
       let items? := match pattern with
         | .list _ => Result.listPatternItems? value
         | .sequence _ => Result.sequencePatternItems? value
@@ -4670,7 +4712,7 @@ theorem nested_sequence_level_is_bind_need_level (channels : NeedChannels) (ps :
 theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne channels (.list ps) address repeated bound family = (do
-      let (value, _) <- channels.value address
+      let (value, _) <- channels.capabilities.positions address
       match Result.listPatternItems? value with
       | none =>
           if family then pure none else throw (structuralPatternKindMismatch (NeedPattern.list ps).toParameter value)
@@ -4684,7 +4726,7 @@ theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : Lis
 theorem nested_unpack_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
     (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne channels (.unpack ps) address repeated bound family = (do
-      let (value, _) <- channels.value address
+      let (value, _) <- channels.capabilities.positions address
       let cells <- (Result.spreadItems value).mapM (fun item => readyNeed (item, Result.valueCount item))
       bindNeedLevel channels ps cells repeated bound family) := by
   rfl
@@ -5135,3 +5177,110 @@ C#-only. -/
 theorem string_intrinsic_text_of_a_number (n : Int) :
     resultToString (.atom n) = pure (.str (toString n)) := by
   simp [resultToString]
+
+/-! ## Lazy collections (issue #204)
+
+A list's positions are evaluated on demand (`Result.deferred`, `Result.pendingList`). The laws
+here are about the values that hold NO lazy form — the CONCRETE values (`Result.isLazy` false),
+which is every value before issue #204 and every value a run hands out. On them each positional
+operation of the lazy model is the eager one: nothing is read, discovered or allocated. -/
+
+namespace KatLang.LazyCollections
+
+/-- A list without a lazy form holds only concrete values. -/
+theorem anyIsLazy_false {xs : List Result} (h : Result.anyIsLazy xs = false) :
+    ∀ x ∈ xs, x.isLazy = false := by
+  induction xs with
+  | nil => intro x hx; cases hx
+  | cons y ys ih =>
+    simp only [Result.anyIsLazy, Bool.or_eq_false_iff] at h
+    intro x hx
+    rcases List.mem_cons.mp hx with rfl | hx
+    · exact h.1
+    · exact ih h.2 x hx
+
+/-- Concrete values make a list without a lazy form. -/
+theorem anyIsLazy_of_all {xs : List Result} (h : ∀ x ∈ xs, x.isLazy = false) :
+    Result.anyIsLazy xs = false := by
+  induction xs with
+  | nil => rfl
+  | cons y ys ih =>
+    simp only [Result.anyIsLazy, Bool.or_eq_false_iff]
+    exact ⟨h y List.mem_cons_self, ih (fun x hx => h x (List.mem_cons_of_mem _ hx))⟩
+
+/-- The items a spread opens from a concrete value are concrete. -/
+theorem spreadItems_concrete {v : Result} (h : v.isLazy = false) : ∀ x ∈ v.spreadItems, x.isLazy = false := by
+  cases v with
+  | sequenceValue xs =>
+    intro x hx
+    exact anyIsLazy_false (by simpa [Result.isLazy] using h) x
+      (by simpa [Result.spreadItems, Result.toItems] using hx)
+  | listValue xs =>
+    intro x hx
+    exact anyIsLazy_false (by simpa [Result.isLazy] using h) x (by simpa [Result.spreadItems] using hx)
+  | deferred a => simp [Result.isLazy] at h
+  | pendingList cs => simp [Result.isLazy] at h
+  | _ =>
+    intro x hx
+    simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hx
+    subst hx; exact h
+
+/-- The elements a list pattern opens from a concrete value are concrete. -/
+theorem listPatternItems_concrete {v : Result} {items : List Result} (h : v.isLazy = false)
+    (hs : v.listPatternItems? = some items) : ∀ x ∈ items, x.isLazy = false := by
+  cases v <;> simp only [Result.listPatternItems?, Option.some.injEq, reduceCtorEq] at hs
+  subst hs
+  exact anyIsLazy_false (by simpa [Result.isLazy] using h)
+
+/-- The items a sequence pattern opens from a concrete value are concrete. -/
+theorem sequencePatternItems_concrete {v : Result} {items : List Result} (h : v.isLazy = false)
+    (hs : v.sequencePatternItems? = some items) : ∀ x ∈ items, x.isLazy = false := by
+  cases v <;> simp only [Result.sequencePatternItems?, Option.some.injEq, reduceCtorEq] at hs
+  subst hs
+  exact anyIsLazy_false (by simpa [Result.isLazy] using h)
+
+/-- A CONCRETE VALUE IS ITS OWN MATERIALIZED FORM: no cell is allocated and no position read,
+    whatever the demand and the path. -/
+theorem materializeVia_concrete (demand : Nat → EvalM CountedResult) (value : Result) (visiting : List Nat)
+    (h : value.isLazy = false) : materializeVia demand value visiting = pure value := by
+  simp [materializeVia, h]
+
+/-- A POSITION HOLDING A CONCRETE VALUE IS THAT VALUE: reading it demands nothing. -/
+theorem forcePosition_concrete (demand : Nat → EvalM CountedResult) (value : Result)
+    (h : value.isLazy = false) : forcePosition demand value = pure value := by
+  cases value <;> first | rfl | simp [Result.isLazy] at h
+
+/-- A READY CELL HOLDING A CONCRETE VALUE completes with it: only a Ready cell holding a deferred
+    item is an alias of that item's position. -/
+theorem suspendedValue_ready_concrete (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (address : Nat) (value : CountedResult)
+    (h : value.1.isLazy = false) :
+    NeedDemand.suspendedValue ev route demand address (.ready value) = pure value := by
+  obtain ⟨v, count⟩ := value
+  cases v <;> first | rfl | simp [Result.isLazy] at h
+
+/-- The written stars of a spread peeled over values that need no forcing: every star but the
+    last opens its value and re-captures the items; an argument view stops the peeling. -/
+def peeledSpread : Nat → Result → Nat × Result
+  | 0, value => (0, value)
+  | Nat.succ n, value =>
+      match value with
+      | .argView _ => (Nat.succ n, value)
+      | _ => peeledSpread n (Result.normalize (Result.sequenceValue value.spreadItems))
+
+/-- WITH NOTHING TO FORCE, PEELING IS PURE (`peeledSpread`). -/
+theorem peelSpreadLayers_pure : ∀ (n : Nat) (value : Result),
+    peelSpreadLayers pure n value = pure (peeledSpread n value)
+  | 0, value => by simp [peelSpreadLayers, peeledSpread]
+  | Nat.succ n, value => by
+    cases value <;> simp [peelSpreadLayers, peeledSpread, peelSpreadLayers_pure n]
+
+/-- PEELING THEN OPENING IS `openSpreadItems`: the value the last star opens, with the stars
+    still to apply, opens to exactly the items all the written stars open. -/
+theorem openSpreadItems_peeled : ∀ (n : Nat) (value : Result),
+    openSpreadItems (peeledSpread n value).1 (peeledSpread n value).2 = openSpreadItems n value
+  | 0, value => by cases value <;> rfl
+  | Nat.succ n, value => by
+    cases value <;> simp [peeledSpread, openSpreadItems, openSpreadItems_peeled n]
+
+end KatLang.LazyCollections

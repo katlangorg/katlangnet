@@ -700,7 +700,6 @@ public class OutputLessArgumentBlameTests
     [InlineData("Step(s) = s, false\nwhile(Step({}))")]
     [InlineData("Step(v, acc) = v + acc\nreduce([1], Step, {})")]
     [InlineData("Coll(*xs) = xs\nColl({}[0])")]
-    [InlineData("Coll(*xs) = xs\nColl([1, {}])")]
     [InlineData("Coll(*xs) = xs\nColl((1, {}))")]
     public async Task ValueDemandPaths_RetainWrittenSource_InBothTwins(string source)
     {
@@ -716,6 +715,27 @@ public class OutputLessArgumentBlameTests
         var asyncResult = await Evaluator.RunAsync(new Expr.AlgorithmExpr(ParseValidRoot(source)),
             new Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache());
         AssertSameDiagnosis(error, AssertError(asyncResult));
+    }
+
+    /// <summary>
+    /// A written LIST argument defers its elements (lazy collections, issue #204): supplying
+    /// <c>[1, {}]</c> evaluates no element, so the argument itself does not fail. The output-less
+    /// element fails where the list is read — here when the run's result is — as a plain missing
+    /// output located at its own written slot, the same on both twins.
+    /// </summary>
+    [Fact]
+    public async Task AnOutputLessElementOfAWrittenListArgument_FailsWhereTheListIsRead_AtItsOwnSlot()
+    {
+        const string source = "Coll(*xs) = xs\nColl([1, {}])";
+        var error = AssertEvalError(source);
+        Assert.IsType<EvalError.MissingOutput>(error);
+        Assert.Equal(new SourceSpan(2, 10, 2, 12), error.Span);
+        var asyncResult = await Evaluator.RunAsync(new Expr.AlgorithmExpr(ParseValidRoot(source)),
+            new Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache());
+        AssertSameDiagnosis(error, AssertError(asyncResult));
+
+        // Counting the list reads no element at all.
+        Assert.False(Evaluator.Run(new Expr.AlgorithmExpr(ParseValidRoot("Coll(*xs) = xs\nColl([1, {}]).first.count"))).IsError);
     }
 
     [Fact]

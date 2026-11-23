@@ -531,8 +531,10 @@ public class AbsentSourceLocationTests
         { "(1, [2, {}])", "{}" },
         { "[1, ({}, 2), 3]", "{}" },
         { "[[{}]]", "{}" },
-        { "P((x, *rest)) = x\nP([1, {}])", "{}" },
-        { "P((x, *rest)) = x\nmap([[1, {}]], P)", "{}" },
+        // Through a pattern: the list pattern binds the written list's positions unread, and
+        // the collected rest is read when the result is (lazy collections, issue #204).
+        { "P([x, *rest]) = rest\nP([1, {}])", "{}" },
+        { "P([x, *rest]) = rest\nmap([[1, {}]], P)", "{}" },
     };
 
     [Theory]

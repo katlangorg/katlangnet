@@ -687,6 +687,10 @@ public static partial class Evaluator
                     ? countedR.Error
                     : EvalResult<Result>.Ok(countedR.Value.Value);
             }
+
+            // THE RUN RESULT IS MATERIALIZED while the run is active (issue #204): inside the
+            // host-termination boundary, awaiting.
+            result = await MaterializeRunOutputAsync(result, ctx).ConfigureAwait(false);
         }
         finally
         {
@@ -735,6 +739,8 @@ public static partial class Evaluator
             evaluated = expr is Expr.AlgorithmExpr(var alg)
                 ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
                 : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+            // THE RUN RESULT IS MATERIALIZED while the run is active (issue #204).
+            evaluated = await MaterializeRunOutputAsync(evaluated, ctx).ConfigureAwait(false);
         }
         finally
         {
@@ -798,6 +804,8 @@ public static partial class Evaluator
             else
             {
                 var outputR = await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+                // THE RUN RESULT IS MATERIALIZED while the run is active (issue #204).
+                outputR = await MaterializeRunOutputAsync(outputR, ctx).ConfigureAwait(false);
                 result = outputR.IsError
                     ? outputR.Error
                     : EvalResult<CountedRootProgramResult>.Ok(
@@ -876,6 +884,8 @@ public static partial class Evaluator
             evaluated = expr is Expr.AlgorithmExpr(var alg)
                 ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
                 : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+            // THE RUN RESULT IS MATERIALIZED while the run is active (issue #204).
+            evaluated = await MaterializeRunOutputAsync(evaluated, ctx).ConfigureAwait(false);
         }
         finally
         {
@@ -948,6 +958,11 @@ public static partial class Evaluator
         // Read only now that the root output succeeded: counts never accompany a failure.
         var rootRowSlotCounts = rootOutputRows.TakeSlotCounts();
 
+        // THE RUN RESULT IS MATERIALIZED (issue #204) — see the synchronous twin.
+        outputR = await MaterializeRunOutputAsync(outputR, ctx).ConfigureAwait(false);
+        if (outputR.IsError)
+            return outputR.Error;
+
         // In the given order; the first failing read is the run's failure and no later name is read.
         var properties = new CountedResult?[topLevelPropertyNames.Count];
         for (var i = 0; i < properties.Length; i++)
@@ -956,7 +971,13 @@ public static partial class Evaluator
             if (propertyR.IsError)
                 return propertyR.Error;
 
-            properties[i] = propertyR.Value;
+            if (propertyR.Value is { } read)
+            {
+                var wholeR = await MaterializeRunOutputAsync(EvalResult<CountedResult>.Ok(read), ctx).ConfigureAwait(false);
+                if (wholeR.IsError)
+                    return wholeR.Error;
+                properties[i] = wholeR.Value;
+            }
         }
 
         return EvalResult<CountedRootProgramResult>.Ok(
@@ -1066,6 +1087,9 @@ public static partial class Evaluator
         for (var i = 0; i < argNames.Count; i++)
         {
             var valueR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
+            if (valueR.IsError) return valueR.Error;
+            // MIRROR — a host operation receives concrete values (issue #204).
+            valueR = await MaterializeRunOutputAsync(valueR, ctx).ConfigureAwait(false);
             if (valueR.IsError) return valueR.Error;
             // MIRROR — a call reference never reaches host code.
             if (HostArgumentBoundaryError(valueR.Value, ctx.Budget, ctx.Observations?.StructuralTraversal) is { } refused) return refused;
@@ -1388,8 +1412,31 @@ public static partial class Evaluator
                         hasPendingChild = false;
                         var link = links[frames[top].Phase - 1];
                         var previousOperand = frames[top].Phase == 1 ? first : links[frames[top].Phase - 2].Operand;
+                        var linkRight = pendingChild.Value;
+                        if (link.Op is ComparisonOp.Eq or ComparisonOp.Ne && ctx.Budget.HasLazyLists)
+                        {
+                            // EQUALITY COMPARES WHOLE VALUES (issue #204): both operands are
+                            // materialized, awaiting, the left one before the right one.
+                            var wholeLeft = await MaterializeValue(frames[top].FirstValue!, ctx, asynchronous: true).ConfigureAwait(false);
+                            if (wholeLeft.IsError)
+                            {
+                                completed = wholeLeft.Error;
+                                break;
+                            }
+
+                            var wholeRight = await MaterializeValue(linkRight, ctx, asynchronous: true).ConfigureAwait(false);
+                            if (wholeRight.IsError)
+                            {
+                                completed = wholeRight.Error;
+                                break;
+                            }
+
+                            frames[top].FirstValue = wholeLeft.Value;
+                            linkRight = wholeRight.Value;
+                        }
+
                         var linkR = ApplyComparison(
-                            link.Op, previousOperand, link.Operand, frames[top].FirstValue!, pendingChild.Value, frames[top].Node.Span, ctx);
+                            link.Op, previousOperand, link.Operand, frames[top].FirstValue!, linkRight, frames[top].Node.Span, ctx);
                         if (linkR.IsError)
                         {
                             completed = linkR.Error;
@@ -1398,7 +1445,7 @@ public static partial class Evaluator
 
                         if (!linkR.Value)
                             frames[top].ComparisonFailed = true;
-                        frames[top].FirstValue = pendingChild.Value;
+                        frames[top].FirstValue = linkRight;
                         frames[top].Phase++;
                         if (frames[top].Phase <= links.Count)
                         {
@@ -1470,6 +1517,12 @@ public static partial class Evaluator
                             var retainedValue = await retained[viewIndex].DemandAsync().ConfigureAwait(false);
                             completed = AcceptRetainedSelection(ref frames[top], retainedValue, ctx);
                         }
+                        else if (viewIndex >= 0 && frames[top].FirstValue is Result.ListValue { Lazy: { } positions })
+                        {
+                            // A list evaluated on demand (issue #204) — see the sync machine.
+                            var read = await ReadLazyPosition(positions, viewIndex, asynchronous: true).ConfigureAwait(false);
+                            completed = AcceptLazySelection(ref frames[top], read, ctx);
+                        }
                         else if (viewIndex >= 0)
                         {
                             var view = (Result.CallReference)frames[top].FirstValue!;
@@ -1489,54 +1542,8 @@ public static partial class Evaluator
 
                 case Expr.ListLiteral(var elements):
                     {
-                        frames[top].ListItems ??= NewListSlots(elements);
-                        if (hasPendingChild)
-                        {
-                            // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
-                            // spread, so its counted supply contributes exactly ONE value.
-                            hasPendingChild = false;
-                            AddListSlot(frames[top].ListItems!, pendingChild.Value, ctx.Budget);
-                            frames[top].Phase++;
-                        }
-
-                        while (frames[top].Phase < elements.Count)
-                        {
-                            var element = elements[frames[top].Phase];
-                            if (IsExpressionSpineNode(element))
-                                break;
-
-                            var slotsR = await EvalExplicitSequenceValueExprSlotsAsync(element, ctx, valEnv).ConfigureAwait(false);
-                            if (slotsR.IsError)
-                            {
-                                completed = slotsR.Error;
-                                break;
-                            }
-
-                            // Transient-bounded before it grows (SEC-01); mirrors the sync machine.
-                            AddListSlots(frames[top].ListItems!, slotsR.Value, ctx.Budget, element is Expr.SequenceSpread);
-                            frames[top].Phase++;
-                        }
-
-                        if (completed is not null)
-                            break;
-
-                        if (frames[top].Phase < elements.Count)
-                        {
-                            requestedChild = elements[frames[top].Phase];
-                            break;
-                        }
-
-                        // Cardinality is known once the written slots (including spread
-                        // expansion) are evaluated, so the reservation happens before the
-                        // persistent list is built.
-                        if (ReserveCollection(ctx, ListSlotTotal(frames[top].ListItems!), frames[top].Node.Span) is { } limitError)
-                        {
-                            completed = limitError;
-                            break;
-                        }
-
-                        completed = EvalResult<CountedResult>.Ok(new CountedResult(
-                            Result.ListValue.TakeOwnership(frames[top].ListItems!.ToArray()), 1));
+                        // LAZY COLLECTIONS (issue #204) — see the synchronous machine.
+                        completed = await EvalListLiteralAsync(elements, frames[top].Node.Span, ctx, valEnv).ConfigureAwait(false);
                         break;
                     }
 
@@ -2530,7 +2537,10 @@ public static partial class Evaluator
                 {
                     var atomsR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);
                     if (atomsR.IsError) return atomsR.Error;
-                    return MakeLanguageAtomsResult(ctx, atomsR.Value);
+                    // `atoms` reads the WHOLE value (issue #204) — see the synchronous twin.
+                    var wholeR = await MaterializeValue(atomsR.Value, ctx, asynchronous: true).ConfigureAwait(false);
+                    if (wholeR.IsError) return wholeR.Error;
+                    return MakeLanguageAtomsResult(ctx, wholeR.Value);
                 }
 
             case (BuiltinId.@range, 2):
@@ -2703,7 +2713,25 @@ public static partial class Evaluator
                 ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], view))
                 : ArgumentViewUnsupported(builtin);
 
-        var collectionValues = BuiltinCollectionItems(collectionItem.Value);
+        // LAZY COLLECTIONS (issue #204) — see the synchronous twin.
+        var collectionValue = collectionItem.Value;
+        if (BindsPositions(builtin, collectionValue))
+        {
+            var positionalControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
+            return positionalControls.IsError
+                ? positionalControls.Error
+                : EvalResult<BoundSequenceBuiltinArguments>.Ok(
+                    new BoundSequenceBuiltinArguments(default!, positionalControls.Value) { Positions = PositionsOf(collectionValue) });
+        }
+
+        if (collectionValue is Result.ListValue { Lazy: not null })
+        {
+            var level = await ForceLevel(collectionValue, ctx, asynchronous: true).ConfigureAwait(false);
+            if (level.IsError) return level.Error;
+            collectionValue = level.Value;
+        }
+
+        var collectionValues = BuiltinCollectionItems(collectionValue);
 
         var collected = new CollectedSequenceBuiltinInput(collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
@@ -2764,36 +2792,27 @@ public static partial class Evaluator
             return await EvalArgumentViewBuiltinAsync(builtin, argumentView, ctx).ConfigureAwait(false);
         if (boundR.Value.RetainedSlice is { } retainedSlice)
             return await EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: true).ConfigureAwait(false);
+        // POSITIONS READ ON DEMAND (issue #204) — see the synchronous twin.
+        if (boundR.Value.Positions is { } positions)
+            return await EvalPositionalBuiltin(builtin, metadata, boundR.Value.SuffixArgs, positions, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
 
-        // An ordinary call: the view and slice routes have returned above.
+        // An ordinary call: the view, slice and position routes have returned above.
         var (preparedInput, suffixArgs, _, _) = boundR.Value;
-        // The callback arms iterate these items through a CollectionIterationItems view made in the arm.
+        // The callback arm iterates these items through a CollectionIterationItems view made in the arm.
         var collectionItems = preparedInput.FlattenedItems;
 
-        // Only the callback-driven builtins (filter, map, reduce) await. Every other builtin is the
-        // synchronous ApplyValueSequenceBuiltinCounted, shared with the synchronous twin.
+        // `contains` and `distinct` compare WHOLE values (issue #204) — see the synchronous twin.
+        if (builtin is BuiltinId.@contains or BuiltinId.@distinct && ctx.Budget.HasLazyLists)
+        {
+            var comparedR = await MaterializeComparedOperands(builtin, preparedInput, suffixArgs, ctx, asynchronous: true).ConfigureAwait(false);
+            if (comparedR.IsError) return comparedR.Error;
+            (preparedInput, suffixArgs) = comparedR.Value;
+        }
+
+        // Only the callback-driven builtin left on this route (reduce) awaits. Every other builtin
+        // is the synchronous ApplyValueSequenceBuiltinCounted, shared with the synchronous twin.
         switch (builtin)
         {
-            case BuiltinId.@filter:
-                {
-                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                    // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
-                    var predicateR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
-                    if (predicateR.IsError) return predicateR.Error;
-
-                    return await EvalFilterCountedAsync(new CollectionIterationItems(collectionItems), predicateR.Value, ctx, valEnv).ConfigureAwait(false);
-                }
-
-            case BuiltinId.@map:
-                {
-                    if (collectionItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                    // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
-                    var transformR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
-                    if (transformR.IsError) return transformR.Error;
-
-                    return await EvalMapCountedAsync(new CollectionIterationItems(collectionItems), transformR.Value, ctx, valEnv).ConfigureAwait(false);
-                }
-
             case BuiltinId.@reduce:
                 {
                     // `initial` is a DEFERRED control: binding retained the supplied computation
@@ -2884,28 +2903,6 @@ public static partial class Evaluator
         ValEnv valEnv)
         => ReduceInitialValue(descriptor, await DemandSequenceBuiltinCallItemValueAsync(initial, ctx, valEnv).ConfigureAwait(false));
 
-    /// <summary>MIRROR OF <see cref="EvalFilterCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalFilterCountedAsync(
-        IReadOnlyList<CountedResult> items,
-        Algorithm predicateAlg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var kept = NewKeptPositions(items.Count);
-        for (var index = 0; index < items.Count; index++)
-        {
-            var item = items[index];
-            var truthR = await EvalFilterPredicateTruthAsync(predicateAlg, item, index, ctx, valEnv).ConfigureAwait(false);
-            if (truthR.IsError)
-                return truthR.Error;
-
-            if (truthR.Value)
-                MarkKeptPosition(kept, index);
-        }
-
-        return MakeFilterKeptListResult(ctx, items, kept);
-    }
-
     /// <summary>
     /// MIRROR OF <see cref="EvalFilterPredicateTruth"/> — keep in lock-step (the
     /// synchronous plain callback wrapper is the counted twin's value projection).
@@ -2935,29 +2932,6 @@ public static partial class Evaluator
             return new EvalError.TypeMismatch(BooleanRequiredMessage("filter predicate result", predicateR.Value));
 
         return EvalResult<bool>.Ok(truth.Value);
-    }
-
-    /// <summary>MIRROR OF <see cref="EvalMapCounted"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalMapCountedAsync(
-        IReadOnlyList<CountedResult> items,
-        Algorithm transformAlg,
-        EvalCtx ctx,
-        ValEnv valEnv)
-    {
-        var mapped = new Result[items.Count];
-        var index = 0;
-        foreach (var item in items)
-        {
-            var transformR = WithCtx(
-                "while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact)",
-                await EvalSequenceCallbackCallCountedAsync(transformAlg, item, ctx, valEnv, MapTransformFrameName).ConfigureAwait(false));
-            if (transformR.IsError) return transformR.Error;
-
-            // The transform's ordinary call result is ONE element (HO-03).
-            mapped[index++] = transformR.Value.Value;
-        }
-
-        return MakeMappedListResult(ctx, mapped);
     }
 
     // ── Loop twins ──────────────────────────────────────────────────────────
@@ -3376,6 +3350,7 @@ public static partial class Evaluator
         var operand = PeelSpreadLayers(expr, out var layers);
         var operandR = await EvalSequenceSpreadOperandValueAsync(operand, ctx, valEnv).ConfigureAwait(false);
         if (operandR.IsError) return operandR.Error;
-        return OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, out _);
+        var opened = await OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, asynchronous: true).ConfigureAwait(false);
+        return opened.Items;
     }
 }

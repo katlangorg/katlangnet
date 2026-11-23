@@ -11,6 +11,11 @@ namespace KatLang.Tests.RootPropertyObservations;
 /// existing context-free predicate (<see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/>) after the run —
 /// and never exposed, while the ordinary outcome is exactly the unobserved run's. The public
 /// snapshot types hold nothing but names, spans, counts, statuses, and export-safe values.
+///
+/// <para>A list is evaluated on demand (issue #204) and an observation reads nothing, so a list
+/// value is shown only when the run read it whole; these programs do so with <c>contains(x, 0)</c>,
+/// which compares whole values and exports nothing. A list the run only counted is withheld like
+/// one holding a call reference (<see cref="LazyCollectionTests"/> pins that rule).</para>
 /// </summary>
 public class PropertyObservationExportSafetyTests
 {
@@ -23,13 +28,15 @@ public class PropertyObservationExportSafetyTests
         { "sequence", Meta + "R = Capture(Square(5))\nS = R, 2\ncount(S)", "R=<withheld>#1; S=<withheld>#2" },
         {
             "mixed nesting",
-            Meta + "R = Capture(Square(5))\nL = [[R], 1]\nS = (L, R), 2\nM = [S, [L]]\nPlain = [1, [2]]\ncount(M) + count(Plain)",
-            "R=<withheld>#1; L=<withheld>#1; S=<withheld>#2; M=<withheld>#1; Plain=[1, [2]]#1"
+            Meta + "R = Capture(Square(5))\nL = [[R], 1]\nS = (L, R), 2\nM = [S, [L]]\nPlain = [1, [2]]\ncontains(M, 0), contains(Plain, 0)",
+            // In publication order: M is published unread; reading it whole evaluates S, whose
+            // sequence evaluates L and R.
+            "M=<withheld>#1; L=<withheld>#1; R=<withheld>#1; S=<withheld>#2; Plain=[1, [2]]#1"
         },
         {
             "shared DAG",
-            Meta + "R = Capture(Square(5))\nShared = [R, R]\nA = [Shared, Shared]\nB = [Shared]\ncount(A) + count(B)",
-            "R=<withheld>#1; Shared=<withheld>#1; A=<withheld>#1; B=<withheld>#1"
+            Meta + "R = Capture(Square(5))\nShared = [R, R]\nA = [Shared, Shared]\nB = [Shared]\ncontains(A, 0), contains(B, 0)",
+            "A=<withheld>#1; Shared=<withheld>#1; R=<withheld>#1; B=<withheld>#1"
         },
         { "before failure", Meta + "R = Capture(Square(5))\nOk = 3\nBoom = 1 / 0\nR.Invoke() + Ok + Boom", "R=<withheld>#1; Ok=3#1" },
         { "refused output", Meta + "R = Capture(Square(5))\nR", "R=<withheld>#1" },
@@ -80,16 +87,18 @@ public class PropertyObservationExportSafetyTests
             Dirty = [[R], 1]
             First = Dirty.first
             Later = [Big, R]
-            count(Clean) + count(Dirty) + count(First) + count(Later)
+            Whole(x) = if(contains(x, 0), 1, 0)
+            count(Clean) + count(Dirty) + count(First) + count(Later) + Whole(Clean) + Whole(Dirty) + Whole(First) + Whole(Later)
             """;
 
         var result = Run(source);
 
         Assert.Equal("7", result.ToDisplayString());
+        // In publication order: the four lists are published unread by their `count`; reading Clean whole
+        // then evaluates Big, and reading Dirty whole evaluates R.
+        var big = "[" + string.Join(", ", Enumerable.Range(1, 100)) + "]";
         Assert.Equal(
-            "Big=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]#1; "
-                + "Clean=[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100], 1]#1; "
-                + "R=<withheld>#1; Dirty=<withheld>#1; First=<withheld>#1; Later=<withheld>#1",
+            $"Clean=[{big}, 1]#1; Dirty=<withheld>#1; First=<withheld>#1; Later=<withheld>#1; Big={big}#1; R=<withheld>#1",
             Describe(result));
         var clean = (Result.ListValue)Single(result, "Clean").Value!;
         Assert.Same(Single(result, "Big").Value, clean.Items[0]);
@@ -189,7 +198,7 @@ public class PropertyObservationExportSafetyTests
     [Fact]
     public void ReferenceFreeValues_AreSharedNotCopied()
     {
-        var result = Assert.IsType<RunResult.Success>(Run("Big = range(1, 1000)\nTwice = [Big, Big]\nBig.count + Twice.count"));
+        var result = Assert.IsType<RunResult.Success>(Run("Big = range(1, 1000)\nTwice = [Big, Big]\nBig.count + Twice.count + if(contains(Twice, 0), 1, 0)"));
         var big = Single(result, "Big").Value!;
         var twice = (Result.ListValue)Single(result, "Twice").Value!;
 

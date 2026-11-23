@@ -125,6 +125,9 @@ def builtinArityParitySweepCovers (b : KatLang.Builtin) : Bool :=
   | .countBuiltin | .containsBuiltin | .firstBuiltin | .lastBuiltin | .distinctBuiltin
   | .takeBuiltin | .skipBuiltin | .minBuiltin | .maxBuiltin | .sumBuiltin
   | .avgBuiltin | .reduceBuiltin | .tickBuiltin => builtinArityParityTargets.contains b
+  -- The internal pipeline steps (lazy collections, issue #204) are no prelude names: no written
+  -- call reaches one, so they have no spec/dispatch arity to sweep.
+  | .mappedBuiltin | .keptBuiltin | .takenBuiltin | .materializedBuiltin => true
 
 #guard builtinArityParityTargets.all builtinArityParitySweepCovers
 
@@ -158,6 +161,8 @@ def builtinWrittenMinimumArity : KatLang.Builtin -> Nat
   | .lastBuiltin => 1 | .distinctBuiltin => 1 | .takeBuiltin => 2 | .skipBuiltin => 2
   | .minBuiltin => 1 | .maxBuiltin => 1 | .sumBuiltin => 1 | .avgBuiltin => 1
   | .reduceBuiltin => 3 | .tickBuiltin => 0
+  -- The internal pipeline steps (issue #204): their fixed supplies, never written by a program.
+  | .mappedBuiltin => 2 | .keptBuiltin => 5 | .takenBuiltin => 4 | .materializedBuiltin => 2
 
 def builtinArityRejectionCarriesMinimum (b : KatLang.Builtin) (maxArgCount : Nat := 6) : Bool :=
   (List.range (maxArgCount + 1)).all fun argCount =>
@@ -524,8 +529,16 @@ def dotCallParityCtx (prog : Algorithm) : KatLang.EvalCtx :=
 def dotCallParityCaseHolds (c : DotCallParityCase) : Bool :=
   let ctx := dotCallParityCtx dotCallParityProg
   let fallback := c.fallback?.getD (.resolve c.name)
-  let plain := (KatLang.evalDotCall c.target c.name fallback c.argsOpt ctx []).run KatLang.EvalState.empty
-  let counted := (KatLang.evalDotCallCounted c.target c.name fallback c.argsOpt ctx []).run KatLang.EvalState.empty
+  -- The two spellings are compared on WHOLE values (lazy collections, issue #204): each result is
+  -- materialized as a run materializes it, so a `map` / `filter` stage's steps run on both.
+  let plain := (do
+      let value <- KatLang.evalDotCall c.target c.name fallback c.argsOpt ctx []
+      KatLang.materializeVia KatLang.demandNeedRecursive value
+        : KatLang.EvalM KatLang.Result).run KatLang.EvalState.empty
+  let counted := (do
+      let (value, count) <- KatLang.evalDotCallCounted c.target c.name fallback c.argsOpt ctx []
+      pure (<- KatLang.materializeVia KatLang.demandNeedRecursive value, count)
+        : KatLang.EvalM KatLang.CountedResult).run KatLang.EvalState.empty
   let parity :=
     match plain, counted with
     | .ok (value, plainState), .ok ((countedValue, _), countedState) =>

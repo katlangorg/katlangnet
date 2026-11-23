@@ -388,7 +388,11 @@ def erasesExactly (k : NeedCapabilities EvalM) (patterns : List NeedPattern) (ce
 
 -- Equal semantic values with DIFFERENT emitted counts are incompatible value-only contributions.
 def differentCounts : NeedCapabilities EvalM :=
-  { production with value := fun address => pure (.atom 7, address + 1), callable := fun _ => pure none }
+  { production with
+    value := fun address => pure (.atom 7, address + 1)
+    -- Repeated-name agreement reads the WHOLE value (issue #204): the same hostile answer.
+    whole := fun address => pure (.atom 7, address + 1)
+    callable := fun _ => pure none }
 #guard let out := run differentCounts [.bind "x", .bind "x"] [0, 1] (heap [])
   isRepeatedBadArity out.1 && out.2.events == [.callable 0, .value 0, .callable 1, .value 1]
 
@@ -408,12 +412,17 @@ def equalIdentities : NeedCapabilities EvalM :=
 
 -- A channel can mutate semantic state BEFORE raising an incompatibility-shaped error.
 -- Both modes must propagate it; family search must stop without retry or activation.
+/-- The hostile read of `statefulIncompatibility`: a state change, then an incompatibility-shaped error. -/
+def statefulRead : EvalM CountedResult := do
+  let _ <- allocateNeed (.ready (.atom 9, 1))
+  modify fun s => { s with nextRuntimeDeclaration := s.nextRuntimeDeclaration + 11 }
+  throw (Error.arityMismatch 3 4)
+
 def statefulIncompatibility : NeedCapabilities EvalM :=
   { production with
-    value := fun _ => do
-      let _ <- allocateNeed (.ready (.atom 9, 1))
-      modify fun s => { s with nextRuntimeDeclaration := s.nextRuntimeDeclaration + 11 }
-      throw (Error.arityMismatch 3 4)
+    value := fun _ => statefulRead
+    -- Repeated-name agreement reads the WHOLE value (issue #204): the same hostile read.
+    whole := fun _ => statefulRead
     callable := fun _ => pure none }
 #guard [false, true].all fun family =>
   let out := run statefulIncompatibility [.bind "x", .bind "x"] [0, 1] (heap []) family

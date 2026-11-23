@@ -1125,9 +1125,10 @@ public class BudgetConservationTests
         var (freshResult, freshBudget) = Evaluator.RunCountedObserved(probe, limits);
         Assert.False(freshResult.IsError);
 
-        // Spend most of every cumulative budget, then fail.
+        // Spend most of every cumulative budget — fifteen callbacks, thirty items —, then fail
+        // on the second row's thirty more.
         var (spentResult, spentBudget) = Evaluator.RunCountedObserved(
-            Ast("range(1, 30).map(G).sum\nG(x) = x * 2"), limits);
+            Ast("range(1, 15).map(G).sum, range(1, 30)\nG(x) = x * 2"), limits);
         Assert.True(spentResult.IsError);
         Assert.True(spentBudget.ConsumedSteps > 0);
 

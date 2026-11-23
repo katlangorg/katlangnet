@@ -78,7 +78,10 @@ def originSucceedsEmpty (row : KatLang.Expr) : Bool :=
   (sequenceSpread (.algorithmExpr (alg [] [] [] [.resolve "G"])))               -- { G }*
 #guard originFailsNested ["while evaluating spread operand (inline library)", "while evaluating property G"]
   (sequenceSpread (.capture [.resolve "G", .num 1]))                             -- (G, 1)*
-#guard originFailsNested ["while evaluating spread operand (listLiteral)", "while evaluating property G"]
+-- A list literal defers its elements (lazy collections, issue #204): `[G]` is built, and the
+-- failure is its position's when the spread reads the level it opens — nested, with the
+-- position's own frames and no operand frame (the operand evaluated).
+#guard originFailsNested ["while evaluating property G"]
   (sequenceSpread (.listLiteral [.resolve "G"]))                                 -- [G]*
 #guard originFailsNested ["while evaluating spread operand (call)", "while evaluating call to if",
     "while evaluating property G"]
@@ -113,8 +116,9 @@ def originSucceedsEmpty (row : KatLang.Expr) : Bool :=
 #guard originFailsNested ["while evaluating call to P", "while evaluating spread operand x",
     "while evaluating property G"]
   (.call (.resolve "P") [.resolve "H"])
-#guard originFailsNested ["while evaluating call to P", "while evaluating spread operand x",
-    "while evaluating property G"]
+-- ... and a list argument is built without reading its element: the level read is the
+-- element's own nested failure (lazy collections, issue #204).
+#guard originFailsNested ["while evaluating call to P", "while evaluating property G"]
   (.call (.resolve "P") [.listLiteral [.resolve "G"]])
 
 -- A collector constructs its exact list; failure of an element is nested in its completed cell.

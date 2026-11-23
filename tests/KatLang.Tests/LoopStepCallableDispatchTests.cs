@@ -392,7 +392,6 @@ public partial class LoopStepCallableDispatchTests
     [InlineData("repeat(take([1, 2], 1.5), 1)", "take([1, 2], 1.5)")]
     [InlineData("repeat(sum(['a']), 1)", "sum(['a'])")]
     [InlineData("repeat(if(5, 1, 2), 1)", "if(5, 1, 2)")]
-    [InlineData("repeat(map([1, 2], 5), 1)", "map([1, 2], 5)")]
     [InlineData("repeat(count([1], [2]), 1)", "count([1], [2])")]
     public async Task Builtin_Failures_AreTheOrdinaryInvocationFailures(string loop, string call)
     {
@@ -407,6 +406,23 @@ public partial class LoopStepCallableDispatchTests
         var callFrames = Frames(GenericError(call));
         Assert.Equal("while evaluating call to repeat", loopFrames[0]);
         Assert.Equal(callFrames, loopFrames.Skip(1).ToArray());
+    }
+
+    [Fact]
+    public async Task AStageBuiltByALoopStep_FailsUnderTheStepsCall_AfterTheLoopHasEnded()
+    {
+        // `map` builds its stage without projecting its mapper (lazy collections, issue #204): the
+        // loop returns the stage, and the run reads it afterwards. The refusal is the ordinary call's,
+        // under the call that built the stage — the loop's frame has ended, on both spellings alike.
+        const string loop = "repeat(map([1, 2], 5), 1)";
+        const string call = "map([1, 2], 5)";
+        var (looped, _) = await AllRoutesAsync(loop);
+        var (called, _) = await AllRoutesAsync(call);
+        Assert.Equal("err", looped.Kind);
+        Assert.Equal(called.Causes, looped.Causes);
+        Assert.DoesNotContain(NoStepParameter, Assert.Single(looped.Errors), StringComparison.Ordinal);
+        Assert.Equal(["while evaluating call to map"], Frames(GenericError(call)));
+        Assert.Equal(Frames(GenericError(call)), Frames(GenericError(loop)));
     }
 
     // ── 3b. Round 1 keeps the captured call's written argument slots ───────────────────────────

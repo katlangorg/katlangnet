@@ -251,7 +251,14 @@ structure ModelCaps (k : NeedCapabilities EvalM) (Rel : Model → EvalState → 
     ∃ t, runEval (k.value a) s = (.ok (M.obs a).1, t) ∧ Rel M t
   callable : ∀ M s a, Rel M s → M.observed a = true →
     ∃ t, runEval (k.callable a) s = (.ok (M.obs a).2, t) ∧ Rel M t
-  ready : ∀ M s v, Rel M s →
+  -- Lazy collections (issue #204): an observation is a CONCRETE value, so the list-position read
+  -- and the whole-value read of an observed address return its observation, like VALUE.
+  positions : ∀ M s a, Rel M s → M.observed a = true →
+    ∃ t, runEval (k.positions a) s = (.ok (M.obs a).1, t) ∧ Rel M t
+  whole : ∀ M s a, Rel M s → M.observed a = true →
+    ∃ t, runEval (k.whole a) s = (.ok (M.obs a).1, t) ∧ Rel M t
+  concrete : ∀ M s a, Rel M s → M.observed a = true → (M.obs a).1.1.isLazy = false
+  ready : ∀ M s v, Rel M s → v.1.isLazy = false →
     ∃ t, runEval (k.allocate (.ready v)) s = (.ok M.size, t) ∧ Rel (M.push (readyObs v)) t
   collector : ∀ M s slice, Rel M s →
     ∃ t, runEval (k.allocate (.collector slice)) s = (.ok M.size, t) ∧ Rel (M.push none) t
@@ -272,7 +279,7 @@ theorem checkAnchor_model (hk : ModelCaps k Rel) (M : Model) (name : Ident) (anc
   | [], s, hs, _ => ⟨s, rfl, hs⟩
   | cell :: rest, s, hs, hc => by
     rw [checkAnchor_run k name anchor family cell rest s]
-    obtain ⟨t1, h1, i1⟩ := hk.value M s cell hs (hc cell List.mem_cons_self)
+    obtain ⟨t1, h1, i1⟩ := hk.whole M s cell hs (hc cell List.mem_cons_self)
     simp only [h1]
     by_cases h : ((M.obs cell).1 == anchor) = true
     · simp only [h, ↓reduceIte, checkAnchorPure]
@@ -306,7 +313,7 @@ theorem name_model (hk : ModelCaps k Rel) (M : Model) (s : EvalState) (name : Id
           cases checkAnchorPure M.obs name anchor family [address] <;> rfl
     | none =>
       simp only
-      obtain ⟨t2, h2, i2⟩ := hk.value M t1 address i1 ha
+      obtain ⟨t2, h2, i2⟩ := hk.whole M t1 address i1 ha
       rw [h2]
       simp only
       cases hanc : (bound.groupOf name).anchor with
@@ -324,13 +331,14 @@ theorem name_model (hk : ModelCaps k Rel) (M : Model) (s : EvalState) (name : Id
     exact ⟨s, by simp only [runEval_pure, nameStep, hr', Bool.false_eq_true, ↓reduceIte], hs⟩
 
 theorem ready_loop_model (hk : ModelCaps k Rel) : ∀ (items : List Result) (acc : List Nat) (M : Model) (s : EvalState),
-    Rel M s → ∃ t,
+    Rel M s → (∀ x ∈ items, x.isLazy = false) → ∃ t,
       runEval (List.mapM.loop (fun item => k.allocate (.ready (item, Result.valueCount item))) items acc) s
         = (.ok (acc.reverse ++ (allocReady M items).1), t) ∧ Rel (allocReady M items).2 t
-  | [], acc, M, s, hs => ⟨s, by simp [List.mapM.loop, allocReady], hs⟩
-  | item :: rest, acc, M, s, hs => by
-    obtain ⟨t1, h1, i1⟩ := hk.ready M s (item, Result.valueCount item) hs
+  | [], acc, M, s, hs, _ => ⟨s, by simp [List.mapM.loop, allocReady], hs⟩
+  | item :: rest, acc, M, s, hs, hc => by
+    obtain ⟨t1, h1, i1⟩ := hk.ready M s (item, Result.valueCount item) hs (hc item List.mem_cons_self)
     obtain ⟨t, h, i⟩ := ready_loop_model hk rest (M.size :: acc) _ t1 i1
+      (fun x hx => hc x (List.mem_cons_of_mem _ hx))
     refine ⟨t, ?_, i⟩
     simp only [List.mapM.loop, runEval_bind, h1, thenRun_ok]
     rw [h]
@@ -338,10 +346,11 @@ theorem ready_loop_model (hk : ModelCaps k Rel) : ∀ (items : List Result) (acc
 
 /-- FRESH READY CHILDREN: opening the items allocates exactly the model's next addresses and
     pushes each item's production counted value. -/
-theorem ready_model (hk : ModelCaps k Rel) (items : List Result) (M : Model) (s : EvalState) (hs : Rel M s) :
+theorem ready_model (hk : ModelCaps k Rel) (items : List Result) (M : Model) (s : EvalState) (hs : Rel M s)
+    (hc : ∀ x ∈ items, x.isLazy = false) :
     ∃ t, runEval (items.mapM (fun item => k.allocate (.ready (item, Result.valueCount item)))) s
         = (.ok (allocReady M items).1, t) ∧ Rel (allocReady M items).2 t := by
-  obtain ⟨t, h, i⟩ := ready_loop_model hk items [] M s hs
+  obtain ⟨t, h, i⟩ := ready_loop_model hk items [] M s hs hc
   refine ⟨t, ?_, i⟩
   simp only [List.reverse_nil, List.nil_append] at h
   exact h
@@ -433,7 +442,7 @@ mutual
       split at hw
       · rename_i ho
         obtain ⟨t1, h1, i1⟩ := hk.value M s address hs ho
-        simp only [NeedBinder.bindOne, runEval_bind, h1, thenRun_ok]
+        simp only [NeedBinder.bindOne, NeedBinder.structuralRead, runEval_bind, h1, thenRun_ok]
         cases hi : Result.sequencePatternItems? (M.obs address).1.1 with
         | none =>
           simp only [hi, Option.some.injEq] at hw
@@ -442,6 +451,7 @@ mutual
         | some items =>
           simp only [hi] at hw
           obtain ⟨t2, h2, i2⟩ := ready_model hk items M t1 i1
+            (LazyCollections.sequencePatternItems_concrete (hk.concrete M s address hs ho) hi)
           simp only [runEval_bind, h2, thenRun_ok]
           exact gate_model ps _ family _ _ w hw _ t2 i2 (fun _ hacc =>
             sources_model hk ps _ repeated bound family _ t2 w i2 hacc)
@@ -450,8 +460,8 @@ mutual
       simp only [walkOne] at hw
       split at hw
       · rename_i ho
-        obtain ⟨t1, h1, i1⟩ := hk.value M s address hs ho
-        simp only [NeedBinder.bindOne, runEval_bind, h1, thenRun_ok]
+        obtain ⟨t1, h1, i1⟩ := hk.positions M s address hs ho
+        simp only [NeedBinder.bindOne, NeedBinder.structuralRead, runEval_bind, h1, thenRun_ok]
         cases hi : Result.listPatternItems? (M.obs address).1.1 with
         | none =>
           simp only [hi, Option.some.injEq] at hw
@@ -460,6 +470,7 @@ mutual
         | some items =>
           simp only [hi] at hw
           obtain ⟨t2, h2, i2⟩ := ready_model hk items M t1 i1
+            (LazyCollections.listPatternItems_concrete (hk.concrete M s address hs ho) hi)
           simp only [runEval_bind, h2, thenRun_ok]
           exact gate_model ps _ family _ _ w hw _ t2 i2 (fun _ hacc =>
             sources_model hk ps _ repeated bound family _ t2 w i2 hacc)
@@ -468,9 +479,10 @@ mutual
       simp only [walkOne] at hw
       split at hw
       · rename_i ho
-        obtain ⟨t1, h1, i1⟩ := hk.value M s address hs ho
-        simp only [NeedBinder.bindOne, runEval_bind, h1, thenRun_ok]
+        obtain ⟨t1, h1, i1⟩ := hk.positions M s address hs ho
+        simp only [NeedBinder.bindOne, NeedBinder.structuralRead, runEval_bind, h1, thenRun_ok]
         obtain ⟨t2, h2, i2⟩ := ready_model hk (Result.spreadItems (M.obs address).1.1) M t1 i1
+          (LazyCollections.spreadItems_concrete (hk.concrete M s address hs ho))
         simp only [h2, thenRun_ok]
         exact gate_model ps _ family _ _ w hw _ t2 i2 (fun _ hacc =>
           sources_model hk ps _ repeated bound family _ t2 w i2 hacc)
@@ -1596,6 +1608,9 @@ structure ProdRel (M : Model) (s : EvalState) : Prop where
   size : s.needs.size = M.size
   stable : ∀ a o, M.view a = some o → StableAt s a o
   plan : ∀ a, (NeedPlan.shapeAt? s.needs a).isSome = M.plan a
+  -- Lazy collections (issue #204): an observation holds no lazy form, so a Ready cell holding it
+  -- is no alias of a list position, and its positions and its whole value are its VALUE.
+  concrete : ∀ a o, M.view a = some o → o.1.1.isLazy = false
 
 theorem obs_of_view {M : Model} {a : Nat} {o : Obs} (h : M.view a = some o) : M.obs a = o := by
   simp [Model.obs, h]
@@ -1625,12 +1640,14 @@ theorem prodRel_update {M : Model} {s t : EvalState} {a : Nat} {c c' : NeedCell}
     by_cases h : b = a
     · subst h; simp [NeedPlan.shapeAt?, hc, hc', hsus]
     · simp [NeedPlan.shapeAt?, hother b h]
+  concrete := hs.concrete
 
 /-- One cell appended: the invariant holds for the pushed model when the new cell is stable with
     the pushed observation and is no invocation plan. -/
 theorem prodRel_push {M : Model} {s : EvalState} (hs : ProdRel M s) (cell : NeedCell) (o : Option Obs)
     (hstab : ∀ x, o = some x → ValueStable cell x.1 ∧ CallableStable cell x.2)
-    (hplan : NeedPlan.ofSuspension? cell.suspension = none) :
+    (hplan : NeedPlan.ofSuspension? cell.suspension = none)
+    (hconc : ∀ x, o = some x → x.1.1.isLazy = false) :
     ProdRel (M.push o) { s with needs := s.needs.push cell } where
   size := by simp [Model.push, hs.size]
   stable b x hb := by
@@ -1649,6 +1666,14 @@ theorem prodRel_push {M : Model} {s : EvalState} (hs : ProdRel M s) (cell : Need
     · subst h; rw [← hs.size]; simp [NeedPlan.shapeAt?, hplan]
     · have hb' : b ≠ s.needs.size := by rw [hs.size]; exact h
       rw [← hs.plan b]; simp [NeedPlan.shapeAt?, Array.getElem?_push, hb', h]
+  concrete b x hb := by
+    simp only [Model.push] at hb
+    by_cases h : b = M.size
+    · subst h
+      simp only [↓reduceIte] at hb
+      exact hconc x hb
+    · simp only [h, ↓reduceIte] at hb
+      exact hs.concrete b x hb
 
 section Production
 open KatLang.NeedControl
@@ -1671,7 +1696,7 @@ theorem shell_value (M : Model) (s : EvalState) (a : Nat) (hs : ProdRel M s) (ha
   · have hr : (NeedDemand.suspendedValue (ev a) route demand a c.suspension).runState
         { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } =
         (.ok o.1, { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) }) := by
-      rw [hsus]; rfl
+      rw [hsus, LazyCollections.suspendedValue_ready_concrete (ev a) route demand a o.1 (hs.concrete a o ho)]; rfl
     refine ⟨_, Memo.suspended_retains_state (ev a) route demand a s _ c (.ok o.1) hc hv hr rfl, ?_⟩
     refine prodRel_update (c' := { c with state := .completed (.ok o.1) }) hs hc ?_ (by simp) ?_ rfl ?_
     · simp [Array.getElem?_modify, hc]
@@ -1679,6 +1704,51 @@ theorem shell_value (M : Model) (s : EvalState) (a : Nat) (hs : ProdRel M s) (ha
     · intro o' ho'
       rw [ho] at ho'; cases ho'
       exact ⟨Or.inl rfl, hcal⟩
+
+/-- THE LIST-POSITION READ ON THE STABLE DOMAIN (issue #204): an observation is a concrete value,
+    so the read a list pattern opens the cell through is its VALUE demand. -/
+theorem shell_positions (M : Model) (s : EvalState) (a : Nat) (hs : ProdRel M s) (ha : M.observed a = true) :
+    ∃ t, runEval ((NeedChannels.shell ev route demand written).capabilities.positions a) s = (.ok (M.obs a).1, t) ∧
+      ProdRel M t := by
+  obtain ⟨t, h, i⟩ := shell_value ev route demand written M s a hs ha
+  refine ⟨t, ?_, i⟩
+  obtain ⟨o, ho⟩ := view_of_observed ha
+  have hc := hs.concrete a o ho
+  rw [obs_of_view ho] at h ⊢
+  obtain ⟨⟨v, count⟩, identity⟩ := o
+  have h' : runEval ((NeedChannels.shell ev route demand written).value a) s = (.ok (v, count), t) := h
+  show runEval (do
+      let (value, count) <- (NeedChannels.shell ev route demand written).value a
+      match value with
+      | .pendingList candidates =>
+          pure (Result.listValue
+            (<- LazyList.positions (NeedChannels.shell ev route demand written).value none candidates), count)
+      | _ => pure (value, count) : EvalM CountedResult) s = _
+  rw [runEval_bind, h', thenRun_ok]
+  cases v <;> first | rfl | simp [Result.isLazy] at hc
+
+/-- THE WHOLE-VALUE READ ON THE STABLE DOMAIN (issue #204): an observation is a concrete value, so
+    the read a repeated name agrees through is its VALUE demand — nothing is materialized. -/
+theorem shell_whole (M : Model) (s : EvalState) (a : Nat) (hs : ProdRel M s) (ha : M.observed a = true) :
+    ∃ t, runEval ((NeedChannels.shell ev route demand written).capabilities.whole a) s = (.ok (M.obs a).1, t) ∧
+      ProdRel M t := by
+  obtain ⟨t, h, i⟩ := shell_value ev route demand written M s a hs ha
+  refine ⟨t, ?_, i⟩
+  obtain ⟨o, ho⟩ := view_of_observed ha
+  have hc := hs.concrete a o ho
+  rw [obs_of_view ho] at h ⊢
+  obtain ⟨⟨v, count⟩, identity⟩ := o
+  have h' : runEval ((NeedChannels.shell ev route demand written).value a) s = (.ok (v, count), t) := h
+  show runEval (do
+      let (value, count) <- (NeedChannels.shell ev route demand written).value a
+      pure (<- materializeVia (NeedChannels.shell ev route demand written).value value, count)
+        : EvalM CountedResult) s = _
+  rw [runEval_bind, h', thenRun_ok]
+  show runEval (do
+      let whole <- materializeVia (NeedChannels.shell ev route demand written).value v
+      pure (whole, count) : EvalM CountedResult) t = _
+  rw [LazyCollections.materializeVia_concrete _ v [] hc]
+  rfl
 
 /-- THE CALLABLE SHELL ON THE STABLE DOMAIN: a published outcome is reused unchanged
     (`projected_sticky`); an unprojected Ready cell publishes the successful absence of identity
@@ -1711,8 +1781,15 @@ theorem shell_model_caps :
     ModelCaps (NeedChannels.shell ev route demand written).capabilities ProdRel where
   value M s a hs ha := shell_value ev route demand written M s a hs ha
   callable M s a hs ha := shell_callable ev route demand written M s a hs ha
-  ready M s v hs := by
-    refine ⟨_, ?_, prodRel_push hs { suspension := .ready v } (readyObs v) ?_ rfl⟩
+  positions M s a hs ha := shell_positions ev route demand written M s a hs ha
+  whole M s a hs ha := shell_whole ev route demand written M s a hs ha
+  concrete M s a hs ha := by
+    obtain ⟨o, ho⟩ := view_of_observed ha
+    rw [obs_of_view ho]
+    exact hs.concrete a o ho
+  ready M s v hs hv := by
+    refine ⟨_, ?_, prodRel_push hs { suspension := .ready v } (readyObs v) ?_ rfl
+      (by intro x hx; simp only [readyObs, Option.some.injEq] at hx; subst hx; exact hv)⟩
     · show (allocateNeed (.ready v)).runState s = _
       rw [Allocation.allocate_run, hs.size]
     · intro x hx
@@ -1720,13 +1797,15 @@ theorem shell_model_caps :
       subst hx
       exact ⟨Or.inr ⟨rfl, rfl⟩, Or.inr ⟨rfl, rfl, _, rfl⟩⟩
   collector M s slice hs := by
-    refine ⟨_, ?_, prodRel_push hs { suspension := .collector slice } none (by intro x hx; cases hx) rfl⟩
+    refine ⟨_, ?_, prodRel_push hs { suspension := .collector slice } none (by intro x hx; cases hx) rfl
+      (by intro x hx; cases hx)⟩
     show (allocateNeed (.collector slice)).runState s = _
     rw [Allocation.allocate_run, hs.size]
   referenceOk M s a hs hp := by
     have hshape : (NeedPlan.shapeAt? s.needs a).isSome = true := by rw [hs.plan a]; exact hp
     obtain ⟨shape, hsh⟩ := Option.isSome_iff_exists.mp hshape
-    refine ⟨_, ?_, prodRel_push hs (CallReferenceLaws.adapterCell a) (adapterObs a) ?_ rfl⟩
+    refine ⟨_, ?_, prodRel_push hs (CallReferenceLaws.adapterCell a) (adapterObs a) ?_ rfl
+      (by intro x hx; simp only [adapterObs, Option.some.injEq] at hx; subst hx; rfl)⟩
     · show (NeedPlan.reference a).runState s = _
       rw [CallReferenceLaws.capture_on_plan a s shape hsh, hs.size]
     · intro x hx

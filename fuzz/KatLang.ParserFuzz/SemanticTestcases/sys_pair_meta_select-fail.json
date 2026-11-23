@@ -2,21 +2,18 @@
   "format": "kl-sem2b-case",
   "formatVersion": 1,
   "generator": "sem2b-grammar",
-  "recipeVersion": 1,
-  "caseId": "sem2b/v1/sys/pair/meta+select-fail",
+  "recipeVersion": 2,
+  "caseId": "sem2b/v2/sys/pair/meta+select-fail",
   "tier": "systematic",
   "seed": null,
   "index": 1,
   "kind": "valid-runtime-failure",
   "families": [
-    "meta",
     "select"
   ],
   "features": [
     "compose:meta+select",
     "failure",
-    "forwarding",
-    "meta",
     "select",
     "spread"
   ],
@@ -98,19 +95,17 @@
     "errorCategory": "DivByZero",
     "diagnostic": null,
     "diagnosticPhase": null,
-    "events": [
-      "trace:1"
-    ],
+    "events": [],
     "cancelledEventsPrefix": [],
-    "paths": "None",
+    "paths": "FirstFailureStops",
     "minimumCacheHits": 0
   },
-  "provenance": "KatLang 0.8.254+afcdc715b1bfea74d209e56fcc8a282e0ca1a177; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
+  "provenance": "KatLang 0.8.276+cd9bffa4bd1fef5ed215f0d0c42b71e2f64c62c0; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
   "result": {
-    "caseId": "sem2b/v1/sys/pair/meta+select-fail",
+    "caseId": "sem2b/v2/sys/pair/meta+select-fail",
     "verdict": "Passed",
     "findings": [],
-    "pathsExercised": "None",
+    "pathsExercised": "FirstFailureStops",
     "pathRejections": [],
     "relations": [
       "parity:sync-generic~sync-optimized",
@@ -130,14 +125,12 @@
         "emittedCount": null,
         "errorCategory": "DivByZero",
         "failureStage": null,
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
         "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
-        "cacheEvidence": "requests=6 hits=4 misses=2 stores=2 keys=2",
+        "cacheEvidence": "requests=1 hits=0 misses=1 stores=1 keys=1",
         "harness": null
       },
       {
@@ -148,14 +141,12 @@
         "emittedCount": null,
         "errorCategory": "DivByZero",
         "failureStage": null,
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
         "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
-        "cacheEvidence": "requests=6 hits=4 misses=2 stores=2 keys=2",
+        "cacheEvidence": "requests=1 hits=0 misses=1 stores=1 keys=1",
         "harness": null
       },
       {
@@ -166,9 +157,7 @@
         "emittedCount": null,
         "errorCategory": "DivByZero",
         "failureStage": null,
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
@@ -184,9 +173,7 @@
         "emittedCount": null,
         "errorCategory": null,
         "failureStage": "evaluation",
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
@@ -202,9 +189,7 @@
         "emittedCount": null,
         "errorCategory": null,
         "failureStage": "evaluation",
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
@@ -220,14 +205,12 @@
         "emittedCount": null,
         "errorCategory": "DivByZero",
         "failureStage": null,
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
         "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
-        "cacheEvidence": "requests=6 hits=4 misses=2 stores=2 keys=2",
+        "cacheEvidence": "requests=1 hits=0 misses=1 stores=1 keys=1",
         "harness": null
       },
       {
@@ -238,14 +221,12 @@
         "emittedCount": null,
         "errorCategory": "DivByZero",
         "failureStage": null,
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
         "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
-        "cacheEvidence": "requests=6 hits=4 misses=2 stores=2 keys=2",
+        "cacheEvidence": "requests=1 hits=0 misses=1 stores=1 keys=1",
         "harness": null
       },
       {
@@ -256,14 +237,12 @@
         "emittedCount": null,
         "errorCategory": "DivByZero",
         "failureStage": null,
-        "events": [
-          "trace:1"
-        ],
+        "events": [],
         "waitCalls": 0,
         "suspensions": 0,
         "cancelled": false,
         "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
-        "cacheEvidence": "requests=6 hits=4 misses=2 stores=2 keys=2",
+        "cacheEvidence": "requests=1 hits=0 misses=1 stores=1 keys=1",
         "harness": null
       }
     ]

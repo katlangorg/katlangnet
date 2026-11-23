@@ -392,7 +392,10 @@ public sealed class MetaBindingRefusalDiagnosticTests
     [Fact]
     public async Task AReachedResourceLimit_IsNeverFramed()
     {
-        const string source = "Id(x) = x\nMix([x], meta op) = x\nMix([Id(Id(Id(1)))], 5)";
+        // The inspecting pattern is a SEQUENCE pattern: its argument is evaluated whole when it is
+        // inspected. (A list pattern checks its list's cardinality without reading an element —
+        // lazy collections, issue #204 — and would reach the META refusal before any limit.)
+        const string source = "Id(x) = x\nMix((x, y), meta op) = x\nMix((Id(Id(Id(1))), 2), 5)";
         var limits = new EvaluationLimits { MaxSteps = 3 };
         var observation = await SixRouteAgreement.OnEveryRouteAsync(source, limits: limits);
         var error = Assert.Single(observation.Errors);
@@ -405,9 +408,11 @@ public sealed class MetaBindingRefusalDiagnosticTests
     public async Task ResourceCounters_Agree_WhenTheRefusalFollowsASuspendingInspection()
     {
         var program = new InvocationRouteCorpus.Case("meta-diag-1-counters", """
-            CheckBefore([x], meta operation) = 0
-            CheckBefore([aflag()], trace(5) + tick())
+            CheckBefore((x, y), meta operation) = 0
+            CheckBefore((aflag(), 1), trace(5) + tick())
             """);
+        // A SEQUENCE pattern inspects a value that is evaluated whole, so the inspection suspends on
+        // `aflag()`; a list pattern would read no element (lazy collections, issue #204).
         var generic = await InvocationRouteCorpus.Observe(program, 0);
         Assert.StartsWith("err NotAnAlgorithm | ", generic.Outcome, StringComparison.Ordinal);
         Assert.Contains(Named("operation"), generic.Outcome, StringComparison.Ordinal);

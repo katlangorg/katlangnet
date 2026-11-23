@@ -81,13 +81,27 @@ public sealed class SelectiveCollectorReadTests
     [InlineData("xs.distinct")]
     public Task WholeValueConsumers_StayEager(string body) => Fails(F(body, "F(1 / 0)"), "DivisionByZero");
 
+    // A written SEQUENCE evaluates its items when it is evaluated.
     [Theory]
-    [InlineData("[10, 1 / 0][0]")]
-    [InlineData("[1 / 0].count")]
     [InlineData("(10, 1 / 0)[0]")]
-    [InlineData("[10, 1 / 0].take(1)")]
-    [InlineData("first([10, 1 / 0])")]
-    public Task WrittenCollections_StayEager(string source) => Fails(source, "DivisionByZero");
+    [InlineData("(10, 1 / 0).count")]
+    public Task WrittenSequences_StayEager(string source) => Fails(source, "DivisionByZero");
+
+    // A written LIST defers its elements, exactly like a retained collector: a selective reader
+    // runs only the positions it reads (lazy collections, issue #204).
+    [Theory]
+    [InlineData("[10, 1 / 0][0]", "10")]
+    [InlineData("[1 / 0].count", "1")]
+    [InlineData("[10, 1 / 0].take(1)", "L[10]")]
+    [InlineData("first([10, 1 / 0])", "10")]
+    public Task WrittenLists_RunOnlyThePositionsRead(string source, string expected) => Ok(source, expected);
+
+    [Theory]
+    [InlineData("[10, 1 / 0][1]")]
+    [InlineData("[10, 1 / 0]")]
+    [InlineData("[10, 1 / 0].sum")]
+    [InlineData("last([10, 1 / 0])")]
+    public Task WrittenLists_FailWhereTheFailingPositionIsRead(string source) => Fails(source, "DivisionByZero");
 
     [Theory]
     [InlineData("A = { xs }\nA.count")]
@@ -282,8 +296,11 @@ public sealed class SelectiveCollectorReadTests
     public async Task Take_CountEffects_PrecedeAKnownPrefix_OrdinaryInputsKeepTheirOrder()
     {
         await Ok(F("xs.take(trace(1))", "F(trace(5))"), "L[5]", "trace(1)", "trace(5)");
-        await Ok("Id(v) = v\nId([trace(5)]).take(trace(1))", "L[5]", "trace(5)", "trace(1)");
-        await Fails("[1 / 0].take('a')", "DivisionByZero");
+        // An ordinary list is still demanded before the count, but its ELEMENTS are read on demand
+        // (lazy collections, issue #204): the count's effect precedes the element's, and an
+        // invalid count is reported before any position is read.
+        await Ok("Id(v) = v\nId([trace(5)]).take(trace(1))", "L[5]", "trace(1)", "trace(5)");
+        await Fails("[1 / 0].take('a')", "TypeMismatch");
     }
 
     // ── Effects and shared completion ───────────────────────────────────────────────────────────

@@ -338,8 +338,13 @@ def observes (rows : List Expr) (v : Result) (obs : EvalState → Bool) : Bool :
 -- The plan supply re-read across an intervening evaluation: still ONE prepared supply.
 #guard observes [add (.index (args R) [.num 0]) (.index (args R) [.num 0])] (.atom 10)
   fun s => count s prepared == 1
--- `L = [R, R.Arguments]`: the cache stores the reference and the view.
-#guard observes [dot (.resolve "L") "count"] (.atom 2) fun s => cacheRefs s == 2 && count s completedRef == 2
+-- `L = [R, R.Arguments]` (lazy collections, issue #204): counting the list reads no position, so
+-- neither the reference nor the view is stored anywhere.
+#guard observes [dot (.resolve "L") "count"] (.atom 2) fun s => cacheRefs s == 0 && count s completedRef == 0
+-- `distinct(L)` reads both positions: their completed cells hold the reference and the view. The
+-- cache holds `R`'s reference; `L`'s cached list holds its position cells, not their values.
+#guard observes [dot (callF "distinct" [.resolve "L"]) "count"] (.atom 2)
+  fun s => cacheRefs s == 1 && count s completedRef == 4
 -- `R.Algorithm(3)`: a recorded callee cell; `AR(4)`: a recorded callee, receiver and alias cell.
 #guard observes [.call (AlgorithmProjectionGuards.algorithm R) [.num 3]] (.atom 9)
   fun s => count s (fun c => c.callee.isSome) == 1

@@ -300,6 +300,13 @@ public closed record Result
     public sealed record ListValue : Result
     {
         private readonly IReadOnlyList<Result> items;
+        // LAZY COLLECTIONS (issue #204, November 2026): a list whose positions are evaluated on
+        // demand — a list literal with a deferred element, a `map` / `filter` / `take` result — is
+        // this same variant over a run-internal position source instead of concrete items. It
+        // exists only inside its run: every value a run hands out is materialized first
+        // (<c>Evaluator.MaterializeRunValue</c>), so a host only ever sees concrete lists.
+        // Lean: a <c>listValue</c> holding <c>deferred</c> items, or a <c>pendingList</c>.
+        private readonly Evaluator.LazyList? lazy;
 
         /// <summary>
         /// Snapshot construction for host-facing / untrusted input: copies
@@ -316,6 +323,12 @@ public closed record Result
         private ListValue(Result[] exclusivelyOwnedItems)
             => items = SafeReadOnlyCollection.Over(exclusivelyOwnedItems);
 
+        private ListValue(Evaluator.LazyList lazy)
+        {
+            this.lazy = lazy;
+            items = [];
+        }
+
         /// <summary>
         /// Trusted ownership-transfer construction: wraps
         /// <paramref name="exclusivelyOwnedItems"/> without copying.
@@ -328,6 +341,21 @@ public closed record Result
             => new(exclusivelyOwnedItems);
 
         /// <summary>
+        /// A list whose positions are evaluated on demand (lazy collections, issue #204): the value
+        /// of one collection INSTANCE over <paramref name="source"/>, which owns the positions'
+        /// shared demand state. Run-internal: it never reaches a host.
+        /// </summary>
+        internal static ListValue Deferred(Evaluator.LazyList source)
+            => new(source);
+
+        /// <summary>
+        /// The run-internal position source of a list evaluated on demand, or <c>null</c> for a
+        /// concrete list. Every evaluator consumer reads a lazy list through it
+        /// (<c>Evaluator.LazyLists.cs</c>); CLR equality, hashing and debug text never do.
+        /// </summary>
+        internal Evaluator.LazyList? Lazy => lazy;
+
+        /// <summary>
         /// Ordered elements as a read-only view. The view never exposes the
         /// backing storage: casting it to a mutable collection interface
         /// yields an object that rejects every mutation operation, and its
@@ -336,9 +364,31 @@ public closed record Result
         /// equality compares it by reference and a <c>with</c> copy shares it.
         /// Reflection and unsafe code are outside this guarantee.
         /// </summary>
-        public IReadOnlyList<Result> Items => items;
+        /// <exception cref="InvalidOperationException">
+        /// Never for a value a host receives. Inside the evaluator, the list is still evaluated on
+        /// demand: its elements are read through its position source, never through this view.
+        /// </exception>
+        public IReadOnlyList<Result> Items
+            => lazy is null
+                ? items
+                : throw new InvalidOperationException(
+                    "A list evaluated on demand has no concrete items until it is materialized.");
 
-        public void Deconstruct(out IReadOnlyList<Result> items) => items = this.items;
+        public void Deconstruct(out IReadOnlyList<Result> items) => items = Items;
+
+        // Debug text never evaluates anything: a list evaluated on demand prints no elements.
+        protected override bool PrintMembers(System.Text.StringBuilder builder)
+        {
+            if (lazy is not null)
+            {
+                builder.Append("Items = <deferred>");
+                return true;
+            }
+
+            builder.Append("Items = ");
+            builder.Append(items);
+            return true;
+        }
     }
 
     /// <summary>

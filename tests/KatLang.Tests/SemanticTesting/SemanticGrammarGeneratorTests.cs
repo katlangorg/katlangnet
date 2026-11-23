@@ -48,14 +48,14 @@ public class SemanticGrammarGeneratorTests
     [Fact]
     public void CaseIds_AreVersioned_AndOtherVersionsOrMalformedIdsAreRefused()
     {
-        Assert.All(SemanticCorpus.All(), c => Assert.StartsWith("sem2b/v1/", c.CaseId, StringComparison.Ordinal));
+        Assert.All(SemanticCorpus.All(), c => Assert.StartsWith("sem2b/v2/", c.CaseId, StringComparison.Ordinal));
         var id = SemanticCorpus.Seeded()[0].CaseId;
 
         Assert.False(SemanticCorpus.TryReconstruct(id, SemanticRecipe.RecipeVersion + 1, out _, out var otherVersion));
         Assert.Contains("is not built by this generator", otherVersion, StringComparison.Ordinal);
-        Assert.False(SemanticCorpus.TryReconstruct("sem2b/v1/seed/zz/1", SemanticRecipe.RecipeVersion, out _, out var malformed));
+        Assert.False(SemanticCorpus.TryReconstruct("sem2b/v2/seed/zz/1", SemanticRecipe.RecipeVersion, out _, out var malformed));
         Assert.Contains("malformed", malformed, StringComparison.Ordinal);
-        Assert.False(SemanticCorpus.TryReconstruct("sem2b/v1/sys/meta/999", SemanticRecipe.RecipeVersion, out _, out var unknown));
+        Assert.False(SemanticCorpus.TryReconstruct("sem2b/v2/sys/meta/999", SemanticRecipe.RecipeVersion, out _, out var unknown));
         Assert.Contains("no systematic case", unknown, StringComparison.Ordinal);
         Assert.False(SemanticCorpus.TryReconstruct("other/v1/sys/meta/0", SemanticRecipe.RecipeVersion, out _, out var prefix));
         Assert.Contains("recipe prefix", prefix, StringComparison.Ordinal);

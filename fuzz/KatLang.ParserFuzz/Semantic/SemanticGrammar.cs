@@ -9,14 +9,14 @@ namespace KatLang.ParserFuzz;
 /// <summary>
 /// Versioned identity of the SEM-2B generator. A descriptor names the generator and the recipe
 /// version that built it; a recipe change that would make an existing case id mean a different
-/// program MUST bump <see cref="RecipeVersion"/>, and replay refuses a version it does not build
+/// program or expectation MUST bump <see cref="RecipeVersion"/>, and replay refuses a version it does not build
 /// rather than silently reinterpreting it.
 /// </summary>
 internal static class SemanticRecipe
 {
     internal const string GeneratorId = "sem2b-grammar";
 
-    internal const int RecipeVersion = 1;
+    internal const int RecipeVersion = 2;
 
     internal static string CasePrefix => "sem2b/v" + RecipeVersion.ToString(CultureInfo.InvariantCulture) + "/";
 }
@@ -128,6 +128,23 @@ internal sealed class SemanticFragment(string family)
 
     public List<string> Events { get; } = [];
 
+    /// <summary>
+    /// Host events of the row's VALUE being read whole: the effects of the list elements nobody
+    /// read while the row was evaluated. A written list defers its elements (lazy collections,
+    /// issue #204), so they run when the run's assembled output is read — after EVERY root row
+    /// has been evaluated — row by row, each row's elements in order, depth first.
+    /// </summary>
+    public List<string> LateEvents { get; } = [];
+
+    /// <summary>
+    /// The row has a part that runs only when its value is read whole (<see cref="LateEvents"/>,
+    /// a late failure, or evidence such as a cache hit that an unread element would produce).
+    /// </summary>
+    public bool ReadsLate { get; set; }
+
+    /// <summary>The failure is raised while the row's value is read whole, not while the row is evaluated.</summary>
+    public bool FailsLate { get; set; }
+
     public SortedSet<string> Features { get; } = new(StringComparer.Ordinal);
 
     public SemanticPath Paths { get; set; }
@@ -148,6 +165,19 @@ internal sealed class SemanticFragment(string family)
     public (string Name, DiagnosticCode Code, string Phase)? Refusal { get; set; }
 
     public bool Failing => FailureCategory is not null;
+
+    /// <summary>
+    /// The row is, or is placed in, a written list nobody reads before the run's output is read:
+    /// EVERYTHING the row does — its effects in their order, its failure — happens when that
+    /// list's elements are read. An export failure stays one: the value is read whole first.
+    /// </summary>
+    public void DeferRow()
+    {
+        LateEvents.InsertRange(0, Events);
+        Events.Clear();
+        ReadsLate = true;
+        if (Failing && !FailsAtExport) FailsLate = true;
+    }
 }
 
 /// <summary>
@@ -163,8 +193,11 @@ internal sealed class SemanticFragment(string family)
 ///
 /// <para><b>Expectations</b> are computed from the construction: arithmetic over the chosen
 /// constants, the demand order the language rules prescribe (left-to-right operands, at-most-once
-/// cells, eager collection values, lazy argument views, fresh invocations), and the documented
-/// failure kinds. Nothing runs the implementation to learn an expectation.</para>
+/// cells, written lists whose elements run when they are first read, lazy argument views, fresh
+/// invocations), and the documented failure kinds. A fragment therefore has two parts: what
+/// EVALUATING its row does (<see cref="SemanticFragment.Events"/>) and what READING the row's value
+/// whole does (<see cref="SemanticFragment.LateEvents"/>) — the latter after every root row has
+/// been evaluated. Nothing runs the implementation to learn an expectation.</para>
 /// </summary>
 internal static class SemanticGrammar
 {
@@ -193,7 +226,23 @@ internal static class SemanticGrammar
     internal static SemanticFragment Build(string family, Gen g, bool failing)
     {
         using var span = g.Span("production");
-        return BuildProduction(family, g, failing);
+        var fragment = BuildProduction(family, g, failing);
+        DeferListRow(fragment);
+        return fragment;
+    }
+
+    /// <summary>
+    /// A production whose row is a written LIST of its operations: the list defers its elements
+    /// (lazy collections, issue #204), so everything the production does happens when the row's
+    /// value is read — in the same order, each element read whole before the next one. (A spread
+    /// element would run when the list is built; no production writes one at the row's top.)
+    /// </summary>
+    internal static void DeferListRow(SemanticFragment f)
+    {
+        if (f.Row is not MExpr.ListLit list) return;
+        if (list.Items.Any(static item => item is MExpr.Spread))
+            throw new InvalidOperationException("a production's row list holds no spread element");
+        f.DeferRow();
     }
 
     private static SemanticFragment BuildProduction(string family, Gen g, bool failing) => family switch
@@ -1341,7 +1390,9 @@ internal static class SemanticGrammar
                     new MExpr.Binary("/", Effect(false, va), Atom(0)),
                     new MExpr.Select(new MExpr.ListLit([Effect(false, vb)]), [Atom(5)]),
                 ]);
-                f.Events.Add("trace:" + (swapped ? vb : va).ToString(CultureInfo.InvariantCulture));
+                // The division runs its traced operand first; the out-of-range selection reads no
+                // position of its written list, so that list's element never runs.
+                if (!swapped) f.Events.Add("trace:" + va.ToString(CultureInfo.InvariantCulture));
                 f.FailureCategory = swapped ? "BadIndex" : "DivByZero";
                 f.Features.Add(swapped ? "operand-order-swapped" : "operand-order");
                 return f;
@@ -1490,27 +1541,51 @@ internal static class SemanticGrammar
         var values = Enumerable.Range(0, 2 + g.Pick("nested.width", 3)).Select(_ => g.Digit()).ToList();
         var tail = g.Digit();
         var data = new List<MExpr>();
+        var inner = new List<string>();
         if (!failing)
         {
             foreach (var value in values)
             {
                 var wait = g.Chance("nested.wait", 50);
                 data.Add(Effect(wait, value));
-                f.Events.Add((wait ? "wait:" : "trace:") + value.ToString(CultureInfo.InvariantCulture));
-                if (wait) f.Features.Add("async");
+                inner.Add((wait ? "wait:" : "trace:") + value.ToString(CultureInfo.InvariantCulture));
             }
         }
         MExpr innerValue = failing ? Atom(99)
             : outerList ? new MExpr.Group(data) : new MExpr.ListLit(data);
         MExpr[] items = [innerValue, Effect(false, tail)];
         f.Row = new MExpr.Call(function, [outerList ? new MExpr.ListLit(items) : new MExpr.Group(items)]);
-        f.Events.Add("trace:" + tail.ToString(CultureInfo.InvariantCulture));
+        var tailEvent = "trace:" + tail.ToString(CultureInfo.InvariantCulture);
+        if (outerList)
+        {
+            // [(a, *rest), z]: the outer list defers both elements. The inner pattern reads the
+            // first one — a written sequence, so all its items run (a failing one is the scalar
+            // 99, refused by kind) — and `z` is bound unread: it runs when the result is read.
+            f.Events.AddRange(inner);
+            if (!failing) f.LateEvents.Add(tailEvent);
+        }
+        else
+        {
+            // ([a, *rest], z): the written sequence evaluates its items — the inner list defers
+            // its elements, `z` runs. The result reads `a`; `count(rest)` reads no position.
+            f.Events.Add(tailEvent);
+            if (!failing) f.LateEvents.Add(inner[0]);
+        }
+
         if (failing)
         {
             f.FailureCategory = "TypeMismatch";
             f.Features.Add("failure");
         }
-        else f.Value = new Result.ListValue([Res(values[0]), Res(values.Count - 1), Res(tail)]);
+        else
+        {
+            f.ReadsLate = true;
+            f.Value = new Result.ListValue([Res(values[0]), Res(values.Count - 1), Res(tail)]);
+        }
+
+        // Only an element that runs can suspend.
+        if (f.Events.Concat(f.LateEvents).Any(static e => e.StartsWith("wait:", StringComparison.Ordinal)))
+            f.Features.Add("async");
         return f;
     }
 
@@ -1553,7 +1628,9 @@ internal static class SemanticGrammar
             case 0:
                 return;
             case 1:
+                // [row]: the row is a deferred element — it runs when the list is read.
                 f.Row = new MExpr.ListLit([f.Row]);
+                f.DeferRow();
                 if (f.Value is { } listed) f.Value = new Result.ListValue([listed]);
                 break;
             case 2:
@@ -1574,10 +1651,12 @@ internal static class SemanticGrammar
 
             case 5:
             {
-                // [Q, Q]: one evaluation, a real cache hit for the second read.
+                // [Q, Q]: one evaluation, a real cache hit for the second read — both when the
+                // list is read.
                 var q = g.Fresh();
                 f.Decls.Add(new MDecl.Value(q, [f.Row]));
                 f.Row = new MExpr.ListLit([new MExpr.Ref(q), new MExpr.Ref(q)]);
+                f.DeferRow();
                 if (f.Value is { } doubled)
                 {
                     f.Value = new Result.ListValue([doubled, doubled]);

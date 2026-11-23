@@ -438,11 +438,13 @@ public class DeconstructionMemoEligibilityTests
     /// </summary>
     private static readonly Dictionary<string, string> SurfaceExpectations = new(StringComparer.Ordinal)
     {
-        ["R01"] = "ok 15 n=1 | t(3) | steps=13 chk=49 depth=7 items=6 binds=1",
-        ["R02"] = "ok 8 n=1 | t(3) | steps=10 chk=39 depth=6 items=6 binds=1",
-        ["R02-MaxSteps10"] = "ok 8 n=1 | t(3) | steps=10 chk=39 depth=6 items=6 binds=1",
-        ["R02-MaxSteps11"] = "ok 8 n=1 | t(3) | steps=10 chk=39 depth=6 items=6 binds=1",
-        ["R03"] = "ok 15 n=1 | t(3) | steps=13 chk=49 depth=5 items=6 binds=1",
+        // R01–R03 select ONE position of a two-item mapped list: its second callback never runs
+        // (lazy collections, issue #204; LazyCollectionShift) — two steps and six checkpoints fewer.
+        ["R01"] = "ok 15 n=1 | t(3) | steps=11 chk=43 depth=7 items=6 binds=1",
+        ["R02"] = "ok 8 n=1 | t(3) | steps=8 chk=33 depth=6 items=6 binds=1",
+        ["R02-MaxSteps10"] = "ok 8 n=1 | t(3) | steps=8 chk=33 depth=6 items=6 binds=1",
+        ["R02-MaxSteps11"] = "ok 8 n=1 | t(3) | steps=8 chk=33 depth=6 items=6 binds=1",
+        ["R03"] = "ok 15 n=1 | t(3) | steps=11 chk=43 depth=5 items=6 binds=1",
         ["R04"] = "ok 8 n=1 | t(3) | steps=8 chk=26 depth=6 items=2 binds=1",
         ["R05"] = "ok 8 n=1 | t(3) | steps=8 chk=32 depth=6 items=4 binds=1",
         ["R06"] = "ok 12 n=1 | t(3) | steps=12 chk=69 depth=6 items=9 binds=1",
@@ -467,7 +469,7 @@ public class DeconstructionMemoEligibilityTests
         ["R22"] = "ok 8 n=1 | t(3) | steps=10 chk=36 depth=7 items=4 binds=1",
         ["R23"] = "err DivisionByZero: while evaluating call to F: Division by zero @ [2:22, 2:27) | t(3) | steps=5 chk=15 depth=5 items=0 binds=1",
         ["R24"] = "ok 3 n=1 |  | steps=1 chk=3 depth=1 items=0 binds=0",
-        ["R25"] = "ok 8 n=1 | t(3) | steps=8 chk=41 depth=6 items=6 binds=1",
+        ["R25"] = "ok 8 n=1 | t(3) | steps=8 chk=40 depth=5 items=6 binds=1",
         ["R26"] = "ok 3 n=1 |  | steps=12 chk=48 depth=3 items=6 binds=3",
         ["R27"] = "ok L[11, 22, 33] n=1 |  | steps=21 chk=93 depth=5 items=18 binds=3",
         ["R28"] = "ok 10 n=1 | t(3) | steps=10 chk=49 depth=6 items=6 binds=1",
@@ -480,22 +482,29 @@ public class DeconstructionMemoEligibilityTests
         // gone (formerly steps=10 chk=34 depth=7; Od1AccountingChange_IsExactlyTheEliminatedBinds).
         ["V03"] = "ok 8 n=1 | t(3) | steps=8 chk=32 depth=6 items=4 binds=1",
         ["V04"] = "ok 0 n=1 |  | steps=0 chk=3 depth=0 items=0 binds=0",
-        ["V08-MaxDepth5"] = "err EvaluationDepthExceeded: Evaluation recursion limit of 5 was exceeded @ [2:18, 2:19) |  | steps=5 chk=16 depth=5 items=1 binds=1",
+        // The failure is reached from a `map` callback, which runs when the mapped position is read: the mapped
+        // list's position is reserved and the selector evaluated first (three checkpoints, one item; so too
+        // FAIL-FROM-CALLBACK).
+        ["V08-MaxDepth5"] = "err EvaluationDepthExceeded: Evaluation recursion limit of 5 was exceeded @ [2:18, 2:19) |  | steps=5 chk=19 depth=5 items=2 binds=1",
         ["V09"] = "ok 16 n=1 | t(3),t(3) | steps=18 chk=76 depth=7 items=8 binds=2",
         ["V10"] = "ok 16 n=1 | t(3),t(3) | steps=17 chk=68 depth=7 items=8 binds=2",
         ["V11"] = "ok 9 n=1 | t(3),t(3) | steps=12 chk=46 depth=6 items=4 binds=1",
         ["ALIAS-RHS"] = "ok S[4, 1, 2] n=3 | t(1) | steps=10 chk=29 depth=6 items=7 binds=1",
         ["WIDE-BODY"] = "ok S[21, 6, 1] n=3 |  | steps=15 chk=34 depth=3 items=9 binds=1",
         ["COLLECT-WIDE"] = "ok 15 n=1 | t(3) | steps=11 chk=62 depth=5 items=8 binds=1",
-        ["R02-REVERSED"] = "ok 8 n=1 | t(3) | steps=10 chk=39 depth=5 items=6 binds=1",
-        ["R02-MaxSteps9"] = "err EvaluationStepLimitExceeded: Evaluation step limit of 9 was exceeded @ [6:32, 6:35) | t(3) | steps=9 chk=38 depth=6 items=6 binds=1",
-        ["V02-MaxItems10"] = "err MaterializationLimitExceeded: Evaluation materialization limit of 10 items was exceeded @ [3:5, 3:39) | t(3) | steps=12 chk=62 depth=6 items=8 binds=1",
+        ["R02-REVERSED"] = "ok 8 n=1 | t(3) | steps=8 chk=33 depth=5 items=6 binds=1",
+        // Eight steps since the selection reads one mapped position: the run completes within nine
+        // (R02_CompletesInEightSteps_AndRefusesAtSeven pins the new near-limit pair).
+        ["R02-MaxSteps9"] = "ok 8 n=1 | t(3) | steps=8 chk=33 depth=6 items=6 binds=1",
+        // The mapped list's three positions are reserved when `map` builds it, before any callback: with the
+        // source list's three and the right-hand side's three, the FIRST `t()` collector is the refusal again.
+        ["V02-MaxItems10"] = "err MaterializationLimitExceeded: Evaluation materialization limit of 10 items was exceeded @ [3:28, 3:31) | t(3) | steps=6 chk=37 depth=6 items=9 binds=1",
         ["SIBLING-CALLBACKS"] = "ok 20 n=1 | t(3) | steps=14 chk=68 depth=6 items=8 binds=1",
         ["UNUSED-COLLECTOR"] = "ok 7 n=1 | t(3) | steps=7 chk=37 depth=6 items=5 binds=1",
         ["LATE-COLLECTOR"] = "ok 10 n=1 | t(3) | steps=12 chk=67 depth=6 items=9 binds=1",
         ["LOOP-STEP-READS"] = "ok S[21, 0] n=1 | t(3) | steps=17 chk=88 depth=5 items=10 binds=1",
         ["NESTED-UNPACK"] = "ok 12 n=1 | t(3) | steps=15 chk=71 depth=9 items=11 binds=2",
-        ["FAIL-FROM-CALLBACK"] = "err DivisionByZero: while evaluating call to F: while evaluating dotCall .map of [1]: while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): Division by zero @ [2:22, 2:27) | t(3) | steps=6 chk=24 depth=6 items=1 binds=1",
+        ["FAIL-FROM-CALLBACK"] = "err DivisionByZero: while evaluating call to F: while evaluating dotCall .map of [1]: while evaluating map transform (map passes each iterated collection item as collected; a collecting parameter collects supplied values as one exact list and nested sequence and list values stay intact): Division by zero @ [2:22, 2:27) | t(3) | steps=6 chk=27 depth=6 items=2 binds=1",
     };
 
     public static TheoryData<string, Route> SurfaceCases()
@@ -514,8 +523,10 @@ public class DeconstructionMemoEligibilityTests
     /// R27), one per activation of a recursive owner whose right-hand side calls it again (R12's four
     /// binds — the former group-wide re-entry guard left the inner activations' binds unstored, seven),
     /// and the limit verdicts the eliminated work
-    /// moves: R02 now completes at <c>MaxSteps = 10</c> and still refuses at 9; V02 now completes at
-    /// <c>MaxMaterializedItems = 11</c> and still refuses at 10.
+    /// moves: V02 completes at <c>MaxMaterializedItems = 11</c> and still refuses at 10. (R02 completed at
+    /// <c>MaxSteps = 10</c> and refused at 9 under OD-1 alone; since lists are evaluated on demand, issue #204,
+    /// it takes eight steps and completes at every limit of this corpus —
+    /// <see cref="R02_CompletesInEightSteps_AndRefusesAtSeven"/> pins the pair that replaced it.)
     /// </summary>
     [Theory]
     [MemberData(nameof(SurfaceCases))]
@@ -528,6 +539,50 @@ public class DeconstructionMemoEligibilityTests
 
     private static readonly System.Text.RegularExpressions.Regex ObservationShape = new(
         @"^(?<outcome>.*) \| (?<effects>[^|]*) \| steps=(?<steps>\d+) chk=(?<chk>\d+) depth=(?<depth>\d+) items=(?<items>\d+) binds=(?<binds>\d+)$");
+
+    /// <summary>
+    /// What evaluating lists on demand (issue #204) changed in this corpus beyond OD-1, as the amounts to ADD to
+    /// a current observation to obtain the eager one: steps, checkpoints, peak depth, materialized items.
+    /// <list type="bullet">
+    /// <item>R01–R03 select one position of a two-item mapped list, so its second callback — one invocation
+    /// and its one property read, six checkpoints — never runs.</item>
+    /// <item>R25 never reads the nested list it selects a position of whole: one checkpoint and one level of
+    /// depth fewer.</item>
+    /// <item>V08 and FAIL-FROM-CALLBACK fail INSIDE a callback, which now runs when its mapped position is
+    /// read: the mapped list's position is reserved and the selector evaluated before the failure (three
+    /// checkpoints and one item MORE at the point of failure).</item>
+    /// </list>
+    /// </summary>
+    private static readonly Dictionary<string, (long Steps, long Checkpoints, long Depth, long Items)> LazyCollectionShift =
+        new(StringComparer.Ordinal)
+        {
+            ["R01"] = (2, 6, 0, 0),
+            ["R02"] = (2, 6, 0, 0),
+            ["R02-MaxSteps11"] = (2, 6, 0, 0),
+            ["R02-REVERSED"] = (2, 6, 0, 0),
+            ["R03"] = (2, 6, 0, 0),
+            ["R25"] = (0, 1, 1, 0),
+            ["V08-MaxDepth5"] = (0, -3, 0, -1),
+            ["FAIL-FROM-CALLBACK"] = (0, -3, 0, -1),
+        };
+
+    /// <summary>
+    /// The near-limit pair of R02 under on-demand lists: its selection reads one mapped position, so the run
+    /// takes exactly eight steps — it completes at <c>MaxSteps = 8</c> and is refused at 7, on every route.
+    /// </summary>
+    [Theory]
+    [InlineData(Route.Generic)]
+    [InlineData(Route.Optimized)]
+    [InlineData(Route.SuspendingAsync)]
+    public async Task R02_CompletesInEightSteps_AndRefusesAtSeven(Route route)
+    {
+        var (_, source, _) = SurfaceCorpus.Single(entry => entry.Id == "R02");
+        var program = new Expr.AlgorithmExpr(Parse(source));
+        Assert.Equal(SurfaceExpectations["R02"], (await Observe(program, route, new EvaluationLimits { MaxSteps = 8 })).ToString());
+        Assert.StartsWith(
+            "err EvaluationStepLimitExceeded: Evaluation step limit of 7 was exceeded",
+            (await Observe(program, route, new EvaluationLimits { MaxSteps = 7 })).ToString());
+    }
 
     /// <summary>
     /// THE OD-1 ACCOUNTING LAW FOR THIS CORPUS, checked between the two pinned tables. Under the former per-reader key a
@@ -544,17 +599,27 @@ public class DeconstructionMemoEligibilityTests
     /// this original corpus; <see cref="DeeperConsumer_SkipsTheRepeatedSourceReadDepth"/> pins a case
     /// where eliminating the source-read invocation also lowers peak depth.
     /// The verdicts that change are exactly the near-limit runs whose limit sat inside the eliminated
-    /// work (R02 at <c>MaxSteps = 10</c>, V02 at <c>MaxMaterializedItems = 11</c>), and the one refusal
-    /// that moves is V02 at 10: with the collector materialized once, the run reaches the limit later, at
-    /// the <c>map</c> result's reservation instead of the second <c>t()</c> collector.
+    /// work (R02 at <c>MaxSteps = 10</c>, V02 at <c>MaxMaterializedItems = 11</c>).
+    ///
+    /// <para>Since lists are evaluated on demand (issue #204) the law holds after
+    /// <see cref="LazyCollectionShift"/> is added back to the current observation, with two verdicts of its
+    /// own: R02 at <c>MaxSteps = 9</c> completes too (eight steps), and V02 at ten items is refused at the
+    /// first <c>t()</c> collector again — the baseline's refusal — but earlier in the run, because the mapped
+    /// list reserves its three positions before any callback (under OD-1 alone the run reached the limit at
+    /// the <c>map</c> result's reservation instead).</para>
     /// </summary>
     [Fact]
     public void Od1AccountingChange_IsExactlyTheEliminatedBinds()
     {
         Assert.Equal(Decon2Baseline.Keys.Order(StringComparer.Ordinal), SurfaceExpectations.Keys.Order(StringComparer.Ordinal));
         Assert.Equal(SurfaceCorpus.Select(entry => entry.Id).Order(StringComparer.Ordinal), SurfaceExpectations.Keys.Order(StringComparer.Ordinal));
-        var changedVerdicts = new HashSet<string>(StringComparer.Ordinal) { "R02-MaxSteps10", "V02-MaxItems11" };
-        var movedRefusals = new HashSet<string>(StringComparer.Ordinal) { "V02-MaxItems10" };
+        // R02-MaxSteps9 completes since lists are evaluated on demand (issue #204: the selection reads ONE
+        // mapped position, so the run takes eight steps), where OD-1 alone left it refused at nine.
+        var changedVerdicts = new HashSet<string>(StringComparer.Ordinal) { "R02-MaxSteps9", "R02-MaxSteps10", "V02-MaxItems11" };
+        // V02 at ten items is refused at the first `t()` collector again, as in the baseline — but earlier in the
+        // run: the mapped list reserves its three positions before any callback (issue #204), so the counters
+        // of the two refusals are not comparable.
+        var sameRefusalElsewhere = new HashSet<string>(StringComparer.Ordinal) { "V02-MaxItems10" };
         var collectorSavings = new HashSet<string>(StringComparer.Ordinal) { "V01", "LATE-COLLECTOR" };
         // M4★: V03's `public A = a` and `public Z = b` became transparent aliases, so beside the bind OD-1
         // eliminated their two property READS are gone as well — one step and one checkpoint each, and the
@@ -580,23 +645,24 @@ public class DeconstructionMemoEligibilityTests
                 continue;
             }
 
-            if (movedRefusals.Contains(id))
+            if (sameRefusalElsewhere.Contains(id))
             {
                 Assert.StartsWith("err MaterializationLimitExceeded", before.Groups["outcome"].Value);
-                Assert.StartsWith("err MaterializationLimitExceeded", after.Groups["outcome"].Value);
-                Assert.NotEqual(before.Groups["outcome"].Value, after.Groups["outcome"].Value);
+                Assert.Equal(before.Groups["outcome"].Value, after.Groups["outcome"].Value);
+                Assert.True(Field(after, "steps") < Field(before, "steps") && Field(after, "items") < Field(before, "items"), id);
                 continue;
             }
 
             Assert.Equal(before.Groups["outcome"].Value, after.Groups["outcome"].Value);
             var (aliasReads, aliasDepth) = aliasReclassified.GetValueOrDefault(id);
-            Assert.Equal(Field(before, "depth") - aliasDepth, Field(after, "depth"));
-            Assert.Equal(eliminated + aliasReads, Field(before, "steps") - Field(after, "steps"));
-            Assert.Equal(eliminated + aliasReads, Field(before, "chk") - Field(after, "chk"));
+            var lazy = LazyCollectionShift.GetValueOrDefault(id);
+            Assert.Equal(Field(before, "depth") - aliasDepth, Field(after, "depth") + lazy.Depth);
+            Assert.Equal(eliminated + aliasReads, Field(before, "steps") - (Field(after, "steps") + lazy.Steps));
+            Assert.Equal(eliminated + aliasReads, Field(before, "chk") - (Field(after, "chk") + lazy.Checkpoints));
             if (collectorSavings.Contains(id))
                 Assert.True(Field(after, "items") < Field(before, "items"), id);
             else
-                Assert.Equal(Field(before, "items"), Field(after, "items"));
+                Assert.Equal(Field(before, "items"), Field(after, "items") + lazy.Items);
         }
 
         // Exactly the cross-consumer shapes (OD-1) and the recursive owner (R12, the per-execution re-entry

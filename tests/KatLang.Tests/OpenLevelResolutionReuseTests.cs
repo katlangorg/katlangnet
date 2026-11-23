@@ -143,7 +143,10 @@ public class OpenLevelResolutionReuseTests
         const string captured = "F(p) = {\n    open Lib.Sub\n    Lib = {\n        public Sub = {\n            public X = p\n        }\n    }\n"
             + "    G(q) = X + q\n    [X, G(1), X]\n}\n[F(10), F(20)]";
         var activated = await OpenProviderIndexing.OnBothRoutesAsync(captured);
-        Assert.Equal(new OpenProviderIndexing.Observation("ok L[L[10, 11, 10], L[20, 21, 20]]", 2, 2, 0, 0, 0, 6, 4), activated);
+        // Each call of `F` consults its level five times: the two written `X` elements when the list is
+        // built (a list element is supplied like an argument and read later: lazy collections, issue #204),
+        // then the three reads — the two elements and `G`'s — when the result is read. One resolution per call.
+        Assert.Equal(new OpenProviderIndexing.Observation("ok L[L[10, 11, 10], L[20, 21, 20]]", 2, 2, 0, 0, 0, 10, 8), activated);
         Assert.Equal("ok", (await SixRouteAgreement.OnEveryRouteAsync(captured)).Kind);
     }
 
@@ -789,7 +792,10 @@ public class OpenLevelResolutionReuseTests
 
         var innerPads = string.Concat(Enumerable.Range(0, padding).Select(static i => $"            public Pad{i} = {i}\n"));
         var captured = $"F(p) = {{\n    open Lib.Sub\n    Lib = {{\n        public Sub = {{\n            public X = p\n{innerPads}        }}\n    }}\n    G(q) = X + q\n    [X, G(1), X]\n}}\n[F(10), F(20)]";
-        Assert.Equal(new OpenProviderIndexing.Observation("ok L[L[10, 11, 10], L[20, 21, 20]]", 2, 2, 0, 0, 0, 6, 4), await OpenProviderIndexing.OnBothRoutesAsync(captured));
+        // Each call's list is read when the run reads its result (lazy collections, issue #204): its
+        // deferred elements consult the level's entry in their own evaluations — five consultations
+        // per call, four of them reuses — where the eager literal consulted it three times.
+        Assert.Equal(new OpenProviderIndexing.Observation("ok L[L[10, 11, 10], L[20, 21, 20]]", 2, 2, 0, 0, 0, 10, 8), await OpenProviderIndexing.OnBothRoutesAsync(captured));
         Assert.Equal("ok", (await SixRouteAgreement.OnEveryRouteAsync(captured)).Kind);
     }
 

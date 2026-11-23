@@ -92,6 +92,17 @@ internal static partial class ValueTextRenderer
                 close = SequenceClose;
                 break;
             case Result.ListValue list:
+                // A list evaluated on demand reaches only a DIAGNOSTIC (every run result is
+                // materialized): it is shown without reading any position (issue #204).
+                if (list.Lazy is { } lazy)
+                {
+                    if (Evaluator.DiagnosticItems(lazy) is not { } shown) return sink.Append(Evaluator.PendingListText);
+                    if (!sink.Append(ListOpen)) return false;
+                    items = shown;
+                    close = ListClose;
+                    break;
+                }
+
                 if (!sink.Append(ListOpen)) return false;
                 items = list.Items;
                 close = ListClose;
@@ -128,6 +139,13 @@ internal static partial class ValueTextRenderer
                     if (!AppendAtom(atom.Value, displayOptions, sink)) return false;
                     break;
                 case Result.Str str:
+                    // A deferred position of a list evaluated on demand (diagnostics only).
+                    if (ReferenceEquals(str, Evaluator.DeferredPositionMarker))
+                    {
+                        if (!sink.Append(Evaluator.DeferredPositionText)) return false;
+                        break;
+                    }
+
                     if (!stringPolicy.Append(str.Value, sink)) return false;
                     break;
                 case Result.Bool flag:
@@ -139,6 +157,20 @@ internal static partial class ValueTextRenderer
                     (items, next, close) = (sequence.Items, 0, SequenceClose);
                     break;
                 case Result.ListValue list:
+                    if (list.Lazy is { } nestedLazy)
+                    {
+                        if (Evaluator.DiagnosticItems(nestedLazy) is not { } shown)
+                        {
+                            if (!sink.Append(Evaluator.PendingListText)) return false;
+                            break;
+                        }
+
+                        if (!sink.Append(ListOpen)) return false;
+                        (suspended ??= new()).Push(new(items, next, close));
+                        (items, next, close) = (shown, 0, ListClose);
+                        break;
+                    }
+
                     if (!sink.Append(ListOpen)) return false;
                     (suspended ??= new()).Push(new(items, next, close));
                     (items, next, close) = (list.Items, 0, ListClose);

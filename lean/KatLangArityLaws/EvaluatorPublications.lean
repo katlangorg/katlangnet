@@ -645,7 +645,12 @@ theorem pubDisc_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM Count
     (hdemand : ∀ b, PubDisc (demand b)) (a : Nat) (suspension : NeedSuspension) :
     PubDisc (NeedDemand.suspendedValue ev route demand a suspension) := by
   cases suspension with
-  | ready value => exact pubDisc_pure _
+  | ready value =>
+    -- A Ready cell holding a deferred list item is that position's demand (issue #204).
+    simp only [NeedDemand.suspendedValue]
+    split
+    · exact hdemand _
+    · exact pubDisc_pure _
   | expression e c v =>
     simp only [NeedDemand.suspendedValue]
     split
@@ -851,7 +856,7 @@ elab "pub_whnf_core" : tactic => do
     shared list `evalrec_unfold`, `EvaluatorCore`); the plan route and the binding channels are
     their records. -/
 macro "pub_unfold_rec" : tactic => `(tactic| evalrec_unfold (config := { proj := false })
-  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell, NeedChannels.capabilities])
+  [EvalRec.planRoute, EvalRec.bindingChannels, NeedChannels.shell])
 
 set_option hygiene false in
 /-- Syntax-directed link discipline (base: no recursive helper lemmas), given that `hrec`
@@ -938,18 +943,76 @@ theorem pub_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀ 
   | nil => unfold selectViewWith; pub_tac_base
   | cons c rest ih => unfold selectViewWith; pub_tac_base
 
+/-! ### Lazy collections (issue #204): the recursive positional helpers -/
+
+theorem pub_lazyDiscover (demand : Nat → EvalM CountedResult) (hd : ∀ a, PubDisc (demand a))
+    (visit : Nat → EvalM Result) (hv : ∀ a, PubDisc (visit a))
+    (limit : Option Nat) (candidates : List (Nat × Nat)) :
+    PubDisc (LazyList.discover demand visit limit candidates) := by
+  induction candidates generalizing limit with
+  | nil => unfold LazyList.discover; pub_tac_base
+  | cons c rest ih => unfold LazyList.discover; pub_tac_base
+
+theorem pub_selectPositionsWith {α : Type} (demand : α → EvalM Result) (hd : ∀ a, PubDisc (demand a))
+    (positionAt : Nat → EvalM (Option Result)) (hp : ∀ n, PubDisc (positionAt n))
+    (read : Result → EvalM Result) (hr : ∀ item, PubDisc (read item)) (selectors : List α) :
+    PubDisc (selectPositionsWith demand positionAt read selectors) := by
+  induction selectors with
+  | nil => unfold selectPositionsWith; pub_tac_base
+  | cons c rest ih => unfold selectPositionsWith; pub_tac_base
+
+theorem pub_peelSpreadLayers (force : Result → EvalM Result) (hf : ∀ value, PubDisc (force value))
+    (layers : Nat) (value : Result) : PubDisc (peelSpreadLayers force layers value) := by
+  induction layers generalizing value with
+  | zero => unfold peelSpreadLayers; pub_tac_base
+  | succ n ih => unfold peelSpreadLayers; pub_tac_base
+
 /-- Capabilities whose every field is link-disciplined. -/
 structure CapsPub (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, PubDisc (caps.value a)
   callable : ∀ a, PubDisc (caps.callable a)
   allocate : ∀ s, PubDisc (caps.allocate s)
   reference : ∀ a, PubDisc (caps.reference a)
+  positions : ∀ a, PubDisc (caps.positions a)
+  whole : ∀ a, PubDisc (caps.whole a)
+
+/-- The read a structural pattern opens its cell through (issue #204) is one of two disciplined
+    capabilities. -/
+theorem pub_structuralRead (caps : NeedCapabilities EvalM) (hc : CapsPub caps)
+    (pattern : NeedPattern) (address : Nat) :
+    PubDisc (NeedBinder.structuralRead caps pattern address) := by
+  cases pattern <;> first | exact hc.value address | exact hc.positions address
+
+/-- THE PRODUCTION CAPABILITIES over disciplined channels are disciplined: the allocator and the
+    META capability as before, and the two lazy-collection reads (issue #204), each the VALUE channel
+    followed by a positional helper over that same channel. Stated once, so that a binder call
+    site proves its two channels only. -/
+theorem pub_capabilities (channels : NeedChannels) (hv : ∀ a, PubDisc (channels.value a))
+    (hc : ∀ a, PubDisc (channels.callable a)) : CapsPub channels.capabilities := by
+  refine ⟨hv, hc, ?_, ?_, ?_, ?_⟩
+  · intro s; show PubDisc (allocateNeed s); pub_tac_base
+  · intro a; show PubDisc (NeedPlan.reference a); pub_tac_base
+  · intro a
+    have hpos : ∀ candidates, PubDisc (LazyList.positions channels.value none candidates) :=
+      fun candidates => pub_lazyDiscover channels.value hv _ (fun _ => by pub_tac_base) none candidates
+    show PubDisc (do
+      let (value, count) <- channels.value a
+      match value with
+      | .pendingList candidates =>
+          pure (Result.listValue (<- LazyList.positions channels.value none candidates), count)
+      | _ => pure (value, count))
+    pub_tac_base
+  · intro a
+    show PubDisc (do
+      let (value, count) <- channels.value a
+      pure (<- materializeVia channels.value value, count))
+    pub_tac_base
 
 /-- NEED-04's data-anchor check demands only through the VALUE capability. -/
 theorem pub_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsPub caps) (name : Ident)
     (anchor : CountedResult) (family : Bool) (cells : List Nat) :
     PubDisc (NeedBinder.checkAnchor caps name anchor family cells) := by
-  have hv := hc.value
+  have hv := hc.whole
   induction cells with
   | nil => unfold NeedBinder.checkAnchor; pub_tac_base
   | cons c rest ih => unfold NeedBinder.checkAnchor; pub_tac_base
@@ -961,6 +1024,7 @@ theorem pub_binder (caps : NeedCapabilities EvalM) (hc : CapsPub caps) (repeated
     (∀ patterns sources current,
       PubDisc (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hwh := hc.whole; have hread := pub_structuralRead caps hc
   have hck := pub_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
@@ -1201,6 +1265,9 @@ macro "pub_tac" : tactic => `(tactic| without_info_trees ((try pub_unfold_rec) <
   | (with_reducible apply pub_discover)
   | (with_reducible apply pub_selectWith)
   | (with_reducible apply pub_selectViewWith)
+  | (with_reducible apply pub_lazyDiscover)
+  | (with_reducible apply pub_selectPositionsWith)
+  | (with_reducible apply pub_peelSpreadLayers)
   | (with_reducible apply pub_bindPatterns)
   | (with_reducible apply pub_selectFamily)
   | (with_reducible apply pub_collectSingleAtomicNumbers)
@@ -1229,6 +1296,7 @@ macro "pub_tac" : tactic => `(tactic| without_info_trees ((try pub_unfold_rec) <
   | (with_reducible apply pub_filterLoop rec hrec hres)
   | (with_reducible apply pub_mapLoop rec hrec hres)
   | (with_reducible apply pub_repeatLoop rec hrec hres)
+  | (with_reducible apply pub_capabilities)
   | (with_reducible apply CapsPub.mk)
 
   | split
@@ -1503,14 +1571,16 @@ theorem EvalBody.evalReduceCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDis
     PubDisc (EvalBody.evalReduceCounted rec collection stepAlg start ctx env) := by
   unfold EvalBody.evalReduceCounted; pub_tac
 
-theorem EvalBody.evalFilterCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    PubDisc (EvalBody.evalFilterCounted rec items predicateAlg ctx env) := by
+theorem EvalBody.evalFilterCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (start : Nat) (items : List CountedResult) (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    PubDisc (EvalBody.evalFilterCounted rec start items predicateAlg ctx env) := by
   unfold EvalBody.evalFilterCounted; pub_tac
 
 theorem EvalBody.evalMapCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (collection : List CountedResult) (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalMapCounted rec collection transformAlg ctx env) := by
   unfold EvalBody.evalMapCounted; pub_tac
 
+-- Lazy collections (issue #204) enlarged this body (the pending-list stages); the same tactic needs more time.
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.applyBuiltinCountedSequence_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env) := by
   unfold EvalBody.applyBuiltinCountedSequence; pub_tac
@@ -1585,6 +1655,9 @@ theorem EvalBody.evalArgumentViewBuiltin_pubDisc (rec : EvalRec) (hrec : ∀ c, 
 theorem EvalBody.evalSequenceSpreadOperandValue_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalSequenceSpreadOperandValue rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadOperandValue; pub_tac
+theorem EvalBody.evalRunValue_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    PubDisc (EvalBody.evalRunValue rec e ctx env) := by
+  unfold EvalBody.evalRunValue; pub_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres : ResSusp rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     PubDisc (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
@@ -1682,7 +1755,7 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | demandSequenceBuiltinCallItemValue item ctx env => exact EvalBody.demandSequenceBuiltinCallItemValue_pubDisc rec hrec hres item ctx env
   | bindSequenceBuiltinArguments b metadata args ctx env => exact EvalBody.bindSequenceBuiltinArguments_pubDisc rec hrec hres b metadata args ctx env
   | evalReduceCounted collection stepAlg start ctx env => exact EvalBody.evalReduceCounted_pubDisc rec hrec hres collection stepAlg start ctx env
-  | evalFilterCounted items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pubDisc rec hrec hres items predicateAlg ctx env
+  | evalFilterCounted start items predicateAlg ctx env => exact EvalBody.evalFilterCounted_pubDisc rec hrec hres start items predicateAlg ctx env
   | evalMapCounted collection transformAlg ctx env => exact EvalBody.evalMapCounted_pubDisc rec hrec hres collection transformAlg ctx env
   | applyBuiltinCountedSequence b metadata args ctx env => exact EvalBody.applyBuiltinCountedSequence_pubDisc rec hrec hres b metadata args ctx env
   | applyBuiltinCounted b args ctx env => exact EvalBody.applyBuiltinCounted_pubDisc rec hrec hres b args ctx env
@@ -1702,6 +1775,7 @@ theorem evalStep_pubDisc (rec : EvalRec) (hrec : ∀ c, PubDisc (rec c)) (hres :
   | argumentViewCells a => exact EvalBody.argumentViewCells_pubDisc rec hrec hres a
   | evalArgumentViewBuiltin b a => exact EvalBody.evalArgumentViewBuiltin_pubDisc rec hrec hres b a
   | evalSequenceSpreadOperandValue e ctx env => exact EvalBody.evalSequenceSpreadOperandValue_pubDisc rec hrec hres e ctx env
+  | evalRunValue e ctx env => exact EvalBody.evalRunValue_pubDisc rec hrec hres e ctx env
   | evalSequenceSpreadCounted e ctx env => exact EvalBody.evalSequenceSpreadCounted_pubDisc rec hrec hres e ctx env
   | evalSupplySpread e ctx env => exact EvalBody.evalSupplySpread_pubDisc rec hrec hres e ctx env
   | evalListLiteralCounted elements ctx env => exact EvalBody.evalListLiteralCounted_pubDisc rec hrec hres elements ctx env

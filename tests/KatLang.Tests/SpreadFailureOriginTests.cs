@@ -108,8 +108,6 @@ public class SpreadFailureOriginTests
     [InlineData("{ G }*", RowLine, 3, "{...}")]
     // Constructing the operand fails.
     [InlineData("(G, 1)*", RowLine, 2, "(G, 1)")]
-    [InlineData("[G]*", RowLine, 2, "[G]")]
-    [InlineData("P([G])", RowLine, 4, "x")]
     // A builtin's argument, a clause pattern's and a binder's inspection, an intrinsic receiver.
     [InlineData("if(true, G, 1)*", RowLine, 10, "if(...)")]
     [InlineData("count(G)*", RowLine, 7, "count(...)")]
@@ -137,6 +135,29 @@ public class SpreadFailureOriginTests
             contexts[^1] is PropertyEvaluationContext("G") or DotCallContext("G", "string"),
             $"unexpected innermost frame {contexts[^1]}");
         Assert.True(contexts.ToList().IndexOf(spread) < contexts.Count - 1);
+    }
+
+    // Lazy collections (issue #204): a list literal defers its elements, so `[G]` is built and
+    // the operand evaluates. The failure is the POSITION's, raised when the spread reads the
+    // level it opens: nested, at `G`, under the position's own frames — with no spread frame.
+    [Theory]
+    [InlineData("[G]*", RowLine, 2)]
+    [InlineData("P([G])", RowLine, 4)]
+    public void ADeferredListElement_FailsAsItsOwnPosition_WithoutASpreadFrame(string row, int line, int column)
+    {
+        var error = Fails(row, KatLangErrorCode.MissingOutput);
+        Assert.Contains("Property 'G' has no defined output", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("while evaluating spread operand", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cannot spread", error.Message, StringComparison.Ordinal);
+        Assert.Equal(line, error.Span!.Value.Start.Line);
+        Assert.Equal(column, error.Span!.Value.Start.Column);
+
+        var structured = EvalFailure(row);
+        var missing = Assert.IsType<EvalError.MissingOutput>(Innermost(structured));
+        Assert.True(missing.IsNested);
+        var contexts = Contexts(structured);
+        Assert.Empty(contexts.OfType<SpreadOperandContext>());
+        Assert.True(contexts[^1] is PropertyEvaluationContext("G"), $"unexpected innermost frame {contexts[^1]}");
     }
 
     [Fact]

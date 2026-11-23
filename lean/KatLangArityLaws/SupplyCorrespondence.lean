@@ -225,11 +225,71 @@ theorem cells_mono {t t' : Table} (h : Extends t t') {c1 c2 : List Nat} (hc : Ce
 theorem cells_length {t : Table} {c1 c2 : List Nat} (h : Cells t c1 c2) : c1.length = c2.length :=
   Rel2.length_eq h
 
+/-- THE VALUE CORRESPONDENCE of two reads (lazy collections, issue #204): EQUAL counted values that
+    are CONCRETE (`Result.isLazy` is false). A lazy value names need cells of ONE heap — a deferred
+    list item its position cell, a pending list its candidates' cells — so two runs over DIFFERENT
+    heaps can hold the same lazy value and still read different things through it. The
+    heap-renaming correspondence of this module is therefore stated for concrete values: the
+    Ready supplies of a callback route whose arguments are concrete, the collectors over them,
+    and everything a binder opens from them. -/
+def ValCorr (_ : Table) (v w : CountedResult) : Prop := v = w ∧ v.1.isLazy = false
+
+theorem res_corr_imp {α β : Type} {P Q : α → β → Prop} (h : ∀ a b, P a b → Q a b) :
+    ∀ {o1 : Except Error α} {o2 : Except Error β}, ResCorr P o1 o2 → ResCorr Q o1 o2
+  | .ok _, .ok _, c => h _ _ c
+  | .error _, .error _, c => c
+  | .ok _, .error _, c => c.elim
+  | .error _, .ok _, c => c.elim
+
+/-- A simulation's result relation may be weakened. -/
+theorem sim_imp {α β : Type} {R : StateRel} {P Q : Table → α → β → Prop} {t : Table} {x : EvalM α}
+    {y : EvalM β} (hpq : ∀ t a b, P t a b → Q t a b) (h : Sim R P t x y) : Sim R Q t x y := by
+  intro s1 s2 hR
+  obtain ⟨t', e, r, c⟩ := h s1 s2 hR
+  exact ⟨t', e, r, res_corr_imp (hpq t') c⟩
+
+/-- Corresponding VALUE reads return equal values. -/
+theorem sim_val_eq {R : StateRel} {t : Table} {x y : EvalM CountedResult} (h : Sim R ValCorr t x y) :
+    Sim R (fun _ v w => v = w) t x y :=
+  sim_imp (fun _ _ _ c => c.1) h
+
+/-- Equal completed outcomes of two corresponding VALUE reads, and their concreteness. -/
+theorem res_val_eq {t : Table} {o1 o2 : Except Error CountedResult} (h : ResCorr (ValCorr t) o1 o2) :
+    o1 = o2 ∧ ∀ v, o1 = .ok v → v.1.isLazy = false := by
+  cases o1 with
+  | error e1 =>
+    cases o2 with
+    | error e2 => exact ⟨by simp only [ResCorr] at h; rw [h], fun _ hv => by cases hv⟩
+    | ok _ => exact h.elim
+  | ok v1 =>
+    cases o2 with
+    | error _ => exact h.elim
+    | ok v2 =>
+      obtain ⟨hv, hc⟩ := (show ValCorr t v1 v2 from h)
+      subst hv
+      exact ⟨rfl, fun v hv => by cases hv; exact hc⟩
+
+/-! ### Concrete values open to concrete items -/
+
+open KatLang.LazyCollections (anyIsLazy_false anyIsLazy_of_all spreadItems_concrete)
+
+/-- The items a structural pattern opens from a concrete value are concrete. -/
+theorem structuralItems_concrete {p : NeedPattern} {value : Result} {items : List Result}
+    (h : value.isLazy = false) (hs : structuralItems p value = some items) :
+    ∀ x ∈ items, x.isLazy = false := by
+  have hsub : items = value.spreadItems := by
+    cases p <;> cases value <;>
+      simp_all [structuralItems, Result.listPatternItems?, Result.sequencePatternItems?, Result.spreadItems,
+        Result.toItems]
+  rw [hsub]
+  exact spreadItems_concrete h
+
 /-- Corresponding suspensions of the two cells the binder may allocate: Ready cells of the SAME
-    counted value, or collectors over corresponding slices. Expression suspensions never
-    correspond here. -/
+    CONCRETE counted value (`ValCorr`: a Ready cell holding a deferred list item would read
+    another cell of its own heap), or collectors over corresponding slices. Expression
+    suspensions never correspond here. -/
 def SuspCorr (t : Table) : NeedSuspension → NeedSuspension → Prop
-  | .ready v, .ready w => v = w
+  | .ready v, .ready w => ValCorr t v w
   | .collector s1, .collector s2 => Cells t s1 s2
   | _, _ => False
 
@@ -429,10 +489,19 @@ theorem state_withAnchor (n : Ident) {t : Table} {s1 s2 : NeedBindState} {a1 a2 
     allocations of corresponding suspensions return corresponding cells, and each re-establishes
     `R` at some extension of the table. -/
 structure CapCorr (R : StateRel) (k1 k2 : NeedCapabilities EvalM) : Prop where
-  value : ∀ t a1 a2, Addr t a1 a2 → Sim R (fun _ v w => v = w) t (k1.value a1) (k2.value a2)
+  value : ∀ t a1 a2, Addr t a1 a2 → Sim R ValCorr t (k1.value a1) (k2.value a2)
   callable : ∀ t a1 a2, Addr t a1 a2 → Sim R (fun _ v w => v = w) t (k1.callable a1) (k2.callable a2)
   allocate : ∀ t s1 s2, SuspCorr t s1 s2 → Sim R Addr t (k1.allocate s1) (k2.allocate s2)
   reference : ∀ t a1 a2, Addr t a1 a2 → Sim R Addr t (k1.reference a1) (k2.reference a2)
+  /-- The two lazy-collection reads (issue #204) correspond like the VALUE demand. -/
+  positions : ∀ t a1 a2, Addr t a1 a2 → Sim R ValCorr t (k1.positions a1) (k2.positions a2)
+  whole : ∀ t a1 a2, Addr t a1 a2 → Sim R ValCorr t (k1.whole a1) (k2.whole a2)
+
+/-- Corresponding records open a structural pattern's cell through corresponding reads. -/
+theorem CapCorr.structuralRead {R : StateRel} {k1 k2 : NeedCapabilities EvalM} (hk : CapCorr R k1 k2)
+    (p : NeedPattern) (t : Table) (a1 a2 : Nat) (ha : Addr t a1 a2) :
+    Sim R ValCorr t (NeedBinder.structuralRead k1 p a1) (NeedBinder.structuralRead k2 p a2) := by
+  cases p <;> first | exact hk.value t a1 a2 ha | exact hk.positions t a1 a2 ha
 
 /-! ## The simulation of the binder core -/
 
@@ -445,8 +514,9 @@ theorem checkAnchor_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : Ca
   | t, [], [], Rel2.nil => sim_pure R _ t true true rfl
   | t, a :: as, b :: bs, Rel2.cons hab hr => by
     simp only [NeedBinder.checkAnchor]
-    refine sim_bind R (fun _ v w => v = w) (fun _ v w => v = w) t _ _ _ _ (hk.value t a b hab) ?_
+    refine sim_bind R ValCorr (fun _ v w => v = w) t _ _ _ _ (hk.whole t a b hab) ?_
     intro t1 v w x1 hvw
+    obtain ⟨hvw, -⟩ := hvw
     subst hvw
     by_cases hag : (v == anchor) = true
     · simp only [hag, ↓reduceIte]
@@ -511,8 +581,9 @@ theorem name_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R
           · exact sim_pure R OptStateCorr t2 _ _ (state_withCallable name (state_mono x2 hb1) (x2 _ ha1) identity)
     | none =>
       simp only
-      refine sim_bind R (fun _ v w => v = w) OptStateCorr t1 _ _ _ _ (hk.value t1 a1 a2 ha1) ?_
+      refine sim_bind R ValCorr OptStateCorr t1 _ _ _ _ (hk.whole t1 a1 a2 ha1) ?_
       intro t2 own own' x2 ho
+      obtain ⟨ho, -⟩ := ho
       subst ho
       have hb2 := state_mono x2 hb1
       have ha2 : Addr t2 a1 a2 := x2 _ ha1
@@ -540,23 +611,27 @@ theorem name_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R
     exact sim_pure R OptStateCorr t _ _ (state_withPlain name hb ha)
 
 theorem ready_loop_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2) :
-    ∀ (items : List Result) (acc1 acc2 : List Nat) (t : Table), Cells t acc1 acc2 →
+    ∀ (items : List Result) (acc1 acc2 : List Nat) (t : Table), (∀ item ∈ items, item.isLazy = false) →
+      Cells t acc1 acc2 →
       Sim R Cells t (List.mapM.loop (fun item => k1.allocate (.ready (item, Result.valueCount item))) items acc1)
         (List.mapM.loop (fun item => k2.allocate (.ready (item, Result.valueCount item))) items acc2)
-  | [], acc1, acc2, t, h => by
+  | [], acc1, acc2, t, _, h => by
       simp only [List.mapM.loop]
       exact sim_pure R Cells t _ _ (Rel2.reverse_aux h)
-  | item :: rest, acc1, acc2, t, h => by
+  | item :: rest, acc1, acc2, t, hitems, h => by
       simp only [List.mapM.loop]
-      refine sim_bind R Addr Cells t _ _ _ _ (hk.allocate t _ _ (by simp [SuspCorr])) ?_
+      refine sim_bind R Addr Cells t _ _ _ _
+        (hk.allocate t _ _ (show SuspCorr t (.ready _) (.ready _) from ⟨rfl, hitems item List.mem_cons_self⟩)) ?_
       intro t1 b1 b2 x1 hb
-      exact ready_loop_sim R k1 k2 hk rest (b1 :: acc1) (b2 :: acc2) t1 (Rel2.cons hb (cells_mono x1 h))
+      exact ready_loop_sim R k1 k2 hk rest (b1 :: acc1) (b2 :: acc2) t1
+        (fun i hi => hitems i (List.mem_cons_of_mem _ hi)) (Rel2.cons hb (cells_mono x1 h))
 
-/-- READY ALLOCATION, simulated: the same items allocate corresponding cells, in order. -/
+/-- READY ALLOCATION, simulated: the same CONCRETE items allocate corresponding cells, in order. -/
 theorem ready_cells_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
-    (items : List Result) (t : Table) : Sim R Cells t (readyCells k1 items) (readyCells k2 items) := by
+    (items : List Result) (hitems : ∀ item ∈ items, item.isLazy = false) (t : Table) :
+    Sim R Cells t (readyCells k1 items) (readyCells k2 items) := by
   unfold readyCells List.mapM
-  exact ready_loop_sim R k1 k2 hk items [] [] t Rel2.nil
+  exact ready_loop_sim R k1 k2 hk items [] [] t hitems Rel2.nil
 
 theorem gate_sim (R : StateRel) (ps : List NeedPattern) (n : Nat) (family : Bool) (t : Table)
     (x y : EvalM (Option NeedBindState)) (h : Sim R OptStateCorr t x y) :
@@ -642,19 +717,21 @@ theorem structural_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : Cap
     Sim R OptStateCorr t (NeedBinder.bindOne k1 p a1 repeated b1 family)
       (NeedBinder.bindOne k2 p a2 repeated b2 family) := by
   rw [bindOne_structural_shape k1 p ps hp, bindOne_structural_shape k2 p ps hp]
-  refine sim_bind R (fun _ v w => v = w) OptStateCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
+  refine sim_bind R ValCorr OptStateCorr t _ _ _ _ (hk.structuralRead p t a1 a2 ha) ?_
   intro t1 v w x1 hvw
+  obtain ⟨hvw, hconc⟩ := hvw
   subst hvw
   obtain ⟨value, count⟩ := v
-  simp only
-  cases structuralItems p value with
+  simp only at hconc ⊢
+  cases hsi : structuralItems p value with
   | none =>
     cases family
     · exact sim_throw R OptStateCorr t1 _
     · exact sim_pure R OptStateCorr t1 none none trivial
   | some items =>
     simp only
-    refine sim_bind R Cells OptStateCorr t1 _ _ _ _ (ready_cells_sim R k1 k2 hk items t1) ?_
+    refine sim_bind R Cells OptStateCorr t1 _ _ _ _
+      (ready_cells_sim R k1 k2 hk items (structuralItems_concrete hconc hsi) t1) ?_
     intro t2 c1 c2 x2 hc
     rw [cells_length hc]
     exact gate_sim R ps c2.length family t2 _ _
@@ -676,8 +753,9 @@ mutual
       exact name_sim R k1 k2 hk name d1 d2 repeated b1 b2 family t1 hd (state_mono x1 hb)
     | literal literal =>
       simp only [NeedBinder.bindOne]
-      refine sim_bind R (fun _ v w => v = w) OptStateCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
+      refine sim_bind R ValCorr OptStateCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
       intro t1 v w x1 hvw
+      obtain ⟨hvw, -⟩ := hvw
       subst hvw
       obtain ⟨value, count⟩ := v
       simp only
@@ -804,11 +882,12 @@ theorem select_family_sim {γ δ : Type} (R : StateRel) (k1 k2 : NeedCapabilitie
 
 /-! ## The production heap correspondence -/
 
-/-- Two cells correspond: corresponding suspensions (equal Ready values, corresponding collector
-    slices), the same VALUE state, the same CALLABLE memo and the same plan supply. -/
+/-- Two cells correspond: corresponding suspensions (equal concrete Ready values, corresponding
+    collector slices), the same VALUE state — a completed value CONCRETE (`ValCorr`, issue #204) —,
+    the same CALLABLE memo and the same plan supply. -/
 def CellCorr (t : Table) (c1 c2 : NeedCell) : Prop :=
   SuspCorr t c1.suspension c2.suspension ∧ c1.state = c2.state ∧ c1.callable = c2.callable ∧
-    c1.plan = c2.plan
+    c1.plan = c2.plan ∧ ∀ v, c1.state = .completed (.ok v) → v.1.isLazy = false
 
 theorem cell_mono {t t' : Table} (h : Extends t t') {c1 c2 : NeedCell} (hc : CellCorr t c1 c2) :
     CellCorr t' c1 c2 :=
@@ -850,7 +929,7 @@ theorem allocate_need_sim (t : Table) (sp1 sp2 : NeedSuspension) (h : SuspCorr t
   · intro p hp
     rcases List.mem_cons.mp hp with rfl | hp
     · exact ⟨_, _, Array.getElem?_push_size, Array.getElem?_push_size,
-        ⟨susp_mono (extends_cons _ _) h, rfl, rfl, rfl⟩⟩
+        ⟨susp_mono (extends_cons _ _) h, rfl, rfl, rfl, fun _ hv => by cases hv⟩⟩
     · obtain ⟨c1, c2, h1, h2, hc⟩ := hcells p hp
       obtain ⟨l1, l2⟩ := hold p hp
       exact ⟨c1, c2, by simp only [Array.getElem?_push, Nat.ne_of_lt l1, ↓reduceIte, h1],
@@ -911,9 +990,10 @@ theorem heap_modify (t : Table) (s1 s2 : EvalState) (a1 a2 : Nat) (f : NeedCell 
   · have e' : ¬ a2 = p.2 := fun h => e (hiff.mpr h)
     exact ⟨c1, c2, by simp [Array.getElem?_modify, e, h1], by simp [Array.getElem?_modify, e', h2], hc⟩
 
-theorem state_update_corr (t : Table) (st : NeedState) :
+theorem state_update_corr (t : Table) (st : NeedState)
+    (hst : ∀ v, st = .completed (.ok v) → v.1.isLazy = false) :
     ∀ c1 c2, CellCorr t c1 c2 → CellCorr t { c1 with state := st } { c2 with state := st } :=
-  fun _ _ hc => ⟨hc.1, rfl, hc.2.2.1, hc.2.2.2⟩
+  fun _ _ hc => ⟨hc.1, rfl, hc.2.2.1, hc.2.2.2.1, hst⟩
 
 theorem map_eq_bind {α β : Type} (f : α → β) (x : EvalM α) : (f <$> x) = (x >>= fun a => pure (f a)) := rfl
 
@@ -929,22 +1009,50 @@ theorem loop_eq_sim {γ : Type} (R : StateRel) (f : Nat → EvalM γ)
       subst hb
       exact loop_eq_sim R f hf xs ys (b1 :: acc) t1 (cells_mono x1 hr)
 
+/-- A loop over corresponding cells whose reads return equal CONCRETE values collects equal lists
+    of concrete values. -/
+theorem loop_concrete_sim (R : StateRel) (f : Nat → EvalM Result)
+    (hf : ∀ t b1 b2, Addr t b1 b2 → Sim R (fun _ v w => v = w ∧ v.isLazy = false) t (f b1) (f b2)) :
+    ∀ (xs1 xs2 : List Nat) (acc : List Result) (t : Table), Cells t xs1 xs2 →
+      (∀ v ∈ acc, v.isLazy = false) →
+      Sim R (fun _ vs ws => vs = ws ∧ ∀ v ∈ vs, v.isLazy = false) t
+        (List.mapM.loop f xs1 acc) (List.mapM.loop f xs2 acc)
+  | [], [], acc, t, _, hacc => by
+      simp only [List.mapM.loop]
+      exact sim_pure R _ t _ _ ⟨rfl, fun v hv => hacc v (List.mem_reverse.mp hv)⟩
+  | x :: xs, y :: ys, acc, t, Rel2.cons hxy hr, hacc => by
+      simp only [List.mapM.loop]
+      refine sim_bind R (fun _ v w => v = w ∧ v.isLazy = false) _ t _ _ _ _ (hf t x y hxy) ?_
+      intro t1 b1 b2 x1 hb
+      obtain ⟨hb, hb1⟩ := hb
+      subst hb
+      refine loop_concrete_sim R f hf xs ys (b1 :: acc) t1 (cells_mono x1 hr) ?_
+      intro v hv
+      rcases List.mem_cons.mp hv with rfl | hv
+      · exact hb1
+      · exact hacc v hv
+
 theorem materialize_sim (recur : Nat → EvalM CountedResult)
-    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
+    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr ValCorr t (recur b1) (recur b2))
     (t : Table) (sl1 sl2 : List Nat) (h : Cells t sl1 sl2) :
-    Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.materialize recur sl1) (NeedDemand.materialize recur sl2) := by
+    Sim HeapCorr ValCorr t (NeedDemand.materialize recur sl1) (NeedDemand.materialize recur sl2) := by
   unfold NeedDemand.materialize List.mapM
-  refine sim_bind HeapCorr (fun _ v w => v = w) _ t _ _ _ _ ?_ ?_
-  · refine loop_eq_sim HeapCorr (fun a => Prod.fst <$> recur a) ?_ sl1 sl2 [] t h
+  refine sim_bind HeapCorr (fun _ vs ws => vs = ws ∧ ∀ v ∈ vs, v.isLazy = false) _ t _ _ _ _ ?_ ?_
+  · refine loop_concrete_sim HeapCorr (fun a => Prod.fst <$> recur a) ?_ sl1 sl2 [] t h
+      (fun _ hv => by cases hv)
     intro t' b1 b2 hb
     rw [map_eq_bind, map_eq_bind]
-    refine sim_bind HeapCorr (fun _ v w => v = w) _ t' _ _ _ _ (hrec t' b1 b2 hb) ?_
+    refine sim_bind HeapCorr ValCorr _ t' _ _ _ _ (hrec t' b1 b2 hb) ?_
     intro t'' v w _ hvw
+    obtain ⟨hvw, hc⟩ := hvw
     subst hvw
-    exact sim_pure HeapCorr _ t'' _ _ rfl
+    exact sim_pure HeapCorr _ t'' _ _ ⟨rfl, hc⟩
   · intro t1 v w _ hvw
+    obtain ⟨hvw, hall⟩ := hvw
     subst hvw
-    exact sim_pure HeapCorr _ t1 _ _ rfl
+    refine sim_pure HeapCorr _ t1 _ _ ⟨rfl, ?_⟩
+    show (Result.listValue v).isLazy = false
+    simpa [Result.isLazy] using anyIsLazy_of_all hall
 
 theorem nested_run {α : Type} (m : EvalM α) (s : EvalState) :
     runEval (withNestedMissingOutput m) s =
@@ -955,6 +1063,21 @@ theorem nested_run {α : Type} (m : EvalM α) (s : EvalState) :
   cases out with
   | ok _ => rfl
   | error err => cases err <;> rfl
+
+/-- Corresponding outcomes stay corresponding when a missing output is marked nested: a value
+    is kept and equal errors are mapped alike (any result relation). -/
+theorem sim_nested_gen {α : Type} {R : StateRel} {P : Table → α → α → Prop} {t : Table} {x y : EvalM α}
+    (h : Sim R P t x y) : Sim R P t (withNestedMissingOutput x) (withNestedMissingOutput y) := by
+  intro s1 s2 hR
+  obtain ⟨u, hu, hr, c⟩ := h s1 s2 hR
+  refine ⟨u, hu, ?_⟩
+  simp only [nested_run]
+  refine ⟨hr, ?_⟩
+  revert c
+  generalize (runEval x s1).1 = o1
+  generalize (runEval y s2).1 = o2
+  intro c
+  cases o1 <;> cases o2 <;> simp_all [ResCorr, Except.mapError]
 
 /-- Equal completed outcomes stay equal when collector materialization marks element failures nested. -/
 theorem sim_nested {α : Type} {R : StateRel} {t : Table} {x y : EvalM α}
@@ -969,15 +1092,21 @@ theorem sim_nested {α : Type} {R : StateRel} {t : Table} {x y : EvalM α}
 
 theorem suspended_value_sim (ev1 ev2 : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult)
-    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
+    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr ValCorr t (recur b1) (recur b2))
     (t : Table) (a1 a2 : Nat) :
     ∀ (sp1 sp2 : NeedSuspension), SuspCorr t sp1 sp2 →
-      Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.suspendedValue ev1 route recur a1 sp1)
+      Sim HeapCorr ValCorr t (NeedDemand.suspendedValue ev1 route recur a1 sp1)
         (NeedDemand.suspendedValue ev2 route recur a2 sp2)
   | .ready v, .ready w, h => by
-      simp only [SuspCorr] at h; subst h
-      exact sim_pure HeapCorr _ t _ _ rfl
-  | .collector sl1, .collector sl2, h => sim_nested (materialize_sim recur hrec t sl1 sl2 h)
+      -- A corresponding Ready value is concrete, so it is no deferred list item: its VALUE is itself.
+      simp only [SuspCorr] at h
+      obtain ⟨hvw, hconc⟩ := h
+      subst hvw
+      obtain ⟨value, count⟩ := v
+      cases value <;> first
+        | exact sim_pure HeapCorr ValCorr t _ _ ⟨rfl, hconc⟩
+        | (simp [Result.isLazy] at hconc)
+  | .collector sl1, .collector sl2, h => sim_nested_gen (materialize_sim recur hrec t sl1 sl2 h)
   | .expression _ _ _, _, h => by cases h
   | .ready _, .expression _ _ _, h => by cases h
   | .ready _, .collector _, h => by cases h
@@ -994,12 +1123,12 @@ theorem res_corr_eq {α : Type} {o1 o2 : Except Error α} (h : ResCorr (fun v w 
     the recursive edge `recur`, whose correspondence is the premise `hrec`. -/
 theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult)
-    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
+    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr ValCorr t (recur b1) (recur b2))
     (t : Table) (a1 a2 : Nat) (ha : Addr t a1 a2) :
-    Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.step (ev a1) route recur a1) (NeedDemand.step (ev a2) route recur a2) := by
+    Sim HeapCorr ValCorr t (NeedDemand.step (ev a1) route recur a1) (NeedDemand.step (ev a2) route recur a2) := by
   intro s1 s2 hR
   obtain ⟨c1, c2, h1, h2, hc⟩ := hR.1 _ ha
-  obtain ⟨hsusp, hst, -, -⟩ := hc
+  obtain ⟨hsusp, hst, -, -, hcomp⟩ := hc
   cases hs : c1.state with
   | completed o =>
     have hs2 : c2.state = .completed o := hst ▸ hs
@@ -1008,7 +1137,10 @@ theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResu
     have e2 : runEval (NeedDemand.step (ev a2) route recur a2) s2 = (o, s2) :=
       KatLang.NeedControl.Memo.completed_sticky (ev a2) route recur a2 s2 c2 o h2 hs2
     rw [e1, e2]
-    exact ⟨t, extends_refl t, hR, by cases o <;> simp [ResCorr]⟩
+    refine ⟨t, extends_refl t, hR, ?_⟩
+    cases o with
+    | error e => rfl
+    | ok v => exact ⟨rfl, hcomp v hs⟩
   | evaluating =>
     have hs2 : c2.state = .evaluating := hst ▸ hs
     have e1 : runEval (NeedDemand.step (ev a1) route recur a1) s1 = (.error .demandCycle, s1) :=
@@ -1020,15 +1152,16 @@ theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResu
   | suspended =>
     have hs2 : c2.state = .suspended := hst ▸ hs
     have hR' := heap_modify t s1 s2 a1 a2 (fun c => { c with state := .evaluating }) hR ha
-      (state_update_corr t .evaluating)
+      (state_update_corr t .evaluating (fun _ h => by cases h))
     obtain ⟨t1, x1, r1, c⟩ := suspended_value_sim (ev a1) (ev a2) route recur hrec t a1 a2 _ _ hsusp _ _ hR'
-    have ho := res_corr_eq c
+    have ho := res_val_eq c
     rcases hv1 : runEval (NeedDemand.suspendedValue (ev a1) route recur a1 c1.suspension)
         { s1 with needs := s1.needs.modify a1 (fun c => { c with state := .evaluating }) } with ⟨o1, u1⟩
     rcases hv2 : runEval (NeedDemand.suspendedValue (ev a2) route recur a2 c2.suspension)
         { s2 with needs := s2.needs.modify a2 (fun c => { c with state := .evaluating }) } with ⟨o2, u2⟩
     rw [hv1, hv2] at ho r1
     simp only at ho r1
+    obtain ⟨ho, hoc⟩ := ho
     subst ho
     cases hinc : o1.isIncomplete with
     | true =>
@@ -1044,8 +1177,11 @@ theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResu
     show RunCorr HeapCorr _ t ((NeedDemand.step (ev a1) route recur a1).runState s1)
       ((NeedDemand.step (ev a2) route recur a2).runState s2)
     rw [e1, e2]
-    refine ⟨t1, x1, heap_modify t1 u1 u2 a1 a2 _ r1 (x1 _ ha) (state_update_corr t1 _), ?_⟩
-    cases o1 <;> simp [ResCorr]
+    refine ⟨t1, x1, heap_modify t1 u1 u2 a1 a2 _ r1 (x1 _ ha)
+      (state_update_corr t1 _ (fun v h => hoc v (by cases h; rfl))), ?_⟩
+    cases o1 with
+    | error e => rfl
+    | ok v => exact ⟨rfl, hoc v rfl⟩
 
 /-- THE PRODUCTION CAPABILITIES CORRESPOND under `HeapCorr`: the binder's allocator
     `allocateNeed` and META capability `NeedPlan.reference` unconditionally, its VALUE shell
@@ -1059,7 +1195,7 @@ theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResu
 theorem heap_corr_capabilities (channels : NeedChannels)
     (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
-    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
+    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr ValCorr t (recur b1) (recur b2))
     (hcal : ∀ t b1 b2, Addr t b1 b2 →
       Sim HeapCorr (fun _ v w => v = w) t (channels.callable b1) (channels.callable b2)) :
     CapCorr HeapCorr channels.capabilities channels.capabilities where
@@ -1069,27 +1205,56 @@ theorem heap_corr_capabilities (channels : NeedChannels)
   callable t a1 a2 ha := hcal t a1 a2 ha
   allocate t sp1 sp2 h := allocate_need_sim t sp1 sp2 h
   reference t a1 a2 ha := reference_sim t a1 a2 ha
+  -- The two lazy-collection reads (issue #204): the VALUE demand, whose corresponding outcome is
+  -- CONCRETE — so it is no pending list to discover, and materializing it is the identity.
+  positions t a1 a2 ha := by
+    have hvalue : Sim HeapCorr ValCorr t (channels.value a1) (channels.value a2) := by
+      rw [hv]; exact step_sim ev route recur hrec t a1 a2 ha
+    simp only [NeedChannels.capabilities]
+    refine sim_bind HeapCorr ValCorr ValCorr t _ _ _ _ hvalue ?_
+    intro t1 v w _ hvw
+    obtain ⟨hvw, hconc⟩ := hvw
+    subst hvw
+    obtain ⟨value, count⟩ := v
+    cases value <;> first
+      | exact sim_pure HeapCorr ValCorr t1 _ _ ⟨rfl, hconc⟩
+      | (simp [Result.isLazy] at hconc)
+  whole t a1 a2 ha := by
+    have hvalue : Sim HeapCorr ValCorr t (channels.value a1) (channels.value a2) := by
+      rw [hv]; exact step_sim ev route recur hrec t a1 a2 ha
+    simp only [NeedChannels.capabilities]
+    refine sim_bind HeapCorr ValCorr ValCorr t _ _ _ _ hvalue ?_
+    intro t1 v w _ hvw
+    obtain ⟨hvw, hconc⟩ := hvw
+    subst hvw
+    obtain ⟨value, count⟩ := v
+    simp only at hconc
+    simp only [materializeVia, hconc, Bool.false_eq_true, ↓reduceIte, EvalM.pure_bind]
+    exact sim_pure HeapCorr ValCorr t1 _ _ ⟨rfl, hconc⟩
 
 /-! ## Ready supply formation, and the callback route -/
 
 theorem ready_need_loop_sim : ∀ (args : List CountedResult) (acc1 acc2 : List Nat) (t : Table),
+    (∀ a ∈ args, a.1.isLazy = false) →
     Cells t acc1 acc2 → Sim HeapCorr Cells t (List.mapM.loop readyNeed args acc1) (List.mapM.loop readyNeed args acc2)
-  | [], acc1, acc2, t, h => by
+  | [], acc1, acc2, t, _, h => by
       simp only [List.mapM.loop]
       exact sim_pure HeapCorr Cells t _ _ (Rel2.reverse_aux h)
-  | v :: rest, acc1, acc2, t, h => by
+  | v :: rest, acc1, acc2, t, hargs, h => by
       simp only [List.mapM.loop]
-      refine sim_bind HeapCorr Addr Cells t _ _ _ _ (allocate_need_sim t (.ready v) (.ready v) rfl) ?_
+      refine sim_bind HeapCorr Addr Cells t _ _ _ _
+        (allocate_need_sim t (.ready v) (.ready v) ⟨rfl, hargs v List.mem_cons_self⟩) ?_
       intro t1 b1 b2 x1 hb
-      exact ready_need_loop_sim rest (b1 :: acc1) (b2 :: acc2) t1 (Rel2.cons hb (cells_mono x1 h))
+      exact ready_need_loop_sim rest (b1 :: acc1) (b2 :: acc2) t1
+        (fun a ha => hargs a (List.mem_cons_of_mem _ ha)) (Rel2.cons hb (cells_mono x1 h))
 
 /-- READY SUPPLY FORMATION, simulated: the callback route's `args.mapM readyNeed`, run from two
     corresponding states (any two states, from the empty table), allocates corresponding cells
     position by position — the same counted values in the same order. -/
-theorem ready_formation_sim (args : List CountedResult) (t : Table) :
-    Sim HeapCorr Cells t (args.mapM readyNeed) (args.mapM readyNeed) := by
+theorem ready_formation_sim (args : List CountedResult) (hargs : ∀ a ∈ args, a.1.isLazy = false)
+    (t : Table) : Sim HeapCorr Cells t (args.mapM readyNeed) (args.mapM readyNeed) := by
   unfold List.mapM
-  exact ready_need_loop_sim args [] [] t Rel2.nil
+  exact ready_need_loop_sim args [] [] t hargs Rel2.nil
 
 /-- LEVEL 2 — AGREEMENT AFTER READY SUPPLY FORMATION (R6). Two bindings that each form a Ready
     supply of the SAME counted arguments — the callback route's prefix — and bind it with the ONE
@@ -1103,14 +1268,15 @@ theorem ready_formation_sim (args : List CountedResult) (t : Table) :
 theorem ready_supplies_bind_correspondingly (channels : NeedChannels)
     (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
-    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
+    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr ValCorr t (recur b1) (recur b2))
     (hcal : ∀ t b1 b2, Addr t b1 b2 →
       Sim HeapCorr (fun _ v w => v = w) t (channels.callable b1) (channels.callable b2))
-    (args : List CountedResult) (ps : List NeedPattern) (family : Bool) (s1 s2 : EvalState) :
+    (args : List CountedResult) (hargs : ∀ a ∈ args, a.1.isLazy = false)
+    (ps : List NeedPattern) (family : Bool) (s1 s2 : EvalState) :
     RunCorr HeapCorr OptEnvCorr []
       (runEval (do let cells ← args.mapM readyNeed; bindNeedPatterns channels ps cells family) s1)
       (runEval (do let cells ← args.mapM readyNeed; bindNeedPatterns channels ps cells family) s2) :=
-  sim_bind HeapCorr Cells OptEnvCorr [] _ _ _ _ (ready_formation_sim args [])
+  sim_bind HeapCorr Cells OptEnvCorr [] _ _ _ _ (ready_formation_sim args hargs [])
     (fun t' c1 c2 _ hc => patterns_sim HeapCorr _ _
       (heap_corr_capabilities channels ev route recur hv hrec hcal) ps c1 c2 family t' hc)
     s1 s2 (heap_corr_empty s1 s2)
@@ -1120,18 +1286,19 @@ theorem ready_supplies_bind_correspondingly (channels : NeedChannels)
 theorem ready_supplies_select_correspondingly {γ : Type} (channels : NeedChannels)
     (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
-    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
+    (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr ValCorr t (recur b1) (recur b2))
     (hcal : ∀ t b1 b2, Addr t b1 b2 →
       Sim HeapCorr (fun _ v w => v = w) t (channels.callable b1) (channels.callable b2))
     (Q : Table → γ → γ → Prop) (activate : CondBranch → NeedEnv → EvalM γ)
     (hact : ∀ t b e1 e2, EnvCorr t e1 e2 → Sim HeapCorr Q t (activate b e1) (activate b e2))
-    (callee : Algorithm) (calleeName : String) (args : List CountedResult) (s1 s2 : EvalState) :
+    (callee : Algorithm) (calleeName : String) (args : List CountedResult)
+    (hargs : ∀ a ∈ args, a.1.isLazy = false) (s1 s2 : EvalState) :
     RunCorr HeapCorr Q []
       (runEval (do let cells ← args.mapM readyNeed
                    NeedBinder.selectFamily channels.capabilities callee cells calleeName activate) s1)
       (runEval (do let cells ← args.mapM readyNeed
                    NeedBinder.selectFamily channels.capabilities callee cells calleeName activate) s2) :=
-  sim_bind HeapCorr Cells Q [] _ _ _ _ (ready_formation_sim args [])
+  sim_bind HeapCorr Cells Q [] _ _ _ _ (ready_formation_sim args hargs [])
     (fun t' c1 c2 _ hc => select_family_sim HeapCorr _ _
       (heap_corr_capabilities channels ev route recur hv hrec hcal) Q callee calleeName activate activate
       hact t' c1 c2 hc)

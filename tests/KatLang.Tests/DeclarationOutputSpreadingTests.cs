@@ -994,7 +994,10 @@ public class DeclarationOutputSpreadingTests
         Assert.Equal("ok S[7, 2]", await SummaryOnEveryRoute("T(x)* = x, tick()\nIgnore(*rest) = 7\nIgnore(T(0)), tick()"));
         Assert.Equal("ok S[7, 1]", await SummaryOnEveryRoute("T(x) = x, tick()\nIgnore(*rest) = 7\nIgnore(T(0)), tick()"));
         // Caching is unchanged: `P` is the cached read and never spreads, `P()` a fresh call that does.
-        Assert.Equal("ok S[L[S[1, 2], 1, 3], 3]", await SummaryOnEveryRoute("P* = 1, tick() + 1\n[P, P()], tick()"));
+        // Lazy collections (issue #204): the marked call is FORMED WITH THE LIST, like an explicit
+        // spread (its tick is the first); the ordinary element `P` is read when the run reads the
+        // list — after the row's `tick()` — and finds the entry that `P()` established.
+        Assert.Equal("ok S[L[S[1, 2], 1, 2], 2]", await SummaryOnEveryRoute("P* = 1, tick() + 1\n[P, P()], tick()"));
     }
 
     // ── Families, zero-parameter declarations, aliases, carriers ──

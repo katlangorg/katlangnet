@@ -23,7 +23,9 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     public async Task RetainedFailures_KeepTheEstablishedSuffixBeforeCollectorOrder(string call, string expected)
     {
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(
-            "Bad = trace(1) / 0\nMissing = [trace(2)][5]\nP(*r, x, x) = x\n" + call);
+            // `Missing` selects from a SEQUENCE value, which is evaluated whole before the selection
+            // fails; a list would defer `trace(2)` and never run it (lazy collections, issue #204).
+            "Bad = trace(1) / 0\nMissing = (trace(2), 0)[5]\nP(*r, x, x) = x\n" + call);
         Assert.StartsWith(expected, result.Outcome);
         Assert.Equal(call == "P(Bad, Missing, 7)" ? ["trace(2)"] : ["trace(1)"], result.HostCalls);
     }
