@@ -1,7 +1,5 @@
 using System.Text;
 using KatLang.Semantics;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit.Abstractions;
 
 namespace KatLang.Tests;
@@ -509,20 +507,18 @@ public class SemanticModelPositionLookupTests(ITestOutputHelper output)
     /// public query itself must also allocate nothing beyond the counter quantum (16 KiB for 8,192
     /// queries). The former LINQ query allocated a closure, a delegate and an enumerator per call
     /// (112 bytes, 917,504 for 8,192 queries), even where it bypassed the counted search. Like the
-    /// probe count, this bound does not depend on elapsed time.
+    /// probe count, this bound does not depend on elapsed time. A scan of the site array written
+    /// into the public wrapper would allocate nothing and escape the probes, so the test first
+    /// requires the wrapper to be exactly the call of the core the probes measure
+    /// (<see cref="MeasuredPositionQueries"/>).
     /// </summary>
     [Fact]
     public void PositionQueryCost_DoesNotGrowWithTheSiteCount()
     {
         // Probes can only measure the algorithm the public entry point delegates to. A private
         // array scan in the wrapper returns the same results and also allocates zero bytes.
-        var source = File.ReadAllText(Path.Combine(RepoRoot.Find(), "src/KatLang/Semantics/SemanticModel.cs"));
-        var publicQuery = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes()
-            .OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == nameof(SemanticModel.FindResolutionAt));
-        var expression = publicQuery.ExpressionBody?.Expression
-            ?? (publicQuery.Body?.Statements is [ReturnStatementSyntax returned] ? returned.Expression : null);
-        Assert.True(SyntaxFactory.AreEquivalent(SyntaxFactory.ParseExpression("FindResolution<UncountedScopeProbes>(position)"), expression),
-            "FindResolutionAt must delegate its entire search to the query measured by FindResolutionAtCounted.");
+        MeasuredPositionQueries.RequireDelegation(
+            nameof(SemanticModel.FindResolutionAt), nameof(SemanticModel.FindResolutionAtCounted), "FindResolution");
 
         static (SemanticModel Model, SourcePosition[] Queries) Listing(int sites)
         {

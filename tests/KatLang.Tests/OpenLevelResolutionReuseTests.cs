@@ -13,9 +13,11 @@ namespace KatLang.Tests;
 /// runtime state — an activation, the static head level of a body entry, or a static wiring of a declaring
 /// scope — and reused by every later read of that state, while a failed resolution is memoized nowhere and a
 /// host-constructed level is never written. Counts come from the run's <see cref="EvaluationObservations"/>
-/// on a prepared root, on the synchronous route and the forced async twin alike
-/// (<see cref="OpenProviderIndexing.OnBothRoutesAsync(string)"/>): <c>Levels</c> counts resolutions,
-/// <c>Consultations</c> reads of a nonempty level, <c>Reuses</c> reads a memo served.
+/// on a prepared root: <c>Levels</c> counts resolutions, <c>Consultations</c> reads of a nonempty level,
+/// <c>Reuses</c> reads a memo served. Where the synchronous route and the forced async twin do the same lookup
+/// work, both must give the same counts (<see cref="OpenProviderIndexing.OnBothRoutesAsync(string)"/>). Two tests
+/// pin work that differs by route and observe each route on its own: loop planning, and an asynchronous
+/// resolution's retry (<see cref="AFailingLinkCarrierThroughAParameter_AgreesOnBothRoutes_ButTheAsyncRetryReadsItsLevelOnceMore"/>).
 /// </summary>
 public class OpenLevelResolutionReuseTests
 {
@@ -386,6 +388,113 @@ public class OpenLevelResolutionReuseTests
         const string alternating = "M0 = { public F0(x) = x + 0 }\nM1 = { public F1(x) = x + 1 }\nA = {\n    open M0\n    F0\n}\n"
             + "B = {\n    open M1\n    F1\n}\nRun(f, g) = [f(1), g(1), f(2), g(2)]\nRun(A, B)";
         Assert.Equal(new OpenProviderIndexing.Observation("ok L[1, 2, 2, 3]", 2, 2, 0, 0, 0, 4, 2), await OpenProviderIndexing.OnBothRoutesAsync(alternating));
+    }
+
+    /// <summary>
+    /// One route of a prepared program beside its open-level counts: the zero-argument entries the run
+    /// published, its semantic charges (steps, peak depth, materialized items and string characters,
+    /// <c>tick()</c>s), and the retries of its asynchronous resolutions (none on the synchronous route).
+    /// </summary>
+    private sealed record RouteRun(OpenProviderIndexing.Observation Lookup, int Publications, string Charges, long Retries)
+    {
+        /// <summary>What both routes must agree on: the complete outcome, the publications and the charges.</summary>
+        public (string Outcome, int Publications, string Charges) Agreed => (Lookup.Outcome, Publications, Charges);
+    }
+
+    /// <summary>The run <see cref="OpenProviderIndexing.ObserveAsync"/> makes of <paramref name="program"/>, with its caches and budget read too.</summary>
+    private static async Task<RouteRun> ObserveRouteAsync(Expr program, bool forcedAsync, EvaluationLimits? limits = null)
+    {
+        var observations = new EvaluationObservations();
+        if (forcedAsync)
+        {
+            var cache = new RunScopedAsyncZeroArgPropertyResultCache();
+            var (result, budget) = await Evaluator.RunCountedObservedAsync(program, limits, cache, observations: observations);
+            return Observed(result, budget, cache.PublishedCount);
+        }
+        else
+        {
+            var cache = new RunScopedZeroArgPropertyResultCache(collectStatistics: false);
+            var (result, budget) = Evaluator.RunCountedObserved(program, limits, zeroArgPropertyResultCache: cache, observations: observations);
+            return Observed(result, budget, cache.PublishedCount);
+        }
+
+        RouteRun Observed(EvalResult<Evaluator.CountedResult> result, EvaluationBudget budget, int publications)
+            => new(OpenProviderIndexing.Of(result, observations), publications,
+                $"steps {budget.ConsumedSteps}, depth {budget.PeakDepth}, items {budget.MaterializedItems}, "
+                    + $"chars {budget.MaterializedStringChars}, ticks {budget.TickCount}",
+                budget.ResolutionRetries);
+    }
+
+    [Fact]
+    public async Task AFailingLinkCarrierThroughAParameter_AgreesOnBothRoutes_ButTheAsyncRetryReadsItsLevelOnceMore()
+    {
+        // NEGATIVE CONTROL of OnBothRoutesAsync's count parity, recovered from the 2026-11-18 open-lookup review. The
+        // carrier `A` reaches `Sub.Algorithm` through its own `open Lib`, and `Run` invokes it through a parameter,
+        // so no binding memo serves the chase. `Sub` has no output row, so the link's receiver demand fails at
+        // `f(1)`, before any argument is demanded.
+        const string failingCarrier = "Lib = {\n    public Sub = {\n        public F(x) = x * 10\n    }\n}\n"
+            + "A = {\n    open Lib\n    Sub.Algorithm\n}\n";
+        const string source = failingCarrier + "Run(f) = [f(1), f(2), f(3)]\nRun(A)";
+        const string publicError = "MissingOutput: while evaluating call to Run: while evaluating call to f: Property 'Sub' has no defined output.\n"
+            + "Add an output expression to 'Sub', or use `()` if the empty sequence value was intended. "
+            + "To use one of its properties, write `Sub.X`. @ [8:5, 8:8)";
+        // Every frame carries the position of `Sub` in the carrier's row; the innermost error has none.
+        const string missingOutput = "err [while evaluating call to Run @ [8:5, 8:8)] [while evaluating call to f @ [8:5, 8:8)] "
+            + "[while evaluating property Sub @ [8:5, 8:8)] MissingOutput { Span = , IsResourceLimit = False, Code = MissingOutput } @  | "
+            + publicError;
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var synchronous = await ObserveRouteAsync(program, forcedAsync: false);
+        var asynchronous = await ObserveRouteAsync(program, forcedAsync: true);
+
+        // Both routes report the same structured error, publish nothing and charge the same two steps.
+        Assert.Equal((missingOutput, 0, "steps 2, depth 2, items 0, chars 0, ticks 0"), synchronous.Agreed);
+        Assert.Equal(synchronous.Agreed, asynchronous.Agreed);
+
+        // Both routes resolve the same two level states of the carrier's `open Lib`, the head level the chase
+        // navigates and the level the link cell's projection reads, and index the same two providers. Their reads
+        // differ. The synchronous route consults those levels four times: the chase's route navigation, the link's
+        // route check, the receiver's classification and its VALUE demand. The twin's resolutions retry twice, after
+        // the link's CALLABLE projection and after its receiver's VALUE. After the VALUE failure the projection's
+        // resolver runs again and checks the link's route once more: a fifth read, which the memo serves.
+        Assert.Equal(new OpenProviderIndexing.Observation(missingOutput, 2, 2, 0, 0, 0, 4, 2), synchronous.Lookup);
+        Assert.Equal(new OpenProviderIndexing.Observation(missingOutput, 2, 2, 0, 0, 0, 5, 3), asynchronous.Lookup);
+        Assert.Equal((0L, 2L), (synchronous.Retries, asynchronous.Retries));
+
+        // These are the helper's own observations, so its parity assertion rejects this program.
+        Assert.Equal(synchronous.Lookup, await OpenProviderIndexing.ObserveAsync(program, forcedAsync: false));
+        Assert.Equal(asynchronous.Lookup, await OpenProviderIndexing.ObserveAsync(program, forcedAsync: true));
+        await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(() => OpenProviderIndexing.OnBothRoutesAsync(program));
+
+        // The charges also agree at the step limit. One step stops both routes at `Sub`'s declaration; two and
+        // three give the original error again.
+        foreach (var maxSteps in new[] { 1, 2, 3 })
+        {
+            var limits = new EvaluationLimits { MaxSteps = maxSteps };
+            var limited = await ObserveRouteAsync(program, forcedAsync: false, limits);
+            Assert.Equal(limited.Agreed, (await ObserveRouteAsync(program, forcedAsync: true, limits)).Agreed);
+            Assert.Equal(
+                maxSteps == 1
+                    ? ("err EvaluationStepLimitExceeded { Span = [2:12, 2:15), IsResourceLimit = True, Code = EvaluationStepLimitExceeded, Limit = 1 } @ [2:12, 2:15)"
+                        + " | EvaluationStepLimitExceeded: Evaluation step limit of 1 was exceeded @ [2:12, 2:15)", 0, "steps 1, depth 1, items 0, chars 0, ticks 0")
+                    : synchronous.Agreed,
+                limited.Agreed);
+        }
+
+        // A trace in the first argument makes premature demand observable. Even the route that retries
+        // the projection must report the same error before invoking the host.
+        var failing = await SixRouteAgreement.OnEveryRouteAsync(source);
+        Assert.Equal(("err", publicError), (failing.Kind, Assert.Single(failing.Errors)));
+        Assert.Empty(failing.HostCalls);
+        var withTrace = await SixRouteAgreement.OnEveryRouteAsync(
+            failingCarrier + "Run(f) = [f(trace(1)), f(2), f(3)]\nRun(A)");
+        Assert.True(failing.AgreesWith(withTrace), withTrace.ToString());
+
+        // A retained carrier whose target traces runs that target once per invocation, in order.
+        const string traced = "Lib = {\n    public Sub = {\n        public F(x) = trace(x)\n    }\n}\n"
+            + "A = {\n    open Lib\n    Sub.F\n}\nRun(f) = [f(1), f(2), f(3)]\nRun(A)";
+        var effects = await SixRouteAgreement.OnEveryRouteAsync(traced);
+        Assert.Equal(("ok", "L[1, 2, 3]"), (effects.Kind, effects.Value));
+        Assert.Equal(["trace(1)", "trace(2)", "trace(3)"], effects.HostCalls);
     }
 
     private delegate EvalResult<Algorithm> ResolveAlias(Algorithm.Alias alias, Evaluator.EvalCtx ctx, Property? binding);

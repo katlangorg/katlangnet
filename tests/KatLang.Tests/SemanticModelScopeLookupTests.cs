@@ -643,7 +643,10 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
     /// that scans the intervals or the scopes (up to 1,024 or 513 probes there) fails at once. The
     /// public query itself must also allocate nothing beyond the counter quantum (16 KiB for 8,192
     /// queries). A scan written into it, outside the counted search, would allocate an enumerator
-    /// per query through the public listing (262,144 bytes). Like the probe count, bytes do not
+    /// per query through the public listing (262,144 bytes). An indexed walk of the listing
+    /// allocates nothing, though, and escapes both the probes and the bytes. So the test first
+    /// requires the public query to be exactly the call of the core the probes measure
+    /// (<see cref="MeasuredPositionQueries"/>). Like the probe count, bytes do not
     /// depend on load. Elapsed time is printed, not asserted. The former 16-times time bound held in
     /// full parallel runs, but the ratio reached 8.4 and 9.1 there, against 1.6 to 1.8 alone.
     /// Measured 2026-11-20 (Release, tiering off): the binary search took 54 ns over 4,096 siblings
@@ -652,6 +655,11 @@ public class SemanticModelScopeLookupTests(ITestOutputHelper output)
     [Fact]
     public void ScopeQueryCost_GrowsSublinearlyWithTheSiblingCount()
     {
+        // Probes can only measure the search the public query delegates to: an indexed walk of the
+        // listing in the wrapper returns the same scopes and allocates nothing.
+        MeasuredPositionQueries.RequireDelegation(
+            nameof(SemanticModel.FindScopeAt), nameof(SemanticModel.FindScopeAtCounted), "FindScope");
+
         static (SemanticModel Model, SourcePosition[] Queries) Siblings(int scopes)
         {
             var model = ModelWith(Shaped("wide", scopes));

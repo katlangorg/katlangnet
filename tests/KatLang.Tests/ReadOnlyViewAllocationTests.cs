@@ -10,6 +10,13 @@ namespace KatLang.Tests;
 /// <see cref="ReadOnlyCollection{T}"/> it replaced, and an empty value still allocates no view at
 /// all. Strict counts, so they run in the isolated child process
 /// (<see cref="GcIsolatedAllocation"/>).
+/// <para>The expected sizes come from <see cref="InstanceSize.Of"/>, never from one
+/// <c>RuntimeHelpers.GetUninitializedObject</c> call measured after a warm-up: a collection between the two
+/// calls frees the type's weakly held reflection cache, and the measured call then rebuilds it (200 bytes
+/// on .NET 11 x64). Measured 2026-11-23 by forcing a blocking gen-2 collection before one counter read per
+/// run: with that baseline the test failed at 8 of its 36 reads, each time in a size window; with
+/// <see cref="InstanceSize.Of"/> it passes at all 28. Every workload below is still ONE exact window, so
+/// one extra object or a copied array in it fails.</para>
 /// </summary>
 public class ReadOnlyViewAllocationTests
 {
@@ -22,9 +29,6 @@ public class ReadOnlyViewAllocationTests
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
-    private static long ObjectBytes(Type type)
-        => Bytes(() => _ = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(type));
-
     [Fact]
     public void TakeOwnership_AllocatesTheValueAndOneViewOverTheGivenArray_GcIsolatedChild()
     {
@@ -32,8 +36,8 @@ public class ReadOnlyViewAllocationTests
             return;
 
         // What the plain view cost before the change: one object holding one reference.
-        var plainView = ObjectBytes(typeof(ReadOnlyCollection<Result>));
-        Assert.Equal(plainView, ObjectBytes(typeof(SafeReadOnlyCollection<Result>)));
+        var plainView = InstanceSize.Of(typeof(ReadOnlyCollection<Result>));
+        Assert.Equal(plainView, InstanceSize.Of(typeof(SafeReadOnlyCollection<Result>)));
         ReadOnlyCollection<Result>? view = null;
         var plainItems = new Result[] { new Result.Atom(1), new Result.Atom(2), new Result.Atom(3) };
         Assert.Equal(plainView, Bytes(() => view = Array.AsReadOnly(plainItems)));
@@ -41,24 +45,23 @@ public class ReadOnlyViewAllocationTests
         if (Environment.Is64BitProcess)
             Assert.Equal(24, plainView);
 
+        // One instance of each record: the two value records and nothing they own.
+        var listRecord = InstanceSize.Of(typeof(Result.ListValue));
+        var sequenceRecord = InstanceSize.Of(typeof(Result.SequenceValue));
+
         var listItems = new Result[] { new Result.Atom(1), new Result.Atom(2), new Result.Atom(3) };
         var sequenceItems = new Result[] { new Result.Atom(4), new Result.Atom(5) };
         Result.ListValue? list = null;
         Result.SequenceValue? sequence = null;
 
         // The record and its one view; the array is the caller's, already allocated.
-        Assert.Equal(
-            ObjectBytes(typeof(Result.ListValue)) + plainView,
-            Bytes(() => list = Result.ListValue.TakeOwnership(listItems)));
-        Assert.Equal(
-            ObjectBytes(typeof(Result.SequenceValue)) + plainView,
-            Bytes(() => sequence = Result.SequenceValue.TakeOwnership(sequenceItems)));
+        Assert.Equal(listRecord + plainView, Bytes(() => list = Result.ListValue.TakeOwnership(listItems)));
+        Assert.Equal(sequenceRecord + plainView, Bytes(() => sequence = Result.SequenceValue.TakeOwnership(sequenceItems)));
 
         Result[]? snapshot = null;
         var arrayBytes = Bytes(() => snapshot = (Result[])listItems.Clone());
         Result.ListValue? hostList = null;
-        Assert.Equal(ObjectBytes(typeof(Result.ListValue)) + plainView + arrayBytes,
-            Bytes(() => hostList = new Result.ListValue(listItems)));
+        Assert.Equal(listRecord + plainView + arrayBytes, Bytes(() => hostList = new Result.ListValue(listItems)));
         GC.KeepAlive(snapshot);
         GC.KeepAlive(hostList);
 
@@ -81,13 +84,13 @@ public class ReadOnlyViewAllocationTests
         }));
         Assert.Equal(12, total);
         Result.ListValue? copy = null;
-        Assert.Equal(ObjectBytes(typeof(Result.ListValue)), Bytes(() => copy = readList with { }));
+        Assert.Equal(listRecord, Bytes(() => copy = readList with { }));
         Assert.Same(readList.Items, copy!.Items);
 
         // An empty value shares the one empty view: only the record is allocated.
         var none = Array.Empty<Result>();
-        Assert.Equal(ObjectBytes(typeof(Result.ListValue)), Bytes(() => list = Result.ListValue.TakeOwnership(none)));
-        Assert.Equal(ObjectBytes(typeof(Result.SequenceValue)), Bytes(() => sequence = Result.SequenceValue.TakeOwnership(none)));
+        Assert.Equal(listRecord, Bytes(() => list = Result.ListValue.TakeOwnership(none)));
+        Assert.Equal(sequenceRecord, Bytes(() => sequence = Result.SequenceValue.TakeOwnership(none)));
         Assert.Same(list!.Items, sequence!.Items);
 
         GC.KeepAlive(view);

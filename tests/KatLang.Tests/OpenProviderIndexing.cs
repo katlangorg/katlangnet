@@ -7,9 +7,17 @@ namespace KatLang.Tests;
 /// on a PREPARED root — the front end has finished before the measured run, so every count is the
 /// evaluator's — through the run's <see cref="EvaluationObservations"/>. Each observation is a fresh
 /// run. <see cref="OnBothRoutesAsync"/> runs the synchronous evaluator and the forced async twin and
-/// requires them to agree on the complete outcome and on every count: the async route reaches open
-/// lookup through the same synchronous resolver (<c>Evaluator.ResolveAsync</c>), so a difference is
-/// a regression of either.
+/// requires them to agree on the complete outcome and on every count. The async route reaches open
+/// lookup through the same synchronous resolver (<c>Evaluator.ResolveAsync</c>), so for a program whose
+/// two routes do the same lookup work a difference is a regression of either. Use the helper only for
+/// such programs. Count parity does not hold for every program: the counts are passive observations of
+/// the work a route performs, and two routes can differ in work while they agree in outcome, effects,
+/// publications and charges. An asynchronous resolution that suspends on a runtime projection runs its
+/// resolver again over the recorded outcome, and that retry can read a level the synchronous route reads
+/// once (<see cref="OpenLevelResolutionReuseTests.AFailingLinkCarrierThroughAParameter_AgreesOnBothRoutes_ButTheAsyncRetryReadsItsLevelOnceMore"/>).
+/// Loop planning recognizes builtins only on the synchronous route
+/// (<see cref="OpenLevelResolutionReuseTests.LoopPlanningSharesTheStepsOpenLevelForBuiltinRecognition"/>).
+/// Tests of such programs observe each route on its own (<see cref="ObserveAsync"/>, <see cref="Of"/>).
 /// </summary>
 internal static class OpenProviderIndexing
 {
@@ -60,23 +68,24 @@ internal static class OpenProviderIndexing
                 zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(),
                 observations: observations)
             : Evaluator.RunCountedObserved(program, observations: observations);
-        var outcome = result.IsError
-            ? "err " + Describe(result.Error)
-            : "ok " + SixRouteAgreement.Neutral(result.Value.Value);
-        return (new Observation(
-            outcome,
+        return (Of(result, observations), MemberIndexWork.Of(observations));
+    }
+
+    /// <summary>The <see cref="Observation"/> of a run that returned <paramref name="result"/> and recorded into <paramref name="observations"/>.</summary>
+    internal static Observation Of(EvalResult<Evaluator.CountedResult> result, EvaluationObservations observations)
+        => new(
+            result.IsError ? "err " + Describe(result.Error) : "ok " + SixRouteAgreement.Neutral(result.Value.Value),
             observations.OpenProviderLevelCount,
             observations.OpenProviderIndexEntryCount,
             observations.OpenProviderDeclarationKeyComparisonCount,
             observations.OpenProviderIdentityComparisonCount,
             observations.OpenProviderCrossDeclarationIdentityComparisonCount,
             observations.OpenLevelConsultationCount,
-            observations.OpenLevelReuseCount), MemberIndexWork.Of(observations));
-    }
+            observations.OpenLevelReuseCount);
 
     /// <summary>
     /// The synchronous observation and member-index work, after requiring the forced async twin to agree with
-    /// both exactly.
+    /// both exactly. Only for a program whose routes do the same lookup work (see the class summary).
     /// </summary>
     internal static async Task<(Observation Run, MemberIndexWork Index)> OnBothRoutesWithIndexWorkAsync(Expr program)
     {
