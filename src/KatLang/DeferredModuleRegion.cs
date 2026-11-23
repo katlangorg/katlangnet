@@ -810,7 +810,7 @@ internal sealed class DeferredModuleRegion
             ValidateParameterPropertyCollisions(resolved, diagnostics, cancellationToken);
             OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite,
                 completedModules: Loader.ModuleUnits, cancellationToken: cancellationToken);
-            InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite, cancellationToken);
+            InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite, Loader.ModuleUnits, cancellationToken);
             if (diagnostics.HasReportedErrors) return null;
             var exposed = PropertyExposureResolver.ElaborateDeferredBranch(
                 resolved, Exposure!, structural.Pattern, out var uncharged, observations, modules, cancellationToken);
@@ -863,7 +863,12 @@ internal sealed class DeferredModuleRegion
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void ValidateParameterPropertyCollisions(Algorithm resolved, DiagnosticBag diagnostics, CancellationToken cancellationToken)
-        => new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite) { CancellationToken = cancellationToken }
+        => new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite)
+            {
+                CancellationToken = cancellationToken,
+                // A module an earlier operation completed was judged there, once (ModuleUnitRegistry.HasCompleted).
+                CompletedModules = Loader.ModuleUnits,
+            }
             .VisitAlgorithm(resolved);
 
     /// <summary>

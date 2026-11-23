@@ -418,13 +418,25 @@ internal static class PropertyExposureResolver
         DeferredBranchCheck? deferred,
         CancellationToken cancellationToken)
     {
-        var run = new ExposureRun(observations, SettlementLedgerOf(CompletingUnit(root, structuralContext), sourceUnit),
-            cancellationToken)
+        var unit = CompletingUnit(root, structuralContext);
+        var run = new ExposureRun(observations, SettlementLedgerOf(unit, sourceUnit), cancellationToken)
         {
             Modules = modules ?? new(),
         };
         run.SharedBodies = SharedBodyCensus.Of(root, cancellationToken);
-        var summaryMemo = new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies, CancellationToken = cancellationToken };
+        var summaryMemo = new PropertyDependencyGraphBuilder.SummaryMemo(observations)
+        {
+            SharedBodies = run.SharedBodies,
+            CancellationToken = cancellationToken,
+            // A deferred branch's materialization is the one resolution that reads completed content an EARLIER
+            // operation of the program published: it takes the summaries those operations kept for that content and
+            // stages its own, which its attempt publishes with its unit (CompletedProviderSummaries).
+            CompletedProviders = deferred is not null && unit is not null
+                && CompletedProviderSummaries.ModeForTesting.Value != CompletedProviderSummaries.Mode.Unshared
+                    ? modules?.CompletedProviderAttempt : null,
+            CompletingUnit = deferred is not null ? unit : null,
+            VerifiesAdoptedProviders = CompletedProviderSummaries.ModeForTesting.Value == CompletedProviderSummaries.Mode.Verified,
+        };
         var resolved = root;
         root = ProcessAlgorithm(root, parent, summaryMemo, observations, run, structuralContext);
         // A deferred branch is compared with its family's provisional contribution BEFORE its unit is sealed: the

@@ -63,15 +63,32 @@ internal sealed class InferredParameterOutputValidator : AstWalker
     /// Validates a materialized deferred branch body, starting from the import site the region
     /// recorded for the body.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="completedModules"/> is the program's module-unit registry: a module an earlier operation
+    /// completed is not validated again (see <see cref="VisitAlgorithm"/>).
+    /// </remarks>
     internal static void ValidateDeferredBody(Algorithm body, DiagnosticBag diagnostics, SourceSpan? importSite,
-        CancellationToken cancellationToken = default)
-        => new InferredParameterOutputValidator(diagnostics, programRoot: null, importSite) { CancellationToken = cancellationToken }
+        ModuleUnitRegistry? completedModules = null, CancellationToken cancellationToken = default)
+        => new InferredParameterOutputValidator(diagnostics, programRoot: null, importSite)
+            {
+                CancellationToken = cancellationToken,
+                _completedModules = completedModules,
+            }
             .VisitAlgorithm(body);
+
+    // The module units earlier operations of the program completed (a materialized deferred unit only): see VisitAlgorithm.
+    private ModuleUnitRegistry? _completedModules;
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {
         // A deferred region's provisional body is validated when it materializes.
         if (algorithm.DeferredRegion is not null || !_visited.Add(algorithm))
+            return;
+
+        // ONE MODULE DECLARATION, VALIDATED ONCE PER PROGRAM (Q-32 I-U): a module an earlier error-free operation
+        // completed was judged there (the verdict is node-local and no holder changes a module's signatures), and it
+        // reported nothing, or that operation would have published nothing.
+        if (algorithm.IsModuleRoot && _completedModules?.SkipsValidationOf(algorithm) == true)
             return;
 
         base.VisitAlgorithm(algorithm);

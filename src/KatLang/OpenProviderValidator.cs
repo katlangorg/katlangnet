@@ -115,7 +115,14 @@ internal sealed class OpenProviderValidator : AstWalker
         FrontEndTraversalObservations? observations = null,
         ModuleUnitRegistry? completedModules = null,
         CancellationToken cancellationToken = default)
-        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations, cancellationToken: cancellationToken)
+        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations,
+            new OpenPresence
+            {
+                TraversalObservations = observations,
+                CancellationToken = cancellationToken,
+                // The scan that decides where an open remains to be validated does not enter a completed module either.
+                CompletedModules = completedModules,
+            }, cancellationToken)
         {
             _completedModules = completedModules,
         }.VisitAlgorithm(root);
@@ -261,6 +268,13 @@ internal sealed class OpenProviderValidator : AstWalker
         // per-path head walk is skipped; a host-built head sharing nested groups costs nothing here.
         public override void VisitPattern(Pattern pattern) { }
 
+        /// <summary>
+        /// The module units earlier operations of the program completed (a materialized deferred unit only). The
+        /// validator never walks such a module (<see cref="OpenProviderValidator.VisitAlgorithm"/>), so no open inside
+        /// it remains to be validated: the scan records it as holding none and does not enter it.
+        /// </summary>
+        internal ModuleUnitRegistry? CompletedModules { get; init; }
+
         public bool Contains(Algorithm algorithm)
         {
             VisitAlgorithm(algorithm);
@@ -270,6 +284,11 @@ internal sealed class OpenProviderValidator : AstWalker
         public override void VisitAlgorithm(Algorithm algorithm)
         {
             if (_memo.TryGetValue(algorithm, out var known)) { _found |= known; return; }
+            if (algorithm.IsModuleRoot && CompletedModules?.SkipsValidationOf(algorithm) == true)
+            {
+                _memo[algorithm] = false;
+                return;
+            }
             var outer = _found;
             _found = algorithm.Opens.Count > 0;
             base.VisitAlgorithm(algorithm);

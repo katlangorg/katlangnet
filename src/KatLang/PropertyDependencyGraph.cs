@@ -674,6 +674,90 @@ internal static class PropertyDependencyGraphBuilder
             return outside is null ? [] : [.. outside];
         }
 
+        /// <summary>
+        /// Re-anchor a completed seed, preserving its absorbed parts, order and sharing. An unchanged seed is its
+        /// own copy. During staging, discover the anchors bottom-up. On adoption, skip unchanged subgraphs through
+        /// the index built when the entry was staged.
+        /// </summary>
+        internal SummarySeed Reanchored(Func<PendingReference, PendingReference> reanchor,
+            Dictionary<SummarySeed, SummarySeed> copies, IReadOnlySet<SummarySeed>? anchoredSeeds,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (anchoredSeeds is not null && !anchoredSeeds.Contains(this))
+                return this;
+            if (copies.TryGetValue(this, out var cached))
+                return cached;
+
+            var pending = new Stack<(SummarySeed Seed, bool PartsDone)>();
+            pending.Push((this, false));
+            while (pending.TryPop(out var frame))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (seed, partsDone) = frame;
+                if (copies.ContainsKey(seed) || anchoredSeeds is not null && !anchoredSeeds.Contains(seed))
+                    continue;
+
+                if (!partsDone && seed._absorbed is { Count: > 0 } parts)
+                {
+                    pending.Push((seed, true));
+                    for (var i = parts.Count - 1; i >= 0; i--)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        pending.Push((parts[i], false));
+                    }
+                    continue;
+                }
+
+                // Complete each child before visiting the next sibling. Looking up a shared child then costs one
+                // dictionary read even when its parents are themselves shared.
+                if (anchoredSeeds is null && !NeedsCopy(seed))
+                {
+                    copies.Add(seed, seed);
+                    continue;
+                }
+
+                var copy = new SummarySeed(seed._requiredAncestorOwnedParameterNames, seed._visiblePropertyDependencyNames,
+                    ownerQualifiedParameters: seed._ownerQualifiedParameters);
+                if (seed._pendingReferences is { Count: > 0 } references)
+                {
+                    var anchored = copy._pendingReferences = new PendingReferenceSet();
+                    foreach (var reference in references)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        anchored.Add(reference is PendingReference item ? reanchor(item) : reference);
+                    }
+                }
+                if (seed._absorbed is { } children)
+                {
+                    foreach (var child in children)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        copy.AbsorbReference(copies.GetValueOrDefault(child, child));
+                    }
+                }
+                copies.Add(seed, copy);
+            }
+            return copies[this];
+
+            bool NeedsCopy(SummarySeed seed)
+            {
+                if (seed._pendingReferences is { } references)
+                    foreach (var reference in references)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (reference is PendingReference) return true;
+                    }
+                if (seed._absorbed is { } children)
+                    foreach (var child in children)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!ReferenceEquals(copies[child], child)) return true;
+                    }
+                return false;
+            }
+        }
+
         // Folds every distinct absorbed seed into this seed's own sets — each once, depth-first in
         // absorption order, so the resulting content and insertion order are deterministic.
         private void Fold()
@@ -978,16 +1062,80 @@ internal static class PropertyDependencyGraphBuilder
     /// what structural navigation (<c>Inner.X</c>) and <c>open</c>-provided names charge.
     /// Both are stored pristine; readers clone before accumulating.
     /// </summary>
-    internal sealed class AlgorithmSummary(
-        SummarySeed outputSeed,
-        IReadOnlyDictionary<string, SummarySeed> memberSeeds)
+    internal sealed class AlgorithmSummary
     {
-        public SummarySeed OutputSeed { get; } = outputSeed;
+        private SummarySeed? _outputSeed;
+        private Func<SummarySeed>? _outputSeedSource;
 
-        public IReadOnlyDictionary<string, SummarySeed> MemberSeeds { get; } = memberSeeds;
+        public AlgorithmSummary(SummarySeed outputSeed, IReadOnlyDictionary<string, SummarySeed> memberSeeds)
+        {
+            _outputSeed = outputSeed;
+            MemberSeeds = memberSeeds;
+        }
+
+        /// <summary>
+        /// A summary ADOPTED from <see cref="CompletedProviderSummaries"/>: its output seed is produced when first read
+        /// and its member seeds one by one (<see cref="ReanchoredMemberSeeds"/>), so adopting a W-member provider to
+        /// read one member costs that member's seed, never the provider's width.
+        /// </summary>
+        internal AlgorithmSummary(Func<SummarySeed> outputSeed, IReadOnlyDictionary<string, SummarySeed> memberSeeds)
+        {
+            _outputSeedSource = outputSeed;
+            MemberSeeds = memberSeeds;
+        }
+
+        public SummarySeed OutputSeed
+        {
+            get
+            {
+                if (_outputSeed is { } seed)
+                    return seed;
+                seed = _outputSeedSource!();
+                _outputSeed = seed;
+                _outputSeedSource = null;
+                return seed;
+            }
+        }
+
+        public IReadOnlyDictionary<string, SummarySeed> MemberSeeds { get; }
 
         public static readonly IReadOnlyDictionary<string, SummarySeed> NoMembers =
             new Dictionary<string, SummarySeed>(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// The member seeds of an adopted summary (<see cref="CompletedProviderSummaries"/>): each stored seed re-anchored at
+    /// the adopting resolution's contexts when it is first read (<see cref="SummarySeed.Reanchored"/>), and never
+    /// before. Names, count and enumeration order are the stored map's.
+    /// </summary>
+    private sealed class ReanchoredMemberSeeds(IReadOnlyDictionary<string, SummarySeed> stored,
+        Func<SummarySeed, SummarySeed> reanchored) : IReadOnlyDictionary<string, SummarySeed>
+    {
+        public int Count => stored.Count;
+        public IEnumerable<string> Keys => stored.Keys;
+        public IEnumerable<SummarySeed> Values => stored.Values.Select(reanchored);
+        public SummarySeed this[string key] => reanchored(stored[key]);
+        public bool ContainsKey(string key) => stored.ContainsKey(key);
+
+        public bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out SummarySeed value)
+        {
+            if (stored.TryGetValue(key, out var seed))
+            {
+                value = reanchored(seed);
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        public IEnumerator<KeyValuePair<string, SummarySeed>> GetEnumerator()
+        {
+            foreach (var (name, seed) in stored)
+                yield return new(name, reanchored(seed));
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>
@@ -1024,6 +1172,251 @@ internal static class PropertyDependencyGraphBuilder
             => FrontEndTraversalObservations.ObserveCancellation(
                 observations, FrontEndCancellationCheckpoint.SummaryChannel, CancellationToken);
 
+        // ── Completed provider summaries (CompletedProviderSummaries) ──
+
+        /// <summary>
+        /// The materialization attempt's view of its loader's completed provider summaries; null in every resolution
+        /// that is not a deferred branch's materialization (the eager parse, a standalone analysis, the semantic model),
+        /// which then computes every summary itself, exactly as before the share existed.
+        /// </summary>
+        internal CompletedProviderSummaries.Attempt? CompletedProviders { get; init; }
+
+        /// <summary>The unsealed unit this resolution completes (a materialization's own facts); null without one.</summary>
+        internal CompletedStaticStructures? CompletingUnit { get; init; }
+
+        /// <summary>The facts a context's lookups read: the table itself, or the one a requirement view projects.</summary>
+        internal static StaticLookupFacts SourceOf(StaticLookupFacts facts)
+            => facts is RequirementLookupFacts projected ? projected.Source : facts;
+
+        /// <summary>
+        /// TEST SEAM (<see cref="CompletedProviderSummaries.ModeForTesting"/>): every adopted summary is also computed by
+        /// this resolution and compared with what it adopted. Never set by production code.
+        /// </summary>
+        internal bool VerifiesAdoptedProviders { get; init; }
+
+        // The exact-context computation in progress that may be kept (its facts and key), how many of the share's
+        // conditions it has broken so far, the contextual results computed since it began, and the contextual results of
+        // every earlier window of this resolution that kept all of them (each was computed under the share's conditions,
+        // so a later window may read it).
+        private (CompletedStaticStructures Source, StaticScopeKey Key)? _providerWindow;
+        private long _providerWindowTaints;
+        private HashSet<object>? _providerWindowResults;
+        private HashSet<object>? _keptWindowResults;
+
+        /// <summary>
+        /// The share key of an exact-context request for <paramref name="algorithm"/> at <paramref name="context"/>, or
+        /// null when its summary cannot be kept or adopted: no share (not a materialization), facts that are neither a
+        /// sealed table nor this resolution's own unit, or a context that is not completed inherited content
+        /// (<see cref="CompletedStaticStructures.HoldsInheritedCompletedBody"/>).
+        /// </summary>
+        internal CompletedProviderSummaries.Key? CompletedProviderKey(CompletedStructureContext context, Algorithm algorithm)
+        {
+            if (CompletedProviders is null || CompletingUnit is not { } unit
+                || SourceOf(context.Facts) is not CompletedStaticStructures source)
+                return null;
+            var own = ReferenceEquals(source, unit);
+            if (!own && !source.IsSealed || !source.HoldsInheritedCompletedBody(context.Key, algorithm))
+                return null;
+            return new(own ? null : source, context.Key);
+        }
+
+        /// <summary>
+        /// The summary an earlier operation kept for <paramref name="provider"/>, re-anchored at this resolution's
+        /// contexts seed by seed, as each one is read (see <see cref="CompletedProviderSummaries"/>).
+        /// </summary>
+        internal bool TryAdoptCompletedProvider(CompletedProviderSummaries.Key provider,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out AlgorithmSummary? adopted, out bool independent)
+        {
+            adopted = null;
+            independent = false;
+            if (CompletedProviders is not { } share || !share.TryGet(provider, out var entry))
+                return false;
+
+            observations?.RecordCompletedProviderSummaryAdoption();
+            independent = entry.Independent;
+            var copies = new Dictionary<SummarySeed, SummarySeed>(ReferenceEqualityComparer.Instance);
+            Func<PendingReference, PendingReference> reanchor = pending =>
+            {
+                observations?.RecordCompletedProviderReferenceReanchor();
+                var source = SourceOf(pending.Origin.Facts);
+                // The computing unit's own table stands for "the asking unit": this resolution's. Every other origin
+                // names a sealed table, which is the same object for every operation that inherits it.
+                if (ReferenceEquals(source, entry.ComputedBy))
+                    source = CompletingUnit!;
+                return new PendingReference(pending.Head, pending.Members,
+                    RequirementContext(source.Context(pending.Origin.Key))!, pending.BoundOwners, pending.OpenPath, pending.Selection);
+            };
+            Func<SummarySeed, SummarySeed> reanchored = seed => seed.Reanchored(reanchor, copies, entry.AnchoredSeeds, CancellationToken);
+            var stored = entry.Summary;
+            adopted = new AlgorithmSummary(() => reanchored(stored.OutputSeed),
+                stored.MemberSeeds.Count == 0 ? AlgorithmSummary.NoMembers : new ReanchoredMemberSeeds(stored.MemberSeeds, reanchored));
+            return true;
+        }
+
+        /// <summary>
+        /// Opens the window of an exact-context computation that may be kept; <see cref="CloseProviderWindow"/> ends it.
+        /// Exact-context requests come from the exposure resolver's charging calls, never from inside a summary walk, so
+        /// a window never nests.
+        /// </summary>
+        internal void OpenProviderWindow(CompletedProviderSummaries.Key provider)
+        {
+            if (_providerWindow is not null)
+                throw new InvalidOperationException("Internal error: an exact-context summary request was made inside another one.");
+            _providerWindow = (provider.Sealed ?? CompletingUnit!, provider.Scope);
+            _providerWindowTaints = 0;
+            _providerWindowResults?.Clear();
+        }
+
+        /// <summary>Ends the window; true when the computation kept every condition of the share.</summary>
+        internal bool CloseProviderWindow()
+        {
+            _providerWindow = null;
+            var kept = _providerWindowTaints == 0;
+            if (kept && _providerWindowResults is { Count: > 0 } results)
+                (_keptWindowResults ??= new(ReferenceEqualityComparer.Instance)).UnionWith(results);
+            _providerWindowResults?.Clear();
+            return kept;
+        }
+
+        // A contextual result computed inside the window: a later hit of it, in this window or after a window that kept
+        // every condition, was computed under the share's conditions.
+        internal void NoteProviderWindowResult(object result)
+        {
+            if (_providerWindow is not null)
+                (_providerWindowResults ??= new(ReferenceEqualityComparer.Instance)).Add(result);
+        }
+
+        // A summary this resolution adopted or kept: it is a summary of completed content computed under the share's
+        // conditions, so a later window that reads it from the memo stays within them.
+        internal void NoteKeptProviderResult(object result)
+            => (_keptWindowResults ??= new(ReferenceEqualityComparer.Instance)).Add(result);
+
+        // A contextual memo hit inside the window: an entry computed outside every such window was computed under
+        // conditions nobody recorded, so the window's summary is not kept.
+        internal void NoteProviderWindowReuse(object result)
+        {
+            if (_providerWindow is not null && _providerWindowResults?.Contains(result) != true
+                && _keptWindowResults?.Contains(result) != true)
+                _providerWindowTaints++;
+        }
+
+        /// <summary>
+        /// TEST SEAM (<see cref="VerifiesAdoptedProviders"/>): whether <paramref name="adopted"/> is, seed by seed, the
+        /// summary this resolution computed itself: the same member names; in every seed the same required names,
+        /// visible names and owner-qualified parameters; and the same references in the same order, each anchored one at
+        /// the same facts object and key with the same path, bound owners and selection. Returns the first difference.
+        /// </summary>
+        internal static string? AdoptedSummaryDifference(AlgorithmSummary adopted, AlgorithmSummary computed)
+        {
+            if (SeedDifference(adopted.OutputSeed, computed.OutputSeed) is { } output)
+                return "output seed: " + output;
+            if (adopted.MemberSeeds.Count != computed.MemberSeeds.Count)
+                return $"member count {adopted.MemberSeeds.Count} / {computed.MemberSeeds.Count}";
+            foreach (var (name, seed) in computed.MemberSeeds)
+            {
+                if (!adopted.MemberSeeds.TryGetValue(name, out var other))
+                    return $"member '{name}' missing";
+                if (SeedDifference(other, seed) is { } member)
+                    return $"member '{name}': {member}";
+            }
+
+            return null;
+
+            static string? SeedDifference(SummarySeed left, SummarySeed right)
+            {
+                // Clones fold their own copies: the compared seeds are never mutated.
+                left = left.Clone();
+                right = right.Clone();
+                if (!left.RequiredAncestorOwnedParameterNames.SetEquals(right.RequiredAncestorOwnedParameterNames))
+                    return "required names";
+                if (!left.VisiblePropertyDependencyNames.SetEquals(right.VisiblePropertyDependencyNames))
+                    return "visible names";
+                if (!left.OwnerQualifiedParameters.SetEquals(right.OwnerQualifiedParameters))
+                    return "owner-qualified parameters";
+                var (leftReferences, rightReferences) = (left.PendingReferences.ToArray(), right.PendingReferences.ToArray());
+                if (leftReferences.Length != rightReferences.Length)
+                    return $"reference count {leftReferences.Length} / {rightReferences.Length}";
+                for (var i = 0; i < leftReferences.Length; i++)
+                {
+                    var (a, b) = (leftReferences[i], rightReferences[i]);
+                    if (a.ContentKey != b.ContentKey)
+                        return $"reference {i} content";
+                    var (anchoredLeft, anchoredRight) = (a as PendingReference, b as PendingReference);
+                    if (anchoredLeft is null != anchoredRight is null)
+                        return $"reference {i} anchoring";
+                    if (anchoredLeft is not null && anchoredRight is not null
+                        && (!ReferenceEquals(anchoredLeft.Origin.Facts, anchoredRight.Origin.Facts)
+                            || !ReferenceEquals(anchoredLeft.Origin.Key, anchoredRight.Origin.Key)
+                            || anchoredLeft.OpenPath != anchoredRight.OpenPath || anchoredLeft.Selection != anchoredRight.Selection))
+                        return $"reference {i} origin";
+                }
+
+                return null;
+            }
+        }
+
+        // The walk enters `body` at `context` inside the window: its facts must be sealed (or the window's own
+        // context), hold exactly this body and not be provisional.
+        private void NoteProviderWindowBody(CompletedStructureContext context, Algorithm body)
+        {
+            if (_providerWindow is not { } window)
+                return;
+            // A synthetic deconstruction helper has no published context of its own, and its summary is the constant
+            // empty one, returned before anything is read (CollectScopeBodySummary).
+            if (body is Algorithm.User { AssignmentDeconstructionTarget: not null })
+                return;
+            if (SourceOf(context.Facts) is not CompletedStaticStructures source
+                || !source.IsSealed && !(ReferenceEquals(source, window.Source) && ReferenceEquals(context.Key, window.Key))
+                || source.Facts(context.Key) is not { Body: { } view, IsProvisional: false }
+                || !ReferenceEquals(view, body))
+                _providerWindowTaints++;
+        }
+
+        /// <summary>
+        /// The form in which <paramref name="summary"/> is kept for later operations: every anchored reference at the
+        /// TABLE its origin reads (a sealed one, or <paramref name="unit"/>, the computing unit's own, which seals when
+        /// its attempt publishes, the only time the summary becomes visible), never at this resolution's requirement
+        /// view of it. A view is the memo's own object, with the provisional bodies its walks registered: kept seeds
+        /// would retain it, and with it this attempt's context. Seeds that carry no anchored reference are kept as they
+        /// are. Null when an origin reads facts that are neither a sealed table nor the unit: the summary is not kept.
+        /// </summary>
+        internal CompletedProviderSummaries.Entry? StoredForm(AlgorithmSummary summary, bool independent, CompletedStaticStructures unit)
+        {
+            var completed = true;
+            var copies = new Dictionary<SummarySeed, SummarySeed>(ReferenceEqualityComparer.Instance);
+            Func<PendingReference, PendingReference> atTable = reference =>
+            {
+                var facts = reference.Origin.Facts;
+                if (SourceOf(facts) is not CompletedStaticStructures table || !table.IsSealed && !ReferenceEquals(table, unit))
+                {
+                    completed = false;
+                    return reference;
+                }
+
+                return ReferenceEquals(table, facts) ? reference
+                    : new PendingReference(reference.Head, reference.Members, table.Context(reference.Origin.Key),
+                        reference.BoundOwners, reference.OpenPath, reference.Selection);
+            };
+            var output = summary.OutputSeed.Reanchored(atTable, copies, null, CancellationToken);
+            var members = AlgorithmSummary.NoMembers;
+            if (summary.MemberSeeds.Count != 0)
+            {
+                var stored = new Dictionary<string, SummarySeed>(summary.MemberSeeds.Count, StringComparer.Ordinal);
+                foreach (var (name, seed) in summary.MemberSeeds)
+                    stored.Add(name, seed.Reanchored(atTable, copies, null, CancellationToken));
+                members = stored;
+            }
+
+            if (!completed) return null;
+            var anchored = new HashSet<SummarySeed>(ReferenceEqualityComparer.Instance);
+            foreach (var (original, stored) in copies)
+            {
+                CancellationToken.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(original, stored)) anchored.Add(stored);
+            }
+            return new(new AlgorithmSummary(output, members), independent, unit, anchored);
+        }
+
         /// <summary>The bodies of the exposure input reached through several paths; null outside exposure, or when none is.</summary>
         internal SharedBodyCensus? SharedBodies;
         private RegionFreeNames? _regionNames;
@@ -1038,6 +1431,8 @@ internal static class PropertyDependencyGraphBuilder
         internal CompletedStructureContext SharedRegionContext(CompletedStructureContext context, Algorithm body)
         {
             if (SharedBodies?.Holds(body) != true || body.IsModuleRoot) return context;
+            // The representative depends on which contexts this resolution's input reached first: never kept.
+            if (_providerWindow is not null) _providerWindowTaints++;
             _regionNames ??= new(new NameSetInterner());
             if (CompletedBodyRegion.Of(context.Facts, context.Key, body, _regionNames) is not { } region) return context;
             _sharedRegions ??= new();
@@ -1101,6 +1496,9 @@ internal static class PropertyDependencyGraphBuilder
                 _bindingFreeRegions.Add(key, regions = []);
             foreach (var previous in regions)
             {
+                // Another context of the same body under the same parent (a body several branches share): which of them
+                // stands for the region depends on the order this resolution met them, so the window's summary is not kept.
+                if (_providerWindow is not null && !ReferenceEquals(previous.Key, at.Key)) _providerWindowTaints++;
                 var before = previous.Facts.Facts(previous.Key)!;
                 if (ReferenceEquals(before.Body, body) && before.Parameters.Count == 0
                     && before.IsProvisional == facts.IsProvisional
@@ -1155,6 +1553,7 @@ internal static class PropertyDependencyGraphBuilder
         internal CompletedStructureContext? RequirementContext(CompletedStructureContext? context, Algorithm? body = null)
         {
             if (context is not { } at) return null;
+            if (body is not null) NoteProviderWindowBody(at, body);
             var source = at.Facts is RequirementLookupFacts existing ? existing.Source : at.Facts;
             if (source is not CompletedStaticStructures { HasProvisional: true }) return at;
             if (!_requirementFacts.TryGetValue(source, out var projection))
@@ -1730,14 +2129,82 @@ internal static class PropertyDependencyGraphBuilder
         if (cache.TryGetValue(key, out var result))
         {
             memos.SharedMemo.UseContext();
+            memos.SharedMemo.NoteProviderWindowReuse(result);
             return result;
         }
+
+        // COMPLETED PROVIDER SUMMARIES: an exact-context request of a deferred materialization for completed inherited
+        // content takes the summary an earlier operation of the program kept, and keeps the one it computes itself
+        // (CompletedProviderSummaries). Every other request, and every other resolution, is unchanged.
+        var provider = exactContext is null ? null : memos.SharedMemo.CompletedProviderKey(context, algorithm);
+        if (provider is { } kept && memos.SharedMemo.TryAdoptCompletedProvider(kept, out var adopted, out var adoptedIndependent))
+        {
+            if (memos.SharedMemo.VerifiesAdoptedProviders)
+            {
+                // TEST SEAM: this resolution's own computation, exactly as without the share, beside what it adopted. It
+                // runs in a window like a first computation, so what it leaves in the memo is what one would leave.
+                var before = memos.SharedMemo.ContextUses;
+                AlgorithmSummary own;
+                memos.SharedMemo.OpenProviderWindow(kept);
+                try
+                {
+                    own = CollectAlgorithmSummary(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations, context);
+                }
+                finally
+                {
+                    memos.SharedMemo.CloseProviderWindow();
+                }
+                if ((canShare && before == memos.SharedMemo.ContextUses) != adoptedIndependent)
+                    throw new InvalidOperationException("An adopted completed provider summary differs from the computed one: context use.");
+                if (SummaryMemo.AdoptedSummaryDifference(adopted, own) is { } difference)
+                    throw new InvalidOperationException($"An adopted completed provider summary differs from the computed one: {difference}.");
+            }
+
+            // The memo holds the adopted summary where its own computation would have put it.
+            if (adoptedIndependent && canShare) independent.Add(algorithm, adopted);
+            else
+            {
+                memos.SharedMemo.UseContext();
+                cache[key] = adopted;
+            }
+            memos.SharedMemo.NoteKeptProviderResult(adopted);
+            return adopted;
+        }
+
         var uses = memos.SharedMemo.ContextUses;
         if (!canShare) memos.SharedMemo.UseContext();
         memos.Observations?.RecordDependencyAlgorithmSummaryComputation();
-        result = CollectAlgorithmSummary(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations, context);
-        if (uses == memos.SharedMemo.ContextUses) independent.Add(algorithm, result);
+        if (provider is not { } computed)
+        {
+            result = CollectAlgorithmSummary(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations, context);
+            if (uses == memos.SharedMemo.ContextUses) independent.Add(algorithm, result);
+            else cache[key] = result;
+            memos.SharedMemo.NoteProviderWindowResult(result);
+            return result;
+        }
+
+        memos.SharedMemo.OpenProviderWindow(computed);
+        bool keeps;
+        try
+        {
+            result = CollectAlgorithmSummary(algorithm, CreateNameSet(), memos.SharedMemo, memos.Observations, context);
+        }
+        finally
+        {
+            keeps = memos.SharedMemo.CloseProviderWindow();
+        }
+
+        var isIndependent = uses == memos.SharedMemo.ContextUses;
+        if (isIndependent) independent.Add(algorithm, result);
         else cache[key] = result;
+        var unit = memos.SharedMemo.CompletingUnit!;
+        if (keeps && memos.SharedMemo.StoredForm(result, isIndependent, unit) is { } stored)
+        {
+            memos.SharedMemo.CompletedProviders!.Stage(computed, stored);
+            memos.SharedMemo.NoteKeptProviderResult(result);
+            memos.Observations?.RecordCompletedProviderSummaryKept();
+        }
+
         return result;
     }
 
@@ -2191,6 +2658,7 @@ internal static class PropertyDependencyGraphBuilder
         if (completedSummaries.TryGetValue(key, out var stored))
         {
             sharedMemo.UseContext();
+            sharedMemo.NoteProviderWindowReuse(stored);
             return stored.Clone();
         }
 
@@ -2199,7 +2667,12 @@ internal static class PropertyDependencyGraphBuilder
         observations?.RecordDependencyBranchBodySummaryComputation();
         var seed = CollectSummarySeed(body, CreateNameSet(binderNames), sharedMemo, observations, representative);
         if (canShare && uses == sharedMemo.ContextUses) independent.Add(independentKey, seed.Clone());
-        else completedSummaries[key] = seed.Clone();
+        else
+        {
+            var kept = seed.Clone();
+            completedSummaries[key] = kept;
+            sharedMemo.NoteProviderWindowResult(kept);
+        }
         return seed;
     }
 

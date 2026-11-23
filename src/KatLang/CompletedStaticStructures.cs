@@ -151,6 +151,31 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
             return _projectionSuspended ? null : ProjectedFacts(key);
     }
 
+    /// <summary>
+    /// Whether <paramref name="key"/> names COMPLETED INHERITED CONTENT whose published body is <paramref name="body"/>:
+    /// the context and every context above it, up to the prelude, has an entry this table did not build itself (a sealed
+    /// table built none after sealing; an unsealed unit's own entries are in its local layer), and each entry holds a
+    /// body and is not provisional. Such entries are final for the program: a completed body is never rebuilt, and a
+    /// later unit overrides only inherited entries that have no body (<c>StaticStructureOperation.CompleteLookups</c>),
+    /// so every operation that inherits this table reads the same facts along that chain. A context below a reach has
+    /// no entry of its own (it is projected) and is never one. Reads only, charges nothing; false for a failed table.
+    /// <see cref="CompletedProviderSummaries"/> keeps summaries of such contexts only.
+    /// </summary>
+    internal bool HoldsInheritedCompletedBody(StaticScopeKey key, Algorithm body)
+    {
+        if (IsFailed)
+            return false;
+        for (var at = key; ; at = at.Parent)
+        {
+            if (_local?.ContainsKey(at) == true
+                || !_bodies.TryGetValue(at, out var facts) || facts.Body is not { } view || facts.IsProvisional
+                || ReferenceEquals(at, key) && !ReferenceEquals(view, body))
+                return false;
+            if (at.Parent is null)
+                return true;
+        }
+    }
+
     /// <summary>Registers a reach (B3-5★): <paramref name="reach"/> was served from <paramref name="processed"/>'s processing.</summary>
     internal void AddReach(StaticScopeKey reach, StaticScopeKey processed, OpenProviderIdentity reachIdentity, OpenProviderIdentity processedIdentity)
     {

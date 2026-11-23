@@ -933,6 +933,37 @@ internal sealed class FrontEndTraversalObservations
         => DependencyAlgorithmSummaryComputations = checked(DependencyAlgorithmSummaryComputations + 1);
 
     /// <summary>
+    /// Summaries of completed inherited content a deferred materialization took from its loader's share instead of
+    /// computing them (<see cref="CompletedProviderSummaries"/>): one per exact-context request the share answered.
+    /// An adopted summary records no <see cref="DependencyAlgorithmSummaryComputations"/>, and nothing below it is
+    /// walked. Zero in every resolution that is not a deferred branch's materialization.
+    /// </summary>
+    public long CompletedProviderSummaryAdoptions { get; private set; }
+
+    internal void RecordCompletedProviderSummaryAdoption()
+        => CompletedProviderSummaryAdoptions = checked(CompletedProviderSummaryAdoptions + 1);
+
+    /// <summary>
+    /// Summaries of completed inherited content a deferred materialization computed and staged for its loader's share
+    /// (<see cref="CompletedProviderSummaries"/>); they become visible to later materializations only if the attempt
+    /// publishes its unit.
+    /// </summary>
+    public long CompletedProviderSummariesKept { get; private set; }
+
+    internal void RecordCompletedProviderSummaryKept()
+        => CompletedProviderSummariesKept = checked(CompletedProviderSummariesKept + 1);
+
+    /// <summary>
+    /// Anchored references of adopted summaries written again at the adopting resolution's own contexts
+    /// (<see cref="CompletedProviderSummaries"/>): the whole per-read cost of an adopted summary, bounded by the seeds
+    /// the reader asked for, never by the provider's width.
+    /// </summary>
+    public long CompletedProviderReferenceReanchors { get; private set; }
+
+    internal void RecordCompletedProviderReferenceReanchor()
+        => CompletedProviderReferenceReanchors = checked(CompletedProviderReferenceReanchors + 1);
+
+    /// <summary>
     /// Completed conditional BRANCH-BODY summary computations in the builder's summary channel
     /// (<c>PropertyDependencyGraphBuilder.CollectBranchBodySummarySeed</c> misses of the
     /// completed branch-body memo, keyed by body reference and binder-name set). Like

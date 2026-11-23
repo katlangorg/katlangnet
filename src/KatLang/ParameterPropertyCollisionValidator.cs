@@ -234,8 +234,23 @@ internal sealed class ParameterPropertyCollisionValidator(
         return names;
     }
 
+    /// <summary>
+    /// The module units earlier operations of the program completed (a materialized deferred unit only): a module one
+    /// of them carried through its whole pipeline was judged there, in the empty context every holder gives it, and is
+    /// not walked again (see <see cref="VisitAlgorithm"/>).
+    /// </summary>
+    internal ModuleUnitRegistry? CompletedModules { get; init; }
+
     public override void VisitAlgorithm(Algorithm algorithm)
     {
+        // ONE MODULE DECLARATION, VALIDATED ONCE PER PROGRAM (Q-32 I-U). A materialized deferred unit receives every
+        // module an earlier error-free operation completed as the very declaration that operation elaborated. A
+        // module meets none of its holder's parameters, so that operation judged it exactly as this walk would, and
+        // reported nothing, or it would have published nothing: there is nothing to report again and nothing to
+        // record (a placeholder inside it already carries the bindings that operation recorded).
+        if (algorithm.IsModuleRoot && CompletedModules?.SkipsValidationOf(algorithm) == true)
+            return;
+
         // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: it meets none of its
         // holder's parameters, so it is validated in the empty context — once, wherever it is held.
         if (algorithm.IsModuleRoot && !_parameters.IsEmpty)

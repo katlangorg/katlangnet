@@ -41,6 +41,12 @@ internal sealed class ModuleUnitRegistry
         new(ReferenceEqualityComparer.Instance),
     ];
 
+    /// <summary>
+    /// The summaries of completed content the program's deferred materializations computed and published with their
+    /// units (<see cref="CompletedProviderSummaries"/>): read and written inside the loader's materialization gate only.
+    /// </summary>
+    internal CompletedProviderSummaries CompletedProviders { get; } = new();
+
     /// <summary>A new operation's units, reading what earlier error-free operations published.</summary>
     internal ModuleUnits BeginOperation() => new(this);
 
@@ -56,6 +62,25 @@ internal sealed class ModuleUnitRegistry
     /// module ONCE per program asks this.
     /// </summary>
     internal bool HasCompleted(Algorithm resolved) => _published[(int)ModuleUnitPass.Exposure].ContainsKey(resolved);
+
+    /// <summary>
+    /// <see cref="HasCompleted"/> asked by a rule that is about to walk <paramref name="resolved"/> and, on a yes, does
+    /// not: the collision, open-provider and output rules of a deferred materialization, each of which judged the
+    /// module in the operation that completed it. Counts the walks not made (<see cref="ValidationWalksSkipped"/>).
+    /// </summary>
+    internal bool SkipsValidationOf(Algorithm resolved)
+    {
+        if (!HasCompleted(resolved))
+            return false;
+        ValidationWalksSkipped++;
+        return true;
+    }
+
+    /// <summary>
+    /// Walks of a completed module that the rules of later operations did not make (<see cref="SkipsValidationOf"/>);
+    /// test-observable, never a decision input. Written inside the loader's materialization gate only.
+    /// </summary>
+    internal long ValidationWalksSkipped { get; private set; }
 
     internal void Publish(Dictionary<Algorithm, Algorithm>[] units, StaticStructureOperation.Continuation? continuation)
     {
@@ -98,6 +123,23 @@ internal sealed class ModuleUnits(ModuleUnitRegistry? registry = null)
     internal void Add(ModuleUnitPass pass, Algorithm module, Algorithm elaborated)
         => _units[(int)pass].Add(module, elaborated);
 
-    /// <summary>Publishes this operation's units to the program's registry: call only when the operation reported no error.</summary>
-    internal void Publish(StaticStructureOperation.Continuation? continuation = null) => _registry?.Publish(_units, continuation);
+    private CompletedProviderSummaries.Attempt? _completedProviders;
+
+    /// <summary>
+    /// This operation's view of the registry's completed provider summaries, created when a deferred materialization's
+    /// exposure first asks for it (the one operation that reads or stages any); null without a registry. What it
+    /// staged is published by <see cref="Publish"/> and otherwise dropped with the operation.
+    /// </summary>
+    internal CompletedProviderSummaries.Attempt? CompletedProviderAttempt
+        => _completedProviders ??= _registry?.CompletedProviders.BeginAttempt();
+
+    /// <summary>
+    /// Publishes this operation's units, and the completed provider summaries it staged, to the program's registry:
+    /// call only when the operation reported no error.
+    /// </summary>
+    internal void Publish(StaticStructureOperation.Continuation? continuation = null)
+    {
+        _registry?.Publish(_units, continuation);
+        _completedProviders?.Publish();
+    }
 }
