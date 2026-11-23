@@ -234,7 +234,7 @@ side. A supplementary run elaborated scratch copies of both files with
 The dependent `KatLangArityLaws/MayCaptureCallsCorpus.lean` gains two gate
 guards (HP-17a/b). It imports the host-parent module but evaluates no structural
 guard. The target rebuild and the exporter's first build together suggest an
-estimated 2 s of extra work on this machine. The Lean CI job has a 30-minute
+estimated 2 s of extra work on this machine. The Lean CI job has a 40-minute
 timeout.
 
 **Estimates for the other three corpora (not migrated).** These are estimates,

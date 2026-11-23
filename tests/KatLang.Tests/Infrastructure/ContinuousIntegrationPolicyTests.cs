@@ -104,7 +104,7 @@ public class ContinuousIntegrationPolicyTests
         foreach (var workflow in new[] { ValidatePath, ReleasePath })
         {
             var source = Text(workflow);
-            foreach (var (job, minutes) in new[] { ("dotnet-validation", 60), ("lean-validation", 30) })
+            foreach (var (job, minutes) in new[] { ("dotnet-validation", 60), ("lean-validation", 40) })
             {
                 var section = Regex.Match(source, $@"(?ms)^  {job}:\n.*?(?=^  [a-z][a-z-]*:|\z)");
                 Assert.True(section.Success, $"Missing validation job in {workflow}: {job}");

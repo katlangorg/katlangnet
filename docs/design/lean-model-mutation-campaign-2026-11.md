@@ -347,7 +347,7 @@ not help; the hunt measured 4–6 minutes per mutant on a machine shared with ot
 4. `hunt-controls` (15 more minutes) only when the runner, the corpus generators or the encoders
    change: it checks the fixture, not a gap.
 
-Not on every pull request: the default set alone is close to the Lean job's 30-minute limit, and
+Running the default set on every pull request would add 26 minutes to Lean validation, and
 most failures would be stale anchors. If standing automation is wanted, the two forms that fit the
 measurements are (a) `-CheckCatalog` as a step of the Lean validation job, which keeps the anchors
 honest at the commit that moves them for under a second, and (b) a weekly scheduled workflow on the

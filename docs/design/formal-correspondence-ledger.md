@@ -262,7 +262,7 @@ On the local checkout on 2026-11-18, `lake env lean` took 20.8 s for the previou
 without slot roles and witnesses. The same inputs expanded to one block per program and one guard per occurrence took 81.0 s
 and 305.9 s respectively. Each measurement used existing dependency oleans and re-elaborated the module once. On 2026-11-20
 `lake build CoreTests` built an earlier version of the slot-role module in 174 s on a machine that was running other work, so the two figures are not
-one measurement series. The Lean CI job has a 30-minute budget.
+one measurement series. The Lean CI job has a 40-minute budget.
 
 | Id | Proposition, domain | Definition concerned | Result | Premises | Category | Remaining bridge |
 | --- | --- | --- | --- | --- | --- | --- |
