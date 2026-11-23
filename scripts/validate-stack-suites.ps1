@@ -15,8 +15,10 @@ Set-StrictMode -Version Latest
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = "./tests/KatLang.Tests/KatLang.Tests.csproj"
 # Fresh-process stack probes (SubprocessProbe children asserting exit code 0, a success marker and
-# no "Stack overflow" text), plus the in-process async-twin stack-shape characterization, whose
-# overflow would kill the test host. Every class must execute at least one test.
+# no "Stack overflow" text), plus two in-process checks: the async-twin stack-shape characterization,
+# whose overflow would kill the test host, and the planned-loop frame nesting check, which compares
+# the stack depth of reads through 4,096 nested loop frames on a 16 MiB thread. Every class must
+# execute at least one test.
 $stackSuiteClasses = @(
     "KatLang.Tests.AstStructuralDepthProcessTests",
     "KatLang.Tests.EvaluationLimitsProcessTests",
@@ -31,7 +33,8 @@ $stackSuiteClasses = @(
     "KatLang.Tests.ScopeVisibilityIterativeUpdateTests",
     "KatLang.Tests.ParserExpressionChainDepthTests",
     "KatLang.Tests.LimitConfigurationTransparencyTests",
-    "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests"
+    "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests",
+    "KatLang.Tests.PlannedLoopFrameNestingTests"
 )
 # The trailing dot matches only members of the named class, never a class whose name extends it.
 $filter = ($stackSuiteClasses | ForEach-Object { "FullyQualifiedName~$_." }) -join "|"

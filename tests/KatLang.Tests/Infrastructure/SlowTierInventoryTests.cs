@@ -171,9 +171,9 @@ public class SlowTierInventoryTests
             "CallableAliasBindingIndirectionTests.MemberPathAliasChains_NormalizeOnAOneMebibyteStack_UpToAThousandLinks"),
         new("LocalOnlyLoopStepPeakMemoryProcessTests.PeakWorkingSet_StaysWithinSixteenMiB_FromTenToTheFifthToTenToTheSixthRounds",
             Category.FullSizeStackOrMemory,
-            "Five probe children, each comparing the peak working set of 10^5 and 10^6 loop rounds; a smaller "
-            + "round count is no subset of these cases. The deterministic reclaim tests of the same file stay per "
-            + "pull request."),
+            "Six cases, each comparing two fresh processes at 10^5 and 10^6 loop rounds; a smaller "
+            + "round count is no subset of these cases. The deterministic reclaim tests of the same file and the "
+            + "recursive memo's retention test in DeconstructionRecursiveReentryTests stay per pull request."),
         new("IdentityKeyedRunStorePeakMemoryProcessTests.PeakWorkingSet_StaysWithinFortyMiB_FromTenToTheFifthToTenToTheSixthRounds",
             Category.FullSizeStackOrMemory,
             "Three probe children, each comparing the peak working set of 10^5 and 10^6 rounds; a smaller round "

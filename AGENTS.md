@@ -369,8 +369,9 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   (`release-stack-suites`, 30 minutes), is the Release backstop the Debug jobs
   cannot be: `scripts/validate-stack-suites.ps1` builds
   `tests/KatLang.Tests` with `-c Release` and runs only the listed
-  `SubprocessProbe` process-death stack suites plus `AsyncStackDepthTests` in
-  Release. A test class that launches a `SubprocessProbe` child is either
+  `SubprocessProbe` process-death stack suites plus the in-process
+  `AsyncStackDepthTests` and `PlannedLoopFrameNestingTests` in Release. A test
+  class that launches a `SubprocessProbe` child is either
   listed there or excluded with a reason in `ContinuousIntegrationPolicyTests`
   (`EveryProcessProbeClass_IsInTheReleaseStackSuite_OrExcludedWithAReason`). It fails on a build or test failure, a zero-test filter, or a listed
   class that executed nothing, and writes its logs and TRX to a fresh ignored

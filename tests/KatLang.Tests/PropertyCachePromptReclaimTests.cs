@@ -373,12 +373,13 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
 /// <summary>
 /// The peak-memory guards of a binding context minted per loop step (property-cache prompt reclaim, 2026-11-17;
 /// deconstruction-memo prompt reclaim, 2026-11-18): a local-only property per step, a local-only property holding a
-/// call reference per step, a local-only runtime alias per step, a local-only deconstruction per step, and that
-/// deconstruction under the uncached property cache's statistics. Each program runs in a fresh
-/// <see cref="SubprocessProbe"/> child — on the default engine (<see cref="KatLangEngine.Run"/>), except the
-/// uncached-statistics loop, which no engine run takes and the child runs on the internal evaluator with
-/// <see cref="UncachedZeroArgPropertyResultCache.CreateForRun"/> — and reports its peak working set; the parent
-/// compares 10⁵ with 10⁶ rounds. Measured in Release, one process per run, peak working set at 10⁵ / 10⁶ / 3·10⁶
+/// call reference per step, a local-only runtime alias per step, a local-only deconstruction per step, that
+/// deconstruction under the uncached property cache's statistics, and a recursive deconstruction owner per step
+/// (2026-11-23). Each program runs in a fresh <see cref="SubprocessProbe"/> child — on the default engine
+/// (<see cref="KatLangEngine.Run"/>), except the uncached-statistics loop, which no engine run takes and the child runs
+/// on the internal evaluator with <see cref="UncachedZeroArgPropertyResultCache.CreateForRun"/>, and the recursive
+/// loop, which the child runs on the internal evaluator with observations — and reports its peak working set; the
+/// parent compares 10⁵ with 10⁶ rounds. Measured in Release, one process per run, peak working set at 10⁵ / 10⁶ / 3·10⁶
 /// rounds (the live heap after a forced collection stayed under 4 MiB in every run): with the property cache's
 /// former ConditionalWeakTable the property loop grew 61.5 / 109.0 / 214.3 MiB and the call-reference loop
 /// 61.7 / 103.6 / 170.0 MiB; with the prompt-reclaim table they stay at 56.5 / 57.0 / 57.2 and 57.6 / 58.1 / 58.1 MiB.
@@ -386,6 +387,14 @@ public sealed class PropertyCachePromptReclaimTests(ITestOutputHelper output)
 /// the deconstruction memo's former ConditionalWeakTable the deconstruction loop grew 63.6 / 101.3 / 156.3 MiB, and
 /// under the uncached cache, whose seen-key set had that table too, 65.0 / 104.7 / 191.9 MiB; with the prompt-reclaim
 /// table they stay at 58.7 / 59.7 / 59.2 and 58.8 / 59.1 / 59.1 MiB.
+/// <para>The recursive loop calls <c>F(1)</c>, whose right-hand side calls <c>F(0)</c>: <c>F(0)</c>'s bind starts while
+/// <c>F(1)</c>'s runs, and it is stored since the per-execution re-entry guard (2026-11-22), so the child also checks
+/// two stored binds per round and, after a forced collection, no live partition. Initial Debug measurements used
+/// <c>x + 1 + F(1) * 0</c> per step. At 10⁵ / 10⁶ rounds (2026-11-23, three pairs) peak working set was
+/// 60.2–60.4 / 58.7–58.8 MiB. When the memo's table kept its dead
+/// entries it grew 81.0 / 247.3 MiB, which the in-process capacity bounds also catch. When stored inner binds kept
+/// their cells in a run-scoped list, which no in-process seam of the memo observes and no nonrecursive row reaches,
+/// it grew 129.3 / 726.8 MiB while the local-deconstruction row stayed at 59.4 / 59.7 MiB.</para>
 /// </summary>
 public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper output)
 {
@@ -394,6 +403,7 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
     private const string Rounds = "KATLANG_LOOP_STEP_PEAK_ROUNDS";
     private const string Marker = "KATLANG_LOOP_STEP_PEAK_MARKER";
     private const string UncachedStatisticsDeconstruction = "uncached-statistics-deconstruction";
+    private const string RecursiveDeconstruction = "recursive-deconstruction";
     private const int FewRounds = 100_000;
     private const int ManyRounds = 1_000_000;
     // The former tables grew by 38–48 MiB between the two sizes in Release; the flat profile by about 1 MiB.
@@ -414,6 +424,8 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
             "runtime-alias" => "G(v) = v + 1\nStep(x) = { A = x.G\nA + 0 }",
             // Both targets read one shared bind of the step's local-only source.
             "local-deconstruction" or UncachedStatisticsDeconstruction => "Step(x) = { a, b = x + 1, x\na + b * 0 }",
+            // F(0)'s bind starts while F(1)'s runs. Each step advances by the recursive result, F(1) = 1.
+            RecursiveDeconstruction => "F(k) = { a, b = if(k > 0, F(k - 1), 0), k\na + b }\nStep(x) = x + F(1)",
             _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, "Unknown loop-step variant."),
         };
         return step + "\nStep(0).repeat(" + rounds.ToString(CultureInfo.InvariantCulture) + ")";
@@ -425,6 +437,7 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
     [InlineData("runtime-alias")]
     [InlineData("local-deconstruction")]
     [InlineData(UncachedStatisticsDeconstruction)]
+    [InlineData(RecursiveDeconstruction)]
     [Trait("Tier", "Slow")]
     public async Task PeakWorkingSet_StaysWithinSixteenMiB_FromTenToTheFifthToTenToTheSixthRounds(string variant)
     {
@@ -455,6 +468,23 @@ public sealed class LocalOnlyLoopStepPeakMemoryProcessTests(ITestOutputHelper ou
             Assert.Equal(rounds.ToString(CultureInfo.InvariantCulture), SixRouteAgreement.Neutral(result.Value.Value));
             // Every step's source and two targets are seen keys of the step's own binding context.
             Assert.Equal(3 * rounds, cache.GetSnapshot().DistinctKeysCreated);
+        }
+        else if (variant == RecursiveDeconstruction)
+        {
+            var observations = new EvaluationObservations();
+            var (result, _) = Evaluator.RunCountedObserved(
+                new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root), observations: observations);
+            Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+            Assert.Equal(rounds.ToString(CultureInfo.InvariantCulture), SixRouteAgreement.Neutral(result.Value.Value));
+            // Both activations of every step bind once and store their binds, the inner one while the outer bind runs.
+            var memo = observations.DeconstructionBindingCache!;
+            Assert.Equal(2L * rounds, observations.DeconstructionFullBindCount);
+            Assert.Equal(2 * rounds, memo.Count);
+            // Every stored bind died with its activation.
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+            Assert.Equal(0, memo.LivePartitionCount());
         }
         else
         {

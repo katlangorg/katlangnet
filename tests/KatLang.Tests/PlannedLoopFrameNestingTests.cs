@@ -25,7 +25,9 @@ namespace KatLang.Tests;
 /// terminal's own <see cref="Result"/> objects in its captured slots, and the terminal environment itself
 /// serving every read, at the same managed stack depth whatever the nesting. The depth check is bounded: it
 /// runs on a 16 MiB thread, where a reintroduced per-level recursion fails the assertion instead of
-/// overflowing.</para>
+/// overflowing. The class also runs in Release in the stack-suite job (<c>scripts/validate-stack-suites.ps1</c>),
+/// whose frames and inlining differ; a view that wraps its parent view fails the depth check there too (the
+/// terminal read 4,106 frames deep through the innermost view and 11 through the outermost, 2026-11-23).</para>
 ///
 /// <para>The program test exercises the engine's source entries, the evaluator's value and flat entries,
 /// and the counted observation harness. Their async entries run inline for this synchronous program.

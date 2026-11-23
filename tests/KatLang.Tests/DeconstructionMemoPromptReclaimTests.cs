@@ -83,32 +83,59 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
         }
     }
 
+    /// <summary>
+    /// Four independent async runs of a loop whose every step's deconstruction source suspends its run inside the
+    /// shared bind. The collection cadence is the PROGRAM's, not the host's: every 1,024 steps each run forces a full
+    /// collection and samples its memo — one stored bind per completed step, no owning bind running, a few live
+    /// partitions — and a probe after the loop does the same, so the table's capacity follows from the program and the
+    /// table's growth rule. Without those collections it followed the host's gen-0 budget: on one Windows machine
+    /// (2026-11-23) 256 entries by default, 512 and 1,024 with a 64 and a 256 MiB gen-0 size, and 4,096 under server
+    /// GC, against an old bound of half the steps. (The collections are full ones, so they are sparse: forced every 256
+    /// steps, they took the test from 3 to 48 seconds.)
+    /// </summary>
     [Fact]
     public async Task ConcurrentAsyncRuns_OfALoopWithALocalDeconstructionThatSuspendsEveryStep_DropTheirPartitions()
     {
         const int runs = 4;
         const int steps = 20_000;
+        const int collectEvery = 1_024;
+        const int survivors = 64;
         var outcomes = await Task.WhenAll(Enumerable.Range(0, runs).Select(_ => Task.Run(async () =>
         {
             var observations = new EvaluationObservations();
-            var live = -1;
+            var samples = new List<(int Stored, int Running, int Live)>();
+            (int Stored, int Running, int Live)? final = null;
+            var hops = 0;
             var operations = HostOperations.Create(
                 // Every step's deconstruction source suspends the run inside the shared bind: GetOrBindAsync's
                 // continuation, and with it the bind's addition to the table, may resume on another thread.
                 HostOperation.CreateAsync("hop", async (_, _) =>
                 {
+                    hops++;
                     await Task.Yield();
+                    return new Result.Atom(0);
+                }),
+                // Every collectEvery steps, one blocking full collection: it clears every dead identity's handle (no
+                // finalizer is involved). A young-generation collection, which the flows above take, does not suffice
+                // here: forced every 256 steps under server GC, one left 257 live partitions (2026-11-23).
+                HostOperation.CreateAsync("collect", async (_, _) =>
+                {
+                    await Task.Yield();
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
+                    samples.Add(Sample(observations.DeconstructionBindingCache!));
                     return new Result.Atom(0);
                 }),
                 HostOperation.CreateAsync("probe", async (_, _) =>
                 {
                     await Task.Yield();
                     ForceFullCollection();
-                    live = observations.DeconstructionBindingCache!.LivePartitionCount();
+                    final = Sample(observations.DeconstructionBindingCache!);
                     return new Result.Atom(0);
                 }));
-            var source = "Step(x) = { a, b = x + 1 + hop() * 0, x\na + b * 0 }\n"
-                + $"Step(0).repeat({steps.ToString(CultureInfo.InvariantCulture)}) + probe() * 0";
+            // A collection every collectEvery steps, after the step's bind is stored, and a probe after the loop.
+            var source = "Step(x) = { a, b = x + 1 + hop() * 0, x\n"
+                + "a + b * 0 + if((x + 1) mod " + collectEvery.ToString(CultureInfo.InvariantCulture) + " == 0, collect(), 0) }\n"
+                + "Step(0).repeat(" + steps.ToString(CultureInfo.InvariantCulture) + ") + probe() * 0";
             var parsed = await SourceProvenance.ParseValidAsync(source, new RunOptions { HostOperations = operations });
             var (result, _) = await Evaluator.RunCountedObservedAsync(
                 new Expr.AlgorithmExpr(parsed.Root),
@@ -117,22 +144,41 @@ public sealed class DeconstructionMemoPromptReclaimTests(ITestOutputHelper outpu
                 hostOperations: operations);
             var memo = observations.DeconstructionBindingCache!;
             return (Result: result, Stored: memo.Count, FullBinds: observations.DeconstructionFullBindCount,
-                Capacity: memo.PromptTableCapacity, Live: live);
+                Capacity: memo.PromptTableCapacity, Hops: hops, Samples: samples, Final: final);
         })));
 
         foreach (var outcome in outcomes)
         {
-            output.WriteLine($"run: {outcome.Stored} stored binds, {outcome.FullBinds} full binds, "
-                + $"table capacity {outcome.Capacity}, {outcome.Live} live partitions at the probe");
+            output.WriteLine($"run: {outcome.Stored} stored binds, {outcome.FullBinds} full binds, {outcome.Hops} suspensions, "
+                + $"table capacity {outcome.Capacity}, at most {outcome.Samples.Select(static sample => sample.Live).DefaultIfEmpty(-1).Max()} live partitions "
+                + $"in {outcome.Samples.Count} collections, {outcome.Final?.Live} at the probe");
             Assert.True(outcome.Result.IsOk, outcome.Result.IsError ? outcome.Result.Error.ToString() : "");
             Assert.Equal(steps.ToString(CultureInfo.InvariantCulture), SixRouteAgreement.Neutral(outcome.Result.Value.Value));
+            // Every step suspended once inside its bind.
+            Assert.Equal(steps, outcome.Hops);
             // One stored bind per step, which the step's second target reads instead of binding again.
             Assert.Equal(steps, outcome.Stored);
             Assert.Equal(steps, outcome.FullBinds);
-            Assert.InRange(outcome.Live, 0, 64);
-            Assert.InRange(outcome.Capacity, 8, steps / 2);
+            Assert.Equal(steps / collectEvery, outcome.Samples.Count);
+            for (var i = 0; i < outcome.Samples.Count; i++)
+            {
+                var (stored, running, live) = outcome.Samples[i];
+                Assert.Equal((i + 1) * collectEvery, stored);
+                Assert.Equal(0, running);
+                Assert.InRange(live, 0, survivors);
+            }
+
+            Assert.Equal((steps, 0), (outcome.Final!.Value.Stored, outcome.Final.Value.Running));
+            Assert.InRange(outcome.Final.Value.Live, 0, survivors);
+            // At most collectEvery identities minted since the last collection, plus up to `survivors` that outlived
+            // it, are alive when the table fills (1,088). The power-of-two table doubles only if more than half its
+            // entries are alive, so it stops at 4,096 whatever the host's GC configuration.
+            Assert.InRange(outcome.Capacity, 8, 4_096);
         }
     }
+
+    private static (int Stored, int Running, int Live) Sample(RunScopedDeconstructionBindingCache memo)
+        => (memo.Count, memo.RunningExecutionCount, memo.LivePartitionCount());
 
     // ── One sequential flow: one memo, used from whatever thread its continuations reach ──
 

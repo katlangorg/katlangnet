@@ -652,8 +652,8 @@ public class ContinuousIntegrationPolicyTests
     private const string StackSuiteJob = "release-stack-suites";
     private const string StackSuiteInvocation = "pwsh -NoProfile -File ./scripts/validate-stack-suites.ps1";
 
-    // The Release stack-suite job's class list. Every class but the in-process async-twin
-    // characterization is a SubprocessProbe process-death probe.
+    // The Release stack-suite job's class list. Every class but the in-process ones below is a
+    // SubprocessProbe process-death probe.
     private static readonly string[] StackSuiteClasses =
     [
         "KatLang.Tests.AstStructuralDepthProcessTests",
@@ -670,11 +670,14 @@ public class ContinuousIntegrationPolicyTests
         "KatLang.Tests.ParserExpressionChainDepthTests",
         "KatLang.Tests.LimitConfigurationTransparencyTests",
         "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests",
+        "KatLang.Tests.PlannedLoopFrameNestingTests",
     ];
 
+    // The async-twin stack-shape and planned-loop frame nesting checks run in the test host.
     private static readonly string[] InProcessStackSuiteClasses =
     [
         "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests",
+        "KatLang.Tests.PlannedLoopFrameNestingTests",
     ];
 
     [Theory]
@@ -780,6 +783,9 @@ public class ContinuousIntegrationPolicyTests
         Assert.True(list.Success, "the script must declare $stackSuiteClasses");
         var named = Regex.Matches(list.Groups["body"].Value, "\"(?<name>[^\"]+)\"").Select(match => match.Groups["name"].Value).ToArray();
         Assert.Equal(StackSuiteClasses, named);
+        // Each class is registered once, and every in-process exemption names a listed class.
+        Assert.Empty(named.GroupBy(name => name, StringComparer.Ordinal).Where(group => group.Count() > 1).Select(group => group.Key));
+        Assert.All(InProcessStackSuiteClasses, name => Assert.Contains(name, named));
 
         var testFiles = Directory.GetFiles(Absolute("tests/KatLang.Tests"), "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
@@ -826,7 +832,7 @@ public class ContinuousIntegrationPolicyTests
             ["KatLang.Tests.SemanticTesting.SemanticBatchOnlyCampaignTests"] =
                 "its children are the semantic campaign's planted batch and single-case workers (a planted wrong observation, batch-only classification and sequence reduction); they run small generated programs, not deep shapes, so no frame-size frontier is swept",
             ["KatLang.Tests.LocalOnlyLoopStepPeakMemoryProcessTests"] =
-                "its children measure peak working set, the flat-memory guards of a binding context minted per loop step (a local-only property, one holding a call reference, a local-only runtime alias, a local-only deconstruction, and that deconstruction under the uncached cache's statistics) over the prompt-reclaim partition tables; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
+                "its children measure peak working set, the flat-memory guards of a binding context minted per loop step (a local-only property, one holding a call reference, a local-only runtime alias, a local-only deconstruction, that deconstruction under the uncached cache's statistics, and a recursive deconstruction owner) over the prompt-reclaim partition tables; retention does not depend on frame sizes or configuration, so the Debug phase covers it and no stack frontier is swept",
         };
 
     /// <summary>
