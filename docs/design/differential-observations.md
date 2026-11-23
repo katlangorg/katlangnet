@@ -773,8 +773,9 @@ Each order must meet the same per-URL request counts and pinned outcome. The
 encoded trees must also match for a given source. Parser and public-engine
 diagnostics are checked by code and span. The deferred branch runs on the public
 engine and on both asynchronous evaluator routes. A refused parse or a tree
-admitted with a deferred region has no Lean evaluator guard. An unexpected encoder
-refusal fails the test.
+admitted with a deferred region has no Lean evaluator guard. The encoder itself
+refuses the deferred tree as evaluator evidence, and the harness requires exactly
+that refusal. Any other encoder refusal fails the test.
 
 Lean consumes the tree the C# front end elaborated. The pilot covers numeric and
 sequence results and the provider error above. It measures neither downloader

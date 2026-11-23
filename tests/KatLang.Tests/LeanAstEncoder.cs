@@ -61,27 +61,44 @@ namespace KatLang.Tests;
 /// owner/activation state) are refused, and a cyclic or over-deep graph is refused by the
 /// evaluator's own structural preflight.
 /// </para>
+///
+/// <para>
+/// THE MODELED DOMAIN (<see cref="LeanEncodingDomain"/>). Every entry point that takes a tree —
+/// <see cref="EncodeProgram"/>, <see cref="EncodeAlgorithm"/>, <see cref="EncodeExpr"/> and
+/// <see cref="EncodeProperty"/> — encodes Lean EVALUATOR EVIDENCE by default, the text every
+/// differential corpus and Lean guard module is built from: besides every refusal above, the
+/// evaluator's admission walk must report no deferred module region anywhere in the graph
+/// (<c>AdmittedProgramFacts.HasDeferredModuleRegion</c>, the fact a run decides from the same walk:
+/// the root, any depth below it, and host-wired parent scopes alike). A placeholder's body is a
+/// provisional elaboration that evaluation replaces when it selects the branch, and Lean's input
+/// model has no deferred regions, so printing it would yield a plausible but different program. Only
+/// an explicit <see cref="LeanEncodingDomain.SyntaxOnly"/> encoding — structural text compared with
+/// another tree's or printed for a diagnosis, never handed to Lean — prints a placeholder's
+/// provisional body; for every other tree the two domains print identical text.
+/// <see cref="EncodePattern"/> and <see cref="QuoteString"/> take no algorithm, so no deferred region
+/// can reach them.
+/// </para>
 /// </summary>
 public static class LeanAstEncoder
 {
-    public static string EncodeProgram(Algorithm root)
+    public static string EncodeProgram(Algorithm root, LeanEncodingDomain domain = LeanEncodingDomain.EvaluatorEvidence)
     {
-        var encoding = new LeanAstEncoding(root);
+        var encoding = new LeanAstEncoding(root, domain);
         return encoding.Complete(encoding.EncodeProgram(root));
     }
-    public static string EncodeAlgorithm(Algorithm algorithm)
+    public static string EncodeAlgorithm(Algorithm algorithm, LeanEncodingDomain domain = LeanEncodingDomain.EvaluatorEvidence)
     {
-        var encoding = new LeanAstEncoding(algorithm);
+        var encoding = new LeanAstEncoding(algorithm, domain);
         return encoding.Complete(encoding.EncodeAlgorithm(algorithm));
     }
-    public static string EncodeExpr(Expr expression)
+    public static string EncodeExpr(Expr expression, LeanEncodingDomain domain = LeanEncodingDomain.EvaluatorEvidence)
     {
-        var encoding = new LeanAstEncoding(expression);
+        var encoding = new LeanAstEncoding(expression, domain);
         return encoding.Complete(encoding.EncodeExpr(expression));
     }
-    public static string EncodeProperty(Property property)
+    public static string EncodeProperty(Property property, LeanEncodingDomain domain = LeanEncodingDomain.EvaluatorEvidence)
     {
-        var encoding = new LeanAstEncoding(property.Value);
+        var encoding = new LeanAstEncoding(property.Value, domain);
         return encoding.Complete(encoding.EncodeProperty(property));
     }
     public static string EncodePattern(Pattern pattern) => LeanAstEncoding.EncodePattern(pattern);
@@ -92,6 +109,28 @@ public static class LeanAstEncoder
     /// string result holding a quote, a backslash, a line feed or a tab stays faithful.
     /// </summary>
     public static string QuoteString(string value) => LeanAstEncoding.Quote(value);
+}
+
+/// <summary>
+/// What a <see cref="LeanAstEncoder"/> text is for, which decides the trees the encoder admits.
+/// </summary>
+public enum LeanEncodingDomain
+{
+    /// <summary>
+    /// LEAN EVALUATOR EVIDENCE, the default: a program a Lean guard evaluates or a definition a Lean
+    /// guard reads, so the tree must lie in the modeled domain. Besides every other refusal of the
+    /// encoder, a tree whose admitted graph holds a deferred module region is refused
+    /// (<see cref="LeanAstEncoding.DeferredRegionRefusal"/>).
+    /// </summary>
+    EvaluatorEvidence,
+
+    /// <summary>
+    /// SYNTAX-ONLY or DIAGNOSTIC text that never reaches Lean: the span-free structure of a tree
+    /// compared with another tree's, or printed for a diagnosis. A deferred module region's
+    /// placeholder prints its provisional body; every other refusal of the encoder stays. Never use
+    /// it to build a Lean program, definition or guard.
+    /// </summary>
+    SyntaxOnly,
 }
 
 internal sealed class LeanAstEncoding
@@ -122,17 +161,17 @@ internal sealed class LeanAstEncoding
     private readonly Dictionary<object, Dictionary<object, string>> _terms = new(ReferenceEqualityComparer.Instance);
     private readonly List<string> _definitions = [];
 
-    public LeanAstEncoding(Algorithm root)
+    public LeanAstEncoding(Algorithm root, LeanEncodingDomain domain)
     {
-        RequireAdmissibleGraph(root);
+        RequireAdmissibleGraph(root, domain);
         _compact = NeedsCompactTerms(root);
         _sharing.VisitAlgorithm(root);
         _needsComponentProvenance = _sharing.NeedsComponentProvenance;
     }
 
-    public LeanAstEncoding(Expr root)
+    public LeanAstEncoding(Expr root, LeanEncodingDomain domain)
     {
-        RequireAdmissibleGraph(root);
+        RequireAdmissibleGraph(root, domain);
         _compact = NeedsCompactTerms(root);
         _sharing.VisitExpr(root);
         _needsComponentProvenance = _sharing.NeedsComponentProvenance;
@@ -202,24 +241,43 @@ internal sealed class LeanAstEncoding
     }
 
     /// <summary>
-    /// The encoder walks the graph recursively (the sharing pre-pass, then the printer), parent
-    /// scopes included, so it first runs the evaluator's own iterative structural preflight over
-    /// the same graph: a reference cycle (possible through caller-owned collections, for instance
-    /// a host scope whose property is pre-wired back to that scope) or an over-deep graph is
-    /// refused with a bounded, precise error instead of overflowing the stack. Zero-weight join
-    /// spines use explicit stacks in both sharing walks and the printer; large host DAGs use
-    /// context-qualified Lean let terms. Unsupported semantic payloads are still refused below.
+    /// Both domains need the evaluator's structural depth and cycle checks before printing.
+    /// <see cref="AstStructuralPreflight.CheckDeferredBody"/> also reports deferred regions throughout
+    /// the graph, including parent scopes. Its fresh memo belongs to this encoding. It requires no
+    /// builtin registry lookup on host input, so the printer can diagnose unsupported builtin IDs.
     /// </summary>
-    private static void RequireAdmissibleGraph(object root)
+    private static void RequireAdmissibleGraph(object root, LeanEncodingDomain domain)
     {
-        if (AstStructuralPreflight.Check(root, EvaluationLimits.MaxSupportedAstDepth,
-                AstConsumerProfile.EvaluatorIterativeJoinSpines) is { } rejection)
+        const int maxDepth = EvaluationLimits.MaxSupportedAstDepth;
+        var hasDeferredRegion = false;
+        var rejection = domain switch
+        {
+            LeanEncodingDomain.EvaluatorEvidence => AstStructuralPreflight.CheckDeferredBody(
+                root, maxDepth, new AstStructuralPreflight.DeferredAdmissionMemo(), out hasDeferredRegion),
+            LeanEncodingDomain.SyntaxOnly => AstStructuralPreflight.Check(
+                root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines),
+            _ => throw new ArgumentOutOfRangeException(nameof(domain), domain, "Unknown Lean encoding domain."),
+        };
+        if (rejection is { } structuralError)
         {
             throw new NotSupportedException(
                 $"{nameof(LeanAstEncoder)} cannot encode a graph the evaluator's structural preflight refuses " +
-                $"({rejection.Kind}); a cyclic or over-deep host graph has no finite Lean term.");
+                $"({structuralError.Kind}); a cyclic or over-deep host graph has no finite Lean term.");
         }
+
+        if (hasDeferredRegion)
+            throw new NotSupportedException(DeferredRegionRefusal);
     }
+
+    /// <summary>
+    /// The one refusal of a tree outside the modeled domain because it holds a deferred module region
+    /// (<see cref="LeanEncodingDomain.EvaluatorEvidence"/>). The text is constant, so the refusal is the
+    /// same whichever placeholder, and however many, the graph holds.
+    /// </summary>
+    internal const string DeferredRegionRefusal =
+        $"{nameof(LeanAstEncoder)} cannot encode a deferred module region as Lean evaluator evidence. " +
+        "Its placeholder body is provisional. For diagnostic text use " +
+        $"{nameof(LeanEncodingDomain)}.{nameof(LeanEncodingDomain.SyntaxOnly)}.";
 
     private int DeclarationIdentity(Property property, Algorithm owner)
     {

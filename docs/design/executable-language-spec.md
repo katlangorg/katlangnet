@@ -312,6 +312,15 @@ verification, then run the corresponding `lake build` target.
    per (host scope OBJECT, property OBJECT). Evaluator-created scopes (internal
    owner/activation) and graphs the evaluator's structural preflight refuses
    (cycles, over-deep chains) stay refused with a precise reason.
+   A tree whose admitted graph holds a deferred module region (the
+   admission walk's `HasDeferredModuleRegion`: a load-bearing branch's
+   placeholder at any depth, host-wired parent scopes included) is outside
+   the modeled domain: every tree entry point refuses it as Lean evaluator
+   evidence, the default `LeanEncodingDomain`, because the placeholder's body
+   is provisional and Lean has no deferred regions. Only a syntax-only or
+   diagnostic comparison that never reaches Lean may print it, by passing
+   `LeanEncodingDomain.SyntaxOnly`; for every other tree both domains print
+   the same text.
    Large host graphs use context-qualified Lean `let` terms instead of expanding
    every shared path; the graph-size estimate saturates and is computed once per
    node. Both sharing walks and printing traverse zero-weight internal join

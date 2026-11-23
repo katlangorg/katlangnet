@@ -878,7 +878,8 @@ public class ModuleCapabilityTransparencyTests
             var refused = await Parser.ParseAsync(source, options);
             Assert.True(refused.HasErrors);
             Assert.Equal([expectedCode], refused.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => d.Code));
-            Assert.Equal(LeanAstEncoder.EncodeProgram(unavailable.Root), LeanAstEncoder.EncodeProgram(refused.Root));
+            Assert.Equal(LeanAstEncoder.EncodeProgram(unavailable.Root, LeanEncodingDomain.SyntaxOnly),
+                LeanAstEncoder.EncodeProgram(refused.Root, LeanEncodingDomain.SyntaxOnly));
             var p = Assert.IsType<Algorithm.User>(Assert.Single(refused.Root.Properties, p => p.Name == "P").Value);
             Assert.False(p.IsModuleElaborated);
             Assert.IsType<RunResult.ParseFailure>(await KatLangEngine.RunAsync(source, options));

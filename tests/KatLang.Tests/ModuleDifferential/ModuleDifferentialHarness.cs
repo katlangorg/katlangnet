@@ -35,13 +35,17 @@ internal static class ModuleDifferentialHarness
         Assert.Equal(fixture.Exclusion == ModuleLeanExclusion.DeferredRegion, facts.HasDeferredModuleRegion);
         if (facts.HasDeferredModuleRegion)
         {
-            // The selected branch fetches during execution. Lean has no deferred-region form.
+            // The selected branch fetches during execution. Lean has no deferred-region form, so the encoder's
+            // modeled-domain boundary refuses the admitted tree as evaluator evidence (LeanEncodingDomain), before
+            // the branch materializes and after it: the tree keeps the placeholder's provisional body.
+            RequireEvidenceRefusal(parsed.Root);
             var success = Assert.IsType<RunResult.Success>(engine);
             Assert.Equal(fixture.Expected, Neutral(success.Value, success.EmittedCount));
             var plainAsync = await Evaluator.RunAsync(tree);
             Assert.False(plainAsync.IsError, fixture.Id);
             Assert.Equal(success.Value, plainAsync.Value, Result.ValueComparer);
             CheckFetches(fixture.Fetches, parseServer);
+            RequireEvidenceRefusal(parsed.Root);
 
             var countedServer = ModuleDifferentialCorpus.Server(reverseFiles);
             var clean = await SourceProvenance.ParseValidAsync(fixture.Source, countedServer.Options());
@@ -75,6 +79,10 @@ internal static class ModuleDifferentialHarness
         // An unsupported encoding fails the case. Only explicitly listed exclusions can omit a guard.
         return LeanAstEncoder.EncodeProgram(parsed.Root);
     }
+
+    private static void RequireEvidenceRefusal(Algorithm root)
+        => Assert.Equal(LeanAstEncoding.DeferredRegionRefusal,
+            Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeProgram(root)).Message);
 
     private static string Neutral(Result value, int emittedCount)
         => $"ok raw={SemanticExplorerHarness.Neutral(value)} n={emittedCount.ToString(CultureInfo.InvariantCulture)}";

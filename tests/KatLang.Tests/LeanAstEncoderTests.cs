@@ -453,6 +453,16 @@ public class LeanAstEncoderTests
         Assert.Contains("'tick' only", other.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(LeanEncodingDomain.EvaluatorEvidence)]
+    [InlineData(LeanEncodingDomain.SyntaxOnly)]
+    public void UndefinedHostBuiltin_KeepsTheEncoderDiagnostic(LeanEncodingDomain domain)
+    {
+        var builtin = new Algorithm.Builtin((BuiltinId)(-1));
+        var error = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(builtin, domain));
+        Assert.Contains("'tick' only, not '-1'", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void NonIntegerNonFiniteAndNegativeZeroNumbers_AreRefusedNotApproximated()
     {
@@ -731,6 +741,130 @@ public class LeanAstEncoderTests
         // The evaluator refuses both graphs too: the encoder admits exactly what it admits.
         Assert.True(Evaluator.Run(new Expr.AlgorithmExpr(cyclic)).IsError);
         Assert.True(Evaluator.Run(new Expr.AlgorithmExpr(deep)).IsError);
+    }
+
+    // ── The modeled domain: deferred module regions (LeanEncodingDomain) ────────────────────────
+
+    /// <summary>The module differential corpus's own fixture with the given id, parsed cleanly through its library.</summary>
+    private static async Task<Algorithm.User> ParseModuleFixture(string id)
+    {
+        var fixture = ModuleDifferentialCorpus.Cases.Single(c => c.Id == id);
+        return (await SourceProvenance.ParseValidAsync(fixture.Source, ModuleDifferentialCorpus.Server().Options())).Root;
+    }
+
+    private static AstStructuralPreflight.AdmittedProgramFacts AdmissionFacts(object root)
+    {
+        Assert.Null(AstStructuralPreflight.CheckAdmittedProgram(root, EvaluationLimits.MaxSupportedAstDepth,
+            AstConsumerProfile.EvaluatorIterativeJoinSpines, out var facts));
+        return facts;
+    }
+
+    private static void AssertRefusedAsEvaluatorEvidence(Func<string> encode)
+        => Assert.Equal(LeanAstEncoding.DeferredRegionRefusal, Assert.Throws<NotSupportedException>(encode).Message);
+
+    /// <summary>
+    /// The admitted deferred-module fixture of the module differential corpus (<c>selected_branch</c>): the
+    /// load-bearing clause of <c>F</c> is a placeholder whose provisional body still holds the written
+    /// <c>load</c>, BELOW the root. The evaluator's admission walk accepts the tree and reports the region, and the
+    /// structural text of the tree is a plausible Lean term — what the encoder printed as evidence before its
+    /// modeled-domain boundary. Every tree entry point now refuses it as evaluator evidence with one constant
+    /// message, wherever the encoding starts: the program, its root, its expression, the property, the family, the
+    /// placeholder itself, and a host-built program that reaches the family only through a wired parent scope.
+    /// </summary>
+    [Fact]
+    public async Task AdmittedDeferredModuleRegion_IsRefusedAsEvaluatorEvidence_AtEveryTreeEntryPoint()
+    {
+        var root = await ParseModuleFixture("selected_branch");
+        Assert.True(AdmissionFacts(new Expr.AlgorithmExpr(root)).HasDeferredModuleRegion);
+        Assert.Null(root.DeferredRegion);
+        var property = root.Properties.Single(p => p.Name == "F");
+        var family = Assert.IsType<Algorithm.Conditional>(property.Value);
+        Assert.Null(family.DeferredRegion);
+        Assert.Null(family.Branches[0].Body.DeferredRegion);
+        var placeholder = family.Branches[1].Body;
+        Assert.NotNull(placeholder.DeferredRegion);
+
+        // Syntax-only text keeps printing the placeholder's provisional body: the written load, no elaborated module.
+        var syntaxOnly = LeanAstEncoder.EncodeProgram(root, LeanEncodingDomain.SyntaxOnly);
+        Assert.Contains("(.call (.resolve \"load\") [.stringLiteral \"https://mods.test/t.kat\"])", syntaxOnly, StringComparison.Ordinal);
+        Assert.DoesNotContain("(.module ", syntaxOnly, StringComparison.Ordinal);
+        Assert.Equal($"({syntaxOnly})", LeanAstEncoder.EncodeExpr(new Expr.AlgorithmExpr(root), LeanEncodingDomain.SyntaxOnly));
+
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeProgram(root));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeAlgorithm(root));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeExpr(new Expr.AlgorithmExpr(root)));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeProperty(property));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeAlgorithm(family));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeAlgorithm(placeholder));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeExpr(new Expr.AlgorithmExpr(placeholder),
+            LeanEncodingDomain.EvaluatorEvidence));
+
+        // Below a host-built root, reached only through its wired parent scope.
+        var hosted = new Algorithm.User(new ScopeCtx(null, [], [new Property("F", family)]), [], [], [],
+            [new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(1)]))]);
+        Assert.True(AdmissionFacts(new Expr.AlgorithmExpr(hosted)).HasDeferredModuleRegion);
+        Assert.StartsWith("(Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp \"F\" (.conditional none [] [",
+            LeanAstEncoder.EncodeAlgorithm(hosted, LeanEncodingDomain.SyntaxOnly), StringComparison.Ordinal);
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeAlgorithm(hosted));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeExpr(new Expr.AlgorithmExpr(hosted)));
+        AssertRefusedAsEvaluatorEvidence(() => LeanAstEncoder.EncodeProgram(hosted));
+    }
+
+    /// <summary>
+    /// The boundary changes no in-domain text. Every comparable program of the module differential corpus (fully
+    /// elaborated modules, <c>.module</c> marks included) and every host-parent case (admitted host-built graphs with
+    /// wired parent scopes) is admitted with no deferred region and encodes identically in both domains, to exactly the
+    /// definition its checked-in generated Lean module holds.
+    /// </summary>
+    [Fact]
+    public async Task ElaboratedModulesAndAdmittedHostParentTrees_EncodeIdenticallyInBothDomains_AsTheirLeanDefinitions()
+    {
+        var directory = Path.Combine(RepoRoot.Find(), "lean", "CoreTests");
+        var modules = File.ReadAllText(Path.Combine(directory, "ModuleDifferential.lean")).ReplaceLineEndings("\n");
+        var hasElaboratedModule = false;
+        foreach (var fixture in ModuleDifferentialCorpus.Cases.Where(c => c.Exclusion is null))
+        {
+            var root = await ParseModuleFixture(fixture.Id);
+            Assert.False(AdmissionFacts(new Expr.AlgorithmExpr(root)).HasDeferredModuleRegion, fixture.Id);
+            var evidence = LeanAstEncoder.EncodeProgram(root);
+            Assert.Equal(evidence, LeanAstEncoder.EncodeProgram(root, LeanEncodingDomain.SyntaxOnly));
+            AssertDefinition(modules, fixture.Id, evidence);
+            hasElaboratedModule |= evidence.Contains("(some (.module ", StringComparison.Ordinal);
+        }
+        Assert.True(hasElaboratedModule, "No compared module program contains an elaborated module.");
+
+        var hostParent = File.ReadAllText(Path.Combine(directory, "HostParentDifferential.lean")).ReplaceLineEndings("\n");
+        var hasWiredParent = false;
+        foreach (var hostCase in HostParentDifferentialCorpus.AllCases())
+        {
+            Assert.False(AdmissionFacts(hostCase.Program).HasDeferredModuleRegion, hostCase.Id);
+            var evidence = LeanAstEncoder.EncodeExpr(hostCase.Program);
+            Assert.Equal(evidence, LeanAstEncoder.EncodeExpr(hostCase.Program, LeanEncodingDomain.SyntaxOnly));
+            AssertDefinition(hostParent, hostCase.LeanName, evidence);
+            hasWiredParent |= evidence.Contains("Algorithm.withParent (some ", StringComparison.Ordinal);
+        }
+        Assert.True(hasWiredParent, "No compared host-parent program wires a parent scope.");
+
+        static void AssertDefinition(string module, string name, string evidence)
+            => Assert.True(module.Contains($"\ndef {name} : Expr :=\n  {evidence}\n#guard ", StringComparison.Ordinal),
+                $"The encoding of {name} differs from its checked-in Lean definition.");
+    }
+
+    [Fact]
+    public void UnknownEncodingDomain_IsRefusedBeforeAnyWalk()
+    {
+        Assert.Equal("domain", Assert.Throws<ArgumentOutOfRangeException>(
+            () => LeanAstEncoder.EncodeProgram(Body(new Expr.Num(1)), (LeanEncodingDomain)2)).ParamName);
+
+        // Even a graph the walk would refuse as cyclic is refused for its domain first.
+        var properties = new List<Property>();
+        var scope = new ScopeCtx(null, [], properties);
+        properties.Add(new Property("P", new Algorithm.User(scope, [], [], [], [new Expr.Num(1)])));
+        var cyclic = new Algorithm.User(scope, [], [], [], [new Expr.Resolve("P")]);
+        Assert.Equal("domain", Assert.Throws<ArgumentOutOfRangeException>(
+            () => LeanAstEncoder.EncodeAlgorithm(cyclic, (LeanEncodingDomain)(-1))).ParamName);
+        Assert.Contains("CycleDetected", Assert.Throws<NotSupportedException>(
+            () => LeanAstEncoder.EncodeAlgorithm(cyclic, LeanEncodingDomain.SyntaxOnly)).Message);
     }
 
     // ── HOST-DIFF-1: pre-wired parent scopes (manually reviewed goldens) ─────────────────────────
