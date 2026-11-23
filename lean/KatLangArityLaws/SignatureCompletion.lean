@@ -22,10 +22,10 @@ What it reuses from the authoritative model, by name and not by copy: `Parameter
 | `Compose` closure of `SelectSignatures`, `LiftSignature`, `MergeOwnerSignature`, `MissingCapturePattern` | `composeFact`, `missing*` | The ONE composition law, concrete |
 | `ParameterPattern.KeepFirstCollectingCapturePerLevel` | `recoverLevel` | X-02 recovery |
 | `SignatureSelector.Lifted` | `liftedWith` | Guard, then zero-supply skip, then identity dedupe |
-| `SignatureSelector.Evaluate` | `evalVector`, `evalComponent` | Layers of components instead of Tarjan's order |
+| `SignatureSelector.ClassificationSearch.Run`, `Settle` | `evalVector`, `evalComponent` | Layers of components instead of Tarjan's order; native runs read PARTIAL vectors (an optimization, ledger S-9) |
 | `SignatureSelector.Complete` | `completeLoop` | Brent's two snapshots, as native |
 | `SignatureSelector.SameState` | `Fact` equality | Pattern tree and X-02 flag; origins are not in `Fact` |
-| `Table`, `GroundednessOf`, `Rule` | `rowOf`, `groundednessOf`, `rule` | Over the WHOLE system (rule G6) |
+| `Table`, `ClassificationSearch.GroundednessOf`, `Rule` | `rowOf`, `groundednessOf`, `rule` | Over the WHOLE system (rule G6); native tables are searched, with every vector read only on the generic path (`EveryRow`) |
 | `Solve`'s local pass and joint regions | none | An optimization the bridge checks, not modeled |
 | `SealCompletion` (origins), `CompletedStaticStructures`, the rewrite | none | Sealed AFTER stabilization; outside this model |
 | `StaticQueryResourceBudget`, cancellation | `fuel`, `.exhausted` | A bound, not the C# ledger: see below |
@@ -377,7 +377,7 @@ def outsideReads (sys : System) (opened : Nat → Bool) (members : List Nat) : L
 def lowerReads (sys : System) (opened : Nat → Bool) (members : List Nat) (cells : Nat → Cell) (t : Nat) : Patterns :=
   if (outsideReads sys opened members).contains t then (cells t).patterns else []
 
-/-- One component given the settled cells below it (`SignatureSelector.Evaluate`). A read of an exhausted cell gives
+/-- One component given the settled cells below it (`ClassificationSearch.Settle`). A read of an exhausted cell gives
     no verdict, a read of a meaningless cell no meaning; otherwise the closed gate, and its rounds when it lifts. -/
 def evalComponent (sys : System) (opened : Nat → Bool) (fuel : Nat) (members : List Nat) (cells : Nat → Cell) :
     Nat → Cell :=

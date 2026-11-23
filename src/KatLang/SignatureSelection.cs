@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 namespace KatLang;
@@ -119,10 +120,13 @@ internal enum SignatureSelectionOutcome : byte
 /// grounded answer given the settled ones below it; a component that fails locally is re-solved JOINTLY with every
 /// reader (a reader may exclude a lower answer), by alternative-carrying stratification over the region's dependency
 /// cone: the cone's settled components are carried by their selected readings, and the whole cone is enumerated only to
-/// decide a refusal's category (<see cref="SolveRegion"/>). A link-free component has exactly one vector, so a link-free
-/// program costs one evaluation per equation, plus the closed gate of each cycle and the rounds of each genuine lifting
-/// cycle, which recompose only the members whose reads changed. Work and storage are charged to the operation's ledger
-/// (<see cref="StaticQueryResourceBudget"/>): exhaustion is <see cref="StaticQueryLimitExceededException"/>,
+/// decide a refusal's category (<see cref="SolveRegion"/>). A component's table is found by the CLASSIFICATION SEARCH
+/// (<see cref="ClassificationSearch"/>, an optimization too): it never evaluates its 2^links vectors one by one, but one
+/// reading per partial vector, split only where a reading consults a class it depends on, so vectors that read alike are
+/// expanded once (a ring of links costs states linear in its links). A link-free component has exactly one vector, so a
+/// link-free program costs one evaluation per equation, plus the closed gate of each cycle and the rounds of each genuine
+/// lifting cycle, which recompose only the members whose reads changed. Work and storage are charged to the operation's
+/// ledger (<see cref="StaticQueryResourceBudget"/>): exhaustion is <see cref="StaticQueryLimitExceededException"/>,
 /// cancellation the operation's token, and a failed or cancelled selection publishes nothing.</para>
 /// </summary>
 internal sealed class SignatureSelector
@@ -159,6 +163,7 @@ internal sealed class SignatureSelector
     private readonly ExactInputs _exactInputs = new();
     private readonly ExactFacts _exactFacts = new();
     private readonly Dictionary<IReadOnlyList<ParameterPattern>, long> _patternNodes = new(ReferenceEqualityComparer.Instance);
+    private long _classificationStates;
 
     /// <param name="references">Each equation's ordered references.</param>
     /// <param name="isLink">Whether each equation is an <c>.Algorithm</c> link (its class is a guard).</param>
@@ -189,6 +194,13 @@ internal sealed class SignatureSelector
     }
 
     /// <summary>
+    /// TEST SEAM: every table is built by the generic path — each classification vector read whole, and each counterfactual
+    /// of each consistent one (<see cref="ClassificationSearch.EveryRow"/>) — instead of by the classification search, so a
+    /// test can compare the search with exactly what it optimizes. Never set in production.
+    /// </summary>
+    internal bool EnumeratesEveryClassification { get; init; }
+
+    /// <summary>
     /// The outcome of one selection: every published fact, and every refused group with its category — the equations it
     /// is reported at, and the <c>.Algorithm</c> links whose classification it could not decide (none for a cycle that does
     /// not settle under any classification).
@@ -203,6 +215,12 @@ internal sealed class SignatureSelector
 
         /// <summary>The components and edges visited forming the joint regions (an observation: linear in their cones).</summary>
         public long RegionVisits { get; set; }
+
+        /// <summary>
+        /// The classification states every table visited, groundedness included (<see cref="ClassificationSearch"/>; an
+        /// observation: a ring of links visits a number linear in its links, where evaluating every vector visited 2^n).
+        /// </summary>
+        public long ClassificationStates { get; set; }
     }
 
     // ─── one equation, one vector ─────────────────────────────────────────────────────────────────
@@ -210,12 +228,14 @@ internal sealed class SignatureSelector
     /// <summary>
     /// One equation's fact under these reads: the stored fact of its exact lifted inputs, or a new composition. A round
     /// passes <paramref name="storedUnits"/>, its composition's charge, so the storage a NEW fact retains is charged before
-    /// it is composed, and a reading that finds its fact retains nothing.
+    /// it is composed, and a reading that finds its fact retains nothing. A table passes the positions of the references
+    /// that can lift there (<see cref="ClassificationSearch"/>), so a reading never rescans the ones that cannot.
     /// </summary>
-    private SignatureFact EvaluateEquation(int equation, Func<int, SignatureFact> look, Func<int, bool> isOpen, long storedUnits = 0)
+    private SignatureFact EvaluateEquation(int equation, Func<int, SignatureFact> look, Func<int, bool> isOpen, long storedUnits = 0,
+        int[]? positions = null)
     {
         _resources.Work(1, _cancellationToken);
-        var lifted = Lifted(equation, look, isOpen);
+        var lifted = Lifted(equation, look, isOpen, positions);
         var known = _composed[equation] ??= new(1, _exactInputs);
         // One hashed lookup, charged for the inputs it hashes and compares: the stored fact itself is returned, since a
         // selected composition and the rewrite are compared by reference.
@@ -292,14 +312,21 @@ internal sealed class SignatureSelector
         return true;
     }
 
-    /// <summary>The LIFTING RULE: the callees a reference lifts under these facts, in written order, each identity once.</summary>
-    private IReadOnlyList<(int Reference, CallableSignature Signature)> Lifted(int equation, Func<int, SignatureFact> look, Func<int, bool> isOpen)
+    /// <summary>
+    /// The LIFTING RULE: the callees a reference lifts under these facts, in written order, each identity once. Given
+    /// <paramref name="positions"/> (ascending), only those references are read: the caller guarantees that every other
+    /// one reads a callee that accepts zero supplied arguments, which lifts nothing and marks no identity as seen.
+    /// </summary>
+    private IReadOnlyList<(int Reference, CallableSignature Signature)> Lifted(int equation, Func<int, SignatureFact> look, Func<int, bool> isOpen,
+        int[]? positions = null)
     {
         List<(int, CallableSignature)>? lifted = null;
         HashSet<object>? seen = null;
         var references = _references[equation];
-        for (var index = 0; index < references.Count; index++)
+        var count = positions?.Length ?? references.Count;
+        for (var at = 0; at < count; at++)
         {
+            var index = positions is null ? at : positions[at];
             var reference = references[index];
             // The guard decides whether the reference is a value read at all — BEFORE its callee is deduplicated, so an
             // inactive first occurrence never hides an active later one.
@@ -314,112 +341,6 @@ internal sealed class SignatureSelector
         }
 
         return (IReadOnlyList<(int, CallableSignature)>?)lifted ?? [];
-    }
-
-    private sealed class Evaluation
-    {
-        public readonly Dictionary<int, SignatureFact> Facts = [];
-        public readonly HashSet<int> Meaningless = [];
-        public bool Cyclic;
-    }
-
-    /// <summary>
-    /// The reading of <paramref name="keys"/> under the vector <paramref name="gamma"/>, given lower facts and link classes and the
-    /// lower keys that have no meaning: dependency-first, a cyclic component by the closed gate.
-    /// </summary>
-    private Evaluation Evaluate(
-        IReadOnlyList<int> keys,
-        IReadOnlySet<int> gamma,
-        IReadOnlyDictionary<int, SignatureFact> lowerFacts,
-        IReadOnlyDictionary<int, bool> lowerOpen,
-        IReadOnlySet<int> lowerMeaningless)
-    {
-        _resources.Metadata(1 + keys.Count, work: 0, _cancellationToken);
-        var inKeys = new HashSet<int>(keys);
-        var result = new Evaluation();
-
-        bool IsOpen(int link) => lowerOpen.TryGetValue(link, out var open) ? open : gamma.Contains(link);
-
-        SignatureFact Look(int target)
-            => result.Facts.TryGetValue(target, out var fact) ? fact
-                : lowerFacts.TryGetValue(target, out var lower) ? lower
-                : throw new InvalidOperationException("Signature selection read an equation it has not decided.");
-
-        IEnumerable<int> Active(int key)
-        {
-            foreach (var reference in _references[key])
-            {
-                if (reference.Target >= 0 && (reference.Guard < 0 || IsOpen(reference.Guard)))
-                    yield return reference.Target;
-            }
-        }
-
-        foreach (var component in StronglyConnected(keys, key => Active(key).Where(inKeys.Contains)))
-        {
-            var members = new HashSet<int>(component);
-            var meaningless = false;
-            foreach (var key in component)
-            {
-                foreach (var target in Active(key))
-                {
-                    if (!members.Contains(target) && (result.Meaningless.Contains(target) || lowerMeaningless.Contains(target)))
-                        meaningless = true;
-                }
-
-                foreach (var reference in _references[key])
-                {
-                    if (reference.Guard >= 0 && lowerMeaningless.Contains(reference.Guard) && !lowerOpen.ContainsKey(reference.Guard))
-                        meaningless = true;
-                }
-            }
-
-            if (meaningless)
-            {
-                result.Meaningless.UnionWith(component);
-                continue;
-            }
-
-            if (component.Count == 1 && !Active(component[0]).Contains(component[0]))
-            {
-                result.Facts[component[0]] = EvaluateEquation(component[0], Look, IsOpen);
-                continue;
-            }
-
-            // THE CLOSED GATE: every member read as declaring nothing. A cycle whose own reads then lift is a genuine
-            // lifting cycle, completed from here; otherwise this evaluation is its only non-lifting fixed point.
-            result.Cyclic = true;
-            SignatureFact Closed(int target) => members.Contains(target) ? _closed : Look(target);
-            var closed = new Dictionary<int, SignatureFact>(component.Count);
-            foreach (var key in component)
-                closed[key] = EvaluateEquation(key, Closed, IsOpen);
-
-            var lifts = false;
-            foreach (var key in component)
-            {
-                foreach (var target in Active(key))
-                {
-                    if (members.Contains(target) && closed[target].Requires)
-                        lifts = true;
-                }
-            }
-
-            IReadOnlyDictionary<int, SignatureFact> reached = closed;
-            if (lifts)
-            {
-                if (Complete(component, members, closed, Look, IsOpen) is not { } completed)
-                {
-                    result.Meaningless.UnionWith(component);
-                    continue;
-                }
-
-                reached = completed;
-            }
-
-            foreach (var (key, fact) in reached)
-                result.Facts[key] = fact;
-        }
-
-        return result;
     }
 
     // ─── recursive completion ─────────────────────────────────────────────────────────────────────
@@ -449,7 +370,8 @@ internal sealed class SignatureSelector
         HashSet<int> members,
         Dictionary<int, SignatureFact> closed,
         Func<int, SignatureFact> look,
-        Func<int, bool> isOpen)
+        Func<int, bool> isOpen,
+        Func<int, int[]> relevant)
     {
         var count = component.Count;
         var position = new Dictionary<int, int>(count);
@@ -458,22 +380,15 @@ internal sealed class SignatureSelector
 
         // The in-component readers of each member over the active references; the classification, so every guard, is fixed
         // during the call. A reader that reads a member twice is listed twice and recomposed once.
-        var edges = 0L;
-        foreach (var key in component)
-        {
-            foreach (var reference in _references[key])
-            {
-                if (reference.Target >= 0 && members.Contains(reference.Target) && (reference.Guard < 0 || isOpen(reference.Guard)))
-                    edges++;
-            }
-        }
-
-        _resources.Work(edges, _cancellationToken);
         var readers = new List<int>?[count];
         for (var reader = 0; reader < count; reader++)
         {
-            foreach (var reference in _references[component[reader]])
+            var key = component[reader];
+            var positions = relevant(key);
+            _resources.Work(positions.Length, _cancellationToken);
+            foreach (var index in positions)
             {
+                var reference = _references[key][index];
                 if (reference.Target >= 0 && position.TryGetValue(reference.Target, out var read) && (reference.Guard < 0 || isOpen(reference.Guard)))
                     (readers[read] ??= []).Add(reader);
             }
@@ -502,9 +417,10 @@ internal sealed class SignatureSelector
             foreach (var at in recompose)
             {
                 var key = component[at];
-                var units = CompositionUnits(key, Read, isOpen);
+                var positions = relevant(key);
+                var units = CompositionUnits(key, Read, isOpen, positions);
                 _resources.Work(units, _cancellationToken);
-                var fact = EvaluateEquation(key, Read, isOpen, storedUnits: units);
+                var fact = EvaluateEquation(key, Read, isOpen, storedUnits: units, positions: positions);
                 if (!ReferenceEquals(fact, state[at]))
                     changed.Add((at, fact));
             }
@@ -522,7 +438,7 @@ internal sealed class SignatureSelector
             foreach (var (at, fact) in changed)
                 state[at] = fact;
             if (settled)
-                return Sealed(component, state, members, look, isOpen);
+                return Sealed(component, state, members, look, isOpen, relevant);
 
             savedAge++;
             foreach (var (at, fact) in changed)
@@ -570,7 +486,8 @@ internal sealed class SignatureSelector
         SignatureFact[] state,
         HashSet<int> members,
         Func<int, SignatureFact> look,
-        Func<int, bool> isOpen)
+        Func<int, bool> isOpen,
+        Func<int, int[]> relevant)
     {
         var known = _sealed[component[0]] ??= new(1, _exactFacts);
         var facts = (SignatureFact[])state.Clone();
@@ -581,8 +498,12 @@ internal sealed class SignatureSelector
         var settled = new Dictionary<int, SignatureFact>(component.Count);
         for (var index = 0; index < facts.Length; index++)
             settled.Add(component[index], facts[index]);
-        var result = _seal(component, settled, (equation, read) => Lifted(equation,
-            target => members.Contains(target) ? read[target] : look(target), isOpen));
+        var result = _seal(component, settled, (equation, read) =>
+        {
+            var positions = relevant(equation);
+            _resources.Work(positions.Length, _cancellationToken);
+            return Lifted(equation, target => members.Contains(target) ? read[target] : look(target), isOpen, positions);
+        });
         known.Add(facts, result);
         return result;
     }
@@ -592,11 +513,11 @@ internal sealed class SignatureSelector
     /// fixed, since the merge builds a list from them before anything is filtered. A list's nodes are counted once, one
     /// charged step per node.
     /// </summary>
-    private long CompositionUnits(int equation, Func<int, SignatureFact> read, Func<int, bool> isOpen)
+    private long CompositionUnits(int equation, Func<int, SignatureFact> read, Func<int, bool> isOpen, int[] positions)
     {
         var references = _references[equation];
-        var units = 1L + references.Count;
-        for (var index = 0; index < references.Count; index++)
+        var units = 1L + positions.Length;
+        foreach (var index in positions)
         {
             var reference = references[index];
             if (reference.Guard >= 0 && !isOpen(reference.Guard))
@@ -672,10 +593,15 @@ internal sealed class SignatureSelector
 
     // ─── tables, groundedness, rule G6 ────────────────────────────────────────────────────────────
 
-    private enum RowKind : byte { Refuted, Meaningless, Consistent }
+    private enum RowKind : byte { Meaningless, Consistent }
 
     private enum Groundedness : byte { Grounded, Undetermined, Ungrounded, NotApplicable }
 
+    /// <summary>
+    /// One row of a table: a classification vector that is NOT refuted, with its reading. A consistent row holds every key's
+    /// fact and its groundedness; a meaningless row holds the facts of the keys that have a meaning and the keys that have
+    /// none, so a joint region carries it without evaluating the vector again.
+    /// </summary>
     private sealed class Row
     {
         public required RowKind Kind;
@@ -703,45 +629,33 @@ internal sealed class SignatureSelector
         return [.. links];
     }
 
-    /// <summary>Every subset, by size then lexicographically by position: deterministic, never declaration-ordered.</summary>
-    private static IEnumerable<HashSet<int>> Subsets(IReadOnlyList<int> items)
+    /// <summary>
+    /// The fixed limit on the links one table classifies together: 2^62 or more classifications are refused whatever the
+    /// program or the host. A table does not visit its classifications one by one (<see cref="ClassificationSearch"/>), but
+    /// what it decides among stays bounded by this constant.
+    /// </summary>
+    private void RequireBoundedClassification(int dimensions)
     {
-        for (var size = 0; size <= items.Count; size++)
-        {
-            var positions = new int[size];
-            for (var i = 0; i < size; i++)
-                positions[i] = i;
-            while (true)
-            {
-                var set = new HashSet<int>(size);
-                foreach (var position in positions)
-                    set.Add(items[position]);
-                yield return set;
-                var advance = size - 1;
-                while (advance >= 0 && positions[advance] == items.Count - size + advance)
-                    advance--;
-                if (advance < 0)
-                    break;
-                positions[advance]++;
-                for (var j = advance + 1; j < size; j++)
-                    positions[j] = positions[j - 1] + 1;
-            }
-        }
+        if (dimensions < 62)
+            return;
+        _resources.Fail();
+        throw new StaticQueryLimitExceededException(
+            $"Signature selection would enumerate 2^{dimensions} classifications of .Algorithm links.", StaticQueryBoundKind.SignatureEnumeration);
     }
 
-    /// <summary>Charges the 2^<paramref name="dimensions"/> vectors of a table before any is evaluated.</summary>
+    /// <summary>Charges the 2^<paramref name="dimensions"/> choices an enumeration visits one by one, before it visits any.</summary>
     private void ChargeEnumeration(int dimensions)
     {
-        if (dimensions >= 62)
-        {
-            _resources.Fail();
-            throw new StaticQueryLimitExceededException(
-                $"Signature selection would enumerate 2^{dimensions} classifications of .Algorithm links.", StaticQueryBoundKind.SignatureEnumeration);
-        }
-
+        RequireBoundedClassification(dimensions);
         _resources.Work(1L << dimensions, _cancellationToken);
     }
 
+    /// <summary>
+    /// The table of <paramref name="keys"/> over their own links: every classification vector that is not refuted, with its
+    /// reading and, when it is consistent, its groundedness, in subset order (by size, then lexicographically by position;
+    /// deterministic, never declaration-ordered) — exactly what evaluating each of the 2^dimensions vectors gives, found by
+    /// the classification search.
+    /// </summary>
     private List<Row> Table(
         IReadOnlyList<int> keys,
         IReadOnlyDictionary<int, SignatureFact> lowerFacts,
@@ -749,99 +663,889 @@ internal sealed class SignatureSelector
         IReadOnlySet<int> lowerMeaningless)
     {
         var links = LinksIn(keys, lowerOpen);
-        ChargeEnumeration(links.Count);
-        var rows = new List<Row>();
-        foreach (var gamma in Subsets(links))
-        {
-            _resources.Metadata(1 + links.Count, work: 0, _cancellationToken);
-            var evaluation = Evaluate(keys, gamma, lowerFacts, lowerOpen, lowerMeaningless);
-            var refuted = false;
-            foreach (var link in links)
-            {
-                if (evaluation.Facts.TryGetValue(link, out var fact) && fact.IsNonempty != gamma.Contains(link))
-                {
-                    refuted = true;
-                    break;
-                }
-            }
-
-            if (refuted)
-            {
-                rows.Add(new Row { Kind = RowKind.Refuted, Gamma = gamma, Cyclic = evaluation.Cyclic });
-            }
-            else if (evaluation.Meaningless.Count != 0)
-            {
-                rows.Add(new Row
-                {
-                    Kind = RowKind.Meaningless,
-                    Gamma = gamma,
-                    Cyclic = true,
-                    Meaningless = new HashSet<int>(evaluation.Meaningless),
-                });
-            }
-            else
-            {
-                var facts = new Dictionary<int, SignatureFact>(keys.Count);
-                foreach (var key in keys)
-                    facts[key] = evaluation.Facts[key];
-                rows.Add(new Row
-                {
-                    Kind = RowKind.Consistent,
-                    Gamma = gamma,
-                    Cyclic = evaluation.Cyclic,
-                    Facts = facts,
-                    Grounded = GroundednessOf(keys, gamma, lowerFacts, lowerOpen, lowerMeaningless),
-                });
-            }
-        }
-
-        return rows;
+        RequireBoundedClassification(links.Count);
+        using var structure = _resources.Temporary();
+        var search = new ClassificationSearch(this, keys, links, lowerFacts, lowerOpen, lowerMeaningless, structure);
+        return EnumeratesEveryClassification ? search.EveryRow() : search.Rows();
     }
 
     /// <summary>
-    /// Three-valued groundedness of a consistent vector: every nonempty set T of its calculation links must be REFUTED —
-    /// some member of T still evaluates to a nonempty calculation without T's support. A set whose members all evaluate
-    /// to empty there is unfounded (ungrounded); one with a meaningless member is undetermined.
+    /// THE CLASSIFICATION SEARCH of one table: its keys, their own links as the dimensions, and fixed lower facts, classes
+    /// and keys without meaning. It finds every vector that is not refuted, with its reading, and each consistent vector's
+    /// three-valued groundedness — what evaluating every vector, and every counterfactual of every consistent one, gives —
+    /// without evaluating the vectors one by one, so the vectors that read alike are expanded once.
+    ///
+    /// <para>THE RELEVANT REFERENCES, decided once per table: a reference matters to a reading only as an edge to a key, as
+    /// a read of a key with no meaning, or as a callee that can lift. One to a lower or external callee whose fixed
+    /// signature accepts zero supplied arguments lifts nothing, orders nothing and marks no identity as seen under either
+    /// class of its guard, so no reading consults its guard or rescans it.</para>
+    ///
+    /// <para>A STATE is a partial vector together with ONE reading run over it: Tarjan's components of the active edges in
+    /// the order a single vector's reading takes them, each component evaluated as it completes, exactly as that reading
+    /// evaluates it. The run stops where it consults a dimension the partial vector leaves open. Every vector extending the
+    /// state reads identically up to there, so the two classes continue as two copies of the state, never from the start.
+    /// A consulted link whose own fact the run already computed is FORCED: a vector giving it the other class contradicts
+    /// that fact, so it is refuted (for groundedness, a link that is still a calculation cannot leave the support). A
+    /// component whose link was decided against the fact it completes with refutes every vector of the state. A finished
+    /// state stands for every vector extending it: a link it never consulted takes the class of its fact, and one with no
+    /// meaning, which no reading consulted, is free — each choice is a row of its own with the same reading. So a vector is
+    /// a row exactly when the search reaches it, with the reading its own evaluation gives, and the search visits a state
+    /// per class the readings actually depend on: a ring of links costs a linear number of states, never 2^n.</para>
+    ///
+    /// <para>GROUNDEDNESS of a consistent vector (every nonempty set T of its calculation links refuted: some member of T is
+    /// still a nonempty calculation without T) is the same search over the counterfactuals: the links outside the vector
+    /// are runtime references (whatever they complete as), each consulted link of the vector is kept or removed, a removed
+    /// link that completes as a nonempty calculation refutes the state, and the links a finished state removed are an
+    /// unrefuted support (the links it never consulted change nothing). A support with no member without meaning makes the
+    /// vector ungrounded; one with such a member, undetermined.</para>
+    ///
+    /// <para>Charged to the operation's ledger with its cancellation: the relevant references once, every state, every
+    /// edge, consult and reference a reading visits, every copy of a state, the storage of every state alive and of the
+    /// table's structure while it is searched, and the storage of every row it keeps. Storage is reserved before it is
+    /// allocated: each key's part of the structure is counted first and then built at exactly that size, with no
+    /// temporary buffer, so a refused reservation leaves nothing of that part allocated.</para>
     /// </summary>
-    private Groundedness GroundednessOf(
-        IReadOnlyList<int> keys,
-        HashSet<int> gamma,
-        IReadOnlyDictionary<int, SignatureFact> lowerFacts,
-        IReadOnlyDictionary<int, bool> lowerOpen,
-        IReadOnlySet<int> lowerMeaningless)
+    private sealed class ClassificationSearch
     {
-        ChargeEnumeration(gamma.Count);
-        var undetermined = false;
-        foreach (var support in Subsets([.. gamma.Order()]))
+        // How a reference's guard reads: no guard, a class fixed below (or no class: a runtime reference), or a dimension.
+        private const int Unguarded = -1;
+        private const int FixedClosed = -2;
+        private const int FixedOpen = -3;
+
+        private enum Read : byte { Closed, Open, Undecided }
+
+        private enum Outcome : byte { Finished, Refuted, Undecided }
+
+        /// <summary>What a reference is to a table (<see cref="RoleOf"/>).</summary>
+        private enum Role : byte { Irrelevant, Edge, MeaninglessRead, Lifts }
+
+        /// <summary>What a run checks the links of a completed component against.</summary>
+        private enum Mode : byte
         {
-            if (support.Count == 0)
-                continue;
-            var counterfactual = new HashSet<int>(gamma);
-            counterfactual.ExceptWith(support);
-            var evaluation = Evaluate(keys, counterfactual, lowerFacts, lowerOpen, lowerMeaningless);
-            var refuted = false;
-            var anyMeaningless = false;
-            foreach (var link in support)
+            /// <summary>A table: a decided link must complete with its class, else the state's vectors are refuted.</summary>
+            Table,
+
+            /// <summary>The groundedness of <see cref="_vector"/>: a link removed from it must not complete as a nonempty calculation.</summary>
+            Groundedness,
+
+            /// <summary>One whole vector, nothing checked: the generic path's reading (<see cref="EveryRow"/>).</summary>
+            Reading,
+        }
+
+        /// <summary>A reference to a key of the table: the key's position, the guard, and whether that key has no meaning below.</summary>
+        private readonly record struct Edge(int Target, int Guard, bool LowerMeaningless);
+
+        private struct Frame
+        {
+            public int Node;
+            public int Position;
+        }
+
+        /// <summary>One state: a partial vector (decided dimensions and their classes) and its reading run so far.</summary>
+        private sealed class State
+        {
+            public ulong Decided;
+            public ulong Value;
+            public SignatureFact?[] Facts = [];
+            public bool[] Meaningless = [];
+            public bool Cyclic;
+            public int[] Index = [];
+            public int[] Low = [];
+            public bool[] OnStack = [];
+            public int[] Stack = [];
+            public int StackCount;
+            public Frame[] Frames = [];
+            public int FrameCount;
+            public int Next;
+            public int Root;
+            public int[]? Pending;
+
+            public static State Initial(int count)
             {
-                if (!evaluation.Facts.TryGetValue(link, out var fact))
+                var state = new State
                 {
-                    anyMeaningless = true;
+                    Facts = new SignatureFact?[count],
+                    Meaningless = new bool[count],
+                    Index = new int[count],
+                    Low = new int[count],
+                    OnStack = new bool[count],
+                    Stack = new int[count],
+                    Frames = new Frame[count],
+                };
+                Array.Fill(state.Index, -1);
+                return state;
+            }
+
+            public State Copy() => new()
+            {
+                Decided = Decided,
+                Value = Value,
+                Facts = (SignatureFact?[])Facts.Clone(),
+                Meaningless = (bool[])Meaningless.Clone(),
+                Cyclic = Cyclic,
+                Index = (int[])Index.Clone(),
+                Low = (int[])Low.Clone(),
+                OnStack = (bool[])OnStack.Clone(),
+                Stack = (int[])Stack.Clone(),
+                StackCount = StackCount,
+                Frames = (Frame[])Frames.Clone(),
+                FrameCount = FrameCount,
+                Next = Next,
+                Root = Root,
+                Pending = Pending,
+            };
+        }
+
+        private readonly SignatureSelector _selector;
+        private readonly IReadOnlyDictionary<int, SignatureFact> _lowerFacts;
+        private readonly IReadOnlyDictionary<int, bool> _lowerOpen;
+        private readonly int[] _keys;
+        private readonly Dictionary<int, int> _local;
+        private readonly int[] _links;
+        private readonly Dictionary<int, int> _bit;
+        private readonly int[] _linkKey;
+        private readonly int[] _bitOf;
+        private readonly Edge[][] _edges;
+        private readonly int[][] _meaninglessReads;
+        private readonly bool[] _alwaysMeaningless;
+        private readonly int[][] _relevant;
+        private readonly int[][] _decides;
+        private readonly int[] _mark;
+        private readonly long _stateUnits;
+        private int _stamp;
+        private int _need;
+        private Mode _mode;
+        private ulong _vector;
+        private bool _emptyIsConsistent;
+
+        public ClassificationSearch(
+            SignatureSelector selector,
+            IReadOnlyList<int> keys,
+            List<int> links,
+            IReadOnlyDictionary<int, SignatureFact> lowerFacts,
+            IReadOnlyDictionary<int, bool> lowerOpen,
+            IReadOnlySet<int> lowerMeaningless,
+            StaticQueryResourceBudget.Lease structure)
+        {
+            _selector = selector;
+            _lowerFacts = lowerFacts;
+            _lowerOpen = lowerOpen;
+            structure.Add(8 + 3L * keys.Count + links.Count, selector._cancellationToken);
+            _keys = [.. keys.Order()];
+            var count = _keys.Length;
+            _local = new Dictionary<int, int>(count);
+            for (var key = 0; key < count; key++)
+                _local.Add(_keys[key], key);
+            _links = [.. links];
+            _bit = new Dictionary<int, int>(_links.Length);
+            _linkKey = new int[_links.Length];
+            _bitOf = new int[count];
+            Array.Fill(_bitOf, -1);
+            for (var bit = 0; bit < _links.Length; bit++)
+            {
+                _bit.Add(_links[bit], bit);
+                _linkKey[bit] = _local[_links[bit]];
+                _bitOf[_linkKey[bit]] = bit;
+            }
+
+            _edges = new Edge[count][];
+            _meaninglessReads = new int[count][];
+            _alwaysMeaningless = new bool[count];
+            _relevant = new int[count][];
+            _decides = new int[count][];
+            _mark = new int[count];
+            for (var key = 0; key < count; key++)
+            {
+                // EXACT SIZE, RESERVED BEFORE IT IS ALLOCATED: a first pass classifies every reference and counts what
+                // this key retains, the structure lease reserves exactly that, and only then are the key's arrays
+                // allocated at their final size and filled, in written order, by a second pass over the same roles. No
+                // temporary buffer exists to grow ahead of its reservation or to coexist with the retained arrays. The
+                // two passes are one classification of each reference, charged once.
+                var references = selector._references[_keys[key]];
+                Charge(1 + references.Count);
+                var (edgeCount, meaninglessCount, relevantCount, decides) = (0, 0, 0, 0UL);
+                for (var position = 0; position < references.Count; position++)
+                {
+                    var reference = references[position];
+                    if (reference.Guard >= 0 && lowerMeaningless.Contains(reference.Guard) && !lowerOpen.ContainsKey(reference.Guard))
+                        _alwaysMeaningless[key] = true;
+                    switch (RoleOf(reference, lowerMeaningless, out _))
+                    {
+                        case Role.Irrelevant:
+                            continue;
+                        case Role.MeaninglessRead:
+                            meaninglessCount++;
+                            continue;
+                        case Role.Edge:
+                            edgeCount++;
+                            break;
+                    }
+
+                    relevantCount++;
+                    var guard = GuardOf(reference.Guard);
+                    if (guard >= 0)
+                        decides |= 1UL << guard;
                 }
-                else if (fact.IsNonempty)
+
+                // Frames across all readings share these edges. Keeping their offsets in a state makes both a
+                // suspension and a copy independent of how many successors its active frames have.
+                var retained = (long)edgeCount + meaninglessCount + relevantCount + BitOperations.PopCount(decides);
+                structure.Add((retained + 3) / 4, selector._cancellationToken);
+                Charge((long)edgeCount * BitOperations.Log2((uint)Math.Max(1, edgeCount)));
+                Edge[] edges = edgeCount == 0 ? [] : new Edge[edgeCount];
+                int[] meaninglessReads = meaninglessCount == 0 ? [] : new int[meaninglessCount];
+                int[] relevant = relevantCount == 0 ? [] : new int[relevantCount];
+                var (edgeAt, meaninglessAt, relevantAt) = (0, 0, 0);
+                for (var position = 0; position < references.Count; position++)
                 {
-                    refuted = true;
+                    var reference = references[position];
+                    switch (RoleOf(reference, lowerMeaningless, out var target))
+                    {
+                        case Role.Irrelevant:
+                            continue;
+                        case Role.MeaninglessRead:
+                            meaninglessReads[meaninglessAt++] = GuardOf(reference.Guard);
+                            continue;
+                        case Role.Edge:
+                            edges[edgeAt++] = new Edge(target, GuardOf(reference.Guard), lowerMeaningless.Contains(reference.Target));
+                            break;
+                    }
+
+                    relevant[relevantAt++] = position;
+                }
+
+                // The adjacency by target: one deterministic sort of the written-order sequence, in place.
+                Array.Sort(edges, static (left, right) => left.Target.CompareTo(right.Target));
+                _edges[key] = edges;
+                _meaninglessReads[key] = meaninglessReads;
+                _relevant[key] = relevant;
+                var bits = new int[BitOperations.PopCount(decides)];
+                for (var (rest, at) = (decides, 0); rest != 0; rest &= rest - 1, at++)
+                    bits[at] = BitOperations.TrailingZeroCount(rest);
+                _decides[key] = bits;
+            }
+
+            _stateUnits = 6 + (48L * count + 63) / 64;
+        }
+
+        private void Charge(long work) => _selector._resources.Work(work, _selector._cancellationToken);
+
+        private int GuardOf(int guard)
+        {
+            if (guard < 0)
+                return Unguarded;
+            if (_lowerOpen.TryGetValue(guard, out var open))
+                return open ? FixedOpen : FixedClosed;
+            return _bit.TryGetValue(guard, out var bit) ? bit : FixedClosed;
+        }
+
+        /// <summary>
+        /// What one reference is to this table (THE RELEVANT REFERENCES): an edge to a key of the table (relevant;
+        /// <paramref name="target"/> is that key's index in the table), a read of a lower key without meaning (not
+        /// relevant: active, it makes the component meaningless, so no reading of it lifts; inactive, it is skipped), a
+        /// lower or external callee that can lift (relevant), or one that cannot. A pure function of the table's inputs,
+        /// so both passes of the construction read the same roles.
+        /// </summary>
+        private Role RoleOf(in SignatureEquationReference reference, IReadOnlySet<int> lowerMeaningless, out int target)
+        {
+            target = -1;
+            if (reference.Target < 0)
+                return reference.External!.AcceptsZeroSuppliedArguments ? Role.Irrelevant : Role.Lifts;
+            if (_local.TryGetValue(reference.Target, out var local))
+            {
+                target = local;
+                return Role.Edge;
+            }
+
+            if (lowerMeaningless.Contains(reference.Target))
+                return Role.MeaninglessRead;
+            // A lower fact is fixed for the table; a callee the table cannot read keeps its read, which fails as before.
+            return _lowerFacts.TryGetValue(reference.Target, out var lower) && lower.Signature.AcceptsZeroSuppliedArguments
+                ? Role.Irrelevant
+                : Role.Lifts;
+        }
+
+        /// <summary>The table's rows: the table search, then subset order.</summary>
+        public List<Row> Rows()
+        {
+            var resources = _selector._resources;
+            var found = new List<(ulong Gamma, Row Row)>();
+            var states = new Stack<State>();
+            resources.Reserve(_stateUnits, _selector._cancellationToken);
+            states.Push(State.Initial(_keys.Length));
+            while (states.TryPop(out var state))
+            {
+                var outcome = Step(state, states);
+                if (outcome == Outcome.Finished)
+                    Emit(state, found, GroundednessOf);
+                if (outcome != Outcome.Undecided)
+                    resources.Release(_stateUnits);
+            }
+
+            return InSubsetOrder(found);
+        }
+
+        /// <summary>
+        /// THE GENERIC PATH, kept as the search's reference (<see cref="EnumeratesEveryClassification"/>, a test seam): each of
+        /// the 2^dimensions vectors read whole and checked as the table rule states it, and the groundedness of each consistent
+        /// one by reading every counterfactual. The rows the search finds, at the cost the search avoids.
+        /// </summary>
+        public List<Row> EveryRow()
+        {
+            using var readings = _selector._resources.Temporary();
+            // The reference path holds the table reading while examining one counterfactual at a time.
+            readings.Add(2 * _stateUnits, _selector._cancellationToken);
+            _selector.ChargeEnumeration(_links.Length);
+            var all = (1UL << _links.Length) - 1;
+            var found = new List<(ulong Gamma, Row Row)>();
+            for (var vector = 0UL; ; vector++)
+            {
+                var state = Reading(vector);
+                var refuted = false;
+                for (var bit = 0; bit < _links.Length && !refuted; bit++)
+                    refuted = state.Facts[_linkKey[bit]] is { } fact && fact.IsNonempty != ((vector & (1UL << bit)) != 0);
+                if (!refuted)
+                    Emit(state, found, EveryGroundedness);
+                if (vector == all)
                     break;
+            }
+
+            return InSubsetOrder(found);
+        }
+
+        /// <summary>The generic path's groundedness: every nonempty support of <paramref name="vector"/>, each counterfactual read whole.</summary>
+        private Groundedness EveryGroundedness(ulong vector)
+        {
+            _selector.ChargeEnumeration(BitOperations.PopCount(vector));
+            var undetermined = false;
+            for (var support = vector; support != 0; support = (support - 1) & vector)
+            {
+                var state = Reading(vector & ~support);
+                var (refuted, withoutMeaning) = (false, false);
+                for (var rest = support; rest != 0 && !refuted; rest &= rest - 1)
+                {
+                    var fact = state.Facts[_linkKey[BitOperations.TrailingZeroCount(rest)]];
+                    refuted = fact is { IsNonempty: true };
+                    withoutMeaning |= fact is null;
+                }
+
+                if (refuted)
+                    continue;
+                if (!withoutMeaning)
+                    return Groundedness.Ungrounded;
+                undetermined = true;
+            }
+
+            return undetermined ? Groundedness.Undetermined : Groundedness.Grounded;
+        }
+
+        /// <summary>The reading of one whole vector, checking nothing.</summary>
+        private State Reading(ulong vector)
+        {
+            _selector._classificationStates++;
+            Charge(1 + _keys.Length / 8);
+            var mode = _mode;
+            _mode = Mode.Reading;
+            try
+            {
+                var state = State.Initial(_keys.Length);
+                state.Decided = (1UL << _links.Length) - 1;
+                state.Value = vector;
+                return Run(state) == Outcome.Finished ? state
+                    : throw new InvalidOperationException("Signature selection left a dimension of a whole classification undecided.");
+            }
+            finally
+            {
+                _mode = mode;
+            }
+        }
+
+        private List<Row> InSubsetOrder(List<(ulong Gamma, Row Row)> found)
+        {
+            Charge((long)found.Count * (1 + BitOperations.Log2((uint)Math.Max(1, found.Count))));
+            found.Sort(static (left, right) => SubsetOrder(left.Gamma, right.Gamma));
+            var rows = new List<Row>(found.Count);
+            foreach (var (_, row) in found)
+                rows.Add(row);
+            return rows;
+        }
+
+        /// <summary>
+        /// Runs <paramref name="state"/> on. When it stops at an undecided dimension it is split there — the runtime class
+        /// (for groundedness: the link removed from the support) continues in the state itself, the calculation class (kept)
+        /// in a copy, both pushed, the runtime class on top — and the outcome is <see cref="Outcome.Undecided"/>; otherwise
+        /// the state has ended, refuted or finished.
+        /// </summary>
+        private Outcome Step(State state, Stack<State> states)
+        {
+            _selector._classificationStates++;
+            Charge(1);
+            var outcome = Run(state);
+            if (outcome != Outcome.Undecided)
+                return outcome;
+
+            var mask = 1UL << _need;
+            Charge(1 + _keys.Length / 8);
+            _selector._resources.Reserve(_stateUnits, _selector._cancellationToken);
+            var other = state.Copy();
+            other.Decided |= mask;
+            other.Value |= mask;
+            state.Decided |= mask;
+            states.Push(other);
+            states.Push(state);
+            return Outcome.Undecided;
+        }
+
+        /// <summary>The rows a finished state stands for: one per choice of its free links, with its one reading.</summary>
+        private void Emit(State state, List<(ulong Gamma, Row Row)> found, Func<ulong, Groundedness> groundedness)
+        {
+            var value = state.Decided & state.Value;
+            var free = 0UL;
+            for (var bit = 0; bit < _links.Length; bit++)
+            {
+                var mask = 1UL << bit;
+                if ((state.Decided & mask) != 0)
+                    continue;
+                if (state.Facts[_linkKey[bit]] is { } fact)
+                {
+                    if (fact.IsNonempty)
+                        value |= mask;
+                }
+                else
+                {
+                    free |= mask;
                 }
             }
 
-            if (refuted)
-                continue;
+            var count = _keys.Length;
+            var resources = _selector._resources;
+            var token = _selector._cancellationToken;
+            var anyMeaningless = Array.IndexOf(state.Meaningless, true) >= 0;
+            resources.Metadata(2 + count, work: 1 + count, token);
+            var facts = new Dictionary<int, SignatureFact>(count);
+            for (var key = 0; key < count; key++)
+            {
+                if (state.Facts[key] is { } fact)
+                    facts.Add(_keys[key], fact);
+            }
+
             if (!anyMeaningless)
-                return Groundedness.Ungrounded;
-            undetermined = true;
+            {
+                resources.Metadata(2 + _links.Length, work: 1 + _links.Length, token);
+                found.Add((value, new Row
+                {
+                    Kind = RowKind.Consistent,
+                    Gamma = GammaOf(value),
+                    Cyclic = state.Cyclic,
+                    Facts = facts,
+                    Grounded = groundedness(value),
+                }));
+                return;
+            }
+
+            var meaningless = new HashSet<int>();
+            for (var key = 0; key < count; key++)
+            {
+                if (state.Meaningless[key])
+                    meaningless.Add(_keys[key]);
+            }
+
+            _selector.ChargeEnumeration(BitOperations.PopCount(free));
+            for (var choice = free; ; choice = (choice - 1) & free)
+            {
+                resources.Metadata(2 + _links.Length, work: 0, token);
+                found.Add((value | choice, new Row
+                {
+                    Kind = RowKind.Meaningless,
+                    Gamma = GammaOf(value | choice),
+                    Cyclic = true,
+                    Facts = facts,
+                    Meaningless = meaningless,
+                }));
+                if (choice == 0)
+                    break;
+            }
         }
 
-        return undetermined ? Groundedness.Undetermined : Groundedness.Grounded;
+        private HashSet<int> GammaOf(ulong vector)
+        {
+            var gamma = new HashSet<int>(BitOperations.PopCount(vector));
+            for (var rest = vector; rest != 0; rest &= rest - 1)
+                gamma.Add(_links[BitOperations.TrailingZeroCount(rest)]);
+            return gamma;
+        }
+
+        /// <summary>Subset order over vectors: by size, then the vector holding the lowest position where they differ.</summary>
+        private static int SubsetOrder(ulong left, ulong right)
+        {
+            var sizes = BitOperations.PopCount(left).CompareTo(BitOperations.PopCount(right));
+            if (sizes != 0 || left == right)
+                return sizes;
+            var differing = left ^ right;
+            return (left & differing & (~differing + 1)) != 0 ? -1 : 1;
+        }
+
+        /// <summary>
+        /// The three-valued groundedness of the consistent vector <paramref name="vector"/>: the counterfactual search. A
+        /// finished state stands for the supports made of the links it removed and any links it never consulted; those links
+        /// change no reading, so the support of its removed links alone decides: unrefuted (the run refuted none of them), it
+        /// makes the vector ungrounded unless one of them has no meaning, which leaves it undetermined. A state that removed
+        /// nothing reads the vector itself, whose links are all nonempty calculations: it holds no support.
+        /// </summary>
+        private Groundedness GroundednessOf(ulong vector)
+        {
+            if (vector == 0)
+            {
+                // Emit asks only for consistent rows. Removing every calculation from any other row
+                // gives this same reading, in which every removed link has a meaning and is empty.
+                _emptyIsConsistent = true;
+                return Groundedness.Grounded;
+            }
+            if (_emptyIsConsistent)
+                return Groundedness.Ungrounded;
+            var resources = _selector._resources;
+            var states = new Stack<State>();
+            Charge(1 + _keys.Length / 8);
+            resources.Reserve(_stateUnits, _selector._cancellationToken);
+            var initial = State.Initial(_keys.Length);
+            initial.Decided = ((1UL << _links.Length) - 1) & ~vector;
+            states.Push(initial);
+            var undetermined = false;
+            (_mode, _vector) = (Mode.Groundedness, vector);
+            try
+            {
+                while (states.TryPop(out var state))
+                {
+                    // The removed class (runtime) continues first: a support is found sooner.
+                    var outcome = Step(state, states);
+                    if (outcome == Outcome.Undecided)
+                        continue;
+                    resources.Release(_stateUnits);
+                    if (outcome == Outcome.Refuted)
+                        continue;
+                    var removed = state.Decided & ~state.Value & vector;
+                    if (removed == 0)
+                        continue;
+                    var withoutMeaning = false;
+                    for (var rest = removed; rest != 0; rest &= rest - 1)
+                        withoutMeaning |= state.Facts[_linkKey[BitOperations.TrailingZeroCount(rest)]] is null;
+                    Charge(1 + _links.Length);
+                    if (!withoutMeaning)
+                    {
+                        while (states.TryPop(out _))
+                            resources.Release(_stateUnits);
+                        return Groundedness.Ungrounded;
+                    }
+
+                    undetermined = true;
+                }
+            }
+            finally
+            {
+                (_mode, _vector) = (Mode.Table, 0);
+            }
+
+            return undetermined ? Groundedness.Undetermined : Groundedness.Grounded;
+        }
+
+        /// <summary>
+        /// Runs the reading of <paramref name="state"/> on: Tarjan's components of the active edges, dependency-first, each
+        /// settled as it completes. Stops at an undecided dimension (<see cref="_need"/>; the state resumes there), at a
+        /// refutation, or when every key is read. Idempotent once finished.
+        /// </summary>
+        private Outcome Run(State state)
+        {
+            var count = _keys.Length;
+            while (true)
+            {
+                if (state.Pending is { } pending)
+                {
+                    var settled = Settle(state, pending);
+                    if (settled != Outcome.Finished)
+                        return settled;
+                    state.Pending = null;
+                    continue;
+                }
+
+                if (state.FrameCount == 0)
+                {
+                    while (state.Root < count && state.Index[state.Root] >= 0)
+                    {
+                        Charge(1);
+                        state.Root++;
+                    }
+                    if (state.Root == count)
+                        return Outcome.Finished;
+                    Enter(state, state.Root);
+                    continue;
+                }
+
+                // Frames never grow past one per key, so the reference stays valid when a successor is entered.
+                ref var frame = ref state.Frames[state.FrameCount - 1];
+                Charge(1);
+                var edges = _edges[frame.Node];
+                if (frame.Position < edges.Length)
+                {
+                    var edge = edges[frame.Position];
+                    var read = Consult(state, edge.Guard);
+                    if (read == Read.Undecided)
+                        return Outcome.Undecided;
+                    frame.Position++;
+                    if (read == Read.Closed)
+                        continue;
+                    var successor = edge.Target;
+                    if (state.Index[successor] < 0)
+                    {
+                        Enter(state, successor);
+                        continue;
+                    }
+
+                    if (state.OnStack[successor])
+                        state.Low[frame.Node] = Math.Min(state.Low[frame.Node], state.Index[successor]);
+                    continue;
+                }
+
+                var node = frame.Node;
+                state.FrameCount--;
+                if (state.FrameCount > 0)
+                {
+                    var parent = state.Frames[state.FrameCount - 1].Node;
+                    state.Low[parent] = Math.Min(state.Low[parent], state.Low[node]);
+                }
+
+                if (state.Low[node] != state.Index[node])
+                    continue;
+                var size = 1;
+                while (state.Stack[state.StackCount - size] != node)
+                    size++;
+                var members = new int[size];
+                for (var at = 0; at < size; at++)
+                {
+                    var member = state.Stack[--state.StackCount];
+                    state.OnStack[member] = false;
+                    members[at] = member;
+                }
+
+                Array.Sort(members);
+                Charge(size);
+                state.Pending = members;
+            }
+        }
+
+        private static void Enter(State state, int key)
+        {
+            state.Index[key] = state.Low[key] = state.Next++;
+            state.Stack[state.StackCount++] = key;
+            state.OnStack[key] = true;
+            state.Frames[state.FrameCount++] = new Frame { Node = key };
+        }
+
+        /// <summary>
+        /// A guard's class under the state. An undecided dimension whose link the run has already read is forced (a vector
+        /// giving it the other class is refuted; for groundedness, only a nonempty calculation is forced to stay); any other
+        /// undecided dimension stops the run (<see cref="_need"/>).
+        /// </summary>
+        private Read Consult(State state, int guard)
+        {
+            switch (guard)
+            {
+                case Unguarded:
+                case FixedOpen:
+                    return Read.Open;
+                case FixedClosed:
+                    return Read.Closed;
+            }
+
+            var mask = 1UL << guard;
+            if ((state.Decided & mask) != 0)
+                return (state.Value & mask) != 0 ? Read.Open : Read.Closed;
+            if (state.Facts[_linkKey[guard]] is { } fact && (_mode != Mode.Groundedness || fact.IsNonempty))
+            {
+                state.Decided |= mask;
+                if (fact.IsNonempty)
+                    state.Value |= mask;
+                return fact.IsNonempty ? Read.Open : Read.Closed;
+            }
+
+            _need = guard;
+            return Read.Undecided;
+        }
+
+        /// <summary>
+        /// Settles one completed component of the run exactly as a single vector's reading does: no meaning when an active
+        /// read reaches a key with none (or a guard below has no class), else its one evaluation, a cycle by the closed gate
+        /// and simultaneous completion. Every class the evaluation reads is decided first, so the run stops before it
+        /// evaluates anything. Then each link of the component is checked against its decided class.
+        /// </summary>
+        private Outcome Settle(State state, int[] members)
+        {
+            var stamp = ++_stamp;
+            foreach (var member in members)
+                _mark[member] = stamp;
+
+            var meaningless = false;
+            var scanned = 0L;
+            foreach (var member in members)
+                meaningless |= _alwaysMeaningless[member];
+            if (!meaningless)
+            {
+                // An edge's guard was read when its key was entered; a read of a lower key with no meaning may need a class.
+                foreach (var member in members)
+                {
+                    foreach (var edge in _edges[member])
+                    {
+                        scanned++;
+                        if (_mark[edge.Target] != stamp && (state.Meaningless[edge.Target] || edge.LowerMeaningless)
+                            && Consult(state, edge.Guard) == Read.Open)
+                            meaningless = true;
+                    }
+
+                    foreach (var guard in _meaninglessReads[member])
+                    {
+                        scanned++;
+                        if (guard is Unguarded or FixedOpen)
+                            meaningless = true;
+                    }
+                }
+            }
+
+            if (!meaningless)
+            {
+                foreach (var member in members)
+                {
+                    foreach (var guard in _meaninglessReads[member])
+                    {
+                        if (guard < 0)
+                            continue;
+                        var read = Consult(state, guard);
+                        if (read == Read.Undecided)
+                        {
+                            Charge(1 + scanned);
+                            return Outcome.Undecided;
+                        }
+
+                        if (read == Read.Open)
+                        {
+                            meaningless = true;
+                            break;
+                        }
+                    }
+
+                    if (meaningless)
+                        break;
+                }
+            }
+
+            Charge(1 + scanned);
+            if (meaningless)
+            {
+                foreach (var member in members)
+                    state.Meaningless[member] = true;
+                return Outcome.Finished;
+            }
+
+            var decided = 0L;
+            foreach (var member in members)
+            {
+                foreach (var bit in _decides[member])
+                {
+                    decided++;
+                    if (Consult(state, bit) == Read.Undecided)
+                    {
+                        Charge(decided);
+                        return Outcome.Undecided;
+                    }
+                }
+            }
+
+            Charge(decided);
+
+            bool IsOpen(int link)
+            {
+                if (_lowerOpen.TryGetValue(link, out var open))
+                    return open;
+                // Only a reference that cannot lift reads an undecided dimension here: either class reads the same.
+                return _bit.TryGetValue(link, out var bit) && (state.Decided & state.Value & (1UL << bit)) != 0;
+            }
+
+            SignatureFact Look(int target)
+                => _local.TryGetValue(target, out var key) && state.Facts[key] is { } fact ? fact
+                    : _lowerFacts.TryGetValue(target, out var lower) ? lower
+                    : throw new InvalidOperationException("Signature selection read an equation it has not decided.");
+
+            var selfRead = false;
+            if (members.Length == 1)
+            {
+                foreach (var edge in _edges[members[0]])
+                    selfRead |= edge.Target == members[0] && Consult(state, edge.Guard) == Read.Open;
+            }
+
+            if (members.Length == 1 && !selfRead)
+            {
+                var key = members[0];
+                Charge(_relevant[key].Length);
+                state.Facts[key] = _selector.EvaluateEquation(_keys[key], Look, IsOpen, positions: _relevant[key]);
+            }
+            else
+            {
+                // THE CLOSED GATE: every member read as declaring nothing. A cycle whose own reads then lift is a genuine
+                // lifting cycle, completed from here; otherwise this evaluation is its only non-lifting fixed point.
+                state.Cyclic = true;
+                var component = new int[members.Length];
+                for (var at = 0; at < members.Length; at++)
+                    component[at] = _keys[members[at]];
+                var memberSet = new HashSet<int>(component);
+                SignatureFact Closed(int target) => memberSet.Contains(target) ? _selector._closed : Look(target);
+                var closed = new Dictionary<int, SignatureFact>(component.Length);
+                foreach (var member in members)
+                {
+                    Charge(_relevant[member].Length);
+                    closed[_keys[member]] = _selector.EvaluateEquation(_keys[member], Closed, IsOpen, positions: _relevant[member]);
+                }
+
+                var lifts = false;
+                foreach (var member in members)
+                {
+                    foreach (var edge in _edges[member])
+                        lifts |= _mark[edge.Target] == stamp && Consult(state, edge.Guard) == Read.Open && closed[_keys[edge.Target]].Requires;
+                }
+
+                IReadOnlyDictionary<int, SignatureFact> reached = closed;
+                if (lifts)
+                {
+                    if (_selector.Complete(component, memberSet, closed, Look, IsOpen, key => _relevant[_local[key]]) is not { } completed)
+                    {
+                        foreach (var member in members)
+                            state.Meaningless[member] = true;
+                        return Outcome.Finished;
+                    }
+
+                    reached = completed;
+                }
+
+                foreach (var (key, fact) in reached)
+                    state.Facts[_local[key]] = fact;
+            }
+
+            if (_mode == Mode.Reading)
+                return Outcome.Finished;
+            foreach (var member in members)
+            {
+                var bit = _bitOf[member];
+                if (bit < 0 || state.Facts[member] is not { } fact)
+                    continue;
+                var mask = 1UL << bit;
+                if ((state.Decided & mask) == 0)
+                    continue;
+                var calculation = (state.Value & mask) != 0;
+                // A table refutes a link that completes against its class; groundedness only a link REMOVED from the vector
+                // under test that completes as a calculation (a link outside it may complete as anything).
+                if (_mode == Mode.Table ? calculation != fact.IsNonempty : (_vector & mask) != 0 && !calculation && fact.IsNonempty)
+                    return Outcome.Refuted;
+            }
+
+            return Outcome.Finished;
+        }
     }
 
     /// <summary>Rule G6 over one table's rows.</summary>
@@ -958,7 +1662,7 @@ internal sealed class SignatureSelector
             }
 
             var rows = Table(component, settledFacts, settledOpen, NoKeys);
-            otherReadings[c] = rows.Count(static row => row.Kind != RowKind.Refuted) >= 2;
+            otherReadings[c] = rows.Count >= 2;
             var (outcome, selected) = Rule(rows);
             localOutcome[c] = outcome;
             if (outcome != SignatureSelectionOutcome.Selected)
@@ -980,6 +1684,7 @@ internal sealed class SignatureSelector
         {
             foreach (var (key, fact) in settledFacts)
                 selection.Facts[key] = fact;
+            selection.ClassificationStates = _classificationStates;
             return selection;
         }
 
@@ -1100,6 +1805,7 @@ internal sealed class SignatureSelector
                 dimensions, outcome));
         }
 
+        selection.ClassificationStates = _classificationStates;
         return selection;
     }
 
@@ -1236,7 +1942,8 @@ internal sealed class SignatureSelector
                 ChargeEnumeration(free.Count);
                 for (var bits = 0L; bits < 1L << free.Count; bits++)
                 {
-                    _resources.Metadata(free.Count, work: 0, _cancellationToken);
+                    // The choice's classes, and the table key built from every read and observed link below.
+                    _resources.Metadata(free.Count, work: free.Count + reads.Count + observed.Count, _cancellationToken);
                     var assigned = alternative.Assigned;
                     for (var i = 0; i < free.Count; i++)
                         assigned = assigned.SetItem(free[i], (bits & (1L << i)) != 0);
@@ -1255,13 +1962,14 @@ internal sealed class SignatureSelector
                             open[link] = choice;
                     }
 
-                    var memoKey = (c, TableKey(reads, alternative, open));
+                    var memoKey = (c, Key: TableKey(reads, alternative, open));
                     if (!tables.TryGetValue(memoKey, out var rows))
+                    {
+                        _resources.Metadata(2 + (memoKey.Key.Length + 31L) / 32, work: 0, _cancellationToken);
                         tables[memoKey] = rows = Table(component, alternative.Facts, open, alternative.Meaningless);
+                    }
                     foreach (var row in rows)
                     {
-                        if (row.Kind == RowKind.Refuted)
-                            continue;
                         var added = row.Gamma.Count + componentLinks.Count + component.Count;
                         _resources.Metadata(4 + added, work: 1 + added, _cancellationToken);
                         var carried = new Alternative
@@ -1284,11 +1992,12 @@ internal sealed class SignatureSelector
                         }
                         else
                         {
-                            var defined = Evaluate(component, row.Gamma, alternative.Facts, open, alternative.Meaningless);
+                            // The row's own reading holds the facts of the keys that have a meaning: the table's inputs are
+                            // exactly this table key's, so evaluating the vector again would give the same objects.
                             var facts = alternative.Facts.ToBuilder();
                             foreach (var key in component)
                             {
-                                if (!row.Meaningless!.Contains(key) && defined.Facts.TryGetValue(key, out var fact))
+                                if (!row.Meaningless!.Contains(key) && row.Facts!.TryGetValue(key, out var fact))
                                     facts[key] = fact;
                             }
 
@@ -1325,8 +2034,12 @@ internal sealed class SignatureSelector
             builder.Append(';');
         }
 
-        foreach (var (link, value) in open.OrderBy(static pair => pair.Key))
-            builder.Append('o').Append(link).Append(value ? '+' : '-');
+        // Every class is a read (a target or guard), and reads already have canonical order.
+        foreach (var link in reads)
+        {
+            if (open.TryGetValue(link, out var value))
+                builder.Append('o').Append(link).Append(value ? '+' : '-');
+        }
         return builder.ToString();
     }
 
@@ -1335,7 +2048,8 @@ internal sealed class SignatureSelector
         var rows = new List<Row>(alternatives.Count);
         foreach (var alternative in alternatives)
         {
-            _resources.Metadata(1 + alternative.Gamma.Count + dimensions.Count, work: 1, _cancellationToken);
+            _resources.Metadata(1 + alternative.Gamma.Count + dimensions.Count,
+                work: 1 + alternative.Gamma.Count + alternative.Assigned.Count + dimensions.Count, _cancellationToken);
             var gamma = new HashSet<int>(alternative.Gamma);
             foreach (var (link, choice) in alternative.Assigned)
             {

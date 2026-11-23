@@ -1,4 +1,5 @@
 using System.Numerics;
+using Xunit.Abstractions;
 
 namespace KatLang.Tests;
 
@@ -7,7 +8,7 @@ namespace KatLang.Tests;
 /// first selection candidate, in the shape it was found, plus the independent oracle the review asked for — rule G6
 /// applied to a whole equation system at once, against the selector's components, local pass and joint regions.
 /// </summary>
-public sealed class SignatureSelectionReviewRegressionTests
+public sealed class SignatureSelectionReviewRegressionTests(ITestOutputHelper output)
 {
     private const string Host = "modules.example";
 
@@ -1240,14 +1241,14 @@ public sealed class SignatureSelectionReviewRegressionTests
     // External signatures: X0 accepts zero arguments (never lifted), X1 and X2 require one each.
     private static readonly string[][] Externals = [[], ["e1"], ["e2"]];
 
-    private static SyntheticSystem RandomSystem(Random random)
+    private static SyntheticSystem RandomSystem(Random random, int maxCount = 7, int maxLinks = 4, int maxReferences = 4)
     {
-        var count = random.Next(1, 7);
+        var count = random.Next(1, maxCount);
         var isLink = new bool[count];
         var links = new List<int>();
         for (var i = 0; i < count; i++)
         {
-            if (links.Count < 4 && random.NextDouble() < 0.4)
+            if (links.Count < maxLinks && random.NextDouble() < 0.4)
             {
                 isLink[i] = true;
                 links.Add(i);
@@ -1259,7 +1260,7 @@ public sealed class SignatureSelectionReviewRegressionTests
         for (var i = 0; i < count; i++)
         {
             own[i] = random.NextDouble() < 0.4 ? [$"o{i}"] : [];
-            references[i] = new SyntheticReference[random.Next(0, 4)];
+            references[i] = new SyntheticReference[random.Next(0, maxReferences)];
             for (var r = 0; r < references[i].Length; r++)
             {
                 var guard = links.Count > 0 && random.NextDouble() < 0.4 ? links[random.Next(links.Count)] : -1;
@@ -1524,7 +1525,22 @@ public sealed class SignatureSelectionReviewRegressionTests
     }
 
     /// <summary>The real selector over a synthetic system, with this oracle's composition law (plain names).</summary>
-    private static SignatureSelector.Selection SelectReal(SyntheticSystem system)
+    private static SignatureSelector.Selection SelectReal(SyntheticSystem system) => SelectReal(system, new int[system.Count], everyClassification: false);
+
+    /// <summary>
+    /// The real selector over a synthetic system, its tables built by the classification search or — with
+    /// <paramref name="everyClassification"/> — by the generic path, every classification vector read whole
+    /// (<see cref="SignatureSelector.EnumeratesEveryClassification"/>). A nonzero <paramref name="modes"/> entry makes that
+    /// equation's composition NON-MONOTONE, which the selector allows (a composition is any pure function of its lifted
+    /// inputs) and real compositions reach through group shapes and recovery: 1 empties it whenever anything lifts and
+    /// otherwise gives it a name of its own, 2 keeps its names only at even parity, 3 reverses their order, 4 adds a second
+    /// name once exactly one is present.
+    /// </summary>
+    private static SignatureSelector.Selection SelectReal(SyntheticSystem system, int[] modes, bool everyClassification)
+        => RealSelector(system, modes, everyClassification, new StaticQueryResourceBudget(StaticQueryLimits.Default)).Solve();
+
+    /// <summary>The real selector of <see cref="SelectReal(SyntheticSystem, int[], bool)"/> over <paramref name="resources"/>, built and not yet run.</summary>
+    private static SignatureSelector RealSelector(SyntheticSystem system, int[] modes, bool everyClassification, StaticQueryResourceBudget resources)
     {
         var closed = new SignatureFact([], null, isLifted: false, composition: null, new CallableSignature("", []));
         var internalIdentities = Enumerable.Range(0, system.Count).Select(_ => new object()).ToArray();
@@ -1550,12 +1566,186 @@ public sealed class SignatureSelectionReviewRegressionTests
                 }
             }
 
+            switch (modes[equation])
+            {
+                case 1:
+                    names = lifted.Count > 0 ? [] : [$"a{equation}"];
+                    break;
+                case 2:
+                    if (names.Sum(static name => name.Length + name[^1]) % 2 == 1)
+                        names.Clear();
+                    break;
+                case 3:
+                    names.Reverse();
+                    break;
+                case 4:
+                    if (names.Count == 1)
+                        names.Add($"b{equation}");
+                    break;
+            }
+
             IReadOnlyList<ParameterPattern> patterns = [.. names.Select(name => (ParameterPattern)new CaptureParameterPattern(name))];
             return new SignatureFact(patterns, null, lifted.Count > 0, null, CallableSignature.FromInferredPatterns($"E{equation}", patterns));
         }
 
         return new SignatureSelector(references, system.IsLink, Compose, static (_, settled, _) => settled, closed,
-            new StaticQueryResourceBudget(StaticQueryLimits.Default), CancellationToken.None).Solve();
+            resources, CancellationToken.None) { EnumeratesEveryClassification = everyClassification };
+    }
+
+    /// <summary>A selection as text: every fact by its key, then every refused group with its links and category, in order.</summary>
+    private static string Rendered(SignatureSelector.Selection selection)
+        => string.Join(" ", selection.Facts.OrderBy(static pair => pair.Key).Select(static pair => $"E{pair.Key}({string.Join(",", pair.Value.Signature.ParameterNames)})"))
+            + " || " + string.Join(" ", selection.Refusals.Select(static refusal => $"[{string.Join(",", refusal.Equations)}; {string.Join(",", refusal.Links)}; {refusal.Outcome}]"));
+
+    /// <summary>
+    /// THE CLASSIFICATION SEARCH AGAINST THE GENERIC PATH (finding lifting-signatures-link-table-exponential-underpriced): the
+    /// selector whose tables are found by the search must select and refuse exactly as the one whose tables read every
+    /// classification vector whole and every counterfactual of every consistent one — the same facts, the same refused
+    /// groups with the same link lists and categories, in the same order — on random systems with monotone and non-monotone
+    /// compositions, with and without settled rings in their cones, and on wider systems of up to eleven equations and five
+    /// links. The comparison is not vacuous: the systems refuse in at least four categories.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void TheClassificationSearch_AgreesWithReadingEveryClassification(int seed)
+    {
+        var random = new Random(1000 + seed);
+        var categories = new HashSet<SignatureSelectionOutcome>();
+        for (var trial = 0; trial < 300; trial++)
+        {
+            var system = trial % 5 == 4 ? RandomSystem(random, maxCount: 12, maxLinks: 5, maxReferences: 6) : RandomSystem(random);
+            if (trial % 2 == 1)
+                system = WithSettledRings(system, random);
+            var modes = trial % 3 == 0 ? new int[system.Count] : [.. Enumerable.Range(0, system.Count).Select(_ => random.Next(5))];
+            var (search, every) = (SelectReal(system, modes, everyClassification: false), SelectReal(system, modes, everyClassification: true));
+            Assert.True(Rendered(every) == Rendered(search),
+                $"seed {seed}, trial {trial}, modes [{string.Join(",", modes)}]: every classification gives {Rendered(every)}, "
+                + $"the search {Rendered(search)}: {system}");
+            categories.UnionWith(search.Refusals.Select(static refusal => refusal.Outcome));
+        }
+
+        Assert.True(categories.Count >= 4, $"Only the categories {string.Join(", ", categories)} were refused.");
+    }
+
+    /// <summary>
+    /// A counterfactual in which a link OUTSIDE the vector becomes a calculation refutes nothing: groundedness asks only
+    /// whether a link REMOVED from the vector stays a calculation. <c>E0</c> reads <c>E2</c>, which lifts the requiring X1
+    /// under <c>E0</c>; <c>E1</c> (anti-monotone: empty once anything lifts) reads X1 under <c>E0</c>; <c>E2</c> also reads
+    /// X0 under <c>E1</c>. Of the classifications, {E1} is consistent and grounded, and {E0} is consistent and supports only
+    /// itself — without E0, E0 is empty, though E1 then is a calculation — so {E1} is selected. A search that refuted the
+    /// counterfactual for E1 would hold {E0} grounded too and refuse both as ambiguous.
+    /// </summary>
+    [Fact]
+    public void ALinkOutsideTheVector_ThatBecomesACalculationInACounterfactual_RefutesNoSupport()
+    {
+        var system = new SyntheticSystem(
+            [[], [], []],
+            [
+                [new SyntheticReference(2, -1, -1)],
+                [new SyntheticReference(-1, 1, 0)],
+                [new SyntheticReference(-1, 1, 0), new SyntheticReference(-1, 0, 1)],
+            ],
+            [true, true, false]);
+        int[] modes = [0, 1, 0];
+        foreach (var everyClassification in new[] { false, true })
+            Assert.Equal("E0() E1(a1) E2() || ", Rendered(SelectReal(system, modes, everyClassification)));
+    }
+
+    /// <summary>
+    /// A FREE link — one whose own component gives it no meaning and whose class no reading of that component consults — is
+    /// a row of its table under BOTH classes, which a reader then tells apart. <c>E1</c> and <c>E2</c> are the oscillator
+    /// (they do not settle), <c>E0</c> reads <c>E1</c> and guards only <c>E1</c>'s read of X0, which lifts nothing; <c>E3</c>
+    /// (anti-monotone) observes <c>E0</c> and has a consistent reading only when <c>E0</c> is a calculation. The joint region
+    /// therefore keeps one reading, which has no meaning, and refuses the oscillator as not settling. Carrying the free link
+    /// under one class only would leave the region no reading at all: a contradiction.
+    /// </summary>
+    [Fact]
+    public void AFreeLinkOfAComponentWithoutMeaning_IsCarriedUnderBothClasses()
+    {
+        var system = new SyntheticSystem(
+            [[], [], [], []],
+            [
+                [new SyntheticReference(1, -1, -1)],
+                [new SyntheticReference(2, -1, -1), new SyntheticReference(-1, 1, -1), new SyntheticReference(-1, 0, 0)],
+                [new SyntheticReference(1, -1, -1), new SyntheticReference(-1, 2, -1)],
+                [new SyntheticReference(-1, 1, 3), new SyntheticReference(-1, 2, 0)],
+            ],
+            [true, false, false, true]);
+        int[] modes = [0, 0, 0, 1];
+        foreach (var everyClassification in new[] { false, true })
+            Assert.Equal(" || [0,1,2; ; NonSettling]", Rendered(SelectReal(system, modes, everyClassification)));
+    }
+
+    /// <summary>
+    /// A TABLE'S STRUCTURE IS RESERVED BEFORE IT IS ALLOCATED. The classification search counts each key's part of its
+    /// structure (its edges, its reads without meaning, its relevant reference positions) first, reserves exactly that,
+    /// and only then builds the part at that size, with no temporary buffer. <c>E0</c> and <c>E1</c> read each other, one
+    /// table without links, and <c>E0</c> also reads <c>E1</c> and the requiring X1 <c>Reads</c> times each, so the part
+    /// of <c>E0</c> holds 2 · Reads + 1 positions and Reads + 1 edges, more than 16 bytes per read. Under a storage bound
+    /// far below that part, the selection is refused at the part's reservation, having allocated less than an eighth of it.
+    /// The former construction grew list buffers to that size first and reserved them only afterwards, then copied the
+    /// retained arrays out of them while they were still alive. It allocated about twice the part before the same refusal.
+    /// The same window measures at least the part for the unbounded selection, so the bound is not vacuous. A bound equal
+    /// to that selection's peak storage completes with its facts.
+    /// </summary>
+    [Fact]
+    public void ATablesStructure_IsReservedBeforeAnyOfItIsAllocated()
+    {
+        const int Reads = 50_000;
+        const long PartBytes = 16L * Reads;
+        const string Selected = "E0(e1) E1(e1) || ";
+        var wide = new SyntheticReference[2 * Reads + 1];
+        wide[0] = new SyntheticReference(1, -1, -1);
+        for (var read = 0; read < Reads; read++)
+        {
+            wide[2 * read + 1] = new SyntheticReference(-1, 1, -1);
+            wide[2 * read + 2] = new SyntheticReference(1, -1, -1);
+        }
+
+        var system = new SyntheticSystem([[], []], [wide, [new SyntheticReference(0, -1, -1)]], [false, false]);
+
+        // One selection under a storage bound, its allocation measured from the start of Solve to its outcome.
+        (string Outcome, long Allocated, StaticQueryResourceBudget Resources) Select(long maxStorageUnits)
+        {
+            var resources = new StaticQueryResourceBudget(StaticQueryLimits.Default with { MaxStorageUnits = maxStorageUnits });
+            var selector = RealSelector(system, new int[system.Count], everyClassification: false, resources);
+            SignatureSelector.Selection? selection = null;
+            StaticQueryLimitExceededException? refusal = null;
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            try
+            {
+                selection = selector.Solve();
+            }
+            catch (StaticQueryLimitExceededException error)
+            {
+                refusal = error;
+            }
+
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            return (selection is null ? refusal!.Message : Rendered(selection), allocated, resources);
+        }
+
+        var unbounded = Select(long.MaxValue);
+        Assert.Equal(Selected, unbounded.Outcome);
+        Assert.True(unbounded.Allocated >= PartBytes, $"The unbounded selection allocated only {unbounded.Allocated:N0} bytes.");
+        Assert.True(unbounded.Resources.PeakStorageUnits >= 3L * Reads / 4, $"Peak storage {unbounded.Resources.PeakStorageUnits} slots.");
+        var funded = Select(unbounded.Resources.PeakStorageUnits);
+        Assert.Equal(Selected, funded.Outcome);
+        Assert.False(funded.Resources.IsFailed);
+
+        _ = Select(1_024); // The refused route, warmed before it is measured.
+        var refused = Select(1_024);
+        output.WriteLine($"unbounded: {unbounded.Allocated:N0} B allocated, peak {unbounded.Resources.PeakStorageUnits:N0} slots; "
+            + $"refused at 1,024 slots: {refused.Allocated:N0} B allocated; part lower bound {PartBytes:N0} B");
+        Assert.Equal("The static operation exceeded its metadata storage bound (1024 slots).", refused.Outcome);
+        Assert.True(refused.Resources.IsFailed);
+        Assert.True(refused.Allocated < PartBytes / 8,
+            $"The refused selection allocated {refused.Allocated:N0} bytes before its refusal; the part it refused is at least {PartBytes:N0}.");
     }
 
     /// <summary>Whether the selector agrees with rule G6 over the whole system; asserts the facts when both select.</summary>

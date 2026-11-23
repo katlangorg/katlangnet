@@ -280,7 +280,7 @@ public sealed class SignatureSelectionTests
 
     /// <summary>
     /// A ring of three links is one joint region: "all calculations" supports only itself, so the unique grounded reading
-    /// makes every link a runtime reference. A ring of 64 would enumerate 2^64 classifications: it is refused as an
+    /// makes every link a runtime reference. A ring of 64 classifies 2^64 vectors together: the fixed limit refuses it as an
     /// explicit structural resource refusal (<see cref="DiagnosticCode.StaticStructureLimitExceeded"/>), never an
     /// inference rule, and nothing is published.
     /// </summary>
@@ -303,6 +303,200 @@ public sealed class SignatureSelectionTests
             + StaticStructureAdmission.SignatureEnumerationSentence,
             refusal.Message);
         Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(LinkRing(64)));
+    }
+
+    // ── The classification search (finding lifting-signatures-link-table-exponential-underpriced) ─────
+
+    /// <summary>The selection of a parsed source, observed: its outcome and its ledger's work from its first composition.</summary>
+    private static (SignatureSelector.Selection Selection, long Work) Selection(string source)
+    {
+        var detected = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        Assert.Empty(detected.Diagnostics);
+        var ledger = detected.Operation!.Queries.Resources;
+        long? first = null;
+        SignatureSelector.Selection? selection = null;
+        long work = 0;
+        var observations = new FrontEndTraversalObservations
+        {
+            OnSignatureSelectionStep = _ => first ??= ledger.WorkCharged,
+            OnSignatureSelection = probe =>
+            {
+                Assert.Null(selection);
+                selection = probe.Selection;
+                work = ledger.WorkCharged - first!.Value;
+            },
+        };
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
+        Assert.Empty(detected.Diagnostics);
+        return (selection!, work);
+    }
+
+    private static void AssertEveryLinkIsARuntimeReference(Algorithm root, int links)
+    {
+        foreach (var i in Enumerable.Range(0, links))
+        {
+            Assert.True(Assert.Single(root.Properties, property => property.Name == $"L{i}").Value is Algorithm.Alias { HasRuntimeTarget: true });
+            Assert.Empty(Assert.Single(root.Properties, property => property.Name == $"K{i}").Value.Params);
+        }
+    }
+
+    /// <summary>
+    /// A ring of links is ONE table over all its links, and the classification search reads it in states linear in its
+    /// links — 4n − 5 for n ≥ 2, where evaluating every vector and every counterfactual of the self-supporting one visited 2^(n+1) − 1
+    /// (8,191 at twelve links) — never a product: each link's class is consulted where the reading needs it, the class its
+    /// own fact already decides is forced, and a contradicted class ends its state at once. Doubling the ring doubles the
+    /// states and the work. A chain of links (a component per link) visits no state at all.
+    /// </summary>
+    [Fact]
+    public void ARingOfLinks_IsReadInStatesLinearInItsLinks()
+    {
+        var measured = new[] { 8, 16, 32 }.Select(static links => (Links: links, Measured: Selection(LinkRing(links)))).ToArray();
+        foreach (var (links, (selection, _)) in measured)
+        {
+            Assert.True(selection.Succeeded);
+            Assert.Equal(4 * links - 5, selection.ClassificationStates);
+        }
+
+        for (var index = 1; index < measured.Length; index++)
+        {
+            var (smaller, larger) = (measured[index - 1].Measured.Work, measured[index].Measured.Work);
+            Assert.True(larger <= 2.4 * smaller, $"Doubling the ring grew the selection's work {(double)larger / smaller:F2}x ({smaller} -> {larger}).");
+        }
+
+        const int ChainLinks = 40;
+        var chain = ChainPrelude + "K0 = D + 0\n"
+            + string.Concat(Enumerable.Range(1, ChainLinks).Select(i => $"L{i} = Cap(Id(K{i - 1} + 0)).Algorithm\nK{i} = L{i}.repeat(D) + 0\n")) + "0";
+        Assert.Equal(0, Selection(chain).Selection.ClassificationStates);
+    }
+
+    /// <summary>
+    /// Rings the former vector enumeration could not afford — it charged 2^n before reading any vector, so the work bound
+    /// refused thirteen links already — are selected now (every link a runtime reference), up to the fixed limit: 61 links
+    /// are classified together, 62 are refused by it with its own sentence, whatever the work bound admits.
+    /// </summary>
+    [Theory]
+    [InlineData(13)]
+    [InlineData(20)]
+    [InlineData(61)]
+    public void RingsTheEnumerationCouldNotAfford_AreSelected_BelowTheFixedLimit(int links)
+    {
+        AssertEveryLinkIsARuntimeReference(SourceProvenance.ParseValid(LinkRing(links)).Root, links);
+    }
+
+    [Fact]
+    public void ARingOfSixtyTwoLinks_IsRefusedByTheFixedLimit()
+    {
+        var refusal = Assert.Single(Parser.Parse(LinkRing(62)).Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(DiagnosticCode.StaticStructureLimitExceeded, refusal.Code);
+        Assert.Equal(
+            "Static structure analysis exceeded its resource bound. Signature selection would enumerate 2^62 classifications of .Algorithm links. "
+            + StaticStructureAdmission.SignatureEnumerationSentence,
+            refusal.Message);
+    }
+
+    /// <summary>A ring whose <c>K</c> members each also read <paramref name="reads"/> zero-argument properties, written as one list.</summary>
+    private static string ReadingRing(int links, int reads)
+        => ChainPrelude
+            + string.Concat(Enumerable.Range(0, reads).Select(static j => $"P{j} = {j}\n"))
+            + string.Concat(Enumerable.Range(0, links).Select(i => $"L{i} = Cap(Id(K{i} + 0)).Algorithm\nK{i} = L{(i + 1) % links}.repeat(D) + count(["
+                + string.Join(", ", Enumerable.Range(0, reads).Select(static j => $"P{j}")) + "])\n"))
+            + "0";
+
+    /// <summary>
+    /// UNDERPRICED, the finding's other half: the former table rescanned every reference of every member for each of its
+    /// 2^n vectors and charged a few units per equation, so reads of callees that cannot lift multiplied its time by the
+    /// number of vectors at the same charge — at the default bounds, fourteen links each reading a thousand properties ran
+    /// for 45 seconds and were admitted. The classification search decides once per table which references can matter (an
+    /// edge to a member, a read of a key without meaning, a callee that can lift) and charges that pass, so such reads cost
+    /// the table one charged visit each — the work grows linearly with them — and change none of its states.
+    /// </summary>
+    [Fact]
+    public void ReadsOfCalleesThatCannotLift_AreChargedOncePerTable_AndChangeNoState()
+    {
+        const int Links = 12;
+        var (none, few, many) = (Selection(ReadingRing(Links, 0)), Selection(ReadingRing(Links, 400)), Selection(ReadingRing(Links, 800)));
+        Assert.All(new[] { none, few, many }, static measured => Assert.Equal(4 * Links - 5, measured.Selection.ClassificationStates));
+        Assert.True(few.Work > none.Work);
+        // Each added read: one charged classification per member that holds it, and the read property's own evaluation.
+        Assert.Equal(many.Work - few.Work, few.Work - none.Work);
+        Assert.InRange(few.Work - none.Work, 400, (Links + 4) * 400);
+        AssertEveryLinkIsARuntimeReference(SourceProvenance.ParseValid(ReadingRing(Links, 800)).Root, Links);
+    }
+
+    [Fact]
+    public void IrrelevantReadsAreClassifiedOnceThroughRecursiveRoundsAndSealing()
+    {
+        static string Cycle(int reads) => string.Concat(Enumerable.Range(0, 251).Select(i => $"P{i} = 0\n"))
+            + "D(z) = z\nA = B + count([" + string.Join(", ", Enumerable.Range(0, reads).Select(i => $"P{i}"))
+            + "])\nB = A + D\n0";
+
+        var few = Selection(Cycle(1));
+        var many = Selection(Cycle(251));
+        Assert.True(few.Selection.Succeeded && many.Selection.Succeeded);
+        Assert.Equal(250L, many.Work - few.Work);
+        var root = SourceProvenance.ParseValid(Cycle(251)).Root;
+        foreach (var name in new[] { "A", "B" })
+            Assert.Equal(new[] { "z" }, Assert.Single(root.Properties, property => property.Name == name).Value.Params);
+    }
+
+    [Fact]
+    public void AConsistentEmptyVectorWitnessesEveryNonemptyRowsSelfSupport()
+    {
+        // The shared H puts these independent self-rings in one table. All 2^10 vectors are consistent.
+        const int Links = 10;
+        var indices = Enumerable.Range(0, Links).ToArray();
+        var source = ChainPrelude + string.Concat(indices.Select(i =>
+            $"L{i} = Cap(Id(K{i} + 0)).Algorithm\nK{i} = L{i}.repeat(D) + L{i}.repeat(H) + 0\n"))
+            + "H = 0" + string.Concat(indices.Select(i => $" + K{i}")) + "\n0";
+        var (selection, _) = Selection(source);
+        Assert.True(selection.Succeeded);
+        Assert.Equal((1L << (Links + 1)) - 1, selection.ClassificationStates);
+        AssertEveryLinkIsARuntimeReference(SourceProvenance.ParseValid(source).Root, Links);
+    }
+
+    /// <summary>
+    /// The classification search is charged to the operation's ledger with its cancellation: a ring's search cancelled at a
+    /// composition in its middle throws the token's cancellation and publishes nothing, and the same retained tree
+    /// resolves in full afterwards; a work bound the search cannot afford is a resource refusal, never a category.
+    /// </summary>
+    [Fact]
+    public void ARingSearch_ObservesCancellationAndItsWorkBound()
+    {
+        const int Links = 24;
+        var root = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(LinkRing(Links))).Root;
+        var count = new FrontEndTraversalObservations();
+        _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, count);
+        var steps = count.SignatureSelectionSteps;
+        Assert.True(steps > 2 * Links, $"{steps} steps");
+
+        using var cancellation = new CancellationTokenSource();
+        var observer = new FrontEndTraversalObservations { OnSignatureSelectionStep = position => { if (position == steps / 2) cancellation.Cancel(); } };
+        var error = Assert.ThrowsAny<OperationCanceledException>(
+            () => ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observer, cancellationToken: cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        var retried = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root);
+        foreach (var i in Enumerable.Range(0, Links))
+        {
+            Assert.Empty(Assert.Single(retried.Properties, property => property.Name == $"L{i}").Value.Params);
+            Assert.Empty(Assert.Single(retried.Properties, property => property.Name == $"K{i}").Value.Params);
+        }
+
+        var prelude = BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        var limits = StaticStructureAdmission.Measure(root, prelude).Limits;
+        StaticStructureOperation Operation(long work)
+        {
+            var operation = new StaticStructureOperation(root, limits with { MaxEvaluations = work }, prelude, phase: StaticAstPhase.NameResolved);
+            operation.RegisterNameResolvedInput(root);
+            return operation;
+        }
+
+        var funded = Operation(limits.MaxEvaluations);
+        long? first = null;
+        var calibration = new FrontEndTraversalObservations { OnSignatureSelectionStep = _ => first ??= funded.Queries.Resources.WorkCharged };
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(root, calibration, structuralOperation: funded);
+        var exhausted = Operation(first!.Value + Links);
+        Assert.Throws<StaticQueryLimitExceededException>(() => ImplicitArgumentResolver.ResolvePrevalidated(root, structuralOperation: exhausted));
+        Assert.True(exhausted.Queries.Resources.IsFailed);
     }
 
     /// <summary>

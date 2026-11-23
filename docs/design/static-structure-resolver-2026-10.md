@@ -805,9 +805,21 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
    whose only grounded row is the selected one and which has no undetermined row; an alternative carrying another of its
    rows is ungrounded or meaningless for good, so it adds no grounded or undetermined row and can change only a
    refusal's category, never a selection. A joint region the ledger cannot afford is still refused as
-   `StaticStructureLimitExceeded`; what is no longer paid is the product of the readings of settled components. All work
-   and storage are charged to the operation's ledger (`StaticQueryResourceBudget`; a table charges its 2^dimensions
-   classifications before evaluating any).
+   `StaticStructureLimitExceeded`; what is no longer paid is the product of the readings of settled components. A
+   component's table is found by the CLASSIFICATION SEARCH (2026-11-23, finding
+   lifting-signatures-link-table-exponential-underpriced of the 2026-11-21 performance audit; `ClassificationSearch`):
+   one reading per partial vector — Tarjan's components of the active edges, each settled as it completes — split only
+   where it consults a class that a fact it already computed does not force, so a contradicted class ends its state at
+   once. An unconsulted link takes its completed class when it has one. Each class is possible if it has no meaning.
+   A consistent all-runtime reading witnesses self-support for every nonempty consistent vector. Other tables use
+   the same search over counterfactuals. The generic path tests the resulting rows against full enumeration.
+   A ring of n ≥ 2 links visits 4n − 5 states, down from 2^(n+1) − 1. References to lower or external callees
+   accepting zero supplied arguments are classified once per table, including through completion and sealing. All work and
+   storage are charged to the operation's ledger (`StaticQueryResourceBudget`): every state, edge, consult, relevant
+   reference and state copy, each row kept, and the storage of the states alive and of the table's structure. Each
+   key's part of that structure is counted, reserved and only then built at exactly that size, with no temporary
+   buffer, so a refused reservation leaves nothing of it allocated; 2^62 or more classifications of one table stay
+   refused by the fixed limit.
 3. **Rewrite**: declarations in their elaborated order over the selected signatures. The rewrite never recomposes a
    signature (`SelectedLifting`); `RequireSelectedComposition` checks, by reference and in O(recorded rewrite DAG + dependencies),
    that the body's rows, once rewritten, lifted exactly the callees the selection composed from, each callee's FIRST
