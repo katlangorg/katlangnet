@@ -17,7 +17,8 @@ internal abstract class NeedNode
     private static readonly Lock UnownedDependencyGate = new();
     // The node whose computation the current logical flow is running: the parent of a VALUE
     // demand or of a runtime CALLABLE projection. Written only by EnterComputation and
-    // LeaveComputation.
+    // LeaveComputation, and by the hand-over of a flow whose context does not flow (FlowNode).
+    // An asynchronous computation installs it only where the context flows (EvaluationFlow).
     private protected static readonly AsyncLocal<NeedNode?> Current = new();
     // The run this node belongs to (budget identity is graph identity).
     private protected readonly EvaluationBudget? _budget;
@@ -71,6 +72,15 @@ internal abstract class NeedNode
 
     // Test observation only: whether the current logical flow is running some node's computation.
     internal static bool HasCurrentNode => Current.Value is not null;
+
+    // The flow's current node, for the hand-over to a continuation that starts in an empty context
+    // because the host has suppressed flow (EvaluationFlow.Handover: a stack hop's queued work, a
+    // fold continuation thread). Read where the flow suspends, written where it continues.
+    internal static NeedNode? FlowNode
+    {
+        get => Current.Value;
+        set => Current.Value = value;
+    }
 
     // Installs `node` as the flow's current node for a computation this flow starts, in both
     // families. The node is written to the logical context because a fork captured inside the
@@ -224,6 +234,14 @@ internal abstract class NeedNode
 ///   awaited, and the two gates are never nested.</item>
 ///   <item><b>Cleanup.</b> An edge exists exactly while its observation frame is active. It is removed
 ///   on every exit: success, failure, exception, cancellation or a cycle.</item>
+///   <item><b>The demanding node.</b> Edges, flights and each observation's own parent are explicit.
+///   Only the node a new demand takes as its parent is read from the logical context, where a fork
+///   inherits it and an unrelated flow does not. An asynchronous computation therefore installs its
+///   node only where the context flows: when the host has suppressed
+///   <see cref="ExecutionContext"/> flow it first continues on the thread pool, and a stack hop or a
+///   fold continuation thread hands the node over itself (<see cref="EvaluationFlow"/>). A demand
+///   after a genuine suspension then still finds its own computation active, so a cycle is
+///   <see cref="EvalError.DemandCycle"/> and never a join of the demander's own flight.</item>
 ///   <item><b>Host termination carried by value.</b> Inside an asynchronous twin run's
 ///   host-termination boundary (<see cref="EvaluationBudget.CarriesHostTermination"/>) a host exception
 ///   or cancellation reaches a cell as the run's marker (<see cref="EvalError.HostTermination"/>)
@@ -907,7 +925,8 @@ internal sealed class NeedCell : NeedNode
     private async ValueTask ProjectRuntimeComputationAsync(ProjectionNode node)
     {
         // TWIN-ONLY (intentional difference from the synchronous ProjectRuntime): see StackHop.
-        if (StackHop.HostStackIsLow()) await new StackHop();
+        // The second condition is the flow rule, as in EvaluateAsync.
+        if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
         var previous = Current.Value;
         var outer = EnterComputation(node, out var inner);
         try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
@@ -1101,7 +1120,12 @@ internal sealed class NeedCell : NeedNode
     private async ValueTask EvaluateAsync()
     {
         // TWIN-ONLY (intentional difference from the synchronous Demand): see StackHop.
-        if (StackHop.HostStackIsLow()) await new StackHop();
+        // The second condition is the flow rule (EvaluationFlow): this computation can suspend, and
+        // a method that suspends while the host has suppressed flow captures no context, so its
+        // continuation would not know the node installed below and a demand cycle would join its
+        // own flight. The computation therefore first continues on the thread pool, where the
+        // context flows; the hop hands the caller's node over, so `previous` is unchanged.
+        if (StackHop.HostStackIsLow() || EvaluationFlow.IsSuppressed) await new StackHop();
         var previous = Current.Value;
         var outer = EnterComputation(this, out var inner);
         try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()

@@ -524,7 +524,35 @@ public static partial class Evaluator
     /// </summary>
     private static readonly AsyncLocal<InvocationPreparationFrame?> PreparingInvocations = new();
 
-    private sealed record InvocationPreparationFrame(InvocationPlan Plan, InvocationPreparationFrame? Parent);
+    internal sealed record InvocationPreparationFrame(InvocationPlan Plan, InvocationPreparationFrame? Parent);
+
+    /// <summary>
+    /// The flow's invocation preparation frames, for the hand-over to a continuation that starts in an
+    /// empty context because the host has suppressed flow (<see cref="EvaluationFlow.Handover"/>). Opaque
+    /// to the hand-over: read where the flow suspends, written where it continues.
+    /// </summary>
+    internal static InvocationPreparationFrame? FlowPreparingInvocations
+    {
+        get => PreparingInvocations.Value;
+        set => PreparingInvocations.Value = value;
+    }
+
+    /// <summary>
+    /// THE FLOW RULE of an invocation's preparation frame (<see cref="EvaluationFlow"/>). The frame is
+    /// flow-local state, and a preparation of the asynchronous family can suspend while it forms the supply
+    /// (a spread operand that awaits a host operation). A method that suspends while the host has suppressed
+    /// <see cref="ExecutionContext"/> flow captures no context, so its continuation would not know the frame
+    /// and a re-entrant preparation would wait for itself. Such a preparation therefore first continues on
+    /// the thread pool (one <see cref="StackHop"/>, which hands the enclosing frames over), where the context
+    /// flows. ONE body with a flag: the synchronous family never suspends, so it never hops. A
+    /// VALUE-initiated preparation installs no frame; its owner's computation follows the same rule
+    /// (<see cref="NeedCell"/>). Return the awaiter itself. Wrapping it in an async helper would allow
+    /// the helper to finish before the caller awaits it, leaving preparation on the suppressed thread.
+    /// </summary>
+    internal static StackHop EnterInvocationFrameFlow(bool byInvocation, bool asynchronous)
+        => asynchronous && byInvocation && EvaluationFlow.IsSuppressed
+            ? new StackHop()
+            : StackHop.Skipped;
 
     /// <summary>
     /// META: the stable reference of a supplied call's plan. It runs no target, demands no VALUE,
@@ -1301,6 +1329,7 @@ public static partial class Evaluator
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<object> RunPlanPreparationCounted(InvocationPlan plan, PlanSupplyShape shape, bool byInvocation)
     {
+        EnterInvocationFrameFlow(byInvocation, asynchronous: false).GetAwaiter().GetResult();
         var previous = PreparingInvocations.Value;
         if (byInvocation) PreparingInvocations.Value = new InvocationPreparationFrame(plan, previous);
         try
@@ -1359,6 +1388,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="RunPlanPreparationCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<object>> RunPlanPreparationAsync(InvocationPlan plan, PlanSupplyShape shape, bool byInvocation)
     {
+        await EnterInvocationFrameFlow(byInvocation, asynchronous: true);
         var previous = PreparingInvocations.Value;
         if (byInvocation) PreparingInvocations.Value = new InvocationPreparationFrame(plan, previous);
         try

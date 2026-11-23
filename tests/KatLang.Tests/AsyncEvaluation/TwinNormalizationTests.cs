@@ -84,7 +84,10 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         /// of this class. So is the one synchronous counterpart of the hop: a lazy <c>reduce</c> fold opens its
         /// fresh-stack accounting only on the synchronous run (<c>!asynchronous &amp;&amp;
         /// FoldContinuationStack.Enter()</c>, <c>Evaluator.ReduceFold.Last</c>), where suspended steps stay on the
-        /// host stack instead of the heap.</summary>
+        /// host stack instead of the heap. A second flag-guarded hop has another condition: an invocation's
+        /// preparation frame is installed only where the execution context flows
+        /// (<c>Evaluator.EnterInvocationFrameFlow</c>, called identically by both <c>RunPlanPreparation</c> twins;
+        /// <c>EvaluationFlow</c>).</summary>
         StackHop = 1 << 5,
 
         /// <summary>The twin family mirrors only the COUNTED family (AGENTS.md): where the synchronous side calls the
@@ -341,6 +344,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
     [
         new("Evaluator.InvocationPlan.PrepareSupply", 0, "15f43bca98b410b5", AC, "the plan route"),
         new("Evaluator.InvocationPlan.PrepareSupply", 1, "fe19b0079f3927da", AC, "the plan supply"),
+        new("Evaluator.EnterInvocationFrameFlow", 0, "d04513a7a03f4f62", SH, "the preparation awaits the hop directly when flow is suppressed; the synchronous path skips it"),
         new("Evaluator.EvalMetaLoop", 0, "711e29be2df977ac", AC, "the captured call's sourced initial state"),
         new("Evaluator.FormSpreadSupplySlot", 0, "a3fb71e714ecc550", AC, "the written collector slice"),
         new("Evaluator.FormSpreadSupplySlot", 1, "77f3dfbbf300143d", AC, "the spread operand value"),

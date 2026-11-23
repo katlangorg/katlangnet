@@ -282,6 +282,13 @@ public static partial class Evaluator
     /// fires depends on the host (thread, build, runtime and JIT state, platform), never on
     /// which limits are configured, and is not a language guarantee (see
     /// <see cref="EvaluationLimits.MaxDepth"/>).</para>
+    ///
+    /// <para><b>Suppressed execution-context flow.</b> A caller may start this method inside
+    /// <see cref="ExecutionContext.SuppressFlow"/>. On the async twin path, a supplied computation
+    /// or invocation preparation entered while flow is suppressed continues on the thread pool.
+    /// Its cycle tracking follows it across awaits, so a cyclic demand still reports
+    /// <see cref="EvalError.DemandCycle"/>. Host operations reached there run without the
+    /// caller's ambient state even if their own awaitables complete synchronously.</para>
     /// </summary>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="expr"/> is null, or <paramref name="hostOperations"/> is null — a run

@@ -910,7 +910,8 @@ public static class KatLangEngine
     /// on the calling thread: this method never schedules work onto another thread and
     /// never yields artificially — thread placement and scheduling remain the host's (and
     /// the downloader's awaitable's) responsibility. The one exception is the stack hop of
-    /// the async twin path described next.</para>
+    /// the async twin path described next, which a deep recursion or a caller that has
+    /// suppressed execution-context flow causes.</para>
     ///
     /// <para>A configuration with an asynchronous <see cref="RunOptions.HostOperations"/>
     /// operation evaluates through the async twin path — even when the program never calls
@@ -934,6 +935,14 @@ public static class KatLangEngine
     /// failures, never a process crash. A host that blocks on the returned task from a
     /// single-threaded context relies on the thread pool for a hop; where there are no
     /// worker threads (browser WebAssembly), await the task instead of blocking on it.</para>
+    ///
+    /// <para><b>Suppressed execution-context flow.</b> A caller may start this method inside
+    /// <see cref="ExecutionContext.SuppressFlow"/>. On the async twin path, a supplied computation
+    /// or invocation preparation entered while flow is suppressed continues on the thread pool.
+    /// Its cycle tracking follows it across awaits, so a cyclic demand still reports
+    /// <see cref="KatLangErrorCode.DemandCycle"/>. Host operations reached there run without the
+    /// caller's ambient state (such as culture or tracing context), even if their own awaitables
+    /// complete synchronously.</para>
     /// </summary>
     /// <exception cref="OperationCanceledException">
     /// Same cancellation contract as <see cref="Run(string, RunOptions?)"/>. Compiling a deferred

@@ -38,9 +38,22 @@ namespace KatLang.Evaluation;
 /// nesting is an open owner decision. The hop happens at most once per site
 /// visit, so a fresh stack that is still low falls through to the probe and its structured error.</para>
 ///
+/// <para><b>Suppressed flow.</b> A second condition makes a twin hop, at three sites only: a
+/// <see cref="NeedCell"/>'s asynchronous VALUE or runtime CALLABLE computation and an
+/// invocation-initiated plan preparation hop when the host has suppressed
+/// <see cref="ExecutionContext"/> flow (<see cref="EvaluationFlow.IsSuppressed"/>), because the
+/// flow-local state they install must be installed where the context flows
+/// (<see cref="EvaluationFlow"/>). Thread-pool work runs with flow not suppressed, so it happens at
+/// most once per suppressed stretch of a run, and never under a flowing context. Like every hop it
+/// evaluates and charges nothing.</para>
+///
 /// <para><b>Held state.</b> The awaiting flow keeps its <see cref="ExecutionContext"/>, so every
 /// <see cref="AsyncLocal{T}"/> it reads — the <see cref="NeedCell"/> wait-for graph, the invocation
-/// preparation frames, a deferred region's held gate turn — resumes with it. No hop site is reached
+/// preparation frames, a deferred region's held gate turn — resumes with it. Where the host has
+/// suppressed flow there is no context to keep: the hop then hands the wait-for node and the
+/// preparation frames to its continuation itself (<see cref="EvaluationFlow.CaptureIfSuppressed"/>),
+/// and nothing else, so a held gate turn and the host's own ambient state do not follow, as
+/// suppression asks. No hop site is reached
 /// while thread-affine state is held: a <c>lock</c> cannot span an await, and a non-initiating
 /// <see cref="NeedCell"/> observation (the one <c>[ThreadStatic]</c> scope) is synchronous and refuses
 /// asynchronous starts. Plan-preparation markers, need-cell flights and the loader's materialization
@@ -90,22 +103,52 @@ internal readonly struct StackHop : ICriticalNotifyCompletion
     /// <summary>The awaiter is the hop itself.</summary>
     public StackHop GetAwaiter() => this;
 
-    /// <summary>Never complete: awaiting a hop always suspends.</summary>
-    public bool IsCompleted => false;
+    /// <summary>A skipped hop, for callers that choose whether their own continuation must move.</summary>
+    internal static StackHop Skipped => new() { IsCompleted = true };
+
+    /// <summary>A requested hop always suspends the method awaiting it.</summary>
+    public bool IsCompleted { get; private init; }
 
     /// <summary>Resuming a hop yields nothing and cannot fail.</summary>
     public void GetResult()
     {
     }
 
-    /// <summary>Queues the continuation to the thread pool, flowing the current <see cref="ExecutionContext"/>.</summary>
+    /// <summary>
+    /// Queues the continuation to the thread pool, flowing the current <see cref="ExecutionContext"/>.
+    /// Where the host has suppressed flow there is none to flow, and the continuation receives the
+    /// evaluator's flow-local state instead (<see cref="QueueWithHandover"/>).
+    /// </summary>
     public void OnCompleted(Action continuation)
-        => ThreadPool.QueueUserWorkItem(static run => run(), continuation, preferLocal: false);
+    {
+        if (EvaluationFlow.CaptureIfSuppressed() is { } handover)
+            QueueWithHandover(handover, continuation);
+        else
+            ThreadPool.QueueUserWorkItem(static run => run(), continuation, preferLocal: false);
+    }
 
     /// <summary>
     /// Queues the continuation to the thread pool without capturing the context: the async method
     /// builder's continuation restores the awaiting method's own <see cref="ExecutionContext"/>.
+    /// Where the host has suppressed flow the builder captured none, and the continuation receives
+    /// the evaluator's flow-local state instead (<see cref="QueueWithHandover"/>).
     /// </summary>
     public void UnsafeOnCompleted(Action continuation)
-        => ThreadPool.UnsafeQueueUserWorkItem(static run => run(), continuation, preferLocal: false);
+    {
+        if (EvaluationFlow.CaptureIfSuppressed() is { } handover)
+            QueueWithHandover(handover, continuation);
+        else
+            ThreadPool.UnsafeQueueUserWorkItem(static run => run(), continuation, preferLocal: false);
+    }
+
+    // The hop of a flow whose context does not flow (EvaluationFlow): the work item starts in the
+    // pool's empty context, installs the flow's node and preparation frames there, and then runs
+    // the continuation, so the flow continues with them and with nothing else of the host's. The
+    // pool resets a worker's context after every work item, so nothing leaks to later work.
+    private static void QueueWithHandover(EvaluationFlow.Handover handover, Action continuation)
+        => ThreadPool.UnsafeQueueUserWorkItem(static resumed =>
+        {
+            resumed.handover.Install();
+            resumed.continuation();
+        }, (handover, continuation), preferLocal: false);
 }

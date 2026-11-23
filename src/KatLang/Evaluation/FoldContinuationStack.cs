@@ -34,7 +34,11 @@ namespace KatLang.Evaluation;
 /// limit and no configuration (Q-09b). The logical flow is the demander's: the new thread runs
 /// under the demander's <see cref="ExecutionContext"/>, so every <see cref="AsyncLocal{T}"/> the
 /// evaluator reads (the <see cref="NeedCell"/> wait-for graph, the invocation preparation frames)
-/// continues with it, and what the computation writes there it restores before it ends. An
+/// continues with it, and what the computation writes there it restores before it ends. Where
+/// the host has suppressed flow a new thread inherits no context, so the demander's wait-for node
+/// and preparation frames are handed to it explicitly (<see cref="EvaluationFlow"/>) and nothing
+/// else is: without them a demand cycle reached on the fresh stack would wait for the demanding
+/// thread, which waits for the fresh one. An
 /// exception it throws — a host operation's, or a cancellation — is rethrown on the demanding
 /// thread as the same object with its original stack trace. No evaluator lock is held across the
 /// demand of a cell, and a non-initiating observation never starts a VALUE computation, so no
@@ -157,7 +161,8 @@ internal static class FoldContinuationStack
     internal static EvalResult<Evaluator.CountedResult>? Continue<TState>(
         TState state, Func<TState, EvalResult<Evaluator.CountedResult>> evaluate)
     {
-        var run = new Run<TState>(state, evaluate);
+        // A new thread inherits the starting thread's context only while flow is not suppressed.
+        var run = new Run<TState>(state, evaluate, EvaluationFlow.CaptureIfSuppressed());
         Thread thread;
         try
         {
@@ -174,7 +179,8 @@ internal static class FoldContinuationStack
         return run.Outcome;
     }
 
-    private sealed class Run<TState>(TState state, Func<TState, EvalResult<Evaluator.CountedResult>> evaluate)
+    private sealed class Run<TState>(
+        TState state, Func<TState, EvalResult<Evaluator.CountedResult>> evaluate, EvaluationFlow.Handover? handover)
     {
         internal EvalResult<Evaluator.CountedResult>? Outcome;
         internal ExceptionDispatchInfo? Exception;
@@ -193,6 +199,8 @@ internal static class FoldContinuationStack
             t_allowance = SegmentSize - Headroom;
             try
             {
+                // The demander's node and preparation frames, where its context did not come along.
+                handover?.Install();
                 Outcome = evaluate(state);
             }
             catch (Exception error)
