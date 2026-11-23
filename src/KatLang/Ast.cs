@@ -5028,15 +5028,20 @@ internal static class AlgorithmValidation
     /// that no node of this graph is an alias (<see cref="AstStructuralPreflight.AdmittedProgramFacts.IsAliasFree"/>):
     /// every alias reach would answer <c>false</c>, so the walk builds no alias-reach table and asks none.
     /// Pass <c>true</c> only with that proof for the same graph; <c>false</c> is always safe.
+    /// <paramref name="cancellationToken"/> is the evaluator run's token, observed at every algorithm the walk
+    /// expands; it changes no verdict of a walk it does not cancel.
     /// </summary>
     internal static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(
         Expr expr, FrontEndTraversalObservations? observations, int nodeCountHint = 0,
-        PreEvaluationTables? tables = null, bool graphIsAliasFree = false)
+        PreEvaluationTables? tables = null, bool graphIsAliasFree = false, CancellationToken cancellationToken = default)
     {
         var walker = new PreEvaluationValidationWalker(
             stopAfterFirst: true, checkConditionalBranchArities: true, nodeCountHint, tables, graphIsAliasFree, observations)
         {
             TraversalObservations = observations,
+            // An evaluator run's token: the walker observes it at every algorithm it expands
+            // (FrontEndCancellationCheckpoint.WalkerAlgorithm), as the front-end walkers do.
+            CancellationToken = cancellationToken,
         };
         walker.VisitExpr(expr);
         return walker.Violations.Count > 0 ? walker.Violations[0] : null;
@@ -5383,7 +5388,7 @@ internal static class AlgorithmValidation
                 }
 
                 // Lean: `ParameterPattern.metaViolation?` follows the X-02 rules (CallReference S1).
-                if (ParameterPattern.FindMetaViolation(algorithm.ParameterPatterns) is not null)
+                if (HasInvalidMeta(algorithm.ParameterPatterns))
                 {
                     Violations.Add(new PreEvaluationAstViolation.InvalidMetaParameter());
                     if (stopAfterFirst)
@@ -5439,6 +5444,34 @@ internal static class AlgorithmValidation
         }
 
         private HashSet<Pattern>? _visitedPatterns;
+
+        // A composed signature's head and tail have disjoint binding names, and composition keeps
+        // their pattern levels. A nested or repeated META is therefore invalid in exactly one or
+        // both parts. This gate needs only the verdict. The parser still asks for the declaration.
+        // Memoize only flat immutable tails. Host-supplied pattern lists use the ordinary rule.
+        private Dictionary<ImplicitSignatureTemplate, bool>? _tailMetaViolations;
+
+        private bool HasInvalidMeta(IReadOnlyList<ParameterPattern> patterns)
+        {
+            if (patterns is not ImplicitSignatureTemplate { Tail: { } tail } composed)
+                return ScanMeta(patterns);
+            if (ScanMeta(composed.Head))
+                return true;
+
+            _tailMetaViolations ??= new(ReferenceEqualityComparer.Instance);
+            if (!_tailMetaViolations.TryGetValue(tail, out var invalid))
+            {
+                invalid = ScanMeta(tail);
+                _tailMetaViolations.Add(tail, invalid);
+            }
+            return invalid;
+        }
+
+        private bool ScanMeta(IReadOnlyList<ParameterPattern> patterns)
+        {
+            TraversalObservations?.RecordPreEvaluationMetaPlacementSlots(patterns.Count);
+            return ParameterPattern.FindMetaViolation(patterns) is not null;
+        }
 
         protected override void VisitProperty(Property property)
         {

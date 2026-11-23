@@ -442,6 +442,15 @@ public class MaintainedDocumentationConsistencyTests
             + @"(?<![\w?])evalSequenceReduceStepCounted(?:Async)?(?![\w?])",
             "eager `reduce` (superseded 2026-11-23 by accumulators evaluated on demand: only the steps an accumulator read reaches run)"
         },
+        // Per-owner merge of meeting names (superseded 2026-11-23, finding lifting-signatures-fe3-sharing-breaks-on-meeting-names):
+        // an owner whose own capture or reused enclosing binding names a lifted capture keeps its own order as its head over
+        // the shared tail WITHOUT the colliding names, excluded once per (tail, collision set). No current text says such an
+        // owner materializes or merges its signature per owner, and the per-owner merge and its yes/no forwarding test are gone.
+        {
+            @"(?<!\w)(?:MergeOwnerSignature|TailMeetsForwardable)(?!\w)|\bmerged\s+per\s+owner\b|"
+            + @"\bmaterializ(?:es|ed?)\s+its\s+(?:merged\s+order|signature\s+exactly\s+as\s+before)\b",
+            "per-owner merge of meeting-name signatures (superseded 2026-11-23 by the owner's head over the shared tail without its collisions)"
+        },
     };
 
     [Theory]

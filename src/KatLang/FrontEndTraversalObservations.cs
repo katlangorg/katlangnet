@@ -340,8 +340,9 @@ internal sealed class FrontEndTraversalObservations
     //
     // K owners that each lift the same L-wide callee hold K × L LOGICAL (owner, slot) bindings. These
     // counters measure the PHYSICAL representation built for them: a template is built once per
-    // distinct lifted signature, an owner instance costs its own head, and only an owner whose own
-    // names reorder the lifted ones materializes a signature of its own.
+    // distinct lifted signature, an owner instance costs its own head, owners whose names meet the
+    // lifted ones share the tail without those names once per distinct collision set, and only an
+    // owner left with none of the shared tail stores a flat signature of its own.
 
     /// <summary>
     /// Flat signature TEMPLATES a resolution interned (<c>ImplicitSignatureTemplateInterner.InternFlat</c>):
@@ -377,8 +378,49 @@ internal sealed class FrontEndTraversalObservations
     }
 
     /// <summary>
-    /// Owners whose own parameter names meet their lifted ones, so their signature order is genuinely
-    /// their own and is merged per owner (<c>ImplicitArgumentResolver.LiftSignature</c>).
+    /// Owners whose names MEET their lifted ones — an own capture or a reused enclosing parameter binding names a lifted
+    /// capture — so the shared tail is read without those names (<c>ImplicitArgumentResolver.LiftSignature</c>,
+    /// <c>ImplicitSignatureTemplateInterner.ComposeExcluding</c>). Each is also counted as an
+    /// <see cref="OwnerSignatureInstances"/> or, when nothing of the shared tail is left, an
+    /// <see cref="OwnerSignaturesMaterialized"/>.
+    /// </summary>
+    public long OwnerSignatureCollisions { get; private set; }
+
+    internal void RecordOwnerSignatureCollision()
+        => OwnerSignatureCollisions = checked(OwnerSignatureCollisions + 1);
+
+    /// <summary>
+    /// Shared tail parts built with an owner's real collisions excluded: one per distinct (shared flat part, excluded
+    /// name set), however many owners meet that part with those names. Their templates are counted by
+    /// <see cref="SignatureTemplatesBuilt"/> like every other flat template.
+    /// </summary>
+    public long SignatureCollisionPartsBuilt { get; private set; }
+
+    /// <summary>Distinct excluded names of the parts counted by <see cref="SignatureCollisionPartsBuilt"/>.</summary>
+    public long SignatureCollisionNamesExcluded { get; private set; }
+
+    /// <summary>Capture or binding entries inspected when indexing a signature part for collision and forwarding keys.</summary>
+    public long SignatureNameIndexSlots { get; private set; }
+
+    /// <summary>Top-level pattern slots passed to the evaluator's META placement rule, including host lists.</summary>
+    public long PreEvaluationMetaPlacementSlots { get; private set; }
+
+    internal void RecordPreEvaluationMetaPlacementSlots(int count)
+        => PreEvaluationMetaPlacementSlots = checked(PreEvaluationMetaPlacementSlots + count);
+
+    internal void RecordSignatureNameIndexSlots(int count)
+        => SignatureNameIndexSlots = checked(SignatureNameIndexSlots + count);
+
+    internal void RecordSignatureCollisionPartBuilt(int excludedNames)
+    {
+        SignatureCollisionPartsBuilt = checked(SignatureCollisionPartsBuilt + 1);
+        SignatureCollisionNamesExcluded = checked(SignatureCollisionNamesExcluded + excludedNames);
+    }
+
+    /// <summary>
+    /// Owners whose signature is a flat list of their own: their names meet the lifted ones and EVERY capture of the shared
+    /// tail part is already bound, so what is left — the owner's own patterns and a composed tail's remaining local head — is
+    /// stored without a shared part (<c>ImplicitArgumentResolver.LiftSignature</c>).
     /// </summary>
     public long OwnerSignaturesMaterialized { get; private set; }
 
@@ -1269,8 +1311,9 @@ internal sealed class FrontEndTraversalObservations
 
 /// <summary>
 /// The bounded blocks of elaboration work at whose start the passes observe the source-processing
-/// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>), and the blocks of
-/// semantic-model construction at whose start the builder observes the token of its cancellable entry.
+/// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>), the blocks of
+/// semantic-model construction at whose start the builder observes the token of its cancellable entry,
+/// and the blocks of an evaluator run's structural admission walk, which observes the run's evaluation token.
 /// </summary>
 internal enum FrontEndCancellationCheckpoint
 {
@@ -1313,6 +1356,13 @@ internal enum FrontEndCancellationCheckpoint
     SemanticModelDeferredOpen,
     /// <summary>One lookup level examined to classify a possible deferred reference.</summary>
     SemanticModelDeferredLookup,
+    /// <summary>
+    /// The start of an evaluator run's structural admission walk and every
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges after it, including the start and
+    /// each block of slots replayed to locate a rejection. The walk observes the run's evaluation token, so a run
+    /// over a large or expanded program is cancellable inside its preflight.
+    /// </summary>
+    EvaluatorPreflight,
 }
 
 /// <summary>
@@ -1336,7 +1386,7 @@ internal static class FrontEndPassStage
 
 internal static class FrontEndCancellationCheckpointKinds
 {
-    internal const int Count = (int)FrontEndCancellationCheckpoint.SemanticModelDeferredLookup + 1;
+    internal const int Count = (int)FrontEndCancellationCheckpoint.EvaluatorPreflight + 1;
 }
 
 /// <summary>

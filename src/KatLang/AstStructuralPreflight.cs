@@ -132,8 +132,12 @@ internal enum AstConsumerProfile
 /// assumption that caller-owned collections remain stable during a check, overall time
 /// and storage are <c>O(nodes + edges)</c> and <c>O(nodes)</c>, respectively. The
 /// preflight charges nothing to any <see cref="Evaluation.EvaluationBudget"/>: it runs before
-/// evaluation begins and consumes no steps, materialization, or string budget. It holds
-/// no static state, so concurrent checks are independent.</para>
+/// evaluation begins and consumes no steps, materialization, or string budget. An evaluator
+/// run's admission walk observes the run's cancellation token before its first edge and after
+/// every <see cref="CancellationCheckpointEdges"/> edges, so cancelling a run over a large graph
+/// — such as signatures that stay distinct per owner because their names meet — costs a bounded
+/// block of edges, never the rest of the walk; a walk that is not cancelled decides exactly as
+/// before. It holds no static state, so concurrent checks are independent.</para>
 /// </summary>
 internal static class AstStructuralPreflight
 {
@@ -316,9 +320,19 @@ internal static class AstStructuralPreflight
         out AdmittedProgramFacts facts,
         int nodeCountHint = 0,
         PreEvaluationTables? tables = null,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
         => CheckCore(root, maxDepth, profile, observations, detectCallCapture: true, deferredMemo: null, out facts, out _,
-            nodeCountHint, tables);
+            nodeCountHint, tables, cancellationToken);
+
+    /// <summary>
+    /// How many edges the admission walk follows between two observations of a cancellable run's token
+    /// (<see cref="FrontEndCancellationCheckpoint.EvaluatorPreflight"/>; the walk also observes it before its
+    /// first edge). The walk costs O(nodes + edges) of the admitted graph — shared nodes are visited once —
+    /// so the bound is on the work a cancelled run can still spend here, never on what the walk admits:
+    /// a run that is not cancelled reaches exactly the verdict, the program facts and the table it reached before.
+    /// </summary>
+    internal const int CancellationCheckpointEdges = 1024;
 
     /// <summary>
     /// Completed, context-independent subtree facts for ONE run's deferred-body checks. Only
@@ -435,8 +449,15 @@ internal static class AstStructuralPreflight
         out AdmittedProgramFacts facts,
         out int rootHeight,
         int nodeCountHint = 0,
-        PreEvaluationTables? tables = null)
+        PreEvaluationTables? tables = null,
+        CancellationToken cancellationToken = default)
     {
+        // Only an evaluator run hands in a cancellable token (CheckAdmittedProgram): every other caller's walk observes
+        // nothing and records no checkpoint, exactly as before.
+        var observesCancellation = cancellationToken.CanBeCanceled;
+        if (observesCancellation)
+            FrontEndTraversalObservations.ObserveCancellation(observations, FrontEndCancellationCheckpoint.EvaluatorPreflight, cancellationToken);
+        var edgesBeforeCheckpoint = CancellationCheckpointEdges;
         var mayCaptureCalls = false;
         var mayReachRuntimeAlias = false;
         var hasDeferredRegion = false;
@@ -512,6 +533,9 @@ internal static class AstStructuralPreflight
 
             if (!TryGetChild(frame.Node, frame.NextChildIndex, out var child))
             {
+                // A zero-weight host join spine can unwind arbitrarily many frames without another edge.
+                if (observesCancellation && frameCount % CancellationCheckpointEdges == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
                 // All children processed: this node's weighted height is now exact.
                 var height = frame.MaxChildHeight + frame.NodeWeight;
                 var heightAtParent = frame.IncomingTransitionWeight + height;
@@ -535,6 +559,12 @@ internal static class AstStructuralPreflight
 
             frame.NextChildIndex++;
             observations?.RecordStructuralPreflightEdge();
+            if (observesCancellation && --edgesBeforeCheckpoint == 0)
+            {
+                edgesBeforeCheckpoint = CancellationCheckpointEdges;
+                FrontEndTraversalObservations.ObserveCancellation(observations, FrontEndCancellationCheckpoint.EvaluatorPreflight, cancellationToken);
+            }
+
             var transitionWeight = TransitionWeight(frame.Node, child, profile);
 
             var knownChild = heights.TryGetValue(child, out var childHeight);
@@ -554,16 +584,17 @@ internal static class AstStructuralPreflight
                 // AT it is positioned at the slot the slot-by-slot walk reports.
                 if (deferredMemo is null && (child is OutputBundle or ImplicitSignatureTemplate)
                     && (childHeight == OnStack || pathWeight + transitionWeight + childHeight > maxDepth))
-                    return RejectWithinGroupingNode(child, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount);
+                    return RejectWithinGroupingNode(child, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount,
+                        observations, cancellationToken);
 
                 if (childHeight == OnStack)
-                    return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount));
+                    return new AstStructuralRejection(AstStructuralViolation.CycleDetected, SpanOf(child, frames, frameCount, cancellationToken));
 
                 // Completed shared node: the deepest path through THIS occurrence is the
                 // current weighted path plus the memoized weighted height — judged
                 // without re-walking the shared subtree.
                 if (pathWeight + transitionWeight + childHeight > maxDepth)
-                    return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount));
+                    return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount, cancellationToken));
 
                 var childHeightAtParent = transitionWeight + childHeight;
                 if (childHeightAtParent > frame.MaxChildHeight)
@@ -575,7 +606,7 @@ internal static class AstStructuralPreflight
 
             var childWeight = NodeWeight(child, profile);
             if (pathWeight + transitionWeight + childWeight > maxDepth)
-                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount));
+                return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount, cancellationToken));
 
             heights[child] = OnStack;
             if (detectCallCapture)
@@ -677,13 +708,18 @@ internal static class AstStructuralPreflight
         int pathWeight,
         int maxDepth,
         Frame[] frames,
-        int frameCount)
+        int frameCount,
+        FrontEndTraversalObservations? observations,
+        CancellationToken cancellationToken)
     {
         // A grouping node (an argument bundle, a shared signature template) is weightless, so its
         // children are judged from the same path weight; a nested grouping child (a composed
         // signature's shared tail) replays its own children in order.
         for (var index = 0; TryGetChild(groupingNode, index, out var slot); index++)
         {
+            if (cancellationToken.CanBeCanceled && index % CancellationCheckpointEdges == 0)
+                FrontEndTraversalObservations.ObserveCancellation(observations,
+                    FrontEndCancellationCheckpoint.EvaluatorPreflight, cancellationToken);
             var slotHeight = heights[slot];
             var onPath = slotHeight == OnStackHeight;
             if (!onPath && pathWeight + slotHeight <= maxDepth)
@@ -691,10 +727,10 @@ internal static class AstStructuralPreflight
 
             // The first offending child; a nested grouping node holds the offending slot itself.
             if (slot is OutputBundle or ImplicitSignatureTemplate)
-                return RejectWithinGroupingNode(slot, heights, pathWeight, maxDepth, frames, frameCount);
+                return RejectWithinGroupingNode(slot, heights, pathWeight, maxDepth, frames, frameCount, observations, cancellationToken);
             return new AstStructuralRejection(
                 onPath ? AstStructuralViolation.CycleDetected : AstStructuralViolation.DepthExceeded,
-                SpanOf(slot, frames, frameCount));
+                SpanOf(slot, frames, frameCount, cancellationToken));
         }
 
         throw new InvalidOperationException(
@@ -919,13 +955,15 @@ internal static class AstStructuralPreflight
     /// nearest positioned ancestor is the load site or an expression of the current
     /// document that reaches it, never a foreign coordinate.
     /// </summary>
-    private static SourceSpan? SpanOf(object node, Frame[] frames, int frameCount)
+    private static SourceSpan? SpanOf(object node, Frame[] frames, int frameCount, CancellationToken cancellationToken)
     {
         if (SpanOf(node) is { } own)
             return own;
 
         for (var index = frameCount - 1; index >= 0; index--)
         {
+            if (cancellationToken.CanBeCanceled && index % CancellationCheckpointEdges == 0)
+                cancellationToken.ThrowIfCancellationRequested();
             if (SpanOf(frames[index].Node) is { } enclosing)
                 return enclosing;
         }

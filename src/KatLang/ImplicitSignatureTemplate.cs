@@ -401,6 +401,9 @@ internal sealed class ImplicitSignatureTemplateInterner(
     private readonly Dictionary<ContentKey, ImplicitSignatureTemplate> _flat = new();
     private readonly Dictionary<ContentKey, ImplicitSignatureTemplate?> _liftedTails = new();
     private readonly Dictionary<ParameterPattern, ParameterPattern> _groups = new(ReferenceEqualityComparer.Instance);
+    // The shared flat parts with an owner's real collisions excluded (ComposeExcluding), by the part's REFERENCE and the
+    // canonical set of the excluded names: the only owner input the exclusion reads.
+    private readonly Dictionary<(ImplicitSignatureTemplate Part, int Excluded), ImplicitSignatureTemplate?> _excluding = new();
 
     // Public host patterns retain caller-owned lists. Freeze nested membership once per
     // resolution before a shared template can cache facts about it; the structural kind is
@@ -455,6 +458,63 @@ internal sealed class ImplicitSignatureTemplateInterner(
         if (head.Length != 0)
             Charge(head.Length + (tail.IsComposed ? tail.Head.Count : 0), work: 1);
         return ImplicitSignatureTemplate.Compose(head, tail);
+    }
+
+    /// <summary>
+    /// FE-3 for an owner whose names MEET the lifted ones: <paramref name="head"/> (the owner's own patterns, frozen) followed
+    /// by <paramref name="tail"/> without the names in <paramref name="sharedExcluded"/> and
+    /// <paramref name="localExcluded"/>, the collisions in its shared part and its local head respectively:
+    /// tail names the owner already binds — its own captures, whose order stays its own, and the enclosing parameter
+    /// bindings its forwarding reuses (Q-04). The result is the order the owner's own merge gives (its patterns, then each
+    /// lifted capture no earlier binding binds): the tail already holds the first occurrence of every lifted name, so
+    /// removing the names the owner binds leaves exactly the captures that merge keeps, in the same structural shapes
+    /// (<paramref name="exclude"/> is the merge's own filter).
+    ///
+    /// <para><b>Only the collisions are per owner.</b> The tail's shared flat part (the tail itself when flat) loses its
+    /// excluded captures ONCE per (part, excluded names) and is interned, so every owner with the same collisions over one
+    /// L-wide tail shares one part, and K such owners cost O(K + L) like owners whose names miss the tail. A composed tail's
+    /// local head is filtered into the owner's head, which every extension copies anyway (<see cref="Compose"/>). The key holds
+    /// the collisions and the part, never the owner, so different collisions keep different parts and each owner's head keeps
+    /// its own capture records.</para>
+    ///
+    /// <para>Null when nothing is left to lift. <paramref name="perOwner"/> is true when the whole shared part was excluded,
+    /// so the result is a flat list of the owner's own patterns and the composed tail's remaining local head.</para>
+    /// </summary>
+    public ImplicitSignatureTemplate? ComposeExcluding(
+        ParameterPattern[] head,
+        ImplicitSignatureTemplate tail,
+        CanonicalNameSet sharedExcluded,
+        CanonicalNameSet localExcluded,
+        Func<IReadOnlyList<ParameterPattern>, IEnumerable<string>, IReadOnlyList<ParameterPattern>> exclude,
+        out bool perOwner)
+    {
+        var shared = tail.Tail ?? tail;
+        IReadOnlyList<ParameterPattern> local = !tail.IsComposed ? []
+            : localExcluded.Count == 0 ? tail.Head
+            : exclude(tail.Head, localExcluded.Names);
+        var remaining = sharedExcluded.Count == 0 ? shared : ExcludedPart(shared, sharedExcluded, exclude);
+        perOwner = remaining is null;
+        if (remaining is null)
+            return local.Count == 0 ? null : InternFlat([.. head, .. local]);
+        return Compose(local.Count == 0 ? head : [.. head, .. local.Select(Freeze)], remaining);
+    }
+
+    /// <summary>The flat <paramref name="part"/> without the captures <paramref name="names"/> names, interned per (part, names); null when none is left.</summary>
+    private ImplicitSignatureTemplate? ExcludedPart(
+        ImplicitSignatureTemplate part,
+        CanonicalNameSet names,
+        Func<IReadOnlyList<ParameterPattern>, IEnumerable<string>, IReadOnlyList<ParameterPattern>> exclude)
+    {
+        var key = (part, names.Id);
+        if (!_excluding.TryGetValue(key, out var remaining))
+        {
+            var kept = exclude(part, names.Names);
+            remaining = kept.Count == 0 ? null : InternFlat(kept);
+            _excluding.Add(key, remaining);
+            observations?.RecordSignatureCollisionPartBuilt(names.Count);
+        }
+
+        return remaining;
     }
 
     private void Charge(int patterns, long work)

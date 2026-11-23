@@ -570,6 +570,14 @@ internal static class PropertyDependencyGraphBuilder
         /// so the result is the one folding would produce, while K owners that each absorbed one
         /// shared L-name argument-bundle seed no longer each copy, qualify, and strip its L names.
         /// The verdict per (part, owned set) is memoized on <paramref name="memo"/>.
+        ///
+        /// <para>A part of required names that <paramref name="owned"/> covers only IN PART — an
+        /// owner whose names meet the shared bundle's, such as a forwarding owner that reuses an
+        /// enclosing binding of one of them (Q-04) — contributes exactly the names outside the set to
+        /// the result, so it is replaced by those names (its RESIDUAL, read once per (part, owned set),
+        /// <see cref="SummaryMemo.PartlyOwnedResidual"/>): the owner's summary then carries its real
+        /// collisions as names, qualified at the levels that own them like any name, instead of
+        /// folding, qualifying and stripping the bundle's whole width once per owner.</para>
         /// </summary>
         internal void DropOwnedAbsorbedParts(IReadOnlySet<string> owned, SummaryMemo memo)
         {
@@ -583,6 +591,15 @@ internal static class PropertyDependencyGraphBuilder
                 if (memo.IsOwnedPureRequirement(part, owned))
                 {
                     kept ??= absorbed.GetRange(0, i);
+                    continue;
+                }
+
+                if (memo.PartlyOwnedResidual(part, owned) is { } residual)
+                {
+                    kept ??= absorbed.GetRange(0, i);
+                    var required = _requiredAncestorOwnedParameterNames ??= CreateNameSet();
+                    foreach (var name in residual)
+                        required.Add(name);
                     continue;
                 }
 
@@ -1410,6 +1427,34 @@ internal static class PropertyDependencyGraphBuilder
             }
 
             return pure;
+        }
+
+        /// <summary>
+        /// FE-3: when a COMPLETED part carries only required names and an owner's TEMPLATE name set covers it only in part,
+        /// the names the set leaves uncovered — the owner's real collisions with the part, which survive the owner's strip —
+        /// in walk order; null otherwise (anything but required names, every name covered, or a name set that is not a shared
+        /// signature template's). A flat template's answer is read once per (part, template set) for every owner of the
+        /// template; a composed one's is its shared tail's residual, tested against the owner's head, like
+        /// <see cref="IsOwnedPureRequirement"/>. An owner whose set is its own keeps folding the part, so nothing per owner
+        /// is retained here.
+        /// </summary>
+        internal string[]? PartlyOwnedResidual(SummarySeed part, IReadOnlySet<string> owned)
+        {
+            if (owned is not ImplicitSignatureTemplate.NameSetView template)
+                return null;
+            if (template.Tail is not { } tail)
+                return ResidualOf(part, owned) is { Length: > 0 } residual ? residual : null;
+            if (ResidualOf(part, tail) is not { } tailResidual)
+                return null;
+            List<string>? outside = null;
+            foreach (var name in tailResidual)
+            {
+                observations?.RecordSummaryResidualNameProbe();
+                if (!owned.Contains(name))
+                    (outside ??= []).Add(name);
+            }
+
+            return outside is null ? null : [.. outside];
         }
 
         private Dictionary<(SummarySeed Part, IReadOnlySet<string> Owned), string[]?>? _residuals;

@@ -7,7 +7,7 @@ namespace KatLang;
 /// set, <see cref="DeferredModuleRegion.RequiresAsyncEvaluationCounting"/>), the structural preflight (a
 /// node-to-height table, <see cref="AstStructuralPreflight.CheckAdmittedProgram"/>) and the
 /// pre-evaluation validation walk (a visited set, and an alias-reach table when the graph holds an alias;
-/// <see cref="AlgorithmValidation.FindFirstPreEvaluationViolation(Expr, FrontEndTraversalObservations?, int, PreEvaluationTables?, bool)"/>).
+/// <see cref="AlgorithmValidation.FindFirstPreEvaluationViolation(Expr, FrontEndTraversalObservations?, int, PreEvaluationTables?, bool, CancellationToken)"/>).
 /// A pass that has finished with its table hands it over here, and a later pass that needs a table of
 /// the same shape takes it instead of allocating its own. Implementation-only: an allocation saving.
 ///

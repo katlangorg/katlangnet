@@ -437,7 +437,9 @@ public class ImplicitSignatureTemplateTests
 
     /// <summary>
     /// An owner whose own name is also lifted keeps its own order — its capture first, the lifted one
-    /// filtered — so its signature is genuinely its own (materialized for that owner, never shared).
+    /// filtered — so its order is genuinely its own; only that collision is per owner: its own head is
+    /// composed over the tail without the colliding name, one excluded part per distinct collision
+    /// (<c>Fe3MeetingNameSharingTests</c>), and no owner materializes a flat signature of its own.
     /// </summary>
     [Fact]
     public void OwnNameAlsoLifted_KeepsTheOwnersOwnOrder()
@@ -448,7 +450,9 @@ public class ImplicitSignatureTemplateTests
         var (detected, _) = detectedInput;
         var observations = new FrontEndTraversalObservations();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations);
-        Assert.Equal(2, observations.OwnerSignaturesMaterialized);
+        Assert.Equal(0, observations.OwnerSignaturesMaterialized);
+        Assert.Equal(2, observations.OwnerSignatureCollisions);
+        Assert.Equal(2, observations.SignatureCollisionPartsBuilt);
         Assert.Equal(["a", "b"], Assert.Single(resolved.Properties, p => p.Name == "A").Value.Params);
         Assert.Equal(["b", "a"], Assert.Single(resolved.Properties, p => p.Name == "B").Value.Params);
         Assert.Equal("4\n21", KatLangEngine.Run(source).ToDisplayString().ReplaceLineEndings("\n"));

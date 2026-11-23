@@ -19,7 +19,7 @@ What it reuses from the authoritative model, by name and not by copy: `Parameter
 | Native piece | Model | Note |
 | --- | --- | --- |
 | `SignatureAnalysis.Body` + `SignatureEquationReference` | `Equation`, `Reference` | INPUT: raw analysis output, not modeled |
-| `Compose` closure of `SelectSignatures`, `LiftSignature`, `MergeOwnerSignature`, `MissingCapturePattern` | `composeFact`, `missing*` | The ONE composition law, concrete |
+| `Compose` closure of `SelectSignatures`, `LiftSignature` (`MergeLiftedTail`, and `ImplicitSignatureTemplateInterner.ComposeExcluding` over `ExcludeCaptures` when the owner's names meet the tail), `MissingCapturePattern` | `composeFact`, `missing*` | The ONE composition law, concrete; native shares the tail and excludes the owner's names from it, the same result |
 | `ParameterPattern.KeepFirstCollectingCapturePerLevel` | `recoverLevel` | X-02 recovery |
 | `SignatureSelector.Lifted` | `liftedWith` | Guard, then zero-supply skip, then identity dedupe |
 | `SignatureSelector.ClassificationSearch.Run`, `Settle` | `evalVector`, `evalComponent` | Layers of components instead of Tarjan's order; native runs read PARTIAL vectors (an optimization, ledger S-9) |

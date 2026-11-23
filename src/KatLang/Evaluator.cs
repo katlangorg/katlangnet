@@ -3449,7 +3449,10 @@ public static partial class Evaluator
     /// (<see cref="AstStructuralPreflight.MayCaptureCalls"/>), its runtime-alias reach
     /// (<see cref="AstStructuralPreflight.MayReachRuntimeAlias"/>) and whether the graph is alias-free
     /// (<see cref="AstStructuralPreflight.AdmittedProgramFacts.IsAliasFree"/>). An accepted walk hands its
-    /// table over to <paramref name="tables"/> for the validation walk.
+    /// table over to <paramref name="tables"/> for the validation walk. The walk observes the run's
+    /// <paramref name="cancellationToken"/> before its first edge and in blocks of
+    /// <see cref="AstStructuralPreflight.CancellationCheckpointEdges"/> edges, so a run over a large program is
+    /// cancellable inside its preflight; its verdict and facts are unchanged.
     /// </summary>
     private static EvalError? StructuralPreflight(
         Expr expr,
@@ -3457,11 +3460,13 @@ public static partial class Evaluator
         int nodeCountHint,
         PreEvaluationTables tables,
         FrontEndTraversalObservations? observations,
-        out AstStructuralPreflight.AdmittedProgramFacts facts)
+        out AstStructuralPreflight.AdmittedProgramFacts facts,
+        CancellationToken cancellationToken)
     {
         var effectiveLimit = (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth;
         return AstStructuralPreflight.CheckAdmittedProgram(
-                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out facts, nodeCountHint, tables, observations)
+                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out facts, nodeCountHint, tables, observations,
+                cancellationToken)
                 is { } rejection
             ? AstStructuralPreflight.ToEvalError(rejection, effectiveLimit)
             : null;
@@ -3554,13 +3559,14 @@ public static partial class Evaluator
         int nodeCountHint,
         bool graphIsAliasFree,
         PreEvaluationTables tables,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        CancellationToken cancellationToken)
     {
         PreEvaluationAstViolation? violation;
         try
         {
             violation = AlgorithmValidation.FindFirstPreEvaluationViolation(
-                expr, observations, nodeCountHint, tables, graphIsAliasFree);
+                expr, observations, nodeCountHint, tables, graphIsAliasFree, cancellationToken);
         }
         catch (FrontEndStackExhaustedException)
         {
@@ -3734,13 +3740,15 @@ public static partial class Evaluator
         // whether the graph is alias-free, which spares the validation walk an alias-reach table that
         // could only answer `false`.
         var admissionObservations = observations?.PreEvaluationTraversal;
-        if (StructuralPreflight(expr, limits, nodeCountHint, tables, admissionObservations, out var programFacts) is { } structuralError)
+        if (StructuralPreflight(expr, limits, nodeCountHint, tables, admissionObservations, out var programFacts, cancellationToken)
+            is { } structuralError)
         {
             budget.ObserveCancellation();
             return PreparedRun.Rejected(structuralError, budget);
         }
 
-        if (PreEvaluationValidationError(expr, programFacts.NodeCount, programFacts.IsAliasFree, tables, admissionObservations)
+        if (PreEvaluationValidationError(expr, programFacts.NodeCount, programFacts.IsAliasFree, tables, admissionObservations,
+                cancellationToken)
             is { } validationError)
         {
             budget.ObserveCancellation();
