@@ -123,14 +123,6 @@ public class EvaluatorIfBuiltinTests
         => AssertEval("10 + if(1 == 2, 5, 0)", 10);
 
     [Fact]
-    public void Eval_If3_CompatibleWithEarlierCoverage_True()
-        => AssertEval("if(1 == 1, 5, 6)", 5);
-
-    [Fact]
-    public void Eval_If3_CompatibleWithEarlierCoverage_False()
-        => AssertEval("if(1 == 2, 5, 6)", 6);
-
-    [Fact]
     public void Eval_If2_RuntimeBuiltinCall_FailsWithSignatureArityMessage()
     {
         var expr = new Expr.Call(

@@ -594,10 +594,6 @@ public class MetamorphicFuzzHarnessTests
     // ── Replay ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Replay_RunsEveryCuratedSeedCleanly()
-        => Assert.Equal(0, MetamorphicReplay.RunReplay(["metamorphic-replay", SeedDirectory]));
-
-    [Fact]
     public void Replay_IsDeterministicWhenRepeated()
     {
         Assert.Equal(0, MetamorphicReplay.RunReplay(["metamorphic-replay", SeedDirectory]));

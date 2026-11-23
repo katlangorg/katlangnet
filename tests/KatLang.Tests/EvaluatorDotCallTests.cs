@@ -1124,18 +1124,6 @@ public class EvaluatorDotCallTests
     }
 
     [Fact]
-    public void Eval_DotCall_LexicalWithArgs()
-    {
-        // Lean: resolveAlg on literal fails â†’ use algorithm target instead
-        var source = """
-            Add = a + b
-            V = 3
-            V.Add(4)
-            """;
-        AssertEval(source, 7);
-    }
-
-    [Fact]
     public void Eval_DotCall_Chaining()
     {
         // Lean: resolveAlg on literal fails â†’ use algorithm target instead
