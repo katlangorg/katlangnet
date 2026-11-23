@@ -3809,7 +3809,11 @@ internal static partial class ImplicitArgumentResolver
                 continue;
             }
             memos.Observations?.RecordDiagnosticReport(DiagnosticCode.UnforwardableParameter);
-            var wording = new UnforwardableParameterWording(calleeDisplayName, ExprNameRenderer.BoundName(parameter.DisplayName),
+            // The parameter's written form is shown bounded, so only the prefix the bound reads is written: a wide or deep
+            // structural pattern costs that prefix, never its whole text.
+            var shownParameter = ExprNameRenderer.BoundDisplayName(parameter, out var displayNodes);
+            memos.Observations?.RecordUnforwardableParameterDisplayNodes(displayNodes);
+            var wording = new UnforwardableParameterWording(calleeDisplayName, shownParameter,
                 IsBoundInAnotherForm(parameter, sources.BoundNames, enclosing, memos.Observations), memos.Observations);
             diagnostics.Report(DiagnosticCode.UnforwardableParameter, span, (Wording: wording, Family: branchName),
                 static state => state.Wording.Format(state.Family));

@@ -20,6 +20,9 @@ namespace KatLang.Tests;
 /// <item>NO PAYLOAD PAST THE LIMIT — a producer whose message grows with the source (bare forwarding's
 /// per-parameter reports, a marker refused on an alias or a module holder) makes and counts every
 /// report but builds a message, and reads what only a message needs, for a stored report alone.</item>
+/// <item>NO TEXT PAST THE RETAINED PREFIX — a stored report whose text grows with the source (a marked-wrapper
+/// suggestion, a structural parameter's written form) is built only to the prefix its bound reads, and stores exactly
+/// the whole message's text.</item>
 /// </list>
 /// Boundaries use small configured limits so every assertion is exact; nothing here measures
 /// elapsed time.
@@ -1393,5 +1396,472 @@ public class DiagnosticBudgetTests
             Assert.Equal(holders, bounded.ReportedCount);
             Assert.Equal(Math.Min(holders, limit), observations.ModuleHolderMarkerMessages);
         }
+    }
+
+    // ── H. Stored payloads built to the retained prefix ─────────────────────
+    //
+    // A STORED report whose text grows with the source is built only as far as its bound reads. A list decides what it
+    // stores of a message from the message's first DiagnosticBag.RetainedPrefixLength (4,097) units — whether to cut it,
+    // and where the surrogate-safe cut falls — and a name echoed bounded is decided by its first 513 units. So the
+    // marked-wrapper suggestion of OutputSpreadMarkerOnAlias is built to the list's prefix, and the written form of a
+    // parameter that UnforwardableParameter and ExplicitParametersRequireOutput show to the name's: the stored text — its
+    // cut, marker and line layout — is the whole message's, while the work and the text built stop at the prefix. The
+    // oracles below rebuild each whole message as the former formatters built it; the counters show what was read, and
+    // the allocation control fails if a whole text is built again.
+
+    // A whole message as a list keeps it, cut independently of the bag: whole up to the bound, else its first 4,096 units
+    // — one fewer when they would end inside a surrogate pair — and the marker.
+    private static string RetainedText(string whole)
+    {
+        const int bound = DiagnosticBag.MaxRetainedMessageLength;
+        if (whole.Length <= bound)
+            return whole;
+        var cut = char.IsHighSurrogate(whole[bound - 1]) && char.IsLowSurrogate(whole[bound]) ? bound - 1 : bound;
+        return whole[..cut] + ExprNameRenderer.TruncationMarker;
+    }
+
+    // A name as a diagnostic echoes it bounded, cut independently of the renderer the same way at 512 units.
+    private static string ShownName(string whole)
+    {
+        const int bound = ExprNameRenderer.MaxRenderedNameLength;
+        if (whole.Length <= bound)
+            return whole;
+        var cut = char.IsHighSurrogate(whole[bound - 1]) && char.IsLowSurrogate(whole[bound]) ? bound - 1 : bound;
+        return whole[..cut] + ExprNameRenderer.TruncationMarker;
+    }
+
+    // What a list stores for a whole message with one line break after its first line.
+    private static Diagnostic StoredForm(string whole, int lineBreak, DiagnosticCode code, SourceSpan? span)
+        => new Diagnostic(new DiagnosticMessage(whole, [lineBreak]), DiagnosticSeverity.Error, span) { Code = code }
+            .WithBoundedMessage(DiagnosticBag.MaxRetainedMessageLength);
+
+    /// <summary>
+    /// The OutputSpreadMarkerOnAlias message about a transparent alias, as the former formatter built it WHOLE — the
+    /// explanation, the line break, and the repair, whose wrapper lists every parameter of the target twice — with its
+    /// first line and where each parameter's text starts in it (its first writing, in the wrapper's parameter list).
+    /// </summary>
+    private static (string First, string Text, IReadOnlyList<int> ParameterStarts) WholeAliasMarkerMessage(
+        string alias, string target, IReadOnlyList<ParameterPattern> parameters)
+    {
+        var name = ExprNameRenderer.BoundName(alias);
+        var shownTarget = ExprNameRenderer.BoundName(target);
+        var first = $"'{name}' is an alias of '{shownTarget}', so it cannot carry the output-spreading marker `*`: "
+            + $"calls through an alias are calls of '{shownTarget}', and they spread exactly when it is marked.";
+        var repair = $"To spread the output of calls to '{name}' itself, declare a marked wrapper: `";
+        var starts = new List<int>();
+        string suggestion;
+        if (parameters.Any(static parameter => parameter is not CaptureParameterPattern))
+            suggestion = $"{name}(…)* = {shownTarget}(…)";
+        else if (parameters.Count == 0)
+            suggestion = $"{name}* = {shownTarget}()";
+        else
+        {
+            var captures = parameters.Cast<CaptureParameterPattern>().ToList();
+            var listed = captures.Select(static c => (c.Kind == ParameterKind.Collecting ? "*" : "") + ExprNameRenderer.BoundName(c.Name)).ToList();
+            var forwarded = captures.Select(static c => ExprNameRenderer.BoundName(c.Name) + (c.Kind == ParameterKind.Collecting ? "*" : "")).ToList();
+            var start = first.Length + Environment.NewLine.Length + repair.Length + name.Length + 1;
+            foreach (var item in listed)
+            {
+                starts.Add(start);
+                start += item.Length + 2;
+            }
+
+            suggestion = $"{name}({string.Join(", ", listed)})* = {shownTarget}({string.Join(", ", forwarded)})";
+        }
+
+        return (first, first + Environment.NewLine + repair + suggestion + "`.", starts);
+    }
+
+    private static int ShownParameters(IReadOnlyList<int> starts) => starts.Count(static start => start < DiagnosticBag.RetainedPrefixLength);
+
+    /// <summary>
+    /// A parsed program whose declaration <paramref name="name"/> a host gave other parameter patterns — the lexer admits
+    /// no surrogate in a name, so only a host tree carries one — detected and resolved into a list of the given capacity.
+    /// </summary>
+    private static (DiagnosticBag Diagnostics, FrontEndTraversalObservations Observations) ResolveHostBuilt(
+        string source, string name, IReadOnlyList<ParameterPattern> parameters, int limit = Limit)
+    {
+        var parsed = Parser.ParseSyntax(source);
+        Assert.False(parsed.HasErrors);
+        var root = parsed.SyntaxRoot;
+        var host = root with
+        {
+            Properties = [.. root.Properties.Select(property => property.Name == name
+                ? property with { Value = Assert.IsType<Algorithm.User>(property.Value) with { ParameterPatterns = parameters } }
+                : property)],
+        };
+        var diagnostics = new DiagnosticBag(limit);
+        var program = ParameterDetector.DetectPrevalidated(host, diagnostics: diagnostics);
+        var observations = new FrontEndTraversalObservations();
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(program, observations, diagnostics);
+        return (diagnostics, observations);
+    }
+
+    [Fact]
+    public void RetainedPrefix_OfAMessage_IsStoredExactlyAsTheWholeMessage()
+    {
+        // The law the builders rely on, at the bag: a message's first RetainedPrefixLength units, kept by a RAW cut however
+        // the message was split into fragments, store exactly what the whole message stores — at every length around the
+        // bound, with a surrogate pair before, across and after the cut and across the prefix's end, and with lone halves.
+        const int bound = DiagnosticBag.MaxRetainedMessageLength;
+        Assert.Equal(bound + 1, DiagnosticBag.RetainedPrefixLength);
+        const string pair = "😀";
+        const string first = "The first line.";
+        var head = first + Environment.NewLine;
+        string Filler(int until) => head + new string('m', until - head.Length);
+        var messages = new List<string>();
+        foreach (var length in new[] { bound - 1, bound, bound + 1, bound + 2, bound + 3, 2 * bound })
+            messages.Add(Filler(length));
+        foreach (var start in new[] { bound - 2, bound - 1, bound, bound + 1 })
+            messages.Add(Filler(start) + pair + "tail");
+        messages.Add(Filler(bound - 1) + "\uD83D" + "tail");
+        messages.Add(Filler(bound) + "\uDE00" + "tail");
+        messages.Add(Filler(bound) + "\uD83D");
+
+        foreach (var whole in messages)
+        {
+            var expected = StoreWhole(whole);
+            Assert.Equal(RetainedText(whole), expected.Message);
+
+            // One fragment, two around every unit near the cut and the prefix's end, and one-unit fragments.
+            var splits = new List<string[]> { new[] { whole } };
+            for (var at = bound - 3; at <= bound + 3 && at < whole.Length; at++)
+                splits.Add([whole[..at], whole[at..]]);
+            splits.Add([.. whole.Select(static unit => unit.ToString())]);
+            foreach (var fragments in splits)
+            {
+                var prefix = new Rendering.TextPrefixBuilder(DiagnosticBag.RetainedPrefixLength);
+                foreach (var fragment in fragments)
+                {
+                    if (!prefix.Append(fragment))
+                        break;
+                }
+
+                Assert.Equal(whole[..Math.Min(whole.Length, DiagnosticBag.RetainedPrefixLength)], prefix.ToString());
+                Assert.Equal(Stored(expected), Stored(StoreWhole(prefix.ToString())));
+            }
+        }
+
+        // Why the cut is raw: a surrogate-safe cut at the prefix's end keeps `bound` units of a longer message, which the
+        // list would then store whole, without its marker.
+        var acrossTheEnd = new string('m', bound) + pair + "tail";
+        var safe = acrossTheEnd[..ExprNameRenderer.SafePrefixLength(acrossTheEnd, DiagnosticBag.RetainedPrefixLength)];
+        Assert.Equal(bound, safe.Length);
+        Assert.Equal(acrossTheEnd[..bound] + ExprNameRenderer.TruncationMarker, StoreWhole(acrossTheEnd).Message);
+        Assert.Equal(safe, StoreWhole(safe).Message);
+
+        static Diagnostic StoreWhole(string message)
+        {
+            var bag = new DiagnosticBag(1);
+            bag.Report(DiagnosticCode.UnexpectedToken, new SourceSpan(1, 1, 1, 2), message,
+                static text => new DiagnosticMessage(text, [first.Length]));
+            return Assert.Single(bag);
+        }
+    }
+
+    [Fact]
+    public void MarkedWrapperSuggestion_StoresTheWholeMessagesText_AcrossTheRetentionBound()
+    {
+        // T's last parameter grows unit by unit, so the whole message, whose repair lists T's parameters twice, passes the
+        // 4,096-unit bound in steps of two units, and a one- or two-letter alias (its name is written three times) gives
+        // both parities. Each stored message is the whole one's, cut by the list, and its wrapper read only the parameters
+        // that begin inside the 4,097-unit prefix the list reads.
+        const int bound = DiagnosticBag.MaxRetainedMessageLength;
+        var lengths = new HashSet<int>();
+        foreach (var alias in new[] { "B", "BB" })
+        {
+            for (var tail = 1; tail <= 400; tail++)
+            {
+                var names = Enumerable.Range(0, 300).Select(static i => $"p{i}").Append("z" + new string('t', tail - 1)).ToList();
+                var (first, whole, starts) = WholeAliasMarkerMessage(alias, "T", [.. names.Select(static n => (ParameterPattern)new CaptureParameterPattern(n))]);
+                if (whole.Length is < bound - 4 or > bound + 4)
+                    continue;
+
+                lengths.Add(whole.Length);
+                var (diagnostics, observations) = Elaborate($"T({string.Join(", ", names)}) = 0\n{alias}* = T\n1");
+                var stored = Assert.Single(diagnostics);
+                var span = new SourceSpan(2, alias.Length + 1, 2, alias.Length + 2);
+                Assert.Equal(Stored(StoredForm(whole, first.Length, DiagnosticCode.OutputSpreadMarkerOnAlias, span)), Stored(stored));
+                Assert.Equal(RetainedText(whole), stored.Message);
+                Assert.Equal((1, ShownParameters(starts)), (observations.OutputSpreadMarkerOnAliasMessages,
+                    observations.OutputSpreadMarkerWrapperParameterReads));
+            }
+        }
+
+        Assert.Superset(new HashSet<int> { bound - 1, bound, bound + 1, bound + 2 }, lengths);
+    }
+
+    public static TheoryData<string, string, int> OrdinaryWrapperForms => new()
+    {
+        // Plain parameters, a collector forwarded as `ys*`, a meta parameter (listed by its name), a target with none, and a
+        // structural parameter anywhere, which makes the suggestion generic.
+        { "A(x, y)* = x, y\nB* = A\nB(1, 2)", "B(x, y)* = A(x, y)", 2 },
+        { "A(x, *ys)* = x, ys*\nB* = A\nB(1)", "B(x, *ys)* = A(x, ys*)", 2 },
+        { "A(meta f) = f\nB* = A\n1", "B(f)* = A(f)", 1 },
+        { "P* = 1\nB* = P\nB()", "B* = P()", 0 },
+        { "A(x, [y], z) = x\nB* = A\n1", "B(…)* = A(…)", 0 },
+        { "A((y, z)) = y\nB* = A\n1", "B(…)* = A(…)", 0 },
+    };
+
+    [Theory]
+    [MemberData(nameof(OrdinaryWrapperForms))]
+    public void MarkedWrapperSuggestion_OfAnOrdinaryTarget_IsStoredWhole(string source, string suggestion, int reads)
+    {
+        var (diagnostics, observations) = Elaborate(source);
+        var stored = Assert.Single(diagnostics, static d => d.Code == DiagnosticCode.OutputSpreadMarkerOnAlias);
+        var target = source[..1];
+        var first = $"'B' is an alias of '{target}', so it cannot carry the output-spreading marker `*`: "
+            + $"calls through an alias are calls of '{target}', and they spread exactly when it is marked.";
+        var repair = $"To spread the output of calls to 'B' itself, declare a marked wrapper: `{suggestion}`.";
+        Assert.Equal(Lines(first, repair), stored.Message);
+        Assert.Equal($"<{first}>{Environment.NewLine}<{repair}>", stored.RenderMessage(static line => $"<{line}>"));
+        Assert.Equal((1, reads), (observations.OutputSpreadMarkerOnAliasMessages, observations.OutputSpreadMarkerWrapperParameterReads));
+    }
+
+    [Theory]
+    [InlineData("T")]
+    [InlineData("Lifted")]
+    public void StructuralParameterPastThePrefix_SelectsTheGenericWrapper(string target)
+    {
+        // The last structural slot would fall beyond the cut in a plain wrapper. It decides the
+        // suggestion even through a lifted signature with an owner-local head and a shared tail.
+        var source = $"T({Names("p", 1200)}, [lastSlot]) = 0\nLifted = own + T\nB* = {target}\nC* = {target}\n1";
+        var (diagnostics, observations) = Elaborate(source, 1);
+        Assert.Equal(2, diagnostics.ReportedCount);
+        Assert.Equal(DiagnosticCode.OutputSpreadMarkerOnAlias, diagnostics[0].Code);
+        Assert.EndsWith($"`B(…)* = {target}(…)`.", diagnostics[0].Message, StringComparison.Ordinal);
+        Assert.Equal(DiagnosticCode.DiagnosticCountExceeded, diagnostics[1].Code);
+        Assert.Equal((1, 0), (observations.OutputSpreadMarkerOnAliasMessages, observations.OutputSpreadMarkerWrapperParameterReads));
+    }
+
+    [Fact]
+    public void WideAliasTargetFlood_BuildsEachStoredMessageOnlyToItsRetainedPrefix()
+    {
+        // 12 marked aliases of a 3,000-parameter target: each whole message is about 32,000 units, so every stored one is
+        // cut, and its wrapper reads only the parameters that begin inside the retained prefix. Every alias's report is
+        // made and counted at every limit; only a stored one is built.
+        const int aliases = 12, parameters = 3000;
+        ParameterPattern[] patterns = [.. Enumerable.Range(0, parameters).Select(static i => new CaptureParameterPattern($"p{i}"))];
+        var source = $"T({Names("p", parameters)}) = 0\n" + string.Concat(Enumerable.Range(0, aliases).Select(i => $"B{i}* = T\n")) + "1";
+        var wholes = Enumerable.Range(0, aliases).Select(i => WholeAliasMarkerMessage($"B{i}", "T", patterns)).ToList();
+        var shown = wholes.Select(static whole => ShownParameters(whole.ParameterStarts)).ToList();
+        Assert.All(shown, static count => Assert.InRange(count, 400, 800));
+
+        var (full, _) = Elaborate(source);
+        Assert.Equal(aliases, full.Count);
+        for (var i = 0; i < aliases; i++)
+        {
+            var span = new SourceSpan(i + 2, i < 10 ? 3 : 4, i + 2, i < 10 ? 4 : 5);
+            Assert.Equal(Stored(StoredForm(wholes[i].Text, wholes[i].First.Length, DiagnosticCode.OutputSpreadMarkerOnAlias, span)), Stored(full[i]));
+            Assert.Equal(DiagnosticBag.MaxRetainedMessageLength + 1, full[i].Message.Length);
+        }
+
+        foreach (var limit in LimitsAround(aliases))
+        {
+            var (bounded, observed) = Elaborate(source, limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            var stored = Math.Min(limit, aliases);
+            Assert.Equal((aliases, aliases, true), (bounded.ReportedCount, bounded.ReportedErrorCount, bounded.HasReported(DiagnosticCode.OutputSpreadMarkerOnAlias)));
+            Assert.Equal((aliases, stored), (observed.OutputSpreadMarkerOnAliasReports, observed.OutputSpreadMarkerOnAliasMessages));
+            // The signature supplies the wrapper shape. Formatting reads only the parameters in the prefix.
+            Assert.Equal(shown.Take(stored).Sum(), observed.OutputSpreadMarkerWrapperParameterReads);
+        }
+    }
+
+    [Fact]
+    public void MarkedWrapperSuggestion_IsCutAroundSurrogatePairs_AsTheListCutsTheWholeMessage()
+    {
+        // A host-built target whose later parameter names are runs of astral scalars (two units each), shifted unit by
+        // unit so that a pair lies across the 4,096-unit cut, or across the end of the 4,097-unit prefix the message is
+        // built to — where the prefix ends in a lone high surrogate, and the list must still cut there and add its marker.
+        const int bound = DiagnosticBag.MaxRetainedMessageLength;
+        const string source = "T(a, b) = 0\nB* = T\n1";
+
+        // The host route is the parse's route: with the written names it stores what the parse stores.
+        ParameterPattern[] written = [new CaptureParameterPattern("a"), new CaptureParameterPattern("b")];
+        Assert.Equal(Elaborate(source).Diagnostics.Select(Stored), ResolveHostBuilt(source, "T", written).Diagnostics.Select(Stored));
+
+        var placements = new HashSet<string>();
+        for (var shift = 0; shift < 8; shift++)
+        {
+            ParameterPattern[] parameters =
+            [
+                .. Enumerable.Range(0, 400).Select(static i => new CaptureParameterPattern($"p{i}")),
+                new CaptureParameterPattern(new string('q', 1 + shift)),
+                .. Enumerable.Range(0, 8).Select(static i => new CaptureParameterPattern(string.Concat(Enumerable.Repeat("😀", 250)))),
+            ];
+            var (first, whole, starts) = WholeAliasMarkerMessage("B", "T", parameters);
+            var (diagnostics, observations) = ResolveHostBuilt(source, "T", parameters);
+            var stored = Assert.Single(diagnostics);
+            Assert.Equal(Stored(StoredForm(whole, first.Length, DiagnosticCode.OutputSpreadMarkerOnAlias, new SourceSpan(2, 2, 2, 3))), Stored(stored));
+            Assert.Equal(RetainedText(whole), stored.Message);
+            Assert.Equal(ShownParameters(starts), observations.OutputSpreadMarkerWrapperParameterReads);
+            placements.Add(char.IsHighSurrogate(whole[bound - 1]) ? "across the cut" : char.IsHighSurrogate(whole[bound]) ? "across the prefix's end" : "elsewhere");
+        }
+
+        Assert.Superset(new HashSet<string> { "across the cut", "across the prefix's end" }, placements);
+    }
+
+    // The UnforwardableParameter message of `A(q) = G` for G's parameter shown as `shown`, which A binds in no form.
+    private static (string First, string Text) UnforwardableMessage(string shown)
+    {
+        var first = $"'G' is forwarded by name here, but its parameter '{shown}' is not a parameter of the enclosing explicit parameter list.";
+        return (first, Lines(first, "Bare forwarding reuses an existing parameter only under its own name, and explicit parameter lists are closed, "
+            + $"so '{shown}' is neither renamed nor added. Declare '{shown}' in the parameter list, or call 'G' with explicit arguments."));
+    }
+
+    // The nodes the bounded written form writes of a group of leaves: its opener, then each leaf that begins inside the
+    // 513-unit prefix after its separator.
+    private static int ShownGroupNodes(IEnumerable<string> leaves)
+    {
+        var nodes = 1;
+        var start = 1;
+        foreach (var leaf in leaves)
+        {
+            if (start >= ExprNameRenderer.MaxRenderedNameLength + 1)
+                break;
+            nodes++;
+            start += leaf.Length + 2;
+        }
+
+        return nodes;
+    }
+
+    [Fact]
+    public void ForwardedStructuralParameter_IsShownBounded_FromItsShownPrefixOnly()
+    {
+        // G's one parameter, which `A0(q) = G` and `A1(q) = G` cannot forward, is shown by its written form, cut to the
+        // name bound: wide (5,000 leaves), with a collector, deep (280 groups, near the source's 300-node structural depth
+        // limit), a long name, the forms whose text is 511 to 514 units, and an ordinary nested one. Each stored message is
+        // the whole one's; only the nodes the shown prefix holds are written. Every leaf's binding is still checked for the
+        // wording (whether A binds the parameter in another form), once per stored message.
+        static string Deep(int depth) => new string('[', depth) + "x" + new string(']', depth);
+        var wide = Enumerable.Range(0, 5000).Select(static i => $"a{i}").ToList();
+        var withCollector = Enumerable.Range(0, 3000).Select(static i => $"b{i}").Append("*rest").ToList();
+        (string Pattern, int Nodes, int Leaves)[] cases =
+        [
+            ($"[{string.Join(", ", wide)}]", ShownGroupNodes(wide), wide.Count),
+            ($"({string.Join(", ", withCollector)})", ShownGroupNodes(withCollector), withCollector.Count),
+            (Deep(280), 281, 1),
+            ($"[{new string('x', 5000)}]", 2, 1),
+            .. new[] { 509, 510, 511, 512 }.Select(static length => ($"[{new string('y', length)}]", 2, 1)),
+            ("[(a, b), [c, *d], e]", 8, 5),
+        ];
+
+        foreach (var (pattern, nodes, leaves) in cases)
+        {
+            var source = $"G({pattern}) = 0\nA0(q) = G\nA1(q) = G\n1";
+            var (first, whole) = UnforwardableMessage(ShownName(pattern));
+            var (full, unbounded) = Elaborate(source);
+            Assert.Equal(2, full.Count);
+            Assert.Equal(Stored(StoredForm(whole, first.Length, DiagnosticCode.UnforwardableParameter, new SourceSpan(2, 9, 2, 10))), Stored(full[0]));
+            Assert.Equal(Stored(StoredForm(whole, first.Length, DiagnosticCode.UnforwardableParameter, new SourceSpan(3, 9, 3, 10))), Stored(full[1]));
+            Assert.Equal((2, 2 * nodes, 2 * leaves), (unbounded.UnforwardableParameterMessages, unbounded.UnforwardableParameterDisplayNodes,
+                unbounded.UnforwardableParameterWordingChecks));
+
+            foreach (var limit in new[] { 3, 2, 1 })
+            {
+                var (bounded, observed) = Elaborate(source, limit);
+                AssertPrefixOfUnbounded(full, bounded, limit);
+                var stored = Math.Min(limit, 2);
+                Assert.Equal((2, 2, 2), (bounded.ReportedCount, bounded.ReportedErrorCount, observed.UnforwardableParameterReports));
+                Assert.Equal((stored, stored * nodes), (observed.UnforwardableParameterMessages, observed.UnforwardableParameterDisplayNodes));
+            }
+        }
+
+        // The work control: the wide parameter's shown prefix holds about a hundred of its 5,001 nodes.
+        Assert.InRange(ShownGroupNodes(wide), 60, 120);
+    }
+
+    [Fact]
+    public void ForwardedStructuralParameter_IsCutAroundSurrogatePairs_AsBoundNameCutsItsWholeText()
+    {
+        // A host-built list parameter whose leaf ends in a run of astral scalars, shifted unit by unit so that a pair lies
+        // across the 512-unit cut, or across the end of the 513-unit prefix its written form is built to.
+        const int bound = ExprNameRenderer.MaxRenderedNameLength;
+        const string source = "G(u) = 0\nA(q) = G\n1";
+        var placements = new HashSet<string>();
+        for (var shift = 0; shift < 4; shift++)
+        {
+            var leaf = new string('m', bound - 7 + shift) + string.Concat(Enumerable.Repeat("😀", 8));
+            var display = "[" + leaf + "]";
+            var (diagnostics, observations) = ResolveHostBuilt(source, "G", [new ListValueParameterPattern([new CaptureParameterPattern(leaf)])]);
+            var stored = Assert.Single(diagnostics);
+            var (first, whole) = UnforwardableMessage(ShownName(display));
+            Assert.Equal(Stored(StoredForm(whole, first.Length, DiagnosticCode.UnforwardableParameter, new SourceSpan(2, 8, 2, 9))), Stored(stored));
+            Assert.Equal(2, observations.UnforwardableParameterDisplayNodes);
+            placements.Add(char.IsHighSurrogate(display[bound - 1]) ? "across the cut" : char.IsHighSurrogate(display[bound]) ? "across the prefix's end" : "elsewhere");
+        }
+
+        Assert.Superset(new HashSet<string> { "across the cut", "across the prefix's end" }, placements);
+    }
+
+    [Fact]
+    public void InferredStructuralParameters_AreShownBounded_AsTheirWholeTextsCut()
+    {
+        // Formula lifting forwards G's parameters to F, which has no output: ExplicitParametersRequireOutput names up to
+        // three of them, each by its written form cut to the name bound — wide, deep, long, and 511 to 514 units.
+        const string canonicalStart = "This algorithm takes the implicit parameter 'x' but does not define an output. ";
+        var canonical = Assert.Single(Parse("G(x) = 0\nF = { a, b = G + 0, 1 }\ntrace(5)").Diagnostics).Message;
+        Assert.StartsWith(canonicalStart, canonical, StringComparison.Ordinal);
+        var rest = canonical[canonicalStart.Length..];
+
+        static string Message(string source)
+            => Assert.Single(Parse(source).Diagnostics, static d => d.Code == DiagnosticCode.ExplicitParametersRequireOutput).Message;
+
+        var wide = $"[{Names("q", 5000)}]";
+        var deep = new string('[', 280) + "r, s" + new string(']', 280);
+        var longName = $"[*{new string('l', 3000)}]";
+        foreach (var pattern in new[] { wide, deep, longName, $"[{new string('y', 509)}]", $"[{new string('y', 510)}]", $"[{new string('y', 511)}]", $"[{new string('y', 512)}]" })
+        {
+            Assert.Equal(
+                $"This algorithm takes the implicit parameter '{ShownName(pattern)}' but does not define an output. {rest}",
+                Message($"G({pattern}) = 0\nF = {{ a, b = G + 0, 1 }}\ntrace(5)"));
+        }
+
+        Assert.Equal(
+            $"This algorithm takes the implicit parameters '{ShownName(wide)}', '{ShownName(deep)}', and 'z' but does not define an output. {rest}",
+            Message($"G({wide}, {deep}, z) = 0\nF = {{ a, b = G + 0, 1 }}\ntrace(5)"));
+        Assert.Equal(
+            $"This algorithm takes the implicit parameters '{ShownName(wide)}', '{ShownName(deep)}', '{ShownName(longName)}', and 1 more but does not define an output. {rest}",
+            Message($"G({wide}, {deep}, {longName}, z) = 0\nF = {{ a, b = G + 0, 1 }}\ntrace(5)"));
+    }
+
+    [Fact]
+    public void StoredReportsOverWideDeclarations_AllocateTheirRetainedPrefix_NotTheWholeText()
+    {
+        // The regression control for the three payloads. Each workload makes two equal reports, and a one-diagnostic list
+        // stores only the first, so a two-diagnostic list's extra allocation is the cost of building ONE stored message.
+        // Built to its retained prefix that is a few kilobytes (measured on 2026-11-23 in the Debug test build: 27 KB for
+        // the wrapper — the 4,097-unit builder, its string and the list's cut copy — 13 KB and 10 KB for the written
+        // forms). Building the whole text first, as the former formatters did, costs at least two UTF-16 copies of it:
+        // measured 1.27 MB for the 10,000-parameter wrapper, 829 KB for the 200,000-unit name and 290 KB for the
+        // 10,000-leaf lifted pattern. Each bound leaves room for an ArrayPool refill (32 KB) and the ~8 KB allocation
+        // quantum of the in-process counter, and stays well below the whole text.
+        static long OneStoredMessage(string source)
+        {
+            long Allocated(int limit)
+            {
+                _ = Elaborate(source, limit);
+                var before = GC.GetAllocatedBytesForCurrentThread();
+                var (diagnostics, _) = Elaborate(source, limit);
+                var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Assert.Equal((2, Math.Min(2, limit)), (diagnostics.ReportedCount, diagnostics.Count - (diagnostics.IsTruncated ? 1 : 0)));
+                return allocated;
+            }
+
+            return Allocated(2) - Allocated(1);
+        }
+
+        (string Payload, long Bytes, long Bound)[] measured =
+        [
+            ("the wrapper over 10,000 parameters", OneStoredMessage($"T({Names("p", 10_000)}) = 0\nB0* = T\nB1* = T\n1"), 128 * 1024),
+            ("the written form of a 200,000-unit name",
+                OneStoredMessage($"G([{new string('x', 200_000)}]) = 0\nA0(q) = G\nA1(q) = G\n1"), 96 * 1024),
+            ("the written form of a 10,000-leaf lifted pattern",
+                OneStoredMessage($"G([{Names("q", 10_000)}]) = 0\nF0 = {{ a, b = G + 0, 1 }}\nF1 = {{ a, b = G + 0, 1 }}\ntrace(5)"), 96 * 1024),
+        ];
+        var over = measured.Where(static m => m.Bytes >= m.Bound).Select(static m => $"{m.Payload}: {m.Bytes} bytes (bound {m.Bound})").ToList();
+        Assert.True(over.Count == 0, "one stored message built its whole text: " + string.Join("; ", over));
     }
 }

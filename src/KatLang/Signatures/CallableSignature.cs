@@ -56,9 +56,18 @@ internal sealed record CallableSignature
         // A shared implicit-signature template is immutable: it is kept by reference (with its
         // cached facts) instead of being copied per signature. Any other list is caller-owned and
         // snapshotted exactly as before.
-        ParameterPatterns = parameterPatterns is ImplicitSignatureTemplate template
-            ? template
-            : parameterPatterns.ToArray();
+        if (parameterPatterns is ImplicitSignatureTemplate template)
+        {
+            ParameterPatterns = template;
+            HasStructuralParameterPattern = template.HasStructuralParameterPattern;
+        }
+        else
+        {
+            var snapshot = parameterPatterns.ToArray();
+            ParameterPatterns = snapshot;
+            // A non-null flat parameter list came through CreateFlatParameterPatterns.
+            HasStructuralParameterPattern = parameters is null && ContainsStructuralParameter(snapshot);
+        }
         HasExplicitParameterList = hasExplicitParameterList;
         _derived = new(new DerivedFacts(parameters?.ToArray(), parameterSource, displayText));
     }
@@ -68,6 +77,7 @@ internal sealed record CallableSignature
     {
         Name = name;
         ParameterPatterns = source.ParameterPatterns;
+        HasStructuralParameterPattern = source.HasStructuralParameterPattern;
         HasExplicitParameterList = source.HasExplicitParameterList;
         _derived = new(new DerivedFacts(parameters: null, source._derived.Value.Source, displayText: null));
     }
@@ -96,8 +106,11 @@ internal sealed record CallableSignature
     /// <summary>The flattened capture count, without materializing <see cref="Parameters"/>.</summary>
     public int FlattenedParameterCount => _derived.Value.FlattenedParameterCount(this);
 
-    /// <summary>Whether a top-level parameter pattern is structural — a sequence pattern <c>(…)</c> or a list pattern <c>[…]</c>.</summary>
-    public bool HasStructuralParameterPattern => ParameterPatterns.Any(static pattern => ParameterPattern.StructuralItems(pattern) is not null);
+    /// <summary>True when a top-level slot has a structural pattern. Marked-wrapper suggestions read this snapshot fact.</summary>
+    public bool HasStructuralParameterPattern { get; }
+
+    internal static bool ContainsStructuralParameter(ParameterPattern[] patterns)
+        => Array.Exists(patterns, static pattern => pattern is not CaptureParameterPattern);
 
     public CallableArityFacts ArityFacts => _derived.Value.ArityFacts(this);
 

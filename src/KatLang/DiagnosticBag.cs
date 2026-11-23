@@ -43,9 +43,9 @@ namespace KatLang;
 /// STAGE bag of the same capacity (<see cref="CreateStage"/>), so it never stores more than one
 /// list could. A stage is never committed: nothing it holds reaches the operation's list.</para>
 ///
-/// <para><b>Payload.</b> Every stored message is at most <see cref="MaxRetainedMessageLength"/>
-/// UTF-16 code units (a longer one keeps its surrogate-safe prefix and the <c>…</c> marker), so a
-/// full list is bounded by a constant whatever the source echoed.</para>
+/// <para><b>Payload.</b> Longer messages retain up to <see cref="MaxRetainedMessageLength"/>
+/// UTF-16 code units of the original, followed by the <c>…</c> marker. A wrapper suggestion can
+/// stop after <see cref="RetainedPrefixLength"/> units and preserve that exact result.</para>
 ///
 /// <para>Not thread-safe: one operation reports sequentially (a deferred materialization runs
 /// under its loader's materialization gate).</para>
@@ -53,12 +53,18 @@ namespace KatLang;
 internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
 {
     /// <summary>
-    /// Longest stored diagnostic message, in UTF-16 code units. Every bounded message KatLang
-    /// formats — echoed names and lists at most <see cref="ExprNameRenderer.MaxRenderedNameLength"/>
-    /// units each, a refused load target at most about 1,250 — stays far below it; only a message
-    /// that echoes a multi-kilobyte identifier or URL the source wrote is cut.
+    /// Maximum UTF-16 units retained from the original message, before any truncation marker.
     /// </summary>
     internal const int MaxRetainedMessageLength = 4096;
+
+    /// <summary>
+    /// The units of a message the retention bound reads: <see cref="MaxRetainedMessageLength"/> plus one. A stored
+    /// message is decided by this prefix alone — whether the message is longer than the bound, and where its
+    /// surrogate-safe cut falls — so a formatter whose message grows with the source writes only this much of it
+    /// (<see cref="Rendering.TextPrefixBuilder"/>) and the list stores exactly the text, marker and line layout
+    /// included, that the whole message would have given.
+    /// </summary>
+    internal const int RetainedPrefixLength = MaxRetainedMessageLength + 1;
 
     // The stored diagnostics (the marker excluded) and, in parallel, each one's place in the list.
     private readonly List<Diagnostic> _stored = [];

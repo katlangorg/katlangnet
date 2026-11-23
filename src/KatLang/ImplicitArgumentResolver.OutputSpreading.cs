@@ -695,7 +695,8 @@ internal static partial class ImplicitArgumentResolver
     /// spread. A structural forwarding carrier (<c>B* = { A }</c>) is a declaration of its own and keeps its
     /// marker. Reported once per alias formation, at the marker (the import site inside module text). The message —
     /// for a transparent reference a wrapper over every parameter of the target — is built only when the list stores
-    /// the report (<see cref="ReportOutputSpreadMarkerError{TWording}"/>).
+    /// the report (<see cref="ReportOutputSpreadMarkerError{TWording}"/>), and then only up to the prefix the list's
+    /// retention bound reads (<see cref="DiagnosticBag.RetainedPrefixLength"/>), which decides the stored text.
     /// </summary>
     private static void ReportOutputSpreadMarkerOnAlias(
         Algorithm.Alias alias, string targetName, AliasTarget? target, ResolverWalkMemos memos)
@@ -721,16 +722,28 @@ internal static partial class ImplicitArgumentResolver
     {
         wording.Observations?.RecordDiagnosticMessage(DiagnosticCode.OutputSpreadMarkerOnAlias);
         var name = ExprNameRenderer.BoundName(wording.DeclarationName);
-        return wording.HasRuntimeTarget
-            ? DiagnosticMessage.JoinLines(
+        if (wording.HasRuntimeTarget)
+        {
+            return DiagnosticMessage.JoinLines(
                 $"'{name}' is a runtime-target alias, so it cannot carry the output-spreading marker `*`: the callable it calls is known only at run time, "
                     + "and only a call the front end resolves statically to a marked declaration is spread.",
-                "Declare a marked algorithm with explicit parameters that calls it instead.")
-            : DiagnosticMessage.JoinLines(
-                $"'{name}' is an alias of '{ExprNameRenderer.BoundName(wording.TargetName)}', so it cannot carry the output-spreading marker `*`: "
-                    + $"calls through an alias are calls of '{ExprNameRenderer.BoundName(wording.TargetName)}', and they spread exactly when it is marked.",
-                $"To spread the output of calls to '{name}' itself, declare a marked wrapper: "
-                    + $"`{MarkedWrapperSuggestion(name, wording.TargetName, wording.Target, wording.Observations)}`.");
+                "Declare a marked algorithm with explicit parameters that calls it instead.");
+        }
+
+        var shownTarget = ExprNameRenderer.BoundName(wording.TargetName);
+        var explanation = $"'{name}' is an alias of '{shownTarget}', so it cannot carry the output-spreading marker `*`: "
+            + $"calls through an alias are calls of '{shownTarget}', and they spread exactly when it is marked.";
+
+        // The repair line ends in a wrapper over every parameter of the target, so the message — the explanation, the line
+        // break and the repair, laid out as JoinLines lays them out — is written only up to the prefix the list's retention
+        // bound reads: the list stores exactly the text of the whole message, and a wide target costs that prefix.
+        var text = new Rendering.TextPrefixBuilder(DiagnosticBag.RetainedPrefixLength);
+        _ = text.Append(explanation)
+            && text.Append(Environment.NewLine)
+            && text.Append($"To spread the output of calls to '{name}' itself, declare a marked wrapper: `")
+            && AppendMarkedWrapperSuggestion(text, name, shownTarget, wording.Target, wording.Observations)
+            && text.Append("`.");
+        return new DiagnosticMessage(text.ToString(), [explanation.Length]);
     }
 
     /// <summary>
@@ -784,30 +797,55 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The marked wrapper the alias report suggests: <c>B(x, y)* = A(x, y)</c> over the target's top-level
-    /// parameters when they are plain names (a collector forwarded as <c>xs*</c>), <c>B* = A()</c> for a
-    /// target with none, and a generic wording for any other head. Every target parameter it reads is counted
-    /// (<see cref="FrontEndTraversalObservations.OutputSpreadMarkerWrapperParameterReads"/>).
+    /// Writes the marked wrapper the alias report suggests: <c>B(x, y)* = A(x, y)</c> over the target's top-level
+    /// parameters when they are plain names (a collector forwarded as <c>xs*</c>), <c>B* = A()</c> for a target with
+    /// none, and the generic <c>B(…)* = A(…)</c> for any other head. Only as far as <paramref name="text"/> keeps it:
+    /// <see cref="CallableSignature.HasStructuralParameterPattern"/> decides the form in constant time. Parameters are
+    /// written until the prefix is complete, each counted once at its first writing
+    /// (<see cref="FrontEndTraversalObservations.OutputSpreadMarkerWrapperParameterReads"/>), since the argument list
+    /// repeats the names of the parameter list before it. False once the prefix is complete.
     /// </summary>
-    private static string MarkedWrapperSuggestion(string alias, string targetName, AliasTarget? target, FrontEndTraversalObservations? observations)
+    private static bool AppendMarkedWrapperSuggestion(
+        Rendering.TextPrefixBuilder text, string alias, string shownTarget, AliasTarget? target, FrontEndTraversalObservations? observations)
     {
-        var shownTarget = ExprNameRenderer.BoundName(targetName);
-        if (target?.Signature.Signature is not { } signature)
-            return $"{alias}(…)* = {shownTarget}(…)";
-        var parameters = new List<string>(signature.ParameterPatterns.Count);
-        var arguments = new List<string>(signature.ParameterPatterns.Count);
-        foreach (var pattern in signature.ParameterPatterns)
+        if (target?.Signature.Signature is not { HasStructuralParameterPattern: false } signature)
+            return AppendGenericWrapper(text, alias, shownTarget);
+
+        var patterns = signature.ParameterPatterns;
+        if (patterns.Count == 0)
+            return text.Append(alias) && text.Append("* = ") && text.Append(shownTarget) && text.Append("()");
+        return text.Append(alias) && text.Append('(')
+            && AppendWrapperParameters(text, patterns, asArguments: false, observations)
+            && text.Append(")* = ") && text.Append(shownTarget) && text.Append('(')
+            && AppendWrapperParameters(text, patterns, asArguments: true, observations: null)
+            && text.Append(')');
+
+        static bool AppendGenericWrapper(Rendering.TextPrefixBuilder text, string alias, string shownTarget)
+            => text.Append(alias) && text.Append("(…)* = ") && text.Append(shownTarget) && text.Append("(…)");
+    }
+
+    /// <summary>
+    /// Writes the wrapper's parameter list (<c>x, *ys</c>) or its argument list (<c>x, ys*</c>) over plain captures until
+    /// the prefix is complete; false once it is.
+    /// </summary>
+    private static bool AppendWrapperParameters(
+        Rendering.TextPrefixBuilder text, IReadOnlyList<ParameterPattern> patterns, bool asArguments, FrontEndTraversalObservations? observations)
+    {
+        for (var index = 0; index < patterns.Count; index++)
         {
+            if (index > 0 && !text.Append(", "))
+                return false;
+            var capture = (CaptureParameterPattern)patterns[index];
             observations?.RecordOutputSpreadMarkerWrapperParameterRead();
-            if (pattern is not CaptureParameterPattern capture)
-                return $"{alias}(…)* = {shownTarget}(…)";
-            var parameterName = ExprNameRenderer.BoundName(capture.Name);
-            parameters.Add(capture.Kind == ParameterKind.Collecting ? "*" + parameterName : parameterName);
-            arguments.Add(capture.Kind == ParameterKind.Collecting ? parameterName + "*" : parameterName);
+            var collecting = capture.Kind == ParameterKind.Collecting;
+            if (collecting && !asArguments && !text.Append('*'))
+                return false;
+            if (!ExprNameRenderer.AppendBoundName(text, capture.Name))
+                return false;
+            if (collecting && asArguments && !text.Append('*'))
+                return false;
         }
 
-        return parameters.Count == 0
-            ? $"{alias}* = {shownTarget}()"
-            : $"{alias}({string.Join(", ", parameters)})* = {shownTarget}({string.Join(", ", arguments)})";
+        return true;
     }
 }

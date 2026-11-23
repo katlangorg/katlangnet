@@ -330,6 +330,42 @@ public class StackSafePatternHelperTests(ITestOutputHelper output)
         Assert.True(shared > 800, $"too few shared patterns: {shared}");
     }
 
+    /// <summary>
+    /// The bounded written form (<see cref="ParameterPattern.DisplayNamePrefix"/>, which diagnostics bound through
+    /// <see cref="ExprNameRenderer.BoundDisplayName(ParameterPattern)"/>) is the same walk stopped early: at EVERY length,
+    /// on trees and shared DAGs, it is exactly that prefix of the legacy text, and a prefix the text fits in writes every
+    /// node once per occurrence — the per-path count the legacy join performed.
+    /// </summary>
+    [Fact]
+    public void OnTreesAndSharedDags_EveryDisplayPrefix_IsThePrefixOfTheLegacyText()
+    {
+        static int LegacyNodes(ParameterPattern pattern)
+            => 1 + (ParameterPattern.StructuralItems(pattern) is { } items ? items.Sum(LegacyNodes) : 0);
+
+        var random = new Random(20261123);
+        var cut = 0;
+        for (var round = 0; round < 2000; round++)
+        {
+            var (pattern, _) = RandomParameterPattern(random);
+            var expected = LegacyDisplayName(pattern);
+            var previousNodes = 0;
+            for (var length = 0; length <= expected.Length + 1; length++)
+            {
+                var prefix = ParameterPattern.DisplayNamePrefix(pattern, length, out var nodes);
+                Assert.True(expected[..Math.Min(length, expected.Length)] == prefix, $"round {round}, length {length}: '{prefix}' of '{expected}'");
+                if (length == 0)
+                    Assert.Equal(0, nodes);
+                Assert.True(nodes >= previousNodes, $"round {round}, length {length}: {nodes} nodes after {previousNodes}");
+                previousNodes = nodes;
+                cut += length < expected.Length ? 1 : 0;
+            }
+
+            Assert.Equal(LegacyNodes(pattern), previousNodes);
+        }
+
+        Assert.True(cut > 20_000, $"too few cut prefixes: {cut}");
+    }
+
     [Fact]
     public void DisplayName_KeepsEveryDelimiterAndSeparatorForm()
     {

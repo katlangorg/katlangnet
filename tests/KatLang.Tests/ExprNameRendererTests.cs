@@ -820,4 +820,180 @@ public class ExprNameRendererTests
     private static OutputBundle Arguments(params Expr[] expressions)
         => expressions;
 
+    // ── The bounded written form of a parameter pattern ─────────────────────────
+    //
+    // A diagnostic that echoes a parameter pattern shows BoundName of its DisplayName. BoundDisplayName builds that text
+    // from the first MaxRenderedNameLength + 1 units alone — all the bound reads — so it must be byte-identical to
+    // BoundName(pattern.DisplayName) for every shape, at every boundary and around every surrogate pair, while a wide or
+    // deep pattern, or a long name in one, is never written whole.
+
+    private const int NameBound = ExprNameRenderer.MaxRenderedNameLength;
+
+    private static CaptureParameterPattern Leaf(string name, ParameterKind kind = ParameterKind.Normal) => new(name, Kind: kind);
+
+    [Fact]
+    public void AppendBoundName_WritesTheAvailablePrefixIncludingAnyNameMarker()
+    {
+        foreach (var name in new[]
+        {
+            "short", new string('x', NameBound), new string('x', NameBound + 1),
+            new string('x', NameBound - 1) + "😀tail", new string('x', NameBound) + "😀tail",
+        })
+        {
+            var expected = ExprNameRenderer.BoundName(name);
+            foreach (var room in new[] { 0, 1, NameBound - 1, NameBound, NameBound + 1, NameBound + 2 })
+            {
+                var prefix = new Rendering.TextPrefixBuilder(room);
+                Assert.Equal(expected.Length < room, ExprNameRenderer.AppendBoundName(prefix, name));
+                Assert.Equal(expected[..Math.Min(room, expected.Length)], prefix.ToString());
+            }
+        }
+    }
+
+    /// <summary>Asserts the bounded form is BoundName of the whole text, and returns the pattern nodes it wrote.</summary>
+    private static int AssertBoundedWrittenForm(ParameterPattern pattern, string context)
+    {
+        var whole = pattern.DisplayName;
+        var bounded = ExprNameRenderer.BoundDisplayName(pattern, out var nodes);
+        Assert.True(ExprNameRenderer.BoundName(whole) == bounded, $"{context}: '{bounded}' for the whole text of {whole.Length} units");
+        Assert.Equal(bounded, ExprNameRenderer.BoundDisplayName(pattern));
+
+        // The same text, cut independently: kept whole up to the bound, else its first NameBound units — one fewer when they
+        // would end inside a surrogate pair — and the marker.
+        var cut = NameBound;
+        if (whole.Length > NameBound && char.IsHighSurrogate(whole[cut - 1]) && char.IsLowSurrogate(whole[cut]))
+            cut--;
+        Assert.True((whole.Length <= NameBound ? whole : whole[..cut] + ExprNameRenderer.TruncationMarker) == bounded, context);
+        return nodes;
+    }
+
+    [Fact]
+    public void BoundDisplayName_IsBoundNameOfTheWholeWrittenForm_AcrossTheBound()
+    {
+        // A tail whose length sweeps the whole text across the bound, behind every kind of leaf and group the text can
+        // end in at the cut: a plain, collecting or meta leaf (the kind's `*`/`meta ` prefix may straddle the cut),
+        // a list, a sequence, an unpacking receiver (no delimiters), and an empty group after the tail.
+        var filler = Enumerable.Range(0, 60).Select(i => (ParameterPattern)Leaf($"f{i}")).ToList();
+        Func<string, ParameterPattern>[] shapes =
+        [
+            tail => new ListValueParameterPattern([.. filler, Leaf(tail)]),
+            tail => new ListValueParameterPattern([.. filler, Leaf(tail, ParameterKind.Collecting)]),
+            tail => new SequenceValueParameterPattern([.. filler, Leaf(tail, ParameterKind.Meta), new ListValueParameterPattern([])]),
+            tail => new UnpackingParameterPattern([.. filler, new SequenceValueParameterPattern([Leaf(tail), Leaf("z")])]),
+            tail => new ListValueParameterPattern([new UnpackingParameterPattern([.. filler, Leaf(tail)]), new SequenceValueParameterPattern([])]),
+            tail => Leaf(tail),
+            tail => Leaf(tail, ParameterKind.Collecting),
+            tail => Leaf(tail, ParameterKind.Meta),
+        ];
+
+        var lengths = new HashSet<int>();
+        foreach (var shape in shapes)
+        {
+            for (var tailLength = 1; tailLength <= NameBound + 4; tailLength++)
+            {
+                var pattern = shape(new string('t', tailLength));
+                var length = pattern.DisplayName.Length;
+                if (length is < NameBound - 3 or > NameBound + 4)
+                    continue;
+                lengths.Add(length);
+                var nodes = AssertBoundedWrittenForm(pattern, $"{pattern.GetType().Name} of {length} units");
+                Assert.InRange(nodes, 1, NameBound + 2);
+            }
+        }
+
+        // The sweep is not vacuous: it lands on each unit around the bound.
+        Assert.Superset(new HashSet<int> { NameBound - 1, NameBound, NameBound + 1, NameBound + 2 }, lengths);
+    }
+
+    [Fact]
+    public void BoundDisplayName_CutsLikeBoundName_AroundEverySurrogatePlacement()
+    {
+        // A run of astral scalars (two units each) moved unit by unit across the cut and the prefix's end: a pair may lie
+        // before the cut, across it (kept one unit shorter), across the end of the prefix the bounded form reads (whose
+        // last unit is then a lone high surrogate it must not keep), or after it; and lone halves on either side.
+        const string pairs = "😀😀😀😀😀😀😀😀";
+        var placements = 0;
+        for (var start = NameBound - 8; start <= NameBound + 3; start++)
+        {
+            foreach (var text in new[]
+            {
+                new string('m', start) + pairs + "end",
+                new string('m', start) + "\uD83D" + "end",
+                new string('m', start) + "\uDE00" + "end",
+            })
+            {
+                // The text as a plain leaf, inside a list (one unit later), and as a collector (`*`, one unit later too).
+                AssertBoundedWrittenForm(Leaf(text), $"leaf at {start}");
+                AssertBoundedWrittenForm(new ListValueParameterPattern([Leaf(text)]), $"list at {start}");
+                AssertBoundedWrittenForm(new SequenceValueParameterPattern([Leaf("a"), Leaf(text, ParameterKind.Collecting)]), $"collector at {start}");
+                placements++;
+            }
+        }
+
+        Assert.Equal(36, placements);
+
+        // The two placements that tell the bounded form from a surrogate-safe prefix: a pair across the cut is dropped
+        // whole, and a pair across the prefix's end leaves the full bound and its marker.
+        var across = ExprNameRenderer.BoundDisplayName(new ListValueParameterPattern([Leaf(new string('m', NameBound - 2) + pairs)]));
+        Assert.Equal("[" + new string('m', NameBound - 2) + ExprNameRenderer.TruncationMarker, across);
+        var atTheEnd = ExprNameRenderer.BoundDisplayName(new ListValueParameterPattern([Leaf(new string('m', NameBound - 1) + pairs)]));
+        Assert.Equal("[" + new string('m', NameBound - 1) + ExprNameRenderer.TruncationMarker, atTheEnd);
+        Assert.Equal(NameBound + 1, atTheEnd.Length);
+    }
+
+    [Fact]
+    public void BoundDisplayName_OfWideDeepAndLongPatterns_WritesOnlyTheShownPrefix()
+    {
+        const int width = 100_000, depth = 200_000;
+        var wide = new ListValueParameterPattern([.. Enumerable.Range(0, width).Select(i => (ParameterPattern)Leaf($"a{i}"))]);
+        ParameterPattern deep = Leaf("x");
+        for (var level = 0; level < depth; level++)
+            deep = new SequenceValueParameterPattern([deep]);
+        var longName = new ListValueParameterPattern([Leaf(new string('n', 1_000_000), ParameterKind.Collecting)]);
+
+        // The wide list's leaves are written while they begin inside the 513-unit prefix: "[a0, a1, …", one unit for the
+        // opener, then each name and its separator.
+        var shownLeaves = 0;
+        for (var start = 1; start < NameBound + 1; shownLeaves++)
+            start += $"a{shownLeaves}".Length + 2;
+        Assert.InRange(shownLeaves, 60, 110);
+        Assert.Equal(1 + shownLeaves, AssertBoundedWrittenForm(wide, "wide"));
+        // Every group of the deep pattern writes its opener, so the prefix is complete after 513 of the 200,001 nodes.
+        Assert.Equal(NameBound + 1, AssertBoundedWrittenForm(deep, "deep"));
+        Assert.Equal(2, AssertBoundedWrittenForm(longName, "long name"));
+
+        // An unpacking receiver writes no delimiter, so a host chain of them has nothing to stop at before its leaf: it is
+        // walked whole, its text one name. No written program builds one (the receiver is never nested).
+        ParameterPattern receivers = Leaf("x");
+        for (var level = 0; level < 1000; level++)
+            receivers = new UnpackingParameterPattern([receivers]);
+        Assert.Equal(1001, AssertBoundedWrittenForm(receivers, "receivers"));
+
+        // The regression control: the bounded form allocates about its prefix — a StringBuilder of at most 513 units, the
+        // text and its cut copy (about 4 KB), and for the deep pattern a stack of the 512 suspended groups (16-byte
+        // entries, doubling to 512: about 16 KB) — never the whole text. Writing the whole text first allocates it at
+        // least twice in UTF-16 (builder and string): about 3.2 MB for the 788,890-unit wide list, 1.6 MB for the deep
+        // one plus its 200,000-entry group stack (over 4 MB), and 4 MB for the long name. The 128 KB bound leaves room
+        // for the ~8 KB allocation quantum of the in-process counter.
+        foreach (var (name, pattern) in new[] { ("wide", (ParameterPattern)wide), ("deep", deep), ("long name", longName) })
+        {
+            _ = ExprNameRenderer.BoundDisplayName(pattern);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            _ = ExprNameRenderer.BoundDisplayName(pattern);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.True(allocated < 128 * 1024, $"{name}: {allocated} bytes");
+        }
+    }
+
+    [Fact]
+    public void BoundDisplayName_ReadsOnlyTheShownPrefix_OfAMalformedHostPattern()
+    {
+        // A null item inside the shown prefix fails as the whole text fails; one past it is never read.
+        var filler = new string('f', NameBound + 10);
+        Assert.Throws<NullReferenceException>(() => ExprNameRenderer.BoundDisplayName(new ListValueParameterPattern([Leaf("a"), null!])));
+        Assert.Throws<NullReferenceException>(() => new ListValueParameterPattern([Leaf("a"), null!]).DisplayName);
+        Assert.Equal(
+            "[" + filler[..(NameBound - 1)] + ExprNameRenderer.TruncationMarker,
+            ExprNameRenderer.BoundDisplayName(new ListValueParameterPattern([Leaf(filler), null!])));
+    }
 }

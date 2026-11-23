@@ -352,11 +352,18 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
         OriginalDeclaration = OriginalDeclaration ?? this,
     };
 
-    public string DisplayName => Kind switch
+    public string DisplayName => DisplayKindPrefix is { Length: > 0 } prefix ? string.Concat(prefix, Name) : Name;
+
+    /// <summary>
+    /// What <see cref="DisplayName"/> writes before <see cref="Name"/>: <c>*</c> for a collector, <c>meta </c> for a
+    /// meta parameter, nothing otherwise — read on its own by the bounded written form of a pattern
+    /// (<see cref="ParameterPattern.DisplayNamePrefix"/>), which never copies a whole long name.
+    /// </summary>
+    internal string DisplayKindPrefix => Kind switch
     {
-        ParameterKind.Collecting => $"*{Name}",
-        ParameterKind.Meta => $"meta {Name}",
-        _ => Name,
+        ParameterKind.Collecting => "*",
+        ParameterKind.Meta => "meta ",
+        _ => "",
     };
 
     /// <summary>
@@ -440,26 +447,67 @@ public closed record ParameterPattern
     /// enclosing level). The text is per occurrence by definition: a host-built pattern that
     /// shares a node along many paths prints it once per path, so the work is the size of the
     /// text. Never a cache: a host that mutates a retained items list reads the current text.
+    /// A diagnostic that shows the text bounded writes only the prefix its bound reads, through
+    /// the same walk (<see cref="DisplayNamePrefix"/>).
     /// </summary>
     private protected static string StructuralDisplayName(ParameterPattern structure)
     {
-        var text = new System.Text.StringBuilder();
-        if (!TryOpenDisplayGroup(structure, text, out var items, out var closer))
+        if (structure is CaptureParameterPattern)
             throw new InvalidOperationException("A capture pattern has no structural display.");
+
+        var text = new Rendering.TextPrefixBuilder(int.MaxValue);
+        _ = WriteDisplayName(structure, text);
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// The first <paramref name="maxLength"/> UTF-16 units of <paramref name="pattern"/>'s
+    /// <see cref="DisplayName"/>, written by the walk that writes the whole text and stopped
+    /// there (a raw cut; see <see cref="Rendering.TextPrefixBuilder"/>): no pattern node after
+    /// the prefix is read, and no part of a long name after it is copied. A bounded diagnostic
+    /// name reads only its bound plus one unit, so it takes exactly this prefix
+    /// (<see cref="ExprNameRenderer.BoundDisplayName(ParameterPattern, out int)"/>).
+    /// <paramref name="nodesWritten"/> counts the pattern nodes — groups and capture leaves —
+    /// whose text the walk began; at most about one per unit of the prefix for every written
+    /// pattern, whose groups and leaves each write at least one unit.
+    /// </summary>
+    internal static string DisplayNamePrefix(ParameterPattern pattern, int maxLength, out int nodesWritten)
+    {
+        var text = new Rendering.TextPrefixBuilder(maxLength);
+        nodesWritten = WriteDisplayName(pattern, text);
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Writes the display text of <paramref name="pattern"/> — a capture leaf's declaration text, a
+    /// structural pattern's items inside its delimiters — into <paramref name="text"/>, stopping once
+    /// the text keeps all it can. Returns the pattern nodes whose text it began.
+    /// </summary>
+    private static int WriteDisplayName(ParameterPattern pattern, Rendering.TextPrefixBuilder text)
+    {
+        if (text.IsComplete)
+            return 0;
+        var nodes = 1;
+        if (!TryOpenDisplayGroup(pattern, text, out var items, out var closer))
+        {
+            AppendCaptureDisplayName(pattern, text);
+            return nodes;
+        }
 
         // The groups whose remaining items wait for a nested group to be written.
         Stack<(IReadOnlyList<ParameterPattern> Items, int Next, char Closer)>? suspended = null;
         var next = 0;
-        while (true)
+        while (!text.IsComplete)
         {
             // Enumerable.Select used to reject a null items list as "source", including
             // one reached through a nested group. Keep that host-visible exception.
             ArgumentNullException.ThrowIfNull(items, "source");
             if (next < items.Count)
             {
-                if (next > 0)
-                    text.Append(", ");
+                if (next > 0 && !text.Append(", "))
+                    break;
                 var item = items[next++];
+                nodes++;
                 if (TryOpenDisplayGroup(item, text, out var nestedItems, out var nestedCloser))
                 {
                     (suspended ??= new Stack<(IReadOnlyList<ParameterPattern>, int, char)>()).Push((items, next, closer));
@@ -467,9 +515,7 @@ public closed record ParameterPattern
                 }
                 else
                 {
-                    // A capture leaf, whose text is its declaration's. A null item of a
-                    // host-built list is the NullReferenceException it always was.
-                    text.Append(item.DisplayName);
+                    AppendCaptureDisplayName(item, text);
                 }
 
                 continue;
@@ -478,9 +524,22 @@ public closed record ParameterPattern
             if (closer != NoDisplayDelimiter)
                 text.Append(closer);
             if (suspended is null || !suspended.TryPop(out var outer))
-                return text.ToString();
+                break;
             (items, next, closer) = outer;
         }
+
+        return nodes;
+    }
+
+    /// <summary>
+    /// A capture leaf's text, its declaration's <see cref="ParameterDeclaration.DisplayName"/>, written
+    /// without copying the whole name first. A null item of a host-built list is the
+    /// NullReferenceException it always was.
+    /// </summary>
+    private static void AppendCaptureDisplayName(ParameterPattern capture, Rendering.TextPrefixBuilder text)
+    {
+        var parameter = ((CaptureParameterPattern)capture).Parameter;
+        _ = text.Append(parameter.DisplayKindPrefix) && text.Append(parameter.Name);
     }
 
     /// <summary>The closer of a structural kind written without delimiters (the unpacking receiver).</summary>
@@ -492,7 +551,7 @@ public closed record ParameterPattern
     /// </summary>
     private static bool TryOpenDisplayGroup(
         ParameterPattern pattern,
-        System.Text.StringBuilder text,
+        Rendering.TextPrefixBuilder text,
         out IReadOnlyList<ParameterPattern> items,
         out char closer)
     {
@@ -4963,7 +5022,8 @@ internal static class AlgorithmValidation
     /// The wording of <see cref="DiagnosticCode.ExplicitParametersRequireOutput"/> for an algorithm
     /// whose parameters were all INFERRED (<see cref="InferredParameterOutputValidator"/>): it names the
     /// parameters — at most three, each bounded — and says where implicit parameters come from, never
-    /// that the algorithm declares them.
+    /// that the algorithm declares them. A named parameter is written only as far as its bound reads
+    /// (<see cref="ExprNameRenderer.BoundDisplayName(ParameterPattern)"/>): a lifted structural pattern can be wide.
     /// </summary>
     internal static string InferredParametersRequireOutputMessage(IReadOnlyList<ParameterPattern> parameters)
     {
@@ -4971,7 +5031,7 @@ internal static class AlgorithmValidation
         var named = Math.Min(parameters.Count, MaxNamed);
         var names = new string[named];
         for (var index = 0; index < named; index++)
-            names[index] = $"'{ExprNameRenderer.BoundName(parameters[index].DisplayName)}'";
+            names[index] = $"'{ExprNameRenderer.BoundDisplayName(parameters[index])}'";
 
         var list = parameters.Count > MaxNamed
             ? $"{string.Join(", ", names)}, and {parameters.Count - MaxNamed} more"

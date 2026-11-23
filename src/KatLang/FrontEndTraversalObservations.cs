@@ -258,6 +258,17 @@ internal sealed class FrontEndTraversalObservations
         => UnforwardableParameterWordingChecks = checked(UnforwardableParameterWordingChecks + 1);
 
     /// <summary>
+    /// Pattern nodes — structural groups and capture leaves — whose text the written form of an
+    /// <see cref="DiagnosticCode.UnforwardableParameter"/> message's parameter wrote: only those up to the prefix its bound
+    /// reads (<c>ExprNameRenderer.BoundDisplayName</c>, 513 units), never the whole of a wide or deep structural pattern.
+    /// Read once per stored report, never for a dropped one.
+    /// </summary>
+    public long UnforwardableParameterDisplayNodes { get; private set; }
+
+    internal void RecordUnforwardableParameterDisplayNodes(int count)
+        => UnforwardableParameterDisplayNodes = checked(UnforwardableParameterDisplayNodes + count);
+
+    /// <summary>
     /// <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> reports the resolver MADE (markers on aliases and on
     /// <c>.Algorithm</c> links; the parser's module-holder report is not the resolver's), each counted by the list whether it
     /// stores it or not.
@@ -268,8 +279,10 @@ internal sealed class FrontEndTraversalObservations
     public long OutputSpreadMarkerOnAliasMessages { get; private set; }
 
     /// <summary>
-    /// Target parameters the marked-wrapper suggestion of an <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/> message
-    /// read (<c>B(x, y)* = A(x, y)</c> lists every parameter of the alias's target): only for a stored report.
+    /// Target parameters whose text the marked-wrapper suggestion of an <see cref="DiagnosticCode.OutputSpreadMarkerOnAlias"/>
+    /// message wrote (<c>B(x, y)* = A(x, y)</c> lists every parameter of the alias's target), each once: only those the
+    /// prefix the list's retention bound reads shows (<see cref="DiagnosticBag.RetainedPrefixLength"/>), and only for a
+    /// stored report.
     /// </summary>
     public long OutputSpreadMarkerWrapperParameterReads { get; private set; }
 

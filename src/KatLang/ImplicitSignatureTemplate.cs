@@ -48,6 +48,7 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         _items = items;
         _tail = tail;
         Count = items.Length + (tail?.Count ?? 0);
+        HasStructuralParameterPattern = tail?.HasStructuralParameterPattern == true || CallableSignature.ContainsStructuralParameter(items);
     }
 
     /// <summary>A flat template over a freshly built array whose ownership transfers here.</summary>
@@ -69,6 +70,9 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
     }
 
     public int Count { get; }
+
+    /// <summary>Computed over the local head. All owners of the tail reuse its answer.</summary>
+    internal bool HasStructuralParameterPattern { get; }
 
     /// <summary>The owner-local head of a composed signature (the whole template when flat).</summary>
     internal IReadOnlyList<ParameterPattern> Head => _items;

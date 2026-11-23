@@ -411,6 +411,40 @@ internal static class ExprNameRenderer
     /// </summary>
     internal static string BoundName(string name) => CapLeafName(name);
 
+    /// <summary>Appends the part of <see cref="BoundName"/> that fits in the surrounding message.</summary>
+    internal static bool AppendBoundName(Rendering.TextPrefixBuilder text, string name)
+    {
+        if (name.Length <= MaxRenderedNameLength)
+            return text.Append(name);
+
+        return text.Append(name.AsSpan(0, SafePrefixLength(name, MaxRenderedNameLength))) && text.Append(TruncationMarker);
+    }
+
+    /// <summary>
+    /// <see cref="BoundName"/> of a parameter pattern's written form, <see cref="ParameterPattern.DisplayName"/>, built
+    /// from the only units the bound reads — the first <see cref="MaxRenderedNameLength"/> + 1
+    /// (<see cref="ParameterPattern.DisplayNamePrefix"/>; see <see cref="Rendering.TextPrefixBuilder"/>) — so a wide or
+    /// deeply structured pattern, or a long name in one, costs the shown prefix, never its whole text. Byte-identical to
+    /// <c>BoundName(pattern.DisplayName)</c>, marker and surrogate-safe cut included.
+    /// </summary>
+    internal static string BoundDisplayName(ParameterPattern pattern) => BoundDisplayName(pattern, out _);
+
+    /// <summary>
+    /// <see cref="BoundDisplayName(ParameterPattern)"/>, also giving the pattern nodes whose text it wrote
+    /// (<see cref="ParameterPattern.DisplayNamePrefix"/>): a traversal-work observation for a diagnostic that shows it.
+    /// </summary>
+    internal static string BoundDisplayName(ParameterPattern pattern, out int nodesWritten)
+    {
+        // A plain capture's written form is its name itself: bound it without a copy.
+        if (pattern is CaptureParameterPattern { Parameter: { DisplayKindPrefix.Length: 0 } plain })
+        {
+            nodesWritten = 1;
+            return CapLeafName(plain.Name);
+        }
+
+        return CapLeafName(ParameterPattern.DisplayNamePrefix(pattern, MaxRenderedNameLength + 1, out nodesWritten));
+    }
+
     /// <summary>
     /// Joins source-derived names for a front-end diagnostic within the rendered-name bound,
     /// reading only the names it shows — so a parameter list echoed once per reference costs a
