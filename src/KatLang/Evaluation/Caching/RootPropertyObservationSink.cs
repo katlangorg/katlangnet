@@ -71,14 +71,11 @@ internal sealed class RootPropertyObservationSink
     /// <summary>
     /// Builds the immutable public snapshot of the completed run and releases the raw records.
     /// Called once, after the engine's ordinary outcome projection and its cancellation checks.
-    /// Each value is classified by the context-free predicate of the run-result boundary
-    /// (<see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/>, with one
-    /// completed-verdict memo across the snapshot so shared structure is scanned once): a value containing a call reference
-    /// anywhere becomes <see cref="PropertyValueStatus.Withheld"/> and is not retained; every other
-    /// value is shared as is — except that a list evaluated on demand (issue #204) is shown as the
-    /// whole concrete form the run built for it, and a value holding a list the run never read
-    /// whole is <see cref="PropertyValueStatus.Withheld"/> too (<see cref="Evaluator.TrySnapshotValue"/>:
-    /// an observation reads nothing). Classification charges nothing and observes no token.
+    /// <see cref="Evaluator.TrySnapshotValue"/> uses only cached data. If a list lacks a cached
+    /// form or those forms contain a cycle, its observation is <see cref="PropertyValueStatus.Withheld"/>.
+    /// The run-result boundary also withholds any concrete snapshot that contains a call reference.
+    /// <see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/> shares its
+    /// completed verdicts across observations. Classification charges nothing and observes no token.
     /// </summary>
     internal PropertyObservations Complete()
     {
@@ -91,9 +88,6 @@ internal sealed class RootPropertyObservationSink
         for (var i = 0; i < observations.Length; i++)
         {
             var (binding, published) = _records[i];
-            // A published value may hold a list evaluated on demand (issue #204). An observation
-            // reads nothing: it shows the concrete form the run built for such a list, and
-            // withholds a value some list of which the run never read whole.
             var available = Evaluator.TrySnapshotValue(published.Value, out var snapshot)
                 && !Evaluator.ContainsCallReference(snapshot, completed);
             observations[i] = new PropertyValueObservation(

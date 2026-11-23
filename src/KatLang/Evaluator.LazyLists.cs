@@ -1048,8 +1048,8 @@ public static partial class Evaluator
     /// concrete, and otherwise the value with every list evaluated on demand replaced by a
     /// concrete form the run already built for it — its whole form, or the one-level form a
     /// consumer that read every position built, with the lists inside that form resolved the
-    /// same way. Nothing is read or evaluated: when some list has no such form yet, there is no
-    /// export-safe snapshot and the result is <c>false</c> — the observer withholds the value.
+    /// same way. A missing cached form or a cycle among those forms returns <c>false</c> and the
+    /// observer withholds the value. Taking the snapshot never demands a list position.
     /// </summary>
     internal static bool TrySnapshotValue(Result value, out Result snapshot)
     {
@@ -1079,6 +1079,9 @@ public static partial class Evaluator
 
         var frames = new Stack<MaterializeFrame>();
         Dictionary<Result, Result>? completed = null;
+        // Track the concrete node each frame walks. For L = [L], L's one-level form leads back
+        // to the same node after its lazy child is resolved.
+        var active = new HashSet<Result>(ReferenceEqualityComparer.Instance) { root };
         frames.Push(new MaterializeFrame(root));
         while (true)
         {
@@ -1087,6 +1090,7 @@ public static partial class Evaluator
             {
                 var finished = frame.CompleteConcrete();
                 frames.Pop();
+                active.Remove(frame.Node);
                 if (frames.Count == 0)
                 {
                     snapshot = finished;
@@ -1115,6 +1119,8 @@ public static partial class Evaluator
             {
                 if (completed is not null && completed.TryGetValue(child, out var concrete))
                     frame.Accept(concrete);
+                else if (!active.Add(child))
+                    return false;
                 else
                     frames.Push(new MaterializeFrame(child));
             }
