@@ -782,6 +782,20 @@ internal sealed class EvaluationBudget
     private Evaluator.NeedFamilyPreparationCache? _familyPreparations;
 
     /// <summary>
+    /// The translations of the WIDE stored heads this run's ordinary calls bind (more than
+    /// <see cref="Evaluator.FlatUniqueNameBindingWidth"/> capture patterns), keyed by pattern-list reference and
+    /// validated against the list before each use (<see cref="Evaluator.NeedHeadPreparationCache"/>). Like
+    /// <see cref="FamilyPreparations"/>, held here so neither AST records nor EvalCtx acquire cache state, and
+    /// independent runs prepare afresh.
+    /// </summary>
+    internal Evaluator.NeedHeadPreparationCache HeadPreparations
+        => Volatile.Read(ref _headPreparations)
+            ?? Interlocked.CompareExchange(ref _headPreparations, new(), null)
+            ?? _headPreparations;
+
+    private Evaluator.NeedHeadPreparationCache? _headPreparations;
+
+    /// <summary>
     /// Observes the run's host cancellation token, throwing
     /// <see cref="OperationCanceledException"/> (carrying that token) when cancellation
     /// has been requested, and doing nothing otherwise. The default token follows the

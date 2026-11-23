@@ -796,13 +796,14 @@ public static partial class Evaluator
         if (source.Count == 0) return [];
         // A flat level translates each pattern on its own. Only a structural host-DAG node needs
         // the sharing memo below; a repeated capture node translated twice binds the same way.
+        // A WIDE flat level keeps its binding shape with its records (WideNeedLevel), decided once.
         var structural = false;
         for (var i = 0; i < source.Count && !structural; i++) structural = children(source[i]) is not null;
         if (!structural)
         {
             var level = new NeedPattern[source.Count];
             for (var i = 0; i < level.Length; i++) level[i] = create(source[i], null);
-            return level;
+            return level.Length > FlatUniqueNameBindingWidth ? new WideNeedLevel(level) : level;
         }
         var memo = new Dictionary<T, NeedPattern>(ReferenceEqualityComparer.Instance);
         var pending = new Stack<(T Pattern, bool Expanded)>();
@@ -907,7 +908,10 @@ public static partial class Evaluator
             : new(family ? EvalResult<NeedEnv?>.Ok(null) : new EvalError.ArityMismatch(arity.Minimum, supply.Count));
     }
 
-    /// <summary>Widest flat level <see cref="IsFlatUniqueNameLevel"/> checks pairwise; a wider one takes the general path.</summary>
+    /// <summary>
+    /// Widest flat level <see cref="IsFlatUniqueNameLevel"/> checks pairwise; a wider one binds directly only as its
+    /// translation's <see cref="WideNeedLevel"/> of distinct names, and otherwise takes the general path.
+    /// </summary>
     internal const int FlatUniqueNameBindingWidth = 16;
 
     /// <summary>
@@ -924,20 +928,31 @@ public static partial class Evaluator
     /// that is only ever added to; and an add-only dictionary enumerates in insertion order, so the
     /// copied environment is <c>(name_i, supply[i])</c> in written order — exactly this array. Both
     /// return a fresh array per call. Pinned by <c>OrdinaryCallBindingAllocationTests</c>.</para>
+    /// <para>A WIDER level of distinct names, which may hold one collector, binds through
+    /// <see cref="WideDistinctNameBindings"/>: its shape was decided once with its translation
+    /// (<see cref="WideNeedLevel"/>), so it is not checked pairwise here.</para>
     /// </summary>
-    private static (string Name, NeedCell Cell)[] FlatUniqueNameBindings(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply)
+    private static (string Name, NeedCell Cell)[] FlatUniqueNameBindings(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply, in EvalCtx ctx)
     {
+        if (patterns is WideNeedLevel wide)
+            return WideDistinctNameBindings(wide, supply, in ctx);
         var env = new (string Name, NeedCell Cell)[patterns.Count];
         for (var i = 0; i < env.Length; i++)
             env[i] = (patterns[i].Name!, supply[i]);
         return env;
     }
 
-    /// <summary>Whether <see cref="FlatUniqueNameBindings"/> binds this level (allocation-free).</summary>
+    /// <summary>
+    /// Whether <see cref="FlatUniqueNameBindings"/> binds this level (allocation-free). A level wider than
+    /// <see cref="FlatUniqueNameBindingWidth"/> is one when its translation decided it a level of distinct names
+    /// (<see cref="WideLevelShape.DistinctNames"/>); the caller's cardinality gate has accepted the supply count.
+    /// </summary>
     private static bool IsFlatUniqueNameLevel(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply)
     {
         var count = patterns.Count;
-        if (count < 2 || count > FlatUniqueNameBindingWidth || supply.Count != count)
+        if (count > FlatUniqueNameBindingWidth)
+            return patterns is WideNeedLevel { Shape: WideLevelShape.DistinctNames };
+        if (count < 2 || supply.Count != count)
             return false;
         for (var i = 0; i < count; i++)
         {
@@ -996,13 +1011,18 @@ public static partial class Evaluator
     /// <see cref="FlatUniqueNameBindingWidth"/> patterns, at least one a literal, every other a plain
     /// unique name (not collecting, not META, no children); the supply count equals the pattern
     /// count. Only clause heads carry literal patterns (<see cref="NeedClausePatterns"/>), so only the
-    /// family drivers ask. Such a head binds through <see cref="BindFlatLiteralHead"/>.
+    /// family drivers ask. Such a head binds through <see cref="BindFlatLiteralHead"/>. A WIDER head is
+    /// one when its translation decided it that shape (<see cref="WideNeedLevel"/>,
+    /// <see cref="WideLevelShape.DistinctNamesWithLiterals"/>), once, with one set of its names instead of the
+    /// pairwise check.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static bool IsFlatLiteralHead(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply)
     {
         var count = patterns.Count;
-        if (count == 0 || count > FlatUniqueNameBindingWidth || supply.Count != count)
+        if (count > FlatUniqueNameBindingWidth)
+            return supply.Count == count && patterns is WideNeedLevel { Shape: WideLevelShape.DistinctNamesWithLiterals };
+        if (count == 0 || supply.Count != count)
             return false;
         var literal = false;
         for (var i = 0; i < count; i++)
@@ -1089,7 +1109,8 @@ public static partial class Evaluator
     /// caller's own shaped report, so allocation here never re-checks it. Each structural level's
     /// own gate stays here, exactly once per level. Patterns traverse in written order, depth
     /// first: a unique plain name transports its cell (a flat level of unique plain names binds
-    /// directly, <see cref="FlatUniqueNameBindings"/>); every occurrence of a repeated name projects
+    /// directly, <see cref="FlatUniqueNameBindings"/>, and so does a wider flat level of distinct names
+    /// whose translation decided it once, <see cref="WideDistinctNameBindings"/>); every occurrence of a repeated name projects
     /// its cell's CALLABLE when reached and demands VALUE only as NEED-04's group-aware rule requires
     /// (a value-only contribution, or a callable one once its group has a data anchor; Lean
     /// <c>NeedBinder.bindName</c>); a literal or a structural pattern demands its cell when reached;
@@ -1115,9 +1136,10 @@ public static partial class Evaluator
             }
             return EvalResult<NeedEnv?>.Ok([(onlyName, patterns[0].Collecting ? CollectorCell(supply.ToArray(), ctx) : supply[0])]);
         }
-        // No local here: the async state machine of this binder stays the size it was.
+        // No local here: the async state machine of this binder stays the size it was. A wider flat level of
+        // distinct names binds as directly (WideNeedLevel), through the same statement, so the frame does too.
         if (IsFlatUniqueNameLevel(patterns, supply))
-            return EvalResult<NeedEnv?>.Ok(FlatUniqueNameBindings(patterns, supply));
+            return EvalResult<NeedEnv?>.Ok(FlatUniqueNameBindings(patterns, supply, in ctx));
 
         // Multiplicity is only zero/one/many. Visit a shared pattern node at most twice,
         // so a host DAG cannot expand into exponentially many paths before binding.
@@ -1569,12 +1591,13 @@ public static partial class Evaluator
         IReadOnlyList<Expr?>? occurrences = null, bool valueBoundary = true)
     {
         // A flat plain capture head with a matching supply count binds straight from the stored
-        // patterns (BindFlatCaptureHead). Every other head, and every other supply count, is translated.
+        // patterns (BindFlatCaptureHead). Every other head, and every other supply count, is translated:
+        // a wide head from the run's validated preparation (NeedCallPatterns).
         var env = BindFlatCaptureHead(callee.ParameterPatterns, supply);
         if (env is null)
         {
             // The call's ONE top-level cardinality decision, reported in the call's own shape.
-            var patterns = NeedParameterPatterns(callee.ParameterPatterns);
+            var patterns = NeedCallPatterns(callee.ParameterPatterns, ctx.Budget);
             if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
             var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false, occurrences).GetAwaiter().GetResult();
             // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
@@ -1649,7 +1672,7 @@ public static partial class Evaluator
         var env = BindFlatCaptureHead(callee.ParameterPatterns, supply);
         if (env is null)
         {
-            var patterns = NeedParameterPatterns(callee.ParameterPatterns);
+            var patterns = NeedCallPatterns(callee.ParameterPatterns, ctx.Budget);
             if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
             var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: true, family: false, occurrences).ConfigureAwait(false);
             // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).

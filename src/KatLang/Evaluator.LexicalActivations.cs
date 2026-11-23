@@ -808,9 +808,8 @@ public static partial class Evaluator
             return null;
 
         // The head scope publishes the head's own parameter names (computed once at entry);
-        // a head pushed without one — a loop step, a clause family, a builtin — reads them
-        // from the algorithm.
-        if (ctx.HeadScope is { } headScope ? ScopeBindsParameter(headScope, name) : ContainsOrdinal(site.Params, name))
+        // a head pushed without one reads them from the algorithm (HeadDeclaresParameter).
+        if (ctx.HeadScope is { } headScope ? ScopeBindsParameter(headScope, name) : HeadDeclaresParameter(site, name))
             return null;
 
         if (site.Parent is not { } parent || RequiredParameterOwner(parent, name) is not { } owner)
@@ -819,6 +818,20 @@ public static partial class Evaluator
             return ParameterActivation.Unbound;
         return IsDetached(activation, ctx) ? ParameterActivation.UnboundDetached : activation;
     }
+
+    /// <summary>
+    /// Whether a head pushed WITHOUT a head scope declares <paramref name="name"/>: ordinal membership in its
+    /// <c>Params</c> (Lean: <c>x ∈ site.params</c>), read from its stored patterns without projecting them. Only a
+    /// user algorithm has names here — a clause family, a builtin or an alias has none — and the head that
+    /// actually has them is a loop step the planner pushes to classify its body's references
+    /// (<c>LoopOptimizer.TryBuildLoopPlanTemplate</c>) or a fully planned round runs under
+    /// (<c>LoopRunFrame.IterationCtx</c>). Until 2026-11-23 every such read projected the head's whole
+    /// <c>Params</c> list: one array of N names per captured reference the planner classified, O(N²) bytes for a
+    /// wide step whose rows read a captured parameter. Same answer, nothing allocated for a flat head
+    /// (<see cref="ParameterPattern.HasCaptureNamed"/>).
+    /// </summary>
+    private static bool HeadDeclaresParameter(Algorithm site, string name)
+        => site is Algorithm.User user && ParameterPattern.HasCaptureNamed(user.ParameterPatterns, name);
 
     /// <summary>
     /// Whether <paramref name="scope"/>'s parameter list binds <paramref name="name"/>: ordinal membership in

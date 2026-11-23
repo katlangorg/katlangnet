@@ -56,6 +56,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.SharedValueGraphComplexityTests.ScalarFastPath_AllocatesNothing_GcIsolatedChild",
                 "KatLang.Tests.WideBodyDuplicatePropertyCheckTests.AWideVerdict_IsReusedWithoutAllocating_GcIsolatedChild",
                 "KatLang.Tests.WideDeconstructionScalabilityTests.TargetMetadata_DoesNotAllocateBeyondTheHelperRecord_GcIsolatedChild",
+                "KatLang.Tests.WideHeadPreparationTests.WideBindingsAllocateOnlyTheirEnvironment_PreparedHeadsAndScopelessReadsNothing_GcIsolatedChild",
                 "KatLang.Tests.WideParameterFrameTests.WideFrameReads_AllocateNothing_OwnAndCaptured_GcIsolatedChild",
             ],
             GcIsolatedAllocation.ChildTests(typeof(GcIsolatedAllocationTests).Assembly));

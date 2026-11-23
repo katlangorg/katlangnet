@@ -1033,6 +1033,49 @@ public closed record ParameterPattern
     }
 
     /// <summary>
+    /// Whether some capture of a pattern list is named <paramref name="name"/> (ordinal, a null name
+    /// included): exactly <c>FlattenCaptures(patterns).Any(capture =&gt; capture.Name == name)</c>, that is,
+    /// membership in <see cref="Algorithm.User.Params"/>, without projecting the names. Read where the
+    /// evaluator asks whether a head pushed without a head scope declares a name
+    /// (<c>Evaluator.HeadDeclaresParameter</c>). The SHARED-DAG RULE of <see cref="FindFirstCapture"/>:
+    /// a structural node met again was fully explored the first time, so it is skipped, and a flat list
+    /// of capture leaves allocates nothing.
+    /// </summary>
+    internal static bool HasCaptureNamed(IReadOnlyList<ParameterPattern> patterns, string name)
+    {
+        Stack<ParameterPattern>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            var top = patterns[index];
+            if (top is CaptureParameterPattern topCapture)
+            {
+                if (string.Equals(topCapture.Name, name, StringComparison.Ordinal))
+                    return true;
+                continue;
+            }
+
+            pending ??= new Stack<ParameterPattern>();
+            pending.Push(top);
+            while (pending.Count > 0)
+            {
+                var pattern = pending.Pop();
+                if (StructuralItems(pattern) is { } items)
+                {
+                    if ((expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
+                        PushItems(pending, items);
+                }
+                else if (string.Equals(((CaptureParameterPattern)pattern).Name, name, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The first capture of a pattern list in <see cref="FlattenCaptures"/> order — the first one
     /// whose declaration has a span when <paramref name="requireSpan"/> — or null: exactly
     /// <c>FlattenCaptures(patterns).FirstOrDefault(…)</c> without the per-occurrence projection.
