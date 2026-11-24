@@ -475,8 +475,14 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
 
     protected override void VisitOpenExpression(Expr expression)
     {
+        // An inline open target starts its own region at the prelude, entered at the level that carries the facts
+        // answering for a block head (ElaboratedScopeLookup.OpenBlockHeadLevel, as open-provider validation and
+        // exposure enter it): the chain's root in an eagerly elaborated program, and in a materialized deferred unit a
+        // prelude level over the unit's own facts, never the recorded chain's root, whose eager facts hold the
+        // placeholder's block with no body. A receiver inside the block is then judged against the block the unit
+        // completed, so a note survives exactly when it survives in the same text with nothing deferred.
         var previous = _scope;
-        _scope = _scope.Root;
+        _scope = ElaboratedScopeLookup.OpenBlockHeadLevel(_scope);
         base.VisitOpenExpression(expression);
         _scope = previous;
     }

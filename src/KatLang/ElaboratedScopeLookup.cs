@@ -1316,7 +1316,9 @@ internal static class ElaboratedScopeLookup
 
     /// <summary>
     /// THE LEVEL A BLOCK HEAD IS DECLARED AT, for the passes that walk INTO an inline open target (the description of
-    /// an unresolved target, open-provider validation): the prelude level that carries the facts answering for it
+    /// an unresolved target, open-provider validation, exposure's open-list region
+    /// (<c>PropertyExposureResolver.OpenTargetRegion</c>) and the dot-member provenance finalizer): the prelude level
+    /// that carries the facts answering for it
     /// (<see cref="OpenBlockHeadFacts"/>). That is the chain's root level whenever it carries those facts, as in every
     /// eagerly elaborated program; otherwise a prelude level over them, built as
     /// <see cref="CompletedStructureContext.Level"/> builds a level the chain does not hold. Every level below it then

@@ -507,6 +507,12 @@ internal static class PropertyExposureResolver
         /// <summary>Rewritten shared bodies across parents (see <see cref="SharedExposureRegion"/>).</summary>
         public Dictionary<SharedExposureRegion, Algorithm>? SharedRegions;
 
+        /// <summary>
+        /// The prelude regions open lists are rewritten in where the chain's root is not the level that answers for a
+        /// block head, by that level (<see cref="OpenTargetRegion"/>); null while none is.
+        /// </summary>
+        public Dictionary<ElaboratedPropertyScope, SummaryScope>? OpenTargetRegions;
+
         private RegionFreeNames? _regionNames;
         public RegionFreeNames RegionNames => _regionNames ??= new(new NameSetInterner());
 
@@ -842,11 +848,47 @@ internal static class PropertyExposureResolver
             ? Array.Empty<Expr>()
             : RewriteExprList(
                 algorithm.Opens,
-                new ExposureWalkMemos(summaryMemo, observations, finalLevel.Root, run));
+                new ExposureWalkMemos(summaryMemo, observations, OpenTargetRegion(finalLevel, levelScope, run), run));
         var rewrittenOutput = RewriteExprList(algorithm.Output, memos);
 
         // The same variant back: a user's rewritten bundle, or an alias's one rewritten target row.
         return algorithm.WithOwnScopeBody(rewrittenOpens, rewrittenProperties ?? (IReadOnlyList<Property>)Array.Empty<Property>(), rewrittenOutput);
+    }
+
+    /// <summary>
+    /// THE REGION AN OPEN LIST IS REWRITTEN IN. An inline open target is declared at the prelude, without the opener's
+    /// declarations, so its nested algorithms are classified in a region of their own that starts at the prelude level
+    /// carrying the facts that answer for a block head (<see cref="ElaboratedScopeLookup.OpenBlockHeadLevel"/>, the
+    /// level open-provider validation enters the same target at), for the level <paramref name="asking"/> that writes the
+    /// open. In an eagerly elaborated program that is the chain's root, and the region is <paramref name="level"/>'s
+    /// root as before. In a materialized deferred unit the chain is the one recorded at the branch, whose root carries
+    /// the EAGER program's facts, where the block is the placeholder's entry with no body; the region is then a
+    /// prelude level over the unit's own facts, where the block is the body the unit completed, so its levels are
+    /// summarized, settled and classified exactly as the same text is when nothing is deferred. A block the unit
+    /// inherited completed keeps its classified view (the inherited-block arm of <see cref="RewriteExprCore"/>, which
+    /// reads the same facts), and a loaded module keeps its own publication: neither depends on this region.
+    /// <para>The level comes from the recorded chain's member-index cache, one per answering facts, so it is entered
+    /// while that cache still takes the attempt's writes, before the deferred region takes them back and freezes the
+    /// unit. One region per level and run, as the chain's root is one region: a block several open lists share is
+    /// rewritten once there (<see cref="SharedExposureRegion"/>).</para>
+    /// </summary>
+    private static SummaryScope OpenTargetRegion(SummaryScope level, ElaboratedPropertyScope asking, ExposureRun run)
+    {
+        var root = level.Root;
+        // Empty open lists can still need a fresh list for record identity. Rewriting one enters no block.
+        if (asking.Opens.Count == 0)
+            return root;
+        var head = ElaboratedScopeLookup.OpenBlockHeadLevel(asking);
+        if (ReferenceEquals(head, root.PropertyScope))
+            return root;
+        run.OpenTargetRegions ??= new(ReferenceEqualityComparer.Instance);
+        if (!run.OpenTargetRegions.TryGetValue(head, out var region))
+        {
+            var context = head.CompletedContext;
+            region = new SummaryScope(null, head, NoSummaries, context?.Facts.Facts(context.Key)?.Parameters, head.OwnerAlgorithm);
+            run.OpenTargetRegions.Add(head, region);
+        }
+        return region;
     }
 
     /// <summary>
@@ -3283,13 +3325,14 @@ internal static class PropertyExposureResolver
         // Family-owned opens exist in host trees only (parsed families own none; the branch
         // bodies own theirs). They are a lookup level of their own for the branch bodies, and
         // they are rewritten like any open list: an open target's nested algorithms classify
-        // under the one rule exactly like every other body.
+        // under the one rule exactly like every other body, in the region the family's own
+        // level enters them at (OpenTargetRegion).
+        var lookupFamily = ElaboratedScopeLookup.CreateScope(algorithm, memos.Scope.PropertyScope, completedContext: completedContext);
         var rewrittenOpens = RewriteExprList(
             algorithm.Opens,
-            new ExposureWalkMemos(memos.SummaryMemo, memos.Observations, memos.Scope.Root, memos.Run));
+            new ExposureWalkMemos(memos.SummaryMemo, memos.Observations, OpenTargetRegion(memos.Scope, lookupFamily, memos.Run), memos.Run));
 
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
-        var lookupFamily = ElaboratedScopeLookup.CreateScope(algorithm, memos.Scope.PropertyScope, completedContext: completedContext);
         // Settled on the family's first deferred branch and handed to every one of them (one canonical set).
         RequirementSet? provisionalContribution = null;
         foreach (var branch in algorithm.Branches)
