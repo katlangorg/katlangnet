@@ -648,6 +648,31 @@ public class AstStructuralDepthTests
             ]).DisplayName);
     }
 
+    [Fact]
+    public void AnyCaptureExpandingSharedNodesOnce_IsIterative()
+    {
+        // The wording check of an unforwardable structural parameter searches its leaves with one index cursor per open
+        // group on the heap, never a frame per level: found at the bottom, not found, and found at once beside the spine.
+        static bool Named(string name, ParameterDeclaration capture) => capture.Name == name;
+        var a = new CaptureParameterPattern("a");
+        foreach (var deep in new[]
+        {
+            DeepParameterPattern(static (_, inner) => new SequenceValueParameterPattern([inner])),
+            DeepParameterPattern(static (_, inner) => new ListValueParameterPattern([inner])),
+            DeepParameterPattern(static (_, inner) => new UnpackingParameterPattern([inner])),
+            DeepParameterPattern((level, inner) => level % 2 == 0
+                ? new ListValueParameterPattern([inner, a])
+                : new SequenceValueParameterPattern([inner, a])),
+        })
+        {
+            Assert.True(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(deep, "x", Named));
+            Assert.False(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(deep, "y", Named));
+        }
+
+        Assert.True(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(
+            DeepParameterPattern((_, inner) => new ListValueParameterPattern([a, inner])), "a", Named));
+    }
+
     [Theory]
     [InlineData("sequence")]
     [InlineData("list")]

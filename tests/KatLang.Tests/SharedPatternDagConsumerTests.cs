@@ -104,6 +104,72 @@ public class SharedPatternDagConsumerTests(ITestOutputHelper output)
         Assert.True(unequalPairs > 200);
     }
 
+    [Fact]
+    public void AnyCaptureExpandingSharedNodesOnce_OffersTheListsCapturesInOrder_UntilTheFirstMatch()
+    {
+        // The short-circuiting search is CapturesExpandingSharedNodesOnce([pattern]).Any(match) without the list: the
+        // same captures — the same declarations, in the same order, a shared node's once — offered up to and including the
+        // first that matches, on random DAGs and on their cloned trees, for every name a capture has and for one none has.
+        var random = new Random(20261124);
+        var sharedCases = 0;
+        var offeredFewer = 0;
+        for (var round = 0; round < 1000; round++)
+        {
+            var (dag, sharesNodes) = RandomDag(random);
+            sharedCases += sharesNodes ? 1 : 0;
+            var origin = new Dictionary<ParameterPattern, ParameterPattern>(ReferenceEqualityComparer.Instance);
+            foreach (var pattern in dag.Concat(dag.Select(pattern => CloneTree(pattern, origin))))
+            {
+                var listed = ParameterPattern.CapturesExpandingSharedNodesOnce([pattern]);
+                foreach (var name in Names.Append("none"))
+                {
+                    var context = $"round {round}: {pattern.DisplayName} searched for {name}";
+                    var offered = new List<ParameterDeclaration>();
+                    var found = ParameterPattern.AnyCaptureExpandingSharedNodesOnce(pattern, (Offered: offered, Name: name),
+                        static (search, capture) =>
+                        {
+                            search.Offered.Add(capture);
+                            return capture.Name == search.Name;
+                        });
+                    var decidedAt = listed.Select(static capture => capture.Name).ToList().IndexOf(name);
+                    Assert.True(found == decidedAt >= 0, context);
+                    Assert.True(listed.Take(decidedAt >= 0 ? decidedAt + 1 : listed.Count).SequenceEqual(offered, ReferenceEqualityComparer.Instance), context);
+                    offeredFewer += offered.Count < listed.Count ? 1 : 0;
+                }
+            }
+        }
+
+        output.WriteLine($"1000 cases, {sharedCases} with shared nodes, {offeredFewer} searches decided before the last capture");
+        Assert.True(sharedCases > 500);
+        Assert.True(offeredFewer > 1000);
+    }
+
+    [Fact]
+    public void AnyCaptureExpandingSharedNodesOnce_SkipsAGroupThatHoldsItself_AsTheListDoes()
+    {
+        // A host list may hold its own group, directly or below another group: the pattern itself counts as expanded, so
+        // the search ends as the list does, with the same captures offered. The list counts its reads against a budget,
+        // so a walk that re-entered the group would fail at once instead of growing without end.
+        var items = new SelfReferencingItems(new PatternReadBudget(100)) { new CaptureParameterPattern("a") };
+        var self = new ListValueParameterPattern(items);
+        items.Add(self);
+        items.Add(new SequenceValueParameterPattern([self, new CaptureParameterPattern("b")]));
+        Assert.Equal(["a", "b"], ParameterPattern.CapturesExpandingSharedNodesOnce([self]).Select(static capture => capture.Name));
+        var offered = new List<string>();
+        Assert.False(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(self, offered, static (names, capture) =>
+        {
+            names.Add(capture.Name);
+            return false;
+        }));
+        Assert.Equal(["a", "b"], offered);
+        Assert.True(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(self, "b", static (name, capture) => capture.Name == name));
+
+        // A capture leaf is its own one capture.
+        var leaf = new CaptureParameterPattern("a");
+        Assert.True(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(leaf, leaf.Parameter, static (expected, capture) => ReferenceEquals(expected, capture)));
+        Assert.False(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(leaf, "b", static (name, capture) => capture.Name == name));
+    }
+
     // ── 3. Diamonds: linear work at 45 and 90 levels ────────────────────────
 
     public static TheoryData<string> Kinds() => new() { "sequence", "list", "unpack" };
@@ -117,6 +183,30 @@ public class SharedPatternDagConsumerTests(ITestOutputHelper output)
             ParameterPattern[] patterns = [Diamond(kind, Bottom("pair"), levels, budget), new CaptureParameterPattern("z")];
             Assert.Equal(["x", "y", "z"], ParameterPattern.CapturesExpandingSharedNodesOnce(patterns).Select(static c => c.Name).Distinct());
             Assert.Equal(3, ParameterPattern.CountCapturesExpandingSharedNodesOnce(patterns));
+            return budget.Reads;
+        });
+
+    [Theory]
+    [MemberData(nameof(Kinds))]
+    public void AnyCaptureExpandingSharedNodesOnce_OnASharedDiamond_ReadsOnlyToTheDecidingCapture(string kind)
+        => AssertLinear($"any capture/{kind}", levels =>
+        {
+            // x is the diamond's first capture and y its last distinct one. Deciding at x reads the first item of each
+            // level on the way down; finding nothing also reads each level's second item, a node already searched, once.
+            var budget = new PatternReadBudget(BudgetLimit);
+            var diamond = Diamond(kind, Bottom("pair"), levels, budget);
+            Assert.True(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(diamond, "x", static (name, capture) => capture.Name == name));
+            Assert.Equal(levels, budget.Reads);
+
+            budget.Reads = 0;
+            var offered = new List<string>();
+            Assert.False(ParameterPattern.AnyCaptureExpandingSharedNodesOnce(diamond, offered, static (names, capture) =>
+            {
+                names.Add(capture.Name);
+                return false;
+            }));
+            Assert.Equal(["x", "y"], offered);
+            Assert.Equal(2 * levels, budget.Reads);
             return budget.Reads;
         });
 
@@ -450,6 +540,29 @@ public class SharedPatternDagConsumerTests(ITestOutputHelper output)
     }
 
     // ── Shapes ──────────────────────────────────────────────────────────────
+
+    // A host items list that may come to hold its own group, counting each item read against a budget.
+    private sealed class SelfReferencingItems(PatternReadBudget budget) : IReadOnlyList<ParameterPattern>
+    {
+        private readonly List<ParameterPattern> _items = [];
+
+        public int Count => _items.Count;
+
+        public ParameterPattern this[int index]
+            => ++budget.Reads > budget.Limit
+                ? throw new InvalidOperationException("A pattern walk re-entered a group that holds itself.")
+                : _items[index];
+
+        public void Add(ParameterPattern item) => _items.Add(item);
+
+        public IEnumerator<ParameterPattern> GetEnumerator()
+        {
+            for (var index = 0; index < _items.Count; index++)
+                yield return this[index];
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
 
     // A fresh bottom: x; (x, y); (*a, *b); [] (no capture at all).
     private static ParameterPattern Bottom(string bottom) => bottom switch

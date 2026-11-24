@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using KatLang.ParserFuzz;
+using KatLang.TestInfrastructure;
 
 namespace KatLang.Tests;
 
@@ -1827,6 +1828,23 @@ public class DiagnosticBudgetTests
             Message($"G({wide}, {deep}, {longName}, z) = 0\nF = {{ a, b = G + 0, 1 }}\ntrace(5)"));
     }
 
+    // The front end's allocation for a source making two equal reports with a two-diagnostic list, minus that with a
+    // one-diagnostic list, which stores only the first: the cost of building ONE stored message (each run warmed first).
+    private static long OneStoredMessage(string source)
+    {
+        long Allocated(int limit)
+        {
+            _ = Elaborate(source, limit);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var (diagnostics, _) = Elaborate(source, limit);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal((2, Math.Min(2, limit)), (diagnostics.ReportedCount, diagnostics.Count - (diagnostics.IsTruncated ? 1 : 0)));
+            return allocated;
+        }
+
+        return Allocated(2) - Allocated(1);
+    }
+
     [Fact]
     public void StoredReportsOverWideDeclarations_AllocateTheirRetainedPrefix_NotTheWholeText()
     {
@@ -1838,21 +1856,6 @@ public class DiagnosticBudgetTests
         // measured 1.27 MB for the 10,000-parameter wrapper, 829 KB for the 200,000-unit name and 290 KB for the
         // 10,000-leaf lifted pattern. Each bound leaves room for an ArrayPool refill (32 KB) and the ~8 KB allocation
         // quantum of the in-process counter, and stays well below the whole text.
-        static long OneStoredMessage(string source)
-        {
-            long Allocated(int limit)
-            {
-                _ = Elaborate(source, limit);
-                var before = GC.GetAllocatedBytesForCurrentThread();
-                var (diagnostics, _) = Elaborate(source, limit);
-                var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                Assert.Equal((2, Math.Min(2, limit)), (diagnostics.ReportedCount, diagnostics.Count - (diagnostics.IsTruncated ? 1 : 0)));
-                return allocated;
-            }
-
-            return Allocated(2) - Allocated(1);
-        }
-
         (string Payload, long Bytes, long Bound)[] measured =
         [
             ("the wrapper over 10,000 parameters", OneStoredMessage($"T({Names("p", 10_000)}) = 0\nB0* = T\nB1* = T\n1"), 128 * 1024),
@@ -1863,5 +1866,254 @@ public class DiagnosticBudgetTests
         ];
         var over = measured.Where(static m => m.Bytes >= m.Bound).Select(static m => $"{m.Payload}: {m.Bytes} bytes (bound {m.Bound})").ToList();
         Assert.True(over.Count == 0, "one stored message built its whole text: " + string.Join("; ", over));
+    }
+
+    // ── The wording of a stored UnforwardableParameter report ────────────────
+    //
+    // Whether the body binds an unforwardable structural parameter in ANOTHER FORM ("in that form") is decided from the
+    // parameter's leaves in CapturesExpandingSharedNodesOnce order, a shared node's once, read only until one is bound
+    // (ParameterPattern.AnyCaptureExpandingSharedNodesOnce) — never from a list of every leaf. A host items list that
+    // counts its reads shows what ONE stored report reads, as the difference between capacities: the written form's
+    // shown prefix, then the leaves its wording checked. A report the list drops reads nothing.
+
+    /// <summary>A host pattern's items list that counts every item read through it.</summary>
+    private sealed class CountedPatternItems(IReadOnlyList<ParameterPattern> items) : IReadOnlyList<ParameterPattern>
+    {
+        public long Reads { get; private set; }
+
+        public int Count => items.Count;
+
+        public ParameterPattern this[int index]
+        {
+            get
+            {
+                Reads++;
+                return items[index];
+            }
+        }
+
+        public IEnumerator<ParameterPattern> GetEnumerator()
+        {
+            for (var index = 0; index < items.Count; index++)
+                yield return this[index];
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    // The UnforwardableParameter message of `A(q) = G` for G's parameter shown as `shown`, one of whose leaves A binds.
+    private static (string First, string Text) InThatFormMessage(string shown)
+    {
+        var first = $"'G' is forwarded by name here, but the enclosing explicit parameter list does not declare its parameter '{shown}' in that form.";
+        return (first, Lines(first, "Bare forwarding reuses an existing parameter only with the same pattern and never reshapes an argument. "
+            + $"Declare the parameter '{shown}', or call 'G' with explicit arguments."));
+    }
+
+    /// <summary>Where the leaf the callers bind stands among the parameter's 10,000 leaves: first, second, middle, last, none.</summary>
+    public static TheoryData<int> DecidingLeafPositions => new() { 0, 1, 4_999, 9_999, -1 };
+
+    [Theory]
+    [MemberData(nameof(DecidingLeafPositions))]
+    public void StoredUnforwardableReport_ReadsTheParameterLeavesOnlyUntilOneDecidesItsWording(int decidingLeaf)
+    {
+        // G's one list parameter holds 10,000 leaves, and three callers that bind `q` — the leaf at `decidingLeaf`, or no
+        // leaf at all — cannot forward it, so each of their three reports says whether its caller binds the parameter in
+        // that form. A stored report reads the items its written form shows, then the leaves its wording checks up to the
+        // one that decides; only a parameter none of whose leaves decides is read to its end. A dropped report reads
+        // nothing, and every capacity keeps the whole list's prefix.
+        const int leaves = 10_000;
+        const int reports = 3;
+        const string source = "G(u) = 0\nA0(q) = G\nA1(q) = G\nA2(q) = G\n1";
+        var names = Enumerable.Range(0, leaves).Select(i => i == decidingLeaf ? "q" : $"a{i}").ToArray();
+        var shown = ShownName($"[{string.Join(", ", names)}]");
+        var (first, whole) = decidingLeaf >= 0 ? InThatFormMessage(shown) : UnforwardableMessage(shown);
+        var checks = decidingLeaf >= 0 ? decidingLeaf + 1 : leaves;
+        var displayNodes = ShownGroupNodes(names);
+        // The written form reads every node it shows but the group itself; the wording reads each leaf it checks once.
+        var readsPerStoredReport = displayNodes - 1 + checks;
+
+        (DiagnosticBag Diagnostics, FrontEndTraversalObservations Observations, long Reads) Resolve(int limit)
+        {
+            var items = new CountedPatternItems([.. names.Select(static name => new CaptureParameterPattern(name))]);
+            var (diagnostics, observations) = ResolveHostBuilt(source, "G", [new ListValueParameterPattern(items)], limit);
+            return (diagnostics, observations, items.Reads);
+        }
+
+        var (full, unbounded, _) = Resolve(Limit);
+        Assert.Equal(
+            Enumerable.Range(2, reports).Select(row
+                => Stored(StoredForm(whole, first.Length, DiagnosticCode.UnforwardableParameter, new SourceSpan(row, 9, row, 10)))),
+            full.Select(Stored));
+        Assert.Equal((reports, reports * checks, reports * displayNodes), (unbounded.UnforwardableParameterMessages,
+            unbounded.UnforwardableParameterWordingChecks, unbounded.UnforwardableParameterDisplayNodes));
+
+        var oneStored = Resolve(1).Reads;
+        foreach (var limit in new[] { reports + 1, reports, reports - 1, 1 })
+        {
+            var (bounded, observed, reads) = Resolve(limit);
+            AssertPrefixOfUnbounded(full, bounded, limit);
+            var stored = Math.Min(limit, reports);
+            Assert.Equal((reports, reports, stored), (bounded.ReportedCount, observed.UnforwardableParameterReports,
+                observed.UnforwardableParameterMessages));
+            Assert.Equal((stored * checks, stored * displayNodes), (observed.UnforwardableParameterWordingChecks,
+                observed.UnforwardableParameterDisplayNodes));
+            Assert.Equal((stored - 1) * readsPerStoredReport, reads - oneStored);
+        }
+    }
+
+    [Fact]
+    public void StoredUnforwardableReport_ChecksTheLeavesOfASharedSubtreeOnce()
+    {
+        // A host-built parameter may hold one structural node along several paths. Its wording checks the leaves in
+        // CapturesExpandingSharedNodesOnce order: a node met again was checked whole where it was first met, and is
+        // skipped. In [[a, b], [a, b], c] with one shared [a, b], a caller binding c decides at the third check, not the
+        // fifth, and a caller binding none of them is told so after three.
+        var shared = new ListValueParameterPattern([new CaptureParameterPattern("a"), new CaptureParameterPattern("b")]);
+        ParameterPattern parameter = new ListValueParameterPattern([shared, shared, new CaptureParameterPattern("c")]);
+        foreach (var (caller, checks) in new[] { ("a", 1), ("b", 2), ("c", 3), ("q", 3) })
+        {
+            var source = $"G(u) = 0\nA0({caller}) = G\nA1({caller}) = G\n1";
+            var (first, whole) = caller == "q" ? UnforwardableMessage("[[a, b], [a, b], c]") : InThatFormMessage("[[a, b], [a, b], c]");
+            var (full, unbounded) = ResolveHostBuilt(source, "G", [parameter]);
+            Assert.Equal(
+                Enumerable.Range(2, 2).Select(row
+                    => Stored(StoredForm(whole, first.Length, DiagnosticCode.UnforwardableParameter, new SourceSpan(row, 9, row, 10)))),
+                full.Select(Stored));
+            Assert.Equal((2, 2 * checks), (unbounded.UnforwardableParameterMessages, unbounded.UnforwardableParameterWordingChecks));
+
+            var (bounded, observed) = ResolveHostBuilt(source, "G", [parameter], limit: 1);
+            AssertPrefixOfUnbounded(full, bounded, 1);
+            Assert.Equal((2, 1, checks), (observed.UnforwardableParameterReports, observed.UnforwardableParameterMessages,
+                observed.UnforwardableParameterWordingChecks));
+        }
+
+        // A diamond of 45 levels holds one node twice per level — 2^45 paths to its bottom (x, y) — and its items count
+        // their reads against a budget a per-path walk would exhaust. Its wording checks x and y whether the caller binds
+        // y or neither; deciding at y reads one item per level on the way down, and finding no leaf also reads each
+        // level's second, already checked, item on the way back: exactly 45 reads more, never a path twice.
+        const int levels = 45;
+        static ParameterPattern Diamond(PatternReadBudget budget)
+        {
+            ParameterPattern pattern = new SequenceValueParameterPattern([new CaptureParameterPattern("x"), new CaptureParameterPattern("y")]);
+            for (var level = 0; level < levels; level++)
+                pattern = new ListValueParameterPattern(new BudgetedPatternItems<ParameterPattern>(pattern, pattern, budget));
+            return pattern;
+        }
+
+        var diamondShown = ExprNameRenderer.BoundDisplayName(Diamond(new PatternReadBudget(1_000_000)));
+        var storedReads = new Dictionary<string, long>();
+        foreach (var caller in new[] { "y", "q" })
+        {
+            var source = $"G(u) = 0\nA0({caller}) = G\nA1({caller}) = G\n1";
+            var (first, whole) = caller == "q" ? UnforwardableMessage(diamondShown) : InThatFormMessage(diamondShown);
+            long Reads(int limit, out DiagnosticBag diagnostics, out FrontEndTraversalObservations observations)
+            {
+                var budget = new PatternReadBudget(1_000_000);
+                (diagnostics, observations) = ResolveHostBuilt(source, "G", [Diamond(budget)], limit);
+                return budget.Reads;
+            }
+
+            var two = Reads(2, out var full, out var unbounded);
+            var one = Reads(1, out var bounded, out var observed);
+            Assert.Equal(
+                Enumerable.Range(2, 2).Select(row
+                    => Stored(StoredForm(whole, first.Length, DiagnosticCode.UnforwardableParameter, new SourceSpan(row, 9, row, 10)))),
+                full.Select(Stored));
+            AssertPrefixOfUnbounded(full, bounded, 1);
+            Assert.Equal((4, 2), (unbounded.UnforwardableParameterWordingChecks, observed.UnforwardableParameterWordingChecks));
+            storedReads[caller] = two - one;
+        }
+
+        Assert.Equal(levels, storedReads["q"] - storedReads["y"]);
+    }
+
+    [Fact]
+    public void StructuralWordingReplays_ForFamiliesSharingABranchBody_ReadTheParameterOnlyForTheFirstReport()
+    {
+        // One branch body `G` shared by three families (M4) under the head [z] or [x], where x is the first of the 10,000
+        // leaves of G's list parameter: the body's first stored report reads the parameter, its written form's prefix and
+        // the leaves its wording checks — one under [x], all of them under [z] — and every report re-issued for a further
+        // family reuses that wording and reads none of the parameter, at every capacity.
+        const int leaves = 10_000;
+        string[] families = ["Left", "Middle", "Right"];
+        var names = new[] { "x" }.Concat(Enumerable.Range(1, leaves - 1).Select(static i => $"a{i}")).ToArray();
+        var shown = ShownName($"[{string.Join(", ", names)}]");
+        var readsByHead = new Dictionary<string, long>();
+        foreach (var head in new[] { "x", "z" })
+        {
+            var parsed = Parser.ParseSyntax($"G(u) = 0\nF([{head}]) = G\nF([1]) = 0\n1");
+            Assert.False(parsed.HasErrors);
+            var branches = Assert.IsType<Algorithm.Conditional>(Assert.Single(parsed.SyntaxRoot.Properties, p => p.Name == "F").Value).Branches;
+            var g = Assert.Single(parsed.SyntaxRoot.Properties, p => p.Name == "G");
+
+            (DiagnosticBag Diagnostics, FrontEndTraversalObservations Observations, long Reads) Resolve(int limit)
+            {
+                var items = new CountedPatternItems([.. names.Select(static name => new CaptureParameterPattern(name))]);
+                var host = g with { Value = Assert.IsType<Algorithm.User>(g.Value) with { ParameterPatterns = [new ListValueParameterPattern(items)] } };
+                var root = new Algorithm.User(null, [], [],
+                    [host, .. families.Select(family => new Property(family, new Algorithm.Conditional(null, [], branches)))],
+                    new OutputBundle([new Expr.Num(1)]));
+                var diagnostics = new DiagnosticBag(limit);
+                var program = ParameterDetector.DetectPrevalidated(root, diagnostics: diagnostics);
+                Assert.Equal(0, diagnostics.ReportedCount);
+                var observations = new FrontEndTraversalObservations();
+                var before = items.Reads;
+                _ = ImplicitArgumentResolver.ResolvePrevalidated(program, observations, diagnostics);
+                return (diagnostics, observations, items.Reads - before);
+            }
+
+            var checks = head == "x" ? 1 : leaves;
+            var (full, unbounded, reads) = Resolve(Limit);
+            // Each of the two branch bodies is rewritten once for the three families that share it.
+            Assert.Equal(branches.Count, unbounded.ResolverBranchBodyRegionExpansions);
+            Assert.Equal(
+                families.Select(family => head == "x"
+                    ? $"'G' is forwarded by name here, but the pattern of conditional branch '{family}' does not bind its parameter '{shown}' in that form."
+                    : $"'G' is forwarded by name here, but its parameter '{shown}' is not bound by the pattern of conditional branch '{family}'."),
+                full.Select(d => d.Message.Split(Environment.NewLine)[0]));
+            Assert.Equal((3, 3, checks), (unbounded.UnforwardableParameterReports, unbounded.UnforwardableParameterMessages,
+                unbounded.UnforwardableParameterWordingChecks));
+
+            foreach (var limit in new[] { 4, 3, 2, 1 })
+            {
+                var (bounded, observed, boundedReads) = Resolve(limit);
+                AssertPrefixOfUnbounded(full, bounded, limit);
+                Assert.Equal((3, Math.Min(limit, 3), checks), (observed.UnforwardableParameterReports,
+                    observed.UnforwardableParameterMessages, observed.UnforwardableParameterWordingChecks));
+                Assert.Equal(reads, boundedReads);
+            }
+
+            readsByHead[head] = reads;
+        }
+
+        // The same written form is read under both heads; the wording alone reads one leaf under [x] and every leaf under [z].
+        Assert.Equal(leaves - 1, readsByHead["z"] - readsByHead["x"]);
+    }
+
+    [Fact]
+    public void StoredUnforwardableReports_DecideTheirWordingWithoutListingEveryLeaf()
+    {
+        // The allocation control for the wording. Each workload makes two equal reports about a 10,000-leaf list parameter,
+        // and a one-diagnostic list stores only the first, so a two-diagnostic list's extra allocation is the cost of ONE
+        // stored message: its bounded written form and its text (measured on 2026-11-24 in the Debug build: 11–12 KB with
+        // a leaf bound, 16 KB with none, whose wording is longer). Deciding the wording from a list of the parameter's
+        // leaves, as the former check did, also cost the list and the stack that filled it, whichever leaf decided:
+        // 536–543 KB per stored message in the Debug test build (the check alone 525 KB in Release, 4.2 MB at 100,000
+        // leaves). A group of leaves is now walked in place. The bound leaves room for an ArrayPool refill (32 KB) and the
+        // ~8 KB allocation quantum of the in-process counter, and stays far below the list.
+        const int leaves = 10_000;
+        (string Payload, long Bytes)[] measured =
+        [
+            ("the first leaf bound by the caller", OneStoredMessage($"G([q, {Names("a", leaves - 1)}]) = 0\nA0(q) = G\nA1(q) = G\n1")),
+            ("the last leaf bound by the caller", OneStoredMessage($"G([{Names("a", leaves - 1)}, q]) = 0\nA0(q) = G\nA1(q) = G\n1")),
+            ("no leaf bound", OneStoredMessage($"G([{Names("a", leaves)}]) = 0\nA0(q) = G\nA1(q) = G\n1")),
+            ("the first leaf bound by an enclosing parameter",
+                OneStoredMessage($"G([q, {Names("a", leaves - 1)}]) = 0\nOuter(q) = {{\n    A0(r) = G\n    A1(r) = G\n    1\n}}\n1")),
+            ("the first leaf of a nested group bound by the caller",
+                OneStoredMessage($"G([(q, {Names("a", leaves - 1)})]) = 0\nA0(q) = G\nA1(q) = G\n1")),
+        ];
+        const long bound = 96 * 1024;
+        var over = measured.Where(static m => m.Bytes >= bound).Select(static m => $"{m.Payload}: {m.Bytes} bytes (bound {bound})").ToList();
+        Assert.True(over.Count == 0, "one stored message listed the parameter's leaves: " + string.Join("; ", over));
     }
 }

@@ -783,6 +783,54 @@ public closed record ParameterPattern
     }
 
     /// <summary>
+    /// Whether <paramref name="match"/> holds for a capture of <paramref name="pattern"/>: exactly
+    /// <c>CapturesExpandingSharedNodesOnce([pattern]).Any(capture =&gt; match(state, capture))</c>, without the list.
+    /// <paramref name="match"/> is offered the same captures in the same order — left to right, depth first, every
+    /// STRUCTURAL node expanded at most once by reference identity (<paramref name="pattern"/> itself included), so a
+    /// node met again is skipped as that list skips it. The walk reads through the first matching capture, or visits
+    /// every item of every expanded group once if none matches. It keeps one cursor per open group and one reference
+    /// per distinct group expanded. Both the stack and the reference set are allocated lazily, so a capture leaf or
+    /// a flat group of leaves needs neither. Iteration also supports arbitrarily deep host patterns.
+    /// <paramref name="match"/> must not mutate the pattern.
+    /// </summary>
+    internal static bool AnyCaptureExpandingSharedNodesOnce<TState>(
+        ParameterPattern pattern,
+        TState state,
+        Func<TState, ParameterDeclaration, bool> match)
+    {
+        if (StructuralItems(pattern) is not { } items)
+            return match(state, ((CaptureParameterPattern)pattern).Parameter);
+
+        // The groups whose remaining items wait for a nested group, and the groups expanded so far.
+        Stack<(IReadOnlyList<ParameterPattern> Items, int Next)>? suspended = null;
+        HashSet<ParameterPattern>? expanded = null;
+        var next = 0;
+        while (true)
+        {
+            if (next < items.Count)
+            {
+                var item = items[next++];
+                if (StructuralItems(item) is not { } nestedItems)
+                {
+                    if (match(state, ((CaptureParameterPattern)item).Parameter))
+                        return true;
+                }
+                else if ((expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance) { pattern }).Add(item))
+                {
+                    (suspended ??= new Stack<(IReadOnlyList<ParameterPattern> Items, int Next)>()).Push((items, next));
+                    (items, next) = (nestedItems, 0);
+                }
+
+                continue;
+            }
+
+            if (suspended is null || !suspended.TryPop(out var outer))
+                return false;
+            (items, next) = outer;
+        }
+    }
+
+    /// <summary>
     /// <c>CapturesExpandingSharedNodesOnce(patterns).Count</c> without materializing the list:
     /// for a tree exactly <see cref="CountCaptures"/>, so a charge that reads it is unchanged for
     /// every parsed program, while a host-built pattern sharing structural nodes is counted with

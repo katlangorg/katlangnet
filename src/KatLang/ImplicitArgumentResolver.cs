@@ -3748,7 +3748,10 @@ internal static partial class ImplicitArgumentResolver
     /// Whether the closed body binds an unforwardable callee parameter in ANOTHER FORM — the wording of its report only
     /// (<see cref="FormatUnforwardableParameter"/>: "in that form"), never part of the verdict: a capture the body binds
     /// only inside one of its own structural patterns, or a structural pattern one of whose leaves the body or an
-    /// enclosing parameter binds. Every name it checks is counted
+    /// enclosing parameter binds. A structural pattern's leaves are checked in
+    /// <see cref="ParameterPattern.CapturesExpandingSharedNodesOnce"/> order, each shared node's once, and read only until
+    /// one is bound (<see cref="ParameterPattern.AnyCaptureExpandingSharedNodesOnce{TState}"/>): a wide pattern whose first
+    /// leaf decides costs that leaf, never a list of every leaf. Every name it checks is counted
     /// (<see cref="FrontEndTraversalObservations.UnforwardableParameterWordingChecks"/>).
     /// </summary>
     private static bool IsBoundInAnotherForm(
@@ -3763,14 +3766,14 @@ internal static partial class ImplicitArgumentResolver
             return bodyNames.Contains(capture.Name);
         }
 
-        foreach (var leaf in ParameterPattern.CapturesExpandingSharedNodesOnce([parameter]))
-        {
-            observations?.RecordUnforwardableParameterWordingCheck();
-            if (bodyNames.Contains(leaf.Name) || enclosing.Binds(leaf.Name))
-                return true;
-        }
-
-        return false;
+        return ParameterPattern.AnyCaptureExpandingSharedNodesOnce(
+            parameter,
+            (BodyNames: bodyNames, Enclosing: enclosing, Observations: observations),
+            static (bindings, leaf) =>
+            {
+                bindings.Observations?.RecordUnforwardableParameterWordingCheck();
+                return bindings.BodyNames.Contains(leaf.Name) || bindings.Enclosing.Binds(leaf.Name);
+            });
     }
 
     /// <summary>
