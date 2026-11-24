@@ -17,9 +17,11 @@ namespace KatLang.Tests;
 /// live heap after 1,000 rounds of 100 positions than after 250 (measured 2026-11-24).
 /// <para>The REACHABILITY GUARD: <see cref="LazyStageTestSeam"/> records every stage the run builds,
 /// weakly; a host operation <c>probe()</c> runs after the loop, forces a full blocking collection
-/// and counts the stages still reachable. The count is deterministic — it depends on reachability
-/// only — and must not grow with the rounds when every round reads its new stage, while a round
-/// that leaves positions unread keeps every stage (their steps are still pending: the controls).
+/// and counts the stages still reachable. The count depends on reachability only — exactly so on the
+/// synchronous route; a twin probe first lets the thread pool drop what it holds only for a moment
+/// (<c>RunProbedAsync</c>) — and must not grow with the rounds when every round reads its new stage,
+/// while a round that leaves positions unread keeps every stage (their steps are still pending: the
+/// controls).
 /// Values, effects and their order are pinned on the six routes; the release changes none of
 /// them.</para>
 /// </summary>
@@ -51,13 +53,44 @@ public sealed class LazyStageRetentionTests
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true);
     }
 
+    // How often, and how far apart, a twin probe counts again while it finds more stages than its bound.
+    private const int SettleAttempts = 20;
+    private const int SettleDelayMilliseconds = 50;
+
+    /// <summary>
+    /// Queues a burst of no-op work items on the thread pool's global queue and waits for all of them:
+    /// idle workers get other work to run, in place of the last continuation they ran.
+    /// </summary>
+    private static Task ThreadPoolTurnoverAsync()
+    {
+        var items = 2 * Math.Max(ThreadPool.ThreadCount, Environment.ProcessorCount);
+        var remaining = items;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Run(int _)
+        {
+            if (Interlocked.Decrement(ref remaining) == 0) done.SetResult();
+        }
+
+        for (var i = 0; i < items; i++) ThreadPool.UnsafeQueueUserWorkItem(Run, 0, preferLocal: false);
+        return done.Task;
+    }
+
     /// <summary>
     /// Runs <paramref name="source"/> with the stage recorder active and returns its outcome and the
     /// stages still reachable at <c>probe()</c>. On the twin route every host operation suspends
     /// (<c>pause(x)</c> returns <c>x</c> after yielding), so each step that calls it resumes on
     /// another thread before its stage can be released.
+    /// <para>The synchronous count is exact: the run never leaves the test's thread. A twin count is
+    /// not: thread-pool work of the last rounds (for example a continuation still in flight, or an
+    /// execution context captured while a step's cell was current, <c>NeedCell.Current</c>) can hold
+    /// an earlier round's stage for a moment after the run stopped needing it. A probe given
+    /// <paramref name="settleTo"/> therefore counts again, after the thread pool has run other work,
+    /// while it finds more stages than that, up to <see cref="SettleAttempts"/> times. A collected
+    /// stage never comes back, and nothing of the run executes while the probe waits, so a stage the
+    /// run itself still holds is counted in every attempt: the bound still catches every retention
+    /// the release removed.</para>
     /// </summary>
-    private static async Task<Probed> RunProbedAsync(string source, bool twin)
+    private static async Task<Probed> RunProbedAsync(string source, bool twin, int? settleTo = null)
     {
         using var recorder = LazyStageTestSeam.Activate();
         var alive = -1;
@@ -73,6 +106,13 @@ public sealed class LazyStageRetentionTests
                 {
                     await Task.Yield();
                     alive = Count();
+                    for (var attempt = 0; settleTo is { } bound && alive > bound && attempt < SettleAttempts; attempt++)
+                    {
+                        await ThreadPoolTurnoverAsync();
+                        await Task.Delay(SettleDelayMilliseconds);
+                        alive = Count();
+                    }
+
                     return new Result.Atom(0);
                 }),
                 HostOperation.CreateAsync("pause", async (args, _) =>
@@ -117,20 +157,22 @@ public sealed class LazyStageRetentionTests
     public async Task ALoopThatReadsItsNewStageEveryRound_KeepsOnlyTheLastRoundReachable(
         string step, int stagesPerRound, string fewRoundsSum, string manyRoundsSum)
     {
+        // At most the last round's stages are reachable, however many rounds ran (every earlier stage
+        // was reachable before the release: 60 and 240 rounds' worth). One more is tolerated: on a
+        // twin run, a thread-pool continuation can briefly hold the previous round's context (seen
+        // only on a process's first twin run). A twin probe settles to that bound before its last
+        // count (RunProbedAsync); without settling, CI once counted 3 for the `pause` step.
+        var bound = stagesPerRound + 1;
         foreach (var twin in new[] { false, true })
         {
-            var few = await RunProbedAsync(Loop(ForceAll, step, 60), twin);
-            var many = await RunProbedAsync(Loop(ForceAll, step, 240), twin);
+            var few = await RunProbedAsync(Loop(ForceAll, step, 60), twin, settleTo: bound);
+            var many = await RunProbedAsync(Loop(ForceAll, step, 240), twin, settleTo: bound);
             Assert.Equal($"ok S[{fewRoundsSum}, 0]", few.Outcome);
             Assert.Equal($"ok S[{manyRoundsSum}, 0]", many.Outcome);
             Assert.Equal(60 * stagesPerRound, few.Built);
             Assert.Equal(240 * stagesPerRound, many.Built);
-            // At most the last round's stages are reachable, however many rounds ran (every earlier
-            // stage was reachable before the release: 60 and 240 rounds' worth). One more is
-            // tolerated: on a twin run, a thread-pool continuation can briefly hold the previous
-            // round's context (seen only on a process's first twin run).
-            Assert.InRange(few.Alive, 1, stagesPerRound + 1);
-            Assert.InRange(many.Alive, 1, stagesPerRound + 1);
+            Assert.InRange(few.Alive, 1, bound);
+            Assert.InRange(many.Alive, 1, bound);
         }
     }
 
@@ -154,7 +196,7 @@ public sealed class LazyStageRetentionTests
 
             // The same loop read whole before the probe: every stage is resolved, deepest first,
             // and released.
-            var whole = await RunProbedAsync(Loop(ForceFirst, step, 60), twin);
+            var whole = await RunProbedAsync(Loop(ForceFirst, step, 60), twin, settleTo: stagesPerRound + 1);
             Assert.Equal(60 * stagesPerRound, whole.Built);
             Assert.InRange(whole.Alive, 1, stagesPerRound + 1);
 
@@ -174,7 +216,7 @@ public sealed class LazyStageRetentionTests
         {
             // `sum` reads every position of the top stage, which reads the stages below it deepest
             // first: every stage is then resolved, and only the top one is still reachable.
-            var whole = await RunProbedAsync("Step(xs) = xs.map{x + 1}\nS = repeat(Step([1, 2]), 200)\nS.sum, probe()", twin);
+            var whole = await RunProbedAsync("Step(xs) = xs.map{x + 1}\nS = repeat(Step([1, 2]), 200)\nS.sum, probe()", twin, settleTo: 2);
             Assert.Equal("ok S[403, 0]", whole.Outcome);
             Assert.Equal(200, whole.Built);
             Assert.InRange(whole.Alive, 1, 2);
@@ -197,7 +239,7 @@ public sealed class LazyStageRetentionTests
             // Each round's scan reads the previous round's two-position prefix: it judges both
             // candidates while the round's prefix is read, so it lets go of the prefix below it
             // even though nobody asks it for a third position.
-            var probed = await RunProbedAsync(ForceAll + "Step(xs) = Force(xs.filter{x > 0}.take(2))\nS = repeat(Step([1, 2]), 100)\nS.sum, probe()", twin);
+            var probed = await RunProbedAsync(ForceAll + "Step(xs) = Force(xs.filter{x > 0}.take(2))\nS = repeat(Step([1, 2]), 100)\nS.sum, probe()", twin, settleTo: 3);
             Assert.Equal("ok S[3, 0]", probed.Outcome);
             Assert.Equal(200, probed.Built);
             Assert.InRange(probed.Alive, 1, 3);
