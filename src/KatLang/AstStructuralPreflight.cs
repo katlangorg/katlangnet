@@ -301,6 +301,40 @@ internal static class AstStructuralPreflight
         => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: false, deferredMemo: null, out _, out rootHeight);
 
     /// <summary>
+    /// The module loader's gate over a deferred materialization's COMPOSED body (<see cref="AstConsumerProfile.FullyRecursive"/>):
+    /// <see cref="CheckMeasuringHeight"/>, except that a module view whose height an earlier materialization published
+    /// (<see cref="CompletedModuleViews"/>) is not walked where that height FITS at the occurrence — the walk takes the
+    /// height, exactly what walking the immutable view would compute — and that the height of every module view the walk
+    /// does walk is staged in <paramref name="moduleViews"/>. The verdict and the root's height are the ordinary walk's.
+    /// A rejection replays the ordinary walk, so its kind and span never depend on which views were reused (a reused
+    /// view's interior is absent from this walk's table). The caller judges a LOWER limit of the same profile from
+    /// <paramref name="rootHeight"/>, as <see cref="CheckMeasuringHeight"/> allows.
+    /// </summary>
+    internal static AstStructuralRejection? CheckComposedModuleBody(
+        object root,
+        int maxDepth,
+        CompletedModuleViews.Attempt moduleViews,
+        out int rootHeight)
+    {
+        var rejection = CheckCore(root, maxDepth, AstConsumerProfile.FullyRecursive, observations: null, detectCallCapture: false,
+            deferredMemo: null, out _, out rootHeight, moduleViews: moduleViews);
+        if (moduleViews.Verifies)
+        {
+            var ordinary = CheckMeasuringHeight(root, maxDepth, AstConsumerProfile.FullyRecursive, out var ordinaryHeight);
+            if ((ordinary is null) != (rejection is null) || ordinary is null && ordinaryHeight != rootHeight)
+                throw new InvalidOperationException(
+                    $"A composed-body gate that reused completed module views decided {(rejection is null ? $"height {rootHeight}" : "a rejection")}, "
+                    + $"the ordinary walk {(ordinary is null ? $"height {ordinaryHeight}" : "a rejection")}.");
+        }
+
+        if (rejection is null || !moduleViews.Shares)
+            return rejection;
+        rootHeight = -1;
+        return Check(root, maxDepth, AstConsumerProfile.FullyRecursive)
+            ?? throw new InvalidOperationException("Internal error: a composed body was rejected only by the gate that reused completed module views.");
+    }
+
+    /// <summary>
     /// The evaluator's admission walk: <see cref="Check"/>
     /// over a run's program, which also decides the run's program facts in the SAME walk
     /// (<see cref="AdmittedProgramFacts"/>, meaningful only when the tree is accepted): its J7 fact
@@ -323,7 +357,7 @@ internal static class AstStructuralPreflight
         FrontEndTraversalObservations? observations = null,
         CancellationToken cancellationToken = default)
         => CheckCore(root, maxDepth, profile, observations, detectCallCapture: true, deferredMemo: null, out facts, out _,
-            nodeCountHint, tables, cancellationToken);
+            nodeCountHint, tables, cancellationToken: cancellationToken);
 
     /// <summary>
     /// How many edges the admission walk follows between two observations of a cancellable run's token
@@ -450,8 +484,13 @@ internal static class AstStructuralPreflight
         out int rootHeight,
         int nodeCountHint = 0,
         PreEvaluationTables? tables = null,
+        CompletedModuleViews.Attempt? moduleViews = null,
         CancellationToken cancellationToken = default)
     {
+        // Module-view heights are facts of the fully recursive profile (CheckComposedModuleBody, its one caller).
+        if (moduleViews is not null && profile != AstConsumerProfile.FullyRecursive)
+            throw new ArgumentException("Completed module-view heights are fully recursive heights.", nameof(moduleViews));
+
         // Only an evaluator run hands in a cancellable token (CheckAdmittedProgram): every other caller's walk observes
         // nothing and records no checkpoint, exactly as before.
         var observesCancellation = cancellationToken.CanBeCanceled;
@@ -540,6 +579,8 @@ internal static class AstStructuralPreflight
                 var height = frame.MaxChildHeight + frame.NodeWeight;
                 var heightAtParent = frame.IncomingTransitionWeight + height;
                 heights[frame.Node] = height;
+                if (moduleViews is not null && CompletedModuleViews.IsModuleView(frame.Node, out var walkedView))
+                    moduleViews.StageHeight(walkedView, height);
                 var subtreeHasDeferredRegion = deferredReach is not null && deferredReach[frameCount - 1];
                 if (deferredMemo is not null)
                     deferredMemo.Completed[frame.Node] = new(height, subtreeHasDeferredRegion);
@@ -559,6 +600,7 @@ internal static class AstStructuralPreflight
 
             frame.NextChildIndex++;
             observations?.RecordStructuralPreflightEdge();
+            moduleViews?.Observations?.RecordDeferredCompositionGateEdge();
             if (observesCancellation && --edgesBeforeCheckpoint == 0)
             {
                 edgesBeforeCheckpoint = CancellationCheckpointEdges;
@@ -575,6 +617,17 @@ internal static class AstStructuralPreflight
                 // occurrence retains the ordinary shared-node rejection and positioning.
                 heights[child] = childHeight = previousChild.Height;
                 knownChild = true;
+            }
+
+            if (!knownChild && moduleViews is not null && CompletedModuleViews.IsModuleView(child, out var completedView)
+                && moduleViews.TryGetReusableHeight(completedView, out var completedHeight)
+                && pathWeight + transitionWeight + completedHeight <= maxDepth)
+            {
+                // A completed module view whose height fits here: its height is what walking it would compute, and an
+                // immutable view reaches nothing on this path, so it is a completed child of this walk.
+                heights[child] = childHeight = completedHeight;
+                knownChild = true;
+                moduleViews.Observations?.RecordCompletedModuleViewReuse();
             }
 
             if (knownChild)

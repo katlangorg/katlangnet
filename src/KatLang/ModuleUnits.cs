@@ -47,6 +47,12 @@ internal sealed class ModuleUnitRegistry
     /// </summary>
     internal CompletedProviderSummaries CompletedProviders { get; } = new();
 
+    /// <summary>
+    /// The admission facts of the module views the program's deferred materializations completed and published with
+    /// their units (<see cref="CompletedModuleViews"/>): read and written inside the loader's materialization gate only.
+    /// </summary>
+    internal CompletedModuleViews CompletedViews { get; } = new();
+
     /// <summary>A new operation's units, reading what earlier error-free operations published.</summary>
     internal ModuleUnits BeginOperation() => new(this);
 
@@ -133,13 +139,41 @@ internal sealed class ModuleUnits(ModuleUnitRegistry? registry = null)
     internal CompletedProviderSummaries.Attempt? CompletedProviderAttempt
         => _completedProviders ??= _registry?.CompletedProviders.BeginAttempt();
 
+    private CompletedModuleViews.Attempt? _completedViews;
+
     /// <summary>
-    /// Publishes this operation's units, and the completed provider summaries it staged, to the program's registry:
-    /// call only when the operation reported no error.
+    /// This operation's view of the registry's completed module views (<see cref="CompletedModuleViews"/>): created by a
+    /// deferred materialization before its load (<see cref="BeginCompletedViews"/>), the one operation that reads or
+    /// stages any; null otherwise. What it staged is published by <see cref="Publish"/> and otherwise dropped with the
+    /// operation.
+    /// </summary>
+    internal CompletedModuleViews.Attempt? CompletedViews => _completedViews;
+
+    /// <summary>Starts this operation's view of the completed module views (a deferred materialization; null without a registry).</summary>
+    internal CompletedModuleViews.Attempt? BeginCompletedViews(FrontEndTraversalObservations? observations)
+        => _completedViews ??= _registry?.CompletedViews.BeginAttempt(_registry, observations);
+
+    /// <summary>
+    /// Whether the resolution pass of this operation receives <paramref name="module"/> (a detected module declaration)
+    /// RESOLVED BY AN EARLIER OPERATION of the program: the registry holds its resolved unit, so this operation's rewrite
+    /// takes that declaration (<c>ImplicitArgumentResolver.ProcessModuleRoot</c>) and its members' signatures are final
+    /// here, read from the earlier operation's published resolved views. Only an earlier operation counts: a module this
+    /// operation resolves itself is analyzed and selected with its own bodies. The reference mode of the completed-view
+    /// test seam (<see cref="CompletedModuleViews.Mode.Unshared"/>) answers no.
+    /// </summary>
+    internal bool ReceivesEarlierResolution(Algorithm module)
+        => _registry is { } registry && registry.TryGet(ModuleUnitPass.Resolution, module, out _)
+            && _completedViews?.Mode != CompletedModuleViews.Mode.Unshared;
+
+    /// <summary>
+    /// Publishes this operation's units, the completed provider summaries it staged and the facts of the module views
+    /// it completed, to the program's registry: call only when the operation reported no error.
     /// </summary>
     internal void Publish(StaticStructureOperation.Continuation? continuation = null)
     {
         _registry?.Publish(_units, continuation);
         _completedProviders?.Publish();
+        // After the units: a view's facts are kept only for a view the registry now holds as a completed unit.
+        _completedViews?.Publish();
     }
 }

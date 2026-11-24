@@ -288,6 +288,12 @@ internal sealed partial class ModuleLoader
     /// </summary>
     internal IReadOnlySet<Expr> RefusedLoads => _refusedLoads;
 
+    /// <summary>
+    /// The cached import view of the canonical module URL <paramref name="moduleUrl"/>, or null when the loader has none:
+    /// the one view every splice of that module shares. Test-observable, never a decision input.
+    /// </summary>
+    internal Algorithm? CachedViewOf(string moduleUrl) => _cache.TryGetValue(moduleUrl, out var cached) ? cached.View : null;
+
     /// <summary>The configured host source-processing token — the authoritative cancellation identity.</summary>
     internal CancellationToken SourceProcessingCancellationToken => _sourceProcessingCancellationToken;
 
@@ -1447,11 +1453,21 @@ internal sealed partial class ModuleLoader
     /// refusal, abandonment during the compile or at publication — is released by the region
     /// (<see cref="ReleaseUnpublishedSplices"/>), exactly once. The attempt's downloads, and
     /// modules that completed inside it, stay charged.</para>
+    ///
+    /// <para><paramref name="moduleViews"/> is the attempt's view of the program's COMPLETED MODULE VIEWS
+    /// (<see cref="CompletedModuleViews"/>; null without a registry): the composed-body gates take the published height
+    /// of a completed view the body splices instead of walking it, and stage the height of every view they do walk, and
+    /// the unresolved-load check does not enter a completed view. Both gates are judged from ONE walk at the raw-syntax
+    /// cap, which measures the composed root's height: the elaboration ceiling is the same profile at a lower limit, so
+    /// that height decides it, and only a rejection walks again, the ordinary way, for the established diagnostic. The
+    /// splices themselves are unchanged: every splice still charges its weight, keeps its span, and reports what it
+    /// reported.</para>
     /// </summary>
     internal async ValueTask<Algorithm> LoadDeferredRegionAsync(
         DeferredModuleRegion region,
         DiagnosticBag diagnostics,
         SpliceLedger materializationLedger,
+        CompletedModuleViews.Attempt? moduleViews,
         CancellationToken materializationCancellationToken)
     {
         ThrowIfCancellationRequested();
@@ -1491,20 +1507,34 @@ internal sealed partial class ModuleLoader
 
             ThrowIfCancellationRequested();
 
-            if (AstStructuralPreflight.Check(
-                    loaded,
-                    MaxTraversalDepth - region.Depth,
-                    AstConsumerProfile.FullyRecursive) is { } compositionRejection)
+            // The raw-syntax cap after splicing, measuring the composed root's height (completed module views reused).
+            var compositionLimit = MaxTraversalDepth - region.Depth;
+            int composedHeight;
+            var compositionRejection = moduleViews is null
+                ? AstStructuralPreflight.CheckMeasuringHeight(loaded, compositionLimit, AstConsumerProfile.FullyRecursive, out composedHeight)
+                : AstStructuralPreflight.CheckComposedModuleBody(loaded, compositionLimit, moduleViews, out composedHeight);
+            if (compositionRejection is not null)
             {
                 ReportSourceProcessingDiagnostic(AstStructuralPreflight.ToParseDiagnostic(
                     compositionRejection, MaxTraversalDepth, _importSite));
                 return loaded;
             }
 
-            if (AstStructuralPreflight.Check(
-                    loaded,
-                    EvaluationLimits.MaxSupportedAstDepth - region.Depth,
-                    AstConsumerProfile.FullyRecursive) is { } elaborationRejection)
+            // The elaboration ceiling: the same profile at a lower limit, decided by the measured height. Only a body that
+            // exceeds it is walked again, by the ordinary gate, which positions the rejection as it always has.
+            var elaborationLimit = EvaluationLimits.MaxSupportedAstDepth - region.Depth;
+            AstStructuralRejection? elaborationRejection = null;
+            if (moduleViews is { Shares: false })
+            {
+                // The unshared control runs both original gates, including on an admitted body.
+                elaborationRejection = AstStructuralPreflight.CheckComposedModuleBody(loaded, elaborationLimit, moduleViews, out _);
+            }
+            else if (composedHeight > elaborationLimit)
+            {
+                elaborationRejection = AstStructuralPreflight.Check(loaded, elaborationLimit, AstConsumerProfile.FullyRecursive)
+                    ?? throw new InvalidOperationException("Internal error: a composed body's measured height exceeds a limit its gate admits.");
+            }
+            if (elaborationRejection is not null)
             {
                 _sink.Add(AstStructuralPreflight.ToParseDiagnostic(
                     elaborationRejection, EvaluationLimits.MaxSupportedAstDepth, _importSite));
@@ -1514,7 +1544,9 @@ internal sealed partial class ModuleLoader
             // A load this materialization REFUSED stays in place by design (its failure is
             // already reported, which fails the materialization); only a load the walk never
             // reached is the internal invariant violation.
-            if (LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, _refusedLoads, out _))
+            if (moduleViews is null
+                    ? LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, _refusedLoads, out _)
+                    : LoadElaborationGuard.TryFindFirstUnresolvedLoad(loaded, _refusedLoads, moduleViews, out _))
                 _sink.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loaded, _refusedLoads, _importSite));
 
             return loaded;

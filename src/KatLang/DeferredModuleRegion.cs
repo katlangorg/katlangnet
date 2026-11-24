@@ -691,14 +691,18 @@ internal sealed class DeferredModuleRegion
                 var published = false;
                 try
                 {
-                    var loaded = await Loader.LoadDeferredRegionAsync(this, diagnostics, attemptLedger, cancellationToken).ConfigureAwait(false);
+                    // The program's loaded modules are ONE unit each (Q-32 I-U): the body's loads
+                    // receive the declarations earlier operations elaborated (ModuleUnitRegistry).
+                    // The attempt's units exist from its load on: the load's gates read and stage the
+                    // facts of the completed module views it splices (CompletedModuleViews), and
+                    // what this attempt staged is published with its units or dropped with it.
+                    var modules = Loader.ModuleUnits.BeginOperation();
+                    var moduleViews = modules.BeginCompletedViews(Loader.TraversalObservations);
+                    var loaded = await Loader.LoadDeferredRegionAsync(this, diagnostics, attemptLedger, moduleViews, cancellationToken).ConfigureAwait(false);
                     if (!diagnostics.HasReportedErrors)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var observations = Loader.TraversalObservations;
-                        // The program's loaded modules are ONE unit each (Q-32 I-U): the body's loads
-                        // receive the declarations earlier operations elaborated (ModuleUnitRegistry).
-                        var modules = Loader.ModuleUnits.BeginOperation();
                         // Name resolution, then automatic parameter forwarding, exactly as the eager
                         // pipeline runs them (Q-04: forwarding never re-selects a binding). Every
                         // demand-time pass starts from the import site the region recorded: a
@@ -780,7 +784,10 @@ internal sealed class DeferredModuleRegion
             // non-provisional parse publishes the continuation needed to compile the branch.
             var completed = structural.Registry.StructuralContinuation
                 ?? throw new InvalidOperationException("A deferred structural unit requires completed eager publications.");
-            var measurement = StaticStructureAdmission.Measure(loaded, completed.Prelude, Loader.ProcessingLimits, cancellationToken: cancellationToken);
+            // The admission measure counts a spliced module view as one unit (published by an earlier materialization, or
+            // computed and staged here): exactly the ordinary walk's totals and limits (MeasureLoadedBody).
+            var measurement = StaticStructureAdmission.MeasureLoadedBody(loaded, completed.Prelude, Loader.ProcessingLimits,
+                modules.CompletedViews, cancellationToken);
             var operation = completed.Materialize(
                 structural.Declaring, loaded, structural.Pattern, measurement.Limits, measurement.HasOutputSpreadMarkers, cancellationToken);
             var detection = new ParameterDetector.DeferredBranchContext(operation.LookupLevel(structural.Declaring),

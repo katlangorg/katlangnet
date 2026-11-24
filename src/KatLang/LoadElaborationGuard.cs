@@ -79,14 +79,32 @@ internal static class LoadElaborationGuard
     /// the whole written construct.
     /// </summary>
     internal static bool TryFindFirstUnresolvedLoad(Algorithm root, IReadOnlySet<Expr> refusedLoads, out SourceSpan? span)
-        => FindFirstUnresolvedLoad(root, refusedLoads, out span);
+        => FindFirstUnresolvedLoad(root, refusedLoads, moduleViews: null, out span);
 
-    private static bool FindFirstUnresolvedLoad(Algorithm root, IReadOnlySet<Expr>? refusedLoads, out SourceSpan? span)
+    /// <summary>
+    /// <see cref="TryFindFirstUnresolvedLoad(Algorithm, IReadOnlySet{Expr}, out SourceSpan?)"/> over a deferred
+    /// materialization's composed body, not entering a module view whose facts an earlier materialization published
+    /// (<see cref="CompletedModuleViews"/>): the operation that completed such a view checked it here and published nothing
+    /// this check could flag (a view holding an unresolved load is never completed, and a refused load is always written
+    /// in the body being checked, never inside a cached view), and the view is immutable. A skipped view holds no load,
+    /// so the first load found, and its position, are the ordinary walk's.
+    /// </summary>
+    internal static bool TryFindFirstUnresolvedLoad(
+        Algorithm root, IReadOnlySet<Expr> refusedLoads, CompletedModuleViews.Attempt moduleViews, out SourceSpan? span)
+    {
+        var found = FindFirstUnresolvedLoad(root, refusedLoads, moduleViews, out span);
+        if (moduleViews.Verifies && (FindFirstUnresolvedLoad(root, refusedLoads, moduleViews: null, out var ordinarySpan) != found || ordinarySpan != span))
+            throw new InvalidOperationException("A load check that skipped completed module views disagrees with the ordinary walk.");
+        return found;
+    }
+
+    private static bool FindFirstUnresolvedLoad(
+        Algorithm root, IReadOnlySet<Expr>? refusedLoads, CompletedModuleViews.Attempt? moduleViews, out SourceSpan? span)
     {
         var found = false;
         SourceSpan? firstSpan = null;
 
-        VisitLoads(root, observations: null, refusedLoads, candidateSpan =>
+        VisitLoads(root, observations: null, refusedLoads, moduleViews, candidateSpan =>
         {
             if (found)
                 return;
@@ -99,22 +117,27 @@ internal static class LoadElaborationGuard
         return found;
     }
 
+    private static bool FindFirstUnresolvedLoad(Algorithm root, IReadOnlySet<Expr>? refusedLoads, out SourceSpan? span)
+        => FindFirstUnresolvedLoad(root, refusedLoads, moduleViews: null, out span);
+
     private static void VisitLoads(
         Algorithm root,
         FrontEndTraversalObservations? observations,
         Action<SourceSpan?> onLoad)
-        => VisitLoads(root, observations, refusedLoads: null, onLoad);
+        => VisitLoads(root, observations, refusedLoads: null, moduleViews: null, onLoad);
 
     private static void VisitLoads(
         Algorithm root,
         FrontEndTraversalObservations? observations,
         IReadOnlySet<Expr>? refusedLoads,
+        CompletedModuleViews.Attempt? moduleViews,
         Action<SourceSpan?> onLoad)
     {
-        new LoadWalker(onLoad, refusedLoads) { TraversalObservations = observations }.VisitAlgorithm(root);
+        new LoadWalker(onLoad, refusedLoads, moduleViews) { TraversalObservations = observations }.VisitAlgorithm(root);
     }
 
-    private sealed class LoadWalker(Action<SourceSpan?> onLoad, IReadOnlySet<Expr>? refusedLoads) : AstWalker
+    private sealed class LoadWalker(Action<SourceSpan?> onLoad, IReadOnlySet<Expr>? refusedLoads, CompletedModuleViews.Attempt? moduleViews)
+        : AstWalker
     {
         // A load directive is an EXPRESSION (a `load('url')` call, or the `open 'url'` sugar
         // that lowers to one), so this walk inspects expression nodes only: a parameter
@@ -148,6 +171,18 @@ internal static class LoadElaborationGuard
             if (!_visited.Add(algorithm))
                 return;
 
+            if (moduleViews is not null)
+            {
+                // A completed module view is not entered (TryFindFirstUnresolvedLoad's composed-body overload).
+                if (CompletedModuleViews.IsModuleView(algorithm, out var view) && moduleViews.IsCheckedForLoads(view))
+                {
+                    moduleViews.Observations?.RecordCompletedModuleViewReuse();
+                    return;
+                }
+
+                moduleViews.Observations?.RecordDeferredLoadCheckExpansion();
+            }
+
             base.VisitAlgorithm(algorithm);
         }
 
@@ -179,6 +214,7 @@ internal static class LoadElaborationGuard
             if (!_visited.Add(expr))
                 return;
 
+            moduleViews?.Observations?.RecordDeferredLoadCheckExpansion();
             if (expr.TryGetUnresolvedLoadArguments(out var args))
             {
                 // A directive module elaboration refused stays in place as written; its

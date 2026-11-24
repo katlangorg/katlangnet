@@ -326,6 +326,14 @@ internal static partial class ImplicitArgumentResolver
         /// of the node — see <see cref="FreeReferenceNames"/>), by node reference.
         /// </summary>
         public Dictionary<Algorithm, CanonicalNameSet>? FreeReferenceNames;
+
+        /// <summary>
+        /// The memo of the ORDINARY free-name walk the verifying test mode of the completed-module store runs beside a
+        /// reuse (<see cref="CompletedModuleViews.Mode.Verified"/>), kept apart from <see cref="FreeReferenceNames"/> so the
+        /// check neither reads a published set nor leaves an entry the plain run would not have; null while no check runs.
+        /// </summary>
+        public Dictionary<Algorithm, CanonicalNameSet>? VerifyingFreeReferenceNames;
+
         /// <summary>
         /// FE-3: the shared signature templates of this run (see <see cref="LiftSignature"/>). Run-local:
         /// a template is shared by the owners of ONE resolution and never across parses. It charges the
@@ -1322,9 +1330,19 @@ internal static partial class ImplicitArgumentResolver
     private static CanonicalNameSet FreeReferenceNames(Algorithm algorithm, ResolutionRun run)
     {
         FrontEndStack.Ensure();
-        var memo = run.FreeReferenceNames ??= new(ReferenceEqualityComparer.Instance);
+        var verifying = run.VerifyingFreeReferenceNames is not null;
+        var memo = verifying ? run.VerifyingFreeReferenceNames! : run.FreeReferenceNames ??= new(ReferenceEqualityComparer.Instance);
         if (memo.TryGetValue(algorithm, out var cached))
             return cached;
+
+        // A LOADED MODULE'S DECLARATION (COMPLETED MODULE VIEWS): its free names are a pure function of the immutable
+        // declaration, so a deferred materialization re-interns the names an earlier one published for it instead of
+        // walking the module (a region key of a body that opens or holds the module reads them), and stages the names it
+        // computes itself below. The set is the same content either way, so every region key is unchanged. The reuse is
+        // a call of its own, so this recursion keeps its one frame per level.
+        var completedViews = !verifying && algorithm is Algorithm.User { IsModuleElaborated: true } ? run.Modules.CompletedViews : null;
+        if (completedViews?.PublishedFreeNames((Algorithm.User)algorithm) is { } published)
+            return AdoptPublishedFreeNames((Algorithm.User)algorithm, published, completedViews, memo, run);
 
         var names = new ReferenceNames(run.ReferenceNameSets);
         switch (algorithm)
@@ -1371,7 +1389,39 @@ internal static partial class ImplicitArgumentResolver
         }
 
         memo[algorithm] = names.Set;
+        if (completedViews is { Shares: true })
+            completedViews.StageFreeNames((Algorithm.User)algorithm, [.. names.Set.Names]);
         return names.Set;
+    }
+
+    /// <summary>
+    /// <see cref="FreeReferenceNames"/> of a loaded module's declaration whose names an earlier materialization published
+    /// (<see cref="CompletedModuleViews"/>): re-interned in this run's interner. The verifying test mode also walks the
+    /// declaration the ordinary way, in a memo of its own that reads no published set and counts nothing, and throws on a
+    /// difference.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static CanonicalNameSet AdoptPublishedFreeNames(Algorithm.User module, string[] published, CompletedModuleViews.Attempt completedViews,
+        Dictionary<Algorithm, CanonicalNameSet> memo, ResolutionRun run)
+    {
+        var adopted = run.ReferenceNameSets.With(NameSetInterner.Empty, published);
+        if (completedViews.Verifies)
+        {
+            run.VerifyingFreeReferenceNames = new(ReferenceEqualityComparer.Instance);
+            try
+            {
+                if (!FreeReferenceNames(module, run).Equals(adopted))
+                    throw new InvalidOperationException("A completed module's published free reference names differ from the ones its declaration gives.");
+            }
+            finally
+            {
+                run.VerifyingFreeReferenceNames = null;
+            }
+        }
+
+        completedViews.Observations?.RecordCompletedModuleFreeNameReuse();
+        memo[module] = adopted;
+        return adopted;
     }
 
     private static void CollectReferenceNames(Expr expr, ReferenceNames names, HashSet<Expr> visited, ResolutionRun run)

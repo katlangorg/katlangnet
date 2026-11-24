@@ -994,10 +994,27 @@ internal static partial class ImplicitArgumentResolver
         }
     }
 
+    /// <summary>
+    /// A loaded module's bodies, analyzed once per analysis in the context the rewrite processes them in (rooted at the
+    /// prelude, Q-31 H-P). A module an EARLIER operation of the program completed is not analyzed at all
+    /// (<see cref="ModuleUnits.ReceivesEarlierResolution"/>): the rewrite receives its published resolved declaration and
+    /// processes none of its bodies (<see cref="ProcessModuleRoot"/>), so its equations would select signatures nothing
+    /// reads, and no reach of the rewrite needs them (THE REACH INVARIANT). A reference into it is an endpoint whose
+    /// signature is FINAL here, the one the completing operation selected, read from its resolved view
+    /// (<see cref="FinalLiftingSignature"/>) by the selection and the rewrite alike, so a selection never depends on whether
+    /// it analyzed such a module: a module is a hygienic unit, its signatures depend on nothing outside it, and G6 selects
+    /// the same ones in every operation.
+    /// </summary>
     private static void AnalyzeModuleRoot(Algorithm.User module, ResolutionRun run)
     {
         if (!run.Analysis!.Modules.Add(module))
             return;
+        if (run.Modules.ReceivesEarlierResolution(module))
+        {
+            run.Observations?.RecordCompletedModuleAnalysisSkipped();
+            return;
+        }
+
         using var owners = run.EnterLevel(DeclaringOwners.Root, level: null);
         AnalyzeUserAlgorithm(module, SignatureMap.Empty(run.Observations), ForwardableParameters.None, isRoot: false, branchContext: null, run);
     }

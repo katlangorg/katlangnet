@@ -931,8 +931,9 @@ public class CompletedProviderSummaryTests
     /// receives that declaration: the collision, open-provider and output rules judged it in the operation that
     /// completed it and do not walk it again (<see cref="ModuleUnitRegistry.SkipsValidationOf"/>): the first selection
     /// elaborates the module and skips nothing, and every later one skips exactly three walks, one per rule, whatever
-    /// the module's width. Signature analysis still enters the module (the count of analyzed bodies grows with it):
-    /// that work is bounded by the aggregate source limit, which every splice of the module charges.
+    /// the module's width. Signature analysis no longer enters it either: the first selection analyzes the module's
+    /// bodies, and a later one reads their completed signatures (<see cref="ModuleUnits.ReceivesEarlierResolution"/>;
+    /// the loader's and the measure's walks of the view are <c>CompletedModuleSpliceTests</c>' subject).
     /// </summary>
     [Fact]
     public async Task ACompletedModuleSplicedIntoABranch_IsNotValidatedAgain()
@@ -965,8 +966,11 @@ public class CompletedProviderSummaryTests
                 Assert.True(body.IsOk, body.IsOk ? "" : body.Error.ToString());
                 // The first selection elaborates and validates the module; a later one receives it, judged.
                 Assert.Equal(index == 0 ? 0 : 3, registry.ValidationWalksSkipped - skipped);
-                // The remaining walk of a spliced module, pinned so that a change to it is seen here.
-                Assert.True(observations.SignatureAnalysisBodies >= width, $"width {width}, selection {index}: {Render(Counters(observations))}");
+                // The first selection analyzes the module's bodies; a later one analyzes the branch body alone.
+                if (index == 0)
+                    Assert.True(observations.SignatureAnalysisBodies >= width, $"width {width}, selection {index}: {Render(Counters(observations))}");
+                else
+                    Assert.Equal((1L, 1L), (observations.SignatureAnalysisBodies, observations.CompletedModuleAnalysesSkipped));
             }
 
             var flat = await RunFlat(root);

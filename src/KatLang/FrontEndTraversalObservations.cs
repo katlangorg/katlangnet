@@ -964,6 +964,73 @@ internal sealed class FrontEndTraversalObservations
         => CompletedProviderReferenceReanchors = checked(CompletedProviderReferenceReanchors + 1);
 
     /// <summary>
+    /// Module roots a deferred materialization's signature analysis did not analyze because an EARLIER operation completed
+    /// the module (<c>ModuleUnits.ReceivesEarlierResolution</c>): one per module and analysis. Their members' signatures
+    /// are final there, read from the published resolved views. Zero outside a deferred materialization.
+    /// </summary>
+    public long CompletedModuleAnalysesSkipped { get; private set; }
+
+    internal void RecordCompletedModuleAnalysisSkipped()
+        => CompletedModuleAnalysesSkipped = checked(CompletedModuleAnalysesSkipped + 1);
+
+    /// <summary>
+    /// Published facts of a completed module view a deferred materialization used instead of walking the view
+    /// (<see cref="CompletedModuleViews"/>): one per occurrence a composed-body gate took a view's height at, per view the
+    /// unresolved-load check did not enter, and per view the admission measure counted as a published unit.
+    /// </summary>
+    public long CompletedModuleViewReuses { get; private set; }
+
+    internal void RecordCompletedModuleViewReuse()
+        => CompletedModuleViewReuses = checked(CompletedModuleViewReuses + 1);
+
+    /// <summary>
+    /// Completed module views whose facts a deferred materialization published with its unit
+    /// (<see cref="CompletedModuleViews"/>); an attempt that publishes nothing publishes none.
+    /// </summary>
+    public long CompletedModuleViewsPublished { get; private set; }
+
+    internal void RecordCompletedModuleViewPublished()
+        => CompletedModuleViewsPublished = checked(CompletedModuleViewsPublished + 1);
+
+    /// <summary>
+    /// Free-reference-name sets of a completed module declaration a deferred materialization's resolution re-interned from
+    /// its loader's store instead of walking the module (<see cref="CompletedModuleViews"/>): one per declaration and run.
+    /// </summary>
+    public long CompletedModuleFreeNameReuses { get; private set; }
+
+    internal void RecordCompletedModuleFreeNameReuse()
+        => CompletedModuleFreeNameReuses = checked(CompletedModuleFreeNameReuses + 1);
+
+    /// <summary>
+    /// Edges the loader's structural gate walked over a deferred materialization's composed body
+    /// (<c>AstStructuralPreflight.CheckComposedModuleBody</c>; one walk decides both ceilings), the ordinary replay of a
+    /// rejection excluded. A completed module view taken by its height adds no edge below it.
+    /// </summary>
+    public long DeferredCompositionGateEdges { get; private set; }
+
+    internal void RecordDeferredCompositionGateEdge()
+        => DeferredCompositionGateEdges = checked(DeferredCompositionGateEdges + 1);
+
+    /// <summary>
+    /// Algorithms and expressions the loader's unresolved-load check expanded over a deferred materialization's composed
+    /// body (each distinct node once); a completed module view it does not enter adds nothing below it.
+    /// </summary>
+    public long DeferredLoadCheckExpansions { get; private set; }
+
+    internal void RecordDeferredLoadCheckExpansion()
+        => DeferredLoadCheckExpansions = checked(DeferredLoadCheckExpansions + 1);
+
+    /// <summary>
+    /// Edges the static admission measure of a deferred materialization's loaded body enumerated itself
+    /// (<c>StaticStructureAdmission.MeasureLoadedBody</c>: the body's own part and every module view whose unit it
+    /// computed); a published unit adds its counts without an edge.
+    /// </summary>
+    public long DeferredAdmissionEdges { get; private set; }
+
+    internal void RecordDeferredAdmissionEdge()
+        => DeferredAdmissionEdges = checked(DeferredAdmissionEdges + 1);
+
+    /// <summary>
     /// Completed conditional BRANCH-BODY summary computations in the builder's summary channel
     /// (<c>PropertyDependencyGraphBuilder.CollectBranchBodySummarySeed</c> misses of the
     /// completed branch-body memo, keyed by body reference and binder-name set). Like

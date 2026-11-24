@@ -459,6 +459,15 @@ public class MaintainedDocumentationConsistencyTests
             @"\bscan below for a position, one native call per scan\b|\bhost-stack probe per stacked\b",
             "recursive discovery of stacked `filter` scans (superseded 2026-11-24 by one frame driving every stacked scan)"
         },
+        // Every materialization re-walking a spliced completed module (superseded 2026-11-24, C#-only work sharing):
+        // a branch that splices a module an earlier operation completed takes the exact view's published facts (gate
+        // height, load-check verdict, admission unit, free reference names) and the completing operation's resolved
+        // signatures. No current text says such a module's re-gates, measure and signature analysis stay per
+        // materialization, or that signature analysis still enters it.
+        {
+            @"\bspliced completed module's re-gates\b|\bre-gates, measure and signature analysis\b|\bsignature analysis still enters the module\b",
+            "every deferred materialization re-walking a spliced completed module (superseded 2026-11-24 by completed module views)"
+        },
     };
 
     [Theory]
