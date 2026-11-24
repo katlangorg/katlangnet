@@ -29,12 +29,14 @@ namespace KatLang.ParserFuzz;
 /// inspects it level by level: kind, count, then the items in written order, a nested level reading
 /// its position, a literal reading its position, a name and a collector binding theirs unread; a
 /// plain parameter keeps its cell until the body demands it, and a collected slice read only by
-/// <c>count</c> runs nothing (NEED-07). The body is a written list of every binder in written order
-/// (a collector as its <c>count</c>): its elements run when the result is READ — for a root row,
-/// when the run's assembled output is read (<see cref="SemanticFragment.LateEvents"/>). The
-/// expectation is computed by a reference evaluation of the written data (<see cref="Reference"/>),
-/// never by running the implementation. Failures: a non-structure where a structure is expected
-/// and a list for a sequence (or the reverse) are <c>TypeMismatch</c>; too many items for a level
+/// <c>count</c> runs nothing, while deconstructing a collector (<c>p, *q = rest</c>) demands its
+/// VALUE, which runs every collected item in order (NEED-07). The body is a written list of every
+/// binder in written order (a collector as its <c>count</c>): its elements run when the result is
+/// READ — for a root row, when the run's assembled output is read
+/// (<see cref="SemanticFragment.LateEvents"/>). The expectation is computed by a reference
+/// evaluation of the written data (<see cref="Reference"/>), never by running the implementation.
+/// Failures: a non-structure where a structure is expected and a list for a sequence (or the
+/// reverse) are <c>TypeMismatch</c>; too many items for a level
 /// without a collector, too many arguments, and a deconstruction that cannot bind are
 /// <c>ArityMismatch</c>; a family none of whose clauses matches is <c>NoMatchingBranch</c>. Clauses
 /// cannot collect, two clauses of one structure are duplicates whatever their extents, a one-item
@@ -380,7 +382,9 @@ internal static class SemanticNestedWide
             throw new InvalidOperationException($"wide deconstruction data is refused as {refused}");
 
         // The body's list is read when the result is: each name in order, and at the inner
-        // collector's place `p` — the deconstruction's first position (`count(q)` reads none).
+        // collector's place `p`, whose first read demands the deconstruction's right-hand side —
+        // the collector's VALUE, which runs EVERY collected cell left to right (NEED-07), not only
+        // the one `p` binds; `p` is then read whole, and `count(q)` after it runs nothing more.
         // An empty collector cannot bind `p`: that read is the failure, after the names before it.
         reference.ReadResult();
         foreach (var item in bodyItems)
@@ -399,7 +403,9 @@ internal static class SemanticNestedWide
                 break;
             }
 
-            reference.Whole(binding.Collected[inner.Rest][0]);
+            var collected = binding.Collected[inner.Rest];
+            foreach (var position in collected) reference.Force(position);
+            reference.Whole(collected[0]);
         }
 
         if (width > 0) f.Value = new Result.ListValue(values);

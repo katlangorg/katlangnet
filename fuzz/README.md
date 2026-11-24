@@ -1667,9 +1667,10 @@ written sequence evaluates its items in source order, a written list defers its 
 when it is first read (lazy collections, issue #204) — and inspects it level by level (kind, count,
 then the items in written order: a nested level and a literal read their position, a name and a
 collector bind theirs unread); a plain parameter waits for the body, and a collected slice read only
-by `count` never runs (NEED-07); a family's clauses are tried in order against one argument cell, so
-what a refused clause read stays read; the body's list of names is read when the result is — for a
-root row, when the run's assembled output is read. Runtime failures
+by `count` never runs, while the first read of `p` in `p, *q = rest` demands the collector's value and
+so runs every collected item in order (NEED-07); a family's clauses are tried in order against one
+argument cell, so what a refused clause read stays read; the body's list of names is read when the
+result is — for a root row, when the run's assembled output is read. Runtime failures
 are a scalar or the other kind where a structure is expected (`TypeMismatch`), one item too many at a
 level without a collector, one argument too many and a deconstruction that cannot bind
 (`ArityMismatch`), and a family no clause of which matches (`NoMatchingBranch`). The four intended

@@ -702,12 +702,15 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// What the wide recipe constructs, pinned on four programs: a parameter list whose structural
+    /// What the wide recipe constructs: a parameter list whose structural
     /// argument runs at the call while the plain tail waits for the body and the collected arguments
     /// never run (NEED-04, NEED-07); one argument too many, rejected before any argument runs
     /// (NEED-05); a three-level clause family in the one-item-per-line extent whose literal clause
     /// does not match, so the second clause does, the argument running once; and two clauses of one
-    /// structure in different extents, refused as duplicates.
+    /// structure in different extents, refused as duplicates. Two collector deconstructions
+    /// <c>p, *q = rest</c> over an inner list collecting two items (two and three levels): the first
+    /// read of <c>p</c> demands the collector's VALUE, which runs both collected items in order — the
+    /// tail's <c>trace</c> or <c>wait</c> too, though <c>count(q)</c> reads none (NEED-07).
     /// </summary>
     [Theory]
     [InlineData("1.1.0.0.1.0.0.1.0.0",
@@ -719,6 +722,12 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     [InlineData("2.1.0.0.0.2.0.1.2.0",
         "v1((\n  (\n    (\n      1,\n      v3),\n    v4),\n  v5)) = [1, v3, v4, v5]\nv1((((v6, v7), v8), v9)) = [2, v6, v7, v8, v9]\nv1((((trace(2), wait(2)), trace(3)), wait(4)))\n997",
         "value ([2, 2, 2, 3, 4], 997)", "trace:2,wait:2,trace:3,wait:4")]
+    [InlineData("4.0.1.1.1.1.0.0",
+        "v1([[v2, *v4, v3], v5, *v6]) = {\n  v7, *v8 = v4\n  [v2, v7, count(v8), v3, v5, count(v6)]\n}\nv1([[trace(1), wait(2), trace(3), wait(4)], trace(5), wait(6), trace(7)])\n997",
+        "value ([1, 2, 1, 4, 5, 2], 997)", "trace:1,wait:2,trace:3,wait:4,trace:5")]
+    [InlineData("4.1.0.1.0.0.1.0.0",
+        "v1(([(v2, v3), *v5, v4], v6)) = {\n  v7, *v8 = v5\n  [v2, v3, v7, count(v8), v4, v6]\n}\nv1(([(trace(1), wait(2)), trace(3), wait(4), trace(5)], wait(6)))\n997",
+        "value ([1, 2, 3, 1, 5, 6], 997)", "wait:6,trace:1,wait:2,trace:3,wait:4,trace:5")]
     [InlineData("5.1.0.0.0.0",
         "v1(((v2, v3), v4)) = [1, v2, v3, v4]\nv1(( ( v5 , v6 ) , v7 )) = [2, v5, v6, v7]\nv1(((trace(1), wait(2)), trace(3)))\n997",
         "refusal DuplicateBranchPattern/syntax", "")]
