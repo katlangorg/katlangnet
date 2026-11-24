@@ -706,7 +706,7 @@ public static partial class Evaluator
         if (ctx.CallStack is AnnotatedReadOnlyList<Algorithm> && AnnotatedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
             return refused;
 
-        return ctx.ZeroArgPropertyResultCache.GetOrEvaluate(
+        return ctx.PropertyAccessCache.GetOrEvaluate(
             ZeroArgPropertyReadExecution(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv),
             IsExported(binding)
                 ? () => EvaluateDetachedZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv)
@@ -1226,13 +1226,14 @@ public static partial class Evaluator
     private static async ValueTask<OpenedSpread> OpenLazySpreadLayers(
         Result value, int layers, Expr expr, EvalCtx ctx, bool transportView, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var opened = value;
         for (var layer = 0; layer < layers; layer++)
         {
             // A position that fails while its level is read is that position's own failure —
             // nested, with its own frames (Q-36): the operand itself evaluated, so no operand
             // frame is added. Lean: `forceLevel` inside `peelSpreadLayers`.
-            var levelR = await ForceLevel(opened, ctx, asynchronous).ConfigureAwait(false);
+            var levelR = await ForceLevel(opened, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (levelR.IsError) return new(levelR.Error);
 
             opened = levelR.Value;
@@ -1934,6 +1935,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         if (RetainedObservationTerminal(ctx) is { } entry)
             return entry;
         if (builtin == BuiltinId.@count)
@@ -1950,7 +1952,7 @@ public static partial class Evaluator
             var taken = length == 0 ? [] : new Result[length];
             for (var index = 0; index < length; index++)
             {
-                var element = await DemandCell(slice[index], asynchronous).ConfigureAwait(false);
+                var element = await DemandCell(slice[index], asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (element.IsError) return element.Error;
                 taken.AsSpan()[index] = element.Value.Value;
             }
@@ -1961,7 +1963,7 @@ public static partial class Evaluator
 
         if (slice.Count == 0)
             return ArgumentViewEmptySelection(builtin);
-        var selected = await DemandCell(slice[builtin == BuiltinId.@first ? 0 : slice.Count - 1], asynchronous).ConfigureAwait(false);
+        var selected = await DemandCell(slice[builtin == BuiltinId.@first ? 0 : slice.Count - 1], asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (selected.IsError) return selected.Error;
         return RetainedObservationTerminal(ctx) is { } afterElement ? afterElement : CountValue(selected.Value.Value);
     }

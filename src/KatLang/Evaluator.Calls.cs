@@ -266,7 +266,7 @@ public static partial class Evaluator
         if (branch.Body.DeferredRegion is not { } region)
             return EvalResult<Algorithm>.Ok(branch.Body);
 
-        return await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(false);
+        return await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>
@@ -301,7 +301,7 @@ public static partial class Evaluator
 
         try
         {
-            var result = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
+            var result = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (result.IsError)
                 return ctx.Budget.RetainRequiredSourceFailure(result.Error);
             return AdmitMaterializedBody(region, result.Value, ctx);

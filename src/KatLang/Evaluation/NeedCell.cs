@@ -92,7 +92,7 @@ internal abstract class NeedNode
 
     // The flow's current node, for the hand-over to a continuation that starts in an empty context
     // because the host has suppressed flow (EvaluationFlow.Handover: a stack hop's queued work, a
-    // fold continuation thread). Read where the flow suspends, written where it continues.
+    // fold trampoline's item queued without a context). Read where the flow suspends, written where it continues.
     internal static NeedNode? FlowNode
     {
         get => Current.Value;
@@ -255,8 +255,9 @@ internal abstract class NeedNode
 ///   Only the node a new demand takes as its parent is read from the logical context, where a fork
 ///   inherits it and an unrelated flow does not. An asynchronous computation therefore installs its
 ///   node only where the context flows: when the host has suppressed
-///   <see cref="ExecutionContext"/> flow it first continues on the thread pool, and a stack hop or a
-///   fold continuation thread hands the node over itself (<see cref="EvaluationFlow"/>). A demand
+///   <see cref="ExecutionContext"/> flow it first continues on the thread pool, and a stack hop hands the
+///   node over itself (<see cref="EvaluationFlow"/>); a fold's heap segments carry it in the execution
+///   context their trampoline captured (<see cref="FoldTrampoline"/>). A demand
 ///   after a genuine suspension then still finds its own computation active, so a cycle is
 ///   <see cref="EvalError.DemandCycle"/> and never a join of the demander's own flight.</item>
 ///   <item><b>Host termination carried by value.</b> Inside an asynchronous twin run's
@@ -1001,10 +1002,10 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                await ProjectRuntimeComputationAsync(node).ConfigureAwait(false);
+                await ProjectRuntimeComputationAsync(node).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return ProjectionStarterOutcome(node);
             }
-            try { return await task.ConfigureAwait(false); }
+            try { return await task.ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
             catch
             {
                 if (JoinedProjectionFault(node) is { } carried) return carried;
@@ -1023,8 +1024,8 @@ internal sealed class NeedCell : NeedNode
         var outer = EnterComputation(node, out var inner);
         try { CompleteProjection(node, RuntimeHelpers.TryEnsureSufficientExecutionStack()
             ? _suspension is not null
-                ? await Evaluator.ProjectSuspendedCallableAsync(this, Source!, _suspension).ConfigureAwait(false)
-                : await node.ProjectAsync!().ConfigureAwait(false)
+                ? await Evaluator.ProjectSuspendedCallableAsync(this, Source!, _suspension).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                : await node.ProjectAsync!().ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : new EvalError.EvaluationStackExhausted { Span = Span }); }
         catch (Exception error) { CompleteProjectionException(node, error); }
         finally { LeaveComputation(previous, outer, inner); }
@@ -1196,10 +1197,10 @@ internal sealed class NeedCell : NeedNode
             }
             if (task is null)
             {
-                await EvaluateAsync().ConfigureAwait(false);
+                await EvaluateAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return StarterOutcome();
             }
-            try { return await task.ConfigureAwait(false); }
+            try { return await task.ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
             catch
             {
                 if (JoinedValueFault() is { } carried) return carried;
@@ -1222,8 +1223,8 @@ internal sealed class NeedCell : NeedNode
         var outer = EnterComputation(this, out var inner);
         try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
             ? _suspension is not null
-                ? await Evaluator.EvalSuspendedValueAsync(this, _suspension).ConfigureAwait(false)
-                : await ComputeAsync().ConfigureAwait(false)
+                ? await Evaluator.EvalSuspendedValueAsync(this, _suspension).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                : await ComputeAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : new EvalError.EvaluationStackExhausted { Span = Span }); }
         catch (Exception error) { CompleteException(error); }
         finally { LeaveComputation(previous, outer, inner); }

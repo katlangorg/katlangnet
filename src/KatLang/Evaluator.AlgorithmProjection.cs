@@ -121,7 +121,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalInvocationReceiver"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalInvocationReceiverAsync(InvocationReceiverSuspension receiver)
     {
-        var value = await EvalAlgorithmReceiverAsync(receiver.Edge, receiver.Caller, receiver.Values).ConfigureAwait(false);
+        var value = await EvalAlgorithmReceiverAsync(receiver.Edge, receiver.Caller, receiver.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return value.IsError ? value.Error : EvalResult<CountedResult>.Ok(new CountedResult(value.Value, value.Value.ValueCount()));
     }
 
@@ -252,8 +252,8 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalDotAlgorithmIntrinsicCountedAsync(
         Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
     {
-        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-        return receiver.IsError ? receiver.Error : await ApplyAlgorithmIntrinsicAsync(dotCall, dotCall.Args, receiver.Value, ctx, valEnv).ConfigureAwait(false);
+        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return receiver.IsError ? receiver.Error : await ApplyAlgorithmIntrinsicAsync(dotCall, dotCall.Args, receiver.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotAlgorithmValueReceiverCounted"/> — keep in lock-step.</summary>
@@ -261,8 +261,8 @@ public static partial class Evaluator
     {
         // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's value
         // projection is the same value.
-        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false));
-        return receiver.IsError ? receiver.Error : await ApplyAlgorithmIntrinsicAsync(dotCall, dotCall.Args, receiver.Value.Value, ctx, valEnv).ConfigureAwait(false);
+        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
+        return receiver.IsError ? receiver.Error : await ApplyAlgorithmIntrinsicAsync(dotCall, dotCall.Args, receiver.Value.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="ApplyAlgorithmIntrinsic"/> — keep in lock-step. The callee's CALLABLE is
@@ -272,16 +272,16 @@ public static partial class Evaluator
     {
         var plan = DecodeAlgorithmReceiver(receiver, ctx);
         if (plan.IsError) return plan.Error;
-        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(false);
+        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (calleeCell.IsError) return calleeCell.Error;
         var callee = calleeCell.Value;
         if (args is null)
-            return CalleeValue(await callee.DemandAsync().ConfigureAwait(false), ctx);
-        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(callee, ctx).ConfigureAwait(false), edge.Span);
+            return CalleeValue(await callee.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext), ctx);
+        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(callee, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext), edge.Span);
         if (callable.IsError) return callable.Error;
         if (MayFormZeroSupply(args) && TakesOriginDispatch(callable.Value))
-            return await EvalOriginCallCountedAsync(CalleeOrigin.Cell(callee), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
-        return await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
+            return await EvalOriginCallCountedAsync(CalleeOrigin.Cell(callee), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>A cell's CALLABLE in the async engine: the one projection through the async resolution adapter.</summary>
@@ -338,39 +338,39 @@ public static partial class Evaluator
         Expr.DotCall edge, OutputBundle args, EvalCtx ctx, ValEnv valEnv)
     {
         var diagnosticName = CallDiagnosticName.FromExpression(edge);
-        var route = await ResolveAsync(ctx, (edge, ctx), static state => IsAlgorithmIntrinsicRoute(state.edge, state.ctx)).ConfigureAwait(false);
+        var route = await ResolveAsync(ctx, (edge, ctx), static state => IsAlgorithmIntrinsicRoute(state.edge, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (route.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, route.Error);
         if (!route.Value)
         {
             // MIRROR OF the synchronous member arm (the async strategy pins fusion off).
-            var member = await ResolveCalleeAsync(edge, ctx).ConfigureAwait(false);
+            var member = await ResolveCalleeAsync(edge, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (member.IsError)
                 return CalleeResolutionFailure(diagnosticName, ctx, member.Error);
             if (MayFormZeroSupply(args) && TakesOriginDispatch(member.Value))
                 return WithCallCtx(diagnosticName, ctx,
-                    await EvalOriginCallCountedAsync(CalleeOrigin.Written(edge), member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+                    await EvalOriginCallCountedAsync(CalleeOrigin.Written(edge), member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             return WithCallCtx(diagnosticName, ctx,
-                await EvalResolvedCallCountedAsync(member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+                await EvalResolvedCallCountedAsync(member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
 
-        var receiver = await EvalAlgorithmReceiverAsync(edge, ctx, valEnv).ConfigureAwait(false);
+        var receiver = await EvalAlgorithmReceiverAsync(edge, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (receiver.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, receiver.Error);
         var plan = DecodeAlgorithmReceiver(receiver.Value, ctx);
         if (plan.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, plan.Error with { Span = plan.Error.Span ?? edge.Span });
-        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(false);
+        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (calleeCell.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, calleeCell.Error);
-        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, ctx).ConfigureAwait(false), edge.Span);
+        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext), edge.Span);
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
         if (MayFormZeroSupply(args) && TakesOriginDispatch(callable.Value))
             return WithCallCtx(diagnosticName, ctx,
-                await EvalOriginCallCountedAsync(CalleeOrigin.Cell(calleeCell.Value), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false));
+                await EvalOriginCallCountedAsync(CalleeOrigin.Cell(calleeCell.Value), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         return WithCallCtx(diagnosticName, ctx,
-            await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false));
+            await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>
@@ -408,18 +408,18 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalAlgorithmReceiver"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> EvalAlgorithmReceiverAsync(Expr.DotCall edge, EvalCtx ctx, ValEnv valEnv)
     {
-        var target = await ResolveDotReceiverAsync(edge.Target, ctx).ConfigureAwait(false);
+        var target = await ResolveDotReceiverAsync(edge.Target, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         EvalResult<Result> receiver;
         if (target.IsError)
         {
             if (IsAbsentIdentity(target.Error))
             {
-                var counted = NestMissingOutput(await EvalCountedAsync(edge.Target, ctx, valEnv).ConfigureAwait(false));
+                var counted = NestMissingOutput(await EvalCountedAsync(edge.Target, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                 receiver = counted.IsError ? counted.Error : EvalResult<Result>.Ok(counted.Value.Value);
             }
             else receiver = target.Error;
         }
-        else receiver = await EvalDotReferenceIntrinsicReceiverAsync(edge, target.Value.Receiver, target.Value.IsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+        else receiver = await EvalDotReferenceIntrinsicReceiverAsync(edge, target.Value.Receiver, target.Value.IsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return receiver;
     }
 
@@ -452,15 +452,15 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="TryEvalLinkValue"/> — keep in lock-step.</summary>
     internal static async ValueTask<EvalResult<CountedResult>?> TryEvalLinkValueAsync(Expr.DotCall edge, LinkSuspension link)
     {
-        var route = await ResolveAsync(link.Caller, (edge, link.Caller), static state => IsAlgorithmIntrinsicRoute(state.edge, state.Caller)).ConfigureAwait(false);
+        var route = await ResolveAsync(link.Caller, (edge, link.Caller), static state => IsAlgorithmIntrinsicRoute(state.edge, state.Caller)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (route.IsOk && !route.Value) return null;
         if (route.IsError) return route.Error;
-        var receiver = await link.Receiver(edge).DemandAsync().ConfigureAwait(false);
+        var receiver = await link.Receiver(edge).DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (receiver.IsError) return receiver.Error;
         var plan = DecodeAlgorithmReceiver(receiver.Value.Value, link.Caller);
         if (plan.IsError) return plan.Error;
-        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(false);
-        return calleeCell.IsError ? calleeCell.Error : CalleeValue(await calleeCell.Value.DemandAsync().ConfigureAwait(false), link.Caller);
+        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return calleeCell.IsError ? calleeCell.Error : CalleeValue(await calleeCell.Value.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext), link.Caller);
     }
 
     /// <summary>

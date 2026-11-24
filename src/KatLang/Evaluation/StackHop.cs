@@ -60,9 +60,17 @@ namespace KatLang.Evaluation;
 /// gate are awaitable (<see cref="TaskCompletionSource"/>, <see cref="SemaphoreSlim"/>), which a
 /// genuine suspension already holds across awaits.</para>
 ///
+/// <para><b>A synchronous run's fold pump.</b> Where a synchronous run continues a long <c>reduce</c>
+/// fold on the heap (<see cref="FoldTrampoline"/>), the twins run on the calling thread under that
+/// fold's pump, and nothing may leave it: <see cref="HostStackIsLow"/> answers <c>false</c> there, so a
+/// twin takes no hop for the host stack and the probe after the site decides, as on the synchronous
+/// family (genuine recursion inside a reducer reaches the structured
+/// <see cref="EvalError.EvaluationStackExhausted"/> or the depth limit), and a hop that suppressed flow
+/// asks for is resumed by the pump on the same thread, with the same hand-over.</para>
+///
 /// <para><b>Hosts.</b> The continuation is queued to the thread pool, never to a captured
-/// <see cref="SynchronizationContext"/> or <see cref="TaskScheduler"/>, and every await of the
-/// library uses <c>ConfigureAwait(false)</c>, so a host that blocks on a deep run from a
+/// <see cref="SynchronizationContext"/> or <see cref="TaskScheduler"/>, and the
+/// evaluator captures only a fold's private scheduling context, so a host that blocks on a deep run from a
 /// single-threaded context does not deadlock where the runtime has a thread pool. A run that hops
 /// completes asynchronously even when nothing else suspends; blocking on such a run on a host
 /// without worker threads (browser WebAssembly) stays unsupported, as it already is for genuinely
@@ -92,6 +100,9 @@ internal readonly struct StackHop : ICriticalNotifyCompletion
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static bool HostStackIsLow()
     {
+        // A synchronous run's fold pump (FoldTrampoline) takes no hop for the host stack: the probe after
+        // the site decides, as on the synchronous family, and nothing leaves the calling thread.
+        if (FoldTrampoline.IsPumping) return false;
         Span<byte> margin = stackalloc byte[ChokepointMargin];
         return IsBelowReserve(margin);
     }
@@ -117,10 +128,12 @@ internal readonly struct StackHop : ICriticalNotifyCompletion
     /// <summary>
     /// Queues the continuation to the thread pool, flowing the current <see cref="ExecutionContext"/>.
     /// Where the host has suppressed flow there is none to flow, and the continuation receives the
-    /// evaluator's flow-local state instead (<see cref="QueueWithHandover"/>).
+    /// evaluator's flow-local state instead (<see cref="QueueWithHandover"/>). On a thread that pumps a
+    /// synchronous run's fold (<see cref="FoldTrampoline"/>) the pump resumes it instead, on that thread.
     /// </summary>
     public void OnCompleted(Action continuation)
     {
+        if (FoldTrampoline.TryPostHop(continuation)) return;
         if (EvaluationFlow.CaptureIfSuppressed() is { } handover)
             QueueWithHandover(handover, continuation);
         else
@@ -131,10 +144,13 @@ internal readonly struct StackHop : ICriticalNotifyCompletion
     /// Queues the continuation to the thread pool without capturing the context: the async method
     /// builder's continuation restores the awaiting method's own <see cref="ExecutionContext"/>.
     /// Where the host has suppressed flow the builder captured none, and the continuation receives
-    /// the evaluator's flow-local state instead (<see cref="QueueWithHandover"/>).
+    /// the evaluator's flow-local state instead (<see cref="QueueWithHandover"/>). On a thread that
+    /// pumps a synchronous run's fold (<see cref="FoldTrampoline"/>) the pump resumes it instead, on
+    /// that thread, with the same state.
     /// </summary>
     public void UnsafeOnCompleted(Action continuation)
     {
+        if (FoldTrampoline.TryPostHop(continuation)) return;
         if (EvaluationFlow.CaptureIfSuppressed() is { } handover)
             QueueWithHandover(handover, continuation);
         else

@@ -2256,7 +2256,7 @@ internal sealed partial class ModuleLoader
 
             try
             {
-                source = await _downloadCode(moduleUrl, _cancellationToken).ConfigureAwait(false);
+                source = await Evaluation.FoldTrampoline.InvokeExternal(_downloadCode, moduleUrl, _cancellationToken).ConfigureAwait(false);
                 ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (IsCancellationRequested)

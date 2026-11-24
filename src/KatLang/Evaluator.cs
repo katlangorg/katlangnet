@@ -203,6 +203,16 @@ public static partial class Evaluator
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
         internal IZeroArgPropertyResultCache ZeroArgPropertyResultCache => Services.ZeroArgPropertyResultCache;
+        internal IZeroArgPropertyResultCache PropertyAccessCache
+        {
+            get
+            {
+                var cache = Services.ZeroArgPropertyResultCache;
+                // A synchronous run lends its own store to its heap steps. Even cells supplied before
+                // the fold use this accessor, so the ordinary twin cache guards apply at every read.
+                return FoldTrampoline.IsPumpingRun(Budget) ? cache.TwinView ?? cache : cache;
+            }
+        }
         internal IDeconstructionBindingCache DeconstructionBindingCache => Services.DeconstructionBindingCache;
         internal bool EnableLoopOptimization => Services.EnableLoopOptimization;
         internal LoopOptimizationDiagnostics? LoopDiagnostics => Services.LoopDiagnostics;

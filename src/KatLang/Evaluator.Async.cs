@@ -1039,7 +1039,7 @@ public static partial class Evaluator
     {
         ctx = ParameterContext(name, ctx, ref valEnv);
         return LookupNeed(ctx.NeedEnv, name) is { } need
-            ? DemandParameter(need, await need.DemandAsync().ConfigureAwait(false), name, span)
+            ? DemandParameter(need, await need.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext), name, span)
             : EvalParamCounted(name, span, ctx, valEnv);
     }
 
@@ -1048,7 +1048,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv,
         string name)
-        => ProjectCountedValue(await EvalParamCountedAsync(name, span: null, ctx, valEnv).ConfigureAwait(false));
+        => ProjectCountedValue(await EvalParamCountedAsync(name, span: null, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
     /// <summary>MIRROR OF <see cref="ApplyMathNativeCall"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> ApplyMathNativeCallAsync(
@@ -1062,7 +1062,7 @@ public static partial class Evaluator
         var wide = (uint)count > MathNativeArgumentPair.Capacity ? new Decimal128[count] : null;
         for (var i = 0; i < argNames.Count; i++)
         {
-            var valR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
+            var valR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (valR.IsError) return valR.Error;
             // MIRROR of ApplyMathNativeCall: the ONE numeric coercion.
             var numR = ExpectInt(valR.Value);
@@ -1086,10 +1086,10 @@ public static partial class Evaluator
         var arguments = new Result[argNames.Count];
         for (var i = 0; i < argNames.Count; i++)
         {
-            var valueR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
+            var valueR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (valueR.IsError) return valueR.Error;
             // MIRROR — a host operation receives concrete values (issue #204).
-            valueR = await MaterializeRunOutputAsync(valueR, ctx).ConfigureAwait(false);
+            valueR = await MaterializeRunOutputAsync(valueR, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (valueR.IsError) return valueR.Error;
             // MIRROR — a call reference never reaches host code.
             if (HostArgumentBoundaryError(valueR.Value, ctx.Budget, ctx.Observations?.StructuralTraversal) is { } refused) return refused;
@@ -1119,7 +1119,7 @@ public static partial class Evaluator
         if (TryInvokeMetaReceiver(hostOperation, argNames, ctx) is { } metaReceived)
             return metaReceived;
 
-        var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
+        var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (argumentsR.IsError) return argumentsR.Error;
 
         // An asynchronous twin run carries the operation's exception by value (see the helper).
@@ -1151,10 +1151,10 @@ public static partial class Evaluator
             && fnName.StartsWith(HostOperations.NativeNamePrefix, StringComparison.Ordinal)
             && hostOperations.TryGetByNativeName(fnName, out var hostOperation))
         {
-            return await InvokeSynchronousHostOperationAsync(hostOperation, argNames, ctx, valEnv).ConfigureAwait(false);
+            return await InvokeSynchronousHostOperationAsync(hostOperation, argNames, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
 
-        return await ApplyMathNativeCallAsync(fnName, argNames, ctx, valEnv).ConfigureAwait(false);
+        return await ApplyMathNativeCallAsync(fnName, argNames, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>
@@ -1182,30 +1182,30 @@ public static partial class Evaluator
         // machine hoists its temporaries; the positioned outcome is identical either way.
         return expr switch
         {
-            Expr.Param(var name) => await EvalParamCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
+            Expr.Param(var name) => await EvalParamCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
 
-            Expr.SequenceSpread => await EvalSequenceSpreadCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
+            Expr.SequenceSpread => await EvalSequenceSpreadCountedAsync(expr, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
 
-            Expr.SequenceConstruct => await EvalSequenceConstructCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
+            Expr.SequenceConstruct => await EvalSequenceConstructCountedAsync(expr, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
 
             Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral
-                => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(false),
+                => await EvalExpressionSpineCountedAsync(expr, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
 
             Expr.EmptySequence(var depth) => CountValue(BuildEmptySequenceValue(depth)),
 
-            Expr.AlgorithmExpr(var alg) => CountValue(await EvalAlgorithmExprValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false)),
+            Expr.AlgorithmExpr(var alg) => CountValue(await EvalAlgorithmExprValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)),
 
             Expr.Capture(var captureBody) => CountValue(WithPreferredSpanOf(
                 expr, captureBody,
-                await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false))),
+                await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext))),
 
-            Expr.Resolve(var name) => await EvalResolveCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(false),
+            Expr.Resolve(var name) => await EvalResolveCountedAsync(name, expr.Span, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
 
             Expr.DotCall dotCallExpr => WithSpanOf(expr, WithDotCallCtx(dotCallExpr, ctx,
-                WithOutputSpreadNotes(dotCallExpr, await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(false)))),
+                WithOutputSpreadNotes(dotCallExpr, await EvalDotCallCountedAsync(dotCallExpr, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)))),
 
             Expr.Call(var func, var callArgs) => WithSpanOf(expr,
-                await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(false)),
+                await EvalCallCountedExprAsync(func, callArgs, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)),
 
             // THE Phase 3 await site: an ASYNCHRONOUS host operation completes by
             // suspending the spine here. Every other native — a synchronous host
@@ -1217,7 +1217,7 @@ public static partial class Evaluator
                     && hostOperations.TryGetByNativeName(nativeFnName, out var hostOperation)
                     && hostOperation.IsAsynchronous
                 => await EvalAsynchronousHostOperationCountedAsync(
-                    hostOperation, nativeArgNames, ctx, valEnv).ConfigureAwait(false),
+                    hostOperation, nativeArgNames, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
 
             // A native wrapper's declared-argument reads ARE ordinary
             // Expr.Param value reads (LookupNativeArgument), so a demanded
@@ -1225,7 +1225,7 @@ public static partial class Evaluator
             // makes NativeCall a recursive variant, not a leaf, and it must
             // stay on the twin family.
             Expr.NativeCall(var nativeFnName, var nativeArgNames)
-                => CountValue(await EvalNativeCallAsync(nativeFnName, nativeArgNames, ctx, valEnv).ConfigureAwait(false)),
+                => CountValue(await EvalNativeCallAsync(nativeFnName, nativeArgNames, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)),
 
             // SYNC-DELEGABLE LEAVES — the only kinds allowed to run through
             // the synchronous evaluator on the twin path: none evaluates a
@@ -1255,13 +1255,13 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         if (alg is Algorithm.Alias)
-            return await EvalInlineAliasValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false);
+            return await EvalInlineAliasValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         var wired = WireToCaller(ctx, alg);
         var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
         if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
             return rejection;
-        return WithSpan(blockSpan, await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(false));
+        return WithSpan(blockSpan, await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>
@@ -1277,7 +1277,7 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = span };
 
-        var resolvedR = await LookupLexicalForValueAsync(ctx.CallStack[0], name, ctx).ConfigureAwait(false);
+        var resolvedR = await LookupLexicalForValueAsync(ctx.CallStack[0], name, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, span);
 
@@ -1286,7 +1286,7 @@ public static partial class Evaluator
             return rejection;
 
         var propertyR = WithPropertyContextOnMissingOutput(resolvedR.Value.Binding.Name, span, resolvedR.Value.ResolvedAlgorithm,
-            await ReadValueBindingCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
+            await ReadValueBindingCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         return propertyR.IsError
             ? propertyR.Error
             : CountValue(propertyR.Value.Value);
@@ -1417,14 +1417,14 @@ public static partial class Evaluator
                         {
                             // EQUALITY COMPARES WHOLE VALUES (issue #204): both operands are
                             // materialized, awaiting, the left one before the right one.
-                            var wholeLeft = await MaterializeValue(frames[top].FirstValue!, ctx, asynchronous: true).ConfigureAwait(false);
+                            var wholeLeft = await MaterializeValue(frames[top].FirstValue!, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             if (wholeLeft.IsError)
                             {
                                 completed = wholeLeft.Error;
                                 break;
                             }
 
-                            var wholeRight = await MaterializeValue(linkRight, ctx, asynchronous: true).ConfigureAwait(false);
+                            var wholeRight = await MaterializeValue(linkRight, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             if (wholeRight.IsError)
                             {
                                 completed = wholeRight.Error;
@@ -1466,7 +1466,7 @@ public static partial class Evaluator
                         {
                             if (!hasPendingChild)
                             {
-                                var retainedSlice = await WrittenCollectorSliceAsync(selection.Target, ctx).ConfigureAwait(false);
+                                var retainedSlice = await WrittenCollectorSliceAsync(selection.Target, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                                 if (EnterRetainedSelection(ref frames[top], retainedSlice, ctx) is { } terminal)
                                 {
                                     completed = terminal;
@@ -1488,7 +1488,7 @@ public static partial class Evaluator
                             frames[top].Phase = 1;
                             if (RequiresSelectorFormation(selection.Selectors, ctx))
                             {
-                                var formed = await FormSelectionSupply(selection, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+                                var formed = await FormSelectionSupply(selection, ctx, valEnv, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                                 if (formed.IsError)
                                 {
                                     completed = formed.Error;
@@ -1503,7 +1503,7 @@ public static partial class Evaluator
                         hasPendingChild = false;
                         if (selectorCell is not null)
                         {
-                            var demanded = await selectorCell.DemandAsync().ConfigureAwait(false);
+                            var demanded = await selectorCell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             completed = demanded.IsError
                                 ? SelectorFailure(demanded.Error, frames[top])
                                 : AdvanceSelection(ref frames[top], demanded.Value.Value, ctx, out requestedChild, out _, out viewIndex);
@@ -1514,25 +1514,25 @@ public static partial class Evaluator
                         // then its acceptance.
                         if (viewIndex >= 0 && frames[top].RetainedSlice is { } retained)
                         {
-                            var retainedValue = await retained[viewIndex].DemandAsync().ConfigureAwait(false);
+                            var retainedValue = await retained[viewIndex].DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             completed = AcceptRetainedSelection(ref frames[top], retainedValue, ctx);
                         }
                         else if (viewIndex >= 0 && frames[top].FirstValue is Result.ListValue { Lazy: { } positions })
                         {
                             // A list evaluated on demand (issue #204) — see the sync machine.
-                            var read = await ReadLazyPosition(positions, viewIndex, asynchronous: true).ConfigureAwait(false);
+                            var read = await ReadLazyPosition(positions, viewIndex, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             completed = AcceptLazySelection(ref frames[top], read, ctx);
                         }
                         else if (viewIndex >= 0)
                         {
                             var view = (Result.CallReference)frames[top].FirstValue!;
-                            var viewCells = await PrepareArgumentViewAsync(view, ctx).ConfigureAwait(false);
+                            var viewCells = await PrepareArgumentViewAsync(view, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             var viewCell = ArgumentViewSelectionCell(viewCells, viewIndex, frames[top]);
                             if (viewCell.IsError)
                                 completed = viewCell.Error;
                             else
                             {
-                                var viewValue = await viewCell.Value.DemandAsync().ConfigureAwait(false);
+                                var viewValue = await viewCell.Value.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                                 completed = AcceptArgumentViewSelection(ref frames[top], viewValue, ctx);
                             }
                         }
@@ -1543,7 +1543,7 @@ public static partial class Evaluator
                 case Expr.ListLiteral(var elements):
                     {
                         // LAZY COLLECTIONS (issue #204) — see the synchronous machine.
-                        completed = await EvalListLiteralAsync(elements, frames[top].Node.Span, ctx, valEnv).ConfigureAwait(false);
+                        completed = await EvalListLiteralAsync(elements, frames[top].Node.Span, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                         break;
                     }
 
@@ -1564,7 +1564,7 @@ public static partial class Evaluator
 
                 // Delegated child: the synchronous machine calls plain Eval here; the
                 // twin awaits the counted dispatch and projects the same value.
-                var childR = await EvalCountedAsync(requestedChild, ctx, valEnv).ConfigureAwait(false);
+                var childR = await EvalCountedAsync(requestedChild, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (childR.IsError)
                 {
                     completed = childR.Error;
@@ -1618,7 +1618,7 @@ public static partial class Evaluator
     {
         if (alg.DeferredRegion is { } region)
         {
-            var materialized = await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(false);
+            var materialized = await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (materialized.IsError)
                 return materialized.Error;
             // The materialized body takes the placeholder's parameter patterns and parent: Lean's
@@ -1645,7 +1645,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output: { Count: 0 } })
             return new EvalError.MissingOutput();
 
-        return await EvalOutputRowsPreparedAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv, invoked: invoked), ctx, valEnv).ConfigureAwait(false);
+        return await EvalOutputRowsPreparedAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv, invoked: invoked), ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalOutputRowsPrepared"/>.</summary>
@@ -1689,7 +1689,7 @@ public static partial class Evaluator
         for (var row = 0; row < source.Rows.Count; row++)
         {
             var expr = source.Rows[row];
-            var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
+            var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
             if (countedR.IsError) return NestOutputRowFailure(countedR.Error, source.Rows, in rowCtx);
 
@@ -1735,7 +1735,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var preparedR = await EvalCapturePreparedCoreAsync(body, ctx, valEnv).ConfigureAwait(false);
+        var preparedR = await EvalCapturePreparedCoreAsync(body, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -1747,7 +1747,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var countedR = await EvalCaptureCountedCoreAsync(body, ctx, valEnv).ConfigureAwait(false);
+        var countedR = await EvalCaptureCountedCoreAsync(body, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return countedR.IsError
             ? countedR.Error
             : EvalResult<Result>.Ok(countedR.Value.Value);
@@ -1760,7 +1760,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         bool invoked = false)
     {
-        var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv, invoked).ConfigureAwait(false);
+        var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv, invoked).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -1777,7 +1777,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv).ConfigureAwait(false);
+        var preparedR = await EvalAlgOutputPreparedCoreAsync(alg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<Result>.Ok(preparedR.Value.Counted.Value);
@@ -1807,7 +1807,7 @@ public static partial class Evaluator
         var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames, invoked: true);
         foreach (var expr in alg.Output)
         {
-            var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
+            var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (countedR.IsError) return countedR.Error;
             AddOutputRowItems(slots, expr, countedR.Value, ctx.Budget, ref bound, ref overflowAt);
         }
@@ -1842,7 +1842,7 @@ public static partial class Evaluator
         SourceSpan? overflowAt = null;
         for (; flagRow >= 0; flagRow--)
         {
-            var countedR = await EvalCountedAsync(rows[flagRow], pushedCtx, valEnv).ConfigureAwait(false);
+            var countedR = await EvalCountedAsync(rows[flagRow], pushedCtx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (countedR.IsError) return countedR.Error;
             AddOutputRowItems(slots, rows[flagRow], countedR.Value, ctx.Budget, ref discovery, ref overflowAt);
             // A flag row whose items alone pass the ceiling cannot be read (SEC-01).
@@ -1867,7 +1867,7 @@ public static partial class Evaluator
             TransientSupply bound = default;
             for (var i = 0; i < flagRow; i++)
             {
-                var countedR = await EvalCountedAsync(rows[i], pushedCtx, valEnv).ConfigureAwait(false);
+                var countedR = await EvalCountedAsync(rows[i], pushedCtx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (countedR.IsError) return countedR.Error;
                 AddOutputRowItems(slots, rows[i], countedR.Value, ctx.Budget, ref bound, ref overflowAt);
             }
@@ -1904,7 +1904,7 @@ public static partial class Evaluator
         if (alg is Algorithm.User { Output.Count: 0 })
             return new EvalError.MissingOutput();
 
-        return await EvalExplicitSequenceValueRowSlotsAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), valEnv).ConfigureAwait(false);
+        return await EvalExplicitSequenceValueRowSlotsAsync(alg.Output, EnterAlgorithmBody(alg, ctx, valEnv), valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>
@@ -1929,7 +1929,7 @@ public static partial class Evaluator
         TransientSupply bound = default;
         foreach (var expr in rows)
         {
-            var exprSlotsR = await EvalExplicitSequenceValueExprSlotsAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
+            var exprSlotsR = await EvalExplicitSequenceValueExprSlotsAsync(expr, rowCtx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
             if (exprSlotsR.IsError) return NestMissingOutput(exprSlotsR.Error);
             AddSlotsBounded(slots, exprSlotsR.Value, rowCtx.Budget, ref bound, expr is Expr.SequenceSpread);
@@ -1952,7 +1952,7 @@ public static partial class Evaluator
             var nestedItemsR = WithPreferredSpanOf(
                 expr,
                 captureBody,
-                await EvalExplicitSequenceValueRowSlotsAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
+                await EvalExplicitSequenceValueRowSlotsAsync(captureBody, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             if (nestedItemsR.IsError) return nestedItemsR.Error;
 
             return MakeCheckedUnfoldedSlot(ctx.Budget, nestedItemsR.Value, expr, captureBody);
@@ -1967,14 +1967,14 @@ public static partial class Evaluator
                 var nestedItemsR = WithPreferredSpanOf(
                     expr,
                     wired.Output,
-                    await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(false));
+                    await EvalExplicitSequenceValueItemsAsync(wired, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                 if (nestedItemsR.IsError) return nestedItemsR.Error;
 
                 return MakeCheckedUnfoldedSlot(ctx.Budget, nestedItemsR.Value, expr, wired.Output);
             }
         }
 
-        var countedR = await EvalCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
+        var countedR = await EvalCountedAsync(expr, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (countedR.IsError) return countedR.Error;
 
         // WRITTEN-SLOT REIFICATION — see the synchronous twin.
@@ -2015,7 +2015,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         if (algorithm is Algorithm.Alias)
-            return await EvalAliasZeroArgumentDemandCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+            return await EvalAliasZeroArgumentDemandCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         if (algorithm is Algorithm.Conditional)
         {
@@ -2024,7 +2024,7 @@ public static partial class Evaluator
                 OutputBundle.Empty,
                 ctx,
                 valEnv,
-                CallDiagnosticName.FromKnown("conditional")).ConfigureAwait(false);
+                CallDiagnosticName.FromKnown("conditional")).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
 
         // Binding the EMPTY supply cannot suspend — there are no arguments to evaluate —
@@ -2036,7 +2036,7 @@ public static partial class Evaluator
         var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
         var boundValues = ShadowValEnv(valEnv, names);
         return await EvalBoundUserBodyCountedAsync(algorithm, boundCtx, boundValues, names, invoked: false)
-            .ConfigureAwait(false);
+            .ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     private static async ValueTask<EvalResult<Result>> ProjectBoundZeroArgumentDemandValueAsync(
@@ -2044,7 +2044,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
         => ProjectCountedValue(
-            await EvalBoundZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false));
+            await EvalBoundZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
     // ── Zero-argument property twins (the async host seam) ──────────────────
 
@@ -2055,8 +2055,8 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var countedR = EntersInDeclaringContext(resolvedAlgorithm)
-            ? await EvalPropertyOwnerBodyCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false)
-            : await EvalZeroArgumentDemandOutputCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
+            ? await EvalPropertyOwnerBodyCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await EvalZeroArgumentDemandOutputCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (countedR.IsError)
             return countedR.Error;
 
@@ -2075,7 +2075,7 @@ public static partial class Evaluator
         // read it demands in a retained cell's computation, however deferred, is judged against its watermark.
         var detached = DetachedEvaluation(ctx, valEnv, out var values);
         detached.Budget.EnterServing(detached.DetachedBefore);
-        try { return await EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, detached, values).ConfigureAwait(false); }
+        try { return await EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, detached, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
         finally { detached.Budget.ExitServing(); }
     }
 
@@ -2086,14 +2086,14 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         if (algorithm.ParameterPatterns.Count != 0)
-            return await EvalCollectingPropertyOwnerBodyCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+            return await EvalCollectingPropertyOwnerBodyCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         if (OutputRowsAccessError(algorithm, ctx) is { } accessError)
             return accessError;
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
-        var preparedR = await EvalOutputRowsPreparedAsync(algorithm.Output, bodyCtx, ctx, valEnv).ConfigureAwait(false);
+        var preparedR = await EvalOutputRowsPreparedAsync(algorithm.Output, bodyCtx, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -2118,7 +2118,7 @@ public static partial class Evaluator
         var boundValues = ShadowValEnv(valEnv, names);
         var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues, names,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
-        var preparedR = await EvalOutputRowsPreparedAsync(algorithm.Output, bodyCtx, boundCtx, boundValues).ConfigureAwait(false);
+        var preparedR = await EvalOutputRowsPreparedAsync(algorithm.Output, bodyCtx, boundCtx, boundValues).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
@@ -2145,7 +2145,7 @@ public static partial class Evaluator
         using (level)
         {
             return await GetOrEvaluateZeroArgPropertyResultCoreAsync(
-                owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
+                owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -2163,11 +2163,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        // The async twin family is entered only when the run's cache is async-capable,
-        // and the cache reference is never replaced during a run, so a non-async cache
-        // here is an evaluator ownership bug — fail loud rather than silently blocking
-        // or bypassing the host's cache.
-        if (ctx.ZeroArgPropertyResultCache is not IAsyncZeroArgPropertyResultCache asyncCache)
+        // The async twin family is entered only where the run's cache is async-capable or offers the
+        // twins its view (a synchronous run's fold continued on the heap, EvalCtx.PropertyAccessCache), and the
+        // cache reference is never replaced during a run, so any other cache here is an evaluator
+        // ownership bug — fail loud rather than silently blocking or bypassing the host's cache.
+        if (ctx.PropertyAccessCache is not IAsyncZeroArgPropertyResultCache asyncCache)
         {
             throw new InvalidOperationException(
                 "Async evaluation requires an async-capable zero-argument property result cache on the run context.");
@@ -2180,7 +2180,7 @@ public static partial class Evaluator
             ZeroArgPropertyReadExecution(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv),
             IsExported(binding)
                 ? () => EvaluateDetachedZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)
-                : () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(false);
+                : () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalZeroArgPropertyAccessCounted(PropertyDeclaringOwner, Property, ZeroArgPropertyAccessKind, Algorithm, EvalCtx, IReadOnlyList{ValueTuple{string, Result}})"/> — keep in lock-step.</summary>
@@ -2193,7 +2193,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var propertyR = await GetOrEvaluateZeroArgPropertyResultAsync(
-            owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
+            owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return propertyR.IsError
             ? propertyR.Error
             : EvalResult<CountedResult>.Ok(new CountedResult(propertyR.Value.Value, propertyR.Value.EmittedCount));
@@ -2235,14 +2235,14 @@ public static partial class Evaluator
 
         // The declared-argument reads are ordinary Expr.Param value reads and can
         // demand an algorithm-channel binding's value, so they take the twin.
-        var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
+        var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (argumentsR.IsError) return argumentsR.Error;
 
         EvalResult<Result> normalizedR;
         try
         {
-            var value = await hostOperation.AsynchronousImplementation!(
-                argumentsR.Value, ctx.Budget.CancellationToken).ConfigureAwait(false);
+            var value = await FoldTrampoline.InvokeExternal(hostOperation.AsynchronousImplementation!,
+                argumentsR.Value, ctx.Budget.CancellationToken).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
             // Deterministic post-resumption observation: a token cancelled while the run
             // was suspended in the host operation is honored as soon as evaluation resumes,
@@ -2287,7 +2287,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return await EvalZeroArgumentDemandOutputAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+            return await EvalZeroArgumentDemandOutputAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -2308,11 +2308,11 @@ public static partial class Evaluator
         ThrowIfAsyncStrategyPinningViolated(ctx);
         // META-S3-1: a callee spelled `X.Algorithm` (see the synchronous twin).
         if (IsAlgorithmEdgeCallee(func))
-            return WithOutputSpreadNotesInsideFrame(args, await EvalAlgorithmCalleeCallCountedAsync((Expr.DotCall)func, args, ctx, valEnv).ConfigureAwait(false));
+            return WithOutputSpreadNotesInsideFrame(args, await EvalAlgorithmCalleeCallCountedAsync((Expr.DotCall)func, args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         // META-S3-0b: the ONE callee law through the async resolution adapter.
-        var calleeR = await ResolveCalleeAsync(func, ctx).ConfigureAwait(false);
+        var calleeR = await ResolveCalleeAsync(func, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (calleeR.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 
@@ -2322,25 +2322,29 @@ public static partial class Evaluator
                 diagnosticName,
                 ctx,
                 WithOutputSpreadNotes(args,
-                    await EvalOriginCallCountedAsync(CalleeOrigin.Written(func), calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false)));
+                    await EvalOriginCallCountedAsync(CalleeOrigin.Written(func), calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(FoldTrampoline.CaptureFoldContext)));
 
         // MIRROR — declaration-level output spreading's note on the call's own failure, before its frame.
         return WithCallCtx(
             diagnosticName,
             ctx,
-            WithOutputSpreadNotes(args, await EvalResolvedCallCountedAsync(calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false)));
+            WithOutputSpreadNotes(args, await EvalResolvedCallCountedAsync(calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(FoldTrampoline.CaptureFoldContext)));
     }
 
     /// <summary>
     /// The async twin family mirrors the GENERIC loop and sequence strategies only, and
     /// the async root context construction pins both optimizations off. Reaching a twin
-    /// with either flag enabled is an evaluator ownership bug — fail loud (like
-    /// <see cref="EvaluationBudget.ExitInvocation"/> underflow) rather than silently
-    /// running a strategy the twin family does not mirror.
+    /// of an ASYNCHRONOUS run with either flag enabled is an evaluator ownership bug — fail
+    /// loud (like <see cref="EvaluationBudget.ExitInvocation"/> underflow) rather than
+    /// silently running a strategy the twin family does not mirror. A SYNCHRONOUS run reaches
+    /// the twins only where a long <c>reduce</c> fold continues on the heap
+    /// (<see cref="FoldTrampoline"/>): its context keeps the run's flags, and the twins run
+    /// the generic strategies they mirror, which charge every budget exactly as the
+    /// optimized ones do (Q-09b), so no value, effect, charge or verdict differs.
     /// </summary>
     private static void ThrowIfAsyncStrategyPinningViolated(EvalCtx ctx)
     {
-        if (ctx.EnableLoopOptimization || ctx.EnableSequencePipelineOptimization)
+        if (ctx.Budget.IsAsynchronousRun && (ctx.EnableLoopOptimization || ctx.EnableSequencePipelineOptimization))
         {
             throw new InvalidOperationException(
                 "Async evaluation requires the generic loop and sequence strategies; the async root context must pin both optimizations off.");
@@ -2357,13 +2361,13 @@ public static partial class Evaluator
     {
         // MIRROR — call(alias) = call(target).
         if (callee is Algorithm.Alias)
-            return await EvalAliasCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalAliasCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = await ResolveNeedSupply(args, ctx, valEnv, asynchronous: true, callee).ConfigureAwait(false);
+            var argAlgsR = await ResolveNeedSupply(args, ctx, valEnv, asynchronous: true, callee).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (argAlgsR.IsError) return argAlgsR.Error;
-            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, argAlgsR.Value, ctx, valEnv).ConfigureAwait(false));
+            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, argAlgsR.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
@@ -2372,17 +2376,17 @@ public static partial class Evaluator
                 args,
                 ctx,
                 valEnv,
-                calleeName).ConfigureAwait(false);
+                calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         if (callee is Algorithm.Conditional)
-            return await EvalConditionalCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalConditionalCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         return await EvalUserCallCountedAsync(
             callee,
             args,
             ctx,
             valEnv,
-            calleeName).ConfigureAwait(false);
+            calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalUserCallCounted"/> — keep in lock-step.</summary>
@@ -2401,7 +2405,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return await EvalUserCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalUserCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -2413,9 +2417,9 @@ public static partial class Evaluator
         CallDiagnosticName calleeName)
     {
         if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
-            && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(false) is { } projected)
+            && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } projected)
             return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
-        return await EvalNeedUserBody(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+        return await EvalNeedUserBody(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="TryProjectSharedDeconstructionTarget"/> — keep in lock-step.</summary>
@@ -2430,10 +2434,10 @@ public static partial class Evaluator
             return null;
         var boundR = SharedDeconstructionBind(helper, target, args, ctx, valEnv) is { } shared
             ? await ctx.DeconstructionBindingCache.GetOrBindAsync(shared,
-                () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(false)
-            : await BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+                () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (boundR.IsError) return boundR.Error;
-        return ProjectCountedValue(await boundR.Value[name].DemandAsync().ConfigureAwait(false));
+        return ProjectCountedValue(await boundR.Value[name].DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>MIRROR OF <see cref="EvalConditionalCallCounted"/> — keep in lock-step.</summary>
@@ -2452,7 +2456,7 @@ public static partial class Evaluator
 
         try
         {
-            return await EvalConditionalCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalConditionalCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         finally
         {
@@ -2467,7 +2471,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        return await EvalNeedFamilyBody(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+        return await EvalNeedFamilyBody(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
 
@@ -2483,7 +2487,7 @@ public static partial class Evaluator
         if (argsOpt is null)
             return null;
 
-        var inputsR = await FormNeedSupply(argsOpt, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+        var inputsR = await FormNeedSupply(argsOpt, ctx, valEnv, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (inputsR.IsError)
             return inputsR.Error;
 
@@ -2508,14 +2512,14 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         if (GetSequenceBuiltinMetadata(builtin) is { } metadata)
-            return await ApplyBuiltinCountedSequenceAsync(builtin, metadata, resolvedArgs, ctx, valEnv).ConfigureAwait(false);
+            return await ApplyBuiltinCountedSequenceAsync(builtin, metadata, resolvedArgs, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         // Supplied cells — see the synchronous twin.
         var args = resolvedArgs;
 
         // META binding first — see the synchronous twin.
         if (BuiltinRegistry.GetBuiltin(builtin) is { DeclaresMetaParameter: true } metaBuiltin)
-            return await ApplyMetaBuiltinCounted(metaBuiltin, args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+            return await ApplyMetaBuiltinCounted(metaBuiltin, args, ctx, valEnv, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         switch (builtin, args.Count)
         {
@@ -2525,7 +2529,7 @@ public static partial class Evaluator
 
             case (BuiltinId.@if, 3):
                 {
-                    var condR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);
+                    var condR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (condR.IsError) return condR.Error;
                     var truth = condR.Value.AsBool();
                     if (truth is null)
@@ -2533,8 +2537,8 @@ public static partial class Evaluator
 
                     // The selected branch is one value boundary — see the synchronous twin.
                     var branchR = truth.Value
-                        ? await EvalResolvedArgumentCountedAsync(args[1], ctx, valEnv).ConfigureAwait(false)
-                        : await EvalResolvedArgumentCountedAsync(args[2], ctx, valEnv).ConfigureAwait(false);
+                        ? await EvalResolvedArgumentCountedAsync(args[1], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                        : await EvalResolvedArgumentCountedAsync(args[2], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (branchR.IsError) return branchR.Error;
                     return EvalResult<CountedResult>.Ok(
                         new CountedResult(branchR.Value.Value, branchR.Value.Value.ValueCount()));
@@ -2542,17 +2546,17 @@ public static partial class Evaluator
 
             case (BuiltinId.@atoms, 1):
                 {
-                    var atomsR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);
+                    var atomsR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (atomsR.IsError) return atomsR.Error;
                     // `atoms` reads the WHOLE value (issue #204) — see the synchronous twin.
-                    var wholeR = await MaterializeValue(atomsR.Value, ctx, asynchronous: true).ConfigureAwait(false);
+                    var wholeR = await MaterializeValue(atomsR.Value, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (wholeR.IsError) return wholeR.Error;
                     return MakeLanguageAtomsResult(ctx, wholeR.Value);
                 }
 
             case (BuiltinId.@range, 2):
                 {
-                    var rangeR = await EvalBuiltinRangeArgumentsAsync(args, ctx, valEnv).ConfigureAwait(false);
+                    var rangeR = await EvalBuiltinRangeArgumentsAsync(args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (rangeR.IsError) return rangeR.Error;
 
                     // A list value is always one visible value, including `[]`.
@@ -2582,12 +2586,12 @@ public static partial class Evaluator
         if (args.Count != 2)
             return WrongBuiltinArity(BuiltinId.@range, args.Count);
 
-        var startR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);
+        var startR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (startR.IsError) return startR.Error;
         var startIntR = ValidateRangeBound(startR.Value, "range start");
         if (startIntR.IsError) return startIntR.Error;
 
-        var stopR = await EvalResolvedArgumentValueAsync(args[1], ctx, valEnv).ConfigureAwait(false);
+        var stopR = await EvalResolvedArgumentValueAsync(args[1], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (stopR.IsError) return stopR.Error;
         var stopIntR = ValidateRangeBound(stopR.Value, "range stop");
         if (stopIntR.IsError) return stopIntR.Error;
@@ -2603,7 +2607,7 @@ public static partial class Evaluator
     {
         if (arg.Cell is { } cell)
         {
-            var result = await cell.DemandAsync().ConfigureAwait(false);
+            var result = await cell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return arg.Source is Expr.Param(var name) ? DemandParameter(cell, result, name, arg.Source.Span) : result;
         }
         if (arg.Algorithm is not { } algorithm)
@@ -2616,7 +2620,7 @@ public static partial class Evaluator
 
         return BlameDemandedArgumentForMissingOutput(
             arg.Source,
-            await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false));
+            await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>MIRROR OF <see cref="EvalResolvedArgument"/> — keep in lock-step.</summary>
@@ -2625,7 +2629,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var countedR = await EvalResolvedArgumentCountedAsync(arg, ctx, valEnv).ConfigureAwait(false);
+        var countedR = await EvalResolvedArgumentCountedAsync(arg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return countedR.IsError
             ? countedR.Error
             : EvalResult<Result>.Ok(countedR.Value.Value);
@@ -2646,7 +2650,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return await EvalZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+            return await EvalZeroArgumentDemandOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -2658,7 +2662,7 @@ public static partial class Evaluator
     {
         if (item.Cell is { } cell && item.Value is null && item.ValueError is null)
         {
-            var result = await cell.DemandAsync().ConfigureAwait(false);
+            var result = await cell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return FinishNeedCallItemDemand(item, cell, result, ctx);
         }
 
@@ -2670,7 +2674,7 @@ public static partial class Evaluator
             return item;
         }
 
-        var demandedR = await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+        var demandedR = await EvalArgumentAlgOutputCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return demandedR.IsError
             ? item with { ValueError = BlameDemandedArgumentForMissingOutput(item.Source, demandedR).Error }
             : item with { Value = demandedR.Value.Value };
@@ -2701,16 +2705,16 @@ public static partial class Evaluator
 
         // A retained collector bound as the whole collection — see the synchronous twin.
         if (ReadsRetainedCollector(builtin) && items[0].Cell is { } collectionCell
-            && await RetainedCellSliceAsync(collectionCell, ctx).ConfigureAwait(false) is { } retained)
+            && await RetainedCellSliceAsync(collectionCell, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } retained)
         {
-            var retainedControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
+            var retainedControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return retainedControls.IsError
                 ? retainedControls.Error
                 : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, retainedControls.Value, null, retained));
         }
 
         // The `collection` parameter is a VALUE position — see the synchronous twin.
-        var collectionItem = await DemandSequenceBuiltinCallItemValueAsync(items[0], ctx, valEnv).ConfigureAwait(false);
+        var collectionItem = await DemandSequenceBuiltinCallItemValueAsync(items[0], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (collectionItem.Value is null)
             return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
@@ -2724,7 +2728,7 @@ public static partial class Evaluator
         var collectionValue = collectionItem.Value;
         if (BindsPositions(builtin, collectionValue))
         {
-            var positionalControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
+            var positionalControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return positionalControls.IsError
                 ? positionalControls.Error
                 : EvalResult<BoundSequenceBuiltinArguments>.Ok(
@@ -2733,7 +2737,7 @@ public static partial class Evaluator
 
         if (collectionValue is Result.ListValue { Lazy: not null })
         {
-            var level = await ForceLevel(collectionValue, ctx, asynchronous: true).ConfigureAwait(false);
+            var level = await ForceLevel(collectionValue, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (level.IsError) return level.Error;
             collectionValue = level.Value;
         }
@@ -2744,7 +2748,7 @@ public static partial class Evaluator
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
         if (preparedInputR.IsError) return preparedInputR.Error;
 
-        var suffixArgsR = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
+        var suffixArgsR = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (suffixArgsR.IsError) return suffixArgsR.Error;
 
         return EvalResult<BoundSequenceBuiltinArguments>.Ok(
@@ -2769,7 +2773,7 @@ public static partial class Evaluator
             // (reduce's initial) is retained undemanded by the shared preparation.
             var controlItem = items[1 + index];
             if (metadata.SuffixArgs[index] is { Kind: not SequenceBuiltinSuffixArgKind.Algorithm, Deferred: false })
-                controlItem = await DemandSequenceBuiltinCallItemValueAsync(controlItem, ctx, valEnv).ConfigureAwait(false);
+                controlItem = await DemandSequenceBuiltinCallItemValueAsync(controlItem, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
             var preparedArgR = PrepareSequenceBuiltinSuffixArg(
                 builtin,
@@ -2793,15 +2797,15 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var boundR = await BindSequenceBuiltinArgumentsAsync(builtin, metadata, args, ctx, valEnv).ConfigureAwait(false);
+        var boundR = await BindSequenceBuiltinArgumentsAsync(builtin, metadata, args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (boundR.IsError) return boundR.Error;
         if (boundR.Value.ArgumentView is { } argumentView)
-            return await EvalArgumentViewBuiltinAsync(builtin, argumentView, ctx).ConfigureAwait(false);
+            return await EvalArgumentViewBuiltinAsync(builtin, argumentView, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (boundR.Value.RetainedSlice is { } retainedSlice)
-            return await EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: true).ConfigureAwait(false);
+            return await EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         // POSITIONS READ ON DEMAND (issue #204) — see the synchronous twin.
         if (boundR.Value.Positions is { } positions)
-            return await EvalPositionalBuiltin(builtin, metadata, boundR.Value.SuffixArgs, positions, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+            return await EvalPositionalBuiltin(builtin, metadata, boundR.Value.SuffixArgs, positions, ctx, valEnv, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         // An ordinary call: the view, slice and position routes have returned above.
         var (preparedInput, suffixArgs, _, _) = boundR.Value;
@@ -2811,7 +2815,7 @@ public static partial class Evaluator
         // `contains` and `distinct` compare WHOLE values (issue #204) — see the synchronous twin.
         if (builtin is BuiltinId.@contains or BuiltinId.@distinct && ctx.Budget.HasLazyLists)
         {
-            var comparedR = await MaterializeComparedOperands(builtin, preparedInput, suffixArgs, ctx, asynchronous: true).ConfigureAwait(false);
+            var comparedR = await MaterializeComparedOperands(builtin, preparedInput, suffixArgs, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (comparedR.IsError) return comparedR.Error;
             (preparedInput, suffixArgs) = comparedR.Value;
         }
@@ -2829,10 +2833,10 @@ public static partial class Evaluator
                     // An empty collection demands the start once and returns its value; the fold
                     // finishes without projecting the reducer.
                     if (collectionItems.Count == 0)
-                        return await EvalReduceInitialAsync(initialR.Value, metadata.SuffixArgs[1], ctx, valEnv).ConfigureAwait(false);
+                        return await EvalReduceInitialAsync(initialR.Value, metadata.SuffixArgs[1], ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
                     // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
-                    var stepR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
+                    var stepR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (stepR.IsError) return stepR.Error;
 
                     return await EvalReduceCounted(
@@ -2842,7 +2846,7 @@ public static partial class Evaluator
                         metadata.SuffixArgs[1],
                         ctx,
                         valEnv,
-                        asynchronous: true).ConfigureAwait(false);
+                        asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 }
 
             default:
@@ -2862,7 +2866,7 @@ public static partial class Evaluator
     {
         // MIRROR — a callback that is an alias is its target, before the invocation charge.
         if (callee is Algorithm.Alias)
-            return await EvalAliasCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalAliasCallbackCallCountedAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         // Charged dynamic invocation boundary — the single callback dispatch chokepoint.
         // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
@@ -2872,7 +2876,7 @@ public static partial class Evaluator
 
         try
         {
-            return await EvalResolvedCallbackCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            return await EvalResolvedCallbackCallCountedCoreAsync(callee, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         finally
         {
@@ -2888,7 +2892,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName)
     {
-        return await EvalNeedCallbackBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(false);
+        return await EvalNeedCallbackBody(callee, args, ctx, valEnv, calleeName, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalSequenceCallbackCallCounted"/> — keep in lock-step.</summary>
@@ -2908,7 +2912,7 @@ public static partial class Evaluator
         SequenceBuiltinSuffixArgDescriptor descriptor,
         EvalCtx ctx,
         ValEnv valEnv)
-        => ReduceInitialValue(descriptor, await DemandSequenceBuiltinCallItemValueAsync(initial, ctx, valEnv).ConfigureAwait(false));
+        => ReduceInitialValue(descriptor, await DemandSequenceBuiltinCallItemValueAsync(initial, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
     /// <summary>
     /// MIRROR OF <see cref="EvalFilterPredicateTruth"/> — keep in lock-step (the
@@ -2922,7 +2926,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var predicateCountedR = await EvalSequenceCallbackCallCountedAsync(
-            predicateAlg, item, ctx, valEnv, FilterPredicateFrameName).ConfigureAwait(false);
+            predicateAlg, item, ctx, valEnv, FilterPredicateFrameName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         var predicateR = WithFilterItemCtx(
             item.Value,
             index,
@@ -2960,7 +2964,7 @@ public static partial class Evaluator
         var argsOpt = dotCall.Args;
 
         // META-S3-0b: receiver navigation can project a parameter's cell — resolved asynchronously.
-        var navigated = await ResolveDotReceiverAsync(target, ctx).ConfigureAwait(false);
+        var navigated = await ResolveDotReceiverAsync(target, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (navigated.IsError && !IsAbsentIdentity(navigated.Error))
             return navigated.Error;
         var targetAlg = navigated.IsError ? null : navigated.Value.Receiver;
@@ -2975,22 +2979,22 @@ public static partial class Evaluator
             var wired = ChildOfInContext(targetAlg!, prop!.Value, ctx);
             // MIRROR — a member that is an alias is read and called as its target.
             if (wired is Algorithm.Alias)
-                return MarkNestedMemberInvocationOutput(await EvalAliasMemberCountedAsync(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false));
+                return MarkNestedMemberInvocationOutput(await EvalAliasMemberCountedAsync(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             // MIRROR — a member read with NO argument list is the ONE structural member read.
             if (argsOpt is null)
-                return await EvalStructuralMemberReadAsync(targetAlg!, prop, wired, name, ctx, valEnv).ConfigureAwait(false);
+                return await EvalStructuralMemberReadAsync(targetAlg!, prop, wired, name, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
             // MIRROR — CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
             if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))
                 return MarkNestedMemberInvocationOutput(await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg!, prop), wired, argsOpt, ctx, valEnv,
-                    CallDiagnosticName.FromKnown(name)).ConfigureAwait(false));
+                    CallDiagnosticName.FromKnown(name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
             return MarkNestedMemberInvocationOutput(await EvalResolvedCallCountedAsync(
                 wired,
                 argsOpt,
                 ctx,
                 valEnv,
-                CallDiagnosticName.FromKnown(name)).ConfigureAwait(false));
+                CallDiagnosticName.FromKnown(name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
 
         // MIRROR — a structural miss: the intrinsics, or the extension call.
@@ -2998,25 +3002,25 @@ public static partial class Evaluator
         {
             case DotEdgeRoute.StringIntrinsic:
             {
-                if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
+                if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } arityRejection)
                     return arityRejection;
                 Result value;
                 if (targetAlg is null)
                 {
                     // The synchronous twin evaluates the value-only target with plain
                     // Eval; the counted twin's value projection is the same value.
-                    var valCountedR = await EvalCountedAsync(target, ctx, valEnv).ConfigureAwait(false);
+                    var valCountedR = await EvalCountedAsync(target, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (valCountedR.IsError) return NestMissingOutput(valCountedR.Error);
                     value = valCountedR.Value.Value;
                 }
                 else if (targetAlg is Algorithm.Alias)
                 {
                     // MIRROR — the `.string` receiver is judged on the alias's target.
-                    return await EvalAliasDotStringCountedAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                    return await EvalAliasDotStringCountedAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 }
                 else
                 {
-                    var val = NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false));
+                    var val = NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                     if (val.IsError) return val.Error;
                     value = val.Value;
                 }
@@ -3026,18 +3030,18 @@ public static partial class Evaluator
             }
             case DotEdgeRoute.InvokeIntrinsic:
                 return targetAlg is null
-                    ? await EvalDotInvokeValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false)
-                    : await EvalDotInvokeIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                    ? await EvalDotInvokeValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                    : await EvalDotInvokeIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             case DotEdgeRoute.ArgumentsIntrinsic:
                 return targetAlg is null
-                    ? await EvalDotArgumentsValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false)
-                    : await EvalDotArgumentsIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                    ? await EvalDotArgumentsValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                    : await EvalDotArgumentsIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             case DotEdgeRoute.AlgorithmIntrinsic:
                 return targetAlg is null
-                    ? await EvalDotAlgorithmValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false)
-                    : await EvalDotAlgorithmIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                    ? await EvalDotAlgorithmValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                    : await EvalDotAlgorithmIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             default:
-                return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
+                return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -3048,11 +3052,11 @@ public static partial class Evaluator
         Algorithm? demandAlg = null;
         if (targetAlg is Algorithm.Alias alias)
         {
-            var terminal = await ResolveAliasValueTerminalAsync(alias, ctx).ConfigureAwait(false);
+            var terminal = await ResolveAliasValueTerminalAsync(alias, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (terminal.IsError) return terminal.Error;
             demandAlg = terminal.Value.Algorithm;
         }
-        return NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv, demandAlg).ConfigureAwait(false));
+        return NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv, demandAlg).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotArgumentsIntrinsicCounted"/> — keep in lock-step.</summary>
@@ -3061,7 +3065,7 @@ public static partial class Evaluator
     {
         if (RejectDotArgumentsIntrinsicArguments(dotCall.Args) is { } rejection)
             return rejection;
-        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value, ctx);
     }
 
@@ -3072,7 +3076,7 @@ public static partial class Evaluator
             return rejection;
         // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's
         // value projection is the same value.
-        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false));
+        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value.Value, ctx);
     }
 
@@ -3080,27 +3084,27 @@ public static partial class Evaluator
     private static async ValueTask<EvalError?> RejectDotInvokeIntrinsicArgumentsAsync(OutputBundle? argsOpt, EvalCtx ctx, ValEnv valEnv)
         => argsOpt is null
             ? new EvalError.IllegalInEval(InvokeRequiresArgumentListMessage)
-            : await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false);
+            : await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
     /// <summary>MIRROR OF <see cref="EvalDotInvokeIntrinsicCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalDotInvokeIntrinsicCountedAsync(
         Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
     {
-        if (await RejectDotInvokeIntrinsicArgumentsAsync(dotCall.Args, ctx, valEnv).ConfigureAwait(false) is { } rejection)
+        if (await RejectDotInvokeIntrinsicArgumentsAsync(dotCall.Args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } rejection)
             return rejection;
-        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-        return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value, ctx).ConfigureAwait(false);
+        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotInvokeValueReceiverCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalDotInvokeValueReceiverCountedAsync(Expr.DotCall dotCall, EvalCtx ctx, ValEnv valEnv)
     {
-        if (await RejectDotInvokeIntrinsicArgumentsAsync(dotCall.Args, ctx, valEnv).ConfigureAwait(false) is { } rejection)
+        if (await RejectDotInvokeIntrinsicArgumentsAsync(dotCall.Args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } rejection)
             return rejection;
         // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's
         // value projection is the same value.
-        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false));
-        return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value.Value, ctx).ConfigureAwait(false);
+        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
+        return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value.Value, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="CallLexicalWithReceiverCounted"/> — keep in lock-step.</summary>
@@ -3112,17 +3116,17 @@ public static partial class Evaluator
         // Stored-fallback consumption — see CallLexicalWithReceiverCounted. DOT-CALL
         // PASSES A VALUE: the receiver is the ordinary first argument of `F(R, args)`.
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
-            return await CallLexicalFallbackCalleeWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
+            return await CallLexicalFallbackCalleeWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         // META-S3-2: the fallback name may be a runtime-target alias, whose CALLABLE is awaited.
-        var calleeR = await ResolveAsync(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)).ConfigureAwait(false);
+        var calleeR = await ResolveAsync(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (calleeR.IsError) return calleeR.Error;
         return await EvalResolvedCallCountedAsync(
             calleeR.Value,
             BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(fallbackName)).ConfigureAwait(false);
+            CallDiagnosticName.FromKnown(fallbackName)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>
@@ -3138,14 +3142,14 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         // META-S3-0b: a parameter fallback projects its cell — resolved asynchronously.
-        var calleeR = await ResolveAsync(ctx, (dotCall.EffectiveLexicalFallback, ctx), static state => ResolveAlg(state.EffectiveLexicalFallback, state.ctx)).ConfigureAwait(false);
+        var calleeR = await ResolveAsync(ctx, (dotCall.EffectiveLexicalFallback, ctx), static state => ResolveAlg(state.EffectiveLexicalFallback, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (calleeR.IsError) return calleeR.Error;
         return await EvalResolvedCallCountedAsync(
             calleeR.Value,
             BuildLexicalReceiverCallArgs(dotCall.Target, dotCall.Args),
             ctx,
             valEnv,
-            CallDiagnosticName.FromKnown(dotCall.Name)).ConfigureAwait(false);
+            CallDiagnosticName.FromKnown(dotCall.Name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotStringReceiverAlgOutput"/> — keep in lock-step.</summary>
@@ -3161,7 +3165,7 @@ public static partial class Evaluator
         // written argument reports it, before (and instead of) the zero-argument law — see the
         // synchronous twin.
         if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
-            return ProjectCountedValue(await EvalParamCountedAsync(needName, target.Span, ctx, valEnv).ConfigureAwait(false));
+            return ProjectCountedValue(await EvalParamCountedAsync(needName, target.Span, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
         // Every other receiver is demanded for its VALUE with zero arguments through the ONE
         // law — see the synchronous twin (an alias receiver is judged on its VALUE terminal's algorithm).
@@ -3176,16 +3180,16 @@ public static partial class Evaluator
                 // MIRROR OF the synchronous twin: the ordinary value-position parameter read (a
                 // parameter with a supplied cell returned above): its counted or bound value, and
                 // BadArity for a binding that has only an algorithm channel, which is never evaluated.
-                return ProjectCountedValue(await EvalParamCountedAsync(name, target.Span, ctx, valEnv).ConfigureAwait(false));
+                return ProjectCountedValue(await EvalParamCountedAsync(name, target.Span, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
             case Expr.Resolve(var name):
-                return await EvalDotStringLexicalPropertyReceiverAsync(target, name, ctx, valEnv).ConfigureAwait(false);
+                return await EvalDotStringLexicalPropertyReceiverAsync(target, name, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
             case Expr.DotCall edge when receiverIsStructuralMember:
-                return await EvalDotStringStructuralMemberReceiverAsync(edge, targetAlg, ctx, valEnv).ConfigureAwait(false);
+                return await EvalDotStringStructuralMemberReceiverAsync(edge, targetAlg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
             default:
-                return await EvalZeroArgumentDemandOutputAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
+                return await EvalZeroArgumentDemandOutputAsync(targetAlg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -3199,13 +3203,13 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = await ResolveAsync(ctx, (owner: ctx.CallStack[0], name, ctx), static state => LookupLexicalRaw(state.owner, state.name, state.ctx)).ConfigureAwait(false);
+        var resolvedR = await ResolveAsync(ctx, (owner: ctx.CallStack[0], name, ctx), static state => LookupLexicalRaw(state.owner, state.name, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
 
         // MIRROR — a receiver reached THROUGH an alias reads its VALUE terminal.
         if (resolvedR.Value.ResolvedAlgorithm is Algorithm.Alias)
-            return await EvalAliasDotStringLexicalReceiverAsync(target, resolvedR.Value, ctx, valEnv).ConfigureAwait(false);
+            return await EvalAliasDotStringLexicalReceiverAsync(target, resolvedR.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
         if (StackHop.HostStackIsLow()) await new StackHop();
@@ -3214,7 +3218,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
+            return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
     }
 
@@ -3228,7 +3232,7 @@ public static partial class Evaluator
         // META-S3-0b: the container's re-navigation goes through the async resolution adapter
         // too, so its correctness follows from the general rule (an awaited outcome is consumed
         // or replayed), not from an earlier navigation having completed the same projection.
-        var navigated = await ResolveDotReceiverAsync(edge.Target, ctx).ConfigureAwait(false);
+        var navigated = await ResolveDotReceiverAsync(edge.Target, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (navigated.IsOk && LookupPropBinding(navigated.Value.Receiver, edge.Name, ctx.Budget) is { } member)
         {
             // TWIN-ONLY (intentional difference from the synchronous mirror): see StackHop.
@@ -3240,10 +3244,10 @@ public static partial class Evaluator
             {
                 if (ChildOfInContext(navigated.Value.Receiver, member.Value, ctx) is Algorithm.Alias memberAlias)
                 {
-                    var terminal = await ResolveAliasValueTerminalAsync(memberAlias, ctx, member).ConfigureAwait(false);
+                    var terminal = await ResolveAliasValueTerminalAsync(memberAlias, ctx, member).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     return terminal.IsError
                         ? terminal.Error
-                        : ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(false));
+                        : ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                 }
 
                 return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(
@@ -3252,11 +3256,11 @@ public static partial class Evaluator
                     ZeroArgPropertyAccessKind.CountedStructural,
                     TryGetFlatBinderUserEquivalent(targetAlg) ?? targetAlg,
                     ctx,
-                    valEnv).ConfigureAwait(false));
+                    valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             }
         }
 
-        return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(false);
+        return await EvalResolvedAlgOutputForValueDemandAsync(targetAlg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     // ── Sequence-join twins ─────────────────────────────────────────────────
@@ -3278,7 +3282,7 @@ public static partial class Evaluator
             {
                 // A spread leaf supplies exactly the spread EXPRESSION's items, read
                 // back like a spread output row (see the synchronous twin).
-                var spreadR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(false);
+                var spreadR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 // MIRROR: a leaf is a SUBORDINATE computation of the join (Q-36).
                 if (spreadR.IsError) return NestMissingOutput(spreadR.Error);
 
@@ -3288,7 +3292,7 @@ public static partial class Evaluator
 
             // The synchronous twin evaluates the leaf with plain Eval; the counted
             // twin's value projection is the same value.
-            var valueR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(false);
+            var valueR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (valueR.IsError) return NestMissingOutput(valueR.Error);
 
             if (valueR.Value.Value.ValueCount() != 0)
@@ -3314,7 +3318,7 @@ public static partial class Evaluator
         if (expr is Expr.Capture(var captureBody))
         {
             var captureSpan = PreferExpressionSpan(expr.Span, captureBody);
-            var captureR = WithSpan(captureSpan, await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
+            var captureR = WithSpan(captureSpan, await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             if (captureR.IsError)
                 return SpreadOperandFailure(expr, captureSpan, captureR.Error);
 
@@ -3324,7 +3328,7 @@ public static partial class Evaluator
         if (expr is Expr.AlgorithmExpr(var alg))
         {
             if (alg is Algorithm.Alias)
-                return await EvalAliasSpreadOperandValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false);
+                return await EvalAliasSpreadOperandValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
@@ -3332,7 +3336,7 @@ public static partial class Evaluator
             if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Block, name: null, blockSpan, wired) is { } rejection)
                 return rejection;
 
-            var blockR = await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(false);
+            var blockR = await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (blockR.IsError)
                 return SpreadOperandFailure(expr, blockSpan, blockR.Error);
 
@@ -3341,7 +3345,7 @@ public static partial class Evaluator
 
         // The synchronous twin evaluates the operand with plain Eval; the counted
         // twin's value projection is the same value.
-        var outputR = await EvalCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
+        var outputR = await EvalCountedAsync(expr, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (outputR.IsError)
             return SpreadOperandFailure(expr, expr.Span, outputR.Error);
 
@@ -3355,9 +3359,9 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var operand = PeelSpreadLayers(expr, out var layers);
-        var operandR = await EvalSequenceSpreadOperandValueAsync(operand, ctx, valEnv).ConfigureAwait(false);
+        var operandR = await EvalSequenceSpreadOperandValueAsync(operand, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (operandR.IsError) return operandR.Error;
-        var opened = await OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, asynchronous: true).ConfigureAwait(false);
+        var opened = await OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return opened.Items;
     }
 }

@@ -527,17 +527,18 @@ public sealed class LazyReduceAccumulatorTests
         Assert.Equal(["1"], stopped);
     }
 
-    // ── 9. The synchronous route continues a long chain on a fresh stack ──────────────────────────────
+    // ── 9. The synchronous route continues a long chain on the heap, on the calling thread ────────────
 
     [Fact]
-    public void LongAccumulatingFold_OnAOneMebibyteThread_CompletesOnFreshStacks()
+    public void LongAccumulatingFold_OnAOneMebibyteThread_CompletesOnTheCallingThread()
     {
         const int count = 4000;
         var source = CallingAdd + $"reduce(range(1, {count}), Add, 0)";
         SourceProvenance.ParseValid(source);
         RunResult? result = null;
         Exception? failure = null;
-        var startedBefore = FoldContinuationStack.Started;
+        var pumpsBefore = FoldTrampoline.Pumps;
+        var waitsBefore = FoldTrampoline.StalledPumps;
         var thread = new Thread(() =>
         {
             try { result = KatLangEngine.Run(source); }
@@ -549,16 +550,19 @@ public sealed class LazyReduceAccumulatorTests
         Assert.Null(failure);
         var success = Assert.IsType<RunResult.Success>(result);
         Assert.Equal(((long)count * (count + 1) / 2).ToString(), SixRouteAgreement.Neutral(success.Value));
-        // Four thousand suspended steps do not fit a 1 MiB stack: the chain continued elsewhere.
-        Assert.True(FoldContinuationStack.Started > startedBefore);
+        // Four thousand suspended steps exceed the host stack's allowance: the chain continued on the heap,
+        // pumped on the calling thread, which never waited for another thread.
+        Assert.True(FoldTrampoline.Pumps > pumpsBefore);
+        Assert.Equal(waitsBefore, FoldTrampoline.StalledPumps);
     }
 
     [Fact]
-    public void HostExceptionOnAFreshStack_ReachesTheCallerAsTheSameObject()
+    public void HostExceptionOnTheHeap_ReachesTheCallerAsTheSameObject()
     {
         var thrown = new InvalidOperationException("host failure");
         var operations = HostOperations.Create(HostOperation.Create("fail", (_, _) => throw thrown));
-        // The start is reached only after three thousand suspended steps, far beyond one thread's allowance.
+        // The start is reached only after three thousand suspended steps, far beyond the host stack's
+        // allowance: it runs in a pumped segment, where the run carries the exception by value.
         const string source = CallingAdd + "reduce(range(1, 3000), Add, fail())";
         RequireCleanParse(source, operations);
 
@@ -618,14 +622,16 @@ public sealed class LazyReduceAccumulatorTests
     private static int Item(Result value) => (int)((Result.Atom)value).Value;
 
     [Theory]
-    [InlineData(false, Flow.Normal)]
-    [InlineData(false, Flow.Suppressed)]
-    [InlineData(true, Flow.Normal)]
-    [InlineData(true, Flow.Suppressed)]
-    public void SynchronousCallbacks_ResumeWithTheirOwnHostContext(bool streamed, Flow flow)
+    [InlineData(false, Flow.Normal, 4)]
+    [InlineData(false, Flow.Suppressed, 4)]
+    [InlineData(true, Flow.Normal, 4)]
+    [InlineData(true, Flow.Suppressed, 4)]
+    [InlineData(false, Flow.Normal, 100)]
+    [InlineData(false, Flow.Suppressed, 100)]
+    public void SynchronousCallbacks_ResumeWithTheirOwnHostContext(bool streamed, Flow flow, int count)
     {
         var ambient = new AsyncLocal<int>();
-        var contexts = Enumerable.Range(0, 5).Select(_ => new SynchronizationContext()).ToArray();
+        var contexts = Enumerable.Range(0, count + 1).Select(_ => new SynchronizationContext()).ToArray();
         var caller = SynchronizationContext.Current;
         var entries = new List<int>();
         var observations = new List<(int Item, int Ambient, bool OwnContext, bool Suppressed)>();
@@ -653,13 +659,13 @@ public sealed class LazyReduceAccumulatorTests
                 return new Result.Atom(0);
             }));
         var body = streamed ? "acc + enter(item) + observe(item)" : "enter(item) + acc + observe(item)";
-        var source = $"Add(item, acc) = {body}\nreduce(range(1, 4), Add, seed())";
+        var source = $"Add(item, acc) = {body}\nreduce(range(1, {count}), Add, seed())";
         RequireCleanParse(source, operations);
 
         var run = HostFlow.Under(flow, () => KatLangEngine.Run(source, new RunOptions { HostOperations = operations }));
-        Assert.Equal("10", SixRouteAgreement.Neutral(Assert.IsType<RunResult.Success>(run).Value));
-        Assert.Equal(streamed ? new[] { 0, 0, 0, 0 } : new[] { 0, 4, 3, 2 }, entries);
-        Assert.Equal(Enumerable.Range(1, 4).Select(i => (i, i, true, flow == Flow.Suppressed)), observations);
+        Assert.Equal((count * (count + 1) / 2).ToString(), SixRouteAgreement.Neutral(Assert.IsType<RunResult.Success>(run).Value));
+        Assert.Equal(streamed ? Enumerable.Repeat(0, count) : Enumerable.Range(2, count - 1).Reverse().Prepend(0), entries);
+        Assert.Equal(Enumerable.Range(1, count).Select(i => (i, i, true, flow == Flow.Suppressed)), observations);
         Assert.Equal(0, ambient.Value);
         Assert.Same(caller, SynchronizationContext.Current);
     }
@@ -667,13 +673,14 @@ public sealed class LazyReduceAccumulatorTests
     /// <summary>
     /// A general fold of 4,000 steps on a 1 MiB thread, its reducer calling the host operation <c>mark</c> before
     /// its accumulator read (the descent: the last step's call first) or after it (the ascent: the first step's
-    /// call first): every call runs one at a time, in that order, on the calling thread or on a fresh stack of
-    /// the fold (<see cref="FoldContinuationStack"/>), never on the thread pool.
+    /// call first): every call runs one at a time, in that order, on the calling thread — the steps nearest the
+    /// fold's own frame on its host stack, the rest on the heap through the fold's trampoline
+    /// (<see cref="FoldTrampoline"/>) — never on another thread.
     /// </summary>
     [Theory]
     [InlineData("Add(item, acc) = mark(item) + acc", false)]
     [InlineData("Id(x) = x\nAdd(item, acc) = Id(item) + acc + 0 * mark(item)", true)]
-    public void LongFoldCallbacks_RunInOrder_OnTheCallingThreadOrTheFoldsFreshStacks(string reducer, bool ascending)
+    public void LongFoldCallbacks_RunInOrder_OnTheCallingThread(string reducer, bool ascending)
     {
         const int count = 4000;
         var calls = new List<(int Item, int Thread, string? Name)>();
@@ -707,11 +714,8 @@ public sealed class LazyReduceAccumulatorTests
         Assert.False(overlapped, "two host calls overlapped");
         var expected = ascending ? Enumerable.Range(1, count) : Enumerable.Range(1, count).Reverse();
         Assert.Equal(expected, calls.Select(static call => call.Item));
-        // The steps nearest the fold's own frame run on the calling thread; the chain beyond its allowance
-        // continues on fresh stacks of the fold.
-        Assert.Contains(calls, call => call.Thread == calling);
-        Assert.Contains(calls, call => call.Thread != calling);
-        Assert.All(calls, call => Assert.True(call.Thread == calling || call.Name == "KatLang fold continuation",
+        // Every call, on the host stack's part of the chain and on the heap's, ran on the calling thread.
+        Assert.All(calls, call => Assert.True(call.Thread == calling,
             $"mark({call.Item}) ran on thread {call.Thread} ({call.Name ?? "unnamed"})"));
     }
 
@@ -780,7 +784,7 @@ public sealed class LazyReduceAccumulatorTests
     public void LongSkippingFold_RunsOnlyTheStepsItDemands_OnTheCallingThread()
     {
         // Of 50,000 steps only the last ten run: the step for 49,990 ignores its accumulator, so every earlier
-        // step, the start (1 / 0) and every fresh stack they would have needed never start.
+        // step, the start (1 / 0) and every heap segment they would have needed never start.
         const string skipping = "Last(item, acc) = if(item == SKIP, 0, mark(item) + acc)";
         const string picking = "Last(item, acc) = mark(item)";
         const int count = 50_000;
@@ -811,8 +815,8 @@ public sealed class LazyReduceAccumulatorTests
     {
         // Every 1,000 more steps cost exactly the same charged work — the same invocations and loop
         // iterations, the same expression checkpoints (one step is charged per 4,096 of them, so the step
-        // total itself is compared net of those) — however the chain is split between the calling thread
-        // and fresh stacks: a continuation charges nothing of its own.
+        // total itself is compared net of those) — however the chain is split between the host stack and
+        // the heap: a continuation charges nothing of its own.
         (long Invocations, long Checkpoints) Work(int count)
         {
             var (result, budget) = Observe(CallingAdd + $"reduce(range(1, {count}), Add, 0)");

@@ -270,7 +270,7 @@ public static partial class Evaluator
         if (JudgeRetainedCellReuse(cell, ctx) is { } refusal)
             return refusal;
         ctx.Budget.EnterServing(ctx.DetachedBefore);
-        try { return await cell.DemandAsync().ConfigureAwait(false); }
+        try { return await cell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
         finally { ctx.Budget.ExitServing(); }
     }
 }

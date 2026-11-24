@@ -1734,18 +1734,18 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalRuntimeAliasValueCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalRuntimeAliasValueCountedAsync(Algorithm.Alias wired, EvalCtx ctx, ValEnv valEnv)
         => wired.Target is Expr.Param
-            ? await EvalCountedAsync(wired.Target, ctx.Push(wired), valEnv).ConfigureAwait(false)
-            : await RetainedCellValueAsync(AliasBindingCell(wired, ctx), ctx).ConfigureAwait(false);
+            ? await EvalCountedAsync(wired.Target, ctx.Push(wired), valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await RetainedCellValueAsync(AliasBindingCell(wired, ctx), ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
     /// <summary>MIRROR OF <see cref="ReadAliasTerminalCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> ReadAliasTerminalCountedAsync(AliasTerminal terminal, EvalCtx ctx, ValEnv valEnv)
     {
         var read = terminal.IsRuntime
-            ? await EvalRuntimeAliasValueCountedAsync((Algorithm.Alias)terminal.Algorithm, ctx, valEnv).ConfigureAwait(false)
+            ? await EvalRuntimeAliasValueCountedAsync((Algorithm.Alias)terminal.Algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : terminal.Binding is { } hop
                 ? WithPropertyContextOnMissingOutput(hop.Binding.Name, span: null, terminal.Algorithm,
-                    await EvalZeroArgPropertyAccessCountedAsync(hop.Owner, hop.Binding, ZeroArgPropertyAccessKind.CountedLexical, terminal.Algorithm, ctx, valEnv).ConfigureAwait(false))
-                : await EvalZeroArgumentDemandOutputCountedAsync(terminal.Algorithm, ctx, valEnv).ConfigureAwait(false);
+                    await EvalZeroArgPropertyAccessCountedAsync(hop.Owner, hop.Binding, ZeroArgPropertyAccessKind.CountedLexical, terminal.Algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext))
+                : await EvalZeroArgumentDemandOutputCountedAsync(terminal.Algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return terminal.CrossesCarrier ? NestCarrierCrossing(read) : read;
     }
 
@@ -1753,35 +1753,35 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> ReadValueBindingCountedAsync(ResolvedLexicalProperty resolved, EvalCtx ctx, ValEnv valEnv)
     {
         var read = resolved.ResolvedAlgorithm is Algorithm.Alias runtime
-            ? await EvalRuntimeAliasValueCountedAsync(runtime, ctx, valEnv).ConfigureAwait(false)
-            : await EvalZeroArgPropertyAccessCountedAsync(resolved, ctx, valEnv).ConfigureAwait(false);
+            ? await EvalRuntimeAliasValueCountedAsync(runtime, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await EvalZeroArgPropertyAccessCountedAsync(resolved, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return resolved.CrossesCarrier ? NestCarrierCrossing(read) : read;
     }
 
     /// <summary>MIRROR OF <see cref="EvalInlineAliasValue"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> EvalInlineAliasValueAsync(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
     {
-        var terminalR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)WireToCaller(ctx, alias), ctx).ConfigureAwait(false);
+        var terminalR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)WireToCaller(ctx, alias), ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (terminalR.IsError)
             return AtSpanIfMissing(terminalR.Error, expr.Span);
 
         var terminal = terminalR.Value;
         if (!terminal.IsRuntime && ZeroArgumentValueDemandError(expr, terminal.Algorithm) is { } rejection)
             return rejection;
-        return WithSpan(expr.Span, WithSpan(((Algorithm.Alias)alias).Target.Span, ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal, ctx, valEnv).ConfigureAwait(false))));
+        return WithSpan(expr.Span, WithSpan(((Algorithm.Alias)alias).Target.Span, ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext))));
     }
 
     /// <summary>MIRROR OF <see cref="EvalAliasSpreadOperandValue"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> EvalAliasSpreadOperandValueAsync(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
     {
-        var terminalR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)WireToCaller(ctx, alias), ctx).ConfigureAwait(false);
+        var terminalR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)WireToCaller(ctx, alias), ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (terminalR.IsError)
             return AtSpanIfMissing(terminalR.Error, expr.Span);
 
         var terminal = terminalR.Value;
         if (!terminal.IsRuntime && ZeroArgumentValueDemandError(expr, terminal.Algorithm) is { } rejection)
             return rejection;
-        var blockR = WithSpan(((Algorithm.Alias)alias).Target.Span, ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal, ctx, valEnv).ConfigureAwait(false)));
+        var blockR = WithSpan(((Algorithm.Alias)alias).Target.Span, ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)));
         if (blockR.IsError)
             return SpreadOperandFailure(expr, expr.Span, blockR.Error);
         return blockR;
@@ -1795,10 +1795,10 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName calleeName)
     {
-        var target = await ResolveAliasTargetAsync((Algorithm.Alias)callee, ctx).ConfigureAwait(false);
+        var target = await ResolveAliasTargetAsync((Algorithm.Alias)callee, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return target.IsError
             ? target.Error
-            : await EvalResolvedCallCountedAsync(target.Value, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            : await EvalResolvedCallCountedAsync(target.Value, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalAliasCallbackCallCounted"/> — keep in lock-step.</summary>
@@ -1809,19 +1809,19 @@ public static partial class Evaluator
         ValEnv valEnv,
         string calleeName)
     {
-        var target = await ResolveAliasTargetAsync((Algorithm.Alias)callee, ctx).ConfigureAwait(false);
+        var target = await ResolveAliasTargetAsync((Algorithm.Alias)callee, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return target.IsError
             ? target.Error
-            : await EvalResolvedCallbackCallCountedAsync(target.Value, args, ctx, valEnv, calleeName).ConfigureAwait(false);
+            : await EvalResolvedCallbackCallCountedAsync(target.Value, args, ctx, valEnv, calleeName).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalAliasZeroArgumentDemandCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalAliasZeroArgumentDemandCountedAsync(Algorithm algorithm, EvalCtx ctx, ValEnv valEnv)
     {
-        var terminal = await ResolveAliasValueTerminalAsync((Algorithm.Alias)algorithm, ctx).ConfigureAwait(false);
+        var terminal = await ResolveAliasValueTerminalAsync((Algorithm.Alias)algorithm, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return terminal.IsError
             ? terminal.Error
-            : await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(false);
+            : await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="NormalizeTopLevelBinding"/> — keep in lock-step.</summary>
@@ -1842,28 +1842,28 @@ public static partial class Evaluator
     {
         if (argsOpt is null)
         {
-            var terminalR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)wiredAlias, ctx, prop).ConfigureAwait(false);
+            var terminalR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)wiredAlias, ctx, prop).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (terminalR.IsError)
                 return terminalR.Error;
             var terminal = terminalR.Value;
             if (terminal.IsRuntime)
             {
-                var runtimeRead = ReCountValueBoundary(await EvalRuntimeAliasValueCountedAsync((Algorithm.Alias)terminal.Algorithm, ctx, valEnv).ConfigureAwait(false));
+                var runtimeRead = ReCountValueBoundary(await EvalRuntimeAliasValueCountedAsync((Algorithm.Alias)terminal.Algorithm, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                 return terminal.CrossesCarrier ? NestCarrierCrossing(runtimeRead) : runtimeRead;
             }
             PropertyDeclaringOwner owner = terminal.Binding is { } hop ? hop.Owner : targetAlg;
             var binding = terminal.Binding is { } bound ? bound.Binding : prop;
-            var memberRead = await EvalStructuralMemberReadAsync(owner, binding, terminal.Algorithm, name, ctx, valEnv).ConfigureAwait(false);
+            var memberRead = await EvalStructuralMemberReadAsync(owner, binding, terminal.Algorithm, name, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return terminal.CrossesCarrier ? NestCarrierCrossing(memberRead) : memberRead;
         }
 
-        var wiredR = await ResolveAliasTargetAsync((Algorithm.Alias)wiredAlias, ctx, prop).ConfigureAwait(false);
+        var wiredR = await ResolveAliasTargetAsync((Algorithm.Alias)wiredAlias, ctx, prop).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (wiredR.IsError)
             return wiredR.Error;
         if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wiredR.Value))
             return await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg, prop), wiredR.Value, argsOpt, ctx, valEnv,
-                CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
-        return await EvalResolvedCallCountedAsync(wiredR.Value, argsOpt, ctx, valEnv, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
+                CallDiagnosticName.FromKnown(name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return await EvalResolvedCallCountedAsync(wiredR.Value, argsOpt, ctx, valEnv, CallDiagnosticName.FromKnown(name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalStructuralMemberRead"/> — keep in lock-step.</summary>
@@ -1872,13 +1872,13 @@ public static partial class Evaluator
         => AcceptsZeroArgumentValueDemand(wired)
             ? MarkSelectedMemberOutput(ReCountValueBoundary(
                 await EvalZeroArgPropertyAccessCountedAsync(
-                    owner, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)))
+                    owner, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)))
             : ConditionalValueAccessError(name, wired) ?? ZeroArgumentDemandArityMismatch(wired);
 
     /// <summary>MIRROR OF <see cref="EvalAliasDotStringLexicalReceiver"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<Result>> EvalAliasDotStringLexicalReceiverAsync(Expr target, ResolvedLexicalProperty resolved, EvalCtx ctx, ValEnv valEnv)
     {
-        var terminal = await ResolveAliasValueTerminalAsync((Algorithm.Alias)resolved.ResolvedAlgorithm, ctx, resolved.Binding).ConfigureAwait(false);
+        var terminal = await ResolveAliasValueTerminalAsync((Algorithm.Alias)resolved.ResolvedAlgorithm, ctx, resolved.Binding).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (terminal.IsError)
             return AtSpanIfMissing(terminal.Error, target.Span);
 
@@ -1889,7 +1889,7 @@ public static partial class Evaluator
 
         using (level)
         {
-            return ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(false));
+            return ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
     }
 
@@ -1901,10 +1901,10 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var receiverR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)aliasAlg, ctx).ConfigureAwait(false);
+        var receiverR = await ResolveAliasValueTerminalAsync((Algorithm.Alias)aliasAlg, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (receiverR.IsError)
             return receiverR.Error;
-        var val = NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(target, aliasAlg, receiverIsStructuralMember, ctx, valEnv, receiverR.Value.Algorithm).ConfigureAwait(false));
+        var val = NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(target, aliasAlg, receiverIsStructuralMember, ctx, valEnv, receiverR.Value.Algorithm).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         if (val.IsError) return val.Error;
         var outR = ResultToString(ctx, val.Value);
         if (outR.IsError) return outR.Error;

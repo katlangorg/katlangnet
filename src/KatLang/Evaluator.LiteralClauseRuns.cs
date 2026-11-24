@@ -319,7 +319,7 @@ public static partial class Evaluator
         var cell = 0;
         do
         {
-            var demanded = await supply[cell].DemandAsync().ConfigureAwait(false);
+            var demanded = await supply[cell].DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (demanded.IsError) return walk.Failure(demanded.Error);
             cell = walk.Advance(demanded.Value.Value);
         }

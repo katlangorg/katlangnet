@@ -476,6 +476,14 @@ public class MaintainedDocumentationConsistencyTests
             @"\bWithheld`?\s+without\s+a\s+concrete\s+form\b|\bWithheld`?\s+when\s+the\s+run\s+built\s+no\s+such\s+form\b",
             "passive observations withheld without a built concrete form (superseded 2026-11-24 by observations of completed positions)"
         },
+        // A synchronous fold continued on fresh threads (superseded 2026-11-24, single-thread fold progress, C#-only host
+        // policy of issue #203): a long general `reduce` fold keeps its suspended steps on the heap and runs on the thread
+        // that demands it (FoldTrampoline), so no current text names the fresh-thread continuation or says that the
+        // synchronous route continues a fold's chain on a fresh stack or thread.
+        {
+            @"(?<!\w)FoldContinuationStack(?!\w)|\bcontinues\s+(?:a\s+long\s+chain|its\s+chain)\s+on\s+a\s+fresh\s+(?:stack|thread)\b|\bfold\s+continuation\s+threads?\b",
+            "a synchronous fold continued on fresh threads (superseded 2026-11-24 by heap continuations pumped on the calling thread)"
+        },
     };
 
     [Theory]

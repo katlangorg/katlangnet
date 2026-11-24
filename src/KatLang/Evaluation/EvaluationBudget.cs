@@ -1190,6 +1190,31 @@ internal sealed class EvaluationBudget
     /// <summary>The most fold continuations this run had suspended at once. Observation only.</summary>
     internal int PeakFoldContinuations { get; private set; }
 
+    /// <summary>
+    /// The most fold continuations the synchronous evaluator kept nested on its thread's host stack while
+    /// this run demanded an accumulator in place: at most <c>FoldTrampoline.HostStackAllowance</c> once
+    /// the run's folds continue on the heap, however long they are. Observation only, like
+    /// <see cref="PeakFoldContinuations"/>, which counts every suspended step wherever it waits.
+    /// </summary>
+    internal int PeakHostStackFoldContinuations { get; private set; }
+
+    /// <summary>Records a synchronous in-place accumulator demand with <paramref name="nested"/> continuations on the host stack.</summary>
+    internal void NoteHostStackFoldContinuations(int nested)
+    {
+        if (nested > PeakHostStackFoldContinuations) PeakHostStackFoldContinuations = nested;
+    }
+
+    /// <summary>
+    /// Accumulator computations this run started as segments of a fold's trampoline: on the heap, at the
+    /// trampoline's own frame (<c>FoldTrampoline</c>). Observation only.
+    /// </summary>
+    internal long HeapFoldSegments => Interlocked.Read(ref _heapFoldSegments);
+
+    private long _heapFoldSegments;
+
+    /// <summary>Counts one accumulator computation started on a fold's trampoline.</summary>
+    internal void NoteHeapFoldSegment() => Interlocked.Increment(ref _heapFoldSegments);
+
     /// <summary>The enforced single-collection item limit.</summary>
     internal int MaxCollectionItems => _maxCollectionItems;
 

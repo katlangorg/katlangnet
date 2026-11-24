@@ -676,10 +676,11 @@ public static partial class Evaluator
     /// </summary>
     private static async ValueTask<EvalResult<Result>> ReadLazyPosition(LazyList positions, int index, bool asynchronous)
     {
-        var has = await HasPosition(positions, index, asynchronous).ConfigureAwait(false);
+        FoldTrampoline.ForkHostScope();
+        var has = await HasPosition(positions, index, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (has.IsError) return has.Error;
         if (!has.Value) return new EvalError.BadIndex();
-        return await ForcePosition(positions.Slot(index), asynchronous).ConfigureAwait(false);
+        return await ForcePosition(positions.Slot(index), asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>Accepts the read position of a lazy list; a failure is positioned at the selector in flight.</summary>
@@ -1460,7 +1461,7 @@ public static partial class Evaluator
     {
         try
         {
-            var value = implementation(arguments, budget.CancellationToken);
+            var value = FoldTrampoline.InvokeHost(implementation, arguments, budget.CancellationToken);
             return NormalizeHostOperationValue(hostOperation, value, budget, observations);
         }
         catch (Exception error) when (budget.CarriesHostTermination)

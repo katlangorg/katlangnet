@@ -73,6 +73,7 @@ public static partial class Evaluator
         ValEnv valEnv,
         bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         // The fold defers the ORIGINAL supplied cell with its written slot. An argument WITHOUT a
         // cell (a hand-built plan) has no computation to retain: it is demanded here, once, and
         // its value supplied as produced data.
@@ -80,14 +81,14 @@ public static partial class Evaluator
         if (initial.Cell is null)
         {
             var startR = asynchronous
-                ? await EvalReduceInitialAsync(initial, initialDescriptor, ctx, valEnv).ConfigureAwait(false)
+                ? await EvalReduceInitialAsync(initial, initialDescriptor, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : EvalReduceInitial(initial, initialDescriptor, ctx, valEnv);
             if (startR.IsError) return startR.Error;
             start = NeedCell.Ready(startR.Value);
         }
 
         var fold = new ReduceFold(items, stepAlg, initial, initialDescriptor, start, ctx, valEnv);
-        return WithCtx(ReduceStepContext, await fold.Last(asynchronous).ConfigureAwait(false));
+        return WithCtx(ReduceStepContext, await fold.Last(asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>
@@ -110,12 +111,18 @@ public static partial class Evaluator
     /// <para><b>Continuations.</b> A step that demands its accumulator is suspended until the
     /// preceding step has run: a fold continuation, accounted apart from call nesting
     /// (<see cref="EvaluationBudget.EnterFoldContinuation"/>: every step of the fold runs at the
-    /// depth the fold began at). The asynchronous route keeps suspended steps on the heap through
-    /// the cell's own stack hop (<see cref="StackHop"/>); the synchronous route continues a long
-    /// chain on a fresh stack (<see cref="FoldContinuationStack"/>). There a suspended step keeps
-    /// its reducer body's frames, a plain synchronous step and the accumulator's context boundary
-    /// (<c>Evaluate</c>). Its accumulator cell holds one computation object
-    /// (<see cref="AccumulatorComputation"/>).</para>
+    /// depth the fold began at). Its accumulator cell holds one computation object
+    /// (<see cref="AccumulatorComputation"/>); an accumulator computed on the heap is a SEGMENT of the
+    /// fold's TRAMPOLINE (<see cref="AccumulatorSegment"/>, <see cref="FoldTrampoline"/>): on the
+    /// asynchronous route every accumulator demand queues its segment there and the demanding step
+    /// suspends as heap state, so the fold's chain
+    /// never grows the host stack and runs on the thread that demands it. The synchronous route keeps
+    /// a short chain on the host stack — a plain synchronous step and the accumulator demand's context
+    /// boundary (<c>Evaluate</c>) per suspended step, at most
+    /// <see cref="FoldTrampoline.HostStackAllowance"/> per thread — and continues a longer one on the
+    /// heap: its accumulator demand runs the segment on the asynchronous twins through the same
+    /// trampoline, pumped on the calling thread (<see cref="FoldTrampoline.TryRunSynchronously"/>). No
+    /// thread is started and nothing waits for another thread.</para>
     ///
     /// <para><b>The streamed route</b> (C#-only implementation optimization; no Lean counterpart).
     /// A reducer whose FIRST observable act is the read of its accumulator
@@ -160,19 +167,11 @@ public static partial class Evaluator
         /// <summary>The fold's result: its last step, demanded by the fold itself.</summary>
         internal async ValueTask<EvalResult<CountedResult>> Last(bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             if (!ReduceFoldTestSeam.WithholdsStreaming && LeadsWithItsAccumulator(_step) is { } reducer)
-                return await Stream(reducer, asynchronous).ConfigureAwait(false);
+                return await Stream(reducer, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
-            // The frame the synchronous route measures a chain of continuations from.
-            var entered = !asynchronous && FoldContinuationStack.Enter();
-            try
-            {
-                return asynchronous ? await StepAsync(items.Count - 1).ConfigureAwait(false) : Step(items.Count - 1);
-            }
-            finally
-            {
-                FoldContinuationStack.Leave(entered);
-            }
+            return asynchronous ? await StepAsync(items.Count - 1).ConfigureAwait(FoldTrampoline.CaptureFoldContext) : Step(items.Count - 1);
         }
 
         // The step over element `index`: ONE ordinary invocation of the reducer over the element's
@@ -215,7 +214,7 @@ public static partial class Evaluator
             // alias is no invocation). A safety net: lookups normalize aliases first.
             if (_step is Algorithm.Alias alias)
             {
-                var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
+                var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (target.IsError) return target.Error;
                 _step = target.Value;
             }
@@ -228,7 +227,7 @@ public static partial class Evaluator
             {
                 NeedCell[] supply = [NeedCell.Ready(CountedSequenceCallbackItem(items[index])), Accumulator(index)];
                 // The step's ordinary call result, whole, with its value-boundary count (HO-03).
-                return ReCountValueBoundary(await EvalNeedCallbackSupplyAsync(_step, supply, ctx, values, ReduceStepFrameName).ConfigureAwait(false));
+                return ReCountValueBoundary(await EvalNeedCallbackSupplyAsync(_step, supply, ctx, values, ReduceStepFrameName).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             }
             finally
             {
@@ -245,6 +244,7 @@ public static partial class Evaluator
         // nested evaluation is known to take, with no step suspended.
         private async ValueTask<EvalResult<CountedResult>> Stream(Algorithm.User reducer, bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             var budget = ctx.Budget;
             // Every step is entered before any step completes, last step first: the invocation
             // charges and their limit, cancellation and terminal checks, in that order. A step's
@@ -268,7 +268,7 @@ public static partial class Evaluator
                     NeedCell[] supply = [NeedCell.Ready(CountedSequenceCallbackItem(items[index])), accumulator];
                     // The step's ordinary call result, whole, with its value-boundary count (HO-03).
                     result = ReCountValueBoundary(
-                        await EvalNeedCallbackSupply(reducer, supply, ctx, values, ReduceStepFrameName, asynchronous).ConfigureAwait(false));
+                        await EvalNeedCallbackSupply(reducer, supply, ctx, values, ReduceStepFrameName, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                 }
                 finally
                 {
@@ -372,27 +372,46 @@ public static partial class Evaluator
             return new NeedCell(new AccumulatorComputation(this, count), budget, budget.CancellationToken);
         }
 
-        // The synchronous VALUE computation of accumulator `count`: in place, or on a fresh stack
-        // once the chain of suspended steps has used this thread's allowance.
+        // The fold's trampoline, created by the first demand that needs it: every accumulator demand
+        // of the asynchronous route, and a synchronous demand beyond the host stack's allowance.
+        private FoldTrampoline? _trampoline;
+
+        private FoldTrampoline Trampoline
+            => Volatile.Read(ref _trampoline) ?? Interlocked.CompareExchange(ref _trampoline, new FoldTrampoline(ctx.Budget), null) ?? _trampoline!;
+
+        // The synchronous VALUE computation of accumulator `count`: in place, nested on the host stack,
+        // while this thread's chain stays within the host stack's allowance (FoldTrampoline: at most
+        // HostStackAllowance fold continuations and HostStackByteAllowance of stack); beyond that on the
+        // heap, through the fold's trampoline pumped on this thread. In place also where the run's
+        // property cache offers the twins no asynchronous view (a host-supplied test cache) or a drain
+        // loop of the same run runs on this thread, as every fold did before the trampoline.
         private EvalResult<CountedResult> EvaluateOnHostStack(int count)
         {
-            // A cell demanded outside its fold's own frames starts the thread's accounting here.
-            var entered = FoldContinuationStack.Enter();
+            if (FoldTrampoline.HostStackAllowanceIsUsed
+                && ctx.ZeroArgPropertyResultCache.TwinView is not null
+                && Trampoline.TryRunSynchronously(new AccumulatorSegment(this, count), ctx.Budget, out var continued))
+            {
+                return continued;
+            }
+
+            var nested = FoldTrampoline.EnterHostStackContinuation();
+            ctx.Budget.NoteHostStackFoldContinuations(nested + 1);
             try
             {
-                if (FoldContinuationStack.MustContinueElsewhere()
-                    && FoldContinuationStack.Continue((fold: this, count),
-                        static state => state.fold.Evaluate(state.count, asynchronous: false).GetAwaiter().GetResult()) is { } continued)
-                {
-                    return continued;
-                }
-
                 return Evaluate(count, asynchronous: false).GetAwaiter().GetResult();
             }
             finally
             {
-                FoldContinuationStack.Leave(entered);
+                FoldTrampoline.LeaveHostStackContinuation(nested);
             }
+        }
+
+        // The asynchronous computation of accumulator `count` as a segment of the fold's trampoline,
+        // counted for the run's observation of continuations kept on the heap.
+        private ValueTask<EvalResult<CountedResult>> EvaluateSegment(int count)
+        {
+            ctx.Budget.NoteHeapFoldSegment();
+            return Evaluate(count, asynchronous: true);
         }
 
         // The VALUE of accumulator `count`: the start, or the step over the element before it.
@@ -401,6 +420,7 @@ public static partial class Evaluator
         // the initial value can change either context. Its caller resumes with its own ambient state.
         private async ValueTask<EvalResult<CountedResult>> Evaluate(int count, bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             var budget = ctx.Budget;
             var suspendedDepth = budget.EnterFoldContinuation(_depth);
             try
@@ -409,12 +429,12 @@ public static partial class Evaluator
                 if (count == 0)
                 {
                     result = asynchronous
-                        ? await EvalReduceInitialAsync(initial, initialDescriptor, ctx, values).ConfigureAwait(false)
+                        ? await EvalReduceInitialAsync(initial, initialDescriptor, ctx, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                         : EvalReduceInitial(initial, initialDescriptor, ctx, values);
                 }
                 else
                 {
-                    result = asynchronous ? await StepAsync(count - 1).ConfigureAwait(false) : Step(count - 1);
+                    result = asynchronous ? await StepAsync(count - 1).ConfigureAwait(FoldTrampoline.CaptureFoldContext) : Step(count - 1);
                 }
                 // The accumulator is a subordinate computation of whichever step demands it, so
                 // its own missing output is stored as nested (Q-36), like a collector's element.
@@ -428,13 +448,23 @@ public static partial class Evaluator
 
         /// <summary>
         /// The VALUE computation of one deferred accumulator of a fold: its fold and its index, one
-        /// object for both routes (<see cref="NeedComputation"/>).
+        /// object for both routes (<see cref="NeedComputation"/>). The asynchronous demand queues the
+        /// accumulator's segment on the fold's trampoline.
         /// </summary>
         private sealed class AccumulatorComputation(ReduceFold fold, int count) : NeedComputation
         {
             internal override EvalResult<CountedResult> Evaluate() => fold.EvaluateOnHostStack(count);
 
-            internal override ValueTask<EvalResult<CountedResult>> EvaluateAsync() => fold.Evaluate(count, asynchronous: true);
+            internal override ValueTask<EvalResult<CountedResult>> EvaluateAsync() => fold.Trampoline.Demand(new AccumulatorSegment(fold, count));
+        }
+
+        /// <summary>
+        /// The asynchronous computation of one deferred accumulator as a segment of its fold's trampoline
+        /// (<see cref="FoldSegment"/>), allocated when the computation runs on the heap.
+        /// </summary>
+        private sealed class AccumulatorSegment(ReduceFold fold, int count) : FoldSegment
+        {
+            protected override ValueTask<EvalResult<CountedResult>> RunSegment() => fold.EvaluateSegment(count);
         }
     }
 }

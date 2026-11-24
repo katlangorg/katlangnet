@@ -30,6 +30,7 @@ $stackSuiteClasses = @(
     "KatLang.Tests.ClauseFamilyCompositionDepthProcessTests",
     "KatLang.Tests.AstGraphFuzzProcessTests",
     "KatLang.Tests.WeightedCostCompositionProcessTests",
+    "KatLang.Tests.ReduceFoldStackProcessTests",
     "KatLang.Tests.ScopeVisibilityIterativeUpdateTests",
     "KatLang.Tests.ParserExpressionChainDepthTests",
     "KatLang.Tests.LimitConfigurationTransparencyTests",

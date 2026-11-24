@@ -64,7 +64,8 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         /// strategy (<c>ThrowIfAsyncStrategyPinningViolated</c>) and never attempts it.</summary>
         OptimizerPinned = 1 << 1,
 
-        /// <summary>The twin requires the run's cache to implement <c>IAsyncZeroArgPropertyResultCache</c> and throws
+        /// <summary>The twin requires the run's cache to implement <c>IAsyncZeroArgPropertyResultCache</c>, or to offer
+        /// the twins its view (a synchronous run's long fold continued on the heap, <c>FoldTrampoline</c>), and throws
         /// otherwise.</summary>
         AsyncCacheGuard = 1 << 2,
 
@@ -82,10 +83,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         /// flag (<c>if (asynchronous &amp;&amp; StackHop.HostStackIsLow()) …</c>: the loop entry,
         /// <c>Evaluator.EvalNeedLoop</c>, or the awaiter a <c>reduce</c> step takes before its invocation,
         /// <c>Evaluator.ReduceFold.StepStackHop</c>, shared by the step and its twin), a branch point
-        /// of this class. So is the one synchronous counterpart of the hop: a lazy <c>reduce</c> fold opens its
-        /// fresh-stack accounting only on the synchronous run (<c>!asynchronous &amp;&amp;
-        /// FoldContinuationStack.Enter()</c>, <c>Evaluator.ReduceFold.Last</c>), where suspended steps stay on the
-        /// host stack instead of the heap. A second flag-guarded hop has another condition: an invocation's
+        /// of this class. A second flag-guarded hop has another condition: an invocation's
         /// preparation frame is installed only where the execution context flows
         /// (<c>Evaluator.EnterInvocationFrameFlow</c>, called identically by both <c>RunPlanPreparation</c> twins;
         /// <c>EvaluationFlow</c>).</summary>
@@ -237,8 +235,8 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalZeroArgumentDemandOutputAsync", "Evaluator.EvalZeroArgumentDemandOutput", "d9dc9a5342124686", IH,
             "ProjectCountedValue(EvalBoundZeroArgumentDemandOutputCounted(...)) is the projecting helper ProjectBoundZeroArgumentDemandValueAsync"),
         new("Evaluator.GetOrEvaluateZeroArgPropertyResultAsync", "Evaluator.GetOrEvaluateZeroArgPropertyResult", "bf2d3c3f7cdf2749", SH, HopReason),
-        new("Evaluator.GetOrEvaluateZeroArgPropertyResultCoreAsync", "Evaluator.GetOrEvaluateZeroArgPropertyResultCore", "263a966cdd759c55", ACG,
-            "the run's cache must be an IAsyncZeroArgPropertyResultCache"),
+        new("Evaluator.GetOrEvaluateZeroArgPropertyResultCoreAsync", "Evaluator.GetOrEvaluateZeroArgPropertyResultCore", "d983542a2392d390", ACG,
+            "the shared PropertyAccessCache must be an IAsyncZeroArgPropertyResultCache"),
         new("Evaluator.EvalResolvedAlgOutputForValueDemandAsync", "Evaluator.EvalResolvedAlgOutputForValueDemand", "bc79101f8c8e0ddd", SH, HopReason),
         new("Evaluator.EvalCallCountedExprAsync", "Evaluator.EvalCallCountedExpr", "75f689764a906e0e", OP | FS,
             "no sequence-pipeline attempt (strategy pin asserted instead); the out-of-line EvalWrittenCalleeCallCounted is its body EvalOriginCallCounted(CalleeOrigin.Written(...))"),
@@ -296,8 +294,8 @@ public class TwinNormalizationTests(ITestOutputHelper output)
             "no in parameter on an async member"),
         new("Evaluator.BindNeedFamilySupply", "Evaluator.BindNeedFamilySupplyCounted", "9c48563b1f2ad854", AL,
             "the flat-literal head is bound without in ctx, and the binder-or-literal-head conditional is restated as an if/else with one await site per arm"),
-        new("Evaluator.EvalPublishedZeroSupplyInvocationAsync", "Evaluator.EvalPublishedZeroSupplyInvocation", "4aa2152ea714ce09", ACG | AL,
-            "the run's cache must be an IAsyncZeroArgPropertyResultCache; the delegate returns ValueTask<...>"),
+        new("Evaluator.EvalPublishedZeroSupplyInvocationAsync", "Evaluator.EvalPublishedZeroSupplyInvocation", "25ad9be885474979", ACG | AL,
+            "the shared PropertyAccessCache must be an IAsyncZeroArgPropertyResultCache; the delegate returns ValueTask<...>"),
         new("Evaluator.EvalOriginUserCallCountedAsync", "Evaluator.EvalOriginUserCallCounted", "6dfac2030aaf9993", SH, HopReason),
         new("Evaluator.EvalOriginFamilyCallCountedAsync", "Evaluator.EvalOriginFamilyCallCounted", "bf2d3c3f7cdf2749", SH, HopReason),
         new("FrontEndPipeline.ProcessAsync(string, RunOptions?, PatternComparisonObservations?, FrontEndTraversalObservations?)",
@@ -365,8 +363,7 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.EvalNeedLoop", 3, "70563d5fe6206b30", OP, "only the synchronous run attempts the loop optimizer (and asserts the planner took a user step); its handover continues, synchronously, in the one round kernel"),
         new("Evaluator.EvalNeedLoop", 4, "c3141958221e536e", OP, "the loop diagnostics report the pinned strategy for the asynchronous run"),
         new("Evaluator.EvalReduceCounted", 0, "3e74ef431c3c8c07", AC, "the start of a fold whose initial argument has no cell (a hand-built plan): demanded before the fold"),
-        new("Evaluator.ReduceFold.Last", 0, "3f551c9eb42fae7b", SH, "only the synchronous run opens the fresh-stack accounting of its fold (FoldContinuationStack, the synchronous counterpart of the hop); the twin keeps suspended steps on the heap"),
-        new("Evaluator.ReduceFold.Last", 1, "93cb46627813128f", AC, "the last step: the plain synchronous step (no state machine stays on the host stack while it is suspended) or its twin"),
+        new("Evaluator.ReduceFold.Last", 0, "93cb46627813128f", AC, "the last step: the plain synchronous step (no state machine stays on the host stack while it is suspended) or its twin"),
         new("Evaluator.ReduceFold.StepStackHop", 0, "880b599e7e11d7fb", SH, "the awaiter the twin takes in its step before charging the invocation; the synchronous run never hops"),
         new("Evaluator.ReduceFold.Evaluate", 0, "44913f0c39a63a2a", AC, "the deferred initial accumulator's value demand"),
         new("Evaluator.ReduceFold.Evaluate", 1, "9a301850168d6c9b", AC, "the preceding step, within the accumulator demand's host context boundary"),

@@ -639,32 +639,37 @@ public class NeedCellSuppressedFlowTests
     }
 
     /// <summary>
-    /// A fold continuation thread (<see cref="FoldContinuationStack"/>) runs inside the demanding
-    /// computation: a demand of the demander's own cell from that thread is a cycle. Under
-    /// suppressed flow the new thread inherits no context, so the node is handed to it; before
-    /// the repair that demand waited for the cell while the cell's thread waited for the fold thread.
+    /// A synchronous fold pump (<see cref="FoldTrampoline.TryRunSynchronously"/>) runs its segment inside the
+    /// demanding computation and on the demanding thread: a demand of the demander's own cell from the
+    /// segment is a cycle, never a wait. The pump restores flow while it runs and the segment starts under
+    /// the demander's captured context, so under suppressed flow it still sees the node and the host's
+    /// ambient state (the former fresh threads received only the node). Afterwards the host's suppression
+    /// is back, and the run's host-termination boundary is closed again.
     /// </summary>
     [Theory]
-    [InlineData(Flow.Normal, "current=True suppressed=False ambient=host")]
-    [InlineData(Flow.Suppressed, "current=True suppressed=False ambient=none")]
-    public async Task AFoldContinuationThread_RunsInsideTheDemandingComputation(Flow flow, string expected)
+    [InlineData(Flow.Normal)]
+    [InlineData(Flow.Suppressed)]
+    public async Task AFoldPump_RunsItsSegmentInsideTheDemandingComputation_OnTheDemandingThread(Flow flow)
     {
         var ambient = new AsyncLocal<string?>();
         var budget = EvaluationBudget.Create(null);
         NeedCell? cell = null;
-        string? onFreshThread = null;
-        EvalResult<Evaluator.CountedResult>? reentry = null;
+        string? inSegment = null;
+        string? afterPump = null;
+        EvalResult<Evaluator.CountedResult> reentry = default;
         var demandingThread = 0;
-        var freshThread = 0;
+        var segmentThread = 0;
+        var segment = new ProbeSegment(() =>
+        {
+            segmentThread = Environment.CurrentManagedThreadId;
+            inSegment = $"current={cell!.IsEvaluatingInCurrentFlow()} suppressed={ExecutionContext.IsFlowSuppressed()} ambient={ambient.Value ?? "none"} carried={budget.CarriesHostTermination}";
+            return cell.DemandAsync();
+        });
         cell = new NeedCell(() =>
         {
             demandingThread = Environment.CurrentManagedThreadId;
-            reentry = FoldContinuationStack.Continue(cell!, self =>
-            {
-                freshThread = Environment.CurrentManagedThreadId;
-                onFreshThread = $"current={self.IsEvaluatingInCurrentFlow()} suppressed={ExecutionContext.IsFlowSuppressed()} ambient={ambient.Value ?? "none"}";
-                return self.Demand();
-            });
+            Assert.True(new FoldTrampoline(budget).TryRunSynchronously(segment, budget, out reentry));
+            afterPump = $"suppressed={ExecutionContext.IsFlowSuppressed()} ambient={ambient.Value ?? "none"} carried={budget.CarriesHostTermination}";
             return Seven;
         }, () => throw new InvalidOperationException("asynchronous family"), span: SpanA, budget: budget);
 
@@ -675,9 +680,16 @@ public class NeedCellSuppressedFlowTests
         }).WaitAsync(HangGuard);
 
         Assert.True(outcome.IsOk);
-        Assert.NotEqual(demandingThread, freshThread);
-        Assert.Equal(expected, onFreshThread);
-        Assert.Equal(SpanA, Assert.IsType<EvalError.DemandCycle>(reentry!.Value.Error).Span);
+        Assert.Equal(demandingThread, segmentThread);
+        Assert.Equal("current=True suppressed=False ambient=host carried=True", inSegment);
+        Assert.Equal($"suppressed={flow == Flow.Suppressed} ambient=host carried=False", afterPump);
+        Assert.Equal(SpanA, Assert.IsType<EvalError.DemandCycle>(reentry.Error).Span);
         Assert.Equal(0, cell.ActiveDependencyCount);
+    }
+
+    // A fold segment whose asynchronous computation is the given delegate.
+    private sealed class ProbeSegment(Func<ValueTask<EvalResult<Evaluator.CountedResult>>> run) : FoldSegment
+    {
+        protected override ValueTask<EvalResult<Evaluator.CountedResult>> RunSegment() => run();
     }
 }

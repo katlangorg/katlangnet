@@ -273,7 +273,7 @@ public static partial class Evaluator
         EvalResult<ZeroArgPropertyResult> published;
         try
         {
-            published = ctx.ZeroArgPropertyResultCache.Invoke(
+            published = ctx.PropertyAccessCache.Invoke(
                 ZeroSupplyInvocationExecution(binding, property, ctx, valEnv), invocation);
         }
         finally { ctx.Budget.ExitServing(); }
@@ -286,9 +286,10 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalPublishedZeroSupplyInvocationAsync(
         PropertyCallBinding binding, Algorithm property, EvalCtx ctx, ValEnv valEnv, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> invocation)
     {
-        // As on the async read seam: the async twin family runs only over an async-capable cache, so a
-        // non-async cache here is an evaluator ownership bug — fail loud, never block or bypass it.
-        if (ctx.ZeroArgPropertyResultCache is not IAsyncZeroArgPropertyResultCache asyncCache)
+        // As on the async read seam: the async twin family runs only over an async-capable cache or the
+        // twins' view of a synchronous run's cache, so any other cache here is an evaluator ownership bug —
+        // fail loud, never block or bypass it.
+        if (ctx.PropertyAccessCache is not IAsyncZeroArgPropertyResultCache asyncCache)
         {
             throw new InvalidOperationException(
                 "Async evaluation requires an async-capable zero-argument property result cache on the run context.");
@@ -301,7 +302,7 @@ public static partial class Evaluator
         try
         {
             published = await asyncCache.InvokeAsync(
-                ZeroSupplyInvocationExecution(binding, property, ctx, valEnv), invocation).ConfigureAwait(false);
+                ZeroSupplyInvocationExecution(binding, property, ctx, valEnv), invocation).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         finally { ctx.Budget.ExitServing(); }
         return published.IsError
@@ -432,19 +433,19 @@ public static partial class Evaluator
     {
         if (callee is Algorithm.Alias alias)
         {
-            var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
+            var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (target.IsError)
                 return target.Error;
             callee = target.Value;
             if (!IsPublishableCallee(callee))
-                return await EvalResolvedCallCountedAsync(callee, args, ctx, valEnv, name).ConfigureAwait(false);
+                return await EvalResolvedCallCountedAsync(callee, args, ctx, valEnv, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return await EvalOriginUserCallCountedAsync(origin, callee, simpleCallee, args, ctx, valEnv, name).ConfigureAwait(false);
+            return await EvalOriginUserCallCountedAsync(origin, callee, simpleCallee, args, ctx, valEnv, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return callee is Algorithm.Conditional
-            ? await EvalOriginFamilyCallCountedAsync(origin, callee, args, ctx, valEnv, name).ConfigureAwait(false)
-            : await EvalOriginUserCallCountedAsync(origin, callee, callee, args, ctx, valEnv, name).ConfigureAwait(false);
+            ? await EvalOriginFamilyCallCountedAsync(origin, callee, args, ctx, valEnv, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await EvalOriginUserCallCountedAsync(origin, callee, callee, args, ctx, valEnv, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="EvalOriginUserCallCounted"/> — keep in lock-step.</summary>
@@ -459,10 +460,10 @@ public static partial class Evaluator
         using (level)
         {
             if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
-                && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(false) is { } projected)
+                && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } projected)
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
             var occurrences = MetaOccurrenceSlots(callee, args, ctx, out var sources);
-            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, sources, callee).ConfigureAwait(false);
+            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, sources, callee).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (supply.IsError) return supply.Error;
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
             {
@@ -471,11 +472,11 @@ public static partial class Evaluator
                 var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
                 return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, valEnv,
                     async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, bodyCtx, bodyValues, name,
-                        variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(false))).ConfigureAwait(false);
+                        variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
 
             return await EvalNeedUserSupply(callee, supply.Value, ctx, valEnv, name, variadicArityStyle: true,
-                occurrences).ConfigureAwait(false);
+                occurrences).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -490,7 +491,7 @@ public static partial class Evaluator
 
         try
         {
-            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, boundCallee: callee).ConfigureAwait(false);
+            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, boundCallee: callee).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (supply.IsError) return supply.Error;
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {
@@ -498,10 +499,10 @@ public static partial class Evaluator
                 var bodyCtx = InvocationBodyContext(binding, ctx, valEnv, out var bodyValues);
                 return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, valEnv,
                     async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, bodyCtx, bodyValues, name)
-                        .ConfigureAwait(false))).ConfigureAwait(false);
+                        .ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
 
-            return await EvalNeedFamilySupply(callee, supply.Value, ctx, valEnv, name).ConfigureAwait(false);
+            return await EvalNeedFamilySupply(callee, supply.Value, ctx, valEnv, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         finally
         {

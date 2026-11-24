@@ -74,9 +74,9 @@ public static partial class Evaluator
             try
             {
                 if (scope.PendingChannel == NeedCell.Channel.Value)
-                    record.RecordValue(cell, await cell.DemandAsync().ConfigureAwait(false));
+                    record.RecordValue(cell, await cell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext));
                 else
-                    record.RecordCallable(cell, await cell.ProjectCallableAsync().ConfigureAwait(false));
+                    record.RecordCallable(cell, await cell.ProjectCallableAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             }
             finally { budget.ExitServing(); }
         }

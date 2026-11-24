@@ -390,7 +390,7 @@ public static partial class Evaluator
 
         private async ValueTask<EvalError?> AwaitDiscovery(ValueTask<EvalError?> discovery)
         {
-            var failure = await discovery.ConfigureAwait(false);
+            var failure = await discovery.ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (failure is null) CheckExhausted();
             return failure;
         }
@@ -481,7 +481,8 @@ public static partial class Evaluator
 
         internal async ValueTask<EvalResult<CountedResult>> EvaluateAtSite(int index, bool asynchronous)
         {
-            var mapped = await Evaluate(index, asynchronous).ConfigureAwait(false);
+            FoldTrampoline.ForkHostScope();
+            var mapped = await Evaluate(index, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             var result = mapped.IsError ? AtSite(mapped.Error) : mapped;
             // This position's step has ended; its cell keeps the outcome.
             Interlocked.Increment(ref _resolved);
@@ -518,14 +519,15 @@ public static partial class Evaluator
 
         private async ValueTask<EvalResult<CountedResult>> Evaluate(int index, bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             // TWIN-ONLY (the synchronous run never hops): see StackHop.
             if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
             // A step runs before its stage is released, never after (ReleaseIfResolved): the
             // fields it reads are all still held.
-            var item = await ReadStagePosition(_source!.Slot(index), asynchronous).ConfigureAwait(false);
+            var item = await ReadStagePosition(_source!.Slot(index), asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (item.IsError) return item.Error;
             var mapper = asynchronous
-                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@map, _descriptors!, _controls!, 0, _ctx).ConfigureAwait(false)
+                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@map, _descriptors!, _controls!, 0, _ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : ExpectPreparedAlgorithmSuffixArg(BuiltinId.@map, _descriptors!, _controls!, 0);
             if (mapper.IsError) return mapper.Error;
 
@@ -533,7 +535,7 @@ public static partial class Evaluator
             var mapped = WithCtx(
                 MapTransformContext,
                 asynchronous
-                    ? await EvalSequenceCallbackCallCountedAsync(mapper.Value, supplied, _ctx, _values!, MapTransformFrameName).ConfigureAwait(false)
+                    ? await EvalSequenceCallbackCallCountedAsync(mapper.Value, supplied, _ctx, _values!, MapTransformFrameName).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                     : EvalSequenceCallbackCallCounted(mapper.Value, supplied, _ctx, _values!, MapTransformFrameName));
             // The transform's ordinary call result is ONE element (HO-03).
             return mapped.IsError
@@ -579,6 +581,7 @@ public static partial class Evaluator
     /// </summary>
     private static async ValueTask<EvalResult<Result>> ReadStagePosition(object slot, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         if (slot is Result value) return EvalResult<Result>.Ok(value);
         var cell = (NeedCell)slot;
 
@@ -594,12 +597,12 @@ public static partial class Evaluator
 
             for (var at = stacked.Count - 1; at >= 0; at--)
             {
-                var read = await DemandCell(stacked[at], asynchronous).ConfigureAwait(false);
+                var read = await DemandCell(stacked[at], asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (read.IsError && read.Error.IsTerminalForRun) return read.Error;
             }
         }
 
-        return await ForceCell(cell, asynchronous).ConfigureAwait(false);
+        return await ForceCell(cell, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     // The unread cell of the source position that an unread `map` position reads first.
@@ -707,6 +710,7 @@ public static partial class Evaluator
         /// </summary>
         private static async ValueTask<EvalError?> DiscoverScans(FilteredList top, int wanted, bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             // TWIN-ONLY (the synchronous run never hops): see StackHop. One probe per discovery:
             // the scans below are driven in this frame.
             if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
@@ -779,7 +783,7 @@ public static partial class Evaluator
                             continue;
                         }
 
-                        if (await source.Discover(frontier + 1, asynchronous).ConfigureAwait(false) is { } sourceFailure)
+                        if (await source.Discover(frontier + 1, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } sourceFailure)
                             return sourceFailure;
                         continue;
                     }
@@ -791,7 +795,7 @@ public static partial class Evaluator
                     }
                 }
 
-                var outcome = await DemandCell(verdict, asynchronous).ConfigureAwait(false);
+                var outcome = await DemandCell(verdict, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (outcome.IsError) return outcome.Error;
                 // A verdict exists only while the scan holds its source (Release).
                 var accepted = outcome.Value.Value is Result.Bool { Value: true } ? source!.Slot(frontier) : null;
@@ -870,25 +874,27 @@ public static partial class Evaluator
 
         private async ValueTask<EvalResult<CountedResult>> JudgeAtSite(int position, bool asynchronous)
         {
-            var verdict = await Judge(position, asynchronous).ConfigureAwait(false);
+            FoldTrampoline.ForkHostScope();
+            var verdict = await Judge(position, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return verdict.IsError ? AtSite(verdict.Error) : verdict;
         }
 
         private async ValueTask<EvalResult<CountedResult>> Judge(int position, bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             // TWIN-ONLY (the synchronous run never hops): see StackHop.
             if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
             // A verdict is computed while the scan holds its source, never after (Release).
-            var item = await ReadStagePosition(_source!.Slot(position), asynchronous).ConfigureAwait(false);
+            var item = await ReadStagePosition(_source!.Slot(position), asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (item.IsError) return item.Error;
             var predicate = asynchronous
-                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@filter, _descriptors!, _controls!, 0, _ctx).ConfigureAwait(false)
+                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@filter, _descriptors!, _controls!, 0, _ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : ExpectPreparedAlgorithmSuffixArg(BuiltinId.@filter, _descriptors!, _controls!, 0);
             if (predicate.IsError) return predicate.Error;
 
             var supplied = new CountedResult(item.Value, item.Value.ValueCount());
             var kept = asynchronous
-                ? await EvalFilterPredicateTruthAsync(predicate.Value, supplied, position, _ctx, _values!).ConfigureAwait(false)
+                ? await EvalFilterPredicateTruthAsync(predicate.Value, supplied, position, _ctx, _values!).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : EvalFilterPredicateTruth(predicate.Value, supplied, position, _ctx, _values!);
             return kept.IsError
                 ? kept.Error
@@ -1035,7 +1041,7 @@ public static partial class Evaluator
             var element = elements[index];
             if (element is Expr.SequenceSpread || IsListLiteralConstant(element))
             {
-                var slotsR = await EvalExplicitSequenceValueExprSlotsAsync(element, ctx, valEnv).ConfigureAwait(false);
+                var slotsR = await EvalExplicitSequenceValueExprSlotsAsync(element, ctx, valEnv).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (slotsR.IsError) return slotsR.Error;
                 AddListSlots(items, slotsR.Value, ctx.Budget, element is Expr.SequenceSpread);
                 continue;
@@ -1139,7 +1145,8 @@ public static partial class Evaluator
 
     private static async ValueTask<EvalResult<Result>> ForceCell(NeedCell cell, bool asynchronous)
     {
-        var outcome = await DemandCell(cell, asynchronous).ConfigureAwait(false);
+        FoldTrampoline.ForkHostScope();
+        var outcome = await DemandCell(cell, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return outcome.IsError ? NestMissingOutput(outcome.Error) : EvalResult<Result>.Ok(outcome.Value.Value);
     }
 
@@ -1155,10 +1162,11 @@ public static partial class Evaluator
 
     private static async ValueTask<EvalResult<bool>> DiscoverPosition(LazyList list, int index, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         // SelectorIndex saturates a large selector at int.MaxValue. That asks for the
         // complete scan, including any predicate failure encountered along the way.
         var wanted = index == int.MaxValue ? LazyList.Everything : index + 1;
-        if (await list.Discover(wanted, asynchronous).ConfigureAwait(false) is { } failure) return failure;
+        if (await list.Discover(wanted, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } failure) return failure;
         return EvalResult<bool>.Ok(index < list.Discovered);
     }
 
@@ -1216,13 +1224,15 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> AwaitWhole(
         ValueTask<EvalResult<CountedResult>> demand, EvalCtx ctx, bool asynchronous)
     {
-        var demanded = await demand.ConfigureAwait(false);
-        return demanded.IsError ? demanded : await MaterializeWhole(demanded.Value, ctx, asynchronous).ConfigureAwait(false);
+        FoldTrampoline.ForkHostScope();
+        var demanded = await demand.ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return demanded.IsError ? demanded : await MaterializeWhole(demanded.Value, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> MaterializeWhole(CountedResult demanded, EvalCtx ctx, bool asynchronous)
     {
-        var whole = await MaterializeValue(demanded.Value, ctx, asynchronous).ConfigureAwait(false);
+        FoldTrampoline.ForkHostScope();
+        var whole = await MaterializeValue(demanded.Value, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return whole.IsError
             ? whole.Error
             : EvalResult<CountedResult>.Ok(new CountedResult(whole.Value, demanded.EmittedCount));
@@ -1243,14 +1253,15 @@ public static partial class Evaluator
 
     private static async ValueTask<EvalResult<Result>> ForceLazyLevel(LazyList lazy, EvalCtx ctx, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var known = lazy.IsExhausted ? lazy.Discovered : -1;
         var read = known > 0 ? new List<Result>(known) : [];
         for (var index = 0; ; index++)
         {
-            var has = await HasPosition(lazy, index, asynchronous).ConfigureAwait(false);
+            var has = await HasPosition(lazy, index, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (has.IsError) return has.Error;
             if (!has.Value) break;
-            var item = await ForcePosition(lazy.Slot(index), asynchronous).ConfigureAwait(false);
+            var item = await ForcePosition(lazy.Slot(index), asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (item.IsError) return item.Error;
             read.Add(item.Value);
         }
@@ -1390,7 +1401,7 @@ public static partial class Evaluator
 
     private static async ValueTask<EvalResult<CountedResult>> MaterializeLazyRunOutputAsync(CountedResult output, EvalCtx ctx)
     {
-        var whole = await MaterializeValue(output.Value, ctx, asynchronous: true).ConfigureAwait(false);
+        var whole = await MaterializeValue(output.Value, ctx, asynchronous: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return whole.IsError
             ? whole.Error
             : EvalResult<CountedResult>.Ok(new CountedResult(whole.Value, output.EmittedCount));
@@ -1641,6 +1652,7 @@ public static partial class Evaluator
 
     private static async ValueTask<EvalResult<Result>> MaterializeLazyValue(Result root, EvalCtx ctx, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var budget = ctx.Budget;
         // Indexed continuation frames (see the depth note on Result): one per open structure.
         var frames = new Stack<MaterializeFrame>();
@@ -1673,9 +1685,9 @@ public static partial class Evaluator
                     return tooDeep;
                 try
                 {
-                    has = await HasPosition(lazy, frame.Next, asynchronous).ConfigureAwait(false);
+                    has = await HasPosition(lazy, frame.Next, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (!has.IsError && has.Value)
-                        item = await ForcePosition(lazy.Slot(frame.Next), asynchronous).ConfigureAwait(false);
+                        item = await ForcePosition(lazy.Slot(frame.Next), asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 }
                 finally
                 {
@@ -1764,11 +1776,12 @@ public static partial class Evaluator
         EvalCtx ctx,
         bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var items = input.FlattenedItems;
         Result[]? whole = null;
         for (var index = 0; index < items.Count; index++)
         {
-            var itemR = await MaterializeValue(items[index], ctx, asynchronous).ConfigureAwait(false);
+            var itemR = await MaterializeValue(items[index], ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (itemR.IsError) return itemR.Error;
             if (whole is null && !ReferenceEquals(itemR.Value, items[index]))
             {
@@ -1785,7 +1798,7 @@ public static partial class Evaluator
         if (builtin == BuiltinId.@contains && controls.Count == 1
             && controls[0] is PreparedSequenceBuiltinSuffixArg.ValueArg(var searched))
         {
-            var searchedR = await MaterializeValue(searched, ctx, asynchronous).ConfigureAwait(false);
+            var searchedR = await MaterializeValue(searched, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (searchedR.IsError) return searchedR.Error;
             if (!ReferenceEquals(searchedR.Value, searched))
                 controls = [new PreparedSequenceBuiltinSuffixArg.ValueArg(searchedR.Value)];
@@ -1824,11 +1837,12 @@ public static partial class Evaluator
         ValEnv values,
         bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         switch (builtin)
         {
             case BuiltinId.@count:
                 {
-                    if (await source.Discover(LazyList.Everything, asynchronous).ConfigureAwait(false) is { } failure)
+                    if (await source.Discover(LazyList.Everything, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } failure)
                         return failure;
                     return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(source.Discovered), 1));
                 }
@@ -1837,7 +1851,7 @@ public static partial class Evaluator
             case BuiltinId.@last:
                 {
                     var wanted = builtin == BuiltinId.@first ? 1 : LazyList.Everything;
-                    if (await source.Discover(wanted, asynchronous).ConfigureAwait(false) is { } failure)
+                    if (await source.Discover(wanted, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } failure)
                         return failure;
                     var found = source.Discovered;
                     if (found == 0)
@@ -1847,7 +1861,7 @@ public static partial class Evaluator
                         return empty.IsError ? empty.Error : new EvalError.BadIndex();
                     }
 
-                    var selected = await ForcePosition(source.Slot(builtin == BuiltinId.@first ? 0 : found - 1), asynchronous).ConfigureAwait(false);
+                    var selected = await ForcePosition(source.Slot(builtin == BuiltinId.@first ? 0 : found - 1), asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     return selected.IsError ? selected.Error : CountValue(selected.Value);
                 }
 

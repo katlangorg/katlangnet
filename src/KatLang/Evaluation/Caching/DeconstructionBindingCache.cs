@@ -262,7 +262,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         EvalResult<IReadOnlyDictionary<string, NeedCell>> result;
         try
         {
-            result = await bind().ConfigureAwait(false);
+            result = await bind().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         finally
         {

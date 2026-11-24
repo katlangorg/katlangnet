@@ -117,6 +117,18 @@ internal interface IZeroArgPropertyResultCache
     /// lets a group's targets share a bind, so each target executes its ordinary bind.
     /// </summary>
     bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => false;
+
+    /// <summary>
+    /// THE TWINS' VIEW of a synchronous run's cache (single-thread fold progress, November 2026): the
+    /// asynchronous members the twin family awaits at every property access, over THIS cache's own store,
+    /// publication law and statistics, for a synchronous run whose long <c>reduce</c> fold continues on the
+    /// heap through the twins (<c>FoldTrampoline</c>). It is no cache of its own: it serves and publishes the
+    /// entries the synchronous members serve and publish, in the run's one evaluation order, so a key read
+    /// by both families of one run has one entry and one owner. It is never handed to a run entry point, so
+    /// it decides no route. <c>null</c> (the default) for a cache that offers none — a host-built cache: a
+    /// run with such a cache keeps every fold on the host stack.
+    /// </summary>
+    IAsyncZeroArgPropertyResultCache? TwinView => null;
 }
 
 /// <summary>
@@ -647,12 +659,12 @@ internal sealed class ZeroArgPropertyPublications(
         Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
     {
         if (!_active.Add(key))
-            return await evaluateAsync().ConfigureAwait(false);
+            return await evaluateAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         EvalResult<ZeroArgPropertyResult> result;
         try
         {
-            result = await evaluateAsync().ConfigureAwait(false);
+            result = await evaluateAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         finally
         {
@@ -721,6 +733,44 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
         ZeroArgPropertyExecution execution,
         Func<EvalResult<ZeroArgPropertyResult>> evaluate)
         => evaluate();
+
+    /// <summary>The twins' view (<see cref="IZeroArgPropertyResultCache.TwinView"/>): the same statistics, nothing stored.</summary>
+    public IAsyncZeroArgPropertyResultCache? TwinView => _twinView ??= new TwinPropertyView(this);
+
+    private TwinPropertyView? _twinView;
+
+    // The requests a twin makes are recorded exactly as GetOrEvaluate records them, before the evaluation.
+    private void RecordTwinRequest(ZeroArgPropertyExecution execution)
+    {
+        if (_stats is null || _seenKeys is null)
+            return;
+
+        var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+        _stats.RecordRequest(execution.AccessKind);
+        _stats.RecordMiss(execution.AccessKind);
+        if (!_seenKeys.Add(key))
+            _repeatedMissRequests++;
+    }
+
+    private sealed class TwinPropertyView(UncachedZeroArgPropertyResultCache cache) : IAsyncZeroArgPropertyResultCache
+    {
+        public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => cache.GetOrEvaluate(execution, evaluate);
+
+        public EvalResult<ZeroArgPropertyResult> Invoke(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => cache.Invoke(execution, evaluate);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
+            ZeroArgPropertyExecution execution, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        {
+            cache.RecordTwinRequest(execution);
+            return evaluateAsync();
+        }
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => evaluateAsync();
+    }
 
     public ZeroArgPropertyResultCacheSnapshot GetSnapshot()
         => (_stats ?? new ZeroArgPropertyResultCacheStatsCollector()).CreateSnapshot(
@@ -839,6 +889,84 @@ internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResu
     internal int ActiveOwnerCount => _results.ActiveOwnerCount;
 
     public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _results.ReadObtainsPublishedValue(key);
+
+    /// <summary>
+    /// The twins' view (<see cref="IZeroArgPropertyResultCache.TwinView"/>): this cache's store, publication
+    /// law and statistics through the asynchronous members.
+    /// </summary>
+    public IAsyncZeroArgPropertyResultCache? TwinView => _twinView ??= new TwinPropertyView(this);
+
+    private TwinPropertyView? _twinView;
+
+    /// <summary>
+    /// The twins' counterpart of <see cref="GetOrEvaluate"/> (their view's member): the same request, hit, miss
+    /// and store statistics around the asynchronous member of the same publication law. Keep the two in
+    /// lock-step by hand: the asynchronous law reports no publication flag, so a store is recognized after the
+    /// evaluation, which is why no twin marker pairs them.
+    /// </summary>
+    private async ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluate)
+    {
+        var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+        var statistics = _statistics;
+        statistics?.RecordRequest(execution.AccessKind, key);
+
+        if (_results.TryGetPublished(key, out var cached))
+        {
+            statistics?.RecordHit(execution.AccessKind);
+            return EvalResult<ZeroArgPropertyResult>.Ok(cached);
+        }
+
+        statistics?.RecordMiss(execution.AccessKind, key);
+
+        // A re-entrant miss (an outer evaluation of this key is still running) evaluates
+        // but never publishes; the outermost successful evaluation publishes (Q-37).
+        var result = await _results.EvaluateMissAsync(key, evaluate).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        if (result.IsError)
+            return result.Error;
+
+        // The key was unpublished before this miss, and only its owner can publish it: published now means
+        // published by this access.
+        if (_results.TryGetPublished(key, out _))
+            statistics?.RecordStore(execution.AccessKind, key, _results.Count);
+
+        return result;
+    }
+
+    /// <summary>The twins' counterpart of <see cref="Invoke"/> (their view's member), as for <see cref="GetOrEvaluateAsync"/>.</summary>
+    private async ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluate)
+    {
+        var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+        var established = _results.TryGetPublished(key, out _);
+        var result = await _results.InvokeAsync(key, evaluate).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        // An empty entry the invocation owned and established (as for a read, only its owner publishes it).
+        if (!established && !result.IsError && _results.TryGetPublished(key, out _))
+            _statistics?.RecordStore(ZeroArgPropertyAccessKind.Invocation, key, _results.Count);
+
+        return result;
+    }
+
+    private sealed class TwinPropertyView(RunScopedZeroArgPropertyResultCache cache) : IAsyncZeroArgPropertyResultCache
+    {
+        public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => cache.GetOrEvaluate(execution, evaluate);
+
+        public EvalResult<ZeroArgPropertyResult> Invoke(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => cache.Invoke(execution, evaluate);
+
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => cache.ReadObtainsPublishedValue(key);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
+            ZeroArgPropertyExecution execution, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => cache.GetOrEvaluateAsync(execution, evaluateAsync);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => cache.InvokeAsync(execution, evaluateAsync);
+    }
 
     /// <summary>Number of entries published in this run (monotonic).</summary>
     internal int PublishedCount => _results.Count;

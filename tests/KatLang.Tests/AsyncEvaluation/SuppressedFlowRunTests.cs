@@ -549,47 +549,52 @@ public class SuppressedFlowRunTests
         Assert.Equal(1, host.WaitCalls);
     }
 
-    // ── The synchronous route: a fold continued on a fresh thread ────────────────────────────
+    // ── The synchronous route: a fold continued on the heap ─────────────────────────────────────
 
     /// <summary>
     /// The synchronous route never suspends, but a long lazy <c>reduce</c> continues its chain of
-    /// accumulators on fresh threads (<see cref="FoldContinuationStack"/>). The start of this fold
-    /// is reached on such a thread and re-enters <c>R</c>'s argument, which the calling thread is
-    /// still computing: without the demander's node on the fresh thread that demand waited for it,
-    /// and the calling thread for the fresh thread.
+    /// accumulators on the heap, pumped on the calling thread (<see cref="FoldTrampoline"/>). The start of
+    /// this fold is reached in such a segment and re-enters <c>R</c>'s argument, which the same flow is
+    /// still computing: the segment runs under the demander's context, so that demand is a cycle, never a
+    /// wait for the computation the pump itself belongs to. The pump restores flow while it runs, so a
+    /// host that suppressed it gets the same answer.
     /// </summary>
     [Theory]
     [InlineData(Flow.Normal)]
     [InlineData(Flow.Suppressed)]
-    public async Task ACycleReachedOnAFoldContinuationThread_IsADemandCycle(Flow flow)
+    public async Task ACycleReachedOnAFoldsHeapContinuation_IsADemandCycle(Flow flow)
     {
         const string source = Capture
             + "Add(item, acc) = Id(item) + acc\n"
             + "R = Capture(Id(reduce(range(1, 3000), Add, R.Invoke())))\nR.Invoke()";
         SourceProvenance.ParseValid(source);
-        var startedBefore = FoldContinuationStack.Started;
+        var pumpsBefore = FoldTrampoline.Pumps;
+        var waitsBefore = FoldTrampoline.StalledPumps;
 
         var result = await HostFlow.OnHostThread(flow, () => KatLangEngine.Run(source)).WaitAsync(DeepWorkGuard);
 
         AssertDemandCycle(result);
-        // Three thousand suspended steps do not fit a 1 MiB stack: the start ran on a fresh thread.
-        Assert.True(FoldContinuationStack.Started > startedBefore);
+        // Three thousand suspended steps exceed the host stack's allowance: the start ran in a pumped segment.
+        Assert.True(FoldTrampoline.Pumps > pumpsBefore);
+        Assert.Equal(waitsBefore, FoldTrampoline.StalledPumps);
     }
 
     [Theory]
     [InlineData(Flow.Normal)]
     [InlineData(Flow.Suppressed)]
-    public async Task ALongFoldWithoutACycle_CompletesOnFreshThreads(Flow flow)
+    public async Task ALongFoldWithoutACycle_CompletesOnTheHeap(Flow flow)
     {
         const string source = Capture
             + "Add(item, acc) = Id(item) + acc\n"
             + "R = Capture(Id(reduce(range(1, 3000), Add, 0)))\nR.Invoke()";
         SourceProvenance.ParseValid(source);
-        var startedBefore = FoldContinuationStack.Started;
+        var pumpsBefore = FoldTrampoline.Pumps;
+        var waitsBefore = FoldTrampoline.StalledPumps;
 
         var result = await HostFlow.OnHostThread(flow, () => KatLangEngine.Run(source)).WaitAsync(DeepWorkGuard);
 
         AssertValue(result, 3000 * 3001 / 2);
-        Assert.True(FoldContinuationStack.Started > startedBefore);
+        Assert.True(FoldTrampoline.Pumps > pumpsBefore);
+        Assert.Equal(waitsBefore, FoldTrampoline.StalledPumps);
     }
 }

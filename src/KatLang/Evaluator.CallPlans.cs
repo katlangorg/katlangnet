@@ -220,7 +220,7 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="PlanCalleeCell"/> — the route through the async resolution adapter.</summary>
     internal static async ValueTask<EvalResult<NeedCell>> PlanCalleeCellAsync(InvocationPlan plan)
     {
-        var route = InvocationRouteOf(await PlanRouteOfAsync(plan).ConfigureAwait(false), plan);
+        var route = InvocationRouteOf(await PlanRouteOfAsync(plan).ConfigureAwait(FoldTrampoline.CaptureFoldContext), plan);
         return route.IsError ? route.Error : plan.SupplyCalleeCell();
     }
 
@@ -447,12 +447,13 @@ public static partial class Evaluator
         /// </summary>
         internal async ValueTask<EvalResult<PreparedSupply>> PrepareSupply(bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             // META-S3-4: the route first, through the async adapter when asynchronous (never the
             // synchronous resolver under the async engine), with the D-1A refusal of an intrinsic route.
-            var route = InvocationRouteOf(asynchronous ? await PlanRouteOfAsync(this).ConfigureAwait(false) : PlanRouteOf(this), this);
+            var route = InvocationRouteOf(asynchronous ? await PlanRouteOfAsync(this).ConfigureAwait(FoldTrampoline.CaptureFoldContext) : PlanRouteOf(this), this);
             if (route.IsError) return ObserverFailure(route.Error);
             var supply = asynchronous
-                ? await PreparePlanSupplyAsync(this, PlanSupplyShape.Cells, byInvocation: true).ConfigureAwait(false)
+                ? await PreparePlanSupplyAsync(this, PlanSupplyShape.Cells, byInvocation: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : PreparePlanSupplyCounted(this, PlanSupplyShape.Cells, byInvocation: true);
             return supply.IsError ? ObserverFailure(supply.Error) : EvalResult<PreparedSupply>.Ok(new PreparedSupply(PlanCells(supply.Value)));
 
@@ -685,7 +686,7 @@ public static partial class Evaluator
             return new EvalError.TypeMismatch(InvokeRequiresCallReferenceMessage(value));
         if (CheckCallReferenceOwnership(reference, ctx) is { } rejected)
             return rejected;
-        var result = await InvokePlanAsync(reference.Plan).ConfigureAwait(false);
+        var result = await InvokePlanAsync(reference.Plan).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (!result.IsError && CheckCallReferenceOwnership(reference, ctx) is { } terminal)
             return terminal;
         return result;
@@ -742,9 +743,9 @@ public static partial class Evaluator
     {
         if (CheckCallReferenceOwnership(view, ctx) is { } rejected)
             return rejected;
-        var route = InvocationRouteOf(await PlanRouteOfAsync(view.Plan).ConfigureAwait(false), view.Plan);
+        var route = InvocationRouteOf(await PlanRouteOfAsync(view.Plan).ConfigureAwait(FoldTrampoline.CaptureFoldContext), view.Plan);
         if (route.IsError) return route.Error;
-        var supply = await PreparePlanSupplyAsync(view.Plan, PlanSupplyShape.Sourced, byInvocation: true).ConfigureAwait(false);
+        var supply = await PreparePlanSupplyAsync(view.Plan, PlanSupplyShape.Sourced, byInvocation: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (supply.IsError) return supply.Error;
         if (CheckCallReferenceOwnership(view, ctx) is { } terminal)
             return terminal;
@@ -789,9 +790,9 @@ public static partial class Evaluator
     {
         if (CheckCallReferenceOwnership(reference, ctx) is { } rejected)
             return rejected;
-        var route = InvocationRouteOf(await PlanRouteOfAsync(reference.Plan).ConfigureAwait(false), reference.Plan);
+        var route = InvocationRouteOf(await PlanRouteOfAsync(reference.Plan).ConfigureAwait(FoldTrampoline.CaptureFoldContext), reference.Plan);
         if (route.IsError) return route.Error;
-        var supply = await PreparePlanSupplyAsync(reference.Plan, PlanSupplyShape.Sourced, byInvocation: true).ConfigureAwait(false);
+        var supply = await PreparePlanSupplyAsync(reference.Plan, PlanSupplyShape.Sourced, byInvocation: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (supply.IsError) return supply.Error;
         if (CheckCallReferenceOwnership(reference, ctx) is { } terminal)
             return terminal;
@@ -835,13 +836,13 @@ public static partial class Evaluator
     /// <summary>MIRROR OF <see cref="EvalArgumentViewBuiltin"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalArgumentViewBuiltinAsync(BuiltinId builtin, Result.CallReference view, EvalCtx ctx)
     {
-        var cells = await PrepareArgumentViewAsync(view, ctx).ConfigureAwait(false);
+        var cells = await PrepareArgumentViewAsync(view, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (cells.IsError) return cells.Error;
         if (builtin == BuiltinId.@count)
             return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(cells.Value.Count), 1));
         if (cells.Value.Count == 0)
             return ArgumentViewEmptySelection(builtin);
-        var selected = await cells.Value[builtin == BuiltinId.@first ? 0 : cells.Value.Count - 1].DemandAsync().ConfigureAwait(false);
+        var selected = await cells.Value[builtin == BuiltinId.@first ? 0 : cells.Value.Count - 1].DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return selected.IsError ? selected.Error : SelectedArgumentViewValue(selected.Value.Value, view, ctx);
     }
 
@@ -880,7 +881,7 @@ public static partial class Evaluator
 
     /// <summary>The async twin of <see cref="InvokePlan"/>.</summary>
     internal static async ValueTask<EvalResult<CountedResult>> InvokePlanAsync(InvocationPlan plan)
-        => ReCountValueBoundary(await EvalPlannedCallCountedAsync(plan, byInvocation: true).ConfigureAwait(false));
+        => ReCountValueBoundary(await EvalPlannedCallCountedAsync(plan, byInvocation: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
 
     /// <summary>
     /// One execution of <paramref name="plan"/>. As the owner's VALUE it runs inside that cell's single
@@ -1023,15 +1024,15 @@ public static partial class Evaluator
         var link = plan.CalleeCell;
         var receiverCell = ((LinkSuspension)link.Suspension!).Receiver((Expr.DotCall)link.Source!);
         var receiver = edge.Target is Expr.Param
-            ? await EvalAlgorithmReceiverAsync(edge, plan.Caller, plan.Values).ConfigureAwait(false)
-            : ProjectCountedValue(await receiverCell.DemandAsync().ConfigureAwait(false));
+            ? await EvalAlgorithmReceiverAsync(edge, plan.Caller, plan.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : ProjectCountedValue(await receiverCell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         if (receiver.IsError) return receiver.Error;
         var captured = DecodeAlgorithmReceiver(receiver.Value, plan.Caller);
         if (captured.IsError)
             return spanDecodeFailure ? captured.Error with { Span = captured.Error.Span ?? edge.Span } : captured.Error;
-        var calleeCell = await PlanCalleeCellAsync(captured.Value).ConfigureAwait(false);
+        var calleeCell = await PlanCalleeCellAsync(captured.Value).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (calleeCell.IsError) return calleeCell.Error;
-        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, plan.Caller).ConfigureAwait(false), edge.Span);
+        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, plan.Caller).ConfigureAwait(FoldTrampoline.CaptureFoldContext), edge.Span);
         if (callable.IsError) return callable.Error;
         return EvalResult<(Algorithm, CallDiagnosticName, NeedCell)>.Ok((callable.Value, PlanCalleeName(captured.Value), calleeCell.Value));
     }
@@ -1150,36 +1151,36 @@ public static partial class Evaluator
             return nodeWorkError;
         ThrowIfAsyncStrategyPinningViolated(ctx);
         if (plan.Source is Expr.DotCall dot)
-            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, WithOutputSpreadNotes(dot, await DispatchPlannedDotAsync(plan, dot, byInvocation).ConfigureAwait(false))));
+            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, WithOutputSpreadNotes(dot, await DispatchPlannedDotAsync(plan, dot, byInvocation).ConfigureAwait(FoldTrampoline.CaptureFoldContext))));
         var call = (Expr.Call)plan.Source;
         var name = CallDiagnosticName.FromExpression(call.Function);
         if (plan.NeedsRoute)
         {
-            var route = await PlanRouteOfAsync(plan).ConfigureAwait(false);
+            var route = await PlanRouteOfAsync(plan).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (route.IsError)
                 return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, route.Error));
             if (route.Value.Kind == PlanRouteKind.AlgorithmIntrinsic)
             {
-                var projected = await ProjectPlannedAlgorithmCalleeAsync(plan, (Expr.DotCall)call.Function, spanDecodeFailure: true).ConfigureAwait(false);
+                var projected = await ProjectPlannedAlgorithmCalleeAsync(plan, (Expr.DotCall)call.Function, spanDecodeFailure: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (projected.IsError)
                     return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, projected.Error));
                 return WithSpanOf(call, WithCallCtx(name, ctx, WithOutputSpreadNotes(call.Args,
-                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation, CalleeOrigin.Cell(projected.Value.Cell)).ConfigureAwait(false))));
+                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation, CalleeOrigin.Cell(projected.Value.Cell)).ConfigureAwait(FoldTrampoline.CaptureFoldContext))));
             }
         }
         // META-S3-0b: the ONE callee law through the async resolution adapter.
-        var callee = await ResolveCalleeAsync(call.Function, ctx).ConfigureAwait(false);
+        var callee = await ResolveCalleeAsync(call.Function, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
         return WithSpanOf(call, WithCallCtx(name, ctx, WithOutputSpreadNotes(call.Args,
-            await DispatchPlannedAsync(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function)).ConfigureAwait(false))));
+            await DispatchPlannedAsync(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function)).ConfigureAwait(FoldTrampoline.CaptureFoldContext))));
     }
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedDotCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> DispatchPlannedDotAsync(InvocationPlan plan, Expr.DotCall dot, bool byInvocation)
     {
         var ctx = plan.Caller;
-        var route = await PlanRouteOfAsync(plan).ConfigureAwait(false);
+        var route = await PlanRouteOfAsync(plan).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (route.IsError) return route.Error;
         switch (route.Value.Kind)
         {
@@ -1188,30 +1189,30 @@ public static partial class Evaluator
                 var wired = route.Value.Wired!;
                 if (wired is Algorithm.Alias alias)
                 {
-                    var target = await ResolveAliasTargetAsync(alias, ctx, route.Value.Member!).ConfigureAwait(false);
+                    var target = await ResolveAliasTargetAsync(alias, ctx, route.Value.Member!).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (target.IsError) return MarkNestedMemberInvocationOutput(target.Error);
                     wired = target.Value;
                 }
-                return MarkNestedMemberInvocationOutput(await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot)).ConfigureAwait(false));
+                return MarkNestedMemberInvocationOutput(await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot)).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             }
             case PlanRouteKind.Extension:
             {
                 var fallback = dot.EffectiveLexicalFallback;
                 var callee = fallback is Expr.Resolve(var fallbackName)
-                    ? await ResolveAsync(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)).ConfigureAwait(false)
-                    : await ResolveAsync(ctx, (fallback, ctx), static state => ResolveAlg(state.fallback, state.ctx)).ConfigureAwait(false);
+                    ? await ResolveAsync(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+                    : await ResolveAsync(ctx, (fallback, ctx), static state => ResolveAlg(state.fallback, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (callee.IsError) return callee.Error;
                 var name = fallback is Expr.Resolve(var known) ? known : dot.Name;
-                return await DispatchPlannedAsync(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation, CalleeOrigin.None).ConfigureAwait(false);
+                return await DispatchPlannedAsync(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation, CalleeOrigin.None).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
             case PlanRouteKind.AlgorithmIntrinsic:
             {
-                var callee = await ProjectPlannedAlgorithmCalleeAsync(plan, dot, spanDecodeFailure: false).ConfigureAwait(false);
+                var callee = await ProjectPlannedAlgorithmCalleeAsync(plan, dot, spanDecodeFailure: false).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (callee.IsError) return callee.Error;
-                return await DispatchPlannedAsync(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell)).ConfigureAwait(false);
+                return await DispatchPlannedAsync(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
             default:
-                return byInvocation ? InvocationRefusal(plan) : await EvalDotCallCountedAsync(dot, ctx, plan.Values).ConfigureAwait(false);
+                return byInvocation ? InvocationRefusal(plan) : await EvalDotCallCountedAsync(dot, ctx, plan.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -1222,21 +1223,21 @@ public static partial class Evaluator
         var ctx = plan.Caller;
         if (callee is Algorithm.Alias alias)
         {
-            var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
+            var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return target.IsError
                 ? target.Error
-                : await DispatchPlannedAsync(plan, target.Value, name, byInvocation, origin).ConfigureAwait(false);
+                : await DispatchPlannedAsync(plan, target.Value, name, byInvocation, origin).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
 
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.BuiltinArguments, byInvocation).ConfigureAwait(false);
+            var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.BuiltinArguments, byInvocation).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (supply.IsError) return supply.Error;
-            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, PlanBuiltinArguments(supply.Value), ctx, plan.Values).ConfigureAwait(false));
+            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, PlanBuiltinArguments(supply.Value), ctx, plan.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return await DispatchPlannedUserAsync(plan, callee, simpleCallee, name, byInvocation, origin).ConfigureAwait(false);
+            return await DispatchPlannedUserAsync(plan, callee, simpleCallee, name, byInvocation, origin).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
 
         if (callee is Algorithm.Conditional)
         {
@@ -1246,7 +1247,7 @@ public static partial class Evaluator
                 return AtFirstSpanIfMissing(limitError, plan.Args);
             try
             {
-                var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.Cells, byInvocation).ConfigureAwait(false);
+                var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.Cells, byInvocation).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (supply.IsError) return supply.Error;
                 var cells = PlanCells(supply.Value);
                 if (cells.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
@@ -1254,9 +1255,9 @@ public static partial class Evaluator
                     var bodyCtx = InvocationBodyContext(binding, ctx, plan.Values, out var bodyValues);
                     return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, plan.Values,
                         async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, bodyCtx, bodyValues, name)
-                            .ConfigureAwait(false))).ConfigureAwait(false);
+                            .ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 }
-                return await EvalNeedFamilySupply(callee, cells, ctx, plan.Values, name).ConfigureAwait(false);
+                return await EvalNeedFamilySupply(callee, cells, ctx, plan.Values, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
             finally
             {
@@ -1264,7 +1265,7 @@ public static partial class Evaluator
             }
         }
 
-        return await DispatchPlannedUserAsync(plan, callee, callee, name, byInvocation, origin).ConfigureAwait(false);
+        return await DispatchPlannedUserAsync(plan, callee, callee, name, byInvocation, origin).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedUserCounted"/> — keep in lock-step.</summary>
@@ -1280,9 +1281,9 @@ public static partial class Evaluator
         using (level)
         {
             if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
-                && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, plan.Values).ConfigureAwait(false) is { } projected)
+                && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, plan.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } projected)
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
-            var supply = await PreparePlanSupplyAsync(plan, UserPlanSupplyShape(plan, callee), byInvocation).ConfigureAwait(false);
+            var supply = await PreparePlanSupplyAsync(plan, UserPlanSupplyShape(plan, callee), byInvocation).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (supply.IsError) return supply.Error;
             var cells = PlanCells(supply.Value);
             var occurrences = PlanMetaOccurrences(plan, callee, supply.Value);
@@ -1292,10 +1293,10 @@ public static partial class Evaluator
                 var bodyCtx = InvocationBodyContext(binding, ctx, plan.Values, out var bodyValues);
                 return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, plan.Values,
                     async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, bodyCtx, bodyValues, name,
-                        variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(false))).ConfigureAwait(false);
+                        variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(FoldTrampoline.CaptureFoldContext))).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
             return await EvalNeedUserSupply(callee, cells, ctx, plan.Values, name, variadicArityStyle: true,
-                occurrences).ConfigureAwait(false);
+                occurrences).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -1373,7 +1374,7 @@ public static partial class Evaluator
         {
             var marker = byInvocation ? PlanPreparation.ByInvocation : PlanPreparation.ByValue;
             if (Interlocked.CompareExchange(ref plan.Supply, marker, null) is null)
-                return await RunPlanPreparationAsync(plan, shape, byInvocation).ConfigureAwait(false);
+                return await RunPlanPreparationAsync(plan, shape, byInvocation).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
         while (true)
         {
@@ -1381,7 +1382,7 @@ public static partial class Evaluator
             if (state is not PlanPreparation preparing) return PlanSupplyOutcome(plan, state!);
             if (IsReentrantPlanPreparation(plan, preparing)) return new EvalError.DemandCycle { Span = plan.Source.Span };
             if (EnsurePlanWaiters(plan, preparing) is { } waiters)
-                await waiters.Task.ConfigureAwait(false);
+                await waiters.Task.ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         }
     }
 
@@ -1395,7 +1396,7 @@ public static partial class Evaluator
         {
             var args = plan.Args;
             var sources = shape == PlanSupplyShape.Cells ? null : new List<Expr?>(args.Count);
-            var formed = await FormNeedSupply(args, plan.Caller, plan.Values, asynchronous: true, sources).ConfigureAwait(false);
+            var formed = await FormNeedSupply(args, plan.Caller, plan.Values, asynchronous: true, sources).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             return PublishPlanSupply(plan, formed, shape, sources);
         }
         catch (Exception error)

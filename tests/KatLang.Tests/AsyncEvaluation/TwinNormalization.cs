@@ -743,10 +743,12 @@ internal static class TwinNormalization
 
         public override SyntaxNode? VisitInvocationExpression(InvocationExpressionSyntax node)
         {
-            // x.ConfigureAwait(false) → x
+            // Scheduling is transport. Evaluator awaits capture only the fold's private ready queue.
             if (node.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "ConfigureAwait" } configure
                 && node.ArgumentList.Arguments is [{ Expression: var argument }]
-                && argument.IsKind(SyntaxKind.FalseLiteralExpression))
+                && (argument.IsKind(SyntaxKind.FalseLiteralExpression)
+                    || argument is MemberAccessExpressionSyntax
+                    { Expression: IdentifierNameSyntax { Identifier.ValueText: "FoldTrampoline" }, Name.Identifier.ValueText: "CaptureFoldContext" }))
                 return Visit(configure.Expression);
 
             // x.GetAwaiter().GetResult() → x

@@ -39,6 +39,7 @@ public static partial class Evaluator
         BuiltinDescriptor descriptor, IReadOnlyList<ResolvedArgumentAlgorithm> arguments,
         EvalCtx ctx, ValEnv values, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         if (!descriptor.AcceptsArity(arguments.Count))
             return WrongBuiltinArity(descriptor.Id, arguments.Count);
         var supplied = new NeedCell[arguments.Count];
@@ -49,13 +50,13 @@ public static partial class Evaluator
             supplied[i] = ExistingArgumentCell(arguments[i], ctx, values);
             occurrences[i] = arguments[i].Source;
         }
-        var bound = await BindAcceptedNeedPatterns(MetaBuiltinPatterns[descriptor.Id], supplied, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
+        var bound = await BindAcceptedNeedPatterns(MetaBuiltinPatterns[descriptor.Id], supplied, ctx, asynchronous, family: false, occurrences).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (bound.IsError) return bound.Error;
         var env = bound.Value!;
         return descriptor.Id switch
         {
             BuiltinId.@while or BuiltinId.@repeat
-                => await EvalMetaLoop(descriptor.Id, env, ctx, values, asynchronous).ConfigureAwait(false),
+                => await EvalMetaLoop(descriptor.Id, env, ctx, values, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext),
             _ => throw new InvalidOperationException($"Builtin '{descriptor.Name}' declares a META parameter but has no native arm."),
         };
     }
@@ -78,11 +79,12 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalMetaLoop(
         BuiltinId builtin, NeedEnv env, EvalCtx ctx, ValEnv values, bool asynchronous)
     {
-        var adapter = await DemandCell(LookupNeed(env, "step")!, asynchronous).ConfigureAwait(false);
+        FoldTrampoline.ForkHostScope();
+        var adapter = await DemandCell(LookupNeed(env, "step")!, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (adapter.IsError) return adapter.Error;
         var reference = (Result.CallReference)adapter.Value.Value;
         var state = asynchronous
-            ? await PrepareLoopInitialStateAsync(reference, ctx).ConfigureAwait(false)
+            ? await PrepareLoopInitialStateAsync(reference, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : PrepareLoopInitialState(reference, ctx);
         if (state.IsError) return state.Error;
         var plan = reference.Plan;
@@ -95,13 +97,13 @@ public static partial class Evaluator
         var remaining = long.MaxValue;
         if (builtin == BuiltinId.@repeat)
         {
-            var count = await DemandCell(LookupNeed(env, "count")!, asynchronous).ConfigureAwait(false);
+            var count = await DemandCell(LookupNeed(env, "count")!, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (count.IsError) return count.Error;
             var integer = ExpectWholeInt(count.Value.Value, "Repeat count");
             if (integer.IsError) return integer.Error;
             if (integer.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
             remaining = integer.Value >= long.MaxValue ? long.MaxValue : (long)integer.Value;
         }
-        return await EvalNeedLoop(builtin, step, remaining, state.Value.Cells, ctx, values, state.Value.Sources, asynchronous).ConfigureAwait(false);
+        return await EvalNeedLoop(builtin, step, remaining, state.Value.Cells, ctx, values, state.Value.Sources, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 }

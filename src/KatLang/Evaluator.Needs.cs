@@ -296,13 +296,13 @@ public static partial class Evaluator
     {
         var source = cell.Source!;
         if (suspension is InvocationReceiverSuspension receiver)
-            return await EvalInvocationReceiverAsync(receiver).ConfigureAwait(false);
+            return await EvalInvocationReceiverAsync(receiver).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (suspension is LinkSuspension link
-            && await TryEvalLinkValueAsync((Expr.DotCall)source, link).ConfigureAwait(false) is { } linked)
+            && await TryEvalLinkValueAsync((Expr.DotCall)source, link).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } linked)
             return FinishSuppliedLinkValue(source, suspension, linked);
         return FinishSuppliedValue(source, suspension, suspension is InvocationPlan plan
-            ? await EvalPlannedCallCountedAsync(plan, byInvocation: false).ConfigureAwait(false)
-            : await EvalCountedAsync(source, suspension.Caller, suspension.Values).ConfigureAwait(false));
+            ? await EvalPlannedCallCountedAsync(plan, byInvocation: false).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await EvalCountedAsync(source, suspension.Caller, suspension.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     /// <summary>
@@ -429,6 +429,7 @@ public static partial class Evaluator
         OutputBundle arguments, EvalCtx caller, ValEnv values, bool asynchronous, List<Expr?>? sources = null,
         Algorithm? boundCallee = null)
     {
+        FoldTrampoline.ForkHostScope();
         if (!caller.Budget.UsesPerSiteInvocationPlans)
             boundCallee = null;
         var supply = new List<NeedCell>(arguments.Count);
@@ -460,7 +461,7 @@ public static partial class Evaluator
             }
             // A spread's cardinality is known only after formation: later slots are not effective slots.
             boundCallee = null;
-            var formed = await FormSpreadSupplySlot(spread, caller, values, asynchronous, supply, sources, bound).ConfigureAwait(false);
+            var formed = await FormSpreadSupplySlot(spread, caller, values, asynchronous, supply, sources, bound).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (formed.Failure is { } failure)
                 return failure;
             if (formed.Supply.Overflowed && !bound.Overflowed)
@@ -497,13 +498,14 @@ public static partial class Evaluator
         Expr.SequenceSpread argument, EvalCtx caller, ValEnv values, bool asynchronous,
         List<NeedCell> supply, List<Expr?>? sources, TransientSupply bound)
     {
+        FoldTrampoline.ForkHostScope();
         // The operand's retained slice, found without allocating a cell for any other operand: a
         // parameter reads the cell SupplyCell would transport, and a written name or member path
         // the cell its transparent chain ends at (A-2). A reference that crossed an ordinary
         // argument boundary is OBSERVED here, only because this star executes: the argument stays
         // its own one cell, with its own VALUE and CALLABLE, and only its slice is opened.
         var slice = asynchronous
-            ? await WrittenCollectorSliceAsync(argument.Operand, caller).ConfigureAwait(false)
+            ? await WrittenCollectorSliceAsync(argument.Operand, caller).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : WrittenCollectorSlice(argument.Operand, caller);
         if (slice is { } known)
         {
@@ -521,15 +523,15 @@ public static partial class Evaluator
             return new(nodeWorkError, bound);
         var operand = PeelSpreadLayers(argument, out var layers);
         var operandR = asynchronous
-            ? await EvalSequenceSpreadOperandValueAsync(operand, caller, values).ConfigureAwait(false)
+            ? await EvalSequenceSpreadOperandValueAsync(operand, caller, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : EvalSequenceSpreadOperandValue(operand, caller, values);
         if (operandR.IsError) return new(operandR.Error, bound);
-        var openedSpread = await OpenSpreadLayers(operandR.Value, layers, argument, caller, transportView: true, asynchronous).ConfigureAwait(false);
+        var openedSpread = await OpenSpreadLayers(operandR.Value, layers, argument, caller, transportView: true, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         var opened = openedSpread.Items;
         if (openedSpread.View is { } view)
         {
             var cells = asynchronous
-                ? await PrepareArgumentViewAsync(view, caller).ConfigureAwait(false)
+                ? await PrepareArgumentViewAsync(view, caller).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : PrepareArgumentView(view, caller);
             if (cells.IsError) return new(AtSpanIfMissing(cells.Error, argument.Span), bound);
             if (AdmitTransient(caller.Budget, ref bound, cells.Value.Count, expansion: true))
@@ -625,7 +627,7 @@ public static partial class Evaluator
             return slice;
         if (cell.Suspension is not { } suspension || !MayBeTransparentReference(cell.Source!, suspension.Caller))
             return null;
-        var outcome = await ResolveAsync(ctx, cell, static start => RetainedCellSliceOutcome(start)).ConfigureAwait(false);
+        var outcome = await ResolveAsync(ctx, cell, static start => RetainedCellSliceOutcome(start)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return outcome.IsOk ? outcome.Value : null;
     }
 
@@ -662,10 +664,10 @@ public static partial class Evaluator
     private static async ValueTask<IReadOnlyList<NeedCell>?> WrittenCollectorSliceAsync(Expr receiver, EvalCtx ctx)
     {
         if (receiver is Expr.Param(var name))
-            return ParameterNeedCell(name, ctx) is { } parameter ? await RetainedCellSliceAsync(parameter, ctx).ConfigureAwait(false) : null;
+            return ParameterNeedCell(name, ctx) is { } parameter ? await RetainedCellSliceAsync(parameter, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext) : null;
         if (!MayBeTransparentReference(receiver, ctx))
             return null;
-        var outcome = await ResolveAsync(ctx, (receiver, ctx), static state => WrittenCollectorSliceOutcome(state.receiver, state.ctx)).ConfigureAwait(false);
+        var outcome = await ResolveAsync(ctx, (receiver, ctx), static state => WrittenCollectorSliceOutcome(state.receiver, state.ctx)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return outcome.IsOk ? outcome.Value : null;
     }
 
@@ -722,6 +724,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<List<SuppliedSelector>>> FormSelectionSupply(
         Expr.Index selection, EvalCtx ctx, ValEnv valEnv, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var supplied = new List<SuppliedSelector>(selection.Selectors.Count);
         List<NeedCell>? cells = null;
         // SEC-01: the selector supply is transient-bounded like a call's (FormNeedSupply).
@@ -742,7 +745,7 @@ public static partial class Evaluator
             }
             cells ??= [];
             cells.Clear();
-            var formed = await FormSpreadSupplySlot(spread, ctx, valEnv, asynchronous, cells, sources: null, bound).ConfigureAwait(false);
+            var formed = await FormSpreadSupplySlot(spread, ctx, valEnv, asynchronous, cells, sources: null, bound).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (formed.Failure is { } failure)
                 return AtSpanIfMissing(failure, slot.Span ?? selection.Span);
             if (formed.Supply.Overflowed && !bound.Overflowed)
@@ -767,8 +770,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> ResolveNeedSupply(
         OutputBundle args, EvalCtx ctx, ValEnv values, bool asynchronous, Algorithm? boundCallee = null)
     {
+        FoldTrampoline.ForkHostScope();
         var sources = new List<Expr?>(args.Count);
-        var formed = await FormNeedSupply(args, ctx, values, asynchronous, sources, boundCallee).ConfigureAwait(false);
+        var formed = await FormNeedSupply(args, ctx, values, asynchronous, sources, boundCallee).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return formed.IsError ? formed.Error : EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(ResolvedSupply(formed.Value, sources));
     }
 
@@ -796,10 +800,11 @@ public static partial class Evaluator
         var budget = ctx.Budget;
         async ValueTask<EvalResult<CountedResult>> Materialize(bool asynchronous)
         {
+            FoldTrampoline.ForkHostScope();
             Result[] items = slice.Count == 0 ? [] : new Result[slice.Count];
             for (var i = 0; i < items.Length; i++)
             {
-                var value = await DemandCell(slice[i], asynchronous).ConfigureAwait(false);
+                var value = await DemandCell(slice[i], asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 // This cell constructs a list from subordinate computations. Keep their failures
                 // nested in its completed outcome, leaving the element cells' outcomes unchanged.
                 if (value.IsError) return NestMissingOutput(value.Error);
@@ -1116,7 +1121,7 @@ public static partial class Evaluator
         for (var i = 0; i < patterns.Count; i++)
         {
             if (patterns[i].Literal is not { } literal) { names++; continue; }
-            var outcome = await supply[i].DemandAsync().ConfigureAwait(false);
+            var outcome = await supply[i].DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (outcome.IsError) return outcome.Error;
             var matched = MatchLiteralPattern(literal, outcome.Value.Value, ctx);
             if (matched.IsError) return matched.Error;
@@ -1157,6 +1162,7 @@ public static partial class Evaluator
         IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply,
         EvalCtx ctx, bool asynchronous, bool family, IReadOnlyList<Expr?>? occurrences = null)
     {
+        FoldTrampoline.ForkHostScope();
         // Empty and single-name heads, and a flat level of unique plain names, need no traversal
         // metadata. These are the same non-inspecting binding rules as the general work-stack path.
         if (patterns.Count == 0) return EvalResult<NeedEnv?>.Ok([]);
@@ -1252,7 +1258,7 @@ public static partial class Evaluator
                     groups ??= new Dictionary<string, RepeatedGroup>(StringComparer.Ordinal);
                     if (!groups.TryGetValue(name, out var group))
                         groups.Add(name, group = new RepeatedGroup());
-                    var projected = asynchronous ? await cell.ProjectCallableAsync().ConfigureAwait(false) : cell.ProjectCallable();
+                    var projected = asynchronous ? await cell.ProjectCallableAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext) : cell.ProjectCallable();
                     if (projected.IsError) return projected.Error;
                     if (projected.Value is { } identity)
                     {
@@ -1263,7 +1269,7 @@ public static partial class Evaluator
                         if (group.HasAnchor)
                         {
                             // Once the group has a data anchor, its own counted VALUE must agree.
-                            var own = await DemandWhole(cell, ctx, asynchronous).ConfigureAwait(false);
+                            var own = await DemandWhole(cell, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             if (own.IsError) return own.Error;
                             var agreed = RepeatedCountedValueAgrees(ref repeatedValues, group.Anchor, own.Value, ctx);
                             if (agreed.IsError) return agreed.Error;
@@ -1287,7 +1293,7 @@ public static partial class Evaluator
                     // A value-only contribution demands its own counted VALUE — the WHOLE value
                     // (issue #204): agreement compares it, so a list evaluated on demand is
                     // materialized first.
-                    var value = await DemandWhole(cell, ctx, asynchronous).ConfigureAwait(false);
+                    var value = await DemandWhole(cell, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                     if (value.IsError) return value.Error;
                     if (group.HasAnchor)
                     {
@@ -1308,7 +1314,7 @@ public static partial class Evaluator
                         group.Pending = null;
                         foreach (var earlier in waiting)
                         {
-                            var own = await DemandWhole(earlier, ctx, asynchronous).ConfigureAwait(false);
+                            var own = await DemandWhole(earlier, ctx, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                             if (own.IsError) return own.Error;
                             var agreed = RepeatedCountedValueAgrees(ref repeatedValues, value.Value, own.Value, ctx);
                             if (agreed.IsError) return agreed.Error;
@@ -1324,7 +1330,7 @@ public static partial class Evaluator
                 bound[name] = cell;
                 continue;
             }
-            var outcome = asynchronous ? await cell.DemandAsync().ConfigureAwait(false) : cell.Demand();
+            var outcome = asynchronous ? await cell.DemandAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext) : cell.Demand();
             if (outcome.IsError) return outcome.Error;
             var inspected = outcome.Value.Value;
             if (pattern.Literal is { } literal)
@@ -1340,7 +1346,7 @@ public static partial class Evaluator
                 // A LIST EVALUATED ON DEMAND (issue #204): a list pattern and the unpacking
                 // receiver check its kind and its cardinality — every position is FOUND, none is
                 // read — before any field, and bind the nested level to the list's own positions.
-                if (await positions.Discover(LazyList.Everything, asynchronous).ConfigureAwait(false) is { } discoveryFailure)
+                if (await positions.Discover(LazyList.Everything, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext) is { } discoveryFailure)
                     return discoveryFailure;
                 var found = positions.Discovered;
                 var positionArity = NeedLevelArity(pattern.Children!);
@@ -1379,8 +1385,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> BindNeedDeconstruction(
         Algorithm.User helper, OutputBundle arguments, EvalCtx ctx, ValEnv values, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         ctx.Observations?.RecordDeconstructionFullBind();
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (supply.IsError) return supply.Error;
         // The helper's cardinality comes first, before any demand (NEED-05). A parser helper takes
         // its one right-hand side, so only a host-modified helper can be refused here.
@@ -1395,13 +1402,13 @@ public static partial class Evaluator
         // its demand of the cell is a memo hit, and the targets are names.
         if (supply.Value.Count == 1)
         {
-            var inspected = await DemandCell(supply.Value[0], asynchronous).ConfigureAwait(false);
+            var inspected = await DemandCell(supply.Value[0], asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             // The right-hand side is a SUBORDINATE computation of every target it unpacks into
             // (Q-36; Lean: the helper call's binder). Its own missing output keeps its blame, so the
             // target's read names the target exactly as an ordinary assignment's does (F3 parity).
             if (inspected.IsError) return NestDeconstructionSourceFailure(inspected.Error);
         }
-        var bindings = await BindAcceptedNeedPatterns(patterns, supply.Value, ctx, asynchronous, family: false).ConfigureAwait(false);
+        var bindings = await BindAcceptedNeedPatterns(patterns, supply.Value, ctx, asynchronous, family: false).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (bindings.IsError)
             return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : NestDeconstructionSourceFailure(bindings.Error);
         // The bound cells by binding name: each target projects the binding its own output reads.
@@ -1462,6 +1469,7 @@ public static partial class Evaluator
         Algorithm step, PreparedGenericLoopStep prepared, IReadOnlyList<NeedCell> state, IReadOnlyList<Expr?>? stateSources,
         EvalCtx ctx, ValEnv values, string loopName, CallDiagnosticName stepName, bool conditionFirst, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         switch (step)
         {
             case Algorithm.User:
@@ -1470,22 +1478,22 @@ public static partial class Evaluator
                 var arity = NeedLevelArity(patterns);
                 if (!arity.Accepts(state.Count))
                     return LoopStateArityMismatch(prepared.BindingContract, arity.Minimum, state.Count, loopName);
-                var bindings = await BindAcceptedNeedPatterns(patterns, state, ctx, asynchronous, family: false).ConfigureAwait(false);
+                var bindings = await BindAcceptedNeedPatterns(patterns, state, ctx, asynchronous, family: false).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 if (bindings.IsError) return bindings.Error;
                 var names = prepared.BindingContract.ParameterNames;
                 var stepCtx = WithNeedBindings(ctx, bindings.Value!, names);
                 var stepValues = ShadowValEnv(values, names);
-                return await ReadLoopStepRows(step, stepCtx, stepValues, names, conditionFirst, asynchronous).ConfigureAwait(false);
+                return await ReadLoopStepRows(step, stepCtx, stepValues, names, conditionFirst, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
             case Algorithm.Conditional:
             {
                 var matched = asynchronous
-                    ? await BindNeedFamilySupply(step, state, ctx, values, stepName).ConfigureAwait(false)
+                    ? await BindNeedFamilySupply(step, state, ctx, values, stepName).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                     : BindNeedFamilySupplyCounted(step, state, ctx, values, stepName);
                 if (matched.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, matched.Error);
                 var activation = matched.Value;
                 return WithCallCtx(stepName, ctx,
-                    await ReadLoopStepRows(activation.Body, activation.Context, activation.Values, null, conditionFirst, asynchronous).ConfigureAwait(false));
+                    await ReadLoopStepRows(activation.Body, activation.Context, activation.Values, null, conditionFirst, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
             }
             case Algorithm.Builtin(var builtin):
             {
@@ -1498,7 +1506,7 @@ public static partial class Evaluator
                 for (var i = 0; i < supplied.Length; i++)
                     supplied[i] = new ResolvedArgumentAlgorithm(null) { Cell = state[i], Source = stateSources?[i] };
                 var result = NestMissingOutput(asynchronous
-                    ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
+                    ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                     : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values));
                 if (result.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, result.Error);
                 // A `map` / `filter` stage this step built reports its later steps under the step's
@@ -1515,11 +1523,11 @@ public static partial class Evaluator
                 // projected alias step to its target once, which is invoked exactly as when written
                 // directly (FWD-02, M4★).
                 var target = asynchronous
-                    ? await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false)
+                    ? await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                     : ResolveAliasTarget(alias, ctx);
                 if (target.IsError) return target.Error;
                 return await InvokeLoopStepSupply(target.Value, PrepareUserLoopStep(target.Value, ctx), state, stateSources, ctx, values,
-                    loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
+                    loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             }
         }
 
@@ -1535,15 +1543,16 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> ReadLoopStepRows(
         Algorithm body, EvalCtx ctx, ValEnv values, IReadOnlyList<string>? parameterNames, bool conditionFirst, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         if (conditionFirst)
         {
             return asynchronous
-                ? await EvalWhileVerdictSlotsAsync(body, ctx, values, parameterNames).ConfigureAwait(false)
+                ? await EvalWhileVerdictSlotsAsync(body, ctx, values, parameterNames).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : EvalWhileVerdictSlots(body, ctx, values, parameterNames);
         }
 
         var supply = asynchronous
-            ? await EvalAlgOutputSlotsAsync(body, ctx, values, parameterNames).ConfigureAwait(false)
+            ? await EvalAlgOutputSlotsAsync(body, ctx, values, parameterNames).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
             : EvalAlgOutputSlots(body, ctx, values, parameterNames);
         return supply.IsError ? supply.Error : EvalResult<IReadOnlyList<Result>?>.Ok(supply.Value);
     }
@@ -1703,10 +1712,10 @@ public static partial class Evaluator
         Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names, bool invoked)
     {
         if (callee is not Algorithm.User { DeferredRegion: null })
-            return await EvalAlgOutputCountedCoreAsync(callee, ctx, values, invoked).ConfigureAwait(false);
+            return await EvalAlgOutputCountedCoreAsync(callee, ctx, values, invoked).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (OutputRowsAccessError(callee, ctx) is { } accessError)
             return accessError;
-        var prepared = await EvalOutputRowsPreparedAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names, invoked: invoked), ctx, values).ConfigureAwait(false);
+        var prepared = await EvalOutputRowsPreparedAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names, invoked: invoked), ctx, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return prepared.IsError
             ? prepared.Error
             : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
@@ -1717,9 +1726,9 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
         var occurrences = MetaOccurrenceSlots(callee, arguments, ctx, out var sources);
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous: true, sources, callee).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous: true, sources, callee).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, variadicArityStyle: true, occurrences).ConfigureAwait(false);
+        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, variadicArityStyle: true, occurrences).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserSupply(
@@ -1732,7 +1741,7 @@ public static partial class Evaluator
         {
             var patterns = NeedCallPatterns(callee.ParameterPatterns, ctx.Budget);
             if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-            var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: true, family: false, occurrences).ConfigureAwait(false);
+            var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: true, family: false, occurrences).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             env = bindings.Value!;
@@ -1740,8 +1749,8 @@ public static partial class Evaluator
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
         var output = ValueViewCell(callee, ctx) is { } viewCell
-            ? await RetainedCellValueAsync(viewCell, ctx).ConfigureAwait(false)
-            : await EvalBoundUserBodyCountedAsync(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names, invoked: true).ConfigureAwait(false);
+            ? await RetainedCellValueAsync(viewCell, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
+            : await EvalBoundUserBodyCountedAsync(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names, invoked: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 
@@ -1781,9 +1790,14 @@ public static partial class Evaluator
     private static ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
         string name, bool asynchronous)
-        => asynchronous
+    {
+        // The synchronous callback has its own method-builder boundary. A heap callback inherits its
+        // caller's ambient state and keeps changes local to that invocation, including when it suspends.
+        using var hostScope = new FoldTrampoline.CallbackHostScope();
+        return asynchronous
             ? EvalNeedCallbackSupplyAsync(callee, supply, ctx, values, name)
             : EvalNeedCallbackSupplyInContext(callee, supply, ctx, values, name);
+    }
 
     // The async method builder restores the caller's execution and synchronization contexts when a
     // synchronous callback returns or throws, including under suppressed flow. The asynchronous driver
@@ -1815,11 +1829,11 @@ public static partial class Evaluator
         if (callee is Algorithm.Builtin builtin)
         {
             var resolved = ResolvedSupply(supply);
-            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false));
+            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
         }
         if (callee is Algorithm.Conditional)
-            return await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
-        return await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false).ConfigureAwait(false);
+            return await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name)).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
+        return await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     // One Ready cell per already-evaluated value, in order (a callback's supply).
@@ -1835,9 +1849,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilyBody(
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous: true, boundCallee: callee).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous: true, boundCallee: callee).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name).ConfigureAwait(false);
+        return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     private readonly record struct NeedFamilyActivation(Algorithm Body, EvalCtx Context, ValEnv Values);
@@ -1869,9 +1883,9 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilySupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var matched = await BindNeedFamilySupply(callee, supply, ctx, values, name).ConfigureAwait(false);
+        var matched = await BindNeedFamilySupply(callee, supply, ctx, values, name).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
         if (matched.IsError) return matched.Error;
-        return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(matched.Value.Body, matched.Value.Context, matched.Value.Values).ConfigureAwait(false));
+        return ReCountValueBoundary(await EvalAlgOutputCountedCoreAsync(matched.Value.Body, matched.Value.Context, matched.Value.Values).ConfigureAwait(FoldTrampoline.CaptureFoldContext));
     }
 
     // The FAMILY-level decision before any clause (Lean: selectNeedFamilyBranch). First come the
@@ -2005,7 +2019,7 @@ public static partial class Evaluator
             {
                 // A literal clause run starts here: its index replays only the attempts that demand or select
                 // (LiteralClauseRun). The dispatch resumes at the selected clause, or past the run.
-                bindings = LiteralRunBindings(await SelectLiteralRunClauseAsync(run, supply, ctx.Observations).ConfigureAwait(false), run, ref i);
+                bindings = LiteralRunBindings(await SelectLiteralRunClauseAsync(run, supply, ctx.Observations).ConfigureAwait(FoldTrampoline.CaptureFoldContext), run, ref i);
             }
             else
             {
@@ -2013,15 +2027,15 @@ public static partial class Evaluator
                 // As in the synchronous driver: a flat literal head binds directly. Separate await sites
                 // keep this state machine's frame closest to its former size.
                 if (!IsFlatLiteralHead(head, supply))
-                    bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: true, family: true).ConfigureAwait(false);
+                    bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: true, family: true).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 else
-                    bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(false);
+                    bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 ObserveClauseOutcome(bindings, ctx);
             }
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
-            var selected = await SelectedBranchBodyAsync(family.BranchAt(i), ctx).ConfigureAwait(false);
+            var selected = await SelectedBranchBodyAsync(family.BranchAt(i), ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }
@@ -2061,6 +2075,7 @@ public static partial class Evaluator
         BuiltinId builtin, ResolvedArgumentAlgorithm stepArgument, long remaining,
         IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values, IReadOnlyList<Expr?>? initialSources, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var repeat = builtin == BuiltinId.@repeat;
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
@@ -2088,7 +2103,7 @@ public static partial class Evaluator
             // META-S3-0b: the async loop consumes the awaited projection outcome through the
             // async resolution adapter (same slot, same point, same diagnostics).
             var projection = asynchronous
-                ? await ProjectLoopStepAsync(stepArgument, builtin, ctx).ConfigureAwait(false)
+                ? await ProjectLoopStepAsync(stepArgument, builtin, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                 : ProjectLoopStep(stepArgument, builtin);
             if (projection.IsError) return projection.Error;
             step = projection.Value;
@@ -2098,7 +2113,7 @@ public static partial class Evaluator
             if (step is Algorithm.Alias aliasStep)
             {
                 var target = asynchronous
-                    ? await ResolveAliasTargetAsync(aliasStep, ctx).ConfigureAwait(false)
+                    ? await ResolveAliasTargetAsync(aliasStep, ctx).ConfigureAwait(FoldTrampoline.CaptureFoldContext)
                     : ResolveAliasTarget(aliasStep, ctx);
                 if (target.IsError) return target.Error;
                 step = target.Value;
@@ -2139,7 +2154,7 @@ public static partial class Evaluator
             }
             prepared = PrepareUserLoopStep(step, ctx);
         }
-        return await RunGenericLoopRounds(step, prepared, repeat, remaining, state, initialSources, ctx, values, stepName, asynchronous).ConfigureAwait(false);
+        return await RunGenericLoopRounds(step, prepared, repeat, remaining, state, initialSources, ctx, values, stepName, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
     }
 
     /// <summary>
@@ -2172,6 +2187,7 @@ public static partial class Evaluator
         IReadOnlyList<NeedCell> state, IReadOnlyList<Expr?>? stateSources,
         EvalCtx ctx, ValEnv values, CallDiagnosticName stepName, bool asynchronous)
     {
+        FoldTrampoline.ForkHostScope();
         var loopName = repeat ? "repeat" : "while";
         while (!repeat || remaining > 0)
         {
@@ -2180,7 +2196,7 @@ public static partial class Evaluator
             // and the state that entered the round is the loop's final state.
             var output = await InvokeLoopStepSupply(
                 step ?? throw new InvalidOperationException("A loop round ran without its step: only a loop of zero rounds leaves the step unprojected."),
-                prepared, state, stateSources, ctx, values, loopName, stepName, conditionFirst: !repeat, asynchronous).ConfigureAwait(false);
+                prepared, state, stateSources, ctx, values, loopName, stepName, conditionFirst: !repeat, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (output.IsError) return output.Error;
             if (output.Value is not { } next) break;
             state = ReadyStateCells(next);
@@ -2191,7 +2207,7 @@ public static partial class Evaluator
         var materialized = new List<Result>(state.Count);
         foreach (var cell in state)
         {
-            var value = await DemandCell(cell, asynchronous).ConfigureAwait(false);
+            var value = await DemandCell(cell, asynchronous).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
             if (value.IsError) return value.Error;
             materialized.Add(value.Value.Value);
         }

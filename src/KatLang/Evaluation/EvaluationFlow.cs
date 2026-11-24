@@ -29,10 +29,11 @@ namespace KatLang.Evaluation;
 ///   pool when <see cref="IsSuppressed"/> holds (a <see cref="StackHop"/>). The method installing
 ///   the node or preparation frame awaits the hop directly. Its execution context then carries
 ///   that identity through further awaits.</item>
-///   <item>A <see cref="StackHop"/> and a fold continuation thread
-///   (<see cref="FoldContinuationStack"/>) give their continuation the state themselves when the
-///   context does not (<see cref="CaptureIfSuppressed"/>): the hop's queued work and the new thread
-///   start in an empty context.</item>
+///   <item>A <see cref="StackHop"/> and a fold's trampoline (<see cref="FoldTrampoline"/>) give their
+///   continuation the state themselves when the context does not (<see cref="CaptureIfSuppressed"/>):
+///   the hop's queued work starts in an empty context, and a trampoline item queued without a context
+///   starts in its drain loop's. A synchronous run's fold pump runs with flow restored, so its own
+///   items carry their contexts.</item>
 /// </list>
 ///
 /// <para><b>What a host observes.</b> Under a flowing context nothing changes: no hop is added and
@@ -40,7 +41,8 @@ namespace KatLang.Evaluation;
 /// without the caller's ambient state. A host operation reached there can observe the thread
 /// and context change even when its awaitable completes synchronously. The hop itself does no
 /// language work and consumes no budget. The synchronous routes never suspend, so they need no hop; only
-/// their fold continuation threads take the hand-over. A deferred region's held gate turn
+/// the twins a long fold continues on under its pump do (<see cref="FoldTrampoline"/>), and that pump
+/// restores flow while it runs and resumes their hops itself. A deferred region's held gate turn
 /// (<see cref="DeferredModuleRegion"/>) is deliberately not part of this state: the host contract of
 /// <see cref="RunOptions.DownloadCode"/> defines it by the execution context, and suppressing flow is
 /// that contract's way out of it.</para>
@@ -71,8 +73,7 @@ internal static class EvaluationFlow
     {
         /// <summary>
         /// Makes the current thread's context continue the captured flow. The caller owns that
-        /// context: a thread-pool work item, whose context the pool resets afterwards, or a thread
-        /// started for the continuation.
+        /// context: a thread-pool work item, or a fold segment inside its saved execution context.
         /// </summary>
         internal void Install()
         {
