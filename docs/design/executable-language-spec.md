@@ -151,9 +151,9 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   provenance for cache and alias shapes. It emits exact owner positions when
   nonempty, and an explicitly empty list only where that changes access (KL-04,
   HP-05j/k; a hand-written Lean guard in `lean/CoreTests/NameOwnership.lean`
-  pins the same absent-versus-empty pair without the encoder). All 134 cases are comparable (124 with
-  pre-wired parents, 224 named cache guards, 24 of them on failing cases, 88 structural guards); the test's
-  three coverage floors (comparable 134, pre-wired 124, named cache guards on successes 200) are the current
+  pins the same absent-versus-empty pair without the encoder). All 163 cases are comparable (124 with
+  pre-wired parents, 272 named cache guards, 48 of them on failing cases, 101 structural guards); the test's
+  three coverage floors (comparable 163, pre-wired 124, named cache guards on successes 224) are the current
   counts, and a coverage-drop control per floor fails while that floor is below its count. A future reviewed model divergence would be excluded from the
   comparable partition by exact id and pinned on BOTH sides (the Lean value by
   a generated guard, the C# value by `HostParentDifferentialTests`). Regenerate with

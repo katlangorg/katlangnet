@@ -100,7 +100,7 @@ theorem ext : NavExt before after := by
 theorem run_before : (projectParameterCallable "x" dctx).runState before = (.ok none, before) := by
   have hb : (projectParameterWith (EvalRec.projectNeedCallable evalUnbounded) "x" dctx).runState before =
       (.ok none, before) := by
-    rw [projectParameterWith_run]
+    rw [projectParameterWith_run _ _ _ _ rfl]
     have : parameterAddressIn before.lexicalActivations "x" dctx = none := by cbv
     rw [this]
     -- The owner IS activated (index 0), so the parameter is available: absence, not the refusal.
@@ -117,7 +117,7 @@ theorem run_after : (projectParameterCallable "x" dctx).runState after = (.ok (s
   have hmemo := projectNeedCallable_memo 0 after _ (some identity) (by rfl : after.needs[0]? = some _) rfl
   have hb : (projectParameterWith (EvalRec.projectNeedCallable evalUnbounded) "x" dctx).runState after =
       (.ok (some identity), after) := by
-    rw [projectParameterWith_run, haddr]
+    rw [projectParameterWith_run _ _ _ _ rfl, haddr]
     exact hmemo
   have hc : ProductionCompletes ((fun rec : EvalRec => projectParameterWith rec.projectNeedCallable "x" dctx) evalUnbounded) after := by
     unfold ProductionCompletes; rw [hb]; nofun
@@ -290,11 +290,14 @@ theorem anchored_of_chainRecorded (x : Ident) (ctx : EvalCtx) (s : EvalState)
       exact this
     exact owner_recorded x hpc par rfl owner ho id hact
 
-/-- The navigation core admits a parameter projection in a context with a recorded site chain. -/
+/-- The navigation core admits a parameter projection in a context with a recorded site chain,
+    outside every retained cell's computation (ledger R-1). -/
 theorem admits_parameter_read (x : Ident) (ctx : EvalCtx) (s : EvalState)
-    (h : ChainRecorded s.lexicalActivations.size (siteScope? ctx)) :
-    navAdmits (.projectParameterCallable x ctx) s = true :=
-  anchored_of_chainRecorded x ctx s h
+    (h : ChainRecorded s.lexicalActivations.size (siteScope? ctx)) (hq : ctx.inputRecord = none) :
+    navAdmits (.projectParameterCallable x ctx) s = true := by
+  show (anchored x ctx s && ctx.inputRecord.isNone) = true
+  rw [anchored_of_chainRecorded x ctx s h, hq]
+  rfl
 
 /-- The navigation core admits a projection exactly of an address inside the heap. -/
 theorem admits_projection_iff (a : Nat) (s : EvalState) :

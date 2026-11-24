@@ -159,10 +159,19 @@ theorem activation_property_step (rec : EvalRec) (hrec : ∀ c, Preserves Activa
   unfold EvalBody.evalZeroArgPropertyAccessCounted
   split
   · simp only [EvalM.bind_runState, get_runState]
-    exact activation_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+    exact pres_servingDetached _
+      (activation_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request) s
   · split
     · exact ActivationPrefix.refl s
-    · exact activation_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
+    · -- An admitted read first notes its input (ledger R-1), which keeps the activation array.
+      rcases KatLang.DetachedEvaluation.note_then_publication rec accessKind owner binding
+        resolvedAlgorithm ctx env request s with heq | ⟨t, hframe, heq⟩
+      · -- The read refused below an admitted reader (ledger R-1, deferred reads): the starting state.
+        rw [heq]
+        exact ActivationPrefix.refl s
+      rw [heq]
+      have hst : ActivationPrefix s t := ⟨[], by rw [hframe]; simp⟩
+      exact hst.trans (activation_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request t)
 
 /-- **Whole run (core):** every completed run of the total core, at every fuel, from every state —
     success and ordinary failure alike — keeps the activation array as a prefix. An INCOMPLETE core
@@ -542,10 +551,10 @@ theorem local_entry_read (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm) 
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (hkept : Retained s t) (ctx : EvalCtx) (env : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) :=
   local_publication_reused k k' owner binding resolved hcache hlocal ctx₀ env₀ n none s t v hentry hkept.2 ctx env
-    (hret.mono hkept.1).context hadmitted
+    (hret.mono hkept.1).context hadmitted hunmarked
 
 /-- **THE PRODUCTION THEOREM (FG-K2).** Let the fixed declaring chain of `resolved` have a valid
     owner search at `s`, answering `n`, and let the cache hold `v` for this owner and LOCAL-only
@@ -565,12 +574,12 @@ theorem local_publication_reused_after_production (c : EvalCall) (k k' : ZeroArg
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (ctx : EvalCtx) (env : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) :=
   local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ ⟨hvalid, howner⟩ hentry
-    (production_retained c s) ctx env hadmitted
+    (production_retained c s) ctx env hadmitted hunmarked
 
 /-- The same over a completed run of the total core (an incomplete core run forgets its state). -/
 theorem local_publication_reused_after_core (m : Nat) (c : EvalCall) (k k' : ZeroArgPropertyAccessKind)
@@ -582,12 +591,12 @@ theorem local_publication_reused_after_core (m : Nat) (c : EvalCall) (k k' : Zer
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (ctx : EvalCtx) (env : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalFuel m c).runState s).2 =
       (.ok v, ((evalFuel m c).runState s).2) :=
   local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret hentry
-    (core_retained m c s hc) ctx env hadmitted
+    (core_retained m c s hc) ctx env hadmitted hunmarked
 
 /-- An operation that FAILS ordinarily still kept the records and the entries: a post-state query.
     It does not say the containing language run continues past the failure. -/
@@ -601,11 +610,11 @@ theorem failed_operation_keeps_local_entry (c : EvalCall) (e : Error) (t : EvalS
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (ctx : EvalCtx) (env : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) := by
   have h := production_retained c s
   rw [hrun] at h
-  exact local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret hentry h ctx env hadmitted
+  exact local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret hentry h ctx env hadmitted hunmarked
 
 /-- **The host fallback keeps its input conditions.** With no retained context (`none` on a valid
     chain, which stays `none`), a surviving entry is reused only by a read with the SAME environment
@@ -620,12 +629,12 @@ theorem fallback_publication_reused_after_production (c : EvalCall) (k k' : Zero
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env none) = some v)
     (hctx : ctx.bindingContext = ctx₀.bindingContext)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) := by
   have hr := production_retained c s
-  refine property_cache_hit_production k' owner binding resolved ctx env _ v hcache ?_ hadmitted
+  refine property_cache_hit_production k' owner binding resolved ctx env _ v hcache ?_ hadmitted (fun _ => hunmarked)
   rw [owner_context_stable hr.1 hvalid, hnone,
     cacheKey_local_invocation_free k' owner binding hlocal ctx env none _ none,
     cacheKey_same_inputs k' k owner binding ctx ctx₀ env hctx none]
@@ -675,7 +684,7 @@ theorem structural_read_reuses_lexical_entry (c : EvalCall) (k k' : ZeroArgPrope
     (hentry : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (ctx : EvalCtx) (env : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false)
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none)
     (hadmitted' : localOnlyReadRefused binding' resolved' ctx = false) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState
         ((evalUnbounded c).runState s).2 =
@@ -694,9 +703,9 @@ theorem structural_read_reuses_lexical_entry (c : EvalCall) (k k' : ZeroArgPrope
     rw [hlex, ← hrecorded]
     exact RetainedAt.activated_level parent params opens props output branches id decl s act hrecord
   refine ⟨local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀ hret₀ hentry (production_retained c s) ctx env
-      hadmitted,
+      hadmitted hunmarked,
     local_entry_read k k' owner' binding' resolved' hcache' (hfields.exported ▸ hlocal) ctx₀ env₀ hret ?_
-      (production_retained c s) ctx env hadmitted'⟩
+      (production_retained c s) ctx env hadmitted' hunmarked⟩
   rw [cacheKey_of_same_fields hfields k k ctx₀ ctx₀ env₀ env₀ n]
   exact hentry
 
@@ -769,13 +778,13 @@ theorem transitions_read_discovery_entry (k k' : ZeroArgPropertyAccessKind) (own
     (hpub : ZeroArgPropertyCache.lookup (discovered a ctx env s).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) (hunmarked : readCtx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2 =
       (.ok v, ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2) :=
   local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀
     (hret.mono (discover_retained _ env a.output.reverse _).1) hpub (rows_retained _ env earlier _)
-    readCtx readEnv hadmitted
+    readCtx readEnv hadmitted hunmarked
 
 /-- The ordinary instance, with NO validity premise: a property wired under the head scope ONE
     recording entry installs (an actual call's entry always records, `entryRecords_of_invocation`)
@@ -789,12 +798,12 @@ theorem entered_body_shares_local_entry (hrec : entryRecords a ctx = true)
     (hpub : ZeroArgPropertyCache.lookup (discovered a ctx env s).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some ctx.bindingContext)) = some v)
     (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) (hunmarked : readCtx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2 =
       (.ok v, ((OutputRows.formLeftToRight (bodyRows a ctx env s) earlier).runState (discovered a ctx env s)).2) :=
   transitions_read_discovery_entry a ctx env s k k' owner binding resolved hcache hlocal ctx₀ env₀ _ v
-    (hparent ▸ entered_scope_retained a ctx env s hrec) hpub earlier readCtx readEnv hadmitted
+    (hparent ▸ entered_scope_retained a ctx env s hrec) hpub earlier readCtx readEnv hadmitted hunmarked
 
 /-- **The production round's exit reads discovery's entry**: for a checked, non-builtin step whose
     round completes, the actual exit state of `whileVerdictSlots` — `true`, `false` or a failure —
@@ -810,7 +819,7 @@ theorem round_exit_reads_discovery_entry (ha : NotBuiltin a) (hp : Passes a)
     (hpub : ZeroArgPropertyCache.lookup (discovered a ctx env s).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (readCtx : EvalCtx) (readEnv : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) (hunmarked : readCtx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((whileVerdictSlots a ctx env).runState s).2 =
       (.ok v, ((whileVerdictSlots a ctx env).runState s).2) := by
@@ -818,7 +827,7 @@ theorem round_exit_reads_discovery_entry (ha : NotBuiltin a) (hp : Passes a)
   exact local_entry_read k k' owner binding resolved hcache hlocal ctx₀ env₀
     (hret.mono (discover_retained _ env a.output.reverse _).1) hpub
     (after_discovery_retained _ (fun e => production_retained (.formOutputRow _ env e)) a.output _)
-    readCtx readEnv hadmitted
+    readCtx readEnv hadmitted hunmarked
 
 /-- **A false continuation forms no transition and still keeps the entry**: under the CF-1 premises
     the round stops in the state discovery reached (`production_cf1_false_skips_earlier_rows`); no
@@ -837,7 +846,7 @@ theorem false_continuation_keeps_local_entry (ha : NotBuiltin a) (hp : Passes a)
     (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n)) = some v)
     (readCtx : EvalCtx) (readEnv : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) (hunmarked : readCtx.inputRecord = none) :
     (whileVerdictSlots a ctx env).runState s = (.ok none, s₂) ∧
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState s₂ = (.ok v, s₂) := by
   refine ⟨production_cf1_false_skips_earlier_rows a ha hp ctx env s pre r trail hrows s₁ s₂ x xs f htrail hr hlast hf, ?_⟩
@@ -849,7 +858,7 @@ theorem false_continuation_keeps_local_entry (ha : NotBuiltin a) (hp : Passes a)
   exact property_cache_hit_production k' owner binding resolved readCtx readEnv s₂ v hcache (by
     rw [(hret.mono hk.1).context, cacheKey_local_invocation_free k' owner binding hlocal readCtx readEnv (some n) _ none,
       cacheKey_retained_owner_context k' k owner binding readCtx ctx₀ readEnv env₀ n none]
-    exact hpub) hadmitted
+    exact hpub) hadmitted (fun _ => hunmarked)
 
 end Rows
 
@@ -875,12 +884,12 @@ theorem dispatched_body_shares_local_entry (c : NeedChannels) (callee : Algorith
     (hpub : ZeroArgPropertyCache.lookup (discovered body next values t).zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some s''.nextBindingContext)) = some v)
     (earlier : List Expr) (readCtx : EvalCtx) (readEnv : ValEnv)
-    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved readCtx = false) (hunmarked : readCtx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved readCtx readEnv).runState
         ((OutputRows.formLeftToRight (bodyRows body next values t) earlier).runState (discovered body next values t)).2 =
       (.ok v, ((OutputRows.formLeftToRight (bodyRows body next values t) earlier).runState (discovered body next values t)).2) :=
   transitions_read_discovery_entry body next values t k k' owner binding resolved hcache hlocal ctx₀ env₀ _ v
     (hparent ▸ dispatched_body_retained c callee cells ctx env name before after branch s s' s'' bindings
-      hdup hbranches hrej hmatch hwired body next values t hrun) hpub earlier readCtx readEnv hadmitted
+      hdup hbranches hrej hmatch hwired body next values t hrun) hpub earlier readCtx readEnv hadmitted hunmarked
 
 end KatLang.OwnerContextStability

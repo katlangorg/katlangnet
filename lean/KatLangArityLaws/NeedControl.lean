@@ -35,10 +35,10 @@ theorem allocate_prefix (s : NeedSuspension) (st : EvalState) (a : Nat)
   · omega
   · rfl
 theorem supply_param_transports (name : Ident) (ctx : EvalCtx) (env : ValEnv)
-    (st : EvalState) (activation : Option ParameterActivation) (a : Nat)
-    (hc : (capturedParameterActivation? name ctx).runState st = (.ok activation, st))
+    (st t : EvalState) (activation : Option ParameterActivation) (a : Nat)
+    (hc : (capturedParameterActivation? name ctx).runState st = (.ok activation, t))
     (ha : lookupAssoc name (activation.map ParameterActivation.needs |>.getD ctx.needEnv) = some a) :
-    (supplyNeed (.param name) ctx env).runState st = (.ok a, st) := by
+    (supplyNeed (.param name) ctx env).runState st = (.ok a, t) := by
   simp only [supplyNeed, bind_run, hc, ha]
   rfl
 theorem supply_literal_one (n : Int) (ctx : EvalCtx) (env : ValEnv) (st : EvalState) :
@@ -47,11 +47,35 @@ theorem supply_literal_one (n : Int) (ctx : EvalCtx) (env : ValEnv) (st : EvalSt
         {st with needs := st.needs.push {suspension := .expression (.num n) ctx env}}) := rfl
 
 /-- THE LOOKUP'S OUTCOMES (EXPORTED-DETACHED, November 2026: captured reads are lexical-only).
-    `capturedParameterActivation?` never writes the state. It either REFUSES — the name is lexically
-    owned and unavailable at the site (`capturedParameter = .unavailable`), reported as `unknownName`
-    in the state the lookup started from — or it succeeds with no activation (an `own` name) or with
-    one SAVED in `lexicalActivations`. (An invalid activation identifier is an absence here.) -/
+    `capturedParameterActivation?` writes no evaluator state but the input records (ledger R-1:
+    a read through an activation inside a retained cell's computation is recorded on that cell,
+    `EvalState.noteInput`). It either REFUSES — the name is lexically owned and unavailable at the
+    site (`capturedParameter = .unavailable`), reported as `unknownName` in the state the lookup
+    started from — or it succeeds with no activation (an `own` name) or with one SAVED in
+    `lexicalActivations`, in a state that differs from the start only in its input records. (An
+    invalid activation identifier is an absence here.) -/
 theorem captured_outcome (name : Ident) (ctx : EvalCtx) (st : EvalState) :
+    (capturedParameterActivation? name ctx).runState st = (.error (Error.unknownName name), st) ∨
+      ∃ activation t, (capturedParameterActivation? name ctx).runState st = (.ok activation, t) ∧
+        t = { st with cellInputs := t.cellInputs } ∧
+        ∀ act, activation = some act → ∃ i : Nat, st.lexicalActivations[i]? = some act := by
+  unfold capturedParameterActivation?
+  split
+  · exact .inr ⟨none, st, rfl, rfl, by simp⟩
+  · exact .inl rfl
+  · rename_i id _
+    rcases noteCellInput_outcome ctx id (Error.unknownName name) st with hn | hn
+    · -- Ledger R-1, deferred reads: refused below an admitted reader, in the starting state.
+      exact .inl (by simp only [bind_run, hn])
+    refine .inr ⟨st.lexicalActivations[id]?, st.noteInput ctx id, ?_,
+      EvalState.noteInput_eq st ctx id, fun act h => ⟨id, h⟩⟩
+    simp only [bind_run, hn]
+    show (Except.ok (st.noteInput ctx id).lexicalActivations[id]?, _) = _
+    simp only [EvalState.noteInput_lexicalActivations]
+
+/-- Outside every retained cell's computation the lookup reads the state only. -/
+theorem captured_outcome_unmarked (name : Ident) (ctx : EvalCtx) (st : EvalState)
+    (h : ctx.inputRecord = none) :
     (capturedParameterActivation? name ctx).runState st = (.error (Error.unknownName name), st) ∨
       ∃ activation, (capturedParameterActivation? name ctx).runState st = (.ok activation, st) ∧
         ∀ act, activation = some act → ∃ i : Nat, st.lexicalActivations[i]? = some act := by
@@ -60,7 +84,11 @@ theorem captured_outcome (name : Ident) (ctx : EvalCtx) (st : EvalState) :
   · exact .inr ⟨none, rfl, by simp⟩
   · exact .inl rfl
   · rename_i id _
-    exact .inr ⟨st.lexicalActivations[id]?, rfl, fun act h => ⟨id, h⟩⟩
+    refine .inr ⟨st.lexicalActivations[id]?, ?_, fun act h => ⟨id, h⟩⟩
+    have hn : (noteCellInput ctx id (Error.unknownName name)).runState st = (.ok (), st) := by
+      rw [noteCellInput_run, EvalState.lateRefusedFor_unmarked st ctx id h, EvalState.noteInput_unmarked st ctx id h]; rfl
+    simp only [bind_run, hn]
+    rfl
 
 /-- A refused lookup refuses the DIRECT TRANSPORT of the parameter: nothing is allocated and the
     state is the one the supply started from, whether or not the receiver would ever demand it. -/
@@ -76,26 +104,26 @@ theorem parameter_address_refused (name : Ident) (ctx : EvalCtx) (st : EvalState
   simp only [parameterNeedAddress?, bind_run, hc]
 
 theorem supply_unbound_param (name : Ident) (ctx : EvalCtx) (env : ValEnv)
-    (st : EvalState) (activation : Option ParameterActivation)
-    (hc : (capturedParameterActivation? name ctx).runState st = (.ok activation, st))
+    (st t : EvalState) (activation : Option ParameterActivation)
+    (hc : (capturedParameterActivation? name ctx).runState st = (.ok activation, t))
     (ha : lookupAssoc name (activation.map ParameterActivation.needs |>.getD ctx.needEnv) = none) :
     (supplyNeed (.param name) ctx env).runState st =
-      (.ok st.needs.size, { st with needs := st.needs.push { suspension := .expression (.param name) ctx env } }) := by
+      (.ok t.needs.size, { t with needs := t.needs.push { suspension := .expression (.param name) ctx env } }) := by
   simp only [supplyNeed, bind_run, hc, ha]
   rfl
 
-theorem known_collector (name : Ident) (ctx : EvalCtx) (st : EvalState)
+theorem known_collector (name : Ident) (ctx : EvalCtx) (st t : EvalState)
     (activation : Option ParameterActivation) (a : Nat) (cell : NeedCell) (slice : List Nat)
-    (hc : (capturedParameterActivation? name ctx).runState st = (.ok activation, st))
+    (hc : (capturedParameterActivation? name ctx).runState st = (.ok activation, t))
     (ha : lookupAssoc name (activation.map ParameterActivation.needs |>.getD ctx.needEnv) = some a)
-    (hcell : st.needs[a]? = some cell)
+    (hcell : t.needs[a]? = some cell)
     (hslice : cell.suspension = .collector slice) :
-    (spreadCollectorSlice? (.param name) ctx).runState st = (.ok (some slice), st) := by
-  have hp : (parameterNeedAddress? name ctx).runState st = (.ok (some a), st) := by
+    (spreadCollectorSlice? (.param name) ctx).runState st = (.ok (some slice), t) := by
+  have hp : (parameterNeedAddress? name ctx).runState st = (.ok (some a), t) := by
     simp only [parameterNeedAddress?, bind_run, hc, ha]
     rfl
   simp only [spreadCollectorSlice?, bind_run, hp, collectorSliceAt?]
-  rw [show (get : EvalM EvalState).runState st = (.ok st, st) from rfl]
+  rw [show (get : EvalM EvalState).runState t = (.ok t, t) from rfl]
   simp only [hcell, hslice]
   rfl
 
@@ -547,14 +575,14 @@ theorem known_slot_exact (ev) (ctx : EvalCtx) (env : ValEnv) (operand : Expr)
   simp only [slot, bind_run, h]
   exact reopen_run slice s
 
-theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
+theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s t : EvalState)
     (activation : Option ParameterActivation) (a : Nat) (cell : NeedCell)
-    (hc : (capturedParameterActivation? name caller).runState s = (.ok activation, s))
+    (hc : (capturedParameterActivation? name caller).runState s = (.ok activation, t))
     (ha : lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv) = some a)
-    (present : s.needs[a]? = some cell)
+    (present : t.needs[a]? = some cell)
     (kind : ∀ slice, cell.suspension ≠ .collector slice) :
-    (spreadCollectorSlice? (.param name) caller).runState s = (.ok none, s) := by
-  have hp : (parameterNeedAddress? name caller).runState s = (.ok (some a), s) := by
+    (spreadCollectorSlice? (.param name) caller).runState s = (.ok none, t) := by
+  have hp : (parameterNeedAddress? name caller).runState s = (.ok (some a), t) := by
     simp only [parameterNeedAddress?, bind_run, hc, ha]
     rfl
   simp only [spreadCollectorSlice?, bind_run, hp, collectorSliceAt?, get_run, present]

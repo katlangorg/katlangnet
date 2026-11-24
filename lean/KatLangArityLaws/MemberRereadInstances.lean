@@ -36,6 +36,8 @@ Per instance, the premises of `member_bridge_of_probe` and where each is proved:
   DERIVED by `StoredCallableNormal.param_head_normal` from two facts of the reached heap (the
   parameter's cell awaits its first projection, and was supplied with a written name);
 * `production_entry` — production completes from `entry`.
+* `input_free` — the plan's context is outside every retained cell's computation (ledger R-1), so
+  no member access of the route notes an input record; of the re-used instance, or stated here.
 
 `nav_settled` is the DERIVED `NavSettled` (over every navigation extension of the probe's exit) and
 `bridge_of_probe` the theorem applied. Nothing here assumes settledness, an alias-key fact or an
@@ -110,13 +112,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeEmpty
 
@@ -151,13 +154,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeSpreadOne
 
@@ -192,13 +196,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeNamedOrdinary
 
@@ -233,13 +238,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end PathRefEmpty
 
@@ -274,13 +280,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RefEmpty
 
@@ -315,13 +322,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RefSpreadNone
 
@@ -356,13 +364,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RefSpreadOne
 
@@ -397,13 +406,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RefSpreadFails
 
@@ -438,13 +448,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RefOrdinary
 
@@ -479,13 +490,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end OpenEmpty
 
@@ -520,13 +532,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end OpenSpreadNone
 
@@ -561,13 +574,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end NestedEmpty
 
@@ -602,13 +616,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end NestedSpreadOne
 
@@ -643,13 +658,14 @@ theorem select : selectDotEdge ctx target N (some owner) = .ok (.member owner p)
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end NestedSpreadFails
 
@@ -705,14 +721,14 @@ theorem head_normal : ∀ x o v, headParam? target = some x →
 /-- **`navSettled_of_navRuns` APPLIED**: settled navigation at the probe's exit, over EVERY
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
-  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal
+  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint select
-    head_normal production_entry
+    head_normal production_entry input_free
 
 end ParamEmpty
 
@@ -768,14 +784,14 @@ theorem head_normal : ∀ x o v, headParam? target = some x →
 /-- **`navSettled_of_navRuns` APPLIED**: settled navigation at the probe's exit, over EVERY
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
-  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal
+  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint select
-    head_normal production_entry
+    head_normal production_entry input_free
 
 end ParamRefSpreadNone
 
@@ -831,14 +847,14 @@ theorem head_normal : ∀ x o v, headParam? target = some x →
 /-- **`navSettled_of_navRuns` APPLIED**: settled navigation at the probe's exit, over EVERY
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
-  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal
+  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint select
-    head_normal production_entry
+    head_normal production_entry input_free
 
 end ParamSpreadFails
 
@@ -894,14 +910,14 @@ theorem head_normal : ∀ x o v, headParam? target = some x →
 /-- **`navSettled_of_navRuns` APPLIED**: settled navigation at the probe's exit, over EVERY
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
-  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal
+  navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint select
-    head_normal production_entry
+    head_normal production_entry input_free
 
 end ParamPathEmpty
 
@@ -920,6 +936,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -984,7 +1003,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1024,13 +1043,14 @@ theorem probe_effect : probed.aliasCells.length = entry.aliasCells.length + 1 :=
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeSpreadNone
 
@@ -1049,6 +1069,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1113,7 +1136,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1153,13 +1176,14 @@ theorem probe_effect : probed.aliasCells.length = entry.aliasCells.length + 1 :=
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeSpreadFails
 
@@ -1178,6 +1202,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1242,7 +1269,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1282,13 +1309,14 @@ theorem probe_effect : probed.aliasCells.length = entry.aliasCells.length + 1 :=
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeNamedSpreadOne
 
@@ -1307,6 +1335,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1371,7 +1402,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1411,13 +1442,14 @@ theorem probe_effect : probed.aliasCells.length = entry.aliasCells.length + 1 :=
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end RuntimeNamedSpreadFails
 
@@ -1436,6 +1468,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1500,7 +1535,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1540,13 +1575,14 @@ theorem probe_effect : probed = entry := rfacts.2.2.2.2.2.2.2.2.2.2.2.2.2
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end PathRefSpreadNone
 
@@ -1565,6 +1601,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1629,7 +1668,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1669,13 +1708,14 @@ theorem probe_effect : probed = entry := rfacts.2.2.2.2.2.2.2.2.2.2.2.2.2
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end PathRefSpreadOne
 
@@ -1694,6 +1734,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1758,7 +1801,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1798,13 +1841,14 @@ theorem probe_effect : probed = entry := rfacts.2.2.2.2.2.2.2.2.2.2.2.2.2
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end PathRefSpreadFails
 
@@ -1823,6 +1867,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := MemberStabilityInstances.capture src
 def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -1887,7 +1934,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -1927,13 +1974,14 @@ theorem probe_effect : probed = entry := rfacts.2.2.2.2.2.2.2.2.2.2.2.2.2
     navigation extension — derived from the probe. -/
 theorem nav_settled : NavSettled target ctx owner probed :=
   navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+    input_free
 
 /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
 theorem bridge_of_probe :
     (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
   member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-    (fun _ _ _ hx => nomatch hx) production_entry
+    (fun _ _ _ hx => nomatch hx) production_entry input_free
 
 end PathRefOrdinary
 

@@ -1032,14 +1032,28 @@ theorem EvalBody.evalZeroArgPropertyAccessCounted_sound (rec : EvalRec) (hrec : 
   · -- Exported: the publication law over the detached context, whose need tier and values are empty.
     intro hp s vs ps
     rw [EvalM.bind_runState, get_run]
-    exact EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding resolvedAlgorithm
-      (ctx.detach s.lexicalActivations.size) [] request
+    -- The request is served (ledger R-1): the served evaluation keeps the publication law's contract.
+    exact SoundI.servingDetached _ (EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding
+      resolvedAlgorithm (ctx.detach s.lexicalActivations.size) [] request
       (P := CallPre (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request))
-      (fun _ _ => ⟨fun _ hm => (by cases hm), fun _ hm => (by cases hm)⟩) hp s vs ps
+      (fun _ _ => ⟨fun _ hm => (by cases hm), fun _ hm => (by cases hm)⟩)) hp s vs ps
   · split
     · exact SoundI.throw _
-    · exact EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding resolvedAlgorithm
-        ctx env request (fun _ ph => ph)
+    · -- An admitted read notes its input first (ledger R-1): no address is written.
+      have hsplit : ((do
+          if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+          EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) :
+            EvalM CountedResult)
+          = ((if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx else pure ()) >>= fun _ =>
+              EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+        split <;> rfl
+      rw [hsplit]
+      refine SoundI.bind (Q := fun _ _ => True) ?_ (fun _ _ _ _ _ => trivial) (fun _ => ?_)
+      · split
+        · exact noteLocalOnlyRead_spec
+        · exact SoundI.pure () (fun _ _ => trivial)
+      · exact EvalBody.zeroArgPropertyPublication_sound rec hrec accessKind owner binding resolvedAlgorithm
+          ctx env request (fun _ ph => ph.1)
 
 /-- **THE PER-BODY OBLIGATION** (M3): every evaluator body keeps the call contract whenever its
     recursive answer does. -/

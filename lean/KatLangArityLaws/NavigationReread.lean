@@ -1,5 +1,6 @@
 import KatLangArityLaws.MemberSettled
 import KatLangArityLaws.RuntimeAlias
+import KatLangArityLaws.RetainedCellReuse
 
 open KatLang KatLang.CallPlan KatLang.EvaluatorCore KatLang.PlanRouteBridge KatLang.MemberStability
 open KatLang.MemberSettled KatLang.EvaluatorCacheLaws
@@ -70,7 +71,13 @@ activation array before the read.
 same bodies (`evalStep`), the same projection flights (`evalFuel`), with a call refused — incomplete —
 exactly when it is not an identity-navigation call, when a parameter it transports has an
 unrecorded captured activation or no cell, when it chases an alias whose declaring chain's owner
-search is unrecorded, or when it projects an address outside the heap (`navAdmits`). It is no second evaluator: `navFuel n ⊑ evalFuel n` (`navFuel_le`), so a completed
+search is unrecorded, or when it projects an address outside the heap (`navAdmits`). Since ledger
+R-1 (November 2026) it also refuses a call that would make an INPUT READ of a retained cell's
+computation (`EvalCtx.inputRecord`): a parameter read, an alias chase (`chaseQuiet`, which also asks
+for the default watermark) and the three calls whose own body takes a member step — the receiver
+probe, the structural member projection and an alias's route decision. Inside such a computation
+the read, or the admitted access of a local-only member (`noteMemberAccess`), writes the cell's
+input record, so it is no pure re-read. It is no second evaluator: `navFuel n ⊑ evalFuel n` (`navFuel_le`), so a completed
 navigation run IS the production run (`NavRuns.production`); and it is executable, so an instance
 establishes it by evaluation. `NavRuns c s r` is "the navigation core completes `c` from `s` with
 `r`".
@@ -391,13 +398,14 @@ theorem anchored_mono {x : Ident} {ctx : EvalCtx} {s u : EvalState}
     exact decide_eq_true (Nat.lt_of_lt_of_le (of_decide_eq_true h) hp.size_le)
 
 /-- An anchored parameter's projection is re-read: the supplied cell is found through the same
-    recorded activation, and its projection is re-read. -/
+    recorded activation, and its projection is re-read (outside every retained cell's computation). -/
 theorem rrat_projectParameterWith (project : Nat → EvalM (Option Algorithm)) (hp : ∀ a, RR (project a))
-    (x : Ident) (ctx : EvalCtx) (s : EvalState) (hanch : anchored x ctx s = true) :
+    (x : Ident) (ctx : EvalCtx) (s : EvalState) (hanch : anchored x ctx s = true)
+    (hq : ctx.inputRecord = none) :
     RRat s (projectParameterWith project x ctx) := by
   have hact := anchored_spec hanch
   intro hdone
-  rw [projectParameterWith_run] at hdone ⊢
+  rw [projectParameterWith_run _ _ _ _ hq] at hdone ⊢
   cases haddr : parameterAddressIn s.lexicalActivations x ctx with
   | none =>
     -- No cell: the absence of a usable binding, or the refusal of an unavailable parameter. Both are
@@ -405,17 +413,17 @@ theorem rrat_projectParameterWith (project : Nat → EvalM (Option Algorithm)) (
     by_cases hu : capturedParameter x ctx = .unavailable
     · simp only [hu, ite_true]
       refine ⟨NavExt.refl s, fun _ u hext => ?_⟩
-      rw [projectParameterWith_run, parameterAddressIn_stable x ctx s u hext.memo.activations hact, haddr]
+      rw [projectParameterWith_run _ _ _ _ hq, parameterAddressIn_stable x ctx s u hext.memo.activations hact, haddr]
       simp only [hu, ite_true]
     · simp only [hu, ite_false]
       refine ⟨NavExt.refl s, fun _ u hext => ?_⟩
-      rw [projectParameterWith_run, parameterAddressIn_stable x ctx s u hext.memo.activations hact, haddr]
+      rw [projectParameterWith_run _ _ _ _ hq, parameterAddressIn_stable x ctx s u hext.memo.activations hact, haddr]
       simp only [hu, ite_false]
   | some address =>
     rw [haddr] at hdone
     have h := hp address s hdone
     refine ⟨h.1, fun hc u hu => ?_⟩
-    rw [projectParameterWith_run,
+    rw [projectParameterWith_run _ _ _ _ hq,
       parameterAddressIn_stable x ctx s u (h.1.memo.activations.trans hu.memo.activations) hact, haddr]
     exact h.2 hc u hu
 
@@ -560,31 +568,41 @@ section Helpers
 variable {P : EvalState → Prop} (hP : ∀ s t, NavExt s t → P s → P t)
 include hP
 
+/-- The member steps of a static path, OUTSIDE every retained cell's computation (`hq`): there an
+    admitted access notes nothing (`noteMemberAccess_unmarked`); inside one it is an input read the
+    cell records (ledger R-1), which is no re-read. -/
 theorem rron_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, RRon P (structureOf a c)) (stepCtx : EvalCtx) (notStatic : Error) (steps : List Ident) :
+    (h : ∀ a c, RRon P (structureOf a c)) (stepCtx : EvalCtx) (hq : stepCtx.inputRecord = none)
+    (notStatic : Error) (steps : List Ident) :
     ∀ (value : Algorithm) (last : Option ResolvedProperty) (receiverName : String),
       RRon P (aliasStepNavigateWith structureOf stepCtx notStatic value last receiverName steps) := by
   induction steps with
   | nil => intro value last receiverName; unfold aliasStepNavigateWith; rr_tac
-  | cons member rest ih => intro value last receiverName; unfold aliasStepNavigateWith; rr_tac
+  | cons member rest ih =>
+    intro value last receiverName; unfold aliasStepNavigateWith
+    simp only [noteMemberAccess_unmarked _ _ _ _ hq]
+    rr_tac
 
 theorem rron_staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, RRon P (structureOf a c)) (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx) :
+    (h : ∀ a c, RRon P (structureOf a c)) (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx)
+    (hq : stepCtx.inputRecord = none) :
     RRon P (staticPathSelectWith structureOf owner target stepCtx) := by
-  have hn := fun stepCtx notStatic steps value last receiverName =>
-    rron_aliasStepNavigateWith hP structureOf h stepCtx notStatic steps value last receiverName
+  have hn := fun notStatic steps value last receiverName =>
+    rron_aliasStepNavigateWith hP structureOf h stepCtx hq notStatic steps value last receiverName
   unfold staticPathSelectWith; rr_tac
 
 theorem rron_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, RRon P (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    (h : ∀ a c, RRon P (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx)
+    (hq : ctx.inputRecord = none) :
     RRon P (resolveAliasStepWith structureOf step target ctx) :=
-  rron_staticPathSelectWith hP structureOf h step target (ctx.push step)
+  rron_staticPathSelectWith hP structureOf h step target (ctx.push step) hq
 
 theorem rron_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, RRon P (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
+    (h : ∀ a c, RRon P (structureOf a c)) (receiver : Expr) (ctx : EvalCtx)
+    (hq : ctx.inputRecord = none) :
     RRon P (aliasRouteIsIntrinsicWith structureOf receiver ctx) := by
-  have hn := fun stepCtx notStatic steps value last receiverName =>
-    rron_aliasStepNavigateWith hP structureOf h stepCtx notStatic steps value last receiverName
+  have hn := fun notStatic steps value last receiverName =>
+    rron_aliasStepNavigateWith hP structureOf h ctx hq notStatic steps value last receiverName
   unfold aliasRouteIsIntrinsicWith; rr_tac
 
 end Helpers
@@ -626,8 +644,11 @@ variable {P : EvalState → Prop} (hP : ∀ s t, NavExt s t → P s → P t)
 variable (rec : EvalRec) (hrec : ∀ c, RRon P (rec c))
 include hP hrec
 
-theorem rron_body_aliasStepIsRuntime (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) :
+theorem rron_body_aliasStepIsRuntime (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String)
+    (hq : ctx.inputRecord = none) :
     RRon P (EvalBody.aliasStepIsRuntime rec step target ctx visited) := by
+  -- The route decision navigates in the alias's own scope, the alias pushed: the same record.
+  have hpush : ∀ a, (ctx.push a).inputRecord = none := fun _ => hq
   unfold EvalBody.aliasStepIsRuntime; rr_nav
 
 /-- THE ALIAS CHASE over an alias: its route decision, its runtime step (the binding cell, a
@@ -635,9 +656,12 @@ theorem rron_body_aliasStepIsRuntime (step : Algorithm) (target : Expr) (ctx : E
 theorem rron_body_chase_alias (fc pr : Bool) (parent : Option ScopeCtx) (opens : List Expr) (props : List PropDef)
     (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (ctx : EvalCtx) (visited : List String)
     (last : Option (Algorithm × PropDef))
-    (hcell : RRon P (aliasBindingCell (.alias parent opens props target id reference) target ctx)) :
+    (hcell : RRon P (aliasBindingCell (.alias parent opens props target id reference) target ctx))
+    (hw : ctx.detachedBefore = 0) (hu : ctx.inputRecord = none) :
     RRon P (EvalBody.resolveAliasChase rec fc pr (.alias parent opens props target id reference) ctx visited last) := by
-  unfold EvalBody.resolveAliasChase; rr_nav
+  unfold EvalBody.resolveAliasChase runtimeAliasStepWith
+  simp only [KatLang.RetainedCellReuse.reuseRetainedCell_quiet _ ctx _ hw hu]
+  rr_nav
 
 omit hP hrec in
 theorem rron_body_chase_other (fc pr : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String)
@@ -653,13 +677,17 @@ theorem rron_body_resolveAliasStructure (a : Algorithm) (ctx : EvalCtx) :
     RRon P (EvalBody.resolveAliasStructure rec a ctx) := by
   unfold EvalBody.resolveAliasStructure; rr_nav
 
-theorem rron_body_resolveDotReceiver? (e : Expr) (ctx : EvalCtx) :
+theorem rron_body_resolveDotReceiver? (e : Expr) (ctx : EvalCtx) (hq : ctx.inputRecord = none) :
     RRon P (EvalBody.resolveDotReceiver? rec e ctx) := by
-  unfold EvalBody.resolveDotReceiver?; rr_nav
+  unfold EvalBody.resolveDotReceiver?
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq]
+  rr_nav
 
-theorem rron_body_projectNeedStructuralMember (e : Expr) (ctx : EvalCtx) :
+theorem rron_body_projectNeedStructuralMember (e : Expr) (ctx : EvalCtx) (hq : ctx.inputRecord = none) :
     RRon P (EvalBody.projectNeedStructuralMember rec e ctx) := by
-  unfold EvalBody.projectNeedStructuralMember; rr_nav
+  unfold EvalBody.projectNeedStructuralMember
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq]
+  rr_nav
 
 theorem rron_body_algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) :
     RRon P (EvalBody.algorithmIntrinsicRoute rec receiver ctx) := by
@@ -679,11 +707,14 @@ def resolveAlgAdmits : Expr → Bool
   | _ => true
 
 /-- A chase step of an alias whose row is a PARAMETER transports that parameter's own cell: the read
-    is admitted where the parameter is anchored and has a cell. Every other chase is admitted. -/
+    is admitted where the parameter is anchored and has a cell, outside every retained cell's
+    computation (inside one the transport is also an INPUT READ the cell records, ledger R-1, so it is
+    no pure re-read). Every other chase is admitted. -/
 def paramRowAdmits (a : Algorithm) (ctx : EvalCtx) (s : EvalState) : Bool :=
   match a with
   | .alias _ _ _ (.param y) _ _ =>
-      anchored y (ctx.push a) s && (parameterAddressIn s.lexicalActivations y (ctx.push a)).isSome
+      anchored y (ctx.push a) s && (parameterAddressIn s.lexicalActivations y (ctx.push a)).isSome &&
+        ctx.inputRecord.isNone
   | _ => true
 
 /-- A chase step of an alias reads (or establishes) its binding cell under `aliasBindingCellKey`,
@@ -704,17 +735,38 @@ theorem cellKeyAdmits_mono {a : Algorithm} {s u : EvalState}
   | builtin b => rfl
   | conditional p op bs id => rfl
 
+/-- An alias chase may take a RUNTIME step, which reuses the alias's retained binding cell
+    (`reuseRetainedCell`, ledger R-1): judged against the reading context, whose answer follows the
+    cell's input record as the cell's computation grows. The navigation core answers such a chase where
+    that judgment is the channel itself — at the default watermark, outside every retained cell's
+    computation (`RetainedCellReuse.reuseRetainedCell_quiet`). A non-alias takes no runtime step. -/
+def chaseQuiet (a : Algorithm) (ctx : EvalCtx) : Bool :=
+  match a with
+  | .alias .. => ctx.detachedBefore == 0 && ctx.inputRecord.isNone
+  | _ => true
+
+theorem chaseQuiet_alias {parent : Option ScopeCtx} {opens : List Expr} {props : List PropDef} {target : Expr}
+    {id : Option PropertyIdentity} {reference : Bool} {ctx : EvalCtx}
+    (h : chaseQuiet (.alias parent opens props target id reference) ctx = true) :
+    ctx.detachedBefore = 0 ∧ ctx.inputRecord = none := by
+  simpa [chaseQuiet] using h
+
 /-- **What the navigation core answers, and where.** The calls of identity navigation; a parameter
-    read only where it is anchored; an alias chase only where its declaring chain's owner search is
-    recorded; a projection only of an address inside the heap. -/
+    read only where it is anchored, outside every retained cell's computation; an alias chase only
+    where its declaring chain's owner search is recorded and its runtime step's reuse judgment is
+    quiet (`chaseQuiet`); a projection only of an address inside the heap. The three calls whose own
+    body takes a MEMBER STEP — the receiver probe, the structural member projection and an alias's
+    route decision — only outside every retained cell's computation: inside one, the admitted access
+    of a local-only member is an INPUT READ the cell records (`noteMemberAccess`, ledger R-1), so it
+    is no pure re-read. -/
 def navAdmits : EvalCall → EvalState → Bool
-  | .aliasStepIsRuntime _ _ _ _, _ => true
-  | .resolveAliasChase _ _ a ctx _ _, s => paramRowAdmits a ctx s && cellKeyAdmits a s
+  | .aliasStepIsRuntime _ _ ctx _, _ => ctx.inputRecord.isNone
+  | .resolveAliasChase _ _ a ctx _ _, s => paramRowAdmits a ctx s && cellKeyAdmits a s && chaseQuiet a ctx
   | .resolveAliasStructure _ _, _ => true
-  | .resolveDotReceiver? _ _, _ => true
-  | .projectNeedStructuralMember _ _, _ => true
+  | .resolveDotReceiver? _ ctx, _ => ctx.inputRecord.isNone
+  | .projectNeedStructuralMember _ ctx, _ => ctx.inputRecord.isNone
   | .algorithmIntrinsicRoute _ _, _ => true
-  | .projectParameterCallable x ctx, s => anchored x ctx s
+  | .projectParameterCallable x ctx, s => anchored x ctx s && ctx.inputRecord.isNone
   | .projectNeedCallable a, s => s.needs[a]?.isSome
   | .resolveAlg e _, _ => resolveAlgAdmits e
   | _, _ => false
@@ -796,19 +848,25 @@ theorem paramRowAdmits_mono {a : Algorithm} {ctx : EvalCtx} {s u : EvalState} (h
   split
   · rename_i parent opens props y id reference
     simp only [Bool.and_eq_true] at hadm ⊢
-    exact ⟨anchored_mono h.memo.activations hadm.1, by rw [parameterAddress_kept h hadm.1]; exact hadm.2⟩
+    exact ⟨⟨anchored_mono h.memo.activations hadm.1.1, by rw [parameterAddress_kept h hadm.1.1]; exact hadm.1.2⟩,
+      hadm.2⟩
   · rfl
 
 theorem navAdmits_mono {c : EvalCall} {s u : EvalState} (h : NavExt s u) (hadm : navAdmits c s = true) :
     navAdmits c u = true := by
   cases c
   case resolveAliasChase fc pr a ctx visited last =>
-    have hadm' : (paramRowAdmits a ctx s && cellKeyAdmits a s) = true := hadm
+    have hadm' : (paramRowAdmits a ctx s && cellKeyAdmits a s && chaseQuiet a ctx) = true := hadm
     simp only [Bool.and_eq_true] at hadm'
-    show (paramRowAdmits a ctx u && cellKeyAdmits a u) = true
+    show (paramRowAdmits a ctx u && cellKeyAdmits a u && chaseQuiet a ctx) = true
     simp only [Bool.and_eq_true]
-    exact ⟨paramRowAdmits_mono h hadm'.1, cellKeyAdmits_mono h.memo.activations hadm'.2⟩
-  case projectParameterCallable x ctx => exact anchored_mono h.memo.activations hadm
+    exact ⟨⟨paramRowAdmits_mono h hadm'.1.1, cellKeyAdmits_mono h.memo.activations hadm'.1.2⟩, hadm'.2⟩
+  case projectParameterCallable x ctx =>
+    have hadm' : (anchored x ctx s && ctx.inputRecord.isNone) = true := hadm
+    simp only [Bool.and_eq_true] at hadm'
+    show (anchored x ctx u && ctx.inputRecord.isNone) = true
+    simp only [Bool.and_eq_true]
+    exact ⟨anchored_mono h.memo.activations hadm'.1, hadm'.2⟩
   case projectNeedCallable a =>
     show u.needs[a]?.isSome = true
     have hadm' : s.needs[a]?.isSome = true := hadm
@@ -841,9 +899,10 @@ theorem rron_paramRow_cell (parent : Option ScopeCtx) (opens : List Expr) (props
       (aliasBindingCell (.alias parent opens props (.param y) id reference) (.param y) ctx) := by
   intro s hs
   have hs' : (anchored y (ctx.push (.alias parent opens props (.param y) id reference)) s &&
-      (parameterAddressIn s.lexicalActivations y (ctx.push (.alias parent opens props (.param y) id reference))).isSome) = true := hs
-  simp only [Bool.and_eq_true] at hs'
-  obtain ⟨hanch, hfound⟩ := hs'
+      (parameterAddressIn s.lexicalActivations y (ctx.push (.alias parent opens props (.param y) id reference))).isSome &&
+      ctx.inputRecord.isNone) = true := hs
+  simp only [Bool.and_eq_true, Option.isNone_iff_eq_none] at hs'
+  obtain ⟨⟨hanch, hfound⟩, hq⟩ := hs'
   cases haddr : parameterAddressIn s.lexicalActivations y (ctx.push (.alias parent opens props (.param y) id reference)) with
   | none => rw [haddr] at hfound; cases hfound
   | some p =>
@@ -851,7 +910,7 @@ theorem rron_paramRow_cell (parent : Option ScopeCtx) (opens : List Expr) (props
         (ctx.push (.alias parent opens props (.param y) id reference)) = some p →
         (aliasBindingCell (.alias parent opens props (.param y) id reference) (.param y) ctx).runState u = (.ok p, u) :=
       fun u hu => KatLang.RuntimeAliasLaws.aliasBindingCell_parameter_transport _ y ctx u _ p
-        (captured_run y _ u (parameterAddressIn_available hu)) hu
+        (captured_run y _ u (parameterAddressIn_available hu) hq) hu
     exact RRat.of_run (hrun s haddr) (NavExt.refl s)
       (fun _ u hu => hrun u (by rw [parameterAddress_kept hu hanch]; exact haddr))
 
@@ -885,22 +944,24 @@ theorem navFuel_rr (n : Nat) : ∀ (c : EvalCall), RR (navFuel n c) := by
         exact fuel_succ_of_body n (.projectNeedCallable a) u _ hre hne
       case aliasStepIsRuntime step target ctx visited =>
         exact (rr_of_rron (rron_body_aliasStepIsRuntime (fun _ _ _ _ => trivial) (navFuel n)
-          (fun c => rron_of_rr (ih c)) step target ctx visited) s).normalize
+          (fun c => rron_of_rr (ih c)) step target ctx visited (Option.isNone_iff_eq_none.mp hadm)) s).normalize
       case resolveAliasStructure a ctx =>
         exact (rr_of_rron (rron_body_resolveAliasStructure (fun _ _ _ _ => trivial) (navFuel n)
           (fun c => rron_of_rr (ih c)) a ctx) s).normalize
       case resolveDotReceiver? e ctx =>
         exact (rr_of_rron (rron_body_resolveDotReceiver? (fun _ _ _ _ => trivial) (navFuel n)
-          (fun c => rron_of_rr (ih c)) e ctx) s).normalize
+          (fun c => rron_of_rr (ih c)) e ctx (Option.isNone_iff_eq_none.mp hadm)) s).normalize
       case projectNeedStructuralMember e ctx =>
         exact (rr_of_rron (rron_body_projectNeedStructuralMember (fun _ _ _ _ => trivial) (navFuel n)
-          (fun c => rron_of_rr (ih c)) e ctx) s).normalize
+          (fun c => rron_of_rr (ih c)) e ctx (Option.isNone_iff_eq_none.mp hadm)) s).normalize
       case algorithmIntrinsicRoute receiver ctx =>
         exact (rr_of_rron (rron_body_algorithmIntrinsicRoute (fun _ _ _ _ => trivial) (navFuel n)
           (fun c => rron_of_rr (ih c)) receiver ctx) s).normalize
       case projectParameterCallable x ctx =>
+        have hadm' : (anchored x ctx s && ctx.inputRecord.isNone) = true := hadm
+        simp only [Bool.and_eq_true, Option.isNone_iff_eq_none] at hadm'
         exact (rrat_projectParameterWith (EvalRec.projectNeedCallable (navFuel n))
-          (fun a => ih (.projectNeedCallable a)) x ctx s hadm).normalize
+          (fun a => ih (.projectNeedCallable a)) x ctx s hadm'.1 hadm'.2).normalize
       case resolveAlg e ctx =>
         have he : resolveAlgAdmits e = true := hadm
         refine RRat.normalize ?_
@@ -912,9 +973,9 @@ theorem navFuel_rr (n : Nat) : ∀ (c : EvalCall), RR (navFuel n c) := by
       case resolveAliasChase fc pr a ctx visited last =>
         refine RRat.normalize ?_
         show RRat s (EvalBody.resolveAliasChase (navFuel n) fc pr a ctx visited last)
-        have hadm' : (paramRowAdmits a ctx s && cellKeyAdmits a s) = true := hadm
+        have hadm' : (paramRowAdmits a ctx s && cellKeyAdmits a s && chaseQuiet a ctx) = true := hadm
         simp only [Bool.and_eq_true] at hadm'
-        obtain ⟨hpa, hck⟩ := hadm'
+        obtain ⟨⟨hpa, hck⟩, hquiet⟩ := hadm'
         cases a with
         | mk p pp op pr' out id => exact rr_pure _ s
         | builtin b => exact rr_pure _ s
@@ -926,7 +987,8 @@ theorem navFuel_rr (n : Nat) : ∀ (c : EvalCall), RR (navFuel n c) := by
               (P := fun t => paramRowAdmits (.alias parent opens props (.param y) id reference) ctx t = true)
               (fun _ _ h hs => paramRowAdmits_mono h hs) (navFuel n) (fun c => rron_of_rr (ih c))
               fc pr parent opens props (.param y) id reference ctx visited last
-              (rron_paramRow_cell parent opens props y id reference ctx) s hpa
+              (rron_paramRow_cell parent opens props y id reference ctx)
+              (chaseQuiet_alias hquiet).1 (chaseQuiet_alias hquiet).2 s hpa
           · have hnp : ∀ y, target ≠ .param y := fun y h => hp ⟨y, h⟩
             exact rron_body_chase_alias
               (P := fun t => ownerSearchRecorded parent t = true)
@@ -934,7 +996,7 @@ theorem navFuel_rr (n : Nat) : ∀ (c : EvalCall), RR (navFuel n c) := by
               (navFuel n) (fun c => rron_of_rr (ih c))
               fc pr parent opens props target id reference ctx visited last
               (fun t ht => rrat_aliasBindingCell (.alias parent opens props target id reference) target ctx hnp t ht)
-              s hck
+              (chaseQuiet_alias hquiet).1 (chaseQuiet_alias hquiet).2 s hck
       all_goals (simp [navAdmits] at hadm)
     rw [ite_eq_left hadm] at hdone
     have h := hbody hdone

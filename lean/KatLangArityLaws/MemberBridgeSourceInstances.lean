@@ -144,13 +144,14 @@ theorem flight_member (a : Nat) (target : Expr) (N : Ident) (fallback : Expr) (a
     (hcell : e.needs[a]? = some cell) (hr : cell.route = none)
     (hprobe : (resolveDotReceiver? target ctx).runState e = (.ok alg?, e'))
     (hsel : selectDotEdge ctx target N alg? = .ok sel)
-    (hstill : (e'.needs[a]?).bind NeedCell.route = none) :
+    (hstill : (e'.needs[a]?).bind NeedCell.route = none)
+    (hq : ctx.inputRecord = none) :
     (withCtx (NeedPlan.CallShape.ctxMsg ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩)
         (NeedPlan.routeOf productionPlanRoute.classify a
           ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩)).runState e =
       (.ok (selectionRoute sel), withRoute a (selectionRoute sel) e') := by
   rw [KatLang.FiniteLoop.ctx_run, routeOf_fresh _ a _ e cell hcell hr]
-  rw [classify_dot target N fallback args ctx env e e' alg? sel hprobe hsel]
+  rw [classify_dot target N fallback args ctx env e e' alg? sel hprobe hsel (fun _ _ _ => hq)]
   simp only [recordRoute, hstill]
   rfl
 
@@ -168,6 +169,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := capture src
 def ctx : EvalCtx := ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -247,7 +251,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
   facts.2.2.2.2.2.2.2.2.1
@@ -299,7 +303,7 @@ theorem bridge :
     (ordinaryCall productionPlanRoute 0 shape .call).runState x =
       (reCountValueBoundary <$> evalCounted src ctx []).runState x :=
   member_bridge_settled 0 target N (.resolve N) args ctx [] x x alg? owner p probe_x selected projection_x
-    settled_origin production_completes
+    settled_origin production_completes input_free
 
 /-- Both sides return the value 7. -/
 theorem value : ((ordinaryCall productionPlanRoute 0 shape .call).runState x).1 = .ok (.atom 7, 1) :=
@@ -333,6 +337,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := capture src
 def ctx : EvalCtx := ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -412,7 +419,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
   facts.2.2.2.2.2.2.2.2.1
@@ -464,7 +471,7 @@ theorem bridge :
     (ordinaryCall productionPlanRoute 0 shape .call).runState x =
       (reCountValueBoundary <$> evalCounted src ctx []).runState x :=
   member_bridge_settled 0 target N (.resolve N) args ctx [] x x alg? owner p probe_x selected projection_x
-    settled_origin production_completes
+    settled_origin production_completes input_free
 
 /-- Both sides return the value 7. -/
 theorem value : ((ordinaryCall productionPlanRoute 0 shape .call).runState x).1 = .ok (.atom 7, 1) :=
@@ -498,6 +505,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := capture src
 def ctx : EvalCtx := ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -576,7 +586,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
   facts.2.2.2.2.2.2.2.2.1
@@ -628,7 +638,7 @@ theorem bridge :
     (ordinaryCall productionPlanRoute 0 shape .call).runState x =
       (reCountValueBoundary <$> evalCounted src ctx []).runState x :=
   member_bridge_settled 0 target N (.resolve N) args ctx [] x x alg? owner p probe_x selected projection_x
-    settled_origin production_completes
+    settled_origin production_completes input_free
 
 /-- Both sides return the value 50. -/
 theorem value : ((ordinaryCall productionPlanRoute 0 shape .call).runState x).1 = .ok (.atom 50, 1) :=
@@ -655,6 +665,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := capture src
 def ctx : EvalCtx := ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -733,7 +746,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
   facts.2.2.2.2.2.2.2.2.1
@@ -785,7 +798,7 @@ theorem bridge :
     (ordinaryCall productionPlanRoute 0 shape .call).runState x =
       (reCountValueBoundary <$> evalCounted src ctx []).runState x :=
   member_bridge_settled 0 target N (.resolve N) args ctx [] x x alg? owner p probe_x selected projection_x
-    settled_origin production_completes
+    settled_origin production_completes input_free
 
 /-- **The spread FAILS**: the supply formation's failure is the run's, on both sides; the callee
     origin is never read. -/
@@ -812,6 +825,9 @@ def src : Expr := .dotMember target N (.resolve N) (some args)
 def row : Expr := capture src
 def ctx : EvalCtx := ctxOf [row]
 def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctx.inputRecord = none := rfl
 
 def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
 def entry : EvalState := withState 0 .evaluating fin
@@ -890,7 +906,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
       (.ok .call, x) :=
   flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
   facts.2.2.2.2.2.2.2.2.1
@@ -942,7 +958,7 @@ theorem bridge :
     (ordinaryCall productionPlanRoute 0 shape .call).runState x =
       (reCountValueBoundary <$> evalCounted src ctx []).runState x :=
   member_bridge_settled 0 target N (.resolve N) args ctx [] x x alg? owner p probe_x selected projection_x
-    settled_origin production_completes
+    settled_origin production_completes input_free
 
 /-- Both sides return the value 20. -/
 theorem value : ((ordinaryCall productionPlanRoute 0 shape .call).runState x).1 = .ok (.atom 20, 1) :=

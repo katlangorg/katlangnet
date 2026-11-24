@@ -302,13 +302,22 @@ theorem keeps_pure {α : Type} (P : EvalState → Prop) (x : α) : Keeps P (pure
 theorem keeps_of_state {α : Type} (P : EvalState → Prop) (m : EvalM α)
     (h : ∀ s, (m.runState s).2 = s) : Keeps P m := fun s hP _ => by rw [h s]; exact hP
 
+/-- A computation that writes nothing but the input records (ledger R-1) keeps every `P` that
+    survives such a write. -/
+theorem keeps_of_inputsOnly {α : Type} (P : EvalState → Prop) (m : EvalM α)
+    (hin : ∀ s (inputs : CellRecords), P s → P { s with cellInputs := inputs })
+    (h : ∀ s, (m.runState s).2 = { s with cellInputs := (m.runState s).2.cellInputs }) : Keeps P m :=
+  fun s hP _ => by rw [h s]; exact hin s _ hP
+
 theorem oblivious_pure' {α : Type} (P : EvalState → Prop) (a : Nat) (x : α) :
     ObliviousOn P a (pure x : EvalM α) := fun _ _ _ _ => rfl
 
-/-- `P` survives a push of ANY cell, including Ready references. Reference-exclusion predicates
-    generally fail this contract; it is stronger than preservation under META-free allocation. -/
+/-- `P` survives a push of ANY cell, including Ready references, and any write of the input records
+    (ledger R-1: no address and no plan is stored there). Reference-exclusion predicates generally
+    fail this contract; it is stronger than preservation under META-free allocation. -/
 def PushClosed (P : EvalState → Prop) : Prop :=
-  ∀ s (c : NeedCell), P s → P { s with needs := s.needs.push c }
+  (∀ s (c : NeedCell), P s → P { s with needs := s.needs.push c }) ∧
+    ∀ s (inputs : CellRecords), P s → P { s with cellInputs := inputs }
 
 theorem withPlan_push (a : Nat) (p : NeedPlanSupply) (s : EvalState) (c : NeedCell)
     (hv : a < s.needs.size) :
@@ -332,12 +341,12 @@ theorem keeps_allocate (P : EvalState → Prop) (hpush : PushClosed P) (susp : N
     Keeps P (allocateNeed susp) := by
   intro s hP _
   rw [KatLang.NeedControl.Allocation.allocate_run]
-  exact hpush s _ hP
+  exact hpush.1 s _ hP
 
 theorem oblivious_captured (a : Nat) (name : Ident) (ctx : EvalCtx) :
     Oblivious a (capturedParameterActivation? name ctx) := by
   intro s p _
-  rw [captured_withPlan, captured_readonly]
+  exact captured_withPlan name ctx a p s
 
 theorem oblivious_supply (a : Nat) (source : Expr) (caller : EvalCtx) (values : ValEnv) :
     Oblivious a (supplyNeed source caller values) := by
@@ -347,7 +356,7 @@ theorem oblivious_supply (a : Nat) (source : Expr) (caller : EvalCtx) (values : 
     have hcw := captured_withPlan name caller a p s
     cases h : (capturedParameterActivation? name caller).runState s with
     | mk o t =>
-      obtain rfl := captured_state h
+      have hn : t.needs = s.needs := by rw [captured_state h]
       rw [h] at hcw
       cases o with
       | error e =>
@@ -356,12 +365,12 @@ theorem oblivious_supply (a : Nat) (source : Expr) (caller : EvalCtx) (values : 
       | ok activation =>
         cases hl : lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv) with
         | none =>
-          rw [KatLang.NeedControl.Allocation.supply_unbound_param name caller values _ activation h hl,
-            KatLang.NeedControl.Allocation.supply_unbound_param name caller values _ activation hcw hl,
-            withPlan_size, withPlan_push a p _ _ hv]
+          rw [KatLang.NeedControl.Allocation.supply_unbound_param name caller values s t activation h hl,
+            KatLang.NeedControl.Allocation.supply_unbound_param name caller values _ _ activation hcw hl,
+            withPlan_size, withPlan_push a p t _ (hn ▸ hv)]
         | some b =>
-          rw [KatLang.NeedControl.Allocation.supply_param_transports name caller values _ activation b h hl,
-            KatLang.NeedControl.Allocation.supply_param_transports name caller values _ activation b hcw hl]
+          rw [KatLang.NeedControl.Allocation.supply_param_transports name caller values s t activation b h hl,
+            KatLang.NeedControl.Allocation.supply_param_transports name caller values _ _ activation b hcw hl]
   · have hn : ∀ name, source ≠ .param name := fun name he => hp ⟨name, he⟩
     rw [KatLang.NeedControl.Allocation.supply_nonparameter source caller values _ hn,
       KatLang.NeedControl.Allocation.supply_nonparameter source caller values _ hn,
@@ -371,8 +380,8 @@ theorem keeps_supply (P : EvalState → Prop) (hpush : PushClosed P) (source : E
     (values : ValEnv) : Keeps P (supplyNeed source caller values) := by
   intro s hP _
   rcases supply_cases source caller values s with h | h <;> rw [h]
-  · exact hP
-  · exact hpush s _ hP
+  · exact hpush.2 s _ hP
+  · exact hpush.2 _ _ (hpush.1 s _ hP)
 
 theorem withPlan_suspension (a : Nat) (p : NeedPlanSupply) (s : EvalState) (b : Nat) :
     ((withPlan a p s).needs[b]?).map NeedCell.suspension = (s.needs[b]?).map NeedCell.suspension := by
@@ -413,7 +422,6 @@ theorem oblivious_parameterNeedAddress (a : Nat) (name : Ident) (ctx : EvalCtx) 
   have hcw := captured_withPlan name ctx a p s
   simp only [parameterNeedAddress?, bind_run, hcw]
   rcases h : (capturedParameterActivation? name ctx).runState s with ⟨o, t⟩
-  obtain rfl := captured_state h
   cases o <;> rfl
 
 theorem Oblivious.bind' {α β : Type} {a : Nat} {m : EvalM α} {f : α → EvalM β}
@@ -460,7 +468,7 @@ theorem slot_keeps (P : EvalState → Prop) (hpush : PushClosed P) (ev : NeedSup
   have kalloc := keeps_allocate P hpush
   cases e with
   | sequenceSpread operand =>
-    refine Keeps.bind (keeps_of_state P _ (fun s => spread_slice_readonly operand ctx s)) (fun known => ?_)
+    refine Keeps.bind (keeps_of_inputsOnly P _ hpush.2 (fun s => spread_slice_readonly operand ctx s)) (fun known => ?_)
     cases known with
     | some slice =>
       exact Keeps.mapM _ (fun b => Keeps.bind
@@ -483,7 +491,7 @@ theorem slot_oblivious (P : EvalState → Prop) (a : Nat) (hpush : PushClosed P)
   cases e with
   | sequenceSpread operand =>
     refine ObliviousOn.bind (ObliviousOn.of_oblivious P (oblivious_slice a operand ctx))
-      (keeps_of_state P _ (fun s => spread_slice_readonly operand ctx s)) (disciplined_slice operand ctx)
+      (keeps_of_inputsOnly P _ hpush.2 (fun s => spread_slice_readonly operand ctx s)) (disciplined_slice operand ctx)
       (fun known => ?_)
     cases known with
     | some slice =>

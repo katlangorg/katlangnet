@@ -207,10 +207,21 @@ theorem protected_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveP
   unfold EvalBody.evalZeroArgPropertyAccessCounted
   split
   · simp only [EvalM.bind_runState, get_runState]
-    exact protected_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+    exact pres_servingDetached_field _
+      (protected_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request) s
   · split
     · exact ActiveProtected.refl s
-    · exact protected_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
+    · -- An admitted read first notes its input (ledger R-1), which keeps every key and entry.
+      rcases KatLang.DetachedEvaluation.note_then_publication rec accessKind owner binding
+        resolvedAlgorithm ctx env request s with heq | ⟨t, hframe, heq⟩
+      · -- The read refused below an admitted reader (ledger R-1, deferred reads): the starting state.
+        rw [heq]
+        exact ActiveProtected.refl s
+      rw [heq]
+      have hst : ActiveProtected s t := fun key hk => by
+        rw [hframe]
+        exact ⟨hk, rfl⟩
+      exact hst.trans (protected_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request t)
 
 /-- One evaluator step over a preserving answer, for every `EvalCall` constructor. -/
 theorem protected_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveProtected (rec c)) :
@@ -273,9 +284,10 @@ theorem request_unfolds (hc : ProductionCompletes (evalUnbounded (requestCall k 
     binding's exposure requires, so the request laws below speak of the context `ctx`, `env` only
     for a request whose law runs THERE:
     * every LOCAL-ONLY request that is not a refused detached read (`local_only_runs_in_own_context`);
-    * an EXPORTED request issued from a context that is already detached at the entry state
-      (`detached_exported_runs_in_own_context`). Any other exported request runs the same law over
-      `ctx.detach s.lexicalActivations.size` and no values
+    * an EXPORTED request issued from a context that is already detached at the entry state, while
+      the input records serve its watermark (`detached_exported_runs_in_own_context`: a request made
+      inside the exported evaluation whose context it is). Any other exported request runs the same
+      law, served, over `ctx.detach s.lexicalActivations.size` and no values
       (`DetachedEvaluation.exported_access_is_detached`), under the SAME key
       (`WhileRoundProduction.cacheKey_exported_context_free`): apply the laws at that context. -/
 def RunsInOwnContext (request : ZeroArgPropertyRequest) : Prop :=
@@ -283,18 +295,20 @@ def RunsInOwnContext (request : ZeroArgPropertyRequest) : Prop :=
     (EvalBody.zeroArgPropertyPublication evalUnbounded k owner binding a ctx env request).runState s
 
 theorem local_only_runs_in_own_context (hlocal : binding.exposure.isExported = false)
-    (hadmitted : (request.isRead && localOnlyReadRefused binding a ctx) = false) :
+    (hadmitted : (request.isRead && localOnlyReadRefused binding a ctx) = false)
+    (hunmarked : ctx.inputRecord = none) :
     RunsInOwnContext k owner binding a ctx env s request := by
   unfold RunsInOwnContext
-  rw [KatLang.DetachedEvaluation.local_only_access_is_attached evalUnbounded k owner binding a ctx env request
-    hlocal hadmitted]
+  rw [KatLang.DetachedEvaluation.local_only_access_is_attached_unmarked evalUnbounded k owner binding a ctx env request
+    hlocal hadmitted hunmarked]
 
 theorem detached_exported_runs_in_own_context (hexported : binding.exposure.isExported = true)
-    (hctx : ctx.detach s.lexicalActivations.size = ctx) (henv : env = []) :
+    (hctx : ctx.detach s.lexicalActivations.size = ctx) (henv : env = [])
+    (hserved : ctx.detachedBefore ≤ s.cellInputs.serving) :
     RunsInOwnContext k owner binding a ctx env s request := by
   unfold RunsInOwnContext
-  rw [KatLang.DetachedEvaluation.exported_access_is_detached evalUnbounded k owner binding a ctx env request s
-    hexported, hctx, henv]
+  rw [KatLang.DetachedEvaluation.exported_access_is_detached_served evalUnbounded k owner binding a ctx env request s
+    hexported (by rw [hctx]; exact hserved), hctx, henv]
 
 /-- **Reentrant requests keep the key absent**: a read or an invocation of an active, absent key
     leaves that key absent. It says nothing of the rest of the state: other keys may publish. -/
@@ -451,10 +465,11 @@ theorem established_entry_read_after (c : EvalCall) (key : ZeroArgPropertyCacheK
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache key = some v)
     (hsame : keyAt k owner binding a ctx env ((evalUnbounded c).runState s).2 = key)
-    (hadmitted : localOnlyReadRefused binding a ctx = false) :
+    (hadmitted : localOnlyReadRefused binding a ctx = false)
+    (hquiet : binding.exposure.isExported = false → ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k owner binding a ctx env).runState ((evalUnbounded c).runState s).2 =
       (.ok v, ((evalUnbounded c).runState s).2) := by
-  refine WhileRoundProduction.property_cache_hit_production k owner binding a ctx env _ v hc ?_ hadmitted
+  refine WhileRoundProduction.property_cache_hit_production k owner binding a ctx env _ v hc ?_ hadmitted hquiet
   rw [show zeroArgPropertyCacheKey k owner binding ctx env
       (propertyOwnerBindingContext a.parent ((evalUnbounded c).runState s).2)
       (propertyOwnerInvocation a.parent ((evalUnbounded c).runState s).2) = key from hsame]

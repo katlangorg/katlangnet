@@ -346,10 +346,14 @@ theorem body_projectParameterCallable_res (x : Ident) (ctx : EvalCtx) (s : EvalS
     (t : EvalState) (h : (EvalBody.projectParameterCallable rec x ctx).runState s = (.ok o, t)) :
     OptAccounted t.needs o := by
   have h' : (projectParameterWith rec.projectNeedCallable x ctx).runState s = (.ok o, t) := h
-  rw [projectParameterWith_run] at h'
+  have hlate : KatLang.MemberStability.capturedLate s x ctx = false := by
+    cases hl : KatLang.MemberStability.capturedLate s x ctx with
+    | false => rfl
+    | true => rw [KatLang.MemberStability.projectParameterWith_late _ x ctx s hl] at h'; cases h'
+  rw [projectParameterWith_run_general _ x ctx s hlate] at h'
   split at h'
   · rename_i address _
-    exact hres (.projectNeedCallable address) s o t h'
+    exact hres (.projectNeedCallable address) (capturedState s x ctx) o t h'
   · -- No cell: the absence of a usable binding (the refusal of an unavailable parameter is no result).
     split at h'
     · cases h'
@@ -562,21 +566,23 @@ theorem member_bridge_of_probe_reached (a : Nat) (target : Expr) (N : Ident) (fa
     (hmint : s'.nextRuntimeDeclaration = s.nextRuntimeDeclaration)
     (hsel : selectDotEdge ctx target N (some owner) = .ok (.member owner p))
     (hheap : NormalHeap s.needs)
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s :=
   member_bridge_of_probe a target N fallback args ctx env s s' owner p hshape hnav hmint hsel
-    (fun x o v _ h => param_head_normal_reached ctx s hheap x o v h) hprod
+    (fun x o v _ h => param_head_normal_reached ctx s hheap x o v h) hprod hq
 
 /-- Settled navigation from the probe on a reached state: `navSettled_of_navRuns` without `hnorm`. -/
 theorem navSettled_of_navRuns_reached (target : Expr) (ctx : EvalCtx) (s t : EvalState) (owner : Algorithm)
     (hshape : receiverPath target = true)
     (hnav : NavRuns (.resolveDotReceiver? target ctx) s (.ok (some owner), t))
-    (hmint : t.nextRuntimeDeclaration = s.nextRuntimeDeclaration) (hheap : NormalHeap s.needs) :
+    (hmint : t.nextRuntimeDeclaration = s.nextRuntimeDeclaration) (hheap : NormalHeap s.needs)
+    (hq : ctx.inputRecord = none) :
     NavSettled target ctx owner t :=
   navSettled_of_navRuns target ctx s t owner hshape hnav hmint
-    (fun x o v _ h => param_head_normal_reached ctx s hheap x o v h)
+    (fun x o v _ h => param_head_normal_reached ctx s hheap x o v h) hq
 
 /-! ## Negative controls: the invariant is of REACHED states, and the relation is not trivial -/
 

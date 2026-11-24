@@ -70,10 +70,15 @@ public static partial class Evaluator
                 throw new System.Diagnostics.UnreachableException(
                     $"META-S3-0b: asynchronous resolution made no progress ({scope.PendingChannel} step reported pending after its outcome was recorded).");
             budget.NoteResolutionRetry();
-            if (scope.PendingChannel == NeedCell.Channel.Value)
-                record.RecordValue(cell, await cell.DemandAsync().ConfigureAwait(false));
-            else
-                record.RecordCallable(cell, await cell.ProjectCallableAsync().ConfigureAwait(false));
+            budget.EnterServing(scope.PendingWatermark);
+            try
+            {
+                if (scope.PendingChannel == NeedCell.Channel.Value)
+                    record.RecordValue(cell, await cell.DemandAsync().ConfigureAwait(false));
+                else
+                    record.RecordCallable(cell, await cell.ProjectCallableAsync().ConfigureAwait(false));
+            }
+            finally { budget.ExitServing(); }
         }
     }
 

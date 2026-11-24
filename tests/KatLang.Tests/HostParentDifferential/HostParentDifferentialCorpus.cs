@@ -28,6 +28,9 @@ public sealed record HostParentCase(
 {
     /// <summary>The Lean definition name of the case (<c>HP-01a</c> → <c>hp_01a</c>).</summary>
     public string LeanName => Id.Replace("-", "_", StringComparison.Ordinal).ToLowerInvariant();
+
+    /// <summary>The expected number of executed ticks when the case also pins effects.</summary>
+    public int? ExpectedTickCount { get; init; }
 }
 
 /// <summary>
@@ -39,13 +42,27 @@ public sealed record HostParentDivergence(string Reason, string CSharpNeutral, s
 
 /// <summary>
 /// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15,
-/// KL-06's failed-run publications HP-16, KL-07's neutral-text collision HP-17) plus the discovered
+/// KL-06's failed-run publications HP-16, KL-07's neutral-text collision HP-17, EXPORTED-DETACHED's HP-18
+/// and R-1's retained runtime-alias cells HP-19, with their open qualification HP-20) plus the discovered
 /// shapes (record-equal / shared / reused host objects, parent-replacing wiring routes, alias and
 /// family variants). Pure, Lean-representable ASTs only: no host operations, integer numbers.
 /// A raw host chain has no implicit prelude level; the module controls pin this boundary too.
 /// </summary>
 public static class HostParentDifferentialCorpus
 {
+    internal const string EscapedAliasCall = """
+        Cap(meta r) = r
+        Inc(x) = x + 1
+        Dbl(x) = x * 2
+        Sel(k) = if(k + tick() == 2, Cap(Inc(0)), Cap(Dbl(0)))
+        F(y) = {
+          A = Sel(y).Algorithm
+          P = [A(5)]
+          P[0]
+        }
+        F(1)
+        """;
+
     // ── AST vocabulary ───────────────────────────────────────────────────────────────────────
 
     private static ReadOnlyCollection<T> L<T>(params T[] items) => Array.AsReadOnly(items);
@@ -133,6 +150,33 @@ public static class HostParentDifferentialCorpus
         static Property AliasF(string name) => Public(name, new Algorithm.Alias(null, L<Expr>(), L<Property>(), R("F")));
         return Program([OpenBlock(first, [], AliasF("FA")), OpenBlock(second, [], AliasF("FB"))],
             [Prop("P", Fn(["f", "f"], N(0)))], Call("P", R("FA"), R("FB")));
+    }
+
+    /// <summary>
+    /// A parsed program with each property named by a dotted declaration path (<c>"F.P"</c>) forced to
+    /// <see cref="PropertyExposure.Exported"/>: the tree a wrong exposure analysis, or a host, would hand the
+    /// evaluators. The front end's own verdict on it must be local-only.
+    /// </summary>
+    private static Expr MisExposedSource(string source, params string[] paths)
+    {
+        Algorithm root = SourceProvenance.ParseValid(source).Root;
+        foreach (var path in paths)
+            root = ExportedAt(root, path.Split('.'), 0);
+        return new Expr.AlgorithmExpr(root);
+    }
+
+    private static Algorithm ExportedAt(Algorithm algorithm, string[] path, int depth)
+    {
+        var owner = (Algorithm.User)algorithm;
+        var properties = owner.Properties.ToList();
+        var index = properties.FindIndex(property => property.Name == path[depth]);
+        var selected = properties[index];
+        properties[index] = depth < path.Length - 1
+            ? selected with { Value = ExportedAt(selected.Value, path, depth + 1) }
+            : selected.Exposure == PropertyExposure.LocalOnlyCapturedAncestorParameters
+                ? selected with { Exposure = PropertyExposure.Exported, RequiredAncestorParameters = [], CaptureRequirements = null }
+                : throw new InvalidOperationException($"{string.Join('.', path)} is not local-only");
+        return owner with { Properties = properties };
     }
 
     // ── Corpus ───────────────────────────────────────────────────────────────────────────────
@@ -745,6 +789,103 @@ public static class HostParentDifferentialCorpus
                 OpenedThrough(OwnerBeside(IncMember(), [MisExposed("P", SpreadOperand())], R("P")), [Call("F", N(7))]), "P");
             Case("HP-18u", "control: the same P declared local-only spreads the parameter",
                 OpenedThrough(OwnerBeside(IncMember(), [Local("P", Body(SpreadOperand()), "y")], R("P")), [Call("F", N(7))]), "P");
+        }
+
+        // HP-19: RETAINED RUNTIME-ALIAS CELLS (ledger R-1, November 2026). A retained binding cell records
+        // the input reads of its computation, and an exported (detached) evaluation that reuses a cell known
+        // to have read an input of an activation detached in it is refused with the alias's own
+        // localOnlyProperty before the channel runs, whichever row established the cell; a read the cell's
+        // computation makes while such an evaluation is served is refused where it happens, with its own
+        // refusal. Parsed programs with members forced exported (the front end classifies them local-only);
+        // the controls keep their values.
+        {
+            const string Selector = "Cap(meta r) = r\nInc(n) = n + 1\nDbl(n) = n * 2\nSel(k) = if(k == 1, Cap(Inc(0)), Cap(Dbl(0)))\n";
+            const string Witness = Selector + "F(y) = {\n  A = Sel(y).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1), F(2)\n";
+            static Expr Classified(string source) => new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+            static string With(string template, string rows) => template.Replace("{0}", rows, StringComparison.Ordinal);
+            Case("HP-19a", "R-1: a falsely exported sibling reusing the call's established alias cell is refused with the alias's localOnlyProperty (formerly S[S[6, 6], S[10, 10]], unrefused)",
+                MisExposedSource(With(Witness, "A(5), P"), "F.P"), "P");
+            Case("HP-19b", "R-1: the same sibling establishing the cell itself is refused at the written y, the direct read's unknownName (the other row order)",
+                MisExposedSource(With(Witness, "P, A(5)"), "F.P"), "P");
+            Case("HP-19c", "R-1: a falsely exported bare read of a parameter-rooted path alias after an attached read is refused (the value route)",
+                MisExposedSource("G(v) = v + 1\nF(y) = {\n  A = y.G\n  P = A + 0\n  A + 0, P\n}\nF(1), F(2)\n", "F.P"), "P");
+            Case("HP-19d", "R-1: a local-only HIT inside the cell's computation is recorded, so the reuse is refused",
+                MisExposedSource(Selector + "F(y) = {\n  L = Sel(y)\n  A = L.Algorithm\n  P = A(5) + 0\n  L.Algorithm(5), A(5), P\n}\nF(1), F(2)\n", "F.P"), "P");
+            Case("HP-19e", "R-1: a cell whose computation reuses another retained cell takes its read, so the reuse is refused",
+                MisExposedSource(Selector + "F(y) = {\n  B = Sel(y).Algorithm\n  A = Cap(B(0)).Algorithm\n  P = A(5) + 0\n  B(5), A(5), P\n}\nF(1), F(2)\n", "F.P"), "P");
+            Case("HP-19f", "R-1 control: an INDEPENDENT local-only alias cell is shared with the falsely exported sibling",
+                MisExposedSource("Cap(meta r) = r\nInc(n) = n + 1\nDbl(n) = n * 2\nF(y) = {\n  A = if(true, Cap(Inc(0)), Cap(Dbl(y))).Algorithm\n  P = A(5) + 0\n  A(5), P\n}\nF(1), F(2)\n", "F.P"), "P");
+            Case("HP-19g", "R-1 control: the witness correctly classified keeps S[S[6, 6], S[10, 10]]",
+                Classified(With(Witness, "A(5), P")), "P");
+
+            // DEFERRED READS: the cell's VALUE is a lazy list built in its own computation, whose positions read
+            // y only when read. THE DEMAND DECIDES (owner decision 2026-11-24): the read is refused while a
+            // detached evaluation that detaches y's activation is served, and is the row's own otherwise.
+            const string Lazy = "Cap(meta r) = r\nF(y) = {\n  Mk(v) = {\n    Z(*xs) = [1, 2].map{ n + y }\n    Cap(Z())\n  }\n  A = Mk(5).Algorithm\n  P = {0}\n  Q = P[0] + 0\n  {1}\n}\nF(1), F(2)\n";
+            static string Rows(string template, string p, string rows)
+                => template.Replace("{0}", p, StringComparison.Ordinal).Replace("{1}", rows, StringComparison.Ordinal);
+            Case("HP-19h", "R-1: a falsely exported sibling reading a lazy position of a reused cell is refused at the deferred read (formerly S[S[2, 2], S[2, 3]], unrefused)",
+                MisExposedSource(Rows(Lazy, "A[0] + 0", "A.count, P"), "F.P"), "P");
+            Case("HP-19i", "R-1: the same sibling establishing the cell itself is refused at the same deferred read (the other row order)",
+                MisExposedSource(Rows(Lazy, "A[0] + 0", "P, A.count"), "F.P"), "P");
+            Case("HP-19j", "R-1 (owner decision): after the sibling read only the count, the attached row's later read of a position uses the row's own input",
+                MisExposedSource(Rows(Lazy, "A.count + 0", "A.count, P, A[1]"), "F.P"), "P");
+            Case("HP-19k", "R-1: a lazy value carried out of the sibling unread and read by the ROW is the row's own read",
+                MisExposedSource(Rows(Lazy, "A.take(2)", "A.count, P[0]"), "F.P"), "P");
+            Case("HP-19l", "R-1: a cell whose VALUE is another cell's lazy value is refused at the deferred read",
+                MisExposedSource("Cap(meta r) = r\nF(y) = {\n  Mk(v) = {\n    Z(*xs) = [1, 2].map{ n + y }\n    Cap(Z())\n  }\n  B = Mk(5).Algorithm\n  Mk2(v) = {\n    W(*xs) = B\n    Cap(W())\n  }\n  A = Mk2(0).Algorithm\n  P = A[0] + 0\n  B.count, A.count, P\n}\nF(1), F(2)\n", "F.P"), "P");
+            Case("HP-19m", "R-1 control: an INDEPENDENT lazy value is shared with the falsely exported sibling",
+                MisExposedSource("Cap(meta r) = r\nDbl(n) = n * 2\nZ0(*xs) = [1, 2].map{ n + 1 }\nF(y) = {\n  A = if(true, Cap(Z0()), Cap(Dbl(y))).Algorithm\n  P = A[0] + 0\n  A.count, P\n}\nF(1), F(2)\n", "F.P"), "P");
+            Case("HP-19n", "R-1 control: the lazy witness correctly classified keeps S[S[2, 2], S[2, 3]]",
+                Classified(Rows(Lazy, "A[0] + 0", "A.count, P")), "P");
+            Case("HP-19o", "R-1 (owner decision): the count-only sibling FIRST establishes the cell at the call's own watermark, and the row's later position read uses the row's own input",
+                MisExposedSource(Rows(Lazy, "A.count + 0", "P, A.count, A[1]"), "F.P"), "P");
+            Case("HP-19p", "R-1: a warm cell still enforces the reader's access — the sibling demands a position the row already read, and its reuse is refused",
+                MisExposedSource(Rows(Lazy, "A[1] + 0", "A.count, A[1], P"), "F.P"), "P");
+            Case("HP-19q", "R-1: a second falsely exported sibling that demands the escaped position is refused at the deferred read",
+                MisExposedSource(Rows(Lazy, "A.take(2)", "A.count, Q"), "F.P", "F.Q"), "P", "Q");
+
+            // A CORRECTLY CLASSIFIED program (review 050804fe, finding 1): the activation supplying z is recorded
+            // inside B's own computation, so forwarding B's list through A keeps that input B's own.
+            const string Forwarded = "Cap(meta r) = r\nBuild(z) = {\n  Z(*xs) = [1, 2].map{ n + z }\n  Cap(Z())\n}\nB = Build(5).Algorithm\nBuild2(v) = {\n  W(*xs) = B\n  Cap(W())\n}\nA = Build2(0).Algorithm\nObserve = A.count + 0\n{0}\n";
+            Case("HP-19r", "R-1 control (correctly classified): a list forwarded through a second root alias keeps its freshly owned input",
+                Classified(With(Forwarded, "B.count, A.count, Observe, A[0]")), "Observe");
+            Case("HP-19s", "R-1 control (correctly classified): the same with the count reads in the other order",
+                Classified(With(Forwarded, "A.count, B.count, Observe, A[0]")), "Observe");
+            Case("HP-19t", "R-1 control (correctly classified): the same with the exported reader establishing the second alias",
+                Classified(With(Forwarded, "B.count, Observe, A[0]")), "Observe");
+
+            // AN ADMITTED LOCAL-ONLY MEMBER ACCESS is an input read (finding 2): the member's accessibility uses
+            // the enclosing activation although the selected branch never reads y.
+            const string Member = "Cap(meta r) = r\nF(y) = {\n  Box = {\n    public G(x) = if(true, x + 1, y + 0)\n  }\n  A = Cap(Box.G(0)).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1)\n";
+            const string MemberCall = "Cap(meta r) = r\nInc(x) = x + 1\nF(y) = {\n  Box = { public Mk(k) = if(true, Cap(Inc(0)), y + 0) }\n  A = Box.Mk(0).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1)\n";
+            Case("HP-19u", "R-1: an admitted access of a local-only member is the cell's input read, so the sibling's reuse is refused although the member's body never reads y",
+                MisExposedSource(With(Member, "A(5), P"), "F.P"), "P");
+            Case("HP-19v", "R-1: the same sibling establishing the cell is refused at the member access (the other row order)",
+                MisExposedSource(With(Member, "P, A(5)"), "F.P"), "P");
+            Case("HP-19w", "R-1 control: the member witness correctly classified keeps S[6, 6]",
+                Classified(With(Member, "A(5), P")), "P");
+            Case("HP-19x", "R-1: the same through a CALL of the local-only member as the cell's receiver",
+                MisExposedSource(With(MemberCall, "A(5), P"), "F.P"), "P");
+            Case("HP-19y", "R-1: the member call with the sibling first is refused at the member access",
+                MisExposedSource(With(MemberCall, "P, A(5)"), "F.P"), "P");
+
+            // A KNOWN DEPENDENT CELL IS REFUSED BEFORE ITS CHANNEL RUNS (finding 3): Same(A, A) warms the CALLABLE,
+            // which reads y; the sibling's VALUE request is refused without running the channel's effect.
+            Case("HP-19z", "R-1: a cold VALUE channel of a cell known to depend on y is refused before it runs",
+                MisExposedSource("Cap(meta r) = r\nEffect(*xs) = tick()\nSel(k) = if(k == 1, Cap(Effect()), Cap(Effect()))\nSame(f, f) = 0\nF(y) = {\n  A = Sel(y).Algorithm\n  P = A + 0\n  Same(A, A), P\n}\nF(1)\n", "F.P"), "P");
+
+            // OPEN QUALIFICATION (pinned residual): an `open`-provided local-only member's admission is resolved by
+            // the lexical lookup, a state-free judgment of the model, and is not recorded on the cell — the reuse
+            // is not refused in either row order.
+            const string Opened = "Cap(meta r) = r\nF(y) = {\n  open Box\n  Box = {\n    public G(x) = if(true, x + 1, y + 0)\n  }\n  A = Cap(G(0)).Algorithm\n  P = A(5) + 0\n  {0}\n}\nF(1)\n";
+            Case("HP-20a", "R-1 open qualification: an open-provided local-only member's admitted access is not recorded — the sibling's reuse is not refused (attached read first)",
+                MisExposedSource(With(Opened, "A(5), P"), "F.P"), "P");
+            Case("HP-20b", "R-1 open qualification: the same with the sibling first",
+                MisExposedSource(With(Opened, "P, A(5)"), "F.P"), "P");
+
+            cases.Add(new("HP-21a", "the escaped element projects its alias under the element's detached watermark and refuses y before tick",
+                MisExposedSource(EscapedAliasCall, "F.P"), L("P")) { ExpectedTickCount = 0 });
         }
 
         return cases.AsReadOnly();

@@ -596,7 +596,8 @@ def selectionRoute : DotSelection → PlanRoute
 theorem classify_dot (target : Expr) (F : Ident) (fallback : Expr) (args : OutputBundle) (ctx : EvalCtx)
     (env : ValEnv) (s s' : EvalState) (alg? : Option Algorithm) (sel : DotSelection)
     (hprobe : (resolveDotReceiver? target ctx).runState s = (.ok alg?, s'))
-    (hsel : selectDotEdge ctx target F alg? = .ok sel) :
+    (hsel : selectDotEdge ctx target F alg? = .ok sel)
+    (hq : ∀ owner p, sel = .member owner p → ctx.inputRecord = none) :
     (productionPlanRoute.classify ⟨.dotMember target F fallback none, args, ctx, env, .dot target F fallback⟩).runState s =
       (.ok (selectionRoute sel), s') := by
   unfold productionPlanRoute
@@ -606,7 +607,12 @@ theorem classify_dot (target : Expr) (F : Ident) (fallback : Expr) (args : Outpu
   rw [hprobe]
   dsimp only
   rw [hsel]
-  cases sel <;> rfl
+  cases sel with
+  | member owner p =>
+    -- Outside every retained cell's computation the admitted access notes nothing (ledger R-1).
+    simp only [noteMemberAccess_unmarked _ _ _ _ (hq owner p rfl)]
+    rfl
+  | miss kind => rfl
 
 /-- **STEP 1, extension route against the production dot evaluation.** After a receiver probe
     completing at `(.ok alg?, s')` with an extension miss — the plan route's own classification step
@@ -681,7 +687,8 @@ theorem dot_member_run (target : Expr) (N : Ident) (fallback : Expr) (args : Out
     (env : ValEnv) (s s' : EvalState) (alg? : Option Algorithm) (owner : Algorithm) (p : PropDef)
     (hprobe : (resolveDotReceiver? target ctx).runState s = (.ok alg?, s'))
     (hsel : selectDotEdge ctx target N alg? = .ok (.member owner p))
-    (hc : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hc : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (evalCounted (.dotMember target N fallback (some args)) ctx env).runState s =
       KatLang.FiniteLoop.ctxOutcome (CtxMsg.dotCall target N)
         ((memberRun owner p args ctx env N (.bound owner p)).runState s') := by
@@ -705,7 +712,7 @@ theorem dot_member_run (target : Expr) (N : Ident) (fallback : Expr) (args : Out
   rw [EvalM.bind_runState]
   have hp : (EvalRec.resolveDotReceiver? evalUnbounded target ctx).runState s = (.ok alg?, s') := hprobe
   rw [hp]
-  simp only [hsel]
+  simp only [hsel, noteMemberAccess_unmarked _ _ _ _ hq]
   rfl
 
 /-- The production callee law of an argumentless member path, as a finite body. -/
@@ -794,7 +801,8 @@ theorem select_member (ctx : EvalCtx) (target : Expr) (N : Ident) (owner owner' 
 theorem member_projection_of_probe (n N : Ident) (fallback : Expr) (ctx : EvalCtx) (s s' : EvalState)
     (owner : Algorithm) (p : PropDef)
     (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s'))
-    (hsel : selectDotEdge ctx (.resolve n) N (some owner) = .ok (.member owner p)) :
+    (hsel : selectDotEdge ctx (.resolve n) N (some owner) = .ok (.member owner p))
+    (hq : ctx.inputRecord = none) :
     (projectNeedStructuralMember (.dotMember (.resolve n) N fallback none) ctx).runState s =
       (.ok (some (childOfInContext owner p.alg ctx)), s') := by
   obtain ⟨-, hlook, hacc⟩ := select_member ctx (.resolve n) N owner owner p hsel
@@ -846,6 +854,7 @@ theorem member_projection_of_probe (n N : Ident) (fallback : Expr) (ctx : EvalCt
         rw [hlook]
         dsimp only
         rw [hacc]
+        simp only [noteMemberAccess_unmarked _ _ _ _ hq]
         rfl
       have hcb : ProductionCompletes
           (EvalBody.projectNeedStructuralMember evalUnbounded (.dotMember (.resolve n) N fallback none) ctx) s := by
@@ -915,9 +924,10 @@ theorem memberRun_completes_of_dot (target : Expr) (N : Ident) (fallback : Expr)
     (ctx : EvalCtx) (env : ValEnv) (s s' : EvalState) (alg? : Option Algorithm) (owner : Algorithm) (p : PropDef)
     (hprobe : (resolveDotReceiver? target ctx).runState s = (.ok alg?, s'))
     (hsel : selectDotEdge ctx target N alg? = .ok (.member owner p))
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     ProductionCompletes (memberRun owner p args ctx env N (.bound owner p)) s' := by
-  have hD := dot_member_run target N fallback args ctx env s s' alg? owner p hprobe hsel hprod
+  have hD := dot_member_run target N fallback args ctx env s s' alg? owner p hprobe hsel hprod hq
   unfold ProductionCompletes at hprod ⊢
   rw [hD] at hprod
   exact (KatLang.FiniteLoop.ctxOutcome_fuel _ _).1 hprod
@@ -938,16 +948,17 @@ theorem member_bridge_of_origin (a : Nat) (target : Expr) (N : Ident) (fallback 
       (.ok (some (childOfInContext owner p.alg ctx)), s'))
     (horigin : (memberRun owner p args ctx env N (.written (.dotMember target N fallback none) ctx)).runState s' =
       (memberRun owner p args ctx env N (.bound owner p)).runState s')
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s := by
-  have hbound := memberRun_completes_of_dot target N fallback args ctx env s s' alg? owner p hprobe hsel hprod
+  have hbound := memberRun_completes_of_dot target N fallback args ctx env s s' alg? owner p hprobe hsel hprod hq
   have hplan : ProductionCompletes (memberRun owner p args ctx env N
       (.written (.dotMember target N fallback none) ctx)) s' := by
     unfold ProductionCompletes at hbound ⊢; rw [horigin]; exact hbound
   rw [ordinaryCall_member_run a target N fallback args ctx env s s' owner p hproj hplan, map_run, map_run,
-    dot_member_run target N fallback args ctx env s s' alg? owner p hprobe hsel hprod,
+    dot_member_run target N fallback args ctx env s s' alg? owner p hprobe hsel hprod hq,
     KatLang.FiniteLoop.ctx_run, horigin]
 
 /-- **STEP 1, member route against the production dot evaluation.** After a receiver probe
@@ -965,13 +976,14 @@ theorem member_bridge (a : Nat) (target : Expr) (N : Ident) (fallback : Expr) (e
     (hsel : selectDotEdge ctx target N alg? = .ok (.member owner p))
     (hproj : (projectNeedStructuralMember (.dotMember target N fallback none) ctx).runState s =
       (.ok (some (childOfInContext owner p.alg ctx)), s'))
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, e :: rest, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env).runState s :=
   member_bridge_of_origin a target N fallback (e :: rest) ctx env s s' alg? owner p hprobe hsel hproj
     (by rw [memberRun_origin_independent owner p e rest ctx env N
-      (.written (.dotMember target N fallback none) ctx) (.bound owner p) hsp]) hprod
+      (.written (.dotMember target N fallback none) ctx) (.bound owner p) hsp]) hprod hq
 
 /-- **`member_bridge` for a named receiver `n.N(e, …)`**, its receiver premise discharged by
     `member_projection_of_probe`: only the probe, the member selection and the production
@@ -981,12 +993,13 @@ theorem member_bridge_named (a : Nat) (n N : Ident) (fallback : Expr) (e : Expr)
     (hsp : ¬ ∃ x, e = .sequenceSpread x)
     (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s'))
     (hsel : selectDotEdge ctx (.resolve n) N (some owner) = .ok (.member owner p))
-    (hprod : ProductionCompletes (evalCounted (.dotMember (.resolve n) N fallback (some (e :: rest))) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember (.resolve n) N fallback (some (e :: rest))) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a
         ⟨.dotMember (.resolve n) N fallback none, e :: rest, ctx, env, .dot (.resolve n) N fallback⟩ .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember (.resolve n) N fallback (some (e :: rest))) ctx env).runState s :=
   member_bridge a (.resolve n) N fallback e rest ctx env s s' (some owner) owner p hsp hprobe hsel
-    (member_projection_of_probe n N fallback ctx s s' owner p hprobe hsel) hprod
+    (member_projection_of_probe n N fallback ctx s s' owner p hprobe hsel hq) hprod hq
 
 /-! ## The receiver premise, for every receiver path
 
@@ -1041,7 +1054,8 @@ def headParam? : Expr → Option Ident
 theorem member_projection_run (target : Expr) (N : Ident) (fallback : Expr) (ctx : EvalCtx) (s s' : EvalState)
     (owner : Algorithm) (p : PropDef)
     (hstruct : (projectedStructure target ctx).runState s = (.ok (some owner), s'))
-    (hlook : Algorithm.lookupPropDefAny? owner N = some p) (hacc : memberAccessible? ctx owner p = true) :
+    (hlook : Algorithm.lookupPropDefAny? owner N = some p) (hacc : memberAccessible? ctx owner p = true)
+    (hq : ctx.inputRecord = none) :
     (projectNeedStructuralMember (.dotMember target N fallback none) ctx).runState s =
       (.ok (some (childOfInContext owner p.alg ctx)), s') := by
   unfold projectedStructure at hstruct
@@ -1071,6 +1085,7 @@ theorem member_projection_run (target : Expr) (N : Ident) (fallback : Expr) (ctx
         rw [hlook]
         dsimp only
         rw [hacc]
+        simp only [noteMemberAccess_unmarked _ _ _ _ hq]
         rfl
       have hcb : ProductionCompletes
           (EvalBody.projectNeedStructuralMember evalUnbounded (.dotMember target N fallback none) ctx) s := by
@@ -1164,8 +1179,9 @@ theorem probe_is_projected_structure : ∀ (target : Expr) (ctx : EvalCtx) (s s'
     Algorithm.lookupPropDefAny? owner N = some p →
     (∀ x o t, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), t) →
       structureNormal o = true) →
+    ctx.inputRecord = none →
     (projectedStructure target ctx).runState s = (.ok (some owner), s')
-  | target, ctx, s, s', owner, N, p, hprobe, hlook, hnorm => by
+  | target, ctx, s, s', owner, N, p, hprobe, hlook, hnorm, hq => by
     have hpc : ProductionCompletes (resolveDotReceiver? target ctx) s := by
       unfold ProductionCompletes; rw [hprobe]; nofun
     have hpu := production_unfolds (.resolveDotReceiver? target ctx) s hpc
@@ -1278,6 +1294,10 @@ theorem probe_is_projected_structure : ∀ (target : Expr) (ctx : EvalCtx) (s s'
             split at hprobe'
             · cases hprobe'
             · rename_i hacc
+              -- Outside every retained cell's computation the admitted access notes nothing (ledger R-1).
+              simp only [noteMemberAccess_unmarked _ _ _ _ hq] at hprobe'
+              rw [bind_run, pure_run] at hprobe'
+              dsimp only at hprobe'
               rw [bind_run] at hprobe'
               rcases hst : (resolveAliasStructure (childOfInContext a q.alg ctx) ctx).runState s1 with ⟨so, s2⟩
               have hst' : (EvalRec.resolveAliasStructure evalUnbounded (childOfInContext a q.alg ctx) ctx).runState s1 =
@@ -1298,8 +1318,8 @@ theorem probe_is_projected_structure : ∀ (target : Expr) (ctx : EvalCtx) (s s'
                   subst h2 h3
                   have hacc' : memberAccessible? ctx a q = true := by simpa using hacc
                   have ih := probe_is_projected_structure o ctx s s1 a n q hpo hl
-                    (fun x o' t hx => hnorm x o' t (by simpa [headParam?] using hx))
-                  have hstep := member_projection_run o n fb ctx s s1 a q ih hl hacc'
+                    (fun x o' t hx => hnorm x o' t (by simpa [headParam?] using hx)) hq
+                  have hstep := member_projection_run o n fb ctx s s1 a q ih hl hacc' hq
                   unfold projectedStructure
                   rw [bind_run, hstep]
                   exact hst
@@ -1329,7 +1349,8 @@ theorem member_projection_of_selection (target : Expr) (N : Ident) (fallback : E
     (hprobe : (resolveDotReceiver? target ctx).runState s = (.ok alg?, s'))
     (hsel : selectDotEdge ctx target N alg? = .ok (.member owner p))
     (hnorm : ∀ x o t, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), t) →
-      structureNormal o = true) :
+      structureNormal o = true)
+    (hq : ctx.inputRecord = none) :
     (projectNeedStructuralMember (.dotMember target N fallback none) ctx).runState s =
       (.ok (some (childOfInContext owner p.alg ctx)), s') := by
   cases alg? with
@@ -1337,7 +1358,7 @@ theorem member_projection_of_selection (target : Expr) (N : Ident) (fallback : E
   | some owner' =>
     obtain ⟨rfl, hlook, hacc⟩ := select_member ctx target N owner' owner p hsel
     exact member_projection_run target N fallback ctx s s' owner p
-      (probe_is_projected_structure target ctx s s' owner N p hprobe hlook hnorm) hlook hacc
+      (probe_is_projected_structure target ctx s s' owner N p hprobe hlook hnorm hq) hlook hacc hq
 
 /-- A receiver that is not rooted at a parameter has no parameter head. -/
 theorem headParam_none_of_not_paramHeaded : ∀ (target : Expr), target.isParamHeaded = false → headParam? target = none
@@ -1370,13 +1391,14 @@ theorem member_bridge_static (a : Nat) (target : Expr) (N : Ident) (fallback : E
     (hsp : ¬ ∃ x, e = .sequenceSpread x)
     (hprobe : (resolveDotReceiver? target ctx).runState s = (.ok alg?, s'))
     (hsel : selectDotEdge ctx target N alg? = .ok (.member owner p))
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, e :: rest, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env).runState s :=
   member_bridge a target N fallback e rest ctx env s s' alg? owner p hsp hprobe hsel
     (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel
-      (fun x _ _ hx => by rw [headParam_none_of_not_paramHeaded target hhead] at hx; cases hx)) hprod
+      (fun x _ _ hx => by rw [headParam_none_of_not_paramHeaded target hhead] at hx; cases hx) hq) hprod hq
 
 /-- **THE MEMBER BRIDGE for a parameter-rooted receiver** (`b.N(e, …)`, `b.Sub.N(e, …)`), with a
     plain first argument, when the head parameter's supplied CALLABLE is structure-normal at the
@@ -1389,12 +1411,13 @@ theorem member_bridge_param (a : Nat) (target : Expr) (N : Ident) (fallback : Ex
     (hsel : selectDotEdge ctx target N alg? = .ok (.member owner p))
     (hnorm : ∀ x o t, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), t) →
       structureNormal o = true)
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, e :: rest, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some (e :: rest))) ctx env).runState s :=
   member_bridge a target N fallback e rest ctx env s s' alg? owner p hsp hprobe hsel
-    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm) hprod
+    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm hq) hprod hq
 
 /-! ## The callee origin: empty and spread-first bundles
 
@@ -1679,7 +1702,8 @@ theorem member_bridge_inert (a : Nat) (target : Expr) (N : Ident) (fallback : Ex
     (hnorm : ∀ x o t, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), t) →
       structureNormal o = true)
     (hnav : NavInert target ctx owner)
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s := by
@@ -1690,10 +1714,10 @@ theorem member_bridge_inert (a : Nat) (target : Expr) (N : Ident) (fallback : Ex
       obtain ⟨rfl, hlook, -⟩ := select_member ctx target N owner' owner p hsel
       exact hlook
   exact member_bridge_of_origin a target N fallback args ctx env s s' alg? owner p hprobe hsel
-    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm)
+    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm hq)
     (memberRun_origin_agrees owner p args ctx env N _ _ s'
       (written_origin_is_bound target N fallback ctx owner p hnav hlook)
-      (memberRun_completes_of_dot target N fallback args ctx env s s' alg? owner p hprobe hsel hprod)) hprod
+      (memberRun_completes_of_dot target N fallback args ctx env s s' alg? owner p hprobe hsel hprod hq)) hprod hq
 
 /-- An inline block that is no transparent reference navigates inertly. -/
 theorem navInert_block (block : Algorithm) (ctx : EvalCtx) (h : structureNormal (wireToCaller ctx block) = true) :
@@ -1758,10 +1782,11 @@ theorem lookup_parent_inert (top : Algorithm) (n : Ident) (ctx : EvalCtx) (sc : 
 theorem navInert_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (a : Algorithm) (q : PropDef)
     (h : NavInert o ctx a) (hl : Algorithm.lookupPropDefAny? a n = some q)
     (hacc : memberAccessible? ctx a q = true)
-    (hn : structureNormal (childOfInContext a q.alg ctx) = true) :
+    (hn : structureNormal (childOfInContext a q.alg ctx) = true)
+    (hq : ctx.inputRecord = none) :
     NavInert (.dotMember o n fb none) ctx (childOfInContext a q.alg ctx) := by
   intro t
-  have hstep := member_projection_run o n fb ctx t t a q (h t) hl hacc
+  have hstep := member_projection_run o n fb ctx t t a q (h t) hl hacc hq
   unfold projectedStructure
   rw [bind_run, hstep]
   dsimp only

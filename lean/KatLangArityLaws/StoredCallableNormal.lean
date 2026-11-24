@@ -344,8 +344,15 @@ theorem param_head_normal (x : Ident) (ctx : EvalCtx) (s : EvalState) (a : Nat)
   have hc : ProductionCompletes (projectParameterCallable x ctx) s := by unfold ProductionCompletes; rw [hrun]; nofun
   have hbody : (projectParameterWith (EvalRec.projectNeedCallable evalUnbounded) x ctx).runState s = (.ok (some o), v) :=
     (production_unfolds (.projectParameterCallable x ctx) s hc).trans hrun
-  rw [projectParameterWith_run, haddr] at hbody
-  exact first_projection_normal a s v (some o) hstat hbody o rfl
+  have hlate : KatLang.MemberStability.capturedLate s x ctx = false := by
+    cases hl : KatLang.MemberStability.capturedLate s x ctx with
+    | false => rfl
+    | true => rw [KatLang.MemberStability.projectParameterWith_late _ x ctx s hl] at hbody; cases hbody
+  rw [projectParameterWith_run_general _ x ctx s hlate, haddr] at hbody
+  have hstat' : staticUnprojected (capturedState s x ctx) a = true := by
+    unfold staticUnprojected at hstat ⊢
+    simpa using hstat
+  exact first_projection_normal a (capturedState s x ctx) v (some o) hstat' hbody o rfl
 
 /-! ## The unconditional statement is false -/
 

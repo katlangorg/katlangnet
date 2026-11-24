@@ -2066,11 +2066,18 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="EvaluateDetachedZeroArgPropertyResult"/> — keep in lock-step.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static ValueTask<EvalResult<ZeroArgPropertyResult>> EvaluateDetachedZeroArgPropertyResultAsync(
+    private static async ValueTask<EvalResult<ZeroArgPropertyResult>> EvaluateDetachedZeroArgPropertyResultAsync(
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
         ValEnv valEnv)
-        => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, DetachedEvaluation(ctx, valEnv, out var values), values);
+    {
+        // The exported evaluation is SERVED while it runs (ledger R-1; Lean `servingDetached`): an input
+        // read it demands in a retained cell's computation, however deferred, is judged against its watermark.
+        var detached = DetachedEvaluation(ctx, valEnv, out var values);
+        detached.Budget.EnterServing(detached.DetachedBefore);
+        try { return await EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, detached, values).ConfigureAwait(false); }
+        finally { detached.Budget.ExitServing(); }
+    }
 
     /// <summary>MIRROR OF <see cref="EvalPropertyOwnerBodyCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalPropertyOwnerBodyCountedAsync(
@@ -2166,7 +2173,7 @@ public static partial class Evaluator
                 "Async evaluation requires an async-capable zero-argument property result cache on the run context.");
         }
 
-        if (ctx.DetachedBefore != 0 && DetachedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
+        if (ctx.CallStack is AnnotatedReadOnlyList<Algorithm> && AnnotatedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
             return refused;
 
         return await asyncCache.GetOrEvaluateAsync(

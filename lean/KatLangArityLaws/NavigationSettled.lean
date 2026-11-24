@@ -87,10 +87,13 @@ theorem resolveAlg_dot_mints (o : Expr) (n : Ident) (fb : Expr) (args : Option O
 /-- **The body of the receiver probe over a member path**, for any evaluator answer: a successful
     probe either navigated a DECLARED, accessible member whose structure chase gave the answer, or
     took a dot-result branch — `resolveAlg` of the edge, run from the probe's exit state or from
-    the exit state of a member structure chase that found no structure. -/
+    the exit state of a member structure chase that found no structure. Outside every retained
+    cell's computation (`hq`): inside one the admitted access is an input read the cell records
+    (`noteMemberAccess`, ledger R-1), and the structure chase starts from that write. -/
 theorem body_probe_member (rec : EvalRec) (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (s t : EvalState)
     (member : Algorithm)
-    (h : (EvalBody.resolveDotReceiver? rec (.dotMember o n fb none) ctx).runState s = (.ok (some member), t)) :
+    (h : (EvalBody.resolveDotReceiver? rec (.dotMember o n fb none) ctx).runState s = (.ok (some member), t))
+    (hq : ctx.inputRecord = none) :
     (∃ a p t₁, (rec (.resolveDotReceiver? o ctx)).runState s = (.ok (some a), t₁) ∧
         Algorithm.lookupPropDefAny? a n = some p ∧ memberAccessible? ctx a p = true ∧
         (rec (.resolveAliasStructure (childOfInContext a p.alg ctx) ctx)).runState t₁ = (.ok (some member), t)) ∨
@@ -136,6 +139,10 @@ theorem body_probe_member (rec : EvalRec) (o : Expr) (n : Ident) (fb : Expr) (ct
           cases h
         | true =>
           simp only [hacc, Bool.not_true, Bool.false_eq_true, ite_false, bind_run] at h
+          have hnote : (noteMemberAccess ctx a p (Error.localOnlyProperty (openExprName o) n p.exposure)).runState t₁ =
+              (.ok (), t₁) := by rw [noteMemberAccess_unmarked _ _ _ _ hq]; rfl
+          rw [hnote] at h
+          dsimp only at h
           rcases hs : (EvalRec.resolveAliasStructure rec (childOfInContext a p.alg ctx) ctx).runState t₁ with ⟨so, t₂⟩
           rw [hs] at h
           cases so with
@@ -156,7 +163,7 @@ theorem body_probe_member (rec : EvalRec) (o : Expr) (n : Ident) (fb : Expr) (ct
     refuted by the counter, not assumed absent. -/
 theorem probe_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (s t : EvalState) (member : Algorithm)
     (hprobe : (resolveDotReceiver? (.dotMember o n fb none) ctx).runState s = (.ok (some member), t))
-    (hmint : t.nextRuntimeDeclaration = s.nextRuntimeDeclaration) :
+    (hmint : t.nextRuntimeDeclaration = s.nextRuntimeDeclaration) (hq : ctx.inputRecord = none) :
     ∃ a p t₁, (resolveDotReceiver? o ctx).runState s = (.ok (some a), t₁) ∧
       Algorithm.lookupPropDefAny? a n = some p ∧ memberAccessible? ctx a p = true ∧
       (resolveAliasStructure (childOfInContext a p.alg ctx) ctx).runState t₁ = (.ok (some member), t) ∧
@@ -165,7 +172,7 @@ theorem probe_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (s t : E
     unfold ProductionCompletes; rw [hprobe]; nofun
   have hbody : (EvalBody.resolveDotReceiver? evalUnbounded (.dotMember o n fb none) ctx).runState s =
       (.ok (some member), t) := (production_unfolds (.resolveDotReceiver? (.dotMember o n fb none) ctx) s hc).trans hprobe
-  rcases body_probe_member evalUnbounded o n fb ctx s t member hbody with
+  rcases body_probe_member evalUnbounded o n fb ctx s t member hbody hq with
     ⟨a, p, t₁, hp, hl, hacc, hs⟩ | ⟨r, t₁, t₂, hp, hmid, halg⟩
   · have e1 : NavExt s t₁ := by
       have := production_navExt (.resolveDotReceiver? o ctx) s; rw [hp] at this; exact this
@@ -202,13 +209,15 @@ theorem navRuns_probe_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) 
       NavRuns (.resolveAliasStructure (childOfInContext a p.alg ctx) ctx) t₁ (.ok (some member), t) ∧
       t₁.nextRuntimeDeclaration = s.nextRuntimeDeclaration ∧ NavExt s t₁ ∧ NavExt t₁ t := by
   obtain ⟨m, hrun, hne⟩ := hnav
-  obtain ⟨k, rfl, -, hbody⟩ := navFuel_body hrun hne rfl
+  obtain ⟨k, rfl, hadm, hbody⟩ := navFuel_body hrun hne rfl
+  -- The navigation core answers the probe only outside every retained cell's computation.
+  have hq : ctx.inputRecord = none := Option.isNone_iff_eq_none.mp hadm
   have hext : ∀ (c : EvalCall) (v : EvalState) (x : c.Ret) (w : EvalState),
       (navFuel k c).runState v = (.ok x, w) → NavExt v w := by
     intro c v x w hr
     have := navFuel_navExt k c v (by rw [hr]; nofun)
     rw [hr] at this; exact this
-  rcases body_probe_member (navFuel k) o n fb ctx s t member hbody with
+  rcases body_probe_member (navFuel k) o n fb ctx s t member hbody hq with
     ⟨a, p, t₁, hp, hl, hacc, hs⟩ | ⟨r, t₁, t₂, hp, hmid, halg⟩
   · have e1 := hext _ s _ t₁ hp
     have e2 := hext _ t₁ _ t hs
@@ -260,8 +269,9 @@ theorem navSettled_of_navRuns : ∀ (target : Expr) (ctx : EvalCtx) (s t : EvalS
     t.nextRuntimeDeclaration = s.nextRuntimeDeclaration →
     (∀ x o v, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), v) →
       structureNormal o = true) →
+    ctx.inputRecord = none →
     NavSettled target ctx owner t
-  | .resolve n, ctx, s, t, owner, _, hnav, hmint, _ => by
+  | .resolve n, ctx, s, t, owner, _, hnav, hmint, _, _ => by
     obtain ⟨m, hrun, hne⟩ := hnav
     obtain ⟨k, rfl, -, hbody⟩ := navFuel_body hrun hne rfl
     have hbody' : (EvalBody.resolveDotReceiver? (navFuel k) (.resolve n) ctx).runState s = (.ok (some owner), t) := hbody
@@ -279,14 +289,14 @@ theorem navSettled_of_navRuns : ∀ (target : Expr) (ctx : EvalCtx) (s t : EvalS
       | ok r =>
         exact navSettled_of (headSettled_name n ctx top rest r hcs hlo t)
           (structSettled_of_navRuns r.alg ctx s t owner ⟨k, hbody', nofun⟩ hmint)
-  | .algorithmExpr block, ctx, s, t, owner, _, hnav, hmint, _ => by
+  | .algorithmExpr block, ctx, s, t, owner, _, hnav, hmint, _, _ => by
     obtain ⟨m, hrun, hne⟩ := hnav
     obtain ⟨k, rfl, -, hbody⟩ := navFuel_body hrun hne rfl
     have hbody' : (navFuel k (.resolveAliasStructure (wireToCaller ctx block) ctx)).runState s =
         (.ok (some owner), t) := hbody
     exact navSettled_of (headSettled_block block ctx t)
       (structSettled_of_navRuns _ ctx s t owner ⟨k, hbody', nofun⟩ hmint)
-  | .param x, ctx, s, t, owner, _, hnav, hmint, hnorm => by
+  | .param x, ctx, s, t, owner, _, hnav, hmint, hnorm, _ => by
     have hprod := hnav.production
     obtain ⟨m, hrun, hne⟩ := hnav
     obtain ⟨k, rfl, -, hbody⟩ := navFuel_body hrun hne rfl
@@ -301,25 +311,25 @@ theorem navSettled_of_navRuns : ∀ (target : Expr) (ctx : EvalCtx) (s t : EvalS
       rw [hcu]; nofun
     exact (production_eq_of_finite (.projectNeedStructuralMember (.param x) ctx)
       (fun rec => rec (.projectParameterCallable x ctx)) (fun _ => rfl) (finite_call _) u hcb).trans hcu
-  | .dotMember o n fb none, ctx, s, t, owner, hshape, hnav, hmint, hnorm => by
+  | .dotMember o n fb none, ctx, s, t, owner, hshape, hnav, hmint, hnorm, hq => by
     obtain ⟨a, p, t₁, hp, hl, hacc, hs, hc1, _, e2⟩ := navRuns_probe_member o n fb ctx s t owner hnav hmint
-    have ih := navSettled_of_navRuns o ctx s t₁ a hshape hp hc1 (fun x o' v hx => hnorm x o' v hx)
+    have ih := navSettled_of_navRuns o ctx s t₁ a hshape hp hc1 (fun x o' v hx => hnorm x o' v hx) hq
     exact navSettled_member o n fb ctx a p owner t (ih.mono e2) hl hacc
-      (structSettled_of_navRuns _ ctx t₁ t owner hs (by omega))
-  | .dotMember _ _ _ (some _), _, _, _, _, h, _, _, _ => by cases h
-  | .num _, _, _, _, _, h, _, _, _ => by cases h
-  | .emptySequence _, _, _, _, _, h, _, _, _ => by cases h
-  | .listLiteral _, _, _, _, _, h, _, _, _ => by cases h
-  | .unary _ _, _, _, _, _, h, _, _, _ => by cases h
-  | .binary _ _ _, _, _, _, _, h, _, _, _ => by cases h
-  | .comparison _ _, _, _, _, _, h, _, _, _ => by cases h
-  | .index _ _, _, _, _, _, h, _, _, _ => by cases h
-  | .call _ _, _, _, _, _, h, _, _, _ => by cases h
-  | .stringLiteral _, _, _, _, _, h, _, _, _ => by cases h
-  | .boolLiteral _, _, _, _, _, h, _, _, _ => by cases h
-  | .sequenceConstruct _ _, _, _, _, _, h, _, _, _ => by cases h
-  | .sequenceSpread _, _, _, _, _, h, _, _, _ => by cases h
-  | .capture _, _, _, _, _, h, _, _, _ => by cases h
+      (structSettled_of_navRuns _ ctx t₁ t owner hs (by omega)) hq
+  | .dotMember _ _ _ (some _), _, _, _, _, h, _, _, _, _ => by cases h
+  | .num _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .emptySequence _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .listLiteral _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .unary _ _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .binary _ _ _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .comparison _ _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .index _ _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .call _ _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .stringLiteral _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .boolLiteral _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .sequenceConstruct _ _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .sequenceSpread _, _, _, _, _, h, _, _, _, _ => by cases h
+  | .capture _, _, _, _, _, h, _, _, _, _ => by cases h
 
 /-! ## The member bridge with the probe as its navigation premise -/
 
@@ -344,11 +354,12 @@ theorem member_bridge_of_probe (a : Nat) (target : Expr) (N : Ident) (fallback :
     (hsel : selectDotEdge ctx target N (some owner) = .ok (.member owner p))
     (hnorm : ∀ x o v, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), v) →
       structureNormal o = true)
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s :=
   member_bridge_of_settled a target N fallback args ctx env s s' (some owner) owner p hnav.production hsel hnorm
-    (navSettled_of_navRuns target ctx s s' owner hshape hnav hmint hnorm) hprod
+    (navSettled_of_navRuns target ctx s s' owner hshape hnav hmint hnorm hq) hprod hq
 
 end KatLang.NavigationSettled

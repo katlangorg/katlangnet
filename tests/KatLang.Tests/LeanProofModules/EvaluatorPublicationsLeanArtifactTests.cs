@@ -154,6 +154,7 @@ public class EvaluatorPublicationsLeanArtifactTests
         text = text.Replace("CapsLink", "CapsPub", StringComparison.Ordinal);
         text = text.Replace("LinkDisc", "PubDisc", StringComparison.Ordinal);
         text = text.Replace("LinkAt", "PubAt", StringComparison.Ordinal);
+        text = text.Replace("linkAt_", "pubAt_", StringComparison.Ordinal);
         text = text.Replace("linkDisc", "pubDisc", StringComparison.Ordinal);
         return LinkPrefix.Replace(text, "pub_");
     }

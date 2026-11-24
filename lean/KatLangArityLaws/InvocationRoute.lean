@@ -151,13 +151,21 @@ def routeOfSelection : Except Error DotSelection → Except Error PlanRoute
 
 /-- **The dot-form route IS the ordinary selection's image.** Classifying an argument-bearing dot
     edge resolves its receiver's typed identity once, then decides through `selectDotEdge` — the
-    same decision ordinary dot evaluation branches on (`evalDotCallCounted_selects`). -/
+    same decision ordinary dot evaluation branches on (`evalDotCallCounted_selects`). On a DECLARED
+    MEMBER the admitted access is first noted as an input read of the retained cell whose computation
+    the caller belongs to (ledger R-1, `noteMemberAccess`: nothing outside every such computation,
+    `classify_dot_member`), and the route is the ordinary call. -/
 theorem classify_dot (resolve : Expr → EvalCtx → EvalM (Option Algorithm))
     (algorithmRoute : Expr → EvalCtx → EvalM Bool) (callee : Expr) (args : OutputBundle)
     (caller : EvalCtx) (values : ValEnv) (r : Expr) (n : Ident) (fb : Expr) (s : EvalState) :
     (classifyPlanRouteWith resolve algorithmRoute ⟨callee, args, caller, values, .dot r n fb⟩).runState s =
       (match (resolve r caller).runState s with
-       | (.ok target, t) => (routeOfSelection (selectDotEdge caller r n target), t)
+       | (.ok target, t) =>
+           match selectDotEdge caller r n target with
+           | .ok (.member targetAlg p) =>
+               (noteMemberAccess caller targetAlg p (Error.localOnlyProperty (openExprName r) n p.exposure) >>=
+                 fun _ => (pure PlanRoute.call : EvalM PlanRoute)).runState t
+           | selection => (routeOfSelection selection, t)
        | (.error e, t) => (.error e, t)) := by
   simp only [classifyPlanRouteWith, bind_run]
   rcases (resolve r caller).runState s with ⟨_ | target, t⟩
@@ -165,7 +173,25 @@ theorem classify_dot (resolve : Expr → EvalCtx → EvalM (Option Algorithm))
   · dsimp only
     cases selectDotEdge caller r n target with
     | error e => rfl
-    | ok sel => cases sel <;> rfl
+    | ok sel =>
+      cases sel with
+      | member targetAlg p => simp only [bind_run]
+      | miss kind => rfl
+
+/-- Outside every retained cell's computation the member route is the ordinary call, in the state the
+    receiver's resolution left. -/
+theorem classify_dot_member (resolve : Expr → EvalCtx → EvalM (Option Algorithm))
+    (algorithmRoute : Expr → EvalCtx → EvalM Bool) (callee : Expr) (args : OutputBundle)
+    (caller : EvalCtx) (values : ValEnv) (r : Expr) (n : Ident) (fb : Expr) (s t : EvalState)
+    (target : Option Algorithm) (targetAlg : Algorithm) (p : PropDef)
+    (hres : (resolve r caller).runState s = (.ok target, t))
+    (hsel : selectDotEdge caller r n target = .ok (.member targetAlg p))
+    (hq : caller.inputRecord = none) :
+    (classifyPlanRouteWith resolve algorithmRoute ⟨callee, args, caller, values, .dot r n fb⟩).runState s =
+      (.ok .call, t) := by
+  rw [classify_dot, hres]
+  simp only [hsel, noteMemberAccess_unmarked _ _ _ _ hq, bind_run]
+  rfl
 
 
 /-- **Agreement on a selection failure** (failure is not absence, NEED-06). When the receiver's
@@ -191,7 +217,8 @@ theorem member_agrees (rec : EvalRec) (r : Expr) (n : Ident) (fb : Expr)
     (args : OutputBundle) (callee : Expr) (ctx : EvalCtx) (env : ValEnv)
     (s t : EvalState) (target : Option Algorithm) (targetAlg : Algorithm) (p : PropDef)
     (hres : (rec.resolveDotReceiver? r ctx).runState s = (.ok target, t))
-    (hsel : selectDotEdge ctx r n target = .ok (.member targetAlg p)) :
+    (hsel : selectDotEdge ctx r n target = .ok (.member targetAlg p))
+    (hq : ctx.inputRecord = none) :
     (EvalBody.evalDotCallCounted rec r n fb (some args) ctx env).runState s =
       ((do
         let wired ← rec.resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
@@ -199,8 +226,8 @@ theorem member_agrees (rec : EvalRec) (r : Expr) (n : Ident) (fb : Expr)
     (classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute
       ⟨callee, args, ctx, env, .dot r n fb⟩).runState s = (.ok .call, t) := by
   refine ⟨?_, ?_⟩
-  · simp only [EvalBody.evalDotCallCounted, bind_run, hres, hsel]
-  · rw [classify_dot, hres]; simp only [routeOfSelection, hsel]
+  · simp only [EvalBody.evalDotCallCounted, bind_run, hres, hsel, noteMemberAccess_unmarked _ _ _ _ hq, pure_run]
+  · exact classify_dot_member _ _ callee args ctx env r n fb s t target targetAlg p hres hsel hq
 
 /-- **Agreement on the extension route** (DOT-03): on any other structural miss, ordinary
     evaluation is the lexical call with the receiver first, and the plan route is `extension`. -/

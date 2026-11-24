@@ -20,6 +20,57 @@ namespace KatLang.AddressInvariant
 
 attribute [ht_spec] allocate_spec ready_spec supply_spec captured_spec record_spec bindParameters_spec enterAlgorithmBody_spec enterPropertyOwnerBody_spec needBindingContext_spec parameterContext_spec needActivateBranch_spec identifyRuntimeAlgorithm_spec
 
+/-! ## The input records (ledger R-1): written, never address-bearing -/
+
+/-- A step of the input records (ledger R-1): refused in the state it started from, or the input
+    records rewritten — no address is stored there. -/
+theorem cellInputsStep_spec {P : Array NeedCell → Prop} {α : Type}
+    {step : CellRecords → Except Error (α × CellRecords)} :
+    SoundI P (cellInputsStep step) (fun _ _ => True) :=
+  SoundI.of_inputsOnly (fun s _ _ => ⟨by
+      rw [cellInputsStep_run]
+      cases step s.cellInputs <;> rfl,
+    fun _ _ => trivial⟩)
+
+theorem noteCellInput_spec {P : Array NeedCell → Prop} {ctx : EvalCtx} {a : Nat} {e : Error} :
+    SoundI P (noteCellInput ctx a e) (fun _ _ => True) :=
+  SoundI.of_inputsOnly (fun s _ _ => ⟨by
+      rw [noteCellInput_run]
+      split
+      · rfl
+      · exact EvalState.noteInput_eq _ _ _,
+    fun _ _ => trivial⟩)
+
+theorem recordCellInputs_spec {P : Array NeedCell → Prop} {address watermark : Nat} {refusal : Error} :
+    SoundI P (recordCellInputs address watermark refusal) (fun _ _ => True) :=
+  cellInputsStep_spec
+
+theorem noteLocalOnlyRead_spec {P : Array NeedCell → Prop} {binding : PropDef} {a : Algorithm} {ctx : EvalCtx} :
+    SoundI P (noteLocalOnlyRead binding a ctx) (fun _ _ => True) := by
+  unfold noteLocalOnlyRead
+  split
+  · exact noteCellInput_spec
+  · exact SoundI.pure () (fun _ _ => trivial)
+
+/-- An admitted member access inside a retained cell's computation is a note (ledger R-1). -/
+theorem noteMemberAccess_spec {P : Array NeedCell → Prop} {ctx : EvalCtx} {container : Algorithm}
+    {p : PropDef} {refusal : Error} :
+    SoundI P (noteMemberAccess ctx container p refusal) (fun _ _ => True) := by
+  unfold noteMemberAccess
+  split
+  · exact SoundI.pure () (fun _ _ => trivial)
+  · split
+    · exact noteCellInput_spec
+    · exact SoundI.pure () (fun _ _ => trivial)
+
+/-- The judgment of a reuse is a step of the input records. -/
+theorem judgeRetainedCellReuse_spec {P : Array NeedCell → Prop} {cell : Nat} {ctx : EvalCtx} :
+    SoundI P (judgeRetainedCellReuse cell ctx) (fun _ _ => True) :=
+  cellInputsStep_spec
+
+attribute [ht_spec] cellInputsStep_spec noteCellInput_spec recordCellInputs_spec noteLocalOnlyRead_spec
+  noteMemberAccess_spec judgeRetainedCellReuse_spec
+
 /-! ## Callback contracts -/
 
 /-- The computed-spread capability: Ready payloads and transported cells valid. -/
@@ -224,10 +275,10 @@ theorem needWrittenSource_spec {P : Array NeedCell → Prop} {a : Nat} :
 theorem spreadCollectorSlice_spec {P : Array NeedCell → Prop} {operand : Expr} {caller : EvalCtx} :
     SoundI P (spreadCollectorSlice? operand caller)
       (fun r h => OptSliceV h r) := by
-  refine SoundI.of_readonly (fun s vs _ => ?_)
-  obtain ⟨r, hr, hfound⟩ := slice_run operand caller s
+  refine SoundI.of_inputsOnly (fun s vs _ => ?_)
+  obtain ⟨r, t, hr, ht, hfound⟩ := slice_run operand caller s
   rw [hr]
-  refine ⟨rfl, fun x hx slice hslice => ?_⟩
+  refine ⟨ht, fun x hx slice hslice => ?_⟩
   subst hx hslice
   obtain ⟨a, cell, hc, hs⟩ := hfound slice rfl
   exact collector_members_valid vs.collectors hc hs

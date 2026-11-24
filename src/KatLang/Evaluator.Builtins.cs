@@ -487,7 +487,14 @@ public static partial class Evaluator
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
         ValEnv valEnv)
-        => EvaluateZeroArgPropertyResult(resolvedAlgorithm, DetachedEvaluation(ctx, valEnv, out var values), values);
+    {
+        // The exported evaluation is SERVED while it runs (ledger R-1; Lean `servingDetached`): an input
+        // read it demands in a retained cell's computation, however deferred, is judged against its watermark.
+        var detached = DetachedEvaluation(ctx, valEnv, out var values);
+        detached.Budget.EnterServing(detached.DetachedBefore);
+        try { return EvaluateZeroArgPropertyResult(resolvedAlgorithm, detached, values); }
+        finally { detached.Budget.ExitServing(); }
+    }
 
     /// <summary>
     /// THE LOCAL-ONLY READ REFUSAL (EXPORTED-DETACHED, November 2026): a property-style read of a
@@ -517,6 +524,29 @@ public static partial class Evaluator
         return DeclaringActivation(resolvedAlgorithm.Parent) is { } activation && IsDetached(activation, ctx)
             ? LocalOnlyPropertyError(DeclaringOwnerDescription(owner), binding)
             : null;
+    }
+
+    /// <summary>
+    /// A property-style read at an ANNOTATED reader (inside an exported evaluation or a retained cell's
+    /// computation): refused when it is keyed on a detached activation (<see cref="DetachedLocalOnlyRead"/>);
+    /// otherwise, inside a retained runtime-alias cell's computation, an admitted LOCAL-only read is that
+    /// cell's INPUT READ through the activation its key names, with the refusal a reader detaching it reports
+    /// (ledger R-1; Lean <c>noteLocalOnlyRead</c>) — and that refusal when the read lands below a reader
+    /// already admitted to the cell. Out of line: an unannotated reader never comes here.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalError? AnnotatedLocalOnlyRead(
+        PropertyDeclaringOwner owner,
+        Property binding,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx)
+    {
+        if (ctx.DetachedBefore != 0 && DetachedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
+            return refused;
+        if (ctx.InputRecord is { } record && !IsExported(binding)
+            && DeclaringActivation(resolvedAlgorithm.Parent) is { } activation && record.Note(activation.Serial))
+            return LocalOnlyPropertyError(DeclaringOwnerDescription(owner), binding);
+        return null;
     }
 
     // How a refused detached read names the declaring owner: its path when it has one. Presentation only.
@@ -673,7 +703,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (ctx.DetachedBefore != 0 && DetachedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
+        if (ctx.CallStack is AnnotatedReadOnlyList<Algorithm> && AnnotatedLocalOnlyRead(owner, binding, resolvedAlgorithm, ctx) is { } refused)
             return refused;
 
         return ctx.ZeroArgPropertyResultCache.GetOrEvaluate(

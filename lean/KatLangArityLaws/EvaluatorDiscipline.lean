@@ -283,6 +283,11 @@ macro "disc_tac_base" : tactic => `(tactic| without_info_trees ((try disc_unfold
   | (with_reducible apply disciplined_invoke)
   | (with_reducible apply disciplined_reference)
   | (with_reducible apply disciplined_viewCells)
+  | (with_reducible apply disciplined_noteCellInput)
+  | (with_reducible apply disciplined_cellInputsStep)
+  | (with_reducible apply discAt_cellInputsStep)
+  | (with_reducible apply disciplined_noteMemberAccess)
+  | (with_reducible apply disciplined_judgeRetainedCellReuse)
   | (with_reducible apply disc_modify; intro s; first
       | exact HeapKept.refl _
       | (apply HeapKept.modify; intro c _; exact cellKept_of_same _ _ rfl rfl rfl rfl))
@@ -297,6 +302,37 @@ macro "disc_tac_base" : tactic => `(tactic| without_info_trees ((try disc_unfold
   | disc_whnf_core
   | disc_unfold_head
   | (with_reducible apply DiscAt.of_disc))))
+
+/-! ## The input records (ledger R-1) are no heap -/
+
+theorem disciplined_cellInputsStep {α : Type} (step : CellRecords → Except Error (α × CellRecords)) :
+    Disciplined (cellInputsStep step) :=
+  disciplined_of_needs _ (fun s => by rw [cellInputsStep_run]; cases step s.cellInputs <;> rfl)
+
+/-- The same step from a fixed entry state: the form a body proof meets it in. -/
+theorem discAt_cellInputsStep {α : Type} {st : EvalState} (step : CellRecords → Except Error (α × CellRecords)) :
+    DiscAt st (cellInputsStep step) :=
+  DiscAt.of_disc (disciplined_cellInputsStep step)
+
+theorem disciplined_noteCellInput (ctx : EvalCtx) (activation : Nat) (refusal : Error) :
+    Disciplined (noteCellInput ctx activation refusal) :=
+  disciplined_of_needs _ (fun s => by rw [noteCellInput_run]; split <;> simp)
+
+/-- An admitted member access inside a retained cell's computation is a note (ledger R-1). -/
+theorem disciplined_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) :
+    Disciplined (noteMemberAccess ctx container p refusal) := by
+  unfold noteMemberAccess
+  split
+  · exact disciplined_pure ()
+  · split
+    · exact disciplined_noteCellInput _ _ _
+    · exact disciplined_pure ()
+
+/-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
+    admission of the reader. -/
+theorem disciplined_judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) :
+    Disciplined (judgeRetainedCellReuse cell ctx) :=
+  disciplined_cellInputsStep _
 
 /-! ## Heap discipline of the recursive total helpers -/
 
@@ -665,6 +701,11 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply disciplined_invoke)
   | (with_reducible apply disciplined_reference)
   | (with_reducible apply disciplined_viewCells)
+  | (with_reducible apply disciplined_noteCellInput)
+  | (with_reducible apply disciplined_cellInputsStep)
+  | (with_reducible apply discAt_cellInputsStep)
+  | (with_reducible apply disciplined_noteMemberAccess)
+  | (with_reducible apply disciplined_judgeRetainedCellReuse)
   | (with_reducible apply disc_modify; intro s; first
       | exact HeapKept.refl _
       | (apply HeapKept.modify; intro c _; exact cellKept_of_same _ _ rfl rfl rfl rfl))
@@ -1237,7 +1278,11 @@ theorem classify_disciplined (shape : NeedPlan.CallShape) :
         (fun b => by split <;> exact disciplined_pure _)
     · exact disciplined_pure _
   · exact Disciplined.bind (evalUnbounded_disciplined (.resolveDotReceiver? _ _))
-      (fun t => by split <;> first | exact disciplined_throw _ | exact disciplined_pure _)
+      (fun t => by
+        split <;> first
+          | exact disciplined_throw _
+          | exact disciplined_pure _
+          | exact Disciplined.bind (disciplined_noteMemberAccess _ _ _ _) (fun _ => disciplined_pure _))
 
 /-- **`ProductionDiscipline` IS A THEOREM (R7).** The named opaque obligation of the M1.5
     invocation-plan laws — that the production callbacks keep every existing cell's suspension,

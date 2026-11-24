@@ -283,4 +283,15 @@ def pubFailedOwnerKeepsOtherEntries : Bool :=
 
 #guard pubFailedOwnerKeepsOtherEntries
 
+-- A past reader's admission remains part of the source's judgment. Its establishment
+-- watermark cuts off its own work, and an attached demand may read even an earlier input.
+private def retainedReadAfterReaderReturned : KatLang.CellRecords :=
+  { records := [(0, { watermark := 10, refusal := .divByZero, forwards := [1] }),
+                (1, { watermark := 5, refusal := .divByZero, readers := 8 })],
+    serving := 8 }
+
+#guard retainedReadAfterReaderReturned.lateRefused 0 4
+#guard !retainedReadAfterReaderReturned.lateRefused 0 6
+#guard !({ retainedReadAfterReaderReturned with serving := 0 } : KatLang.CellRecords).lateRefused 0 4
+
 end KatLangTests

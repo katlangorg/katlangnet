@@ -242,7 +242,7 @@ theorem bridge :
     Bridged ι
       ((ordinaryCall productionPlanRoute k shape .algorithm).runState x)
       ((reCountValueBoundary <$> evalCounted src ctxIn envIn).runState x) :=
-  algorithm_bridge_dot_param_at k "r" fb args ctxIn envIn x x alg? ca b x_cell rfl rfl rfl probe_x miss bound bound_lt
+  algorithm_bridge_dot_param_at k "r" fb args ctxIn envIn x x alg? ca b x_cell rfl rfl rfl probe_x miss bound (by cbv) bound_lt
     inv_x recvOut x₄ read_x read_plan read_unrecorded
     (fun v hv => by
       have hv' : v = recvVal := by
@@ -476,7 +476,7 @@ theorem bridge :
     Bridged ι
       ((ordinaryCall productionPlanRoute k shape .algorithm).runState x)
       ((reCountValueBoundary <$> evalCallCountedExpr edge args ctxIn envIn).runState x) :=
-  algorithm_bridge_grouped_param_at k "r" fb args ctxIn envIn x ca b settled x_cell rfl rfl rfl bound bound_lt
+  algorithm_bridge_grouped_param_at k "r" fb args ctxIn envIn x ca b settled x_cell rfl rfl rfl bound (by cbv) bound_lt
     inv_x recvOut x₄ read_x read_plan read_unrecorded
     (fun v hv => by
       have hv' : v = recvVal := by

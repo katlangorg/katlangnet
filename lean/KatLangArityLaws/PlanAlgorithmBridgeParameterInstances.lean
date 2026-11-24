@@ -159,7 +159,7 @@ theorem bridge_dot :
       ((ordinaryCall productionPlanRoute 2 (dotShape receiver fb [] caller []) .algorithm).runState (x false))
       ((reCountValueBoundary <$> evalCounted (source false) caller []).runState (x false)) := by
   apply algorithm_bridge_dot_param_at 2 "r" fb [] caller [] (x false) (x false) none (ca false) 1
-    (x_cell false) rfl rfl rfl (probe_x false) miss (by kernel_rfl) (by decide +kernel)
+    (x_cell false) rfl rfl rfl (probe_x false) miss (by kernel_rfl) rfl (by decide +kernel)
     (inv_x false) (.ok (.callRef 0)) (x₄ false) (read_x false)
   · exact read_plan false
   · decide +kernel
@@ -192,7 +192,7 @@ theorem bridge_grouped :
       ((ordinaryCall productionPlanRoute 2 (groupedShape receiver fb [] caller []) .algorithm).runState (x true))
       ((reCountValueBoundary <$> evalCallCountedExpr edge [] caller []).runState (x true)) := by
   apply algorithm_bridge_grouped_param_at 2 "r" fb [] caller [] (x true) (ca true) 1 settled
-    (x_cell true) rfl rfl rfl (by kernel_rfl) (by decide +kernel)
+    (x_cell true) rfl rfl rfl (by kernel_rfl) rfl (by decide +kernel)
     (inv_x true) (.ok (.callRef 0)) (x₄ true) (read_x true)
   · exact read_plan true
   · decide +kernel

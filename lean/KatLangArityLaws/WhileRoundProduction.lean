@@ -828,26 +828,40 @@ theorem publication_read_hit (rec : EvalRec) (k : ZeroArgPropertyAccessKind) (ow
     key (at the read's state) holds `v` returns `v` and leaves the state unchanged — no evaluation,
     no owner mark, no publication — unless it is a REFUSED detached read (`hadmitted`,
     EXPORTED-DETACHED: a local-only read keyed on a detached activation is refused before the cache
-    is consulted; an exported binding is never refused, and its key is the reader's). -/
+    is consulted; an exported binding is never refused, and its key is the reader's). A LOCAL-only
+    read is stated outside every retained cell's computation (`hquiet`): inside one it also records
+    its input read on that cell (ledger R-1, `noteLocalOnlyRead`), which writes the input records. -/
 theorem property_cache_hit_production (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (resolved : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
     (v : CountedResult) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx env (propertyOwnerBindingContext resolved.parent s) (propertyOwnerInvocation resolved.parent s)) = some v)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false)
+    (hquiet : binding.exposure.isExported = false → ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k owner binding resolved ctx env).runState s = (.ok v, s) := by
   refine production_of_answer_free (.evalZeroArgPropertyAccessCounted k owner binding resolved ctx env .read) s _
     (fun rec => ?_) nofun
   show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env .read).runState s = _
   cases hexp : binding.exposure.isExported with
   | true =>
-    rw [KatLang.DetachedEvaluation.exported_access_is_detached rec k owner binding resolved ctx env .read s hexp]
-    refine publication_read_hit rec k owner binding resolved _ _ s v hcache ?_
-    rw [cacheKey_exported_context_free k k owner binding hexp _ ctx _ env _ _ _]
-    exact hhit
+    -- The request is served (ledger R-1): a hit leaves the state it found, so the served watermark the
+    -- request raised is restored to the entry state.
+    rw [KatLang.DetachedEvaluation.exported_access_is_detached rec k owner binding resolved ctx env .read s hexp,
+      servingDetached_runState]
+    split
+    · refine publication_read_hit rec k owner binding resolved _ _ s v hcache ?_
+      rw [cacheKey_exported_context_free k k owner binding hexp _ ctx _ env _ _ _]
+      exact hhit
+    · have hpub := publication_read_hit rec k owner binding resolved (ctx.detach s.lexicalActivations.size) []
+        { s with cellInputs :=
+          { s.cellInputs with serving := (ctx.detach s.lexicalActivations.size).detachedBefore } } v hcache (by
+            rw [cacheKey_exported_context_free k k owner binding hexp _ ctx _ env _ _ _]
+            exact hhit)
+      rw [hpub]
+      rfl
   | false =>
-    rw [KatLang.DetachedEvaluation.local_only_access_is_attached rec k owner binding resolved ctx env .read hexp
-      (by rw [hadmitted, Bool.and_false])]
+    rw [KatLang.DetachedEvaluation.local_only_access_is_attached_unmarked rec k owner binding resolved ctx env .read hexp
+      (by rw [hadmitted, Bool.and_false]) (hquiet hexp)]
     exact publication_read_hit rec k owner binding resolved ctx env s v hcache hhit
 
 /-- An exported binding's read is never a refused detached read. -/
@@ -884,7 +898,7 @@ theorem exported_publication_reused (k k' : ZeroArgPropertyAccessKind) (owner : 
     (hstable : propertyOwnerInvocation resolved.parent t = oi) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) := by
   refine property_cache_hit_production k' owner binding resolved ctx env t v hcache ?_
-    (exported_read_admitted binding resolved ctx hexp)
+    (exported_read_admitted binding resolved ctx hexp) (fun h => by rw [hexp] at h; cases h)
   rw [hstable, cacheKey_exported_context_free k' k owner binding hexp ctx ctx₀ env env₀ _ oc oi]
   exact hkept _ v hpub
 
@@ -900,9 +914,10 @@ theorem local_publication_reused (k k' : ZeroArgPropertyAccessKind) (owner : Alg
     (hpub : ZeroArgPropertyCache.lookup s₂.zeroArgPropertyCache (zeroArgPropertyCacheKey k owner binding ctx₀ env₀ (some n) oi) = some v)
     (hkept : KatLang.EvaluatorCacheLaws.CacheKept s₂ t) (ctx : EvalCtx) (env : ValEnv)
     (hstable : propertyOwnerBindingContext resolved.parent t = some n)
-    (hadmitted : localOnlyReadRefused binding resolved ctx = false) :
+    (hadmitted : localOnlyReadRefused binding resolved ctx = false) (hunmarked : ctx.inputRecord = none) :
     (evalZeroArgPropertyAccessCounted k' owner binding resolved ctx env).runState t = (.ok v, t) := by
   refine property_cache_hit_production k' owner binding resolved ctx env t v hcache ?_ hadmitted
+    (fun _ => hunmarked)
   rw [hstable, cacheKey_local_invocation_free k' owner binding hlocal ctx env (some n) _ oi,
     cacheKey_retained_owner_context k' k owner binding ctx ctx₀ env env₀ n oi]
   exact hkept _ v hpub

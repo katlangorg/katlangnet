@@ -498,7 +498,11 @@ internal sealed class NeedCell : NeedNode
         internal ObservationScope? Outer { get; }
         internal ResolutionRecord? Record { get; }
         internal NeedCell? Pending { get; private set; }
-        internal Channel PendingChannel { get; private set; }
+        // Both channels carry a nonnegative watermark. Its complement denotes CALLABLE so
+        // carrying it across a retry needs only the original observation scope's one word.
+        private long _pendingWatermark;
+        internal Channel PendingChannel => _pendingWatermark < 0 ? Channel.Callable : Channel.Value;
+        internal long PendingWatermark => _pendingWatermark < 0 ? ~_pendingWatermark : _pendingWatermark;
 
         internal EvalResult<Evaluator.CountedResult> ObserveValue(NeedCell cell)
         {
@@ -520,7 +524,10 @@ internal sealed class NeedCell : NeedNode
             if (Pending is null)
             {
                 Pending = cell;
-                PendingChannel = channel;
+                // ResolveAsync executes this operation after the synchronous observation unwinds.
+                // Carry the watermark that applied at the demand or projection itself.
+                var watermark = cell._budget?.ServingDetached ?? 0;
+                _pendingWatermark = channel == Channel.Callable ? ~watermark : watermark;
             }
             return EvalError.ObservationPending.Instance;
         }

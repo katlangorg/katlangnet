@@ -1667,7 +1667,7 @@ public static partial class Evaluator
         var names = callee.Params;
         // A value view's zero-supply invocation reads its binding cell (L-RUN, M4★): never a rerun of the row.
         var output = ValueViewCell(callee, ctx) is { } viewCell
-            ? viewCell.Demand()
+            ? RetainedCellValue(viewCell, ctx)
             : EvalBoundUserBodyCounted(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names, invoked: true);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
@@ -1740,7 +1740,7 @@ public static partial class Evaluator
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
         var output = ValueViewCell(callee, ctx) is { } viewCell
-            ? await viewCell.DemandAsync().ConfigureAwait(false)
+            ? await RetainedCellValueAsync(viewCell, ctx).ConfigureAwait(false)
             : await EvalBoundUserBodyCountedAsync(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names, invoked: true).ConfigureAwait(false);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }

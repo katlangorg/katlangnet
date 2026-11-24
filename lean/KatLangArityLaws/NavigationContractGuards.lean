@@ -127,10 +127,10 @@ theorem navFacts_fail :
     ¬ NavFacts (.resolveAliasChase false true wired (ctx .exported) [] none) EvalState.empty := by
   intro h
   have hadm' : (paramRowAdmits wired (ctx .exported) EvalState.empty &&
-      cellKeyAdmits wired EvalState.empty) = true :=
+      cellKeyAdmits wired EvalState.empty && chaseQuiet wired (ctx .exported)) = true :=
     navFacts_admits (.resolveAliasChase false true wired (ctx .exported) [] none) EvalState.empty rfl h
   simp only [Bool.and_eq_true] at hadm'
-  have hadm := hadm'.1
+  have hadm := hadm'.1.1
   rw [facts.2.2.1] at hadm
   cases hadm
 
@@ -263,7 +263,7 @@ theorem ancestor_backed :
 
 theorem ancestor_admitted :
     navAdmits (.projectParameterCallable "c" LinkAncestor.ctxIn) LinkAncestor.entry = true :=
-  navFacts_admits _ _ rfl ancestor_backed
+  navFacts_admits _ _ rfl ⟨ancestor_backed, by cbv⟩
 
 /-- … and the fact is not trivially true there: the chain names a record (the head parameter is read
     through a captured activation), so over an activation array without it the chain is NOT backed. -/
@@ -288,7 +288,7 @@ theorem forwarded_backed :
 
 theorem forwarded_admitted :
     navAdmits (.projectParameterCallable "b" LinkForwardedPath.ctxIn) LinkForwardedPath.entry = true :=
-  navFacts_admits _ _ rfl forwarded_backed
+  navFacts_admits _ _ rfl ⟨forwarded_backed, by cbv⟩
 
 end Reached
 

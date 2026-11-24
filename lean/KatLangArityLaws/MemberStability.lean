@@ -187,10 +187,11 @@ theorem NavStable.of_inert {target : Expr} {ctx : EvalCtx} {owner : Algorithm}
 theorem navStable_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (a : Algorithm) (q : PropDef)
     (t : EvalState) (h : NavStable o ctx a t) (hl : Algorithm.lookupPropDefAny? a n = some q)
     (hacc : memberAccessible? ctx a q = true)
-    (hn : structureNormal (childOfInContext a q.alg ctx) = true) :
+    (hn : structureNormal (childOfInContext a q.alg ctx) = true)
+    (hq : ctx.inputRecord = none) :
     NavStable (.dotMember o n fb none) ctx (childOfInContext a q.alg ctx) t := by
   intro u hu
-  have hstep := member_projection_run o n fb ctx u u a q (h u hu) hl hacc
+  have hstep := member_projection_run o n fb ctx u u a q (h u hu) hl hacc hq
   unfold projectedStructure
   rw [bind_run, hstep]
   dsimp only
@@ -340,7 +341,8 @@ theorem member_bridge_settled (a : Nat) (target : Expr) (N : Ident) (fallback : 
       (resolveAliasTarget (childOfInContext owner p.alg ctx) ctx).runState s' = (.ok g, t) →
       (NeedSupply.form evalSupplySpread ctx env args).runState t = (.ok cells, u) →
       (projectedStructure target ctx).runState u = (.ok (some owner), u))
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s := by
@@ -349,7 +351,7 @@ theorem member_bridge_settled (a : Nat) (target : Expr) (N : Ident) (fallback : 
     (memberRun_origin_agrees_at owner p args ctx env N _ _ s'
       (fun g t cells u hr hf =>
         written_origin_is_bound_at target N fallback ctx owner p u (hsettled g t cells u hr hf) hlook)
-      (memberRun_completes_of_dot target N fallback args ctx env s s' alg? owner p hprobe hsel hprod)) hprod
+      (memberRun_completes_of_dot target N fallback args ctx env s s' alg? owner p hprobe hsel hprod hq)) hprod hq
 
 /-- A stable navigation at the probe's exit is settled where the member run reads its origin. -/
 theorem settled_of_stable (target : Expr) (ctx : EvalCtx) (owner : Algorithm) (wired : Algorithm)
@@ -383,13 +385,14 @@ theorem member_bridge_stable (a : Nat) (target : Expr) (N : Ident) (fallback : E
     (hproj : (projectNeedStructuralMember (.dotMember target N fallback none) ctx).runState s =
       (.ok (some (childOfInContext owner p.alg ctx)), s'))
     (hstable : NavStable target ctx owner s')
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s :=
   member_bridge_settled a target N fallback args ctx env s s' alg? owner p hprobe hsel hproj
     (fun g t cells u hr hf =>
-      settled_of_stable target ctx owner _ env args s' hstable g t cells u hr hf) hprod
+      settled_of_stable target ctx owner _ env args s' hstable g t cells u hr hf) hprod hq
 
 /-- `member_bridge_stable` with the receiver premise discharged by the probe and the selection
     (`member_projection_of_selection`; a parameter-rooted receiver needs `hnorm`). -/
@@ -401,12 +404,13 @@ theorem member_bridge_stable_of_selection (a : Nat) (target : Expr) (N : Ident) 
     (hnorm : ∀ x o t, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), t) →
       structureNormal o = true)
     (hstable : NavStable target ctx owner s')
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s :=
   member_bridge_stable a target N fallback args ctx env s s' alg? owner p hprobe hsel
-    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm) hstable hprod
+    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm hq) hstable hprod hq
 
 /-! ## Parameter receivers: the first projection's memo -/
 
@@ -506,16 +510,22 @@ def capturedRecord (acts : Array ParameterActivation) (name : Ident) (ctx : Eval
   | .activation id => acts[id]?
 
 /-- `capturedParameterActivation?` of an AVAILABLE parameter reads ONE record of the activation array
-    and writes nothing. -/
+    and, outside every retained cell's computation, writes nothing (inside one it records the read on
+    that cell, ledger R-1). -/
 theorem captured_run (name : Ident) (ctx : EvalCtx) (s : EvalState)
-    (h : capturedParameter name ctx ≠ .unavailable) :
+    (h : capturedParameter name ctx ≠ .unavailable) (hq : ctx.inputRecord = none) :
     (capturedParameterActivation? name ctx).runState s =
       (.ok (capturedRecord s.lexicalActivations name ctx), s) := by
   unfold capturedParameterActivation? capturedRecord
   cases hc : capturedParameter name ctx with
   | own => rfl
   | unavailable => exact absurd hc h
-  | activation id => rfl
+  | activation id =>
+    have hn : (noteCellInput ctx id (Error.unknownName name)).runState s = (.ok (), s) := by
+      rw [noteCellInput_run, EvalState.lateRefusedFor_unmarked s ctx id hq,
+        EvalState.noteInput_unmarked s ctx id hq]; rfl
+    simp only [bind_run, hn]
+    rfl
 
 /-- `capturedParameterActivation?` of an UNAVAILABLE parameter is the `unknownName` refusal, in the
     state the lookup started from (EXPORTED-DETACHED: captured reads are lexical-only). -/
@@ -569,9 +579,10 @@ theorem parameterAddressIn_available {acts : Array ParameterActivation} {x : Ide
   cases h
 
 /-- The CALLABLE projection of a parameter: its supplied cell's projection, the absence of a
-    usable binding without a cell, or the REFUSAL of an unavailable parameter. -/
+    usable binding without a cell, or the REFUSAL of an unavailable parameter — outside every retained
+    cell's computation (inside one the lookup also records its input read, ledger R-1). -/
 theorem projectParameterWith_run (project : Nat → EvalM (Option Algorithm)) (x : Ident) (ctx : EvalCtx)
-    (s : EvalState) :
+    (s : EvalState) (hq : ctx.inputRecord = none) :
     (projectParameterWith project x ctx).runState s =
       (match parameterAddressIn s.lexicalActivations x ctx with
        | some address => (project address).runState s
@@ -587,7 +598,106 @@ theorem projectParameterWith_run (project : Nat → EvalM (Option Algorithm)) (x
     unfold projectParameterWith
     rw [bind_run, captured_refused x ctx s hu]
   · unfold projectParameterWith parameterAddressIn
-    rw [bind_run, captured_run x ctx s hu]
+    rw [bind_run, captured_run x ctx s hu hq]
+    dsimp only
+    split <;> rename_i h <;> simp only [h, hu, ite_false] <;> rfl
+
+/-- The state the captured lookup of `x` leaves from `s`: the input record's note of an activation
+    read inside a retained cell's computation (ledger R-1), else `s`. Heap and activations are `s`'s. -/
+def capturedState (s : EvalState) (x : Ident) (ctx : EvalCtx) : EvalState :=
+  match capturedParameter x ctx with
+  | .activation id => s.noteInput ctx id
+  | _ => s
+
+@[simp] theorem capturedState_needs (s : EvalState) (x : Ident) (ctx : EvalCtx) :
+    (capturedState s x ctx).needs = s.needs := by
+  unfold capturedState; split <;> simp
+
+@[simp] theorem capturedState_lexicalActivations (s : EvalState) (x : Ident) (ctx : EvalCtx) :
+    (capturedState s x ctx).lexicalActivations = s.lexicalActivations := by
+  unfold capturedState; split <;> simp
+
+/-- Whether the lookup of `x` in `ctx` is refused LATE in `s` (ledger R-1, deferred reads): an available
+    parameter read through an activation below a reader already admitted to the retained cell whose
+    computation `ctx` belongs to. Never outside every such computation (`capturedLate_unmarked`). -/
+def capturedLate (s : EvalState) (x : Ident) (ctx : EvalCtx) : Bool :=
+  match capturedParameter x ctx with
+  | .activation id => s.lateRefusedFor ctx id
+  | _ => false
+
+theorem capturedLate_unmarked (s : EvalState) (x : Ident) (ctx : EvalCtx) (hq : ctx.inputRecord = none) :
+    capturedLate s x ctx = false := by
+  unfold capturedLate
+  split
+  · exact EvalState.lateRefusedFor_unmarked s ctx _ hq
+  · rfl
+
+/-- `capturedParameterActivation?` of an AVAILABLE parameter, in every context: ONE record of the
+    activation array, in the state the lookup's note leaves (`capturedState`) — when the read is not
+    refused late (`capturedLate`, ledger R-1). -/
+theorem captured_run_general (name : Ident) (ctx : EvalCtx) (s : EvalState)
+    (h : capturedParameter name ctx ≠ .unavailable) (hl : capturedLate s name ctx = false) :
+    (capturedParameterActivation? name ctx).runState s =
+      (.ok (capturedRecord s.lexicalActivations name ctx), capturedState s name ctx) := by
+  have hlate := hl
+  unfold capturedLate at hlate
+  unfold capturedParameterActivation? capturedRecord capturedState
+  cases hc : capturedParameter name ctx with
+  | own => rfl
+  | unavailable => exact absurd hc h
+  | activation id =>
+    rw [hc] at hlate
+    have hlate' : s.lateRefusedFor ctx id = false := hlate
+    have hn : (noteCellInput ctx id (Error.unknownName name)).runState s =
+        (.ok (), s.noteInput ctx id) := by
+      rw [noteCellInput_run, hlate']; rfl
+    simp only [bind_run, hn]
+    show (Except.ok (s.noteInput ctx id).lexicalActivations[id]?, _) = _
+    simp only [EvalState.noteInput_lexicalActivations]
+
+/-- A lookup refused late (ledger R-1, deferred reads) refuses the CALLABLE projection of the
+    parameter, in the state it started from. -/
+theorem projectParameterWith_late (project : Nat → EvalM (Option Algorithm)) (x : Ident) (ctx : EvalCtx)
+    (s : EvalState) (hl : capturedLate s x ctx = true) :
+    (projectParameterWith project x ctx).runState s = (.error (Error.unknownName x), s) := by
+  unfold capturedLate at hl
+  cases hc : capturedParameter x ctx with
+  | own => rw [hc] at hl; cases hl
+  | unavailable => rw [hc] at hl; cases hl
+  | activation id =>
+    rw [hc] at hl
+    have hl' : s.lateRefusedFor ctx id = true := hl
+    have hn : (noteCellInput ctx id (Error.unknownName x)).runState s = (.error (Error.unknownName x), s) := by
+      rw [noteCellInput_run, hl']; rfl
+    have hcap : (capturedParameterActivation? x ctx).runState s = (.error (Error.unknownName x), s) := by
+      unfold capturedParameterActivation?
+      rw [hc]
+      simp only [bind_run, hn]
+    unfold projectParameterWith
+    rw [bind_run, hcap]
+
+/-- The CALLABLE projection of a parameter in every context: its supplied cell's projection from the
+    state the lookup's note leaves, the absence of a usable binding without a cell, or the REFUSAL of
+    an unavailable parameter. -/
+theorem projectParameterWith_run_general (project : Nat → EvalM (Option Algorithm)) (x : Ident) (ctx : EvalCtx)
+    (s : EvalState) (hl : capturedLate s x ctx = false) :
+    (projectParameterWith project x ctx).runState s =
+      (match parameterAddressIn s.lexicalActivations x ctx with
+       | some address => (project address).runState (capturedState s x ctx)
+       | none =>
+         if capturedParameter x ctx = .unavailable then (.error (Error.unknownName x), s)
+         else (.ok none, capturedState s x ctx)) := by
+  by_cases hu : capturedParameter x ctx = .unavailable
+  · have hnone : parameterAddressIn s.lexicalActivations x ctx = none := by
+      unfold parameterAddressIn capturedRecord
+      rw [hu]
+      rfl
+    rw [hnone]
+    simp only [hu, ite_true]
+    unfold projectParameterWith
+    rw [bind_run, captured_refused x ctx s hu]
+  · unfold projectParameterWith parameterAddressIn
+    rw [bind_run, captured_run_general x ctx s hu hl]
     dsimp only
     split <;> rename_i h <;> simp only [h, hu, ite_false] <;> rfl
 
@@ -615,14 +725,15 @@ theorem finite_projectParameter (x : Ident) (ctx : EvalCtx) :
     supplied cell is found through the same recorded activation, and its memo is read back. -/
 theorem projectParameterCallable_stable (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (owner : Algorithm)
     (hrun : (projectParameterCallable x ctx).runState s = (.ok (some owner), s'))
-    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size) :
+    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size)
+    (hq : ctx.inputRecord = none) :
     ∀ u, MemoExt s' u → (projectParameterCallable x ctx).runState u = (.ok (some owner), u) := by
   have hc : ProductionCompletes (projectParameterCallable x ctx) s := by
     unfold ProductionCompletes; rw [hrun]; nofun
   have hu := production_unfolds (.projectParameterCallable x ctx) s hc
   have hbody : (projectParameterWith (EvalRec.projectNeedCallable evalUnbounded) x ctx).runState s = (.ok (some owner), s') :=
     hu.trans hrun
-  rw [projectParameterWith_run] at hbody
+  rw [projectParameterWith_run _ _ _ _ hq] at hbody
   have hext : MemoExt s s' := by
     have := production_memoExt (.projectParameterCallable x ctx) s
     have hr : (evalUnbounded (.projectParameterCallable x ctx)).runState s = (.ok (some owner), s') := hrun
@@ -643,7 +754,7 @@ theorem projectParameterCallable_stable (x : Ident) (ctx : EvalCtx) (s s' : Eval
     have haddr' : parameterAddressIn u.lexicalActivations x ctx = some address := by
       rw [parameterAddressIn_stable x ctx s u (hext.activations.trans hu'.activations) hact, haddr]
     have hbody' : (projectParameterWith (EvalRec.projectNeedCallable evalUnbounded) x ctx).runState u = (.ok (some owner), u) := by
-      rw [projectParameterWith_run, haddr']
+      rw [projectParameterWith_run _ _ _ _ hq, haddr']
       exact hread
     have hcb : ProductionCompletes ((fun rec : EvalRec => projectParameterWith rec.projectNeedCallable x ctx) evalUnbounded) u := by
       unfold ProductionCompletes; rw [hbody']; nofun
@@ -658,10 +769,11 @@ theorem projectParameterCallable_stable (x : Ident) (ctx : EvalCtx) (s s' : Eval
 theorem navStable_param (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (owner : Algorithm)
     (hrun : (projectParameterCallable x ctx).runState s = (.ok (some owner), s'))
     (hnormal : structureNormal owner = true)
-    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size) :
+    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size)
+    (hq : ctx.inputRecord = none) :
     NavStable (.param x) ctx owner s' := by
   intro u hu
-  have hcall := projectParameterCallable_stable x ctx s s' owner hrun hact u hu
+  have hcall := projectParameterCallable_stable x ctx s s' owner hrun hact hq u hu
   have hhead : (projectNeedStructuralMember (.param x) ctx).runState u = (.ok (some owner), u) := by
     have hcb : ProductionCompletes ((fun rec : EvalRec => rec (.projectParameterCallable x ctx)) evalUnbounded) u := by
       unfold ProductionCompletes
@@ -693,10 +805,11 @@ theorem probe_param (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (alg? : Optio
     `MemberStabilityGuards.memberOriginRemintsRuntimeIdentity`.) -/
 theorem probe_param_stable (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (owner : Algorithm)
     (hprobe : (resolveDotReceiver? (.param x) ctx).runState s = (.ok (some owner), s'))
-    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size) :
+    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size)
+    (hq : ctx.inputRecord = none) :
     ∀ u, MemoExt s' u → (resolveDotReceiver? (.param x) ctx).runState u = (.ok (some owner), u) := by
   intro u hu
-  have hcall := projectParameterCallable_stable x ctx s s' owner (probe_param x ctx s s' (some owner) hprobe) hact u hu
+  have hcall := projectParameterCallable_stable x ctx s s' owner (probe_param x ctx s s' (some owner) hprobe) hact hq u hu
   have hcb : ProductionCompletes ((fun rec : EvalRec => rec (.projectParameterCallable x ctx)) evalUnbounded) u := by
     unfold ProductionCompletes
     show ((projectParameterCallable x ctx).runState u).1 ≠ _
@@ -718,13 +831,14 @@ theorem member_bridge_param_stable (a : Nat) (x : Ident) (N : Ident) (fallback :
     (hsel : selectDotEdge ctx (.param x) N (some owner) = .ok (.member owner p))
     (hnormal : structureNormal owner = true)
     (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size)
+    (hq : ctx.inputRecord = none)
     (hprod : ProductionCompletes (evalCounted (.dotMember (.param x) N fallback (some args)) ctx env) s) :
     (ordinaryCall productionPlanRoute a
         ⟨.dotMember (.param x) N fallback none, args, ctx, env, .dot (.param x) N fallback⟩ .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember (.param x) N fallback (some args)) ctx env).runState s := by
   have hcall := probe_param x ctx s s' (some owner) hprobe
   refine member_bridge_stable_of_selection a (.param x) N fallback args ctx env s s' (some owner) owner p
-    hprobe hsel ?_ (navStable_param x ctx s s' owner hcall hnormal hact) hprod
+    hprobe hsel ?_ (navStable_param x ctx s s' owner hcall hnormal hact hq) hprod hq
   intro y o t hy hrun
   have hxy : y = x := by
     simp only [headParam?, Option.some.injEq] at hy
@@ -839,10 +953,21 @@ theorem navKept_property_step (rec : EvalRec) (hrec : ∀ c, Preserves NavKept (
   unfold EvalBody.evalZeroArgPropertyAccessCounted
   split
   · simp only [EvalM.bind_runState, KatLang.EvaluatorCacheLaws.get_runState]
-    exact navKept_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+    exact KatLang.EvaluatorCacheLaws.pres_servingDetached _
+      (navKept_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request) s
   · split
     · exact NavKept.refl s
-    · exact navKept_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
+    · -- An admitted read first notes its input (ledger R-1): a kept write.
+      rcases KatLang.DetachedEvaluation.note_then_publication rec accessKind owner binding
+        resolvedAlgorithm ctx env request s with heq | ⟨t, hframe, heq⟩
+      · -- The read refused below an admitted reader (ledger R-1, deferred reads): the starting state.
+        rw [heq]
+        exact NavKept.refl s
+      rw [heq]
+      have hst : NavKept s t := by
+        rw [hframe]
+        exact KatLang.EvaluatorCacheLaws.WriteFrame.keep s _ rfl rfl rfl rfl rfl
+      exact NavKept.trans hst (navKept_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request t)
 
 /-- **WHOLE RUN (production).** Every production operation, from every state, whatever its outcome,
     keeps every recorded alias binding cell and never moves the runtime-declaration counter back. -/
@@ -942,7 +1067,8 @@ theorem member_bridge_navSettled (a : Nat) (target : Expr) (N : Ident) (fallback
     (hproj : (projectNeedStructuralMember (.dotMember target N fallback none) ctx).runState s =
       (.ok (some (childOfInContext owner p.alg ctx)), s'))
     (hsettled : NavSettled target ctx owner s')
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s :=
@@ -958,6 +1084,6 @@ theorem member_bridge_navSettled (a : Nat) (target : Expr) (N : Ident) (fallback
         have := form_navExt ctx env args t
         rw [hf] at this
         exact this
-      exact hsettled u (h1.trans h2)) hprod
+      exact hsettled u (h1.trans h2)) hprod hq
 
 end KatLang.MemberStability

@@ -281,12 +281,14 @@ theorem alias_chase_installs (rec : EvalRec) (followCarriers projectRuntime : Bo
             (some (next.owner, next.binding)) : EvalM AliasChaseEnd) := rfl
 
 /-- THE BARE READ of a runtime-target alias whose row is no parameter is the VALUE demand of its ONE
-    binding cell (`aliasBindingCell`) — the cell its CALLABLE projects. -/
+    binding cell (`aliasBindingCell`) — the cell its CALLABLE projects — judged as a REUSE of that cell
+    against the reader (`reuseRetainedCell`, ledger R-1). -/
 theorem alias_value_installs (rec : EvalRec) (p : Option ScopeCtx) (o : List Expr) (pr : List PropDef)
     (target : Expr) (d : Option PropertyIdentity) (reference : Bool) (ctx : EvalCtx) (env : ValEnv)
     (h : ∀ x, target ≠ .param x) :
     EvalBody.aliasValue rec (.alias p o pr target d reference) ctx env = ((do
-      rec.demandNeedRecursive (<- aliasBindingCell (.alias p o pr target d reference) target ctx)) :
+      let cell <- aliasBindingCell (.alias p o pr target d reference) target ctx
+      reuseRetainedCell cell ctx (rec.demandNeedRecursive cell)) :
         EvalM CountedResult) := by
   cases target with
   | param x => exact absurd rfl (h x)
@@ -351,7 +353,7 @@ theorem user_supply_binds (rec : EvalRec) (callee : Algorithm) (cells : List Nat
       if (Algorithm.output callee).isEmpty then throw (Error.missingOutput .own)
       let next <- needBindingContext ctx bindings
       if let some address ← valueViewCell? callee ctx then
-        return (← rec.demandNeedRecursive address)
+        return (← reuseRetainedCell address ctx (rec.demandNeedRecursive address))
       rec.evalAlgOutputCounted callee { next with enteringInvocation := true }
         (ValEnv.shadow env (Algorithm.params callee))) :
         EvalM CountedResult) := rfl
@@ -912,7 +914,8 @@ theorem dot_member_read_installs (rec : EvalRec) (target : Expr) (name : Ident) 
     (ctx : EvalCtx) (env : ValEnv) (s s' : EvalState) (receiver? : Option Algorithm)
     (owner : Algorithm) (binding : PropDef)
     (hprobe : (rec.resolveDotReceiver? target ctx).runState s = (.ok receiver?, s'))
-    (hmember : selectDotEdge ctx target name receiver? = .ok (.member owner binding)) :
+    (hmember : selectDotEdge ctx target name receiver? = .ok (.member owner binding))
+    (hq : ctx.inputRecord = none) :
     (EvalBody.evalDotCallCounted rec target name fallback none ctx env).runState s = ((do
       match <- rec.resolveAliasValueTarget (childOfInContext owner binding.alg ctx) ctx with
       | terminal@(.runtime _ _) => reCountValueBoundary <$> EvalBody.terminalAccess rec terminal ctx env
@@ -940,7 +943,7 @@ theorem dot_member_read_installs (rec : EvalRec) (target : Expr) (name : Ident) 
         EvalM CountedResult).runState s' := by
   unfold EvalBody.evalDotCallCounted
   rw [EvalM.bind_runState, hprobe]
-  simp only [hmember]
+  simp only [hmember, noteMemberAccess_unmarked _ _ _ _ hq]
   rfl
 
 /-- The dot route's `Invoke` arm over a value receiver: the argument-list route fact, ONE read of

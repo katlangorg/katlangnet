@@ -230,17 +230,17 @@ theorem ready_spec {P : Array NeedCell → Prop} {v : CountedResult}
     (hreq : ∀ h, P h → CRV h v) : SoundI P (readyNeed v) (fun a h => a < h.size) :=
   allocate_spec (susp := .ready v) hreq
 
-/-- `capturedParameterActivation?` reads only; it refuses an unavailable parameter in the state it
-    started from, and a selected activation is a saved one. -/
+/-- `capturedParameterActivation?` writes nothing but the input records (ledger R-1); it refuses an
+    unavailable parameter in the state it started from, and a selected activation is a saved one. -/
 theorem captured_spec {P : Array NeedCell → Prop} {name : Ident} {ctx : EvalCtx} :
     SoundI P (capturedParameterActivation? name ctx)
       (fun act? h => OptActV h act?) := by
-  refine SoundI.of_readonly (fun s vs _ => ?_)
-  rcases captured_run name ctx s with hrefused | ⟨act?, hc, hact⟩
+  refine SoundI.of_inputsOnly (fun s vs _ => ?_)
+  rcases captured_run name ctx s with hrefused | ⟨act?, t, hc, ht, hact⟩
   · rw [hrefused]
     exact ⟨rfl, fun _ h => by cases h⟩
   rw [hc]
-  refine ⟨rfl, fun x hx act he => ?_⟩
+  refine ⟨ht, fun x hx act he => ?_⟩
   cases hx
   obtain ⟨i, hi⟩ := hact act he
   exact vs.activations i act hi
@@ -258,20 +258,24 @@ theorem supply_spec {P : Array NeedCell → Prop} {source : Expr} {caller : Eval
   intro hp s vs ps
   by_cases hpar : ∃ name, source = .param name
   · obtain ⟨name, rfl⟩ := hpar
-    rcases captured_run name caller s with hrefused | ⟨act?, hc, hact⟩
+    rcases captured_run name caller s with hrefused | ⟨act?, t, hc, ht, hact⟩
     · rw [supply_param_refused name caller values s _ hrefused]
       exact ⟨vs, Nat.le_refl _, fun _ h => by cases h⟩
     have venv : ValidNeedEnv s.needs (act?.map ParameterActivation.needs |>.getD caller.needEnv) :=
       tier_valid (hreq _ ps).1 (fun act e => by
         obtain ⟨i, hi⟩ := hact act e
         exact vs.activations i act hi)
+    have vt := Inv.of_inputsOnly vs ht
+    have hn : t.needs = s.needs := by rw [ht]
     cases hl : lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv) with
     | some a =>
-      rw [supply_param_transports name caller values s act? a hc hl]
-      exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact venv.lookup hl⟩
+      rw [supply_param_transports name caller values s t act? a hc hl]
+      exact ⟨vt, hn ▸ Nat.le_refl _, fun x hx => by cases hx; exact hn ▸ venv.lookup hl⟩
     | none =>
-      rw [supply_unbound_param name caller values s act? hc hl, ← allocate_run]
-      exact allocate_spec (susp := .expression (.param name) caller values) (fun h ph => hreq h ph) hp s vs ps
+      rw [supply_unbound_param name caller values s t act? hc hl, ← allocate_run]
+      have := allocate_spec (susp := .expression (.param name) caller values) (fun h ph => hreq h ph) hp t vt
+        (hn ▸ ps)
+      exact ⟨this.1, hn ▸ this.2.1, this.2.2⟩
   · rw [supply_nonparameter source caller values s (fun n h => hpar ⟨n, h⟩), ← allocate_run]
     exact allocate_spec (susp := .expression source caller values) (fun h ph => hreq h ph) hp s vs ps
 

@@ -241,6 +241,17 @@ public static partial class Evaluator
         return ctx;
     }
 
+    /// <summary>
+    /// The watermark a qualifying zero-supply invocation of <paramref name="binding"/> is SERVED at (ledger
+    /// R-1): the watermark of its body's context (<see cref="InvocationBodyContext"/>) — the detached one
+    /// for an <see cref="PropertyExposure.Exported"/> binding, which is the reader's watermark raised to the
+    /// run's current one — and zero, which serves nothing, for a local-only binding.
+    /// </summary>
+    private static long InvocationServedWatermark(in PropertyCallBinding binding, in EvalCtx ctx)
+        => IsExported(binding.Binding) && ctx.Budget.DetachesExportedEvaluations
+            ? Math.Max(ctx.DetachedBefore, ctx.Budget.ActivationWatermark)
+            : 0;
+
     private static EvalResult<ZeroArgPropertyResult> ToPropertyResult(EvalResult<CountedResult> output)
         => output.IsError
             ? output.Error
@@ -256,9 +267,16 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalPublishedZeroSupplyInvocation(
         PropertyCallBinding binding, Algorithm property, EvalCtx ctx, ValEnv valEnv, Func<EvalResult<ZeroArgPropertyResult>> invocation)
     {
-        var published = ctx.ZeroArgPropertyResultCache.Invoke(
-            ZeroSupplyInvocationExecution(binding, property, ctx, valEnv),
-            invocation);
+        // An EXPORTED binding's invocation is served while it runs, like its read (ledger R-1; Lean
+        // `servingDetached` in `EvalBody.evalZeroArgPropertyAccessCounted`).
+        ctx.Budget.EnterServing(InvocationServedWatermark(binding, ctx));
+        EvalResult<ZeroArgPropertyResult> published;
+        try
+        {
+            published = ctx.ZeroArgPropertyResultCache.Invoke(
+                ZeroSupplyInvocationExecution(binding, property, ctx, valEnv), invocation);
+        }
+        finally { ctx.Budget.ExitServing(); }
         return published.IsError
             ? published.Error
             : EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(published.Value.Value, published.Value.EmittedCount)));
@@ -276,9 +294,16 @@ public static partial class Evaluator
                 "Async evaluation requires an async-capable zero-argument property result cache on the run context.");
         }
 
-        var published = await asyncCache.InvokeAsync(
-            ZeroSupplyInvocationExecution(binding, property, ctx, valEnv),
-            invocation).ConfigureAwait(false);
+        // An EXPORTED binding's invocation is served while it runs, like its read (ledger R-1; Lean
+        // `servingDetached` in `EvalBody.evalZeroArgPropertyAccessCounted`).
+        ctx.Budget.EnterServing(InvocationServedWatermark(binding, ctx));
+        EvalResult<ZeroArgPropertyResult> published;
+        try
+        {
+            published = await asyncCache.InvokeAsync(
+                ZeroSupplyInvocationExecution(binding, property, ctx, valEnv), invocation).ConfigureAwait(false);
+        }
+        finally { ctx.Budget.ExitServing(); }
         return published.IsError
             ? published.Error
             : EvalResult<CountedResult>.Ok(ReCountValueBoundary(new CountedResult(published.Value.Value, published.Value.EmittedCount)));

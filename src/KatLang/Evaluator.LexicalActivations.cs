@@ -823,7 +823,17 @@ public static partial class Evaluator
             return null;
         if (owner.Activation is not { } activation)
             return ParameterActivation.Unbound;
-        return IsDetached(activation, ctx) ? ParameterActivation.UnboundDetached : activation;
+        if (ctx.CallStack is AnnotatedReadOnlyList<Algorithm> annotated)
+        {
+            if (annotated.DetachedBefore != 0 && activation.Serial < annotated.DetachedBefore)
+                return ParameterActivation.UnboundDetached;
+            // Inside a retained cell's computation the read is the cell's INPUT READ (ledger R-1; Lean:
+            // the `noteCellInput` of `capturedParameterActivation?`) — REFUSED instead when it lands below a
+            // reader admitted to the cell while a detached evaluation that detaches the owner is served.
+            if (annotated.InputRecord is { } record && record.Note(activation.Serial))
+                return ParameterActivation.UnboundDetached;
+        }
+        return activation;
     }
 
     /// <summary>

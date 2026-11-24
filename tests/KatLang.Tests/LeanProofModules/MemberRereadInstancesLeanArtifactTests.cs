@@ -321,6 +321,8 @@ public class MemberRereadInstancesLeanArtifactTests
           DERIVED by `StoredCallableNormal.param_head_normal` from two facts of the reached heap (the
           parameter's cell awaits its first projection, and was supplied with a written name);
         * `production_entry` — production completes from `entry`.
+        * `input_free` — the plan's context is outside every retained cell's computation (ledger R-1), so
+          no member access of the route notes an input record; of the re-used instance, or stated here.
 
         `nav_settled` is the DERIVED `NavSettled` (over every navigation extension of the probe's exit) and
         `bridge_of_probe` the theorem applied. Nothing here assumes settledness, an alias-key fact or an
@@ -402,13 +404,14 @@ public class MemberRereadInstancesLeanArtifactTests
             navigation extension — derived from the probe. -/
         theorem nav_settled : NavSettled target ctx owner probed :=
           navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+            input_free
 
         /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
         theorem bridge_of_probe :
             (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
               (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
           member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-            (fun _ _ _ hx => nomatch hx) production_entry
+            (fun _ _ _ hx => nomatch hx) production_entry input_free
 
         end @NS@
 
@@ -469,14 +472,14 @@ public class MemberRereadInstancesLeanArtifactTests
         /-- **`navSettled_of_navRuns` APPLIED**: settled navigation at the probe's exit, over EVERY
             navigation extension — derived from the probe. -/
         theorem nav_settled : NavSettled target ctxIn owner probed :=
-          navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal
+          navSettled_of_navRuns target ctxIn entry probed owner rfl nav_run no_mint head_normal input_free
 
         /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
         theorem bridge_of_probe :
             (ordinaryCall productionPlanRoute k shape .call).runState entry =
               (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
           member_bridge_of_probe k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint select
-            head_normal production_entry
+            head_normal production_entry input_free
 
         end @NS@
 
@@ -500,6 +503,9 @@ public class MemberRereadInstancesLeanArtifactTests
         def row : Expr := MemberStabilityInstances.capture src
         def ctx : EvalCtx := MemberStabilityInstances.ctxOf [row]
         def shape : NeedPlan.CallShape := ⟨path, args, ctx, [], .dot target N (.resolve N)⟩
+        /-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+            of its route notes an input record. -/
+        theorem input_free : ctx.inputRecord = none := rfl
 
         def fin : EvalState := ((evalCounted row ctx []).runState EvalState.empty).2
         def entry : EvalState := withState 0 .evaluating fin
@@ -564,7 +570,7 @@ public class MemberRereadInstancesLeanArtifactTests
             (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify 0 shape)).runState entry =
               (.ok .call, x) :=
           MemberStabilityInstances.flight_member 0 target N (.resolve N) args ctx [] entry probed entryCell alg? _ entry_cell rfl probe_entry
-            selected route_free
+            selected route_free input_free
 
         theorem demand_done :
             ((NeedPlan.executeAlong productionPlanRoute 0 shape .call).runState x).1.isIncomplete = false :=
@@ -604,13 +610,14 @@ public class MemberRereadInstancesLeanArtifactTests
             navigation extension — derived from the probe. -/
         theorem nav_settled : NavSettled target ctx owner probed :=
           navSettled_of_navRuns target ctx entry probed owner rfl nav_run no_mint (fun _ _ _ hx => nomatch hx)
+            input_free
 
         /-- **`member_bridge_of_probe` APPLIED** from the state before the classification. -/
         theorem bridge_of_probe :
             (ordinaryCall productionPlanRoute 0 shape .call).runState entry =
               (reCountValueBoundary <$> evalCounted src ctx []).runState entry :=
           member_bridge_of_probe 0 target N (.resolve N) args ctx [] entry probed owner p rfl nav_run no_mint select
-            (fun _ _ _ hx => nomatch hx) production_entry
+            (fun _ _ _ hx => nomatch hx) production_entry input_free
 
         end @NS@
 

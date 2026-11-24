@@ -274,6 +274,27 @@ theorem Sound.of_readonly {α : Type} {pre : Array NeedCell → Prop} {m : EvalM
   rw [hs]
   exact ⟨vs, Nat.le_refl _, hr⟩
 
+/-- A computation that writes no state but the input records (ledger R-1): heap and activations
+    are the ones it started from. -/
+theorem Sound.of_inputsOnly {α : Type} {pre : Array NeedCell → Prop} {m : EvalM α}
+    {post : α → Array NeedCell → Prop}
+    (h : ∀ s, StateValid s → pre s.needs →
+      (m.runState s).2 = { s with cellInputs := (m.runState s).2.cellInputs } ∧
+      ∀ x, (m.runState s).1 = .ok x → post x s.needs) : Sound pre m post := by
+  intro s vs ps
+  obtain ⟨hs, hr⟩ := h s vs ps
+  have hn : (m.runState s).2.needs = s.needs := by rw [hs]
+  have ha : (m.runState s).2.lexicalActivations = s.lexicalActivations := by rw [hs]
+  refine ⟨⟨hn ▸ vs.collectors, hn ▸ vs.suspensionEnvs, hn ▸ ha ▸ vs.activations⟩, hn ▸ Nat.le_refl _,
+    fun x hx => hn ▸ hr x hx⟩
+
+/-- A state that differs from a valid one in its input records only is valid. -/
+theorem StateValid.of_inputsOnly {s t : EvalState} (vs : StateValid s)
+    (ht : t = { s with cellInputs := t.cellInputs }) : StateValid t := by
+  have hn : t.needs = s.needs := by rw [ht]
+  have ha : t.lexicalActivations = s.lexicalActivations := by rw [ht]
+  exact ⟨hn ▸ vs.collectors, hn ▸ vs.suspensionEnvs, hn ▸ ha ▸ vs.activations⟩
+
 /-- `mapM` composes, each element run from the state the previous one left. -/
 theorem Sound.mapM {α β : Type} {pre : Array NeedCell → Prop} {f : α → EvalM β}
     {q : β → Array NeedCell → Prop} (hpre : Mono (fun (_ : Unit) => pre)) (hq : Mono q)
@@ -371,7 +392,8 @@ theorem ready_sound (value : CountedResult) :
     identifier is an absence here, not a dangling need address.) -/
 theorem captured_run (name : Ident) (ctx : EvalCtx) (s : EvalState) :
     (capturedParameterActivation? name ctx).runState s = (.error (Error.unknownName name), s) ∨
-      ∃ act?, (capturedParameterActivation? name ctx).runState s = (.ok act?, s) ∧
+      ∃ act? t, (capturedParameterActivation? name ctx).runState s = (.ok act?, t) ∧
+        t = { s with cellInputs := t.cellInputs } ∧
         ∀ act, act? = some act → ∃ i : Nat, s.lexicalActivations[i]? = some act :=
   captured_outcome name ctx s
 
@@ -398,66 +420,72 @@ theorem supply_sound (source : Expr) (caller : EvalCtx) (values : ValEnv) :
   intro s vs ps
   by_cases hp : ∃ name, source = .param name
   · obtain ⟨name, rfl⟩ := hp
-    rcases captured_run name caller s with hrefused | ⟨act?, hc, hact⟩
+    rcases captured_run name caller s with hrefused | ⟨act?, t, hc, ht, hact⟩
     · rw [supply_param_refused name caller values s _ hrefused]
       exact ⟨vs, Nat.le_refl _, fun _ h => by cases h⟩
     · have venv := lookup_tier_valid vs ps act? hact
+      have vt := StateValid.of_inputsOnly vs ht
+      have hn : t.needs = s.needs := by rw [ht]
       cases hl : lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv) with
       | some a =>
-        rw [supply_param_transports name caller values s act? a hc hl]
-        exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact venv.lookup hl⟩
+        rw [supply_param_transports name caller values s t act? a hc hl]
+        exact ⟨vt, hn ▸ Nat.le_refl _, fun x hx => by cases hx; exact hn ▸ venv.lookup hl⟩
       | none =>
-        rw [supply_unbound_param name caller values s act? hc hl, ← allocate_run]
-        exact allocate_sound (.expression (.param name) caller values) s vs ps
+        rw [supply_unbound_param name caller values s t act? hc hl, ← allocate_run]
+        have := allocate_sound (.expression (.param name) caller values) t vt (hn ▸ ps)
+        exact ⟨this.1, hn ▸ this.2.1, this.2.2⟩
   · rw [supply_nonparameter source caller values s (fun n h => hp ⟨n, h⟩), ← allocate_run]
     exact allocate_sound (.expression source caller values) s vs ps
 
-/-- `spreadCollectorSlice?` never writes the state, and a slice it returns is the slice of a
-    collector cell PRESENT in the heap. -/
+/-- `spreadCollectorSlice?` writes no state but the input records (ledger R-1), and a slice it
+    returns is the slice of a collector cell PRESENT in the heap. -/
 theorem slice_run (operand : Expr) (caller : EvalCtx) (s : EvalState) :
-    ∃ r, (spreadCollectorSlice? operand caller).runState s = (r, s) ∧
+    ∃ r t, (spreadCollectorSlice? operand caller).runState s = (r, t) ∧ t = { s with cellInputs := t.cellInputs } ∧
       ∀ slice, r = .ok (some slice) →
         ∃ (a : Nat) (cell : NeedCell), s.needs[a]? = some cell ∧ cell.suspension = .collector slice := by
   cases operand
   case param name =>
-    rcases captured_run name caller s with hrefused | ⟨act?, hc, _⟩
-    · refine ⟨.error (Error.unknownName name), ?_, fun _ h => by cases h⟩
+    rcases captured_run name caller s with hrefused | ⟨act?, t, hc, ht, _⟩
+    · refine ⟨.error (Error.unknownName name), s, ?_, rfl, fun _ h => by cases h⟩
       simp only [spreadCollectorSlice?, bind_run, parameter_address_refused name caller s _ hrefused]
+    have hn : t.needs = s.needs := by rw [ht]
     have hp : (parameterNeedAddress? name caller).runState s =
-        (.ok (lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv)), s) := by
+        (.ok (lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv)), t) := by
       simp only [parameterNeedAddress?, bind_run, hc]
       rfl
     cases hl : lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv) with
     | none =>
-      refine ⟨.ok none, ?_, fun _ h => by cases h⟩
+      refine ⟨.ok none, t, ?_, ht, fun _ h => by cases h⟩
       simp only [spreadCollectorSlice?, bind_run, hp, hl]
       rfl
     | some a =>
       cases hcell : s.needs[a]? with
       | none =>
-        refine ⟨.error .badArity, ?_, fun _ h => by cases h⟩
-        simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell]
+        have hcell' : t.needs[a]? = none := by rw [hn]; exact hcell
+        refine ⟨.error .badArity, t, ?_, ht, fun _ h => by cases h⟩
+        simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell']
         rfl
       | some cell =>
+        have hcell' : t.needs[a]? = some cell := by rw [hn]; exact hcell
         cases hs : cell.suspension with
         | collector slice =>
-          refine ⟨.ok (some slice), ?_, fun sl h => ?_⟩
-          · simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          refine ⟨.ok (some slice), t, ?_, ht, fun sl h => ?_⟩
+          · simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell', hs]
             rfl
           · cases h; exact ⟨a, cell, hcell, hs⟩
         | expression e c v =>
-          refine ⟨.ok none, ?_, fun _ h => by cases h⟩
-          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          refine ⟨.ok none, t, ?_, ht, fun _ h => by cases h⟩
+          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell', hs]
           rfl
         | ready v =>
-          refine ⟨.ok none, ?_, fun _ h => by cases h⟩
-          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          refine ⟨.ok none, t, ?_, ht, fun _ h => by cases h⟩
+          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell', hs]
           rfl
         | applied _ _ _ _ _ =>
-          refine ⟨.ok none, ?_, fun _ h => by cases h⟩
-          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          refine ⟨.ok none, t, ?_, ht, fun _ h => by cases h⟩
+          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell', hs]
           rfl
-  all_goals exact ⟨.ok none, rfl, fun _ h => by cases h⟩
+  all_goals exact ⟨.ok none, _, rfl, rfl, fun _ h => by cases h⟩
 
 /-- **Known-slice validity.** A slice `spreadCollectorSlice?` finds is valid in the current heap
     by the collector order alone: its members are `b < a < heap.size` for the collector's own
@@ -465,10 +493,10 @@ theorem slice_run (operand : Expr) (caller : EvalCtx) (s : EvalState) :
 theorem collector_slice_sound (operand : Expr) (caller : EvalCtx) :
     Sound (fun _ => True) (spreadCollectorSlice? operand caller)
       (fun r h => ∀ slice, r = some slice → ValidAddresses h slice) := by
-  refine Sound.of_readonly (fun s vs _ => ?_)
-  obtain ⟨r, hr, hfound⟩ := slice_run operand caller s
+  refine Sound.of_inputsOnly (fun s vs _ => ?_)
+  obtain ⟨r, t, hr, ht, hfound⟩ := slice_run operand caller s
   rw [hr]
-  refine ⟨rfl, fun x hx slice hslice => ?_⟩
+  refine ⟨ht, fun x hx slice hslice => ?_⟩
   subst hx hslice
   obtain ⟨a, cell, hc, hs⟩ := hfound slice rfl
   exact collector_members_valid vs.collectors hc hs
@@ -554,8 +582,8 @@ theorem recordParameterActivation_sound (names : List Ident) (ctx : EvalCtx) (en
 theorem parameterContext_sound (name : Ident) (ctx : EvalCtx) (env : ValEnv) :
     Sound (fun h => ValidCtx h ctx) (parameterContext name ctx env)
       (fun r h => ValidCtx h r.1) := by
-  refine Sound.of_readonly (fun s vs ps => ?_)
-  rcases captured_run name ctx s with hrefused | ⟨act?, hc, hact⟩
+  refine Sound.of_inputsOnly (fun s vs ps => ?_)
+  rcases captured_run name ctx s with hrefused | ⟨act?, t, hc, ht, hact⟩
   · have hrun : (parameterContext name ctx env).runState s = (.error (Error.unknownName name), s) := by
       simp only [parameterContext, bind_run, hrefused]
     rw [hrun]
@@ -563,11 +591,11 @@ theorem parameterContext_sound (name : Ident) (ctx : EvalCtx) (env : ValEnv) :
   have hrun : (parameterContext name ctx env).runState s =
       (.ok (match act? with
         | none => (ctx, env)
-        | some activation => ({ ctx with needEnv := activation.needs }, activation.values)), s) := by
+        | some activation => ({ ctx with needEnv := activation.needs }, activation.values)), t) := by
     simp only [parameterContext, bind_run, hc]
     cases act? <;> rfl
   rw [hrun]
-  refine ⟨rfl, fun x hx => ?_⟩
+  refine ⟨ht, fun x hx => ?_⟩
   cases hx
   cases act? with
   | none => exact ps

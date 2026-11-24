@@ -66,20 +66,25 @@ theorem evalAttempt_run {α : Type} (m : EvalM α) (s : EvalState) :
       (if (m.runState s).1.isIncomplete then (.error .fuelExhausted, (m.runState s).2)
        else (.ok (m.runState s).1, (m.runState s).2)) := rfl
 
+/-- The lookup writes no state but the input records (ledger R-1: `EvalState.noteInput`). -/
 theorem captured_readonly (name : Ident) (ctx : EvalCtx) (s : EvalState) :
-    ((capturedParameterActivation? name ctx).runState s).2 = s := by
-  unfold capturedParameterActivation?
-  repeat' (first | rfl | split | dsimp only | simp only [bind_run, get_run, pure_run, throw_run])
+    ((capturedParameterActivation? name ctx).runState s).2 =
+      { s with cellInputs := ((capturedParameterActivation? name ctx).runState s).2.cellInputs } := by
+  rcases KatLang.NeedControl.Allocation.captured_outcome name ctx s with h | ⟨_, t, h, ht, _⟩
+  · rw [h]
+  · rw [h]; exact ht
 
 theorem captured_state {name : Ident} {ctx : EvalCtx} {s t : EvalState}
     {o : Except Error (Option ParameterActivation)}
-    (h : (capturedParameterActivation? name ctx).runState s = (o, t)) : t = s := by
+    (h : (capturedParameterActivation? name ctx).runState s = (o, t)) :
+    t = { s with cellInputs := t.cellInputs } := by
   have := captured_readonly name ctx s
   rw [h] at this
   exact this
 
 theorem parameter_address_readonly (name : Ident) (ctx : EvalCtx) (s : EvalState) :
-    ((parameterNeedAddress? name ctx).runState s).2 = s := by
+    ((parameterNeedAddress? name ctx).runState s).2 =
+      { s with cellInputs := ((parameterNeedAddress? name ctx).runState s).2.cellInputs } := by
   simp only [parameterNeedAddress?, bind_run]
   split
   · rename_i heq
@@ -93,7 +98,8 @@ theorem collector_slice_readonly (address : Nat) (s : EvalState) :
   repeat' (first | rfl | split)
 
 theorem spread_slice_readonly (operand : Expr) (ctx : EvalCtx) (s : EvalState) :
-    ((spreadCollectorSlice? operand ctx).runState s).2 = s := by
+    ((spreadCollectorSlice? operand ctx).runState s).2 =
+      { s with cellInputs := ((spreadCollectorSlice? operand ctx).runState s).2.cellInputs } := by
   unfold spreadCollectorSlice?
   cases operand
   case param name =>
@@ -101,41 +107,67 @@ theorem spread_slice_readonly (operand : Expr) (ctx : EvalCtx) (s : EvalState) :
     simp only [bind_run]
     rcases hrun : (parameterNeedAddress? name ctx).runState s with ⟨out, next⟩
     rw [hrun] at hstate
-    cases hstate
+    simp only at hstate
     cases out with
-    | error => rfl
+    | error => exact hstate
     | ok found =>
       cases found with
-      | none => rfl
-      | some address => exact collector_slice_readonly address _
+      | none => exact hstate
+      | some address =>
+        rw [collector_slice_readonly address next]
+        exact hstate
   all_goals rfl
 
+/-- The spread slice's lookup leaves the heap as it found it. -/
+theorem spread_slice_needs (operand : Expr) (ctx : EvalCtx) (s : EvalState) :
+    ((spreadCollectorSlice? operand ctx).runState s).2.needs = s.needs := by
+  rw [spread_slice_readonly]
 
+
+/-- ONE supply: the heap is unchanged (a transport or a refusal) or grows by one suspended cell;
+    beside that only the input records may change (ledger R-1). -/
 theorem supply_cases (source : Expr) (caller : EvalCtx) (values : ValEnv) (s : EvalState) :
-    ((supplyNeed source caller values).runState s).2 = s ∨
     ((supplyNeed source caller values).runState s).2 =
-      { s with needs := s.needs.push { suspension := .expression source caller values } } := by
+      { s with cellInputs := ((supplyNeed source caller values).runState s).2.cellInputs } ∨
+    ((supplyNeed source caller values).runState s).2 =
+      { s with needs := s.needs.push { suspension := .expression source caller values },
+               cellInputs := ((supplyNeed source caller values).runState s).2.cellInputs } := by
   by_cases hp : ∃ name, source = .param name
   · obtain ⟨name, rfl⟩ := hp
     cases h : (capturedParameterActivation? name caller).runState s with
     | mk o t =>
-      obtain rfl := captured_state h
+      have ht := captured_state h
       cases o with
       | error e =>
         left
-        unfold supplyNeed
-        simp only [bind_run, h]
+        have hrun : (supplyNeed (.param name) caller values).runState s = (.error e, t) := by
+          unfold supplyNeed
+          simp only [bind_run, h]
+        rw [hrun]
+        exact ht
       | ok activation =>
         cases hl : lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv) with
         | none =>
           right
-          rw [KatLang.NeedControl.Allocation.supply_unbound_param name caller values t activation h hl]
+          rw [KatLang.NeedControl.Allocation.supply_unbound_param name caller values s t activation h hl]
+          dsimp only
+          rw [ht]
         | some a =>
           left
-          rw [KatLang.NeedControl.Allocation.supply_param_transports name caller values t activation a h hl]
+          rw [KatLang.NeedControl.Allocation.supply_param_transports name caller values s t activation a h hl]
+          exact ht
   · right
     have hn : ∀ name, source ≠ .param name := fun name he => hp ⟨name, he⟩
     rw [KatLang.NeedControl.Allocation.supply_nonparameter source caller values s hn]
+
+/-- The heap after ONE supply: unchanged, or grown by one suspended cell. -/
+theorem supply_needs_cases (source : Expr) (caller : EvalCtx) (values : ValEnv) (s : EvalState) :
+    ((supplyNeed source caller values).runState s).2.needs = s.needs ∨
+    ((supplyNeed source caller values).runState s).2.needs =
+      s.needs.push { suspension := .expression source caller values } := by
+  rcases supply_cases source caller values s with h | h
+  · left; rw [h]
+  · right; rw [h]
 
 
 /-! ## Heap discipline -/
@@ -269,7 +301,7 @@ theorem disciplined_allocate (suspension : NeedSuspension) : Disciplined (alloca
 theorem disciplined_supply (source : Expr) (caller : EvalCtx) (values : ValEnv) :
     Disciplined (supplyNeed source caller values) := by
   intro s
-  rcases supply_cases source caller values s with h | h <;> rw [h]
+  rcases supply_needs_cases source caller values s with h | h <;> rw [h]
   · exact HeapKept.refl _
   · exact HeapKept.push _ _
 
@@ -284,7 +316,7 @@ theorem disciplined_mapM {α β : Type} (f : α → EvalM β) (hf : ∀ x, Disci
 
 theorem disciplined_slice (operand : Expr) (ctx : EvalCtx) :
     Disciplined (spreadCollectorSlice? operand ctx) :=
-  disciplined_of_needs _ (fun s => by rw [spread_slice_readonly])
+  disciplined_of_needs _ (fun s => spread_slice_needs operand ctx s)
 
 theorem disciplined_source (a : Nat) : Disciplined (needWrittenSource? a) :=
   disciplined_of_needs _ (fun s => by rw [KatLang.NeedControl.Provenance.source_run])
@@ -1285,7 +1317,7 @@ theorem forward_hop (name : Ident) (ctx : EvalCtx) (env : ValEnv) (s : EvalState
     (hc : (capturedParameterActivation? name ctx).runState s = (.ok activation, s))
     (ha : lookupAssoc name (activation.map ParameterActivation.needs |>.getD ctx.needEnv) = some a) :
     (supplyNeed (.param name) ctx env).runState s = (.ok a, s) :=
-  KatLang.NeedControl.Allocation.supply_param_transports name ctx env s activation a hc ha
+  KatLang.NeedControl.Allocation.supply_param_transports name ctx env s s activation a hc ha
 
 /-- The binder half of a hop: a plain parameter is bound to the supplied cell itself. -/
 theorem binder_transports {m : Type → Type} [Monad m] [MonadExceptOf Error m]
@@ -1548,12 +1580,49 @@ theorem fresh_plan_is_ordinary_call
         | ok v => exact ⟨rfl, Or.inr (Or.inl ⟨.ok cells, rfl⟩)⟩
 
 
+/-- The plan write commutes with the input records' note (they write different fields). -/
+theorem withPlan_noteInput (a : Nat) (p : NeedPlanSupply) (s : EvalState) (ctx : EvalCtx) (i : Nat) :
+    withPlan a p (s.noteInput ctx i) = (withPlan a p s).noteInput ctx i := by
+  unfold withPlan EvalState.noteInput
+  split <;> rfl
+
 theorem captured_withPlan (name : Ident) (ctx : EvalCtx) (a : Nat) (p : NeedPlanSupply)
     (s : EvalState) :
     (capturedParameterActivation? name ctx).runState (withPlan a p s) =
-      (((capturedParameterActivation? name ctx).runState s).1, withPlan a p s) := by
+      (((capturedParameterActivation? name ctx).runState s).1,
+        withPlan a p ((capturedParameterActivation? name ctx).runState s).2) := by
   unfold capturedParameterActivation?
-  repeat' (first | rfl | split | dsimp only | simp only [bind_run, get_run, pure_run, throw_run])
+  split
+  · rfl
+  · rfl
+  · rename_i id _
+    -- The plan record is no input record: the note refuses (ledger R-1, deferred reads) in both states alike.
+    have hl : (withPlan a p s).lateRefusedFor ctx id = s.lateRefusedFor ctx id := by
+      unfold withPlan EvalState.lateRefusedFor
+      split <;> rfl
+    cases hq : s.lateRefusedFor ctx id with
+    | true =>
+      have h1 : (noteCellInput ctx id (Error.unknownName name)).runState (withPlan a p s) =
+          (.error (Error.unknownName name), withPlan a p s) := by
+        rw [noteCellInput_run, hl, hq]; rfl
+      have h2 : (noteCellInput ctx id (Error.unknownName name)).runState s = (.error (Error.unknownName name), s) := by
+        rw [noteCellInput_run, hq]; rfl
+      simp only [bind_run, h1, h2]
+    | false =>
+      have h1 : (noteCellInput ctx id (Error.unknownName name)).runState (withPlan a p s) =
+          (.ok (), (withPlan a p s).noteInput ctx id) := by
+        rw [noteCellInput_run, hl, hq]; rfl
+      have h2 : (noteCellInput ctx id (Error.unknownName name)).runState s =
+          (.ok (), s.noteInput ctx id) := by
+        rw [noteCellInput_run, hq]; rfl
+      simp only [bind_run, h1, h2]
+      show (Except.ok ((withPlan a p s).noteInput ctx id).lexicalActivations[id]?,
+          (withPlan a p s).noteInput ctx id) =
+        (Except.ok (s.noteInput ctx id).lexicalActivations[id]?,
+          withPlan a p (s.noteInput ctx id))
+      rw [withPlan_noteInput]
+      simp only [EvalState.noteInput_lexicalActivations]
+      rfl
 
 /-- **Deliberate sharing.** A fresh plan whose argument is a parameter bound to an existing cell
     `c` prepares exactly `c` itself: nothing is allocated, and the only state change is the plan
@@ -1571,7 +1640,7 @@ theorem prepare_transports_parameter (ev : NeedSupply.SpreadEval)
       (.ok activation, withPlan a .preparing s) := by
     rw [captured_withPlan, hc]
   have hsup := KatLang.NeedControl.Allocation.supply_param_transports name shape.caller shape.values
-    (withPlan a .preparing s) activation c hc' hl
+    (withPlan a .preparing s) (withPlan a .preparing s) activation c hc' hl
   have hf := KatLang.NeedControl.Formation.ordinary_singleton ev shape.caller shape.values (.param name)
     (withPlan a .preparing s) _ _ (fun _ h => by cases h) hsup
   rw [prepare_unprepared ev a shape s cell h hp (by rw [hargs, hf]; rfl)]

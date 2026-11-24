@@ -25,8 +25,12 @@ evaluator ENFORCES the flag:
 
 So a wrong `exported` flag is a deterministic refusal on the paths these laws cover —
 `unknownName` at the parameter operation, `localOnlyProperty` at a navigation or at a local-only
-read — never a value read from a pre-existing input. (One retained cell is NOT covered: a local
-runtime-alias binding cell established before the exported evaluation started; ledger row R-1.)
+read — never a value read from a pre-existing input. A retained runtime-alias binding cell is reached
+by the alias chase instead; its reuse is judged against the reader BEFORE its channel runs (ledger row
+R-1, qualified, November 2026: `KatLangArityLaws/RetainedCellReuse.lean`), and inside a retained cell's
+computation an input read that lands below a reader admitted to the cell, while a detached evaluation
+that detaches the activation is served, is the same refusal (`activation_late_refused`,
+`noteLocalOnlyRead_run`).
 
 What is proved here, over the production definitions of `KatLang.lean`:
 
@@ -68,7 +72,8 @@ What is proved here, over the production definitions of `KatLang.lean`:
   **`exported_request_ignores_reader_tiers`**: two readers that differ only in their need tier and
   value environment issue THE SAME request of an exported binding.
 * § 5 **Alias cells.** An exported alias's binding cell is supplied in the detached context, a
-  local-only one's in the using context (`aliasCellContext_exported`, `aliasCellContext_local`).
+  local-only one's at the watermark of its declaring level (`aliasCellContext_exported`,
+  `aliasCellContext_local`, `reattach_not_detached`, `aliasCellContext_local_attached`).
 
 NOT claimed here (ledger row E-22): that an exported request is independent of the reader's
 BINDING CONTEXT and of the CONTENTS of the detached activations. Both are identities by design —
@@ -283,12 +288,30 @@ theorem own_reads_the_context (name : Ident) (ctx : EvalCtx) (s : EvalState)
   simp only [capturedParameterActivation?, h]
   rfl
 
-/-- An `activation` read uses the recorded activation, read from the state. -/
+/-- An `activation` read uses the recorded activation, read from the state. It changes the state
+    only by recording the read as an input of the retained cell whose computation `ctx` belongs to
+    (`EvalState.noteInput`, ledger R-1; nothing outside every cell's computation) — unless the read
+    lands below a reader already admitted to that cell (`activation_late_refused`). -/
 theorem activation_reads_the_record (name : Ident) (ctx : EvalCtx) (s : EvalState) (id : Nat)
-    (h : capturedParameter name ctx = .activation id) :
-    (capturedParameterActivation? name ctx).runState s = (.ok s.lexicalActivations[id]?, s) := by
-  simp only [capturedParameterActivation?, h]
-  rfl
+    (h : capturedParameter name ctx = .activation id) (hl : s.lateRefusedFor ctx id = false) :
+    (capturedParameterActivation? name ctx).runState s =
+      (.ok s.lexicalActivations[id]?, s.noteInput ctx id) := by
+  have hn : (noteCellInput ctx id (Error.unknownName name)).runState s =
+      (.ok (), s.noteInput ctx id) := by
+    rw [noteCellInput_run, hl]; rfl
+  simp only [capturedParameterActivation?, h, bind_run, hn, get_run, pure_run,
+    EvalState.noteInput_lexicalActivations]
+
+/-- DEFERRED READS (ledger R-1): an `activation` read that lands below a reader already ADMITTED to
+    the retained cell whose computation `ctx` belongs to (`EvalState.lateRefusedFor`) is the same
+    `unknownName` refusal as an unavailable parameter's, in the state it started from — the refusal
+    that reader's own detached context reports for the read. -/
+theorem activation_late_refused (name : Ident) (ctx : EvalCtx) (s : EvalState) (id : Nat)
+    (h : capturedParameter name ctx = .activation id) (hl : s.lateRefusedFor ctx id = true) :
+    (capturedParameterActivation? name ctx).runState s = (.error (Error.unknownName name), s) := by
+  have hn : (noteCellInput ctx id (Error.unknownName name)).runState s = (.error (Error.unknownName name), s) := by
+    rw [noteCellInput_run, hl]; rfl
+  simp only [capturedParameterActivation?, h, bind_run, hn]
 
 /-- An unavailable parameter has NO read context: the refusal, before any tier is consulted. -/
 theorem unavailable_context_refused (name : Ident) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
@@ -398,17 +421,18 @@ theorem own_transport_uses_the_context (name : Ident) (caller : EvalCtx) (values
 
 /-- AVAILABLE CELLS TRANSPORT LAZILY: a parameter whose lexical owner's activation is usable and
     binds it is supplied as that activation's existing cell — nothing is allocated, demanded or
-    projected, and the state is unchanged. -/
+    projected, and the state changes only by the input record of the retained cell whose
+    computation the transport belongs to (`EvalState.noteInput`; ledger R-1). -/
 theorem available_transport_is_lazy (name : Ident) (caller : EvalCtx) (values : ValEnv) (s : EvalState)
     (id address : Nat) (activation : ParameterActivation)
     (h : capturedParameter name caller = .activation id)
     (hrecord : s.lexicalActivations[id]? = some activation)
-    (hbound : lookupAssoc name activation.needs = some address) :
-    (supplyNeed (.param name) caller values).runState s = (.ok address, s) := by
-  have hc : (capturedParameterActivation? name caller).runState s = (.ok (some activation), s) := by
-    simp only [capturedParameterActivation?, h]
-    show ((do pure ((← get).lexicalActivations[id]?) : EvalM (Option ParameterActivation))).runState s = _
-    simp only [bind_run, get_run, pure_run, hrecord]
+    (hbound : lookupAssoc name activation.needs = some address)
+    (hl : s.lateRefusedFor caller id = false) :
+    (supplyNeed (.param name) caller values).runState s =
+      (.ok address, s.noteInput caller id) := by
+  have hc := activation_reads_the_record name caller s id h hl
+  rw [hrecord] at hc
   simp only [supplyNeed, bind_run, hc, Option.map_some, Option.getD_some, hbound]
   rfl
 
@@ -425,7 +449,8 @@ theorem capturedParameter_ignores_tiers (name : Ident) (ctx : EvalCtx) (needs : 
     the owner activation's. This is the statement the E-18 premise `ParamRowOwned`
     (`NavigationContract`) asked of a parameter-row alias, now a property of every captured read:
     an owner that is not activated yields the refusal (`captured_unavailable_static`) instead of
-    the chasing context's binding. -/
+    the chasing context's binding. Both readers also leave the SAME state: the input record of the
+    retained cell whose computation they belong to, if any, takes the same read (ledger R-1). -/
 theorem captured_read_is_lexical (name : Ident) (ctx : EvalCtx) (env env' : ValEnv) (needs' : NeedEnv)
     (binding' : Nat) (s : EvalState) (site : Algorithm) (scope owner : ScopeCtx)
     (hhead : ctx.head? = some site) (hscope : siteScope? ctx = some scope)
@@ -435,10 +460,10 @@ theorem captured_read_is_lexical (name : Ident) (ctx : EvalCtx) (env env' : ValE
     ((parameterContext name ctx env).runState s = (.error (Error.unknownName name), s)
       ∧ (parameterContext name { ctx with needEnv := needs', bindingContext := binding' } env').runState s =
           (.error (Error.unknownName name), s))
-    ∨ ∃ tier values,
-      (parameterContext name ctx env).runState s = (.ok ({ ctx with needEnv := tier }, values), s)
+    ∨ ∃ tier values t,
+      (parameterContext name ctx env).runState s = (.ok ({ ctx with needEnv := tier }, values), t)
       ∧ (parameterContext name { ctx with needEnv := needs', bindingContext := binding' } env').runState s =
-          (.ok ({ ctx with needEnv := tier, bindingContext := binding' }, values), s) := by
+          (.ok ({ ctx with needEnv := tier, bindingContext := binding' }, values), t) := by
   cases hid : owner.activation with
   | none =>
     have hu := captured_unavailable_static name ctx site scope owner hhead hscope hnot hown hid
@@ -450,15 +475,25 @@ theorem captured_read_is_lexical (name : Ident) (ctx : EvalCtx) (env env' : ValE
       refine .inl ⟨unavailable_context_refused name ctx env s hu, ?_⟩
       exact unavailable_context_refused name _ env' s (by rw [capturedParameter_ignores_tiers]; exact hu)
     · have ha := captured_activation name ctx site scope owner id hhead hscope hnot hown hid (by omega)
+      have ha' : capturedParameter name { ctx with needEnv := needs', bindingContext := binding' } = .activation id := by
+        rw [capturedParameter_ignores_tiers]; exact ha
+      have hq : s.lateRefusedFor { ctx with needEnv := needs', bindingContext := binding' } id =
+          s.lateRefusedFor ctx id := rfl
+      cases hl : s.lateRefusedFor ctx id with
+      | true =>
+        -- A read below an admitted reader of the cell both readers belong to: both refused alike.
+        refine .inl ⟨?_, ?_⟩
+        · simp only [parameterContext, bind_run, activation_late_refused name ctx s id ha hl]
+        · simp only [parameterContext, bind_run, activation_late_refused name _ s id ha' (hq.trans hl)]
+      | false =>
       have hlt := hvalid id hid
       have hget : s.lexicalActivations[id]? = some s.lexicalActivations[id] := by
         simp [hlt]
-      refine .inr ⟨s.lexicalActivations[id].needs, s.lexicalActivations[id].values, ?_, ?_⟩
-      · simp only [parameterContext, bind_run, activation_reads_the_record name ctx s id ha, hget]
+      refine .inr ⟨s.lexicalActivations[id].needs, s.lexicalActivations[id].values,
+        s.noteInput ctx id, ?_, ?_⟩
+      · simp only [parameterContext, bind_run, activation_reads_the_record name ctx s id ha hl, hget]
         rfl
-      · have ha' : capturedParameter name { ctx with needEnv := needs', bindingContext := binding' } = .activation id := by
-          rw [capturedParameter_ignores_tiers]; exact ha
-        simp only [parameterContext, bind_run, activation_reads_the_record name _ s id ha', hget]
+      · simp only [parameterContext, bind_run, activation_reads_the_record name _ s id ha' (hq.trans hl), hget]
         rfl
 
 /-! ## 3. Accessibility -/
@@ -532,14 +567,31 @@ theorem memberAccessible_attached (ctx : EvalCtx) (h : ctx.detachedBefore = 0) (
 
 /-- **Exported means detached.** Every request of an exported binding — a read and an invocation
     alike — IS the publication law over the detached context and no inherited values, at the
-    number of activations recorded when the request starts. -/
+    number of activations recorded when the request starts, run while the input records SERVE that
+    context's watermark (`servingDetached`, ledger R-1): an input read the request demands in a
+    retained cell's computation is judged against it. -/
 theorem exported_access_is_detached (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (request : ZeroArgPropertyRequest) (s : EvalState) (h : binding.exposure.isExported = true) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s =
+      (servingDetached (ctx.detach s.lexicalActivations.size).detachedBefore
+        (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm
+          (ctx.detach s.lexicalActivations.size) [] request)).runState s := by
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, h, ite_true, bind_run, get_run]
+
+/-- When the input records already serve the request's watermark — a request made inside the
+    evaluation it would serve — the exported access IS the publication law over the detached context,
+    in the same state. -/
+theorem exported_access_is_detached_served (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
+    (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (request : ZeroArgPropertyRequest) (s : EvalState) (h : binding.exposure.isExported = true)
+    (hs : (ctx.detach s.lexicalActivations.size).detachedBefore ≤ s.cellInputs.serving) :
+    (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s =
       (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm
         (ctx.detach s.lexicalActivations.size) [] request).runState s := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, h, ite_true, bind_run, get_run]
+  rw [exported_access_is_detached rec accessKind owner binding resolvedAlgorithm ctx env request s h,
+    servingDetached_runState]
+  simp only [hs, ↓reduceIte]
 
 /-- **`detached_local_only_read_refused`.** A property-style READ of a local-only binding whose
     key names a detached activation — the nearest activated level of its declaring chain was
@@ -560,15 +612,91 @@ theorem detached_local_only_read_refused (rec : EvalRec) (accessKind : ZeroArgPr
     Bool.and_self, ite_true, Bool.false_eq_true, ite_false]
   rfl
 
-/-- A local-only request that is not a refused read is the publication law in its own context. -/
+/-- A local-only request that is not a refused read is the publication law in its own context,
+    after a READ has recorded its input read through the key's activation on the retained cell
+    whose computation it belongs to (`noteLocalOnlyRead`, ledger R-1). -/
 theorem local_only_access_is_attached (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (request : ZeroArgPropertyRequest)
     (hlocal : binding.exposure.isExported = false)
     (hadmitted : (request.isRead && localOnlyReadRefused binding resolvedAlgorithm ctx) = false) :
     EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request =
-      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request := by
+      (do
+        if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+        EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
   simp only [EvalBody.evalZeroArgPropertyAccessCounted, hlocal, hadmitted, Bool.false_eq_true, ite_false]
+
+/-- Outside every retained cell's computation the read's note is nothing. -/
+theorem noteLocalOnlyRead_unmarked (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx)
+    (h : ctx.inputRecord = none) : noteLocalOnlyRead binding resolvedAlgorithm ctx = pure () := by
+  unfold noteLocalOnlyRead noteCellInput
+  split <;> simp [h]
+
+/-- An admitted local-only request outside every retained cell's computation is the publication
+    law in its own context, read or invocation alike. -/
+theorem local_only_access_is_attached_unmarked (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
+    (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (request : ZeroArgPropertyRequest)
+    (hlocal : binding.exposure.isExported = false)
+    (hadmitted : (request.isRead && localOnlyReadRefused binding resolvedAlgorithm ctx) = false)
+    (hunmarked : ctx.inputRecord = none) :
+    EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request =
+      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request := by
+  rw [local_only_access_is_attached rec accessKind owner binding resolvedAlgorithm ctx env request hlocal hadmitted,
+    noteLocalOnlyRead_unmarked binding resolvedAlgorithm ctx hunmarked]
+  split <;> rfl
+
+/-- The read's note writes the input records only — or, when the read lands below a reader already
+    admitted to the retained cell whose computation `ctx` belongs to (ledger R-1, deferred reads), it
+    is the read's own `localOnlyProperty` refusal, in the state it started from. -/
+theorem noteLocalOnlyRead_run (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (s : EvalState) :
+    (noteLocalOnlyRead binding resolvedAlgorithm ctx).runState s =
+        (.error (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure), s) ∨
+      ∃ t, (noteLocalOnlyRead binding resolvedAlgorithm ctx).runState s = (.ok (), t) ∧
+        t = { s with cellInputs := t.cellInputs } := by
+  unfold noteLocalOnlyRead
+  split
+  · rename_i id _
+    rcases noteCellInput_outcome ctx id
+        (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure) s with h | h
+    · exact .inl h
+    · exact .inr ⟨_, h, EvalState.noteInput_eq _ _ _⟩
+  · exact .inr ⟨s, rfl, rfl⟩
+
+/-- The admitted local-only arm is the publication law run from the state the read's note left,
+    which differs from the entry state in its input records only (ledger R-1). -/
+theorem note_then_publication (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
+    (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+    (request : ZeroArgPropertyRequest) (s : EvalState) :
+    ((do
+        if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+        EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) :
+          EvalM CountedResult).runState s =
+        (.error (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure), s) ∨
+    ∃ t, t = { s with cellInputs := t.cellInputs } ∧
+      ((do
+        if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+        EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) :
+          EvalM CountedResult).runState s =
+        (EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request).runState t := by
+  have hsplit : ((do
+      if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) :
+        EvalM CountedResult)
+      = ((if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx else pure ()) >>= fun _ =>
+          EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+    split <;> rfl
+  rw [hsplit, bind_run]
+  cases hr : request.isRead with
+  | false => exact .inr ⟨s, rfl, rfl⟩
+  | true =>
+    rcases noteLocalOnlyRead_run binding resolvedAlgorithm ctx s with ht | ⟨t, ht, hframe⟩
+    · refine .inl ?_
+      simp only [ite_true]
+      rw [ht]
+    · refine .inr ⟨t, hframe, ?_⟩
+      simp only [ite_true]
+      rw [ht]
 
 /-- No local-only read is refused at the default watermark. -/
 theorem nothing_refused_by_default (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx)
@@ -578,25 +706,28 @@ theorem nothing_refused_by_default (binding : PropDef) (resolvedAlgorithm : Algo
   | none => simp
   | some id => simp [nothing_detached_by_default ctx h id]
 
-/-- At the default watermark every local-only request is the publication law in its own context:
-    outside every exported evaluation a local-only binding is read as it always was. -/
+/-- At the default watermark, outside every retained cell's computation, every local-only request
+    is the publication law in its own context: outside every exported evaluation a local-only
+    binding is read as it always was. -/
 theorem local_only_access_attached_by_default (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (request : ZeroArgPropertyRequest)
-    (hlocal : binding.exposure.isExported = false) (h : ctx.detachedBefore = 0) :
+    (hlocal : binding.exposure.isExported = false) (h : ctx.detachedBefore = 0)
+    (hunmarked : ctx.inputRecord = none) :
     EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request =
       EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request :=
-  local_only_access_is_attached rec accessKind owner binding resolvedAlgorithm ctx env request hlocal
-    (by rw [nothing_refused_by_default binding resolvedAlgorithm ctx h, Bool.and_false])
+  local_only_access_is_attached_unmarked rec accessKind owner binding resolvedAlgorithm ctx env request hlocal
+    (by rw [nothing_refused_by_default binding resolvedAlgorithm ctx h, Bool.and_false]) hunmarked
 
 /-- An explicit invocation of a local-only binding is never refused up front: it is its own fresh
-    calculation, which the two read rules confine. -/
+    calculation, which the two read rules confine (and it records no read of its own). -/
 theorem local_only_invocation_is_attached (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind)
     (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
     (calleeName : String) (hlocal : binding.exposure.isExported = false) :
     EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env (.invoke calleeName) =
-      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env (.invoke calleeName) :=
-  local_only_access_is_attached rec accessKind owner binding resolvedAlgorithm ctx env (.invoke calleeName) hlocal rfl
+      EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env (.invoke calleeName) := by
+  rw [local_only_access_is_attached rec accessKind owner binding resolvedAlgorithm ctx env (.invoke calleeName) hlocal rfl]
+  rfl
 
 /-- The detached context does not depend on the reader's need tier. -/
 theorem detach_ignores_the_need_tier (ctx : EvalCtx) (needs : NeedEnv) (activations : Nat) :
@@ -626,10 +757,71 @@ theorem aliasCellContext_exported (wired : Algorithm) (ctx : EvalCtx) (state : E
     aliasCellContext wired ctx state = ctx.detach state.lexicalActivations.size := by
   simp only [aliasCellContext, h, ite_true]
 
-/-- A local-only alias's binding cell is supplied in the using context, as before. -/
+/-- A local-only alias's binding cell is supplied AT THE WATERMARK OF ITS DECLARING LEVEL (ledger R-1):
+    the using context reattached at the nearest activation of the alias's declaring chain — the
+    activation its key names — and the using context itself when the chain has none. -/
 theorem aliasCellContext_local (wired : Algorithm) (ctx : EvalCtx) (state : EvalState)
     (h : aliasCellIsExported wired = false) :
-    aliasCellContext wired ctx state = ctx := by
+    aliasCellContext wired ctx state =
+      match nearestActivation? wired.parent with
+      | some activation => ctx.reattach activation
+      | none => ctx := by
   simp only [aliasCellContext, h, Bool.false_eq_true, ite_false]
+  cases nearestActivation? wired.parent <;> rfl
+
+/-- The watermark reattaching selects never detaches the activation. -/
+theorem attachedLevel_le (activation : Nat) :
+    ∀ (outer : List Nat) (level : Nat), (EvalCtx.attachedLevel activation level outer).fst ≤ activation
+  | [], level => by
+      unfold EvalCtx.attachedLevel
+      split
+      · rename_i h; exact h
+      · exact Nat.zero_le _
+  | next :: rest, level => by
+      unfold EvalCtx.attachedLevel
+      split
+      · rename_i h; exact h
+      · exact attachedLevel_le activation rest next
+
+/-- **The reattached context does not detach the activation**: the row of a local-only alias may use
+    the inputs of its declaring level, whichever reader supplies it. -/
+theorem reattach_not_detached (ctx : EvalCtx) (activation : Nat) :
+    (ctx.reattach activation).isDetached activation = false := by
+  have h := attachedLevel_le activation ctx.outerDetached ctx.detachedBefore
+  simp only [EvalCtx.reattach, EvalCtx.isDetached]
+  exact decide_eq_false (by omega)
+
+/-- A context that does not detach the activation is unchanged by reattaching at it. -/
+theorem reattach_attached (ctx : EvalCtx) (activation : Nat) (h : ctx.isDetached activation = false) :
+    ctx.reattach activation = ctx := by
+  have hle : ctx.detachedBefore ≤ activation := by
+    simp only [EvalCtx.isDetached, decide_eq_false_iff_not] at h
+    omega
+  have hlevel : EvalCtx.attachedLevel activation ctx.detachedBefore ctx.outerDetached =
+      (ctx.detachedBefore, ctx.outerDetached) := by
+    cases ctx.outerDetached <;> simp [EvalCtx.attachedLevel, hle]
+  unfold EvalCtx.reattach
+  rw [hlevel]
+
+/-- Reattaching changes the watermark alone: the call stack, the need tier, the binding context, the
+    head scope and the input record are the using context's. -/
+theorem reattach_fields (ctx : EvalCtx) (activation : Nat) :
+    (ctx.reattach activation).callStack = ctx.callStack ∧
+    (ctx.reattach activation).needEnv = ctx.needEnv ∧
+    (ctx.reattach activation).bindingContext = ctx.bindingContext ∧
+    (ctx.reattach activation).headScope = ctx.headScope ∧
+    (ctx.reattach activation).inputRecord = ctx.inputRecord :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- A reader that does not detach the alias's declaring level — every reader of a correctly
+    classified program — supplies a local-only alias's row in the using context, as before. -/
+theorem aliasCellContext_local_attached (wired : Algorithm) (ctx : EvalCtx) (state : EvalState)
+    (h : aliasCellIsExported wired = false)
+    (ha : ∀ activation, nearestActivation? wired.parent = some activation → ctx.isDetached activation = false) :
+    aliasCellContext wired ctx state = ctx := by
+  rw [aliasCellContext_local wired ctx state h]
+  cases hn : nearestActivation? wired.parent with
+  | none => rfl
+  | some activation => exact reattach_attached ctx activation (ha activation hn)
 
 end KatLang.DetachedEvaluation

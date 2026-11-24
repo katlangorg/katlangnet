@@ -115,8 +115,10 @@ theorem pilot_resolveAliasStructure (a : Algorithm) (ctx : EvalCtx) (s : EvalSta
   all_goals assumption
 
 /-- STRUCTURAL + MEMBER NAVIGATION + LEXICAL NAME HEAD: the receiver probe, every arm. VCs: the
-    precondition of each recursive call it makes, at each state it can make it from. -/
-theorem pilot_resolveDotReceiver (e : Expr) (ctx : EvalCtx) (s : EvalState)
+    precondition of each recursive call it makes, at each state it can make it from. Outside every
+    retained cell's computation (`hq`): inside one the admitted member access is an input read the
+    cell records (`noteMemberAccess`, ledger R-1), a write this procedure has no rule for. -/
+theorem pilot_resolveDotReceiver (e : Expr) (ctx : EvalCtx) (s : EvalState) (hq : ctx.inputRecord = none)
     (vcProbe : ∀ o, K.pre (.resolveDotReceiver? o ctx) s)
     (vcMember : ∀ (a : Algorithm) (p : PropDef) t, K.inv t →
       K.pre (.resolveAliasStructure (childOfInContext a p.alg ctx) ctx) t)
@@ -128,11 +130,14 @@ theorem pilot_resolveDotReceiver (e : Expr) (ctx : EvalCtx) (s : EvalState)
       (fun _ _ => True) := by
   show Agree K s (EvalBody.resolveDotReceiver? rec e ctx) (EvalBody.resolveDotReceiver? (K.guard rec) e ctx) _
   unfold EvalBody.resolveDotReceiver?
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq, EvalM.pure_bind]
   agree_tac
   all_goals first | assumption | solve_by_elim
 
-/-- STRUCTURAL: the structural projection of a written source, every arm. -/
+/-- STRUCTURAL: the structural projection of a written source, every arm; outside every retained
+    cell's computation (`hq`, as for the receiver probe). -/
 theorem pilot_projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) (s : EvalState)
+    (hq : ctx.inputRecord = none)
     (vcReceiver : ∀ r, K.pre (.projectNeedStructuralMember r ctx) s)
     (vcChase : ∀ (a : Algorithm) t, K.inv t → K.pre (.resolveAliasStructure a ctx) t)
     (vcParam : ∀ x, K.pre (.projectParameterCallable x ctx) s) :
@@ -141,6 +146,7 @@ theorem pilot_projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) (s : E
   show Agree K s (EvalBody.projectNeedStructuralMember rec source ctx)
     (EvalBody.projectNeedStructuralMember (K.guard rec) source ctx) _
   unfold EvalBody.projectNeedStructuralMember
+  simp only [noteMemberAccess_unmarked _ _ _ _ hq, EvalM.pure_bind]
   agree_tac
   all_goals first | assumption | solve_by_elim
 
@@ -172,10 +178,11 @@ theorem pilot_resolveAliasChase (fc pr : Bool) (parent : Option ScopeCtx) (opens
     (vcRuntime : ∀ step vis, K.pre (.aliasStepIsRuntime step target ctx vis) s)
     (vcCell : ∀ (w : Algorithm) t, Agree K t (aliasBindingCell w target ctx) (aliasBindingCell w target ctx)
       (fun _ _ => True))
-    (vcProject : ∀ addr t, K.inv t → K.pre (.projectNeedCallable addr) t)
     (vcNext : ∀ (b : Algorithm) vis' last' t, K.inv t → K.pre (.resolveAliasChase fc pr b ctx vis' last') t)
     (vcStep : ∀ (w : Algorithm) key t, Agree K t (resolveAliasStepWith (chaseStructure rec fc key visited) w target ctx)
-      (resolveAliasStepWith (chaseStructure (K.guard rec) fc key visited) w target ctx) (fun _ _ => True)) :
+      (resolveAliasStepWith (chaseStructure (K.guard rec) fc key visited) w target ctx) (fun _ _ => True))
+    (vcReuse : ∀ (cell : Nat) t, Agree K t (reuseRetainedCell cell ctx (rec.projectNeedCallable cell))
+      (reuseRetainedCell cell ctx ((K.guard rec).projectNeedCallable cell)) (fun _ _ => True)) :
     Agree K s (evalStep rec (.resolveAliasChase fc pr (.alias parent opens props target id reference) ctx visited last))
       (evalStep (K.guard rec) (.resolveAliasChase fc pr (.alias parent opens props target id reference) ctx visited last))
       (fun _ _ => True) := by
@@ -183,7 +190,7 @@ theorem pilot_resolveAliasChase (fc pr : Bool) (parent : Option ScopeCtx) (opens
     (EvalBody.resolveAliasChase (K.guard rec) fc pr (.alias parent opens props target id reference) ctx visited last) _
   unfold EvalBody.resolveAliasChase runtimeAliasStepWith
   agree_tac
-  all_goals first | assumption | solve_by_elim | exact vcStep _ _ _
+  all_goals first | assumption | solve_by_elim | exact vcStep _ _ _ | exact vcReuse _ _
 
 /-- BINDER ENTRY: a user algorithm over a formed cell supply. VCs: the relational contract of the
     binder over the two answers' binding channels (`bindNeedPatterns`, higher-order), one-run
@@ -198,7 +205,8 @@ theorem pilot_evalNeedUserSupply (callee : Algorithm) (cells : List Nat) (ctx : 
     (vcContext : ∀ bindings t, Agree K t (needBindingContext ctx bindings) (needBindingContext ctx bindings)
       (fun _ _ => True))
     (vcView : ∀ t, Agree K t (valueViewCell? callee ctx) (valueViewCell? callee ctx) (fun _ _ => True))
-    (vcDemand : ∀ address t, K.inv t → K.pre (.demandNeedRecursive address) t)
+    (vcReuse : ∀ (address : Nat) t, Agree K t (reuseRetainedCell address ctx (rec.demandNeedRecursive address))
+      (reuseRetainedCell address ctx ((K.guard rec).demandNeedRecursive address)) (fun _ _ => True))
     (vcOutput : ∀ next values t, K.inv t → K.pre (.evalAlgOutputCountedCore callee next values) t) :
     Agree K s (EvalBody.evalNeedUserSupply rec callee cells ctx env)
       (EvalBody.evalNeedUserSupply (K.guard rec) callee cells ctx env) (fun _ _ => True) := by

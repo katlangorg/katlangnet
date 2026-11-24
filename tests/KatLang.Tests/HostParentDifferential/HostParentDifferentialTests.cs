@@ -61,7 +61,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17 and EXPORTED-DETACHED's HP-18.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15, KL-06's HP-16, KL-07's HP-17, EXPORTED-DETACHED's HP-18, R-1's HP-19, its open qualification HP-20 and its escaped projection HP-21.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -70,7 +70,7 @@ public class HostParentDifferentialTests
         Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(cases.Count, cases.Select(c => c.LeanName).Distinct(StringComparer.Ordinal).Count());
         var families = cases.Select(c => c.Id[..5]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(Enumerable.Range(1, 18).Select(n => $"HP-{n:00}"), families);
+        Assert.Equal(Enumerable.Range(1, 21).Select(n => $"HP-{n:00}"), families);
         Assert.All(cases, c => Assert.False(string.IsNullOrWhiteSpace(c.Description), c.Id));
     }
 
@@ -99,9 +99,9 @@ public class HostParentDifferentialTests
     /// (<see cref="CoverageDropControl_LosingOneUnitOfAMetricFailsTheRatchet"/>) fail while a floor
     /// is below its current count, so a floor cannot go stale after cases are added.
     /// </summary>
-    private const int MinimumComparableCases = 134;
+    private const int MinimumComparableCases = 163;
     private const int MinimumComparableCasesWithPreWiredParents = 124;
-    private const int MinimumSuccessCacheGuards = 200;
+    private const int MinimumSuccessCacheGuards = 224;
 
     private const string ComparableMetric = "comparable";
     private const string PreWiredMetric = "pre-wired";
@@ -248,6 +248,19 @@ public class HostParentDifferentialTests
         // The other executed parameter operations: invoked and transported, detached and static.
         ("HP-18l", ["P"]), ("HP-18n", ["P"]), ("HP-18p", []), ("HP-18q", []),
         ("HP-18r", ["P"]), ("HP-18t", ["P"]),
+        // R-1: a falsely exported sibling reusing a retained alias cell known to have read the call's input is
+        // refused in either row order; a local-only hit inside the cell's computation keeps its entry.
+        ("HP-19a", ["P"]), ("HP-19b", ["P"]), ("HP-19c", ["P"]), ("HP-19d", ["L", "P"]), ("HP-19e", ["P"]),
+        // Deferred reads the sibling itself demands: the zero-supply helper calls (Z, W) publish before the
+        // read is refused. (A sibling that read only the count, HP-19j / HP-19o, or carried the value out
+        // unread to the row, HP-19k, is not refused: those cases succeed.)
+        ("HP-19h", ["P", "Z"]), ("HP-19i", ["P", "Z"]), ("HP-19l", ["P", "W", "Z"]),
+        // A warm position the sibling demands, and a second sibling demanding the escaped position.
+        ("HP-19p", ["P", "Z"]), ("HP-19q", ["P", "Q", "Z"]),
+        // An admitted local-only member access is the cell's input read, in either row order; a cold channel
+        // of a cell known to depend on the call's input is refused before it runs.
+        ("HP-19u", ["P"]), ("HP-19v", ["P"]), ("HP-19x", ["P"]), ("HP-19y", ["P"]), ("HP-19z", ["P"]),
+        ("HP-21a", ["P"]),
     ];
 
     /// <summary>
@@ -329,7 +342,7 @@ public class HostParentDifferentialTests
     [Fact]
     public void FidelityRatchet_EverySuccessfulCaseKeepsItsStructuralGuard()
     {
-        const int MinimumStructuralGuards = 84;
+        const int MinimumStructuralGuards = 101;
 
         var cases = HostParentDifferentialCorpus.AllCases();
         var lines = GenerateArtifact(cases).Split('\n');
@@ -721,6 +734,8 @@ public class HostParentDifferentialTests
             }
 
             LeanObsTemplate.AppendErrorGuard(builder, hostCase.LeanName, observation.ErrorPayload);
+            if (hostCase.ExpectedTickCount is { } ticks)
+                builder.Append($"#guard ((runCountedM {hostCase.LeanName}).runState EvalState.empty).2.tickCounter == {ticks.ToString(CultureInfo.InvariantCulture)}\n");
             // KL-06: publications are compared on success AND failure; a failed run keeps what its
             // successful owners published, and a watched name with no entry is guarded at zero.
             ZeroArgPublicationObserver.AppendCacheGuards(builder, hostCase.LeanName, hostCase.WatchedProperties, observation.Publications);

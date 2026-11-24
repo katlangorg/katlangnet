@@ -356,7 +356,9 @@ theorem enterAlgorithmBody_keeps_cells (a : Algorithm) (ctx : EvalCtx) (env : Va
   · exact ⟨_, _, rfl, rfl, rfl, KatLang.OwnerContextStability.ActivationPrefix.push s _⟩
 
 /-- The first use of a non-parameter row's binding cell: the row supplied in the entered body context,
-    then recorded under the alias's key (read in the state the use started from). -/
+    MARKED with the new cell (`EvalCtx.inputRecord`: the cell is the next address), the cell's INPUT
+    RECORD opened under the activations recorded when the use started (ledger R-1), and the cell
+    recorded under the alias's key (read in the state the use started from). -/
 theorem aliasBindingCell_establishes (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (s : EvalState)
     (hnp : ∀ n, target ≠ .param n)
     (hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells = none) :
@@ -365,13 +367,17 @@ theorem aliasBindingCell_establishes (wired : Algorithm) (target : Expr) (ctx : 
       ∧ KatLang.OwnerContextStability.ActivationPrefix s u
       ∧ (aliasBindingCell wired target ctx).runState s =
           (.ok u.needs.size, { u with
-            needs := u.needs.push { suspension := .expression target c [] },
+            needs := u.needs.push { suspension := .expression target { c with inputRecord := some u.needs.size } [] },
+            cellInputs := { u.cellInputs with records :=
+              (u.needs.size, { watermark := s.lexicalActivations.size, refusal := aliasReuseRefusal wired }) ::
+                u.cellInputs.records },
             aliasCells := (aliasBindingCellKey wired ctx s, u.needs.size) :: u.aliasCells }) := by
   obtain ⟨c, u, he, hneeds, hcells, hprefix⟩ := enterAlgorithmBody_keeps_cells wired (aliasCellContext wired ctx s) [] s
   refine ⟨c, u, he, hneeds, hcells, hprefix, ?_⟩
   rw [aliasBindingCell_nonparameter wired target ctx hnp]
   simp only [aliasBindingCellRecorded, bind_run, get_run, hl, he,
-    KatLang.NeedControl.Allocation.supply_nonparameter target c [] u hnp, modify_run]
+    KatLang.NeedControl.Allocation.supply_nonparameter target { c with inputRecord := some u.needs.size } [] u hnp,
+    recordCellInputs, cellInputsStep_run, modify_run]
   rfl
 
 /-- **One cell per key.** Whatever cell a successful use of a runtime alias's binding cell returns,
@@ -473,11 +479,12 @@ theorem aliasBindingCell_inert (wired : Algorithm) (target : Expr) (ctx : EvalCt
     | ok r => exact (supply_heap_core _ _ _ s r t hs).1
     | error e =>
       -- A parameter row fails only as the refusal of an UNAVAILABLE parameter, in the entry state.
-      rcases supply_shape (.param n) (ctx.push wired) [] s with ⟨e', he⟩ | ⟨r, hr⟩
+      rcases supply_shape (.param n) (ctx.push wired) [] s with ⟨e', he⟩ | ⟨r, t', hr, _⟩
       · rw [he] at hs
         cases hs
         exact HeapCore.refl _
-      · rcases hr with hr | ⟨hr, _⟩ <;> rw [hr] at hs <;> cases hs
+      · rw [hr] at hs
+        cases hs
   · have hnp : ∀ n, target ≠ .param n := fun n h => hp ⟨n, h⟩
     cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
     | some a0 =>
@@ -499,7 +506,7 @@ theorem aliasBindingCell_parameter_transport (wired : Algorithm) (name : Ident) 
     (hfind : lookupAssoc name (activation.map ParameterActivation.needs |>.getD (ctx.push wired).needEnv) = some p) :
     (aliasBindingCell wired (.param name) ctx).runState s = (.ok p, s) := by
   simp only [aliasBindingCell]
-  exact KatLang.NeedControl.Allocation.supply_param_transports name (ctx.push wired) [] s activation p hact hfind
+  exact KatLang.NeedControl.Allocation.supply_param_transports name (ctx.push wired) [] s s activation p hact hfind
 
 /-! ## One runtime step: failure is never absence -/
 
@@ -510,32 +517,48 @@ theorem runtimeAliasStep_cell_failure_propagates (project : Nat → EvalM (Optio
   simp only [runtimeAliasStepWith, bind_run, hcell]
 
 /-- **Failure propagates.** A projection FAILURE of the binding cell — whatever its kind — is the
-    step's failure, with the same error and state: never the alias's ordinary property, never absence,
-    never a retry. -/
+    step's failure, with the same error: never the alias's ordinary property, never absence, never a
+    retry. The reader is judged first (ledger R-1); for a reader the judgment admits the projection
+    runs SERVED from the state the judgment left, and its state is the step's. -/
 theorem runtimeAliasStep_failure_propagates (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm)
-    (target : Expr) (ctx : EvalCtx) (s u t : EvalState) (a : Nat) (e : Error)
+    (target : Expr) (ctx : EvalCtx) (s u u' t : EvalState) (a : Nat) (e : Error)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
-    (hfail : (project a).runState u = (.error e, t)) :
+    (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.ok (), u'))
+    (hfail : (servingDetached ctx.detachedBefore (project a)).runState u' = (.error e, t)) :
     (runtimeAliasStepWith project owner target ctx).runState s = (.error e, t) := by
-  simp only [runtimeAliasStepWith, bind_run, hcell, hfail]
+  simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge, hfail]
+
+/-- **A refused reuse is a failure, and the projection does not run.** A reader that detaches an input
+    the cell is known to have read is refused with the cell's refusal in the state the cell's
+    establishment left: the judgment comes BEFORE the projection (ledger R-1). -/
+theorem runtimeAliasStep_refused (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm)
+    (target : Expr) (ctx : EvalCtx) (s u u' : EvalState) (a : Nat) (refusal : Error)
+    (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
+    (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.error refusal, u')) :
+    (runtimeAliasStepWith project owner target ctx).runState s = (.error refusal, u') := by
+  simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge]
 
 /-- **Absence ends the chase.** A binding cell that projects NO callable identity makes the alias a
-    VALUE VIEW (`terminal`), never a failure and never another chase step. -/
+    VALUE VIEW (`terminal`), never a failure and never another chase step — for a reader the reuse
+    judgment admits (ledger R-1), whose projection runs served. -/
 theorem runtimeAliasStep_absence_is_terminal (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm)
-    (target : Expr) (ctx : EvalCtx) (s u t : EvalState) (a : Nat)
+    (target : Expr) (ctx : EvalCtx) (s u u' t : EvalState) (a : Nat)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
-    (hnone : (project a).runState u = (.ok none, t)) :
+    (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.ok (), u'))
+    (hnone : (servingDetached ctx.detachedBefore (project a)).runState u' = (.ok none, t)) :
     (runtimeAliasStepWith project owner target ctx).runState s = (.ok .terminal, t) := by
-  simp only [runtimeAliasStepWith, bind_run, hcell, hnone]
+  simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge, hnone]
   rfl
 
-/-- A supplied identity is passed on unchanged: the chase continues with exactly it. -/
+/-- A supplied identity is passed on unchanged: the chase continues with exactly it (for a reader the
+    reuse judgment admits, whose projection runs served). -/
 theorem runtimeAliasStep_identity (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm)
-    (target : Expr) (ctx : EvalCtx) (s u t : EvalState) (a : Nat) (identity : Algorithm)
+    (target : Expr) (ctx : EvalCtx) (s u u' t : EvalState) (a : Nat) (identity : Algorithm)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
-    (hsome : (project a).runState u = (.ok (some identity), t)) :
+    (hjudge : (judgeRetainedCellReuse a ctx).runState u = (.ok (), u'))
+    (hsome : (servingDetached ctx.detachedBefore (project a)).runState u' = (.ok (some identity), t)) :
     (runtimeAliasStepWith project owner target ctx).runState s = (.ok (.continue identity), t) := by
-  simp only [runtimeAliasStepWith, bind_run, hcell, hsome]
+  simp only [runtimeAliasStepWith, reuseRetainedCell, bind_run, hcell, hjudge, hsome]
   rfl
 
 /-! ## The value view (L-RUN, M4★) -/

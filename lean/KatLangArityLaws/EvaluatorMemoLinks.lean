@@ -696,6 +696,37 @@ theorem linkDisc_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, LinkDi
     · exact linkDisc_prepare sp hsp a _
   · exact linkDisc_throw _
 
+/-! ## The input records (ledger R-1) are no heap -/
+
+theorem linkDisc_cellInputsStep {α : Type} (step : CellRecords → Except Error (α × CellRecords)) :
+    LinkDisc (cellInputsStep step) :=
+  linkDisc_of_needs _ (fun s => by rw [cellInputsStep_run]; cases step s.cellInputs <;> rfl)
+
+/-- The same step from a fixed entry state: the form a body proof meets it in. -/
+theorem linkAt_cellInputsStep {α : Type} {st : EvalState} (step : CellRecords → Except Error (α × CellRecords)) :
+    LinkAt st (cellInputsStep step) :=
+  LinkAt.of_disc (linkDisc_cellInputsStep step)
+
+theorem linkDisc_noteCellInput (ctx : EvalCtx) (activation : Nat) (refusal : Error) :
+    LinkDisc (noteCellInput ctx activation refusal) :=
+  linkDisc_of_needs _ (fun s => by rw [noteCellInput_run]; split <;> simp)
+
+/-- An admitted member access inside a retained cell's computation is a note (ledger R-1). -/
+theorem linkDisc_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) :
+    LinkDisc (noteMemberAccess ctx container p refusal) := by
+  unfold noteMemberAccess
+  split
+  · exact linkDisc_pure ()
+  · split
+    · exact linkDisc_noteCellInput _ _ _
+    · exact linkDisc_pure ()
+
+/-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
+    admission of the reader. -/
+theorem linkDisc_judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) :
+    LinkDisc (judgeRetainedCellReuse cell ctx) :=
+  linkDisc_cellInputsStep _
+
 /-! ## The syntax-directed per-body procedure (the `EvaluatorDiscipline` procedure over `LinkDisc`) -/
 
 open Lean Meta Elab Tactic in
@@ -868,6 +899,11 @@ macro "link_tac_base" : tactic => `(tactic| without_info_trees ((try link_unfold
   | (with_reducible apply linkDisc_invoke)
   | (with_reducible apply linkDisc_reference)
   | (with_reducible apply linkDisc_viewCells)
+  | (with_reducible apply linkDisc_noteCellInput)
+  | (with_reducible apply linkDisc_cellInputsStep)
+  | (with_reducible apply linkAt_cellInputsStep)
+  | (with_reducible apply linkDisc_noteMemberAccess)
+  | (with_reducible apply linkDisc_judgeRetainedCellReuse)
   | (with_reducible apply link_modify; intro s; first
       | exact LinkHeapKept.refl _
       | (apply LinkHeapKept.modify; intro c _; exact linkKept_of_same _ _ rfl rfl rfl))
@@ -1222,6 +1258,11 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply linkDisc_invoke)
   | (with_reducible apply linkDisc_reference)
   | (with_reducible apply linkDisc_viewCells)
+  | (with_reducible apply linkDisc_noteCellInput)
+  | (with_reducible apply linkDisc_cellInputsStep)
+  | (with_reducible apply linkAt_cellInputsStep)
+  | (with_reducible apply linkDisc_noteMemberAccess)
+  | (with_reducible apply linkDisc_judgeRetainedCellReuse)
   | (with_reducible apply link_modify; intro s; first
       | exact LinkHeapKept.refl _
       | (apply LinkHeapKept.modify; intro c _; exact linkKept_of_same _ _ rfl rfl rfl))
@@ -1957,7 +1998,11 @@ theorem classify_linkDisc (shape : NeedPlan.CallShape) :
         (fun b => by split <;> exact linkDisc_pure _)
     · exact linkDisc_pure _
   · exact LinkDisc.bind (evalUnbounded_linkDisc (.resolveDotReceiver? _ _))
-      (fun t => by split <;> first | exact linkDisc_throw _ | exact linkDisc_pure _)
+      (fun t => by
+        split <;> first
+          | exact linkDisc_throw _
+          | exact linkDisc_pure _
+          | exact LinkDisc.bind (linkDisc_noteMemberAccess _ _ _ _) (fun _ => linkDisc_pure _))
 
 /-- The public VALUE demand (whose callbacks are the production operations) keeps the FG-M1 facts. -/
 theorem demandNeed_linkDisc (a : Nat) : LinkDisc (demandNeed a) := by

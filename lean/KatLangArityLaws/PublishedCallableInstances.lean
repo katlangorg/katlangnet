@@ -121,6 +121,9 @@ def k : Nat := match ((evalCounted row ctx []).runState EvalState.empty).1 with 
 def ctxIn : EvalCtx := match fin.needs[k]? with | some { suspension := .expression _ c _, .. } => c | _ => ctx
 def envIn : ValEnv := match fin.needs[k]? with | some { suspension := .expression _ _ v, .. } => v | _ => []
 def shape : NeedPlan.CallShape := ⟨path, args, ctxIn, envIn, .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctxIn.inputRecord = none := by cbv
 
 /-- The state the VALUE shell runs the plan from. -/
 def entry : EvalState := withState k .evaluating fin
@@ -194,7 +197,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify k shape)).runState entry =
       (.ok .call, x) :=
   flight_member k target N (.resolve N) args ctxIn envIn entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute k shape .call).runState x).1.isIncomplete = false :=
@@ -267,13 +270,14 @@ theorem head_projection_normal : ∀ o v,
     navigation extension, with no premise on the head's CALLABLE. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
   navSettled_of_navRuns_reached target ctxIn entry probed owner rfl nav_run no_mint heap_normal
+    input_free
 
 /-- **`member_bridge_of_probe_reached` APPLIED** from the state before the classification. -/
 theorem bridge :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe_reached k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint
-    select heap_normal production_entry
+    select heap_normal production_entry input_free
 
 end LinkParam
 
@@ -299,6 +303,9 @@ def k : Nat := match ((evalCounted row ctx []).runState EvalState.empty).1 with 
 def ctxIn : EvalCtx := match fin.needs[k]? with | some { suspension := .expression _ c _, .. } => c | _ => ctx
 def envIn : ValEnv := match fin.needs[k]? with | some { suspension := .expression _ _ v, .. } => v | _ => []
 def shape : NeedPlan.CallShape := ⟨path, args, ctxIn, envIn, .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctxIn.inputRecord = none := by cbv
 
 /-- The state the VALUE shell runs the plan from. -/
 def entry : EvalState := withState k .evaluating fin
@@ -372,7 +379,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify k shape)).runState entry =
       (.ok .call, x) :=
   flight_member k target N (.resolve N) args ctxIn envIn entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute k shape .call).runState x).1.isIncomplete = false :=
@@ -445,13 +452,14 @@ theorem head_projection_normal : ∀ o v,
     navigation extension, with no premise on the head's CALLABLE. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
   navSettled_of_navRuns_reached target ctxIn entry probed owner rfl nav_run no_mint heap_normal
+    input_free
 
 /-- **`member_bridge_of_probe_reached` APPLIED** from the state before the classification. -/
 theorem bridge :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe_reached k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint
-    select heap_normal production_entry
+    select heap_normal production_entry input_free
 
 end LinkAncestor
 
@@ -477,6 +485,9 @@ def k : Nat := match ((evalCounted row ctx []).runState EvalState.empty).1 with 
 def ctxIn : EvalCtx := match fin.needs[k]? with | some { suspension := .expression _ c _, .. } => c | _ => ctx
 def envIn : ValEnv := match fin.needs[k]? with | some { suspension := .expression _ _ v, .. } => v | _ => []
 def shape : NeedPlan.CallShape := ⟨path, args, ctxIn, envIn, .dot target N (.resolve N)⟩
+/-- The plan's context is outside every retained cell's computation (ledger R-1): no member access
+    of its route notes an input record. -/
+theorem input_free : ctxIn.inputRecord = none := by cbv
 
 /-- The state the VALUE shell runs the plan from. -/
 def entry : EvalState := withState k .evaluating fin
@@ -550,7 +561,7 @@ theorem flight :
     (withCtx shape.ctxMsg (NeedPlan.routeOf productionPlanRoute.classify k shape)).runState entry =
       (.ok .call, x) :=
   flight_member k target N (.resolve N) args ctxIn envIn entry probed entryCell alg? _ entry_cell rfl probe_entry
-    selected route_free
+    selected route_free input_free
 
 theorem demand_done :
     ((NeedPlan.executeAlong productionPlanRoute k shape .call).runState x).1.isIncomplete = false :=
@@ -623,13 +634,14 @@ theorem head_projection_normal : ∀ o v,
     navigation extension, with no premise on the head's CALLABLE. -/
 theorem nav_settled : NavSettled target ctxIn owner probed :=
   navSettled_of_navRuns_reached target ctxIn entry probed owner rfl nav_run no_mint heap_normal
+    input_free
 
 /-- **`member_bridge_of_probe_reached` APPLIED** from the state before the classification. -/
 theorem bridge :
     (ordinaryCall productionPlanRoute k shape .call).runState entry =
       (reCountValueBoundary <$> evalCounted src ctxIn envIn).runState entry :=
   member_bridge_of_probe_reached k target N (.resolve N) args ctxIn envIn entry probed owner p rfl nav_run no_mint
-    select heap_normal production_entry
+    select heap_normal production_entry input_free
 
 end LinkForwardedPath
 

@@ -159,7 +159,9 @@ internal interface IPlannedLoopPublicationObserver
 ///   <item>An <see cref="PropertyExposure.Exported"/> binding is self-contained:
 ///   the front end classifies it as independent of enclosing call inputs.
 ///   <c>Evaluator.DetachedEvaluation</c> refuses direct reads of those inputs.
-///   A retained local runtime-alias cell can still supply an earlier value (ledger R-1). ITS STORAGE
+///   A retained runtime-alias cell known to have read such an input is refused to the detached reader before
+///   its channel runs, and a read of one that the detached reader's own demand causes is refused at the read
+///   (ledger R-1). ITS STORAGE
 ///   FOLLOWS ITS OWNING INVOCATION (INNER-PROPERTY LIFETIME, November 2026; until then one
 ///   entry per run): ONE entry per declaring scope (<see cref="StructuralOwnerIdentity"/> —
 ///   the same identity for every activation, open-provided wiring, or rebuilt structural

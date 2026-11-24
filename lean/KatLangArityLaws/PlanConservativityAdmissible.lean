@@ -112,16 +112,18 @@ theorem ObliviousOn.mapM_mem {α β : Type} {P : EvalState → Prop} {a : Nat} (
 
 /-- `P` survives exactly the pushes supply formation over `(ctx, env)` performs: a fresh
     suspended expression cell of that caller, and a fresh Ready cell holding a value satisfying
-    `R` (a computed spread's item). -/
+    `R` (a computed spread's item) — and the input-record writes of its parameter lookups (ledger
+    R-1), which store no address and no plan. -/
 structure FormAdmissible (P : EvalState → Prop) (ctx : EvalCtx) (env : ValEnv) (R : Result → Prop) :
     Prop where
   expr : ∀ s e, P s → P { s with needs := s.needs.push { suspension := .expression e ctx env } }
   ready : ∀ s v, P s → R v →
     P { s with needs := s.needs.push { suspension := .ready (v, Result.valueCount v) } }
+  inputs : ∀ s (inputs : CellRecords), P s → P { s with cellInputs := inputs }
 
 theorem formAdmissible_of_pushClosed {P : EvalState → Prop} (hpush : PushClosed P) (ctx : EvalCtx)
     (env : ValEnv) (R : Result → Prop) : FormAdmissible P ctx env R :=
-  ⟨fun s _ hP => hpush s _ hP, fun s _ hP _ => hpush s _ hP⟩
+  ⟨fun s _ hP => hpush.1 s _ hP, fun s _ hP _ => hpush.1 s _ hP, hpush.2⟩
 
 /-- What a computed spread may contribute under an item contract `R`. -/
 def SpreadOk (R : Result → Prop) : SpreadSupply → Prop
@@ -132,8 +134,8 @@ theorem keeps_supply_adm {P : EvalState → Prop} {ctx : EvalCtx} {env : ValEnv}
     (hadm : FormAdmissible P ctx env R) (e : Expr) : Keeps P (supplyNeed e ctx env) := by
   intro s hP _
   rcases supply_cases e ctx env s with h | h <;> rw [h]
-  · exact hP
-  · exact hadm.expr s e hP
+  · exact hadm.inputs s _ hP
+  · exact hadm.inputs _ _ (hadm.expr s e hP)
 
 theorem keeps_ready_adm {P : EvalState → Prop} {ctx : EvalCtx} {env : ValEnv} {R : Result → Prop}
     (hadm : FormAdmissible P ctx env R) (v : Result) (hv : R v) :
@@ -153,7 +155,8 @@ theorem slot_keeps_adm (P : EvalState → Prop) (ctx : EvalCtx) (env : ValEnv) (
     Keeps P (NeedSupply.slot ev ctx env e) := by
   cases e with
   | sequenceSpread operand =>
-    refine Keeps.bind (keeps_of_state P _ (fun s => spread_slice_readonly operand ctx s)) (fun known => ?_)
+    refine Keeps.bind (keeps_of_inputsOnly P _ hadm.inputs (fun s => spread_slice_readonly operand ctx s))
+      (fun known => ?_)
     cases known with
     | some slice =>
       exact Keeps.mapM _ (fun b => Keeps.bind
@@ -179,7 +182,8 @@ theorem slot_oblivious_adm (P : EvalState → Prop) (a : Nat) (ctx : EvalCtx) (e
   cases e with
   | sequenceSpread operand =>
     refine ObliviousOn.bind (ObliviousOn.of_oblivious P (oblivious_slice a operand ctx))
-      (keeps_of_state P _ (fun s => spread_slice_readonly operand ctx s)) (disciplined_slice operand ctx)
+      (keeps_of_inputsOnly P _ hadm.inputs (fun s => spread_slice_readonly operand ctx s))
+      (disciplined_slice operand ctx)
       (fun known => ?_)
     cases known with
     | some slice =>
@@ -698,7 +702,8 @@ theorem formAdmissible_activeRefFree (a : Nat) (ctx : EvalCtx) (env : ValEnv)
     (henv : envRefFreeB env = true) :
     FormAdmissible (ActiveRefFree a) ctx env (fun v => v.containsCallRef = false) :=
   ⟨fun s e h => ⟨active_push _ h.1, storedRefFree_push _ h.2 (by simp [cellRefFreeB, henv])⟩,
-   fun s v h hv => ⟨active_push _ h.1, storedRefFree_push _ h.2 (by simp [cellRefFreeB, hv])⟩⟩
+   fun s v h hv => ⟨active_push _ h.1, storedRefFree_push _ h.2 (by simp [cellRefFreeB, hv])⟩,
+   fun _ _ h => h⟩
 
 /-- **The fresh-plan simulation at `ActiveRefFree a`.** For a call domain `Q` on which every body
     keeps the reference-free half given the active mark (`hkB`; the active half is discharged by

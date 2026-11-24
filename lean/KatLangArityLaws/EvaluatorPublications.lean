@@ -727,6 +727,37 @@ theorem pubDisc_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, PubDisc
     · exact pubDisc_prepare sp hsp a _
   · exact pubDisc_throw _
 
+/-! ## The input records (ledger R-1) are no heap -/
+
+theorem pubDisc_cellInputsStep {α : Type} (step : CellRecords → Except Error (α × CellRecords)) :
+    PubDisc (cellInputsStep step) :=
+  pubDisc_of_needs _ (fun s => by rw [cellInputsStep_run]; cases step s.cellInputs <;> rfl)
+
+/-- The same step from a fixed entry state: the form a body proof meets it in. -/
+theorem pubAt_cellInputsStep {α : Type} {st : EvalState} (step : CellRecords → Except Error (α × CellRecords)) :
+    PubAt st (cellInputsStep step) :=
+  PubAt.of_disc (pubDisc_cellInputsStep step)
+
+theorem pubDisc_noteCellInput (ctx : EvalCtx) (activation : Nat) (refusal : Error) :
+    PubDisc (noteCellInput ctx activation refusal) :=
+  pubDisc_of_needs _ (fun s => by rw [noteCellInput_run]; split <;> simp)
+
+/-- An admitted member access inside a retained cell's computation is a note (ledger R-1). -/
+theorem pubDisc_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) :
+    PubDisc (noteMemberAccess ctx container p refusal) := by
+  unfold noteMemberAccess
+  split
+  · exact pubDisc_pure ()
+  · split
+    · exact pubDisc_noteCellInput _ _ _
+    · exact pubDisc_pure ()
+
+/-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
+    admission of the reader. -/
+theorem pubDisc_judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) :
+    PubDisc (judgeRetainedCellReuse cell ctx) :=
+  pubDisc_cellInputsStep _
+
 /-! ## The syntax-directed per-body procedure (the `EvaluatorDiscipline` procedure over `PubDisc`) -/
 
 open Lean Meta Elab Tactic in
@@ -900,6 +931,11 @@ macro "pub_tac_base" : tactic => `(tactic| without_info_trees ((try pub_unfold_r
   | (with_reducible apply pubDisc_invoke)
   | (with_reducible apply pubDisc_reference)
   | (with_reducible apply pubDisc_viewCells)
+  | (with_reducible apply pubDisc_noteCellInput)
+  | (with_reducible apply pubDisc_cellInputsStep)
+  | (with_reducible apply pubAt_cellInputsStep)
+  | (with_reducible apply pubDisc_noteMemberAccess)
+  | (with_reducible apply pubDisc_judgeRetainedCellReuse)
   | (with_reducible apply pub_modify; intro s; first
       | exact PubHeapKept.refl _
       | (apply PubHeapKept.modify; intro c _; exact pubKept_of_same _ _ rfl rfl rfl))
@@ -1255,6 +1291,11 @@ macro "pub_tac" : tactic => `(tactic| without_info_trees ((try pub_unfold_rec) <
   | (with_reducible apply pubDisc_invoke)
   | (with_reducible apply pubDisc_reference)
   | (with_reducible apply pubDisc_viewCells)
+  | (with_reducible apply pubDisc_noteCellInput)
+  | (with_reducible apply pubDisc_cellInputsStep)
+  | (with_reducible apply pubAt_cellInputsStep)
+  | (with_reducible apply pubDisc_noteMemberAccess)
+  | (with_reducible apply pubDisc_judgeRetainedCellReuse)
   | (with_reducible apply pub_modify; intro s; first
       | exact PubHeapKept.refl _
       | (apply PubHeapKept.modify; intro c _; exact pubKept_of_same _ _ rfl rfl rfl))

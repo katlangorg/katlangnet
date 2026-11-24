@@ -667,6 +667,37 @@ theorem actDisc_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, ActDisc
     · exact actDisc_prepare sp hsp a _
   · exact actDisc_throw _
 
+/-! ## The input records (ledger R-1) are no heap -/
+
+theorem actDisc_cellInputsStep {α : Type} (step : CellRecords → Except Error (α × CellRecords)) :
+    ActDisc (cellInputsStep step) :=
+  actDisc_of_needs _ (fun s => by rw [cellInputsStep_run]; cases step s.cellInputs <;> rfl)
+
+/-- The same step from a fixed entry state: the form a body proof meets it in. -/
+theorem actAt_cellInputsStep {α : Type} {st : EvalState} (step : CellRecords → Except Error (α × CellRecords)) :
+    ActAt st (cellInputsStep step) :=
+  ActAt.of_disc (actDisc_cellInputsStep step)
+
+theorem actDisc_noteCellInput (ctx : EvalCtx) (activation : Nat) (refusal : Error) :
+    ActDisc (noteCellInput ctx activation refusal) :=
+  actDisc_of_needs _ (fun s => by rw [noteCellInput_run]; split <;> simp)
+
+/-- An admitted member access inside a retained cell's computation is a note (ledger R-1). -/
+theorem actDisc_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) :
+    ActDisc (noteMemberAccess ctx container p refusal) := by
+  unfold noteMemberAccess
+  split
+  · exact actDisc_pure ()
+  · split
+    · exact actDisc_noteCellInput _ _ _
+    · exact actDisc_pure ()
+
+/-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
+    admission of the reader. -/
+theorem actDisc_judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) :
+    ActDisc (judgeRetainedCellReuse cell ctx) :=
+  actDisc_cellInputsStep _
+
 /-! ## The syntax-directed per-body procedure (the `EvaluatorDiscipline` procedure over `ActDisc`) -/
 
 open Lean Meta Elab Tactic in
@@ -839,6 +870,11 @@ macro "act_tac_base" : tactic => `(tactic| without_info_trees ((try act_unfold_r
   | (with_reducible apply actDisc_invoke)
   | (with_reducible apply actDisc_reference)
   | (with_reducible apply actDisc_viewCells)
+  | (with_reducible apply actDisc_noteCellInput)
+  | (with_reducible apply actDisc_cellInputsStep)
+  | (with_reducible apply actAt_cellInputsStep)
+  | (with_reducible apply actDisc_noteMemberAccess)
+  | (with_reducible apply actDisc_judgeRetainedCellReuse)
   | (with_reducible apply act_modify; intro s; first
       | exact ActHeapKept.refl _
       | (apply ActHeapKept.modify; intro c _; exact actKept_of_same _ _ rfl))
@@ -1193,6 +1229,11 @@ macro "act_tac" : tactic => `(tactic| without_info_trees ((try act_unfold_rec) <
   | (with_reducible apply actDisc_invoke)
   | (with_reducible apply actDisc_reference)
   | (with_reducible apply actDisc_viewCells)
+  | (with_reducible apply actDisc_noteCellInput)
+  | (with_reducible apply actDisc_cellInputsStep)
+  | (with_reducible apply actAt_cellInputsStep)
+  | (with_reducible apply actDisc_noteMemberAccess)
+  | (with_reducible apply actDisc_judgeRetainedCellReuse)
   | (with_reducible apply act_modify; intro s; first
       | exact ActHeapKept.refl _
       | (apply ActHeapKept.modify; intro c _; exact actKept_of_same _ _ rfl))
@@ -1764,7 +1805,11 @@ theorem classify_actDisc (shape : NeedPlan.CallShape) :
         (fun b => by split <;> exact actDisc_pure _)
     · exact actDisc_pure _
   · exact ActDisc.bind (evalUnbounded_actDisc (.resolveDotReceiver? _ _))
-      (fun t => by split <;> first | exact actDisc_throw _ | exact actDisc_pure _)
+      (fun t => by
+        split <;> first
+          | exact actDisc_throw _
+          | exact actDisc_pure _
+          | exact ActDisc.bind (actDisc_noteMemberAccess _ _ _ _) (fun _ => actDisc_pure _))
 
 /-- The public VALUE demand keeps every `evaluating` mark (of OTHER cells: its own cell's mark is
     the one it writes, from a `suspended` entry). -/

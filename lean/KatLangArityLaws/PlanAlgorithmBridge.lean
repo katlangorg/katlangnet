@@ -1855,7 +1855,8 @@ theorem establish_run_param (a : Nat) (x : EvalState) (ca : NeedCell) (shape : N
     (hnone : ca.callee = none) (hshape : NeedPlan.ofSuspension? ca.suspension = some shape)
     (hroute : ca.route = some .algorithm)
     (hedge : shape.callee = .dotMember (.param name) "Algorithm" fallback none)
-    (hbound : parameterAddressIn x.lexicalActivations name shape.caller = some b) :
+    (hbound : parameterAddressIn x.lexicalActivations name shape.caller = some b)
+    (hq : shape.caller.inputRecord = none) :
     ∃ x₁, (NeedPlan.calleeCell productionPlanRoute.classify a).runState x = (.ok x.needs.size, x₁) ∧
       (NeedLink.receiverCell x.needs.size).runState x₁ =
         (.ok b, embed (paramInsertion x.needs.size a shape.callee shape.caller shape.values b) x) := by
@@ -1891,9 +1892,9 @@ theorem establish_run_param (a : Nat) (x : EvalState) (ca : NeedCell) (shape : N
   have hsupply : ∀ s : EvalState, s.lexicalActivations = x.lexicalActivations →
       (supplyNeed (.param name) shape.caller shape.values).runState s = (.ok b, s) := by
     intro s hs
-    refine KatLang.NeedControl.Allocation.supply_param_transports name shape.caller shape.values s
+    refine KatLang.NeedControl.Allocation.supply_param_transports name shape.caller shape.values s s
       (capturedRecord s.lexicalActivations name shape.caller) b
-      (captured_run name shape.caller s (parameterAddressIn_available hbound)) ?_
+      (captured_run name shape.caller s (parameterAddressIn_available hbound) hq) ?_
     rw [hs]
     exact hbound
   rw [receiver_param_at _ x.needs.size b _ shape.callee name fallback shape.caller shape.values hcell rfl rfl hlink
@@ -1915,7 +1916,8 @@ theorem algorithm_core_bridge_param (E : EvalState → Prop) (a : Nat) (shape : 
     (hedge : shape.callee = .dotMember (.param name) "Algorithm" fallback none)
     (ha : x.needs[a]? = some ca) (hshape : NeedPlan.ofSuspension? ca.suspension = some shape)
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
-    (hbound : parameterAddressIn x.lexicalActivations name shape.caller = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name shape.caller = some b) (hq : shape.caller.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x) (hE : E x)
     (cread : InsertedAt E (paramInsertion x.needs.size a shape.callee shape.caller shape.values b) shiftResult
       (invocationReceiverValue (.param name) shape.caller shape.values)
@@ -1949,7 +1951,7 @@ theorem algorithm_core_bridge_param (E : EvalState → Prop) (a : Nat) (shape : 
     subst hinc
     rfl
   have hlink : linkEdge? shape.callee = some (.param name, fallback) := by rw [hedge]; exact linkEdge_algorithm _ _
-  obtain ⟨x₁, hcal, hrcv⟩ := establish_run_param a x ca shape name fallback b hinv ha hnone hshape hroute hedge hbound
+  obtain ⟨x₁, hcal, hrcv⟩ := establish_run_param a x ca shape name fallback b hinv ha hnone hshape hroute hedge hbound hq
   have hle : (paramInsertion x.needs.size a shape.callee shape.caller shape.values b).base ≤ x.needs.size :=
     Nat.le_refl _
   have hgetL : (embed (paramInsertion x.needs.size a shape.callee shape.caller shape.values b) x).needs[x.needs.size]? =
@@ -2067,7 +2069,8 @@ theorem algorithm_bridge_dot_param (E : EvalState → Prop) (a : Nat) (name : Id
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
     (hprobe : (resolveDotReceiver? (.param name) ctx).runState x = (.ok alg?, x'))
     (hmiss : selectDotEdge ctx (.param name) "Algorithm" alg? = .ok (.miss .algorithm))
-    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hq : ctx.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x) (hE : E x)
     (cread : InsertedAt E
       (paramInsertion x.needs.size a (.dotMember (.param name) "Algorithm" fallback none) ctx env b) shiftResult
@@ -2100,7 +2103,7 @@ theorem algorithm_bridge_dot_param (E : EvalState → Prop) (a : Nat) (name : Id
     rw [hprodEq]
     exact map_completes _ _ x hprod
   have h := algorithm_core_bridge_param E a (dotShape (.param name) fallback args ctx env) name fallback x ca b rfl ha
-    (by rw [hsus]; rfl) hroute hnone hbound hbk hinv hE cread kread hmemo hentry ctail ktail hcomp
+    (by rw [hsus]; rfl) hroute hnone hbound hq hbk hinv hE cread kread hmemo hentry ctail ktail hcomp
   have he : algorithmProduction (NeedPlan.CallShape.ctxMsg (dotShape (.param name) fallback args ctx env)) (.param name)
       (dotShape (.param name) fallback args ctx env).args (dotShape (.param name) fallback args ctx env).caller
       (dotShape (.param name) fallback args ctx env).values =
@@ -2117,7 +2120,8 @@ theorem algorithm_bridge_grouped_param (E : EvalState → Prop) (a : Nat) (name 
     (ha : x.needs[a]? = some ca)
     (hsus : ca.suspension = .expression (.call (.dotMember (.param name) "Algorithm" fallback none) args) ctx env)
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
-    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hq : ctx.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x) (hE : E x)
     (cread : InsertedAt E
       (paramInsertion x.needs.size a (.dotMember (.param name) "Algorithm" fallback none) ctx env b) shiftResult
@@ -2154,7 +2158,7 @@ theorem algorithm_bridge_grouped_param (E : EvalState → Prop) (a : Nat) (name 
     rw [hprodEq]
     exact map_completes _ _ s hprod
   have h := algorithm_core_bridge_param E a (groupedShape (.param name) fallback args ctx env) name fallback x ca b rfl
-    ha (by rw [hsus]; rfl) hroute hnone hbound hbk hinv hE cread kread hmemo hentry ctail ktail hcomp
+    ha (by rw [hsus]; rfl) hroute hnone hbound hq hbk hinv hE cread kread hmemo hentry ctail ktail hcomp
   have he : algorithmProduction (NeedPlan.CallShape.ctxMsg (groupedShape (.param name) fallback args ctx env))
       (.param name) (groupedShape (.param name) fallback args ctx env).args
       (groupedShape (.param name) fallback args ctx env).caller
@@ -2334,7 +2338,8 @@ theorem algorithm_bridge_dot_param_at (a : Nat) (name : Ident) (fallback : Expr)
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
     (hprobe : (resolveDotReceiver? (.param name) ctx).runState x = (.ok alg?, x'))
     (hmiss : selectDotEdge ctx (.param name) "Algorithm" alg? = .ok (.miss .algorithm))
-    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hq : ctx.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x)
     (o₁ : Except Error Result) (x₄ : EvalState)
     (hread : (invocationReceiverValue (.param name) ctx env).runState x = (o₁, x₄))
@@ -2359,7 +2364,7 @@ theorem algorithm_bridge_dot_param_at (a : Nat) (name : Ident) (fallback : Expr)
       ((reCountValueBoundary <$>
         evalCounted (.dotMember (.param name) "Algorithm" fallback (some args)) ctx env).runState x) := by
   refine algorithm_bridge_dot_param (fun s => s = x) a name fallback args ctx env x x' alg? ca b ha hsus hroute hnone
-    hprobe hmiss hbound hbk hinv rfl (insertedAt_singleton hread hreadP) ?_ ?_ ?_ ?_ ?_ hprod
+    hprobe hmiss hbound hq hbk hinv rfl (insertedAt_singleton hread hreadP) ?_ ?_ ?_ ?_ ?_ hprod
   · intro s hs _
     subst hs
     rw [hread]
@@ -2392,7 +2397,8 @@ theorem algorithm_bridge_grouped_param_at (a : Nat) (name : Ident) (fallback : E
     (ha : x.needs[a]? = some ca)
     (hsus : ca.suspension = .expression (.call (.dotMember (.param name) "Algorithm" fallback none) args) ctx env)
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
-    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hq : ctx.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x)
     (o₁ : Except Error Result) (x₄ : EvalState)
     (hread : (invocationReceiverValue (.param name) ctx env).runState x = (o₁, x₄))
@@ -2417,7 +2423,7 @@ theorem algorithm_bridge_grouped_param_at (a : Nat) (name : Ident) (fallback : E
       ((reCountValueBoundary <$>
         evalCallCountedExpr (.dotMember (.param name) "Algorithm" fallback none) args ctx env).runState x) := by
   refine algorithm_bridge_grouped_param (fun s => s = x) a name fallback args ctx env x x ca b hsettled ha hsus hroute
-    hnone hbound hbk hinv rfl (insertedAt_singleton hread hreadP) ?_ ?_ ?_ ?_ ?_ hprod
+    hnone hbound hq hbk hinv rfl (insertedAt_singleton hread hreadP) ?_ ?_ ?_ ?_ ?_ hprod
   · intro s hs _
     subst hs
     rw [hread]
@@ -2814,7 +2820,8 @@ theorem algorithm_bridge_dot_param_of_invariant (P : EvalState → Prop) (a : Na
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
     (hprobe : (resolveDotReceiver? (.param name) ctx).runState x = (.ok alg?, x'))
     (hmiss : selectDotEdge ctx (.param name) "Algorithm" alg? = .ok (.miss .algorithm))
-    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hq : ctx.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x) (hP : P x) (hframe : ∀ s, P s → Frame x.needs.size a s)
     (hplans : ∀ s, P s → PlanCallees s)
     (kread : Keeps P (invocationReceiverValue (.param name) ctx env))
@@ -2835,7 +2842,7 @@ theorem algorithm_bridge_dot_param_of_invariant (P : EvalState → Prop) (a : Na
       ((ordinaryCall productionPlanRoute a (dotShape (.param name) fallback args ctx env) .algorithm).runState x)
       ((reCountValueBoundary <$>
         evalCounted (.dotMember (.param name) "Algorithm" fallback (some args)) ctx env).runState x) :=
-  algorithm_bridge_dot_param P a name fallback args ctx env x x' alg? ca b ha hsus hroute hnone hprobe hmiss hbound hbk
+  algorithm_bridge_dot_param P a name fallback args ctx env x x' alg? ca b ha hsus hroute hnone hprobe hmiss hbound hq hbk
     hinv hP
     (cread.at _ rfl rfl rfl)
     (fun s hs hne => (hframe _ (kread s hs hne)).2.2)
@@ -2854,7 +2861,8 @@ theorem algorithm_bridge_grouped_param_of_invariant (P : EvalState → Prop) (a 
     (ha : x.needs[a]? = some ca)
     (hsus : ca.suspension = .expression (.call (.dotMember (.param name) "Algorithm" fallback none) args) ctx env)
     (hroute : ca.route = some .algorithm) (hnone : ca.callee = none)
-    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hbk : b < x.needs.size)
+    (hbound : parameterAddressIn x.lexicalActivations name ctx = some b) (hq : ctx.inputRecord = none)
+    (hbk : b < x.needs.size)
     (hinv : Inv x) (hP : P x) (hframe : ∀ s, P s → Frame x.needs.size a s)
     (hplans : ∀ s, P s → PlanCallees s)
     (kread : Keeps P (invocationReceiverValue (.param name) ctx env))
@@ -2875,7 +2883,7 @@ theorem algorithm_bridge_grouped_param_of_invariant (P : EvalState → Prop) (a 
       ((ordinaryCall productionPlanRoute a (groupedShape (.param name) fallback args ctx env) .algorithm).runState x)
       ((reCountValueBoundary <$>
         evalCallCountedExpr (.dotMember (.param name) "Algorithm" fallback none) args ctx env).runState s) :=
-  algorithm_bridge_grouped_param P a name fallback args ctx env s x ca b hdecided ha hsus hroute hnone hbound hbk
+  algorithm_bridge_grouped_param P a name fallback args ctx env s x ca b hdecided ha hsus hroute hnone hbound hq hbk
     hinv hP
     (cread.at _ rfl rfl rfl)
     (fun s hs hne => (hframe _ (kread s hs hne)).2.2)

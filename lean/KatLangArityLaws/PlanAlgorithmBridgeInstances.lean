@@ -197,6 +197,7 @@ theorem flight_dot (a : Nat) (target fallback : Expr) (args : OutputBundle) (ctx
       (.ok .algorithm, withRoute a .algorithm e') := by
   rw [ctx_run, routeOf_fresh _ a _ e cell hcell hr]
   have hc := classify_dot target "Algorithm" fallback args ctx env e e' alg? _ hprobe hmiss
+    (fun _ _ h => by cases h)
   have hc' : (productionPlanRoute.classify (dotShape target fallback args ctx env)).runState e =
       (.ok .algorithm, e') := hc
   rw [hc']

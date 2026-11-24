@@ -382,10 +382,11 @@ theorem headSettled_name (n : Ident) (ctx : EvalCtx) (top : Algorithm) (rest : L
     being recorded). -/
 theorem headSettled_param (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (owner : Algorithm)
     (hrun : (projectParameterCallable x ctx).runState s = (.ok (some owner), s'))
-    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size) :
+    (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size)
+    (hq : ctx.inputRecord = none) :
     HeadSettled (.param x) ctx owner s' := by
   intro u hu
-  have hcall := projectParameterCallable_stable x ctx s s' owner hrun hact u hu.memo
+  have hcall := projectParameterCallable_stable x ctx s s' owner hrun hact hq u hu.memo
   have hcb : ProductionCompletes ((fun rec : EvalRec => rec (.projectParameterCallable x ctx)) evalUnbounded) u := by
     unfold ProductionCompletes
     show ((projectParameterCallable x ctx).runState u).1 ≠ _
@@ -397,17 +398,19 @@ theorem headSettled_param (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (owner 
     parameter-rooted paths, one declared, accessible member at a time. -/
 theorem headSettled_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (a : Algorithm) (q : PropDef)
     (t : EvalState) (h : NavSettled o ctx a t) (hl : Algorithm.lookupPropDefAny? a n = some q)
-    (hacc : memberAccessible? ctx a q = true) :
+    (hacc : memberAccessible? ctx a q = true)
+    (hq : ctx.inputRecord = none) :
     HeadSettled (.dotMember o n fb none) ctx (childOfInContext a q.alg ctx) t :=
-  fun u hu => member_projection_run o n fb ctx u u a q (h u hu) hl hacc
+  fun u hu => member_projection_run o n fb ctx u u a q (h u hu) hl hacc hq
 
 /-- A member step over a settled receiver, with the member's structure settled. -/
 theorem navSettled_member (o : Expr) (n : Ident) (fb : Expr) (ctx : EvalCtx) (a : Algorithm) (q : PropDef)
     (owner : Algorithm) (t : EvalState) (h : NavSettled o ctx a t)
     (hl : Algorithm.lookupPropDefAny? a n = some q) (hacc : memberAccessible? ctx a q = true)
-    (hs : StructSettled (childOfInContext a q.alg ctx) ctx owner t) :
+    (hs : StructSettled (childOfInContext a q.alg ctx) ctx owner t)
+    (hq : ctx.inputRecord = none) :
     NavSettled (.dotMember o n fb none) ctx owner t :=
-  navSettled_of (headSettled_member o n fb ctx a q t h hl hacc) hs
+  navSettled_of (headSettled_member o n fb ctx a q t h hl hacc hq) hs
 
 /-! ## From the production probe -/
 
@@ -472,9 +475,10 @@ theorem navSettled_plain_name_of_probe (n : Ident) (ctx : EvalCtx) (top : Algori
 theorem navSettled_param_of_probe (x : Ident) (ctx : EvalCtx) (s s' : EvalState) (selected owner : Algorithm)
     (hprobe : (resolveDotReceiver? (.param x) ctx).runState s = (.ok (some selected), s'))
     (hact : ∀ id, capturedId? x ctx = some id → id < s.lexicalActivations.size)
+    (hq : ctx.inputRecord = none)
     (hstruct : StructSettled selected ctx owner s') :
     NavSettled (.param x) ctx owner s' :=
-  navSettled_of (headSettled_param x ctx s s' selected (probe_param x ctx s s' (some selected) hprobe) hact) hstruct
+  navSettled_of (headSettled_param x ctx s s' selected (probe_param x ctx s s' (some selected) hprobe) hact hq) hstruct
 
 /-! ## The member bridge with the PROBE as its navigation premise -/
 
@@ -491,14 +495,15 @@ theorem member_bridge_name_of_probe (a : Nat) (n N : Ident) (fallback : Expr) (a
     (hprobe : (resolveDotReceiver? (.resolve n) ctx).runState s = (.ok (some owner), s'))
     (hsel : selectDotEdge ctx (.resolve n) N (some owner) = .ok (.member owner p))
     (hnormal : ∀ r, (lookupLexicalPropertyRaw top n ctx).runState s = (.ok r, s) → structureNormal r.alg = true)
-    (hprod : ProductionCompletes (evalCounted (.dotMember (.resolve n) N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember (.resolve n) N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a
         ⟨.dotMember (.resolve n) N fallback none, args, ctx, env, .dot (.resolve n) N fallback⟩ .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember (.resolve n) N fallback (some args)) ctx env).runState s :=
   member_bridge_navSettled a (.resolve n) N fallback args ctx env s s' (some owner) owner p hprobe hsel
     (member_projection_of_selection (.resolve n) N fallback ctx s s' (some owner) owner p hprobe hsel
-      (fun x _ _ hx => by simp [headParam?] at hx))
-    (navSettled_plain_name_of_probe n ctx top rest s s' owner hcs hprobe hnormal).2 hprod
+      (fun x _ _ hx => by simp [headParam?] at hx) hq)
+    (navSettled_plain_name_of_probe n ctx top rest s s' owner hcs hprobe hnormal).2 hprod hq
 
 /-- **THE MEMBER BRIDGE over ANY receiver, every bundle, from settledness assembled at the probe's
     exit**: `member_bridge_navSettled` with the receiver premise discharged by the probe and the
@@ -511,12 +516,13 @@ theorem member_bridge_of_settled (a : Nat) (target : Expr) (N : Ident) (fallback
     (hnorm : ∀ x o t, headParam? target = some x → (projectParameterCallable x ctx).runState s = (.ok (some o), t) →
       structureNormal o = true)
     (hsettled : NavSettled target ctx owner s')
-    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember target N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a ⟨.dotMember target N fallback none, args, ctx, env, .dot target N fallback⟩
         .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember target N fallback (some args)) ctx env).runState s :=
   member_bridge_navSettled a target N fallback args ctx env s s' alg? owner p hprobe hsel
-    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm) hsettled hprod
+    (member_projection_of_selection target N fallback ctx s s' alg? owner p hprobe hsel hnorm hq) hsettled hprod hq
 
 /-! ## Transparent references: the production alias chase, unfolded
 
@@ -661,13 +667,14 @@ theorem member_bridge_reference_of_probe (a : Nat) (n N : Ident) (fallback : Exp
     (htarget : (lookupLexicalPropertyRaw (.alias parent opens props (.resolve m) id true) m
       (ctx.push (.alias parent opens props (.resolve m) id true))).runState s = (.ok target, s))
     (hg : isAliasAlg target.alg = false)
-    (hprod : ProductionCompletes (evalCounted (.dotMember (.resolve n) N fallback (some args)) ctx env) s) :
+    (hprod : ProductionCompletes (evalCounted (.dotMember (.resolve n) N fallback (some args)) ctx env) s)
+    (hq : ctx.inputRecord = none) :
     (ordinaryCall productionPlanRoute a
         ⟨.dotMember (.resolve n) N fallback none, args, ctx, env, .dot (.resolve n) N fallback⟩ .call).runState s =
       (reCountValueBoundary <$> evalCounted (.dotMember (.resolve n) N fallback (some args)) ctx env).runState s :=
   member_bridge_of_settled a (.resolve n) N fallback args ctx env s s' (some owner) owner p hprobe hselect
     (fun x _ _ hx => by simp [headParam?] at hx)
     (navSettled_reference_of_probe n ctx top rest s s' owner hcs hprobe parent opens props m id hsel target
-      htarget hg).2.2 hprod
+      htarget hg).2.2 hprod hq
 
 end KatLang.MemberSettled

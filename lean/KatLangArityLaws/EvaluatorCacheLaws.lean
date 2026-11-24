@@ -424,6 +424,48 @@ theorem pres_identifyRuntime (a : Algorithm) : Preserves R (identifyRuntimeAlgor
   fun s => WriteFrame.mint s
 theorem pres_valueViewCell (a : Algorithm) (ctx : EvalCtx) : Preserves R (valueViewCell? a ctx) := by
   unfold valueViewCell?; pres_tac_base
+/-- A step of the input records (ledger R-1) keeps every field a write-framed relation reads: it is
+    refused in the state it started from, or writes the input records only. -/
+theorem pres_cellInputsStep {α : Type} (step : CellRecords → Except Error (α × CellRecords)) :
+    Preserves R (cellInputsStep step) := by
+  intro s
+  rw [cellInputsStep_run]
+  cases step s.cellInputs with
+  | error refusal => exact StateRel.refl s
+  | ok result => exact WriteFrame.keep s _ rfl rfl rfl rfl rfl
+/-- The same step from a fixed entry state: the form a body proof meets it in. -/
+theorem presAt_cellInputsStep {α : Type} {st : EvalState} (step : CellRecords → Except Error (α × CellRecords)) :
+    PresAt R st (cellInputsStep step) :=
+  PresAt.of_pres (pres_cellInputsStep step)
+/-- The input records' one writer of reads (ledger R-1). -/
+theorem pres_noteCellInput (ctx : EvalCtx) (activation : Nat) (refusal : Error) :
+    Preserves R (noteCellInput ctx activation refusal) := by
+  unfold noteCellInput
+  split
+  · exact pres_pure ()
+  · exact pres_cellInputsStep _
+/-- An admitted member access inside a retained cell's computation is a note (ledger R-1). -/
+theorem pres_noteMemberAccess (ctx : EvalCtx) (container : Algorithm) (p : PropDef) (refusal : Error) :
+    Preserves R (noteMemberAccess ctx container p refusal) := by
+  unfold noteMemberAccess
+  split
+  · exact pres_pure ()
+  · split
+    · exact pres_noteCellInput _ _ _
+    · exact pres_pure ()
+/-- The judgment of a reuse is a step of the input records: a refusal in the starting state, or the
+    admission of the reader. -/
+theorem pres_judgeRetainedCellReuse (cell : Nat) (ctx : EvalCtx) : Preserves R (judgeRetainedCellReuse cell ctx) :=
+  pres_cellInputsStep _
+theorem pres_recordCellInputs (address watermark : Nat) (refusal : Error) :
+    Preserves R (recordCellInputs address watermark refusal) :=
+  pres_cellInputsStep _
+theorem pres_noteLocalOnlyRead (binding : PropDef) (a : Algorithm) (ctx : EvalCtx) :
+    Preserves R (noteLocalOnlyRead binding a ctx) := by
+  unfold noteLocalOnlyRead
+  split
+  · exact pres_noteCellInput _ _ _
+  · exact pres_pure ()
 end Helpers
 
 set_option hygiene false in
@@ -445,6 +487,8 @@ macro "pres_tac_alloc" : tactic => `(tactic| without_info_trees ((try pres_unfol
   | (with_reducible apply pres_raw_pure)
   | (with_reducible apply pres_allocate)
   | (with_reducible apply pres_recordActivation)
+  | (with_reducible apply pres_noteCellInput)
+  | (with_reducible apply pres_noteMemberAccess)
   | split
   | pres_intro
   | pres_zeta
@@ -474,13 +518,20 @@ theorem pres_supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) :
   · exact pres_allocate _
 
 /-- **The alias-cell table's ONE writer.** It records a binding cell only after its own lookup of
-    the key found nothing, and nothing between the lookup and the record touches the table: so the
-    record is a write `WriteFrame.aliasAfter` accepts. A hit changes nothing. -/
+    the key found nothing, and nothing between the lookup and the record touches the table — the
+    cell's input record it opens on the way (ledger R-1) writes `cellInputs` only — so the record is
+    a write `WriteFrame.aliasAfter` accepts. A hit changes nothing. -/
 theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) :
     Preserves R (aliasBindingCellRecorded wired target ctx) := by
   intro s
-  have hpre : Preserves R (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx => supplyNeed target declaringCtx []) :=
-    pres_bind (pres_enterAlgorithmBody wired (aliasCellContext wired ctx s) []) (fun declaringCtx => pres_supplyNeed target declaringCtx [])
+  have hpre : Preserves R (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx =>
+      (get : EvalM EvalState) >>= fun entered =>
+      supplyNeed target { declaringCtx with inputRecord := some entered.needs.size } [] >>= fun address =>
+      recordCellInputs address s.lexicalActivations.size (aliasReuseRefusal wired) >>= fun _ => pure address) :=
+    pres_bind (pres_enterAlgorithmBody wired (aliasCellContext wired ctx s) []) (fun declaringCtx =>
+      pres_bind pres_get (fun entered =>
+        pres_bind (pres_supplyNeed target _ []) (fun address =>
+          pres_bind (pres_recordCellInputs address _ _) (fun _ => pres_pure address))))
   have k := hpre s
   have hget : (get : EvalM EvalState).runState s = (.ok s, s) := rfl
   cases hl : lookupAssoc (aliasBindingCellKey wired ctx s) s.aliasCells with
@@ -492,16 +543,27 @@ theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx :
     exact StateRel.refl s
   | none =>
     have hrun : ((aliasBindingCellRecorded wired target ctx).runState s).2 =
-        (match (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s with
+        (match (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx =>
+            (get : EvalM EvalState) >>= fun entered =>
+            supplyNeed target { declaringCtx with inputRecord := some entered.needs.size } [] >>= fun address =>
+            recordCellInputs address s.lexicalActivations.size (aliasReuseRefusal wired) >>= fun _ => pure address).runState s with
          | (.ok address, t) => { t with aliasCells := (aliasBindingCellKey wired ctx s, address) :: t.aliasCells }
          | (.error _, t) => t) := by
       simp only [aliasBindingCellRecorded, EvalM.bind_runState, hget, hl]
       rcases (enterAlgorithmBody wired (aliasCellContext wired ctx s) []).runState s with ⟨_ | declaringCtx, t₁⟩
       · rfl
       · dsimp only
-        rcases (supplyNeed target declaringCtx []).runState t₁ with ⟨_ | address, t₂⟩ <;> rfl
+        rw [show (get : EvalM EvalState).runState t₁ = (.ok t₁, t₁) from rfl]
+        dsimp only
+        rcases (supplyNeed target { declaringCtx with inputRecord := some t₁.needs.size } []).runState t₁
+          with ⟨_ | address, t₂⟩
+        · rfl
+        · rfl
     rw [hrun]
-    rcases hr : (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s
+    rcases hr : (enterAlgorithmBody wired (aliasCellContext wired ctx s) [] >>= fun declaringCtx =>
+        (get : EvalM EvalState) >>= fun entered =>
+        supplyNeed target { declaringCtx with inputRecord := some entered.needs.size } [] >>= fun address =>
+        recordCellInputs address s.lexicalActivations.size (aliasReuseRefusal wired) >>= fun _ => pure address).runState s
       with ⟨_ | address, t⟩
     · rw [hr] at k; exact k
     · rw [hr] at k; exact WriteFrame.aliasAfter s t _ _ k hl
@@ -535,6 +597,14 @@ macro "pres_tac_mid" : tactic => `(tactic| without_info_trees ((try pres_unfold_
   | (with_reducible apply pres_identifyRuntime)
   | (with_reducible apply pres_aliasBindingCellRecorded)
   | (with_reducible apply pres_valueViewCell)
+  | (with_reducible apply pres_noteCellInput)
+  | (with_reducible apply pres_cellInputsStep)
+  | (with_reducible apply presAt_cellInputsStep)
+  | (with_reducible apply pres_noteMemberAccess)
+  | (with_reducible apply pres_noteLocalOnlyRead)
+  | (with_reducible apply pres_judgeRetainedCellReuse)
+  | (with_reducible apply pres_reuseRetainedCell)
+  | (with_reducible apply pres_servingDetached)
   | (with_reducible apply pres_evalError)
   | (with_reducible apply pres_lift)
   | (with_reducible apply pres_mapM)
@@ -549,6 +619,43 @@ macro "pres_tac_mid" : tactic => `(tactic| without_info_trees ((try pres_unfold_
   | pres_unfold_head
   | (with_reducible apply PresAt.of_pres))))
 
+
+section ReuseWriter
+variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
+
+/-- Serving a detached evaluation (ledger R-1) preserves what the evaluation preserves: the two
+    writes around it are steps of the input records. -/
+theorem pres_servingDetached {α : Type} (watermark : Nat) {m : EvalM α} (hm : Preserves R m) :
+    Preserves R (servingDetached watermark m) := by
+  unfold servingDetached; pres_tac_mid
+
+/-- Serving under a relation that reads a state only through its property cache and its owner set
+    (`FieldFrame`): the two writes of the served watermark keep both. -/
+theorem pres_servingDetached_field {F : EvalState → EvalState → Prop} [StateRel F] [FieldFrame F]
+    {α : Type} (watermark : Nat) {m : EvalM α} (hm : Preserves F m) :
+    Preserves F (servingDetached watermark m) := by
+  intro s
+  rw [servingDetached_runState]
+  split
+  · exact hm s
+  · have h1 : F s { s with cellInputs := { s.cellInputs with serving := watermark } } :=
+      FieldFrame.frame _ _ rfl rfl
+    have h2 := hm { s with cellInputs := { s.cellInputs with serving := watermark } }
+    rcases hrun : m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with ⟨outcome, t⟩
+    rw [hrun] at h2
+    simp only []
+    split
+    · exact StateRel.trans h1 h2
+    · exact StateRel.trans (StateRel.trans h1 h2) (FieldFrame.frame _ _ rfl rfl)
+
+/-- The reuse of a retained cell (ledger R-1) preserves what its channel preserves: the judgment
+    before the channel is a step of the input records, and the channel runs served. -/
+theorem pres_reuseRetainedCell {α : Type} (cell : Nat) (ctx : EvalCtx) {m : EvalM α} (hm : Preserves R m) :
+    Preserves R (reuseRetainedCell cell ctx m) := by
+  unfold reuseRetainedCell
+  exact pres_bind (pres_judgeRetainedCellReuse cell ctx) (fun _ => pres_servingDetached _ hm)
+
+end ReuseWriter
 
 section Helpers2
 variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
@@ -888,6 +995,13 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_identifyRuntime)
   | (with_reducible apply pres_aliasBindingCellRecorded)
   | (with_reducible apply pres_valueViewCell)
+  | (with_reducible apply pres_noteCellInput)
+  | (with_reducible apply pres_cellInputsStep)
+  | (with_reducible apply presAt_cellInputsStep)
+  | (with_reducible apply pres_noteMemberAccess)
+  | (with_reducible apply pres_noteLocalOnlyRead)
+  | (with_reducible apply pres_reuseRetainedCell)
+  | (with_reducible apply pres_servingDetached)
   | (with_reducible apply pres_evalError)
   | (with_reducible apply pres_lift)
   | (with_reducible apply pres_mapM)
@@ -1587,9 +1701,10 @@ theorem cache_publication_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKep
 
 /-- EXPORTED-DETACHED (November 2026): the access is the publication law in the context its binding's
     exposure requires — the detached context for an exported binding, a refusal (which writes nothing)
-    or the accessing context for a local-only one — so it keeps every relation the publication law
-    keeps in EVERY context. -/
-theorem access_pres_of_publication {R : EvalState → EvalState → Prop} [StateRel R] (rec : EvalRec)
+    or the accessing context for a local-only one, after an admitted read's input note (ledger R-1,
+    a kept write) — so it keeps every write-framed relation the publication law keeps in EVERY
+    context. -/
+theorem access_pres_of_publication {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R] (rec : EvalRec)
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
     (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest)
     (h : ∀ ctx' env', Preserves R
@@ -1599,10 +1714,16 @@ theorem access_pres_of_publication {R : EvalState → EvalState → Prop} [State
   unfold EvalBody.evalZeroArgPropertyAccessCounted
   split
   · simp only [EvalM.bind_runState, get_runState]
-    exact h _ _ s
+    exact pres_servingDetached _ (h _ _) s
   · split
     · exact StateRel.refl s
-    · exact h ctx env s
+    · revert s
+      show Preserves R (do
+        if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+        EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request)
+      split
+      · exact pres_bind (pres_noteLocalOnlyRead binding resolvedAlgorithm ctx) (fun _ => h ctx env)
+      · exact pres_bind (pres_pure ()) (fun _ => h ctx env)
 
 theorem cache_property_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
@@ -1716,10 +1837,56 @@ theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept
   unfold EvalBody.evalZeroArgPropertyAccessCounted
   split
   · simp only [EvalM.bind_runState, get_runState]
-    exact active_publication_step rec hrec accessKind owner binding resolvedAlgorithm _ _ request s
+    -- The request is served (ledger R-1): the served evaluation is the publication law up to the input
+    -- records, which the owner set does not read.
+    intro hne
+    obtain ⟨entered, hentered, hcomplete, _, hexit⟩ := servingDetached_complete _ _ s hne
+    have hstep := active_publication_step rec hrec accessKind owner binding resolvedAlgorithm
+      (ctx.detach s.lexicalActivations.size) [] request entered hcomplete
+    show _ = s.activeZeroArgProperties
+    rw [hexit]
+    show _ = s.activeZeroArgProperties
+    have hs : entered.activeZeroArgProperties = s.activeZeroArgProperties := by rw [hentered]
+    exact hstep.trans hs
   · split
     · intro _; rfl
-    · exact active_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request s
+    · -- An admitted read first notes its input (ledger R-1), which keeps the owner set.
+      have hnote : ∀ st : EvalState, (∃ e, ((if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+          else pure ()) : EvalM Unit).runState st = (.error e, st)) ∨
+          ∃ t, ((if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+          else pure ()) : EvalM Unit).runState st = (.ok (), t) ∧
+            t.activeZeroArgProperties = st.activeZeroArgProperties := by
+        intro st
+        split
+        · unfold noteLocalOnlyRead
+          split
+          · rename_i id _
+            rcases noteCellInput_outcome ctx id
+                (Error.localOnlyProperty detachedReadDescription binding.name binding.exposure) st with h | h
+            · exact .inl ⟨_, h⟩
+            · exact .inr ⟨_, h, by simp⟩
+          · exact .inr ⟨st, rfl, rfl⟩
+        · exact .inr ⟨st, rfl, rfl⟩
+      show ((do
+          if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+          EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).1
+        ≠ .error .fuelExhausted → ActiveKept s ((do
+          if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+          EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).2
+      have hsplit : ((do
+          if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx
+          EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) : EvalM CountedResult)
+          = ((if request.isRead then noteLocalOnlyRead binding resolvedAlgorithm ctx else pure ()) >>= fun _ =>
+              EvalBody.zeroArgPropertyPublication rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+        split <;> rfl
+      rcases hnote s with ⟨e, ht⟩ | ⟨t, ht, hact⟩
+      · -- Ledger R-1, deferred reads: the read refused in the state it started from.
+        rw [hsplit, EvalM.bind_runState, ht]
+        intro _; rfl
+      rw [hsplit, EvalM.bind_runState, ht]
+      intro hne
+      have := active_publication_step rec hrec accessKind owner binding resolvedAlgorithm ctx env request t hne
+      exact this.trans hact
 
 
 theorem active_body_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c)) (c : EvalCall)

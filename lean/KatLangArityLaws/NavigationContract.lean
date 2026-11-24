@@ -411,18 +411,19 @@ def ParamRowOwned : Algorithm → Prop
     row whose owner was activated before that evaluation started reads NO binding: the chase is
     then a refusal, not a transport, and the navigation core does not admit it. Every other
     algorithm satisfies it, and so does every alias in a context no exported evaluation entered
-    (`paramRowUsable_attached`). -/
+    (`paramRowUsable_attached`). A parameter row is also chased outside every retained cell's
+    computation: inside one its transport is an input read the cell records (ledger R-1). -/
 def ParamRowUsable : Algorithm → EvalCtx → Prop
   | .alias parent _ _ (.param y) _ _, ctx =>
-      ∀ p owner id, parent = some p → requiredParameterOwner? p y = some owner → owner.activation = some id →
-        ctx.detachedBefore ≤ id
+      (∀ p owner id, parent = some p → requiredParameterOwner? p y = some owner → owner.activation = some id →
+        ctx.detachedBefore ≤ id) ∧ ctx.inputRecord = none
   | _, _ => True
 
-theorem paramRowUsable_attached (a : Algorithm) (ctx : EvalCtx) (h : ctx.detachedBefore = 0) :
-    ParamRowUsable a ctx := by
+theorem paramRowUsable_attached (a : Algorithm) (ctx : EvalCtx) (h : ctx.detachedBefore = 0)
+    (hq : ctx.inputRecord = none) : ParamRowUsable a ctx := by
   unfold ParamRowUsable
   split
-  · intro _ _ _ _ _ _; omega
+  · exact ⟨fun _ _ _ _ _ _ => by omega, hq⟩
   · trivial
 
 /-- The captured activation of a parameter row, read in the alias's own pushed context: its owner's,
@@ -452,7 +453,7 @@ theorem paramRowAdmits_of_owned (a : Algorithm) (ctx : EvalCtx) (s : EvalState)
     subst hp
     obtain ⟨act, hact, hy⟩ := owner_backed y (chain := some p) hb p rfl owner hown i hid
     have hcap : capturedId? y (ctx.push (.alias (some p) opens props (.param y) id reference)) = some i :=
-      capturedId?_paramRow p opens props y id reference ctx owner i hown hid (hu p owner i rfl hown hid)
+      capturedId?_paramRow p opens props y id reference ctx owner i hown hid (hu.1 p owner i rfl hown hid)
     have hanch : anchored y (ctx.push (.alias (some p) opens props (.param y) id reference)) s = true := by
       unfold anchored
       rw [hcap]
@@ -462,7 +463,7 @@ theorem paramRowAdmits_of_owned (a : Algorithm) (ctx : EvalCtx) (s : EvalState)
       unfold parameterAddressIn
       rw [KatLang.MemberStability.capturedRecord_of_id hcap, hact]
       rfl
-    rw [hanch, haddr, hy]
+    rw [hanch, haddr, hy, hu.2]
     rfl
   · rfl
 
@@ -492,13 +493,19 @@ theorem cellKeyAdmits_of_backed (a : Algorithm) (s : EvalState)
   | conditional p op bs id => rfl
 
 /-- **THE NAVIGATION FACTS**: the navigation fragment of the proposed call precondition — what a
-    contract has to give at a navigation call for the navigation core to admit it. Every other
-    navigation call is admitted outright. -/
+    contract has to give at a navigation call for the navigation core to admit it. The three calls
+    whose own body takes a member step (the receiver probe, the structural member projection, an
+    alias's route decision) are made outside every retained cell's computation: inside one the
+    admitted access of a local-only member is an input read the cell records (ledger R-1). Every
+    other navigation call is admitted outright. -/
 def NavFacts : EvalCall → EvalState → Prop
   | .resolveAliasChase _ _ a ctx _ _, s =>
-      Backed s.lexicalActivations a.parent ∧ ParamRowOwned a ∧ ParamRowUsable a ctx
-  | .projectParameterCallable _ ctx, s => Backed s.lexicalActivations (siteScope? ctx)
+      Backed s.lexicalActivations a.parent ∧ ParamRowOwned a ∧ ParamRowUsable a ctx ∧ chaseQuiet a ctx = true
+  | .projectParameterCallable _ ctx, s => Backed s.lexicalActivations (siteScope? ctx) ∧ ctx.inputRecord = none
   | .projectNeedCallable a, s => a < s.needs.size
+  | .aliasStepIsRuntime _ _ ctx _, _ => ctx.inputRecord = none
+  | .resolveDotReceiver? _ ctx, _ => ctx.inputRecord = none
+  | .projectNeedStructuralMember _ ctx, _ => ctx.inputRecord = none
   | _, _ => True
 
 /-- **ADMISSION FROM THE NAVIGATION FACTS**, clause by clause. -/
@@ -506,12 +513,18 @@ theorem navFacts_admits (c : EvalCall) (s : EvalState) (hc : navStatic c = true)
     navAdmits c s = true := by
   cases c
   case resolveAliasChase fc pr a ctx vis last =>
-    show (paramRowAdmits a ctx s && cellKeyAdmits a s) = true
-    rw [paramRowAdmits_of_owned a ctx s h.1 h.2.1 h.2.2, cellKeyAdmits_of_backed a s h.1]
+    show (paramRowAdmits a ctx s && cellKeyAdmits a s && chaseQuiet a ctx) = true
+    rw [paramRowAdmits_of_owned a ctx s h.1 h.2.1 h.2.2.1, cellKeyAdmits_of_backed a s h.1, h.2.2.2]
     rfl
-  case projectParameterCallable x ctx => exact anchored_of_chainRecorded x ctx s (Backed.chainRecorded h)
+  case projectParameterCallable x ctx =>
+    show (anchored x ctx s && ctx.inputRecord.isNone) = true
+    rw [anchored_of_chainRecorded x ctx s (Backed.chainRecorded h.1), h.2]
+    rfl
   case projectNeedCallable a => exact (admits_projection_iff a s).2 h
   case resolveAlg e ctx => exact hc
+  case aliasStepIsRuntime step target ctx visited => exact Option.isNone_iff_eq_none.mpr h
+  case resolveDotReceiver? e ctx => exact Option.isNone_iff_eq_none.mpr h
+  case projectNeedStructuralMember e ctx => exact Option.isNone_iff_eq_none.mpr h
   all_goals first | rfl | (simp [navStatic] at hc)
 
 /-- A contract ADMITS navigation: at every navigation call, its invariant and precondition give the
@@ -594,12 +607,12 @@ theorem bindingCell_address_valid (wired : Algorithm) (target : Expr) (ctx : Eva
     parameter's cell, at the entry state. -/
 theorem guard_projectParameterCallable (K : Contract) (rec : EvalRec) (x : Ident) (ctx : EvalCtx) (s : EvalState)
     (hi : K.inv s) (hinv : Inv s) (hctx : ValidCtx s.needs ctx)
-    (hproj : ∀ a, a < s.needs.size → K.pre (.projectNeedCallable a) s) :
+    (hproj : ∀ a, a < s.needs.size → K.pre (.projectNeedCallable a) s) (hq : ctx.inputRecord = none) :
     (evalStep (K.guard rec) (.projectParameterCallable x ctx)).runState s =
       (evalStep rec (.projectParameterCallable x ctx)).runState s := by
   show (projectParameterWith (EvalRec.projectNeedCallable (K.guard rec)) x ctx).runState s =
     (projectParameterWith (EvalRec.projectNeedCallable rec) x ctx).runState s
-  rw [projectParameterWith_run, projectParameterWith_run]
+  rw [projectParameterWith_run _ _ _ _ hq, projectParameterWith_run _ _ _ _ hq]
   cases haddr : parameterAddressIn s.lexicalActivations x ctx with
   | none => rfl
   | some a => exact K.guard_run_of rec _ s hi (hproj a (parameter_address_valid x ctx s hinv hctx a haddr))
@@ -712,11 +725,13 @@ theorem CtxOK.ext {s t : EvalState} (h : ActivationPrefix s t) {ctx : EvalCtx}
 /-- The navigation facts of a chase from a usable algorithm, of a parameter read in a usable context,
     and of a projection of a valid address. -/
 theorem navFacts_chase {s : EvalState} {a : Algorithm} (ha : AlgOK s.lexicalActivations a) (fc pr : Bool)
-    (ctx : EvalCtx) (hu : ParamRowUsable a ctx) (vis : List String) (last : Option (Algorithm × PropDef)) :
-    NavFacts (.resolveAliasChase fc pr a ctx vis last) s := ⟨ha.1, ha.2, hu⟩
+    (ctx : EvalCtx) (hu : ParamRowUsable a ctx) (hquiet : chaseQuiet a ctx = true) (vis : List String)
+    (last : Option (Algorithm × PropDef)) :
+    NavFacts (.resolveAliasChase fc pr a ctx vis last) s := ⟨ha.1, ha.2, hu, hquiet⟩
 
-theorem navFacts_parameter {s : EvalState} {ctx : EvalCtx} (hc : CtxOK s.lexicalActivations ctx) (x : Ident) :
-    NavFacts (.projectParameterCallable x ctx) s := hc.2.1
+theorem navFacts_parameter {s : EvalState} {ctx : EvalCtx} (hc : CtxOK s.lexicalActivations ctx)
+    (hq : ctx.inputRecord = none) (x : Ident) :
+    NavFacts (.projectParameterCallable x ctx) s := ⟨hc.2.1, hq⟩
 
 /-! ## B1 at the proposed invariant: only the per-body obligation remains -/
 
@@ -725,9 +740,12 @@ theorem navFacts_parameter {s : EvalState} {ctx : EvalCtx} (hc : CtxOK s.lexical
     to the additional input/result predicates of `navigationContract`; they are NOT discharged here.
     These facts concern the entry arguments, not a run of either evaluator core. -/
 def NavigationInputs : EvalCall → EvalState → Prop
-  | .resolveAliasChase _ _ a ctx _ _, s => AlgOK s.lexicalActivations a ∧ ParamRowUsable a ctx
-  | .projectParameterCallable _ ctx, s => CtxOK s.lexicalActivations ctx
+  | .resolveAliasChase _ _ a ctx _ _, s => AlgOK s.lexicalActivations a ∧ ParamRowUsable a ctx ∧ chaseQuiet a ctx = true
+  | .projectParameterCallable _ ctx, s => CtxOK s.lexicalActivations ctx ∧ ctx.inputRecord = none
   | .projectNeedCallable a, s => a < s.needs.size
+  | .aliasStepIsRuntime _ _ ctx _, _ => ctx.inputRecord = none
+  | .resolveDotReceiver? _ ctx, _ => ctx.inputRecord = none
+  | .projectNeedStructuralMember _ ctx, _ => ctx.inputRecord = none
   | _, _ => True
 
 /-- The proposed state invariant, the proved address contracts, and navigation's structural input
@@ -752,9 +770,12 @@ theorem navigationContract_admits (extraPre : EvalCall → EvalState → Prop)
   intro c s _ _ hp
   have inputs : NavigationInputs c s := hp.2.1
   cases c with
-  | resolveAliasChase fc pr a ctx vis last => exact ⟨inputs.1.1, inputs.1.2, inputs.2⟩
-  | projectParameterCallable x ctx => exact inputs.2.1
+  | resolveAliasChase fc pr a ctx vis last => exact ⟨inputs.1.1, inputs.1.2, inputs.2.1, inputs.2.2⟩
+  | projectParameterCallable x ctx => exact ⟨inputs.1.2.1, inputs.2⟩
   | projectNeedCallable a => exact inputs
+  | aliasStepIsRuntime step target ctx visited => exact inputs
+  | resolveDotReceiver? e ctx => exact inputs
+  | projectNeedStructuralMember e ctx => exact inputs
   | _ => trivial
 
 /-- **THE ONE UNPROVED PER-BODY OBLIGATION for B1 at the proposed invariant.** Its two halves are
@@ -804,7 +825,9 @@ theorem member_bridge_of_contract (K : Contract) (hbody : K.BodySound) (hadm : K
   have hnav := navRuns_of_contract K hbody hadm (.resolveDotReceiver? target ctx) s rfl hi hp
     (by unfold ProductionCompletes; rw [hrun]; nofun)
   rw [hrun] at hnav
+  -- The contract's navigation facts place the probe outside every retained cell's computation.
+  have hq : ctx.inputRecord = none := hadm (.resolveDotReceiver? target ctx) s rfl hi hp
   exact member_bridge_of_probe_reached a target N fallback args ctx env s s' owner p hshape hnav hmint hsel
-    hheap hprod
+    hheap hprod hq
 
 end KatLang.NavigationContract

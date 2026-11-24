@@ -100,8 +100,10 @@ def sa : Algorithm := selected ctx "SA"
 /-- After the runtime step established the binding cell: cell 0, recorded. -/
 def established : EvalState := ((aliasBindingCell sa row ctx).runState EvalState.empty).2
 
-/-- The context the binding cell's row is supplied in. -/
-def declCtx : EvalCtx := cellCtx established 0 ctx
+/-- The context the binding cell's row is supplied in, read outside the cell's own input record: the
+    row's context is MARKED with the cell (ledger R-1), and the navigation core answers a runtime chase
+    only where its reuse judgment is quiet (`NavigationReread.chaseQuiet`). -/
+def declCtx : EvalCtx := { cellCtx established 0 ctx with inputRecord := none }
 
 /-- THE IN-FLIGHT STATE: the projection shell's `projecting` mark on the binding cell. -/
 def inFlight : EvalState := KatLang.NeedControl.Projection.setCallable 0 .projecting established

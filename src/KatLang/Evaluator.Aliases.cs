@@ -407,7 +407,23 @@ public static partial class Evaluator
                     return Finish(frame, EvalResult<AliasChaseEnd>.Ok(new AliasChaseEnd(AliasChaseEndKind.Runtime, step, frame.Last)));
                 _projections++;
                 var cell = AliasBindingCell(step, frame.Ctx);
-                var projection = cell.ProjectCallable();
+                // R-1: the projection is a REUSE of the retained cell, judged against the reading context
+                // BEFORE it runs; a refusal depends on the reader, so it settles no route decision (Lean
+                // `runtimeAliasStepWith`). An admitted annotated reader's projection runs served.
+                EvalResult<Algorithm?> projection;
+                if (frame.Ctx.CallStack is AnnotatedReadOnlyList<Algorithm>)
+                {
+                    if (JudgeRetainedCellReuse(cell, frame.Ctx) is { } refusal)
+                    {
+                        _taints++;
+                        return Finish(frame, refusal);
+                    }
+                    frame.Ctx.Budget.EnterServing(frame.Ctx.DetachedBefore);
+                    try { projection = cell.ProjectCallable(); }
+                    finally { frame.Ctx.Budget.ExitServing(); }
+                }
+                else
+                    projection = cell.ProjectCallable();
                 // An unpublished outcome (a recorded-only result, a flow-local DemandCycle, a pending observation
                 // or terminal answer) settles no route decision; the cell's published outcome — a failure included — is
                 // the sticky fact every later navigation reads.
@@ -1042,8 +1058,12 @@ public static partial class Evaluator
         var key = AliasBindingCellKey(wired, ctx);
         lock (cells)
             if (cells.TryGetValue(key, out var known)) return known;
+        // R-1: the cell's INPUT RECORD opens under the activations recorded when the use started (before the
+        // alias's own body entry), and the row's context is marked with it (Lean `aliasBindingCellRecorded`).
+        var record = new AliasCellInputs(ctx.Budget.ActivationWatermark, ctx.Budget);
         var rowCtx = AliasCellContext(wired, ctx, out var rowValues);
-        var created = SupplyCell(wired.Target, EnterAlgorithmBody(wired, rowCtx, rowValues), rowValues, retained: true);
+        var created = SupplyCell(wired.Target, EnterAlgorithmBody(wired, rowCtx, rowValues).MarkInputRecord(record), rowValues, retained: true);
+        record.Cell = created;
         lock (cells)
         {
             if (cells.TryGetValue(key, out var raced)) return raced;
@@ -1060,9 +1080,16 @@ public static partial class Evaluator
     /// its row is supplied where an exported property is evaluated: every activation that exists now
     /// is an identity and no input, and the cell's later VALUE demand and CALLABLE projection run
     /// under that watermark wherever they happen — a row that reads an enclosing call's input is a
-    /// refusal, never a callable shared across calls. A local-only alias's cell (one per declaring
-    /// binding identity) and a property-less alias's are supplied in the using context with no
-    /// values, as before.
+    /// refusal, never a callable shared across calls. A LOCAL-ONLY alias's cell (one per declaring
+    /// binding identity) and a property-less alias's are supplied, with no values, in the using context
+    /// AT THE WATERMARK OF THE ALIAS'S DECLARING LEVEL (ledger R-1; <see cref="EvalCtx.Reattach"/> at the
+    /// nearest activation of its declaring chain, the activation its key names): the row is that level's
+    /// own binding, so its computation — and every part of it that runs later — may use that level's
+    /// inputs whichever reader reaches the row first. A reader inside an exported evaluation entered since
+    /// (a falsely exported sibling) therefore establishes the very cell the level's own row would, and is
+    /// judged where it reuses it (<see cref="RetainedCellAdmission"/>). A reader at the declaring level's own
+    /// watermark, and an alias with no activated declaring level, supply the row in the using context, as
+    /// before. (A run under the mutation guard's old reuse path keeps the using context too.)
     /// </summary>
     private static EvalCtx AliasCellContext(Algorithm.Alias wired, EvalCtx ctx, out ValEnv values)
     {
@@ -1070,7 +1097,9 @@ public static partial class Evaluator
             return DetachedEvaluation(ctx, NoBindingCellValues, out values);
 
         values = NoBindingCellValues;
-        return ctx;
+        return ctx.DetachedBefore != 0 && ctx.Budget.JudgesRetainedCellReuse && DeclaringActivation(wired.Parent) is { } declaring
+            ? ctx.Reattach(declaring.Serial)
+            : ctx;
     }
 
     /// <summary>
@@ -1089,13 +1118,21 @@ public static partial class Evaluator
     /// </summary>
     private static bool AliasMemoDetached(Algorithm wired, in EvalCtx ctx)
     {
-        if (ctx.DetachedBefore == 0 || wired.Parent is not { } level)
+        if (ctx.CallStack is not AnnotatedReadOnlyList<Algorithm> annotated || wired.Parent is not { } level)
+            return false;
+
+        // The memos record the outcome of access checks; inside a retained cell's computation an admitted
+        // check through an activation that existed when the cell was established is the cell's INPUT READ
+        // (ledger R-1, `AdmitMemberAccess`), which a memo hit would skip — so there, too, the chase runs
+        // again with the reading context's checks and records nothing.
+        var reach = Math.Max(annotated.DetachedBefore, annotated.InputRecord?.Watermark ?? 0);
+        if (reach == 0)
             return false;
 
         var oldest = Evaluation.Caching.ScopeKeyFacts.ForActivationLookup(level.Parent).OldestActivationSerial;
         if (level.Activation is { } activation && activation.Serial < oldest)
             oldest = activation.Serial;
-        return oldest < ctx.DetachedBefore;
+        return oldest < reach;
     }
 
     /// <summary>
@@ -1348,7 +1385,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalRuntimeAliasValueCounted(Algorithm.Alias wired, EvalCtx ctx, ValEnv valEnv)
         => wired.Target is Expr.Param
             ? EvalCounted(wired.Target, ctx.Push(wired), valEnv)
-            : AliasBindingCell(wired, ctx).Demand();
+            : RetainedCellValue(AliasBindingCell(wired, ctx), ctx);
 
     /// <summary>
     /// THE BARE READ AT A VALUE TERMINAL (OD-E, M4★; Lean <c>terminalAccess</c>): a runtime-target alias is
@@ -1698,7 +1735,7 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalRuntimeAliasValueCountedAsync(Algorithm.Alias wired, EvalCtx ctx, ValEnv valEnv)
         => wired.Target is Expr.Param
             ? await EvalCountedAsync(wired.Target, ctx.Push(wired), valEnv).ConfigureAwait(false)
-            : await AliasBindingCell(wired, ctx).DemandAsync().ConfigureAwait(false);
+            : await RetainedCellValueAsync(AliasBindingCell(wired, ctx), ctx).ConfigureAwait(false);
 
     /// <summary>MIRROR OF <see cref="ReadAliasTerminalCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> ReadAliasTerminalCountedAsync(AliasTerminal terminal, EvalCtx ctx, ValEnv valEnv)

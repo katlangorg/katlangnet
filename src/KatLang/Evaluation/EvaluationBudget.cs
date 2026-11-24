@@ -412,7 +412,63 @@ internal sealed class EvaluationBudget
     /// (<c>Evaluator.DetachedEvaluation</c>): true for every production run. False only for a run
     /// created under the mutation-guard seam (<see cref="DetachedEvaluationTestSeam"/>), read once here.
     /// </summary>
-    internal bool DetachesExportedEvaluations { get; } = DetachedEvaluationTestSeam.Current is null;
+    internal bool DetachesExportedEvaluations { get; } = DetachedEvaluationTestSeam.Current is not { DisablesDetachment: true };
+
+    /// <summary>
+    /// Whether this run JUDGES the reuse of a retained runtime-alias binding cell against its reader, and
+    /// supplies a local-only alias's row at its declaring level's watermark
+    /// (ledger R-1, <c>Evaluator.RetainedCellAdmission</c>): true for every production run. False only for a
+    /// run created under the mutation-guard seam's
+    /// <see cref="DetachedEvaluationTestSeam.DisableRetainedCellJudgment"/>, read once here.
+    /// </summary>
+    internal bool JudgesRetainedCellReuse { get; } = DetachedEvaluationTestSeam.Current is not { DisablesRetainedCellJudgment: true };
+
+    /// <summary>
+    /// The run's ONE gate over the input records of its retained runtime-alias cells (ledger R-1,
+    /// <c>Evaluator.AliasCellInputs</c>): a note checks the admitted readers of every record it reaches and
+    /// writes them as one step, and a judgment admits its reader in the same step, as Lean's operations do.
+    /// Taken only inside a retained cell's computation or by an annotated reader.
+    /// </summary>
+    internal object RetainedCellGate { get; } = new();
+
+    // The watermark being served and the entry watermarks of the brackets in progress (innermost last).
+    private long _servingDetached;
+    private long[] _servingEntries = [];
+    private int _servingDepth;
+
+    /// <summary>
+    /// THE WATERMARK OF THE DETACHED EVALUATION THE RUN IS SERVING (ledger R-1; owner decision November 24
+    /// 2026; Lean <c>CellRecords.serving</c>): the deepest watermark among the exported evaluations in
+    /// progress (<c>Evaluator.EvaluateDetachedZeroArgPropertyResult</c> and the zero-supply invocation's
+    /// publication) and the readers whose reuse is running a retained cell's channel
+    /// (<c>Evaluator.RetainedCellValue</c>, the alias chase's runtime step); zero while the run serves none.
+    /// An input read a retained cell's computation makes — however deferred — is refused only while the
+    /// evaluation that demands it detaches the activation it goes through
+    /// (<c>Evaluator.AliasCellInputs.Note</c>): the same read demanded after that evaluation returned
+    /// belongs to an attached reader, which may use its own inputs.
+    /// </summary>
+    internal long ServingDetached => Volatile.Read(ref _servingDetached);
+
+    /// <summary>
+    /// Serves <paramref name="watermark"/> until the matching <see cref="ExitServing"/> (Lean
+    /// <c>servingDetached</c>): the served watermark rises to it, never falls, and the entry watermark is
+    /// kept here — so a bracket holds nothing in its caller's frame or across an await. A run is one
+    /// logical flow: a bracket's two halves run in order, though a continuation may resume on another
+    /// thread.
+    /// </summary>
+    internal void EnterServing(long watermark)
+    {
+        var entered = _servingDetached;
+        if (_servingDepth == _servingEntries.Length)
+            Array.Resize(ref _servingEntries, Math.Max(4, _servingDepth * 2));
+        _servingEntries[_servingDepth++] = entered;
+        if (watermark > entered)
+            Volatile.Write(ref _servingDetached, watermark);
+    }
+
+    /// <summary>Ends the innermost <see cref="EnterServing"/>: the watermark it found is served again.</summary>
+    internal void ExitServing()
+        => Volatile.Write(ref _servingDetached, _servingEntries[--_servingDepth]);
 
     /// <summary>
     /// ONE execution of the <c>tick()</c> primitive: increments the run's counter and returns the new

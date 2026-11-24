@@ -280,11 +280,12 @@ theorem own_member_hit_never_resolves_the_target (rec : EvalRec) (receiver : Exp
     (fb : Expr) (ctx : EvalCtx) (c : Algorithm) (prop : PropDef) (s s' : EvalState)
     (hrecv : (rec.projectNeedStructuralMember receiver ctx).runState s = (.ok (some c), s'))
     (hstruct : (rec.resolveAliasStructure c ctx).runState s' = (.ok (some c), s'))
-    (hprop : c.lookupPropDefAny? name = some prop) (hacc : memberAccessible? ctx c prop = true) :
+    (hprop : c.lookupPropDefAny? name = some prop) (hacc : memberAccessible? ctx c prop = true)
+    (hq : ctx.inputRecord = none) :
     (EvalBody.projectNeedStructuralMember rec (.dotMember receiver name fb none) ctx).runState s
       = (.ok (some (childOfInContext c prop.alg ctx)), s') := by
   simp only [EvalBody.projectNeedStructuralMember, EvalM.bind_runState, hrecv, hstruct, hprop, hacc,
-    Bool.not_true, Bool.false_eq_true, ite_false]
+    Bool.not_true, Bool.false_eq_true, ite_false, noteMemberAccess_unmarked _ _ _ _ hq]
   rfl
 
 /-- **Production: an own-member hit on a navigated carrier.** Where the production projection of
@@ -297,13 +298,14 @@ theorem production_own_member_hit (receiver : Expr) (name : Ident) (fb : Expr) (
     (hrecv : (projectNeedStructuralMember receiver ctx).runState s
       = (.ok (some (.alias p op pr target id false)), s'))
     (hprop : KatLang.lookupPropDefAny? pr name = some prop)
-    (hacc : memberAccessible? ctx (.alias p op pr target id false) prop = true) :
+    (hacc : memberAccessible? ctx (.alias p op pr target id false) prop = true)
+    (hq : ctx.inputRecord = none) :
     (projectNeedStructuralMember (.dotMember receiver name fb none) ctx).runState s
       = (.ok (some (childOfInContext (.alias p op pr target id false) prop.alg ctx)), s') := by
   show (evalUnbounded (.projectNeedStructuralMember (.dotMember receiver name fb none) ctx)).runState s = _
   rw [← production_unfolds _ s hcomp]
   exact own_member_hit_never_resolves_the_target evalUnbounded receiver name fb ctx _ prop s s' hrecv
-    (production_structure_of_carrier p op pr target id ctx s') hprop hacc
+    (production_structure_of_carrier p op pr target id ctx s') hprop hacc hq
 
 /-- **A non-runtime row is classified with nothing evaluated**: a static path is no runtime step. -/
 theorem static_row_is_no_runtime_step (rec : EvalRec) (step : Algorithm) (target : Expr) (ctx : EvalCtx)
@@ -610,11 +612,12 @@ theorem member_step_selects_the_declaration (structureOf : Algorithm → EvalCtx
     (name member : String) (p : PropDef) (s : EvalState)
     (hs : (structureOf value stepCtx).runState s = (.ok (some receiver), s))
     (hp : Algorithm.lookupPropDefAny? receiver member = some p)
-    (ha : memberAccessible? stepCtx receiver p = true) :
+    (ha : memberAccessible? stepCtx receiver p = true)
+    (hq : stepCtx.inputRecord = none) :
     (aliasStepNavigateWith structureOf stepCtx notStatic value last name [member]).runState s =
       (.ok (some { owner := receiver, binding := p, alg := childOfInContext receiver p.alg stepCtx }), s) := by
   unfold aliasStepNavigateWith
-  simp only [KatLang.CallPlan.bind_run, hs, hp, ha]
+  simp only [KatLang.CallPlan.bind_run, hs, hp, ha, noteMemberAccess_unmarked _ _ _ _ hq]
   rfl
 
 /-- **Exact transport.** A transparent reference's slice reaches the supply as a direct spread's does:
@@ -694,6 +697,6 @@ theorem transparent_slice_is_the_binding_cell (wired : Algorithm) (name : Ident)
     (aliasBindingCell wired (.param name) ctx).runState s = (.ok p, s) ∧
       (spreadCollectorSlice? (.param name) (ctx.push wired)).runState s = (.ok (some slice), s) :=
   ⟨KatLang.RuntimeAliasLaws.aliasBindingCell_parameter_transport wired name ctx s activation p hact hfind,
-    KatLang.NeedControl.Allocation.known_collector name (ctx.push wired) s activation p cell slice hact hfind hcell hcollector⟩
+    KatLang.NeedControl.Allocation.known_collector name (ctx.push wired) s s activation p cell slice hact hfind hcell hcollector⟩
 
 end KatLang.WholeAlgorithmTransport

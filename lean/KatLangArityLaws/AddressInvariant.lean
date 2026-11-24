@@ -507,6 +507,28 @@ theorem SoundI.of_readonly {α : Type} {P : Array NeedCell → Prop} {m : EvalM 
   rw [hs]
   exact ⟨vs, Nat.le_refl _, hr⟩
 
+/-- A state that differs from an `Inv` state in its input records only (ledger R-1) is an `Inv`
+    state: no address is stored there. -/
+theorem Inv.of_inputsOnly {s t : EvalState} (vs : Inv s) (ht : t = { s with cellInputs := t.cellInputs }) :
+    Inv t := by
+  have hn : t.needs = s.needs := by rw [ht]
+  have ha : t.lexicalActivations = s.lexicalActivations := by rw [ht]
+  have hc : t.zeroArgPropertyCache = s.zeroArgPropertyCache := by rw [ht]
+  have hl : t.aliasCells = s.aliasCells := by rw [ht]
+  exact ⟨hn ▸ vs.collectors, hn ▸ vs.cells, hn ▸ ha ▸ vs.activations, hn ▸ hc ▸ vs.cache,
+    hn ▸ hl ▸ vs.aliasCells⟩
+
+/-- A computation that writes no state but the input records (ledger R-1). -/
+theorem SoundI.of_inputsOnly {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
+    {Q : α → Array NeedCell → Prop}
+    (h : ∀ s, Inv s → P s.needs →
+      (m.runState s).2 = { s with cellInputs := (m.runState s).2.cellInputs } ∧
+      ∀ x, (m.runState s).1 = .ok x → Q x s.needs) : SoundI P m Q := by
+  intro _ s vs ps
+  obtain ⟨hs, hr⟩ := h s vs ps
+  have hn : (m.runState s).2.needs = s.needs := by rw [hs]
+  exact ⟨Inv.of_inputsOnly vs hs, hn ▸ Nat.le_refl _, fun x hx => hn ▸ hr x hx⟩
+
 /-- A computation from a fixed entry state (the continuation of a `get`). -/
 def SoundAt {α : Type} (st : EvalState) (m : EvalM α) (Q : α → Array NeedCell → Prop) : Prop :=
   Inv (m.runState st).2 ∧ st.needs.size ≤ (m.runState st).2.needs.size ∧
@@ -620,6 +642,25 @@ theorem OptSliceV.some {h : Array NeedCell} {slice : List Nat} (v : OptSliceV h 
     ValidAddresses h slice := v slice rfl
 theorem OptActV.some {h : Array NeedCell} {act : ParameterActivation} (v : OptActV h (some act)) :
     ActV h act := v act rfl
+
+/-- A SERVED evaluation (ledger R-1, `servingDetached`) keeps the evaluation's contract: the two writes
+    around it change the input records only, where no address is stored. -/
+theorem SoundI.servingDetached {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
+    {Q : α → Array NeedCell → Prop} (watermark : Nat) (hm : SoundI P m Q) :
+    SoundI P (servingDetached watermark m) Q := by
+  intro hp s vs ps
+  rw [servingDetached_runState]
+  split
+  · exact hm hp s vs ps
+  · have vs' : Inv { s with cellInputs := { s.cellInputs with serving := watermark } } :=
+      Inv.of_inputsOnly vs rfl
+    obtain ⟨vt, gt, rt⟩ := hm hp _ vs' ps
+    rcases hrun : m.runState { s with cellInputs := { s.cellInputs with serving := watermark } } with ⟨outcome, t⟩
+    rw [hrun] at vt gt rt
+    simp only []
+    split
+    · exact ⟨vt, gt, fun x hx => by cases hx⟩
+    · exact ⟨Inv.of_inputsOnly vt rfl, gt, rt⟩
 
 /-- `evalAttempt` turns every ordinary failure into a successful `.error` result, keeping the
     state it reached; the incomplete outcome passes unchanged. -/

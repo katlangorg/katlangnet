@@ -219,8 +219,11 @@ theorem agree_resolveDotReceiver_name (n : Ident) (owner : Algorithm) (rest : Li
     wired member to be `AlgOK`. The B2 preparation refuted it on a source program; since the
     anchoring of a container's chain (2026-11-13) that program's member is owned
     (`NavigationSourceDomainGuards.OutsideContainer.reached_member_is_owned`), and the condition is
-    not proved in general. -/
+    not proved in general. Stated outside every retained cell's computation (`hq`): inside one the
+    admitted access is an input read the cell records (`noteMemberAccess`, ledger R-1), a write no
+    contract of this family speaks of. -/
 theorem agree_resolveDotReceiver_member (o : Expr) (n : Ident) (fallback : Expr) (ctx : EvalCtx) (s : EvalState)
+    (hq : ctx.inputRecord = none)
     (hprobe : K.pre (.resolveDotReceiver? o ctx) s)
     (hmember : ∀ a t, K.inv t → K.ext s t → K.post (.resolveDotReceiver? o ctx) (some a) t →
       ∀ p, Algorithm.lookupPropDefAny? a n = some p → memberAccessible? ctx a p = true →
@@ -248,6 +251,7 @@ theorem agree_resolveDotReceiver_member (o : Expr) (n : Ident) (fallback : Expr)
       dsimp only
       by_cases hacc : memberAccessible? ctx a p = true
       · rw [hacc]
+        simp only [noteMemberAccess_unmarked _ _ _ _ hq, EvalM.pure_bind]
         refine Agree.bind ho (Agree.rec_call hk (hmember a t hit het hpost p hp hacc)) (fun member u _ hiu heu _ => ?_)
         cases member with
         | none => exact hmissAgree u hiu (ho.trans _ _ _ het heu)
