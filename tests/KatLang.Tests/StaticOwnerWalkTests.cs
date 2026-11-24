@@ -4,7 +4,7 @@ namespace KatLang.Tests;
 
 public sealed class StaticOwnerWalkTests
 {
-    private static string AliasChain(int depth, int names)
+    internal static string AliasChain(int depth, int names)
     {
         var source = new StringBuilder();
         for (var i = 0; i < names; i++)

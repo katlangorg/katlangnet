@@ -142,11 +142,15 @@ internal sealed class ElaboratedPropertyScope
             if (!ReferenceEquals(view, _completedPropertyView))
             {
                 _completedPropertyView = view;
-                _completedProperties = view.Properties.Select(property => new PropertyLookupHit(view, property)).ToArray();
+                _completedProperties = CompletedPropertyHits(view);
             }
             return _completedProperties!;
         }
     }
+
+    // Keep the projection on the cache miss so ordinary property reads allocate no closure.
+    private static PropertyLookupHit[] CompletedPropertyHits(Algorithm view)
+        => view.Properties.Select(property => new PropertyLookupHit(view, property)).ToArray();
 
     /// <summary>
     /// The chain's outermost level, captured at construction (parent links are

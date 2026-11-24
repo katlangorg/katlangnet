@@ -1161,7 +1161,9 @@ internal static class PropertyExposureResolver
                     ? resolution.ResolveVisibleName(key, level)
                     : resolution.Resolve(pending, level);
                 resolution.EndRecording();
-                var read = new (string Name, RequirementSet Read)[levelReads.Count];
+                (string Name, RequirementSet Read)[] read = levelReads.Count == 0
+                    ? []
+                    : new (string Name, RequirementSet Read)[levelReads.Count];
                 var i = 0;
                 foreach (var readName in levelReads)
                     read[i++] = (readName, summaries[readName]);
@@ -1529,8 +1531,9 @@ internal static class PropertyExposureResolver
                 {
                     if (_retained + weight > capacity)
                         return;
+                    // Most groups keep one candidate: its list starts with room for one.
                     if (candidates is null)
-                        _candidates.Add((key.Content, key.Level), candidates = []);
+                        _candidates.Add((key.Content, key.Level), candidates = new(1));
                     candidates.Add((settled, weight));
                     _retained += weight;
                     observations?.RecordSettlementShareStore();
@@ -1800,10 +1803,22 @@ internal static class PropertyExposureResolver
         // The frame whose body is running: what it consults beyond its key is recorded on it (see Frame).
         private Frame? _running;
 
-        /// <summary>Starts recording the level-in-progress summaries a top-level settlement reads.</summary>
-        public HashSet<string> BeginRecording() => _levelReads = new HashSet<string>(StringComparer.Ordinal);
+        /// <summary>
+        /// Starts recording the level-in-progress summaries a top-level settlement reads.
+        /// A settlement with no such reads leaves its empty set available for the next one.
+        /// </summary>
+        public HashSet<string> BeginRecording()
+            => _levelReads = _emptyRecording ?? new HashSet<string>(StringComparer.Ordinal);
 
-        public void EndRecording() => _levelReads = null;
+        private HashSet<string>? _emptyRecording;
+
+        public void EndRecording()
+        {
+            // A nonempty recording belongs to its reader. Recycling it would make later small recordings
+            // repeatedly clear a bucket array sized for the largest preceding settlement.
+            _emptyRecording = _levelReads is { Count: 0 } ? _levelReads : null;
+            _levelReads = null;
+        }
 
         // The direct-chain property lookup, recording a read of the level-in-progress summary it returns.
         private bool TryLookupSummary(SummaryScope from, string name, out SummaryScope level, out PropertyLookupHit hit, out RequirementSet summary)
@@ -1930,7 +1945,11 @@ internal static class PropertyExposureResolver
             public SummaryScope? SiteIsItsLevel;
             private int _siteDepth = SummaryScope.NoOwnerLookup;
             private bool _inconsistentViews;
-            private List<(StaticLookupFacts Facts, int Version)>? _views;
+            // The fact views consulted, each once, in the order first consulted: the first one in place (a settlement
+            // usually consults one or two), any further ones in a list.
+            private StaticLookupFacts? _firstView;
+            private int _firstViewVersion;
+            private List<(StaticLookupFacts Facts, int Version)>? _moreViews;
 
             /// <summary>
             /// The owners this frame's reference binds itself (<see cref="SummaryReference.BoundOwners"/>): its bound
@@ -2046,8 +2065,21 @@ internal static class PropertyExposureResolver
 
             public void NoteView(StaticLookupFacts facts, int version)
             {
-                _views ??= [];
-                foreach (var (known, seen) in _views)
+                if (_firstView is null)
+                {
+                    _firstView = facts;
+                    _firstViewVersion = version;
+                    return;
+                }
+
+                if (ReferenceEquals(_firstView, facts))
+                {
+                    _inconsistentViews |= _firstViewVersion != version;
+                    return;
+                }
+
+                _moreViews ??= [];
+                foreach (var (known, seen) in _moreViews)
                 {
                     if (!ReferenceEquals(known, facts))
                         continue;
@@ -2055,7 +2087,29 @@ internal static class PropertyExposureResolver
                     return;
                 }
 
-                _views.Add((facts, version));
+                _moreViews.Add((facts, version));
+            }
+
+            // The views a nested frame consulted, as this frame's reads, in the order that frame first consulted them.
+            private void NoteViewsOf(Frame nested)
+            {
+                if (nested._firstView is not { } first)
+                    return;
+                NoteView(first, nested._firstViewVersion);
+                if (nested._moreViews is { } more)
+                    foreach (var (facts, version) in more)
+                        NoteView(facts, version);
+            }
+
+            private (StaticLookupFacts Facts, int Version)[] Views()
+            {
+                if (_firstView is null)
+                    return [];
+                var views = new (StaticLookupFacts Facts, int Version)[1 + (_moreViews?.Count ?? 0)];
+                views[0] = (_firstView, _firstViewVersion);
+                for (var i = 1; i < views.Length; i++)
+                    views[i] = _moreViews![i - 1];
+                return views;
             }
 
             /// <summary>A read of the summary <paramref name="name"/> of the level in progress (<c>TryLookupSummary</c>).</summary>
@@ -2107,9 +2161,7 @@ internal static class PropertyExposureResolver
                 NoteSiteLanding(nested.SiteDepth);
                 AbsorbLiveReads(nested.ReadLive, nested._liveReads);
                 _inconsistentViews |= nested._inconsistentViews;
-                if (nested._views is { } views)
-                    foreach (var (facts, version) in views)
-                        NoteView(facts, version);
+                NoteViewsOf(nested);
                 _ownerOffChain |= nested.OwnerOffChain;
                 if (!nested.RunsUnbound)
                     AbsorbFootprint(nested._footprint, nested._exactBoundOwners,
@@ -2135,7 +2187,7 @@ internal static class PropertyExposureResolver
             }
 
             public SettlementShare.Settled Complete()
-                => new(Result, SiteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews,
+                => new(Result, SiteDepth, ReadLive, Views(), _inconsistentViews,
                     _exactBoundOwners ? null : _footprint is null ? [] : [.. _footprint], _emptiness, OwnerOffChain,
                     _liveReads is null ? null : [.. _liveReads]);
 
@@ -2208,7 +2260,9 @@ internal static class PropertyExposureResolver
             _nextIndex = 0;
             _triedEquations = false;
             root.Index = _nextIndex++;
-            var frames = new Stack<Frame>();
+            // One stack per resolution: a Run never nests in its own resolution (its first step clears the run state), and
+            // the finally below empties the stack again.
+            var frames = _frames ??= new Stack<Frame>();
             frames.Push(root);
             try
             {
@@ -2286,6 +2340,8 @@ internal static class PropertyExposureResolver
 
             return root.Result;
         }
+
+        private Stack<Frame>? _frames;
 
         // Nothing partial outlives its Run: a completed, cancelled or failed settlement leaves none behind.
         private void ClearPartials()

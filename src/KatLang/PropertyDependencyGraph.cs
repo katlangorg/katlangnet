@@ -212,6 +212,13 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference
             return;
         }
 
+        Narrow(existing, reference);
+    }
+
+    // Kept out of Add: the lambda's closure over the added reference was allocated on entry to Add, for every reference
+    // of every copied set, although only a second write of one key reads it.
+    private void Narrow(SummaryReference existing, SummaryReference reference)
+    {
         var common = existing.BoundOwners.Where(owner => reference.BoundOwners.Any(other => ReferenceEquals(owner, other))).ToArray();
         if (common.Length == existing.BoundOwners.Count)
             return;
@@ -221,6 +228,9 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<SummaryReference
 
     public void UnionWith(IEnumerable<SummaryReference> references)
     {
+        // A copy into an empty set is sized once (entry order is write order either way).
+        if (_references.Count == 0 && references is PendingReferenceSet { Count: > 0 } incoming)
+            _references.EnsureCapacity(incoming.Count);
         foreach (var reference in references) Add(reference);
     }
     public bool SetEquals(PendingReferenceSet other)
@@ -1608,6 +1618,10 @@ internal static class PropertyDependencyGraphBuilder
                 _lookupRoots.Add(origin.Facts, root);
                 _requirementLevels.Add((origin.Facts, origin.Facts.PreludeKey), root);
             }
+            // A level built before: the walk below would stop at once and return it. Answered without its stack, since
+            // every settlement frame and summary input reads its origin's level here.
+            if (_requirementLevels.TryGetValue((origin.Facts, origin.Key), out var built))
+                return built;
             var pending = new Stack<StaticScopeKey>();
             var key = origin.Key;
             while (!_requirementLevels.ContainsKey((origin.Facts, key)))
