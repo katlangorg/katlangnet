@@ -44,10 +44,12 @@ public static partial class Evaluator
     /// have no independent callable identity. VALUE remains its suspended computation.
     /// A runtime CALLABLE projection's FAILURE (<see cref="EvalError.IsProjectionFailure"/>, at any
     /// wrapping depth) is never one: the computation failed, so its error propagates (NEED-06).
-    /// <para>One pass down the context frames, in constant stack like <see cref="IsProjectionFailure"/>
-    /// and the Q-36 readers (<see cref="IsOwnMissingOutputError"/>): every frame and the terminal are
-    /// tested for the projection mark, then the terminal for its kind. Out of line (FRAME-SIZE
-    /// DISCIPLINE): it runs on error paths only, under the identity-resolution spines.</para>
+    /// <para>One pass down the context frames, in constant stack like <see cref="IsProjectionFailure"/>:
+    /// every frame and the terminal are tested for the projection mark (each frame carries its own), then
+    /// the terminal for its kind. It is asked of a resolution's own outcome, never once per level a
+    /// failure leaves, and a completed projection's failure is marked at its outermost frame, so the pass
+    /// ends there. Out of line (FRAME-SIZE DISCIPLINE): it runs on error paths only, under the
+    /// identity-resolution spines.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static bool IsLiftableError(EvalError error)

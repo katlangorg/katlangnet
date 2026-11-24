@@ -918,14 +918,17 @@ public static partial class Evaluator
     private static EvalError SpreadMissingOutput(SourceSpan? span)
         => new EvalError.SpreadMissingOutput() { Span = span };
 
-    // THE Q-36 CONTEXT-CHAIN READERS ARE LOOPS (November 2026, implementation only). Each of them reads or
-    // rebuilds a failure's WHOLE chain of context frames, and the consumers run once per level a failure
+    // THE Q-36 CONTEXT-CHAIN READERS (November 2026, implementation only). They decide on a failure's
+    // terminal or rebuild its chain of context frames, and the consumers run once per level a failure
     // leaves. A run's chain grows with its nesting, which the async route does not bound by the host stack
     // (a stack hop continues recursion routed through loop steps on fresh stacks), and a completing twin
     // runs its continuation on whatever stack is left above the runtime's reserve: one native frame per
-    // context frame there overflowed the process at about 1,200 frames. They therefore find the terminal
-    // through EvalError.UnwrapContext and rebuild through WithContextTerminal, in constant stack. The
-    // verdicts, the copied frames (span and runtime slots), their order and the terminal are unchanged.
+    // context frame there overflowed the process at about 1,200 frames, and walking the chain for each
+    // verdict made a deep failure's unwinding quadratic (about 5 s for 10,000 loop-step levels). They
+    // therefore read the terminal each frame recorded when it was built (EvalError.UnwrapContext: constant
+    // work and stack, so an unaffected failure costs nothing per level) and rebuild through
+    // WithContextTerminal, in constant stack, only when the terminal changes. The verdicts, the copied
+    // frames (span and runtime slots), their order and the terminal are unchanged.
 
     /// <summary>Any missing output, whatever its origin and context frames (the category test).</summary>
     private static bool IsMissingOutputError(EvalError error)
@@ -988,10 +991,12 @@ public static partial class Evaluator
     /// <see cref="IsOwnForBlame"/>); the origin itself is nested exactly as before.</para>
     ///
     /// <para>Uses constant stack. A failure whose
-    /// terminal is not an own missing output is returned as it is, the same object; otherwise every
+    /// terminal is not an own missing output is returned as it is, the same object, decided in constant
+    /// work from the terminal its outermost frame recorded; otherwise every
     /// context frame is copied around the nested copy of the terminal
-    /// (<see cref="WithContextTerminal"/>). Out of line (FRAME-SIZE DISCIPLINE): it runs on error
-    /// paths only, while its callers sit on the evaluator's recursion spines.</para>
+    /// (<see cref="WithContextTerminal"/>), once: the copy's terminal is nested. Out of line (FRAME-SIZE
+    /// DISCIPLINE): it runs on error paths only, while its callers sit on the evaluator's recursion
+    /// spines.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static EvalError NestMissingOutput(EvalError error)

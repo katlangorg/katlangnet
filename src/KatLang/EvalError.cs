@@ -96,7 +96,8 @@ public closed record EvalError
     /// malformed host input, not a resource limit. Host cancellation is not an error
     /// value at all — a cancelled run throws <see cref="OperationCanceledException"/>
     /// and never produces an <see cref="EvalError"/> — so it is outside this
-    /// classification. The check resolves through <see cref="WithContext"/> wrappers,
+    /// classification. The check resolves through <see cref="WithContext"/> wrappers (the
+    /// terminal the outermost frame recorded, read in constant work at any depth),
     /// and this is the one authoritative resource-limit classifier
     /// (<see cref="KatLangError.IsResourceLimit"/> delegates here); it never inspects
     /// message text.
@@ -148,27 +149,25 @@ public closed record EvalError
     {
         get
         {
-            // One pass down the context frames, as IsResourceLimit makes: this is read once per
-            // frame an ordinary failure leaves.
+            // The outermost frame's recorded terminal, as IsResourceLimit reads it: this is asked
+            // once per frame an ordinary failure leaves, so it must not walk the chain.
             var terminal = UnwrapContext();
             return terminal is HostTermination || IsResourceLimitKind(terminal);
         }
     }
 
     /// <summary>
-    /// The error below every <see cref="WithContext"/> frame, found without recursion: a host may
-    /// build a chain deeper than any stack. Null only for a host-built frame whose inner error is null.
-    /// The evaluator's context-chain classifiers (<c>Evaluator.IsOwnMissingOutputError</c> and the
-    /// other Q-36 readers) decide on it too: a run's own chain grows with its nesting, which the async
-    /// route does not bound by the stack.
+    /// The error below every <see cref="WithContext"/> frame: the terminal the outermost frame
+    /// RECORDED when it was built (<see cref="WithContext"/>), read in constant work and constant stack
+    /// at any depth. Null only for a host-built frame whose inner error is null. Every classification of
+    /// a chain decides on it — <see cref="IsResourceLimit"/>, <see cref="IsHostTermination"/>,
+    /// <see cref="IsTerminalForRun"/>, <see cref="Code"/> and the evaluator's Q-36 readers
+    /// (<c>Evaluator.IsOwnMissingOutputError</c>, <c>Evaluator.NestMissingOutput</c>): they are asked
+    /// once per level a failure leaves, and a run's own chain grows with its nesting, which the async
+    /// route does not bound by the stack, so walking the chain for each answer made unwinding a deep
+    /// failure quadratic in its depth.
     /// </summary>
-    internal EvalError UnwrapContext()
-    {
-        var terminal = this;
-        while (terminal is WithContext frame)
-            terminal = frame.Inner;
-        return terminal;
-    }
+    internal EvalError UnwrapContext() => this is WithContext frame ? frame.RecordedTerminal! : this;
 
     /// <summary>
     /// Stable machine-readable classification of this error's semantic family —
@@ -183,8 +182,9 @@ public closed record EvalError
     /// variant maps one-to-one. The mapping is compiler-exhaustive over the
     /// closed hierarchy: an unmapped future variant fails the build here instead
     /// of silently inheriting <see cref="KatLangErrorCode.Unspecified"/> or
-    /// reaching a runtime fallback. Context wrappers are unwrapped iteratively
-    /// so classification remains stack-safe even for deep host-built errors.
+    /// reaching a runtime fallback. Context wrappers are unwrapped through the
+    /// terminal the outermost frame recorded, so classification is stack-safe and
+    /// constant work even for deep host-built errors.
     /// </summary>
     public KatLangErrorCode Code
     {
@@ -675,7 +675,40 @@ public closed record EvalError
     {
         public ErrorContext ErrorContext { get; }
 
-        public EvalError Inner { get; private init; }
+        // THE CHAIN'S TERMINAL, RECORDED WHEN THE FRAME IS BUILT (November 2026; C# implementation
+        // only, no semantic, API or equality change). The error below every frame of this chain — what
+        // UnwrapContext formerly found by walking it — is written by Inner's init accessor from the inner
+        // frame's own record (or the inner error itself), so it costs one read per frame built and every
+        // classification of the chain reads it here, never walking. A frame owns its inner chain and both
+        // are immutable, so the record can never go stale: the constructor, WithInner (the Q-36 rebuilds,
+        // `with { Inner = ... }`) and every other copy either set Inner through the accessor or copy the
+        // frame with its Inner and its record together (`with { Span = ... }`). It sits in an
+        // equality-transparent runtime slot, declared before Inner, exactly as a synthesized record would
+        // compare and hash it (FrameEquals, FrameHash).
+        private readonly RuntimeStateSlot<EvalError?> _terminal;
+
+        /// <summary>The error this frame gives context to.</summary>
+        public EvalError Inner
+        {
+            get
+            {
+                // TEST SEAM: counts the context-chain reads of an activated flow (one static load otherwise).
+                if (Evaluation.ContextChainReadTestSeam.IsActive)
+                    Evaluation.ContextChainReadTestSeam.NoteRead();
+                return field;
+            }
+            private init
+            {
+                field = value;
+                _terminal = new(value?.UnwrapContext());
+            }
+        }
+
+        /// <summary>
+        /// The error below every frame of this chain, recorded when this frame was built
+        /// (<see cref="UnwrapContext"/>); null only below a host-built frame whose inner error is null.
+        /// </summary>
+        internal EvalError? RecordedTerminal => _terminal.Value;
 
         public string Context => ErrorContext.ToString();
 
@@ -701,10 +734,12 @@ public closed record EvalError
 
         // ── Native record members without recursion on Inner ────────────────────────────────
         // Synthesized record equality, hashing and text follow Inner once per frame on the caller's
-        // stack, and a host may build a chain deeper than any stack (a run's own chains are bounded
-        // by its depth limit). The three members below are the synthesized ones written as loops:
+        // stack. Host-built chains and failures from deeply nested async loop steps can exceed that
+        // stack. The three members below are the synthesized ones written as loops:
         // the same fields through the same default comparers in the same order, the same hash
-        // value and the same text. A frame has ONE inner error, so the chain is a list — no shared
+        // value and the same text. The recorded terminal is one of those fields: a transparent
+        // runtime slot, equal to every other and hashing to zero at its position, as the compiler
+        // folds a slot. A frame has ONE inner error, so the chain is a list — no shared
         // paths to memoize, unlike the AST records of RecordGraphEquality. Only reflection can make
         // a frame its own inner error; such a chain has no answer here (formerly a stack overflow).
 
@@ -729,9 +764,14 @@ public closed record EvalError
             return true;
         }
 
-        /// <summary>The fields declared before <see cref="Inner"/>: the base record's part, then the context.</summary>
+        /// <summary>
+        /// The fields declared before <see cref="Inner"/>: the base record's part, then the context and
+        /// the recorded terminal's transparent slot.
+        /// </summary>
         private bool FrameEquals(WithContext other)
-            => base.Equals(other) && RecordGraphEquality.FieldEquals(ErrorContext, other.ErrorContext);
+            => base.Equals(other)
+                && RecordGraphEquality.FieldEquals(ErrorContext, other.ErrorContext)
+                && RecordGraphEquality.FieldEquals(_terminal, other._terminal);
 
         /// <inheritdoc />
         public override int GetHashCode()
@@ -751,7 +791,7 @@ public closed record EvalError
 
         /// <summary>The synthesized hash of this frame with a zero inner hash folded in at <see cref="Inner"/>'s position.</summary>
         private int FrameHash() => RecordGraphEquality.CombineChild(
-            RecordGraphEquality.Combine(base.GetHashCode(), ErrorContext), 0);
+            RecordGraphEquality.Combine(RecordGraphEquality.Combine(base.GetHashCode(), ErrorContext), _terminal), 0);
 
         /// <summary>
         /// The synthesized member list — <c>Span</c>, <c>IsResourceLimit</c>, <c>Code</c>,
@@ -765,7 +805,7 @@ public closed record EvalError
             RuntimeHelpers.EnsureSufficientExecutionStack();
 
             // Both inherited classifications are the terminal error's, for every frame alike:
-            // read once, they keep the text linear in the chain instead of quadratic.
+            // read once, from the recorded terminal, they keep the text linear in the chain.
             var terminal = UnwrapContext();
             var isResourceLimit = terminal.IsResourceLimit.ToString();
             var code = terminal.Code.ToString();

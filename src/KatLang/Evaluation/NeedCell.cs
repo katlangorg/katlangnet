@@ -533,12 +533,13 @@ internal sealed class NeedCell : NeedNode
         }
     }
 
-    /// <summary>Whether <paramref name="error"/> is (or wraps) a non-initiating observation's pending marker.</summary>
+    /// <summary>
+    /// Whether <paramref name="error"/> is (or wraps) a non-initiating observation's pending marker: the
+    /// chain's recorded terminal (<see cref="EvalError.UnwrapContext"/>), asked at every failed
+    /// projection completion, so it never walks the chain.
+    /// </summary>
     internal static bool IsObservationPending(EvalError error)
-    {
-        while (error is EvalError.WithContext withContext) error = withContext.Inner;
-        return error is EvalError.ObservationPending;
-    }
+        => error.UnwrapContext() is EvalError.ObservationPending;
 
     /// <summary>Whether the current flow is inside a non-initiating observation scope.</summary>
     internal static bool IsObserving => t_observation is not null;

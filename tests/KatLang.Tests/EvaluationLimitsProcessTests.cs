@@ -789,7 +789,16 @@ public class EvaluationLimitsProcessTests
                 const int levels = 3_000;
                 // Keep the deep failure bounded even if a regression stops the recursion from reaching its base.
                 var limits = new EvaluationLimits { MaxSteps = 200_000 };
-                var (result, budget) = new LoopStepRecursionRun(Failing(levels)).Evaluate("twin", limits);
+                EvalResult<Evaluator.CountedResult> result;
+                EvaluationBudget budget;
+                using (var reads = ContextChainReadTestSeam.Activate())
+                {
+                    (result, budget) = new LoopStepRecursionRun(Failing(levels)).Evaluate("twin", limits);
+                    // Unwinding reads no context chain per level: each frame recorded its terminal when it was built
+                    // (DeepFailureUnwindScalingTests). Asking once per level walked about 18 million frames here.
+                    Assert.True(reads.Reads <= levels, $"`{bottom}` under {levels} levels: {reads.Reads} context-chain reads");
+                }
+
                 Assert.True(result.IsError);
                 var terminal = ContextTerminal(result.Error);
                 Assert.True(terminal.GetType() == kind, $"`{bottom}` at the bottom of {levels} levels: {terminal.GetType().Name}");
@@ -909,6 +918,22 @@ public class EvaluationLimitsProcessTests
         Assert.False(Evaluator.IsLiftableError(Wrap(new EvalError.NotAnAlgorithm("x"), depth, markedFrame: depth - 1)));
         Assert.False(Evaluator.IsLiftableError(Wrap(new EvalError.NotAnAlgorithm("x") { IsProjectionFailure = true }, depth)));
         Assert.True(Evaluator.IsProjectionFailure(Wrap(new EvalError.NotAnAlgorithm("x"), depth, markedFrame: depth - 1)));
+
+        // The terminal-deciding readers read the terminal every frame recorded when it was built: none of the
+        // 100,000 frames is read to classify a chain, and the one rebuild of an own missing output reads each once.
+        using (var reads = ContextChainReadTestSeam.Activate())
+        {
+            Assert.True(Evaluator.IsOwnMissingOutputError(own));
+            Assert.False(Evaluator.IsOwnMissingOutputError(nested) || Evaluator.IsOwnMissingOutputError(other));
+            Assert.Same(nested, Evaluator.NestMissingOutput(nested));
+            Assert.Same(other, Evaluator.NestMissingOutput(other));
+            Assert.False(other.IsTerminalForRun || other.IsResourceLimit || other.IsHostTermination);
+            Assert.Equal(KatLangErrorCode.MissingOutput, own.Code);
+            Assert.Equal(0L, reads.Reads);
+            Assert.True(Evaluator.IsOwnMissingOutputError(own));
+            _ = Evaluator.NestMissingOutput(own);
+            Assert.Equal((long)depth, reads.Reads);
+        }
 
         WriteProbeMarker();
     }

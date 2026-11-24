@@ -201,10 +201,13 @@ public class EvalErrorRecordEqualityTests
         ];
         Assert.Equal(expected, holders);
 
-        // And the frame's own fields are exactly the two its hand-written members read after the
-        // base record's part (the differential's hash would also move with a third).
-        string[] ownFields = ["<ErrorContext>k__BackingField", "<Inner>k__BackingField"];
+        // And the frame's own fields are exactly the three its hand-written members read after the
+        // base record's part, in this order: the context, the recorded terminal's transparent slot
+        // (equal to every slot, hashing to zero, as the compiler folds a slot) and the inner error,
+        // still LAST, so the chain's hash stays a sum (the differential's hash would move with a fourth).
+        string[] ownFields = ["<ErrorContext>k__BackingField", "_terminal", "<Inner>k__BackingField"];
         Assert.Equal(ownFields, typeof(EvalError.WithContext).GetFields(DeclaredInstance).Select(static field => field.Name).ToArray());
+        Assert.Equal(typeof(RuntimeStateSlot<EvalError?>), typeof(EvalError.WithContext).GetField("_terminal", DeclaredInstance)!.FieldType);
     }
 
     [Fact]
