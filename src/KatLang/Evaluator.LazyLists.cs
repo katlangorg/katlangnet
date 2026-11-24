@@ -151,15 +151,35 @@ public static partial class Evaluator
         /// Reserves this list's positions once. A concurrent reader can reuse the reservation
         /// only after the budget admits it.
         /// </summary>
-        internal EvalError? EnsureReservation(EvalCtx ctx, int count)
+        internal EvalError? EnsureReservation(EvaluationBudget budget, int count)
         {
             lock (this)
             {
-                if (_reserved) return ctx.Budget.CheckContinuation();
-                if (ReserveCollection(ctx, count) is { } refused) return refused;
+                if (_reserved) return budget.CheckContinuation();
+                if (budget.TryReserveCollection(count) is { } refused) return refused;
                 _reserved = true;
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Lets go of the context of the call that built this stage, once the stage runs no
+        /// further step: no failure of its own remains to be framed, so the site keeps only its
+        /// span. A stage released before any dispatch recorded its site gets a detached one, so no
+        /// later dispatch installs a site holding that dispatch's context.
+        /// </summary>
+        private protected void ReleaseSite()
+        {
+            if (Volatile.Read(ref _site) is { } site)
+            {
+                site.Release();
+                return;
+            }
+
+            var detached = new StageSite(null, null, default);
+            detached.Release();
+            if (Interlocked.CompareExchange(ref _site, detached, null) is { } installed)
+                installed.Release();
         }
     }
 
@@ -176,6 +196,10 @@ public static partial class Evaluator
     {
         private SourceSpan? _span;
         private bool _hasSpan;
+        // The building call's context: the call's activation and parameter cells, which hold the
+        // lists the stage was built from. Released with the stage's own computation state.
+        private EvalCtx _ctx = ctx;
+        private bool _released;
 
         /// <summary>The written call's span, recorded by the dispatch that positions the call (once).</summary>
         internal void NoteSpan(SourceSpan? span)
@@ -185,14 +209,28 @@ public static partial class Evaluator
             _hasSpan = true;
         }
 
+        /// <summary>
+        /// Drops the building call's context once its stage runs no further step
+        /// (<see cref="LazyList.ReleaseSite"/>). Only a failure that ends the run can be framed
+        /// afterwards (a completed scan's reservation), and that keeps no frame anyway.
+        /// </summary>
+        internal void Release()
+        {
+            _released = true;
+            _ctx = default;
+            function = null;
+            dot = null;
+        }
+
         internal EvalError Frame(EvalError error)
         {
             if (error.IsTerminalForRun)
                 return AtSpanIfMissing(error, _span);
+            System.Diagnostics.Debug.Assert(!_released, "A released stage ran a step whose failure needs its call frame.");
             if (dot is not null)
-                error = new EvalError.WithContext(CtxDotCall(dot.Target, dot.Name, ctx), error) { Span = error.Span };
+                error = new EvalError.WithContext(CtxDotCall(dot.Target, dot.Name, _ctx), error) { Span = error.Span };
             else if (function is { IsDiagnosticallyTransparent: false } name)
-                error = new EvalError.WithContext(CtxCall(name, ctx), error) { Span = error.Span };
+                error = new EvalError.WithContext(CtxCall(name, _ctx), error) { Span = error.Span };
             return AtSpanIfMissing(error, _span);
         }
     }
@@ -245,42 +283,110 @@ public static partial class Evaluator
     /// first position read — the mapper's own cell keeps the projection), then makes the ordinary
     /// callback call. Lean: <c>LazyList.mapItems</c> / <c>mapCandidates</c> and the
     /// <c>mappedBuiltin</c> step.
+    ///
+    /// <para>OBSOLETE OWNERSHIP IS RELEASED (C#-only): once every position is found and every
+    /// position's computation has ended — with a value or with the failure its cell keeps — the
+    /// stage runs no further step, so it lets go of what only a step reads: its source, the root
+    /// whose discovery found its positions, the mapper and the environment of the call that built
+    /// it (<see cref="ReleaseIfResolved"/>). It keeps its cells, so every reader still shares each
+    /// position's one outcome. A loop that maps its list every round and reads the new list keeps
+    /// only the last round's stage, not every round's.</para>
     /// </summary>
-    private sealed class MappedList(
-        LazyList source,
-        IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
-        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> controls,
-        EvalCtx ctx,
-        ValEnv values) : LazyList
+    private sealed class MappedList : LazyList
     {
-        private readonly LazyList _root = source.Root;
-        private readonly int _limit = source.Limit;
         private const int PageSize = 32;
+
+        // What a step reads, released once the stage runs no further step. The root is null
+        // afterwards: the stage is then its own root, with _count positions. The limit stays,
+        // so a reader that still holds the root pairs it with the stage's own limit.
+        private LazyList? _source;
+        private LazyList? _root;
+        private readonly int _limit;
+        private IReadOnlyList<SequenceBuiltinSuffixArgDescriptor>? _descriptors;
+        private IReadOnlyList<PreparedSequenceBuiltinSuffixArg>? _controls;
+        private EvalCtx _ctx;
+        private ValEnv? _values;
+
+        private readonly EvaluationBudget _budget;
+        private readonly bool _pending;
         private NeedCell?[]? _firstPage;
         private Dictionary<int, NeedCell?[]>? _otherPages;
+        // How many positions' computations have ended; the cardinality once the stage is released.
+        private int _resolved;
+        private int _count;
 
-        internal override LazyList Root => _root;
-        internal override int Limit => _limit;
-        internal override int Discovered => Math.Min(_root.Discovered, _limit);
-
-        internal override bool IsExhausted
+        internal MappedList(
+            LazyList source,
+            IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
+            IReadOnlyList<PreparedSequenceBuiltinSuffixArg> controls,
+            EvalCtx ctx,
+            ValEnv values)
         {
-            get
-            {
-                var exhausted = _root.IsExhausted;
-                return exhausted || _root.Discovered >= _limit;
-            }
+            _source = source;
+            _root = source.Root;
+            _limit = source.Limit;
+            _descriptors = descriptors;
+            _controls = controls;
+            _ctx = ctx;
+            _values = values;
+            _budget = ctx.Budget;
+            _pending = source.IsPending;
         }
 
-        internal override bool IsPending => _root.IsPending;
+        internal override LazyList Root => Volatile.Read(ref _root) ?? this;
+        // Constructors can capture Root just before another reader releases this stage. The
+        // same limit bounds both the old root and this stage's final positions.
+        internal override int Limit => _limit;
+        internal override int Discovered => Volatile.Read(ref _root) is { } root ? Math.Min(root.Discovered, _limit) : _count;
+
+        internal override bool IsExhausted => CheckExhausted();
+
+        internal override bool IsPending => _pending;
         internal override bool IsStage => true;
         internal override Result? ValueAt(int index) => null;
 
         internal override ValueTask<EvalError?> Discover(int wanted, bool asynchronous)
-            => _root.Discover(Math.Min(wanted, _limit), asynchronous);
+        {
+            // A released stage has found every position: what is left of a discovery request is
+            // the run's continuation check its root's scan would have made first.
+            if (Volatile.Read(ref _root) is not { } root)
+                return _pending ? new(_budget.CheckContinuation()) : default;
+            var discovery = root.Discover(Math.Min(wanted, _limit), asynchronous);
+            if (!discovery.IsCompletedSuccessfully) return AwaitDiscovery(discovery);
+            var failure = discovery.Result;
+            if (failure is null) CheckExhausted();
+            return new(failure);
+        }
 
-        /// <summary>The slot of the source position that position <paramref name="index"/> reads.</summary>
-        internal object SourceSlot(int index) => source.Slot(index);
+        private async ValueTask<EvalError?> AwaitDiscovery(ValueTask<EvalError?> discovery)
+        {
+            var failure = await discovery.ConfigureAwait(false);
+            if (failure is null) CheckExhausted();
+            return failure;
+        }
+
+        /// <summary>
+        /// Whether every position has been found — the root is exhausted or the stage's limit is
+        /// reached — releasing the stage when every position's step has ended as well
+        /// (<see cref="ReleaseIfResolved"/>). Every reader that learns the stage is complete
+        /// asks this, as do the end of each step and the end of each discovery.
+        /// </summary>
+        private bool CheckExhausted()
+        {
+            if (Volatile.Read(ref _root) is not { } root) return true;
+            // Exhaustion is read BEFORE the count: once exhausted, the count is final.
+            var rootExhausted = root.IsExhausted;
+            var discovered = root.Discovered;
+            if (!rootExhausted && discovered < _limit) return false;
+            ReleaseIfResolved(Math.Min(discovered, _limit));
+            return true;
+        }
+
+        /// <summary>
+        /// The slot of the source position that position <paramref name="index"/> reads, or
+        /// <c>null</c> once the stage is released (every position's computation has ended).
+        /// </summary>
+        internal object? SourceSlot(int index) => Volatile.Read(ref _source)?.Slot(index);
 
         internal override object Slot(int index)
         {
@@ -290,7 +396,7 @@ public static partial class Evaluator
             {
                 if (index < PageSize)
                 {
-                    _firstPage ??= new NeedCell?[IsExhausted ? Math.Min(Discovered, PageSize) : PageSize];
+                    _firstPage ??= new NeedCell?[FirstPageLength()];
                     return _firstPage[index] ??= NewCell(index);
                 }
 
@@ -302,38 +408,76 @@ public static partial class Evaluator
             }
         }
 
-        private NeedCell NewCell(int index)
+        // The first page holds every position of a list known to be shorter than a page. Read
+        // from the root, not through IsExhausted: no release is attempted while a cell is made.
+        private int FirstPageLength()
         {
-            var budget = ctx.Budget;
-            // The cell's two computations are one object's methods: that object names the stage
-            // and the position, which is how a read finds the stage below (ReadStagePosition).
-            var position = new MappedPosition(this, index);
-            return new NeedCell(position.Evaluate, position.EvaluateAsync, token: budget.CancellationToken, budget: budget);
+            if (Volatile.Read(ref _root) is not { } root) return Math.Min(_count, PageSize);
+            var exhausted = root.IsExhausted || root.Discovered >= _limit;
+            return exhausted ? Math.Min(Math.Min(root.Discovered, _limit), PageSize) : PageSize;
         }
+
+        // The cell's computation is one object: it names the stage and the position, which is
+        // how a read finds the stage below (ReadStagePosition).
+        private NeedCell NewCell(int index)
+            => new(new MappedPosition(this, index), _budget, _budget.CancellationToken);
 
         internal async ValueTask<EvalResult<CountedResult>> EvaluateAtSite(int index, bool asynchronous)
         {
             var mapped = await Evaluate(index, asynchronous).ConfigureAwait(false);
-            return mapped.IsError ? AtSite(mapped.Error) : mapped;
+            var result = mapped.IsError ? AtSite(mapped.Error) : mapped;
+            // This position's step has ended; its cell keeps the outcome.
+            Interlocked.Increment(ref _resolved);
+            CheckExhausted();
+            return result;
+        }
+
+        /// <summary>
+        /// Releases what only a step reads once the stage runs no further step: all
+        /// <paramref name="count"/> positions are found and every position's computation has
+        /// ended. Each computation ends at most once and only for a position found already, so
+        /// the count of ended computations reaching the cardinality means every one has ended.
+        /// Afterwards the stage is its own root, and no step is left to read its source, root,
+        /// mapper or environment.
+        /// </summary>
+        private void ReleaseIfResolved(int count)
+        {
+            if (Volatile.Read(ref _resolved) < count) return;
+            lock (this)
+            {
+                if (_root is null) return;
+                _count = count;
+                // The cardinality is published before the root is dropped (see Discovered).
+                Volatile.Write(ref _root, null);
+                Volatile.Write(ref _source, null);
+                _descriptors = null;
+                _controls = null;
+                _values = null;
+                _ctx = default;
+            }
+
+            ReleaseSite();
         }
 
         private async ValueTask<EvalResult<CountedResult>> Evaluate(int index, bool asynchronous)
         {
             // TWIN-ONLY (the synchronous run never hops): see StackHop.
             if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
-            var item = await ReadStagePosition(source.Slot(index), asynchronous).ConfigureAwait(false);
+            // A step runs before its stage is released, never after (ReleaseIfResolved): the
+            // fields it reads are all still held.
+            var item = await ReadStagePosition(_source!.Slot(index), asynchronous).ConfigureAwait(false);
             if (item.IsError) return item.Error;
             var mapper = asynchronous
-                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@map, descriptors, controls, 0, ctx).ConfigureAwait(false)
-                : ExpectPreparedAlgorithmSuffixArg(BuiltinId.@map, descriptors, controls, 0);
+                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@map, _descriptors!, _controls!, 0, _ctx).ConfigureAwait(false)
+                : ExpectPreparedAlgorithmSuffixArg(BuiltinId.@map, _descriptors!, _controls!, 0);
             if (mapper.IsError) return mapper.Error;
 
             var supplied = new CountedResult(item.Value, item.Value.ValueCount());
             var mapped = WithCtx(
                 MapTransformContext,
                 asynchronous
-                    ? await EvalSequenceCallbackCallCountedAsync(mapper.Value, supplied, ctx, values, MapTransformFrameName).ConfigureAwait(false)
-                    : EvalSequenceCallbackCallCounted(mapper.Value, supplied, ctx, values, MapTransformFrameName));
+                    ? await EvalSequenceCallbackCallCountedAsync(mapper.Value, supplied, _ctx, _values!, MapTransformFrameName).ConfigureAwait(false)
+                    : EvalSequenceCallbackCallCounted(mapper.Value, supplied, _ctx, _values!, MapTransformFrameName));
             // The transform's ordinary call result is ONE element (HO-03).
             return mapped.IsError
                 ? mapped.Error
@@ -342,18 +486,21 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// ONE POSITION OF A <c>map</c> STAGE: the object whose two methods are the position cell's
-    /// VALUE computation (<see cref="NeedCell.ValueComputation"/>).
+    /// ONE POSITION OF A <c>map</c> STAGE: the position cell's VALUE computation
+    /// (<see cref="NeedComputation"/>, <see cref="NeedCell.ValueComputation"/>).
     /// </summary>
-    private sealed class MappedPosition(MappedList stage, int index)
+    private sealed class MappedPosition(MappedList stage, int index) : NeedComputation
     {
-        /// <summary>The slot of the source position this position reads first.</summary>
-        internal object SourceSlot() => stage.SourceSlot(index);
+        /// <summary>
+        /// The slot of the source position this position reads first; <c>null</c> once its stage
+        /// is released (every position's computation, this one's included, has ended).
+        /// </summary>
+        internal object? SourceSlot() => stage.SourceSlot(index);
 
-        internal EvalResult<CountedResult> Evaluate()
+        internal override EvalResult<CountedResult> Evaluate()
             => stage.EvaluateAtSite(index, asynchronous: false).GetAwaiter().GetResult();
 
-        internal ValueTask<EvalResult<CountedResult>> EvaluateAsync()
+        internal override ValueTask<EvalResult<CountedResult>> EvaluateAsync()
             => stage.EvaluateAtSite(index, asynchronous: true);
     }
 
@@ -418,14 +565,27 @@ public static partial class Evaluator
     /// stay readable. A predicate that asks for the scan it is part of meets its own verdict cell
     /// in flight: a demand cycle. Lean: <c>LazyList.filterItems</c> / <c>filterCandidates</c>,
     /// <c>LazyList.discover</c> and the <c>keptBuiltin</c> step.
+    ///
+    /// <para>Scans stacked at run time are discovered without one native call per scan
+    /// (<see cref="DiscoverScans"/>), and once every candidate the source will ever have has been
+    /// judged the scan lets go of what only a step reads — its source, the predicate and the
+    /// environment of the call that built it (<see cref="Release"/>; C#-only).</para>
     /// </summary>
-    private sealed class FilteredList(
-        LazyList source,
-        IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
-        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> controls,
-        EvalCtx ctx,
-        ValEnv values) : LazyList
+    private sealed class FilteredList : LazyList
     {
+        // The shared verdict values: a verdict is read only by its scan.
+        private static readonly Result.Bool Kept = new(true);
+        private static readonly Result.Bool Rejected = new(false);
+
+        // What a step reads, released once every candidate of the source has been judged. The
+        // source is null afterwards: it then has no position at the frontier, and never will.
+        private LazyList? _source;
+        private IReadOnlyList<SequenceBuiltinSuffixArgDescriptor>? _descriptors;
+        private IReadOnlyList<PreparedSequenceBuiltinSuffixArg>? _controls;
+        private EvalCtx _ctx;
+        private ValEnv? _values;
+        private readonly EvaluationBudget _budget;
+
         // The slots of the accepted source positions, in source order: an accepted position IS
         // its source position (the same value, the same cell), so a scan over a scan of any
         // height hands out a position's slot without asking the scans below it.
@@ -433,6 +593,21 @@ public static partial class Evaluator
         private int _frontier;
         private NeedCell? _verdict;
         private bool _exhausted;
+
+        internal FilteredList(
+            LazyList source,
+            IReadOnlyList<SequenceBuiltinSuffixArgDescriptor> descriptors,
+            IReadOnlyList<PreparedSequenceBuiltinSuffixArg> controls,
+            EvalCtx ctx,
+            ValEnv values)
+        {
+            _source = source;
+            _descriptors = descriptors;
+            _controls = controls;
+            _ctx = ctx;
+            _values = values;
+            _budget = ctx.Budget;
+        }
 
         internal override int Discovered
         {
@@ -453,45 +628,94 @@ public static partial class Evaluator
             lock (this) return _accepted[index];
         }
 
-        internal override async ValueTask<EvalError?> Discover(int wanted, bool asynchronous)
+        internal override ValueTask<EvalError?> Discover(int wanted, bool asynchronous)
+            => DiscoverScans(this, wanted, asynchronous);
+
+        /// <summary>
+        /// DISCOVERY OF STACKED SCANS WITHOUT ONE NATIVE CALL PER SCAN. A scan that has judged
+        /// every candidate its source has found asks the source for its next position; when that
+        /// position is found by another scan (the <c>filter</c> below, through any <c>map</c> and
+        /// <c>take</c> stages, which ask it for exactly that many), this frame drives that scan's
+        /// discovery itself: the scan above waits on an explicit list, the scan below runs the
+        /// iterations its own discovery would run (the same continuation checks, verdicts and
+        /// reservations, in the same order), and the scan above resumes when the request is met,
+        /// as when the call returned. A failure ends the whole discovery with that failure, as it
+        /// ended every call of the chain, and no candidate is inspected that the nested calls would
+        /// not inspect. So a scan stacked at run time to any height is discovered on the native
+        /// stack of one, on both routes. The order is Lean's: <c>LazyList.discover</c> demands the
+        /// candidates' verdicts in candidate order, each reading its source verdict first.
+        /// </summary>
+        private static async ValueTask<EvalError?> DiscoverScans(FilteredList top, int wanted, bool asynchronous)
         {
-            // STACK SAFETY: a scan over a scan asks the scan below to find a position first, one
-            // native call per stacked `filter`. The asynchronous twin continues on a fresh stack
-            // (StackHop, TWIN-ONLY); the synchronous run ends with the structured host-stack
-            // failure every other deep evaluation gives.
+            // TWIN-ONLY (the synchronous run never hops): see StackHop. One probe per discovery:
+            // the scans below are driven in this frame.
             if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
             if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
                 return new EvalError.EvaluationStackExhausted();
 
+            var scan = top;
+            // The scans waiting for the scan below them, each with the count it asked for: the
+            // innermost one inline, the ones above it in a list (innermost last).
+            FilteredList? waiting = null;
+            var waitingWanted = 0;
+            List<(FilteredList Scan, int Wanted)>? above = null;
             while (true)
             {
-                if (ctx.Budget.CheckContinuation() is { } terminal) return terminal;
+                if (scan._budget.CheckContinuation() is { } terminal) return terminal;
                 int frontier;
                 NeedCell? verdict;
-                lock (this)
+                LazyList? source;
+                bool met;
+                lock (scan)
                 {
-                    if (_exhausted || _accepted.Count >= wanted) return null;
-                    frontier = _frontier;
-                    verdict = _verdict;
+                    met = scan._exhausted || scan._accepted.Count >= wanted;
+                    frontier = scan._frontier;
+                    verdict = scan._verdict;
+                    source = scan._source;
+                }
+
+                if (met)
+                {
+                    // The request is met: the scan that made it resumes.
+                    if (waiting is null) return null;
+                    (scan, wanted) = (waiting, waitingWanted);
+                    if (above is { Count: > 0 })
+                    {
+                        (waiting, waitingWanted) = above[^1];
+                        above.RemoveAt(above.Count - 1);
+                    }
+                    else
+                    {
+                        waiting = null;
+                    }
+
+                    continue;
                 }
 
                 if (verdict is null)
                 {
                     // Is there a source position at the frontier? The source is asked for it, and
-                    // for no later one.
+                    // for no later one. A released scan's source has no further position.
+                    if (source is null)
+                    {
+                        if (scan.Complete(frontier) is { } refused) return refused;
+                        continue;
+                    }
+
                     var sourceExhausted = source.IsExhausted;
                     if (frontier >= source.Discovered)
                     {
                         if (sourceExhausted)
                         {
-                            lock (this)
-                            {
-                                if (_frontier == frontier && !_exhausted)
-                                {
-                                    if (EnsureReservation(ctx, _accepted.Count) is { } refused) return AtSite(refused);
-                                    _exhausted = true;
-                                }
-                            }
+                            if (scan.Complete(frontier) is { } refused) return refused;
+                            continue;
+                        }
+
+                        if (source.Root is FilteredList below)
+                        {
+                            if (waiting is not null) (above ??= []).Add((waiting, waitingWanted));
+                            (waiting, waitingWanted) = (scan, wanted);
+                            (scan, wanted) = (below, Math.Min(frontier + 1, source.Limit));
                             continue;
                         }
 
@@ -500,35 +724,88 @@ public static partial class Evaluator
                         continue;
                     }
 
-                    lock (this)
+                    lock (scan)
                     {
-                        if (_frontier != frontier) continue;
-                        verdict = _verdict ??= NewVerdict(frontier);
+                        if (scan._frontier != frontier) continue;
+                        verdict = scan._verdict ??= scan.NewVerdict(frontier);
                     }
                 }
 
                 var outcome = await DemandCell(verdict, asynchronous).ConfigureAwait(false);
                 if (outcome.IsError) return outcome.Error;
-                var accepted = outcome.Value.Value is Result.Bool { Value: true } ? source.Slot(frontier) : null;
-                lock (this)
+                // A verdict exists only while the scan holds its source (Release).
+                var accepted = outcome.Value.Value is Result.Bool { Value: true } ? source!.Slot(frontier) : null;
+                lock (scan)
                 {
                     // Another flow may have judged this candidate meanwhile: it is recorded once.
-                    if (_frontier != frontier) continue;
-                    if (accepted is not null) _accepted.Add(accepted);
-                    _frontier = frontier + 1;
-                    _verdict = null;
+                    if (scan._frontier != frontier) continue;
+                    if (accepted is not null) scan._accepted.Add(accepted);
+                    scan._frontier = frontier + 1;
+                    scan._verdict = null;
                 }
+
+                scan.ReleaseIfJudged(source!, frontier + 1);
             }
         }
 
-        private NeedCell NewVerdict(int position)
+        // The scan has no candidate at the frontier, and its source will find none: it is
+        // complete. It reserves its positions once (a refusal ends the run and leaves the scan
+        // incomplete) and lets go of what only a step reads.
+        private EvalError? Complete(int frontier)
         {
-            var budget = ctx.Budget;
-            return new NeedCell(
-                () => JudgeAtSite(position, asynchronous: false).GetAwaiter().GetResult(),
-                () => JudgeAtSite(position, asynchronous: true),
-                token: budget.CancellationToken,
-                budget: budget);
+            lock (this)
+            {
+                if (_frontier != frontier || _exhausted) return null;
+                if (EnsureReservation(_budget, _accepted.Count) is { } refused) return AtSite(refused);
+                _exhausted = true;
+            }
+
+            Release();
+            return null;
+        }
+
+        // Every candidate the source will ever have is judged once the source is exhausted and
+        // the frontier has passed its last position: no verdict is left to compute. The scan
+        // itself completes when it is next asked for a position it lacks.
+        private void ReleaseIfJudged(LazyList source, int judged)
+        {
+            // Exhaustion is read BEFORE the count: once exhausted, the count is final.
+            var exhausted = source.IsExhausted;
+            if (exhausted && judged >= source.Discovered)
+                Release();
+        }
+
+        /// <summary>
+        /// Lets go of the source, the predicate and the environment of the call that built the
+        /// scan once no verdict is left to compute. The accepted slots stay (each is its source
+        /// position's own slot, read already), and so do the frontier and the completion state.
+        /// </summary>
+        private void Release()
+        {
+            lock (this)
+            {
+                if (_source is null || _verdict is not null) return;
+                _source = null;
+                _descriptors = null;
+                _controls = null;
+                _values = null;
+                _ctx = default;
+            }
+
+            ReleaseSite();
+        }
+
+        // The verdict cell's computation is one object: it names the scan and the candidate.
+        private NeedCell NewVerdict(int position)
+            => new(new Verdict(this, position), _budget, _budget.CancellationToken);
+
+        private sealed class Verdict(FilteredList scan, int position) : NeedComputation
+        {
+            internal override EvalResult<CountedResult> Evaluate()
+                => scan.JudgeAtSite(position, asynchronous: false).GetAwaiter().GetResult();
+
+            internal override ValueTask<EvalResult<CountedResult>> EvaluateAsync()
+                => scan.JudgeAtSite(position, asynchronous: true);
         }
 
         private async ValueTask<EvalResult<CountedResult>> JudgeAtSite(int position, bool asynchronous)
@@ -541,20 +818,21 @@ public static partial class Evaluator
         {
             // TWIN-ONLY (the synchronous run never hops): see StackHop.
             if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
-            var item = await ReadStagePosition(source.Slot(position), asynchronous).ConfigureAwait(false);
+            // A verdict is computed while the scan holds its source, never after (Release).
+            var item = await ReadStagePosition(_source!.Slot(position), asynchronous).ConfigureAwait(false);
             if (item.IsError) return item.Error;
             var predicate = asynchronous
-                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@filter, descriptors, controls, 0, ctx).ConfigureAwait(false)
-                : ExpectPreparedAlgorithmSuffixArg(BuiltinId.@filter, descriptors, controls, 0);
+                ? await ExpectPreparedAlgorithmSuffixArgAsync(BuiltinId.@filter, _descriptors!, _controls!, 0, _ctx).ConfigureAwait(false)
+                : ExpectPreparedAlgorithmSuffixArg(BuiltinId.@filter, _descriptors!, _controls!, 0);
             if (predicate.IsError) return predicate.Error;
 
             var supplied = new CountedResult(item.Value, item.Value.ValueCount());
             var kept = asynchronous
-                ? await EvalFilterPredicateTruthAsync(predicate.Value, supplied, position, ctx, values).ConfigureAwait(false)
-                : EvalFilterPredicateTruth(predicate.Value, supplied, position, ctx, values);
+                ? await EvalFilterPredicateTruthAsync(predicate.Value, supplied, position, _ctx, _values!).ConfigureAwait(false)
+                : EvalFilterPredicateTruth(predicate.Value, supplied, position, _ctx, _values!);
             return kept.IsError
                 ? kept.Error
-                : EvalResult<CountedResult>.Ok(new CountedResult(new Result.Bool(kept.Value), 1));
+                : EvalResult<CountedResult>.Ok(new CountedResult(kept.Value ? Kept : Rejected, 1));
         }
     }
 
@@ -824,8 +1102,15 @@ public static partial class Evaluator
     private static NeedCell PositionCell(object slot, EvaluationBudget budget)
     {
         if (slot is Result value) return NeedCell.Ready(new CountedResult(value, value.ValueCount()));
-        var position = (NeedCell)slot;
-        return new NeedCell(position.Demand, position.DemandAsync, token: budget.CancellationToken, budget: budget);
+        return new NeedCell(new StoredPosition((NeedCell)slot), budget, budget.CancellationToken);
+    }
+
+    /// <summary>The computation of a stored pattern position: the VALUE demand of the position's own cell.</summary>
+    private sealed class StoredPosition(NeedCell position) : NeedComputation
+    {
+        internal override EvalResult<CountedResult> Evaluate() => position.Demand();
+
+        internal override ValueTask<EvalResult<CountedResult>> EvaluateAsync() => position.DemandAsync();
     }
 
     /// <summary>
@@ -898,7 +1183,7 @@ public static partial class Evaluator
             read.Add(item.Value);
         }
 
-        if (lazy.EnsureReservation(ctx, read.Count) is { } refused) return refused;
+        if (lazy.EnsureReservation(ctx.Budget, read.Count) is { } refused) return refused;
         return EvalResult<Result>.Ok(lazy.PublishLevel(Result.ListValue.TakeOwnership(read.ToArray())));
     }
 
@@ -1253,7 +1538,7 @@ public static partial class Evaluator
                 }
                 else
                 {
-                    if (lazy.EnsureReservation(ctx, frame.Next) is { } refused) return refused;
+                    if (lazy.EnsureReservation(ctx.Budget, frame.Next) is { } refused) return refused;
                     finished = lazy.PublishMaterialized(Result.ListValue.TakeOwnership(frame.ReadPositions()));
                     open!.Remove(lazy);
                     child = finished;
@@ -1449,8 +1734,9 @@ public static partial class Evaluator
     // reserves them when its first concrete form is built.
     private static EvalResult<CountedResult> StageResult(LazyList stage, EvalCtx ctx)
     {
+        LazyStageTestSeam.Note(stage);
         var exhausted = stage.IsExhausted;
-        if (exhausted && stage.EnsureReservation(ctx, stage.Discovered) is { } refused)
+        if (exhausted && stage.EnsureReservation(ctx.Budget, stage.Discovered) is { } refused)
             return refused;
         return EvalResult<CountedResult>.Ok(new CountedResult(DeferredList(stage, ctx.Budget), 1));
     }

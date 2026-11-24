@@ -451,6 +451,14 @@ public class MaintainedDocumentationConsistencyTests
             + @"\bmaterializ(?:es|ed?)\s+its\s+(?:merged\s+order|signature\s+exactly\s+as\s+before)\b",
             "per-owner merge of meeting-name signatures (superseded 2026-11-23 by the owner's head over the shared tail without its collisions)"
         },
+        // Recursive discovery of stacked scans (superseded 2026-11-24, C#-only host policy of issue #204):
+        // one frame drives every `filter` scan stacked at run time, so no current text says a scan asks the
+        // scan below for a position with a native call of its own, or guards each stacked scan with its own
+        // host-stack probe, and the synchronous run no longer ends a tall stack with EvaluationStackExhausted.
+        {
+            @"\bscan below for a position, one native call per scan\b|\bhost-stack probe per stacked\b",
+            "recursive discovery of stacked `filter` scans (superseded 2026-11-24 by one frame driving every stacked scan)"
+        },
     };
 
     [Theory]

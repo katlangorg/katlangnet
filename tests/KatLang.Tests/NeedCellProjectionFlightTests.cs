@@ -823,8 +823,12 @@ public sealed class NeedCellProjectionFlightTests
         Assert.DoesNotContain(fields, field => field.FieldType.Name == "ProjectionNode");
         // 2026-11-19: the per-cell gate object left (the cell locks itself) and the inline first
         // wait-for edge (target and multiplicity) arrived.
-        // The one object-typed field is the CALLABLE computation (`_projection`); no gate object, no Lock.
-        Assert.Single(fields, field => field.FieldType == typeof(object));
+        // The object-typed fields are the two computations: the CALLABLE one (`_projection`) and,
+        // since 2026-11-24, the VALUE one (`_evaluate`: a delegate, or one NeedComputation object
+        // in place of a delegate pair). No gate object, no Lock.
+        Assert.Equal(
+            ["_evaluate", "_projection"],
+            fields.Where(static field => field.FieldType == typeof(object)).Select(static field => field.Name).Order(StringComparer.Ordinal));
         Assert.DoesNotContain(fields, field => field.FieldType == typeof(Lock));
         Assert.Equal(17, fields.Count);
     }

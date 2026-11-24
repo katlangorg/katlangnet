@@ -437,13 +437,15 @@ public class NeedCellDemandScaffoldingTests
     // The brief's three workloads: one `if` per element (three lazily demanded argument cells per
     // call), a recursive user call (2 * fib(13) - 1 = 465 calls of Fib(12)), and one unary plus one
     // binary Math member per element. Since 2026-11-19 also a runtime CALLABLE projection per element:
-    // a supplied `.Algorithm` link, invoked through a parameter.
+    // a supplied `.Algorithm` link, invoked through a parameter. Since 2026-11-24 also one `filter`
+    // verdict per element: a candidate's verdict cell read on demand.
     private static (string Source, int Units) Workload(string name) => name switch
     {
         "IfHeavy" => ("F = if(x mod 2 == 0, x, 0 - x)\nrange(1, 2000).map(F).sum", 2000),
         "RecursiveCalls" => ("Fib = if(n < 2, n, Fib(n - 1) + Fib(n - 2))\nFib(12)", 465),
         "MathHeavy" => ("F = Math.Abs(x) + Math.Round(x, 1)\nrange(1, 2000).map(F).sum", 2000),
         "RuntimeProjection" => ("Capture(meta op) = op\nSq(y) = y * y\nUse(g, v) = g(v)\nF = Use(Capture(Sq(x)).Algorithm, x)\nrange(1, 2000).map(F).sum", 2000),
+        "FilterHeavy" => ("P = x mod 2 == 0\nrange(1, 2000).filter(P).sum", 2000),
         _ => throw new ArgumentOutOfRangeException(nameof(name)),
     };
 
@@ -493,6 +495,22 @@ public class NeedCellDemandScaffoldingTests
     /// 29,490.9; Release sync 2,062.1 → 2,494.3, 2,361.8 → 2,361.8, 3,294.1 → 3,726.3, 5,368.0 →
     /// 5,800.2; Release twin 2,061.8 → 2,494.0, 2,360.7 → 2,360.7, 3,293.8 → 3,726.0, 5,904.0 →
     /// 6,384.2 (rows in the order of the table below).</para>
+    ///
+    /// <para>On 2026-11-24 a mapped position's and a <c>filter</c> verdict's cell stopped allocating
+    /// two delegates: the cell holds its position's computation object (<c>NeedComputation</c>), and a
+    /// verdict is a shared Boolean. Every mapping row moved down by that MEASURED saving, keeping its
+    /// margin, so reverting it fails the row: 112.0 bytes per element in Release on both routes (Debug
+    /// 88.0, where the step method's state machine object carries one more local; 87.9 on
+    /// RuntimeProjection). FilterHeavy (2,000 verdicts) was added with a 36-byte margin, half the
+    /// smallest saving it pins (the 72-byte context restore of its one nested computation per element);
+    /// its verdicts saved 136.0 bytes each in Release and 112.0 in Debug. Measured before (base
+    /// <c>3e989521</c>) and after with one harness: Debug sync IfHeavy 4,202.5 → 4,114.5, MathHeavy
+    /// 5,538.5 → 5,450.5, RuntimeProjection 8,804.2 → 8,716.3, FilterHeavy 2,748.0 → 2,636.0; Debug twin
+    /// 16,976.3 → 16,888.3, 22,604.3 → 22,516.3, 29,494.0 → 29,406.1, 9,445.8 → 9,333.9; Release sync
+    /// 2,497.4 → 2,385.4, 3,729.4 → 3,617.4, 5,803.3 → 5,691.3, 1,506.7 → 1,370.7; Release twin 2,497.2
+    /// → 2,385.2, 3,729.2 → 3,617.2, 6,387.3 → 6,275.3, 1,506.5 → 1,370.5. RecursiveCalls did not move.
+    /// Reverting the delegates of either cell kind fails its rows (Debug IfHeavy 4,226.5, FilterHeavy
+    /// 2,772.0); RuntimeProjection's synchronous margin was wider than the saving before and still is.</para>
     /// </summary>
     [Fact]
     public void DemandAndMathWorkloads_StayBelowTheirMeasuredBounds_GcIsolatedChild()
@@ -503,14 +521,16 @@ public class NeedCellDemandScaffoldingTests
         var failures = new List<string>();
         foreach (var (workload, asynchronous, debugBound, releaseBound) in new (string, bool, int, int)[]
         {
-            ("IfHeavy", false, 4_253, 2_540),
+            ("IfHeavy", false, 4_165, 2_428),
             ("RecursiveCalls", false, 3_203, 2_443),
-            ("MathHeavy", false, 5_554, 3_738),
-            ("RuntimeProjection", false, 8_944, 5_840),
-            ("IfHeavy", true, 17_015, 2_539),
+            ("MathHeavy", false, 5_466, 3_626),
+            ("RuntimeProjection", false, 8_856, 5_728),
+            ("FilterHeavy", false, 2_672, 1_407),
+            ("IfHeavy", true, 16_927, 2_427),
             ("RecursiveCalls", true, 20_116, 2_442),
-            ("MathHeavy", true, 22_613, 3_737),
-            ("RuntimeProjection", true, 29_523, 6_424),
+            ("MathHeavy", true, 22_525, 3_625),
+            ("RuntimeProjection", true, 29_435, 6_312),
+            ("FilterHeavy", true, 9_370, 1_407),
         })
         {
 #if DEBUG

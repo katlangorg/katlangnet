@@ -352,7 +352,8 @@ public sealed class LazyCollectionTests
     [Fact]
     public async Task ScansStackedAtRunTime_AreFoundWithoutCrashingTheHost()
     {
-        // A scan over a scan asks the scan below for its next position. A moderate height is read.
+        // A scan over a scan asks the scan below for its next position, all driven from one frame
+        // (tall stacks, order, blame, budget and joins: StackedScanDiscoveryTests).
         await Expect("Step(xs) = xs.filter{x >= 0}\nrepeat(Step([0, 1]), 100).count", "ok 2", "");
         await Expect("Step(xs) = xs.filter{x >= 0}.map{x + 1}\nrepeat(Step([0, 1]), 100)", "ok L[100, 101]", "");
     }
@@ -386,6 +387,32 @@ public sealed class LazyCollectionTests
         var result = Evaluator.EvalCounted(Program(source), ctx, []);
         Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
         return Assert.IsAssignableFrom<Evaluator.LazyList>(Assert.IsType<Result.ListValue>(result.Value.Value).Lazy);
+    }
+
+    [Fact]
+    public async Task AStageConstructedAcrossMapRelease_KeepsTheCapturedRootsPrefixLimit()
+    {
+        var ctx = Evaluator.EvalCtx.Empty with { CallStack = [BuiltinRegistry.CreateRuntimePreludeAlgorithm()] };
+        var mapped = Positions("[1, 2, 3].filter{x > 0}.take(1).map{x + 10}", ctx);
+
+        // A map or prefix constructor has read the root. Another reader now resolves the
+        // only mapped position, releasing the stage before the constructor reads its limit.
+        var capturedRoot = mapped.Root;
+        Assert.NotSame(mapped, capturedRoot);
+        Assert.Null(await mapped.Discover(1, asynchronous: false));
+        var cell = Assert.IsType<NeedCell>(mapped.Slot(0));
+        var read = await cell.DemandAsync();
+        Assert.True(read.IsOk);
+        Assert.Equal(new Result.Atom(11), read.Value.Value);
+        Assert.Same(mapped, mapped.Root);
+        var capturedLimit = mapped.Limit;
+
+        // Even if another consumer scans the entire root, the new stage can only address
+        // the one slot of its source.
+        Assert.Null(await capturedRoot.Discover(3, asynchronous: false));
+        Assert.Equal(3, capturedRoot.Discovered);
+        Assert.Equal(1, Math.Min(capturedRoot.Discovered, capturedLimit));
+        Assert.Same(cell, mapped.Slot(0));
     }
 
     [Fact]

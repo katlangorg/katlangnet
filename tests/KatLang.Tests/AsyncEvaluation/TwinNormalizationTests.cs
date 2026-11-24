@@ -371,12 +371,12 @@ public class TwinNormalizationTests(ITestOutputHelper output)
         new("Evaluator.ReduceFold.Step", 0, "08985556eb02434b", AC, "the alias reducer's target"),
         new("Evaluator.ReduceFold.Step", 1, "7981bb5f399044bc", SH, "the twin-only stack hop before the step's invocation chokepoint (EvaluationBudget.TryEnterInvocation); the synchronous run never hops"),
         new("Evaluator.MappedList.Evaluate", 0, "7981bb5f399044bc", SH, "the twin-only stack hop before a mapped position's step (it reads the position below it, then invokes the mapper); the synchronous run never hops"),
-        new("Evaluator.MappedList.Evaluate", 1, "a6cf57d2cf0e8f88", RA, "the asynchronous mapper projection takes ctx for its adapter"),
-        new("Evaluator.MappedList.Evaluate", 2, "d98590242a0ca5ac", AC, "the mapper's callback call"),
-        new("Evaluator.FilteredList.Discover", 0, "7981bb5f399044bc", SH, "the twin-only stack hop before a scan asks the scan below it for a position; the synchronous run never hops (it ends with the structured host-stack failure)"),
+        new("Evaluator.MappedList.Evaluate", 1, "7eac9c5da48f2140", RA, "the asynchronous mapper projection takes ctx for its adapter"),
+        new("Evaluator.MappedList.Evaluate", 2, "bf2ddaef265fd6c3", AC, "the mapper's callback call"),
+        new("Evaluator.FilteredList.DiscoverScans", 0, "7981bb5f399044bc", SH, "the twin-only stack hop before a discovery that drives every stacked scan below it from one frame; the synchronous run never hops"),
         new("Evaluator.FilteredList.Judge", 0, "7981bb5f399044bc", SH, "the twin-only stack hop before a candidate's verdict (it reads the source position, then invokes the predicate); the synchronous run never hops"),
-        new("Evaluator.FilteredList.Judge", 1, "ce0137326731b24e", RA, "the asynchronous predicate projection takes ctx for its adapter"),
-        new("Evaluator.FilteredList.Judge", 2, "ad5ad9b946c6f13e", AC, "the predicate's truth"),
+        new("Evaluator.FilteredList.Judge", 1, "e8fbcc47ff43b7ab", RA, "the asynchronous predicate projection takes ctx for its adapter"),
+        new("Evaluator.FilteredList.Judge", 2, "b419b550f6d45c50", AC, "the predicate's truth"),
     ];
 
     /// <summary>

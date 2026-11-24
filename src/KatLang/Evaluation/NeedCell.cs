@@ -4,6 +4,23 @@ using System.Runtime.CompilerServices;
 namespace KatLang.Evaluation;
 
 /// <summary>
+/// THE VALUE COMPUTATION OF ONE OBJECT: a cell whose computation is one object's two methods —
+/// a position of a <c>map</c> stage, a <c>filter</c> candidate's verdict, a stored pattern
+/// position (lazy collections, issue #204). The cell holds the object where a host-built cell
+/// holds its two delegates, and releases it the same way when the computation ends, so such a
+/// cell allocates no delegate (two delegates cost 112 bytes on .NET 11 x64). Sharing is
+/// unchanged: the object belongs to exactly one cell, which is the position's one VALUE demand.
+/// </summary>
+internal abstract class NeedComputation
+{
+    /// <summary>The synchronous computation of the cell's VALUE.</summary>
+    internal abstract EvalResult<Evaluator.CountedResult> Evaluate();
+
+    /// <summary>The asynchronous twin's computation of the cell's VALUE.</summary>
+    internal abstract ValueTask<EvalResult<Evaluator.CountedResult>> EvaluateAsync();
+}
+
+/// <summary>
 /// One node of a run's wait-for graph (NEED-09): a computation an observer can wait on. A
 /// <see cref="NeedCell"/> is its own VALUE computation; a cell's RUNTIME CALLABLE projection is
 /// a lazily held projection node of that cell. Both channels share these edges, the run's
@@ -272,7 +289,10 @@ internal sealed class NeedCell : NeedNode
 {
     private readonly CancellationToken _token;
     private readonly bool _ready;
-    private Func<EvalResult<Evaluator.CountedResult>>? _evaluate;
+    // A host-built cell's VALUE computation: the synchronous delegate (beside its asynchronous
+    // twin in _evaluateAsync), or one NeedComputation object whose two methods are both. Released
+    // when the computation ends.
+    private object? _evaluate;
     private Func<ValueTask<EvalResult<Evaluator.CountedResult>>>? _evaluateAsync;
     // A host-built cell's CALLABLE computation: an identity-only projection delegate, or the
     // RUNTIME projection's node (which holds its flight state). A written argument's cell has
@@ -333,6 +353,17 @@ internal sealed class NeedCell : NeedNode
         CancellationToken token = default)
         : this(evaluate, evaluateAsync, (object?)project, span, slice, source, budget, token)
     {
+    }
+
+    /// <summary>
+    /// A VALUE-only cell whose computation is <paramref name="computation"/>'s two methods (see
+    /// <see cref="NeedComputation"/>): no CALLABLE projection, span, slice or source.
+    /// </summary>
+    internal NeedCell(NeedComputation computation, EvaluationBudget budget, CancellationToken token)
+        : base(budget)
+    {
+        _evaluate = computation;
+        _token = token;
     }
 
     private NeedCell(
@@ -615,9 +646,21 @@ internal sealed class NeedCell : NeedNode
 
     /// <summary>
     /// The object whose methods compute this cell's VALUE, for a cell built from one object's
-    /// computation (a <c>map</c> stage's position); <c>null</c> for every other cell.
+    /// computation (<see cref="NeedComputation"/>: a <c>map</c> stage's position) while that
+    /// computation has not ended; <c>null</c> for every other cell.
     /// </summary>
-    internal object? ValueComputation => _evaluate?.Target;
+    internal NeedComputation? ValueComputation => Volatile.Read(ref _evaluate) as NeedComputation;
+
+    // The VALUE computation of a cell without a suspension: its computation object's, or its
+    // delegate's. Read once, by the flow that starts the computation.
+    private EvalResult<Evaluator.CountedResult> Compute()
+        => _evaluate is NeedComputation computation
+            ? computation.Evaluate()
+            : ((Func<EvalResult<Evaluator.CountedResult>>)_evaluate!)();
+
+    // The asynchronous twin of Compute.
+    private ValueTask<EvalResult<Evaluator.CountedResult>> ComputeAsync()
+        => _evaluate is NeedComputation computation ? computation.EvaluateAsync() : _evaluateAsync!();
 
     // Test observation only: whether this cell's VALUE computation is in flight (its completion
     // is released once the outcome is published).
@@ -1077,7 +1120,7 @@ internal sealed class NeedCell : NeedNode
             {
                 var outer = EnterComputation(this, out var inner);
                 try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
-                    ? _suspension is not null ? Evaluator.EvalSuspendedValue(this, _suspension) : _evaluate!()
+                    ? _suspension is not null ? Evaluator.EvalSuspendedValue(this, _suspension) : Compute()
                     : new EvalError.EvaluationStackExhausted { Span = Span }); }
                 catch (Exception error) { CompleteException(error); }
                 finally { LeaveComputation(parent, outer, inner); }
@@ -1148,7 +1191,7 @@ internal sealed class NeedCell : NeedNode
         try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
             ? _suspension is not null
                 ? await Evaluator.EvalSuspendedValueAsync(this, _suspension).ConfigureAwait(false)
-                : await _evaluateAsync!().ConfigureAwait(false)
+                : await ComputeAsync().ConfigureAwait(false)
             : new EvalError.EvaluationStackExhausted { Span = Span }); }
         catch (Exception error) { CompleteException(error); }
         finally { LeaveComputation(previous, outer, inner); }
