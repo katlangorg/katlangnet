@@ -71,24 +71,28 @@ internal sealed class RootPropertyObservationSink
     /// <summary>
     /// Builds the immutable public snapshot of the completed run and releases the raw records.
     /// Called once, after the engine's ordinary outcome projection and its cancellation checks.
-    /// <see cref="Evaluator.TrySnapshotValue"/> uses only cached data. If a list lacks a cached
-    /// form or those forms contain a cycle, its observation is <see cref="PropertyValueStatus.Withheld"/>.
+    /// <see cref="Evaluator.TrySnapshotValue"/> reads only what the run has completed: a list's
+    /// whole or one-level form, or — for a list whose cardinality the run settled — the memoized
+    /// successful values of positions it read one by one. If some list was read too little or the
+    /// completed data leads around a cycle, the observation is <see cref="PropertyValueStatus.Withheld"/>.
     /// The run-result boundary also withholds any concrete snapshot that contains a call reference.
-    /// <see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/> shares its
-    /// completed verdicts across observations. Classification charges nothing and observes no token.
+    /// The snapshot walk and <see cref="Evaluator.ContainsCallReference(Result, Dictionary{Result, bool})"/>
+    /// each share one memo across observations. Classification charges nothing and observes no token.
     /// </summary>
     internal PropertyObservations Complete()
     {
         if (_records.Count == 0)
             return PropertyObservations.Empty;
 
-        // One memo for the whole snapshot: roots sharing a large graph scan it once, not once each.
+        // One memo each for the whole snapshot: roots sharing a large graph walk and scan it once,
+        // not once each, and share its snapshot.
         var completed = new Dictionary<Result, bool>(ReferenceEqualityComparer.Instance);
+        Dictionary<Result, Result?>? snapshots = null;
         var observations = new PropertyValueObservation[_records.Count];
         for (var i = 0; i < observations.Length; i++)
         {
             var (binding, published) = _records[i];
-            var available = Evaluator.TrySnapshotValue(published.Value, out var snapshot)
+            var available = Evaluator.TrySnapshotValue(published.Value, ref snapshots, out var snapshot)
                 && !Evaluator.ContainsCallReference(snapshot, completed);
             observations[i] = new PropertyValueObservation(
                 binding.Name,

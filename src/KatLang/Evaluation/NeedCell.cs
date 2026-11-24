@@ -652,6 +652,30 @@ internal sealed class NeedCell : NeedNode
     }
 
     /// <summary>
+    /// PASSIVE INSPECTION of the VALUE memo (C#-only; the root-property observation snapshot,
+    /// <c>Evaluator.TrySnapshotValue</c>): the successful outcome this cell's VALUE computation has
+    /// published, read under the cell gate. <c>false</c> while the VALUE is unstarted or in flight,
+    /// and when it ended with a failure or a stored exception. Unlike <see cref="Demand"/> it makes
+    /// no entry check — no cancellation or run-terminal observation — and it never starts or joins a
+    /// flight, adds a wait-for edge or computes anything: it reads a fact the run has established
+    /// already, which is all a completed run's observer may read.
+    /// </summary>
+    internal bool TryGetCompletedValue(out Evaluator.CountedResult value)
+    {
+        lock (this)
+        {
+            if (_completed is { IsOk: true } completed)
+            {
+                value = completed.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    /// <summary>
     /// The object whose methods compute this cell's VALUE, for a cell built from one object's
     /// computation (<see cref="NeedComputation"/>: a <c>map</c> stage's position) while that
     /// computation has not ended; <c>null</c> for every other cell.

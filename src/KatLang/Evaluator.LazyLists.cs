@@ -135,6 +135,34 @@ public static partial class Evaluator
         /// </summary>
         internal abstract Result? ValueAt(int index);
 
+        /// <summary>
+        /// PASSIVE INSPECTION (C#-only; the root-property observation snapshot,
+        /// <see cref="TryReadCompletedPositions"/>): the cardinality the run has SETTLED for this
+        /// list — every position found and no further one possible — or <c>-1</c> when it has not.
+        /// It reads only what the run established: it discovers, releases and reserves nothing. A
+        /// <c>filter</c> scan is settled once it has completed (<see cref="IsExhausted"/>); one that
+        /// has judged its last candidate but was never asked past it is not. A list whose
+        /// <see cref="IsExhausted"/> can do more than read (a <c>map</c> stage releases itself there)
+        /// overrides this.
+        /// </summary>
+        internal virtual int SettledCount
+        {
+            get
+            {
+                // Exhaustion is read BEFORE the count: once exhausted, the count is final.
+                var exhausted = IsExhausted;
+                return exhausted ? Discovered : -1;
+            }
+        }
+
+        /// <summary>
+        /// PASSIVE INSPECTION: the slot of a found position when it exists already — a value, or
+        /// the cell whose VALUE it is — and <c>null</c> when that position's cell was never created
+        /// (a <c>map</c> stage creates a position's cell when the position is first asked for).
+        /// Unlike <see cref="Slot"/> it creates nothing.
+        /// </summary>
+        internal abstract object? PeekSlot(int index);
+
         /// <summary>The one-level concrete form, once a consumer has built it.</summary>
         internal Result.ListValue? Level => Volatile.Read(ref _level) ?? Volatile.Read(ref _materialized);
 
@@ -258,6 +286,7 @@ public static partial class Evaluator
         internal override bool IsExhausted => true;
         internal override ValueTask<EvalError?> Discover(int wanted, bool asynchronous) => default;
         internal override object Slot(int index) => items[index];
+        internal override object? PeekSlot(int index) => items[index];
         internal override Result? ValueAt(int index) => items[index];
     }
 
@@ -272,6 +301,7 @@ public static partial class Evaluator
         internal override bool IsExhausted => true;
         internal override ValueTask<EvalError?> Discover(int wanted, bool asynchronous) => default;
         internal override object Slot(int index) => slots[index];
+        internal override object? PeekSlot(int index) => slots[index];
         internal override Result? ValueAt(int index) => slots[index] as Result;
     }
 
@@ -380,6 +410,33 @@ public static partial class Evaluator
             if (!rootExhausted && discovered < _limit) return false;
             ReleaseIfResolved(Math.Min(discovered, _limit));
             return true;
+        }
+
+        // The passive twin of CheckExhausted: the same answer, without the release it may make.
+        internal override int SettledCount
+        {
+            get
+            {
+                // A released stage is its own root: its cardinality was published before its root
+                // was dropped (see Discovered).
+                if (Volatile.Read(ref _root) is not { } root) return _count;
+                var settled = root.SettledCount;
+                if (settled >= 0) return Math.Min(settled, _limit);
+                return root.Discovered >= _limit ? _limit : -1;
+            }
+        }
+
+        // A position's cell exists once the position was asked for (Slot); none is created here.
+        internal override object? PeekSlot(int index)
+        {
+            lock (this)
+            {
+                if (index < PageSize)
+                    return _firstPage is { } first && index < first.Length ? first[index] : null;
+                return _otherPages is { } pages && pages.TryGetValue(index / PageSize, out var page)
+                    ? page[index % PageSize]
+                    : null;
+            }
         }
 
         /// <summary>
@@ -628,6 +685,9 @@ public static partial class Evaluator
             lock (this) return _accepted[index];
         }
 
+        // An accepted position is recorded with the slot its verdict read: nothing is created.
+        internal override object? PeekSlot(int index) => Slot(index);
+
         internal override ValueTask<EvalError?> Discover(int wanted, bool asynchronous)
             => DiscoverScans(this, wanted, asynchronous);
 
@@ -865,7 +925,19 @@ public static partial class Evaluator
         internal override ValueTask<EvalError?> Discover(int wanted, bool asynchronous)
             => _root.Discover(Math.Min(wanted, _limit), asynchronous);
 
+        // The passive twin of IsExhausted, read through the root's own passive count.
+        internal override int SettledCount
+        {
+            get
+            {
+                var settled = _root.SettledCount;
+                if (settled >= 0) return Math.Min(settled, _limit);
+                return _root.Discovered >= _limit ? _limit : -1;
+            }
+        }
+
         internal override object Slot(int index) => _slots.Slot(index);
+        internal override object? PeekSlot(int index) => _slots.PeekSlot(index);
         internal override bool IsPending => _root.IsPending;
         internal override Result? ValueAt(int index) => _slots.ValueAt(index);
     }
@@ -1331,90 +1403,156 @@ public static partial class Evaluator
     /// <summary>
     /// A value as a PASSIVE OBSERVER may show it (issue #204): the value itself when it is
     /// concrete, and otherwise the value with every list evaluated on demand replaced by a
-    /// concrete form the run already built for it — its whole form, or the one-level form a
-    /// consumer that read every position built, with the lists inside that form resolved the
-    /// same way. A missing cached form or a cycle among those forms returns <c>false</c> and the
-    /// observer withholds the value. Taking the snapshot never demands a list position.
+    /// concrete form of what the run has read of it, the lists inside resolved the same way:
+    /// <list type="number">
+    ///   <item>its whole form, when a consumer read it whole;</item>
+    ///   <item>its one-level form, when a consumer read every position in one go;</item>
+    ///   <item>otherwise the positions the run READ ONE BY ONE: when its cardinality is settled
+    ///   and every position holds a value already or its cell's VALUE has completed successfully,
+    ///   a new list of those values (<see cref="TryReadCompletedPositions"/>).</item>
+    /// </list>
+    /// A list the run read too little of (its cardinality unsettled, a position unread, in flight
+    /// or failed) or a cycle (a form or a position leading back to a list the snapshot is already
+    /// inside, <c>L = [L]</c>) returns <c>false</c> and the observer withholds the value. Taking
+    /// the snapshot never demands a position, discovers a candidate, reserves, charges, performs an
+    /// effect or observes cancellation, and a snapshot holds no list evaluated on demand and no
+    /// cell. <paramref name="snapshots"/> remembers by reference the snapshot of every structure a
+    /// walk completed, and — as <c>null</c> — every structure a walk proved has none. The sink
+    /// shares it across one run's observations, so a structure several of them reach is walked
+    /// once and its snapshot is one shared value.
     /// </summary>
-    internal static bool TrySnapshotValue(Result value, out Result snapshot)
+    internal static bool TrySnapshotValue(Result value, ref Dictionary<Result, Result?>? snapshots, out Result snapshot)
     {
-        snapshot = value;
-        if (!ContainsLazyList(value)) return true;
-        return TrySnapshotLazyValue(value, out snapshot);
-    }
-
-    // Post-order rebuild with indexed continuation frames and a reference-identity memo of the
-    // concrete structures completed, like the materialization walk — but a lazy list contributes
-    // a remembered concrete form (its whole form as it is; its one-level form as a concrete node
-    // whose items are walked in turn) or ends the walk.
-    private static bool TrySnapshotLazyValue(Result root, out Result snapshot)
-    {
-        snapshot = root;
-        if (root is Result.ListValue { Lazy: { } rootList })
+        var node = value;
+        // Scalars, materialized lists and previously inspected roots need no traversal state.
+        var needsFrame = !TryGetKnownSnapshot(ref node, snapshots, out var known);
+        if (!needsFrame)
         {
-            if (rootList.Materialized is { } whole)
-            {
-                snapshot = whole;
-                return true;
-            }
-
-            if (rootList.Level is not { } rootLevel) return false;
-            root = rootLevel;
+            snapshot = known ?? value;
+            return known is not null;
         }
 
+        snapshots ??= new Dictionary<Result, Result?>(ReferenceEqualityComparer.Instance);
         var frames = new Stack<MaterializeFrame>();
-        Dictionary<Result, Result>? completed = null;
-        // Track the concrete node each frame walks. For L = [L], L's one-level form leads back
-        // to the same node after its lazy child is resolved.
-        var active = new HashSet<Result>(ReferenceEqualityComparer.Instance) { root };
-        frames.Push(new MaterializeFrame(root));
-        while (true)
+        var active = new HashSet<Result>(ReferenceEqualityComparer.Instance);
+        // Enter an unknown structure, then finish as many frames as its last child resolves.
+        while (needsFrame)
         {
-            var frame = frames.Peek();
-            if (frame.Next >= frame.Source!.Count)
+            if (!active.Add(node) || SnapshotFrame(node) is not { } frame)
             {
-                var finished = frame.CompleteConcrete();
-                frames.Pop();
-                active.Remove(frame.Node);
-                if (frames.Count == 0)
-                {
-                    snapshot = finished;
-                    return true;
-                }
-
-                (completed ??= new Dictionary<Result, Result>(ReferenceEqualityComparer.Instance))[frame.Node] = finished;
-                frames.Peek().Accept(finished);
-                continue;
+                snapshots[node] = null;
+                break;
             }
 
-            var child = frame.Source[frame.Next];
-            if (child is Result.ListValue { Lazy: { } nested })
+            frames.Push(frame);
+            while (true)
             {
-                if (nested.Materialized is { } known)
+                if (frame.Next < frame.Source!.Count)
                 {
+                    node = frame.Source[frame.Next];
+                    needsFrame = !TryGetKnownSnapshot(ref node, snapshots, out known);
+                    if (needsFrame || known is null) break;
                     frame.Accept(known);
                     continue;
                 }
 
-                if (nested.Level is not { } level) return false;
-                child = level;
-            }
+                known = frame.CompleteConcrete();
+                snapshots[frame.Node] = known;
+                active.Remove(frame.Node);
+                frames.Pop();
+                if (!frames.TryPeek(out var parent))
+                {
+                    snapshot = known;
+                    return true;
+                }
 
-            if (child is Result.ListValue or Result.SequenceValue)
-            {
-                if (completed is not null && completed.TryGetValue(child, out var concrete))
-                    frame.Accept(concrete);
-                else if (!active.Add(child))
-                    return false;
-                else
-                    frames.Push(new MaterializeFrame(child));
-            }
-            else
-            {
-                frame.Accept(child);
+                parent.Accept(known);
+                frame = parent;
             }
         }
+
+        // A missing position, an already withheld child, or a cycle makes every open ancestor
+        // unavailable. Siblings that completed earlier keep their own snapshots.
+        foreach (var open in frames) snapshots[open.Node] = null;
+        snapshot = value;
+        return false;
     }
+
+    // A scalar and a whole form are already concrete. For other structures consult the shared
+    // memo, keying a lazy list with a one-level form on the actual node the walk will inspect.
+    private static bool TryGetKnownSnapshot(
+        ref Result node,
+        Dictionary<Result, Result?>? snapshots,
+        out Result? known)
+    {
+        known = null;
+        if (node is Result.ListValue { Lazy: { } lazy })
+        {
+            if (lazy.Materialized is { } whole)
+            {
+                known = whole;
+                return true;
+            }
+
+            // A one-level form is walked as the concrete node it is.
+            if (lazy.Level is { } level) node = level;
+        }
+        else if (node is not (Result.ListValue or Result.SequenceValue))
+        {
+            known = node;
+            return true;
+        }
+
+        return snapshots is not null && snapshots.TryGetValue(node, out known);
+    }
+
+    private static MaterializeFrame? SnapshotFrame(Result node)
+    {
+        if (node is not Result.ListValue { Lazy: { } list }) return new MaterializeFrame(node);
+        return TryReadCompletedPositions(list) is { } positions ? new MaterializeFrame(node, positions) : null;
+    }
+
+    /// <summary>
+    /// THE POSITIONS A RUN READ ONE BY ONE, read back without reading anything (C#-only; the
+    /// passive observation snapshot, <see cref="TrySnapshotValue"/>): the values of every position
+    /// of <paramref name="list"/>, in order, when the run has settled its cardinality
+    /// (<see cref="LazyList.SettledCount"/>) and every position holds a value already or a cell
+    /// whose VALUE has completed successfully (<see cref="NeedCell.TryGetCompletedValue"/>) —
+    /// selected one at a time in any order, bound by a pattern and read, or judged by a
+    /// <c>filter</c>'s verdict; otherwise <c>null</c>. The values are the positions' own (a nested
+    /// list is still the list it is). Every position is checked before anything is allocated, so a
+    /// list read at a few of many positions costs no more than the positions up to the first one
+    /// it lacks.
+    /// </summary>
+    private static Result[]? TryReadCompletedPositions(LazyList list)
+    {
+        var count = list.SettledCount;
+        if (count < 0) return null;
+        for (var index = 0; index < count; index++)
+        {
+            if (CompletedPositionValue(list, index) is null) return null;
+        }
+
+        Result[] values = count == 0 ? [] : new Result[count];
+        for (var index = 0; index < values.Length; index++)
+        {
+            // A completed outcome is never rewritten, so the second read finds the first one's value.
+            if (CompletedPositionValue(list, index) is not { } value) return null;
+            values[index] = value;
+        }
+
+        return values;
+    }
+
+    // The value one found position holds without any demand: its value slot, or the successful
+    // VALUE its cell has completed with; null for a position never read, still in flight or failed.
+    private static Result? CompletedPositionValue(LazyList list, int index)
+        => list.PeekSlot(index) switch
+        {
+            Result value => value,
+            NeedCell cell when cell.TryGetCompletedValue(out var completed) => completed.Value,
+            _ => null,
+        };
 
     /// <summary>One open structure of a materialization walk: its node and the next child.</summary>
     private sealed class MaterializeFrame
@@ -1427,7 +1565,8 @@ public static partial class Evaluator
         private readonly bool _isSequence;
         internal int Next;
         // A concrete node's destination, allocated once a child's concrete form differs from the
-        // stored child; while it is null the node is its own materialized form.
+        // stored child; while it is null the node is its own materialized form. A passive
+        // snapshot's positions frame owns its source and writes into it from the start.
         private Result[]? _rebuilt;
         // A lazy node's materialized positions, in order.
         private List<Result>? _read;
@@ -1450,6 +1589,19 @@ public static partial class Evaluator
                 default:
                     throw new ArgumentException("Materialization frames require a sequence or list value.", nameof(node));
             }
+        }
+
+        /// <summary>
+        /// A passive snapshot's frame over the completed positions of a list evaluated on demand
+        /// (<see cref="TryReadCompletedPositions"/>): <paramref name="positions"/> is an array the
+        /// frame owns, its items are walked like a concrete node's and replaced in place by their
+        /// snapshots, and the node's concrete form is always a new list over it.
+        /// </summary>
+        internal MaterializeFrame(Result node, Result[] positions)
+        {
+            Node = node;
+            Source = positions;
+            _rebuilt = positions;
         }
 
         internal void Accept(Result materialized)

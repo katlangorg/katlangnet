@@ -13,7 +13,9 @@ namespace KatLang.Tests.RootPropertyObservations;
 /// snapshot types hold nothing but names, spans, counts, statuses, and export-safe values.
 ///
 /// <para>A list is evaluated on demand (issue #204). An observation can use the whole value the
-/// run already built or assemble it from cached one-level forms. Missing forms, cycles and call
+/// run already built, assemble it from cached one-level forms, or — for a list whose cardinality
+/// the run settled — from the completed positions it read one at a time
+/// (<see cref="PropertyObservationPositionReadTests"/>). A list read too little, cycles and call
 /// references all make the value unavailable to the observer.</para>
 /// </summary>
 public class PropertyObservationExportSafetyTests

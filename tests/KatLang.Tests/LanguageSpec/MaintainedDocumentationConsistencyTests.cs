@@ -468,6 +468,14 @@ public class MaintainedDocumentationConsistencyTests
             @"\bspliced completed module's re-gates\b|\bre-gates, measure and signature analysis\b|\bsignature analysis still enters the module\b",
             "every deferred materialization re-walking a spliced completed module (superseded 2026-11-24 by completed module views)"
         },
+        // Passive observations shown only from a concrete form the run built (superseded 2026-11-24, C#-only host
+        // policy of issue #204): a list whose cardinality the run settled and whose every position's VALUE completed
+        // is observed from those memoized values, however its positions were read, so no current text says an
+        // observation is withheld merely because no whole or one-level form was built.
+        {
+            @"\bWithheld`?\s+without\s+a\s+concrete\s+form\b|\bWithheld`?\s+when\s+the\s+run\s+built\s+no\s+such\s+form\b",
+            "passive observations withheld without a built concrete form (superseded 2026-11-24 by observations of completed positions)"
+        },
     };
 
     [Theory]

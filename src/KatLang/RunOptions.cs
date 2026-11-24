@@ -575,8 +575,10 @@ public sealed class RunOptions
     /// <para><b>Partial runs.</b> An <see cref="RunResult.EvalFailure"/> carries the values
     /// published before the failure; its errors are unchanged. Cancellation still propagates as
     /// <see cref="OperationCanceledException"/>, so no snapshot is returned.</para>
-    /// <para><b>Export safety.</b> A published value containing a run-internal call reference is
-    /// <see cref="PropertyValueStatus.Withheld"/>, never exposed.</para>
+    /// <para><b>Export safety.</b> The snapshot can show a lazy list from its settled length and
+    /// the completed values of its positions, including positions selected one at a time.
+    /// A call reference, a cycle or an unresolved list at any depth makes the observation
+    /// <see cref="PropertyValueStatus.Withheld"/>.</para>
     /// </summary>
     public bool ObservePropertyValues { get; init; }
 }

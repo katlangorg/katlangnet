@@ -9,9 +9,9 @@ public enum PropertyValueStatus
     Available = 0,
 
     /// <summary>
-    /// The published value contains a run-internal call reference, which never leaves a run, so it
-    /// is not exposed: <see cref="PropertyValueObservation.Value"/> is <c>null</c>. The run itself is
-    /// unaffected — a program may hold such a value in a property it never outputs.
+    /// The run's completed data cannot provide a finite, export-safe snapshot. The value contains
+    /// a call reference, a cycle, or a list with an unsettled length or a position whose value
+    /// has yet to complete successfully. <see cref="PropertyValueObservation.Value"/> is <c>null</c>.
     /// </summary>
     Withheld = 1,
 }
