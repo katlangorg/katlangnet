@@ -213,14 +213,16 @@ public static partial class Evaluator
     /// (<see cref="ParameterActivation.Capture"/>), or taken at the access when no activation owns the
     /// binding — and so, through its hoisted source's cache key, what separates a deconstruction
     /// group's shared binds of distinct activations. The need tier a binding
-    /// boundary minted (<see cref="BoundNeedEnv"/>) IS that identity, EVEN WHEN IT IS EMPTY: a call that
+    /// boundary minted (<see cref="BoundNeedEnv"/>, or the <see cref="LayeredBoundNeedEnv"/> of a narrow
+    /// boundary over a wide tier) IS that identity, EVEN WHEN IT IS EMPTY: a call that
     /// binds no cell and inherits none is still a new activation (CACHE-OWNER-D2, October 2026; Lean
     /// <c>EvalCtx.bindParameters</c> allocates a fresh context at every boundary). Only a context below
     /// no boundary — the root, a host entry, a planned loop's shadowed step context — falls back to its
-    /// value environment's identity, which a planned loop advances per iteration.
+    /// value environment's identity, which a planned loop advances per iteration. A layered tier is
+    /// recognized before its <c>Count</c> is read, which would build its flat list.
     /// </summary>
     internal static object BindingContextIdentity(in EvalCtx ctx, ValEnv valEnv)
-        => ctx.NeedEnv.Count != 0 || ctx.NeedEnv is BoundNeedEnv
+        => ctx.NeedEnv is LayeredBoundNeedEnv || ctx.NeedEnv.Count != 0 || ctx.NeedEnv is BoundNeedEnv
             ? ctx.NeedEnv
             : ValueEnvironmentCacheIdentity(valEnv);
 
@@ -263,20 +265,30 @@ public static partial class Evaluator
     /// does not bind stay visible, which is what lets a nested call still reach an
     /// ancestor-owned parameter. Every user-call, conditional-call, callback, and
     /// loop-step binding site — generic and planned, synchronous and async twin —
-    /// derives its callee context from this ONE helper and then prepends its own cells;
-    /// the callee's binding-context identity (the key component of a LOCAL-ONLY
-    /// property's zero-arg cache entry) is minted by the <see cref="Concat"/> that
-    /// prepends them.</para>
+    /// derives its callee tier from this ONE filter (<see cref="UnshadowedBindings"/>) with its own cells
+    /// prepended (<see cref="MintNeedBindingContext"/>); the callee's binding-context identity (the key
+    /// component of a LOCAL-ONLY property's zero-arg cache entry) is minted with that tier — by the
+    /// <see cref="Concat"/> that prepends them, or as the <see cref="LayeredBoundNeedEnv"/> of a narrow
+    /// boundary over a wide tier, which applies the same filter without copying. The loop planner's
+    /// shadowed step context is this helper's own result: a filtered tier of at least
+    /// <see cref="MinimumIndexedParameterCount"/> bindings is held as a <see cref="ShadowedNeedEnv"/> (the same
+    /// bindings, recognizably made by the evaluator), so each planned round's boundary can layer over it.</para>
     /// Lean: <c>EvalCtx.bindParameters</c> (which also performs the prepend).
     /// </summary>
     internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)
-        => ctx.WithNeedEnv(UnshadowedBindings(ctx.NeedEnv, parameterNames));
+    {
+        var shadowed = UnshadowedBindings(ctx.NeedEnv, parameterNames);
+        return ctx.WithNeedEnv(shadowed.Count >= MinimumIndexedParameterCount ? new ShadowedNeedEnv(shadowed) : shadowed);
+    }
 
     // The kept bindings in order, as the former `Where(…).ToArray()` produced them — a fresh array,
     // or the shared empty array when none is kept — without its closure, delegate and iterator
-    // (three heap objects per binding site; 2026-11 allocation attribution).
+    // (three heap objects per binding site; 2026-11 allocation attribution). A layered tier filters
+    // its parts without building its flat list (LayeredBoundNeedEnv.Unshadowed).
     private static NeedEnv UnshadowedBindings(NeedEnv inherited, IReadOnlyList<string> parameterNames)
     {
+        if (inherited is LayeredBoundNeedEnv layered)
+            return layered.Unshadowed(parameterNames);
         if (parameterNames.Count >= MinimumIndexedParameterCount && inherited.Count > LinearShadowNameScanLimit)
             return UnshadowedWideBindings(inherited, parameterNames);
         var kept = 0;
@@ -3116,7 +3128,7 @@ public static partial class Evaluator
             // demand); an algorithm-tier binding (internally constructed contexts only) is
             // returned as is. Otherwise NotAnAlgorithm (parameters are not structurally algorithms).
             // The environment reaching here was shadowed by every enclosing
-            // binding's parameter names (ShadowInheritedParameterEnvironments), so a
+            // binding's parameter names (UnshadowedBindings, MintNeedBindingContext), so a
             // parameter bound only on the value channel finds NO entry and fails as
             // not-callable instead of reaching a same-named caller callable.
             Expr.Param(var x) => ResolveNeedParameterAlgorithm(x, expr.Span, ctx),
@@ -4715,7 +4727,10 @@ public static partial class Evaluator
     /// invocation, a loop iteration, a zero-argument demand that binds a pattern, a runtime alias's
     /// bare cell. Its reference is the binding-context identity even when it is EMPTY — a call that
     /// binds nothing is still a new activation (CACHE-OWNER-D2). Every other tier (the root's, a
-    /// shadowed view, an activation's captured cells) is no boundary when empty.
+    /// shadowed view, an activation's captured cells) is no boundary when empty. A NARROW boundary
+    /// over a wide tier the evaluator made mints the same list as parts instead
+    /// (<see cref="LayeredBoundNeedEnv"/>, <see cref="MintNeedBindingContext"/>), which is a boundary too, and
+    /// a tier minted here can be the shared base of such layers: nothing changes it after it is minted.
     /// </summary>
     internal class BoundNeedEnv : List<(string Name, NeedCell Cell)>
     {

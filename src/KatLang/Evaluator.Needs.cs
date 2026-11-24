@@ -10,8 +10,12 @@ public static partial class Evaluator
     // an O(1) indexer; the scan order and first-match rule are unchanged. A WIDE tier the evaluator
     // made — a minted boundary tier or a wide activation's captured cells — answers its owned names
     // through the activation's owned-name index (LookupWideNeed), which gives the scan's first match.
+    // A LAYERED tier (a narrow boundary over a wide minted tier) answers from its parts, without
+    // building its flat list (LayeredBoundNeedEnv.Find): asked first, because its Count builds it.
     private static NeedCell? LookupNeed(NeedEnv env, string name)
     {
+        if (env is LayeredBoundNeedEnv layered)
+            return layered.Find(name);
         var count = env.Count;
         if (count >= MinimumIndexedParameterCount)
             return LookupWideNeed(env, name);
@@ -1573,11 +1577,10 @@ public static partial class Evaluator
             ? CallDiagnosticName.FromExpression(source)
             : CallDiagnosticName.FromKnown(loopName + " step");
 
+    // The callee context of a completed binding: the boundary's fresh need tier (MintNeedBindingContext —
+    // the shadowed inherited tier with the callee's own cells before it), everything else the caller's.
     private static EvalCtx WithNeedBindings(EvalCtx ctx, NeedEnv bindings, IReadOnlyList<string> names)
-    {
-        var inherited = ShadowInheritedParameterEnvironments(ctx, names);
-        return inherited.WithNeedEnv(Concat(bindings, inherited.NeedEnv));
-    }
+        => ctx.WithNeedEnv(MintNeedBindingContext(bindings, ctx.NeedEnv, names));
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedUserBodyCounted(

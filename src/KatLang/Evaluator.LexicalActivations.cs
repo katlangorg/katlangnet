@@ -258,6 +258,11 @@ internal sealed class ParameterActivation
     /// are then one hash lookup instead of a scan of the head's names and bindings. The kept bindings, their
     /// order and the first binding per name are the filter's own, on both tiers (implementation-only,
     /// 2026-11-22, finding <c>evaluator-runtime-quadratic-parameter-width</c>).</para>
+    /// <para>A narrow body entered over a LAYERED need tier (<see cref="Evaluator.LayeredBoundNeedEnv"/>: a narrow
+    /// boundary over a wide tier) filters only the layer's prefix when every owned name is one the layer hides from
+    /// its base — always so for the names its own boundary bound — because the flat list's bindings of those names
+    /// all lie in the prefix (<see cref="Evaluator.LayeredBoundNeedEnv.OwnedPart"/>). So entering the body reads none of
+    /// the caller's wide tier (implementation-only, 2026-11-24).</para>
     /// </summary>
     internal static ParameterActivation Capture(
         IReadOnlyList<string> names,
@@ -269,9 +274,11 @@ internal sealed class ParameterActivation
         if (names.Count >= Evaluator.MinimumIndexedParameterCount)
             return CaptureIndexed(new OwnedParameterNames(names), ctx, values, inheritedBindingIdentity, invoked);
 
+        // A layered tier holds the first binding of each name its boundary shadowed in its narrow prefix
+        // (Evaluator.LayeredBoundNeedEnv.OwnedPart), so the filter reads only that part: the same bindings.
         return new(
             FilterOwned(values, names, static binding => binding.Name),
-            FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
+            FilterOwned(ctx.NeedEnv is Evaluator.LayeredBoundNeedEnv layered ? layered.OwnedPart(names) : ctx.NeedEnv, names, static binding => binding.Name),
             inheritedBindingIdentity ?? Evaluator.BindingContextIdentity(ctx, values),
             ctx.Budget.NextActivationSerial(),
             invoked);

@@ -8,7 +8,10 @@
 // list. A WIDE need tier the evaluator itself makes (a minted boundary tier, a
 // wide activation's captured cells: Evaluator.MinimumIndexedParameterCount) is
 // still that list, carrying its activation's owned-name index, which answers
-// what the ordered scan would.
+// what the ordered scan would. At a narrow boundary over a wide minted tier
+// or the loop planner's wide shadowed tier, Evaluator.LayeredBoundNeedEnv
+// stores the new bindings and hidden names alongside the shared base.
+// Lookup and enumeration preserve the order of the resulting list.
 //
 // A parameter's VALUE and its CALLABLE identity both live on its supplied cell
 // (NeedEnv): since Model C there is no separate algorithm-channel tier and no counted
