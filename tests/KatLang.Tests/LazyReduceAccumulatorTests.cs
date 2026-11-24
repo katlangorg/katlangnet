@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using KatLang.Evaluation;
 using KatLang.Tests.AsyncEvaluation;
 
@@ -29,10 +31,14 @@ public sealed class LazyReduceAccumulatorTests
     private static Task<SixRouteAgreement.Observation> RunAsync(string source)
         => SixRouteAgreement.OnEveryRouteAsync(source);
 
-    private static void RequireCleanParse(string source, HostOperations operations)
+    private static void RequireCleanParse(string source, HostOperations operations) => ParseValidRoot(source, operations);
+
+    // A source the front end accepts, parsed with the host operations its names resolve to.
+    private static Algorithm.User ParseValidRoot(string source, HostOperations operations)
     {
         var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(static d => d.Message)));
+        return parsed.Root;
     }
 
     private static string Outcome(SixRouteAgreement.Observation observation) => observation.Kind switch
@@ -559,6 +565,296 @@ public sealed class LazyReduceAccumulatorTests
         var caught = Assert.Throws<InvalidOperationException>(
             () => KatLangEngine.Run(source, new RunOptions { HostOperations = operations }));
         Assert.Same(thrown, caught);
+    }
+
+    // ── 10. What a suspended step keeps alive, and where its callbacks run ───────────────────────────
+
+    /// <summary>
+    /// The asynchronous state machines on the host stack when the start of a general fold of <paramref name="count"/>
+    /// steps is demanded — every step suspended — counted by the start itself, a host operation. The run stays on one
+    /// 16 MiB thread: a short chain never continues elsewhere.
+    /// </summary>
+    private static int AsyncStateMachineFramesAtTheStart(int count)
+    {
+        var frames = -1;
+        var probeThread = -1;
+        var operations = HostOperations.Create(HostOperation.Create("probe", (_, _) =>
+        {
+            probeThread = Environment.CurrentManagedThreadId;
+            frames = new StackTrace(false).GetFrames().Count(static frame =>
+                frame.GetMethod()?.DeclaringType is { } type && typeof(IAsyncStateMachine).IsAssignableFrom(type));
+            return new Result.Atom(0);
+        }));
+        var source = CallingAdd + $"reduce(range(1, {count}), Add, probe())";
+        RequireCleanParse(source, operations);
+
+        RunResult? result = null;
+        Exception? failure = null;
+        var runThread = -1;
+        var thread = new Thread(() =>
+        {
+            runThread = Environment.CurrentManagedThreadId;
+            try { result = KatLangEngine.Run(source, new RunOptions { HostOperations = operations }); }
+            catch (Exception error) { failure = error; }
+        }, maxStackSize: 16 * 1024 * 1024) { IsBackground = true };
+        thread.Start();
+        Assert.True(thread.Join(WaitLimit), "the fold did not finish");
+
+        Assert.Null(failure);
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal(((long)count * (count + 1) / 2).ToString(), SixRouteAgreement.Neutral(success.Value));
+        Assert.Equal(runThread, probeThread);
+        return frames;
+    }
+
+    [Fact]
+    public void SuspendedSteps_KeepOnlyTheAccumulatorContextBoundary_OnTheSynchronousHostStack()
+    {
+        // One method builder restores each demander's ambient state. The step and callback dispatch add
+        // no state machines of their own (formerly three machines in total per suspended step).
+        Assert.InRange(AsyncStateMachineFramesAtTheStart(9) - AsyncStateMachineFramesAtTheStart(3), 0, 6);
+    }
+
+    private static int Item(Result value) => (int)((Result.Atom)value).Value;
+
+    [Theory]
+    [InlineData(false, Flow.Normal)]
+    [InlineData(false, Flow.Suppressed)]
+    [InlineData(true, Flow.Normal)]
+    [InlineData(true, Flow.Suppressed)]
+    public void SynchronousCallbacks_ResumeWithTheirOwnHostContext(bool streamed, Flow flow)
+    {
+        var ambient = new AsyncLocal<int>();
+        var contexts = Enumerable.Range(0, 5).Select(_ => new SynchronizationContext()).ToArray();
+        var caller = SynchronizationContext.Current;
+        var entries = new List<int>();
+        var observations = new List<(int Item, int Ambient, bool OwnContext, bool Suppressed)>();
+        var operations = HostOperations.Create(
+            HostOperation.Create("enter", (args, _) =>
+            {
+                var item = Item(args[0]);
+                entries.Add(ambient.Value);
+                ambient.Value = item;
+                SynchronizationContext.SetSynchronizationContext(contexts[item]);
+                return args[0];
+            }, "x"),
+            HostOperation.Create("observe", (args, _) =>
+            {
+                var item = Item(args[0]);
+                observations.Add((item, ambient.Value, SynchronizationContext.Current == contexts[item], ExecutionContext.IsFlowSuppressed()));
+                return new Result.Atom(0);
+            }, "x"),
+            HostOperation.Create("seed", (_, _) =>
+            {
+                ambient.Value = 99;
+                SynchronizationContext.SetSynchronizationContext(contexts[0]);
+                if (ExecutionContext.IsFlowSuppressed()) ExecutionContext.RestoreFlow();
+                else ExecutionContext.SuppressFlow();
+                return new Result.Atom(0);
+            }));
+        var body = streamed ? "acc + enter(item) + observe(item)" : "enter(item) + acc + observe(item)";
+        var source = $"Add(item, acc) = {body}\nreduce(range(1, 4), Add, seed())";
+        RequireCleanParse(source, operations);
+
+        var run = HostFlow.Under(flow, () => KatLangEngine.Run(source, new RunOptions { HostOperations = operations }));
+        Assert.Equal("10", SixRouteAgreement.Neutral(Assert.IsType<RunResult.Success>(run).Value));
+        Assert.Equal(streamed ? new[] { 0, 0, 0, 0 } : new[] { 0, 4, 3, 2 }, entries);
+        Assert.Equal(Enumerable.Range(1, 4).Select(i => (i, i, true, flow == Flow.Suppressed)), observations);
+        Assert.Equal(0, ambient.Value);
+        Assert.Same(caller, SynchronizationContext.Current);
+    }
+
+    /// <summary>
+    /// A general fold of 4,000 steps on a 1 MiB thread, its reducer calling the host operation <c>mark</c> before
+    /// its accumulator read (the descent: the last step's call first) or after it (the ascent: the first step's
+    /// call first): every call runs one at a time, in that order, on the calling thread or on a fresh stack of
+    /// the fold (<see cref="FoldContinuationStack"/>), never on the thread pool.
+    /// </summary>
+    [Theory]
+    [InlineData("Add(item, acc) = mark(item) + acc", false)]
+    [InlineData("Id(x) = x\nAdd(item, acc) = Id(item) + acc + 0 * mark(item)", true)]
+    public void LongFoldCallbacks_RunInOrder_OnTheCallingThreadOrTheFoldsFreshStacks(string reducer, bool ascending)
+    {
+        const int count = 4000;
+        var calls = new List<(int Item, int Thread, string? Name)>();
+        var active = 0;
+        var overlapped = false;
+        var operations = HostOperations.Create(HostOperation.Create("mark", (args, _) =>
+        {
+            if (Interlocked.Increment(ref active) != 1) overlapped = true;
+            lock (calls) calls.Add((Item(args[0]), Environment.CurrentManagedThreadId, Thread.CurrentThread.Name));
+            Interlocked.Decrement(ref active);
+            return args[0];
+        }, "x"));
+        var source = reducer + $"\nreduce(range(1, {count}), Add, 0)";
+        RequireCleanParse(source, operations);
+
+        RunResult? result = null;
+        Exception? failure = null;
+        var calling = -1;
+        var thread = new Thread(() =>
+        {
+            calling = Environment.CurrentManagedThreadId;
+            try { result = KatLangEngine.Run(source, new RunOptions { HostOperations = operations }); }
+            catch (Exception error) { failure = error; }
+        }, maxStackSize: 1024 * 1024);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromMinutes(5)), "the fold did not finish");
+
+        Assert.Null(failure);
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal(((long)count * (count + 1) / 2).ToString(), SixRouteAgreement.Neutral(success.Value));
+        Assert.False(overlapped, "two host calls overlapped");
+        var expected = ascending ? Enumerable.Range(1, count) : Enumerable.Range(1, count).Reverse();
+        Assert.Equal(expected, calls.Select(static call => call.Item));
+        // The steps nearest the fold's own frame run on the calling thread; the chain beyond its allowance
+        // continues on fresh stacks of the fold.
+        Assert.Contains(calls, call => call.Thread == calling);
+        Assert.Contains(calls, call => call.Thread != calling);
+        Assert.All(calls, call => Assert.True(call.Thread == calling || call.Name == "KatLang fold continuation",
+            $"mark({call.Item}) ran on thread {call.Thread} ({call.Name ?? "unnamed"})"));
+    }
+
+    /// <summary>
+    /// The asynchronous twin keeps suspended steps on the heap: a long general fold whose reducer GENUINELY
+    /// suspends in every step — before its accumulator read or after it — still makes its host calls one at a
+    /// time and in the nested order.
+    /// </summary>
+    [Theory]
+    [InlineData("Add(item, acc) = pause(item) + acc", false)]
+    [InlineData("Id(x) = x\nAdd(item, acc) = Id(item) + acc + 0 * pause(item)", true)]
+    public async Task LongFoldWithGenuinelySuspendingCallbacks_KeepsTheirOrder(string reducer, bool ascending)
+    {
+        const int count = 3000;
+        var calls = new List<int>();
+        var active = 0;
+        var overlapped = false;
+        var operations = HostOperations.Create(HostOperation.CreateAsync("pause", async (args, _) =>
+        {
+            if (Interlocked.Increment(ref active) != 1) overlapped = true;
+            await Task.Yield();
+            lock (calls) calls.Add(Item(args[0]));
+            Interlocked.Decrement(ref active);
+            return args[0];
+        }, "x"));
+        var source = reducer + $"\nreduce(range(1, {count}), Add, 0)";
+        RequireCleanParse(source, operations);
+
+        var result = await KatLangEngine.RunAsync(source, new RunOptions { HostOperations = operations }).WaitAsync(TimeSpan.FromMinutes(5));
+
+        var success = Assert.IsType<RunResult.Success>(result);
+        Assert.Equal(((long)count * (count + 1) / 2).ToString(), SixRouteAgreement.Neutral(success.Value));
+        Assert.False(overlapped, "two host calls overlapped");
+        Assert.Equal(ascending ? Enumerable.Range(1, count) : Enumerable.Range(1, count).Reverse(), calls);
+    }
+
+    // A fold of `count` elements whose step for `count - 10` ignores its accumulator, observed on a 1 MiB thread.
+    private static (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget, List<(int Item, bool OnCallingThread)> Calls)
+        ObserveLongSkippingFold(int count, string reducer)
+    {
+        var calls = new List<(int Item, int Thread)>();
+        var operations = HostOperations.Create(HostOperation.Create("mark", (args, _) =>
+        {
+            lock (calls) calls.Add((Item(args[0]), Environment.CurrentManagedThreadId));
+            return args[0];
+        }, "x"));
+        var source = reducer.Replace("SKIP", (count - 10).ToString(), StringComparison.Ordinal) + $"\nreduce(range(1, {count}), Last, 1 / 0)";
+        var program = new Expr.AlgorithmExpr(ParseValidRoot(source, operations));
+
+        (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) observed = default;
+        var calling = -1;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            calling = Environment.CurrentManagedThreadId;
+            try { observed = Evaluator.RunCountedObserved(program, hostOperations: operations); }
+            catch (Exception error) { failure = error; }
+        }, maxStackSize: 1024 * 1024) { IsBackground = true };
+        thread.Start();
+        Assert.True(thread.Join(WaitLimit), "the fold did not finish");
+        Assert.Null(failure);
+        return (observed.Result, observed.Budget!, calls.Select(call => (call.Item, OnCallingThread: call.Thread == calling)).ToList());
+    }
+
+    [Fact]
+    public void LongSkippingFold_RunsOnlyTheStepsItDemands_OnTheCallingThread()
+    {
+        // Of 50,000 steps only the last ten run: the step for 49,990 ignores its accumulator, so every earlier
+        // step, the start (1 / 0) and every fresh stack they would have needed never start.
+        const string skipping = "Last(item, acc) = if(item == SKIP, 0, mark(item) + acc)";
+        const string picking = "Last(item, acc) = mark(item)";
+        const int count = 50_000;
+        var (result, budget, calls) = ObserveLongSkippingFold(count, skipping);
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
+        Assert.Equal(Enumerable.Range(count - 9, 10).Sum().ToString(), SixRouteAgreement.Neutral(result.Value.Value));
+        Assert.Equal(Enumerable.Range(count - 9, 10).Reverse(), calls.Select(static call => call.Item));
+        Assert.All(calls, static call => Assert.True(call.OnCallingThread, $"mark({call.Item}) left the calling thread"));
+        Assert.Equal(10, budget.PeakFoldContinuations);
+        Assert.Equal(0, budget.ActiveFoldContinuations);
+
+        // The skipped steps charge nothing: what the ten demanded steps cost beyond the one step of a fold that
+        // ignores every accumulator does not depend on how many steps were skipped.
+        long Beyond(int length)
+        {
+            var (skipped, skippedBudget, _) = ObserveLongSkippingFold(length, skipping);
+            var (picked, pickedBudget, pickedCalls) = ObserveLongSkippingFold(length, picking);
+            Assert.True(skipped.IsOk && picked.IsOk);
+            Assert.Equal([length], pickedCalls.Select(static call => call.Item));
+            return skippedBudget.ConsumedSteps - pickedBudget.ConsumedSteps;
+        }
+
+        Assert.Equal(Beyond(20_000), Beyond(count));
+    }
+
+    [Fact]
+    public void AccumulatingFoldWork_IsTheSameForEveryStep_WhereverItsChainContinues()
+    {
+        // Every 1,000 more steps cost exactly the same charged work — the same invocations and loop
+        // iterations, the same expression checkpoints (one step is charged per 4,096 of them, so the step
+        // total itself is compared net of those) — however the chain is split between the calling thread
+        // and fresh stacks: a continuation charges nothing of its own.
+        (long Invocations, long Checkpoints) Work(int count)
+        {
+            var (result, budget) = Observe(CallingAdd + $"reduce(range(1, {count}), Add, 0)");
+            Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
+            Assert.Equal(count, budget.PeakFoldContinuations);
+            Assert.Equal(0, budget.ActiveFoldContinuations);
+            var checkpoints = budget.ConsumedExpressionCheckpoints;
+            return (budget.ConsumedSteps - checkpoints / EvaluationBudget.ExpressionCheckpointsPerStep, checkpoints);
+        }
+
+        var work = new[] { 1000, 2000, 3000, 4000 }.Select(Work).ToArray();
+        for (var i = 2; i < work.Length; i++)
+        {
+            Assert.Equal(work[1].Invocations - work[0].Invocations, work[i].Invocations - work[i - 1].Invocations);
+            Assert.Equal(work[1].Checkpoints - work[0].Checkpoints, work[i].Checkpoints - work[i - 1].Checkpoints);
+        }
+    }
+
+    [Fact]
+    public void GeneralFoldSteps_AllocateLittleMoreThanStreamedSteps()
+    {
+        // The same work per step (one Id call, one addition) on the general route (Id(item) + acc: every step
+        // suspended) and the streamed route (acc + Id(item)). A general step's own extra is its accumulator's
+        // computation object and the context write of that accumulator's demand; the streamed route makes a
+        // Ready cell per accumulator instead. Measured per step in November 2026 (x64, eight-step folds):
+        // Release 91 B (189 B while each accumulator held a closure and two delegates). Eight thousand steps per route, all on this
+        // thread: the counter's quantum (about 8 KB) moves a per-step figure by at most 1 B.
+        const int count = 8;
+        const int runs = 1000;
+        double PerStep(string reducer)
+        {
+            var parsed = SourceProvenance.ParseValid(reducer + $"reduce(range(1, {count}), Add, 0)");
+            var program = new Expr.AlgorithmExpr(parsed.Root);
+            for (var i = 0; i < 20; i++) Assert.True(Evaluator.RunCountedObserved(program).Result.IsOk);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < runs; i++) Evaluator.RunCountedObserved(program);
+            return (GC.GetAllocatedBytesForCurrentThread() - before) / (double)(runs * count);
+        }
+
+        var general = PerStep(CallingAdd);
+        var streamed = PerStep("Id(x) = x\nAdd(item, acc) = acc + Id(item)\n");
+        Assert.InRange(general - streamed, -64, 160);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────────────────────

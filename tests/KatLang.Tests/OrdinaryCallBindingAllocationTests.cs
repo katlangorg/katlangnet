@@ -454,9 +454,8 @@ public class OrdinaryCallBindingAllocationTests
         var cellArray = Bytes(() => _ = new NeedCell[arguments.Length]);
         var resolvedArray = Bytes(() => _ = new Evaluator.ResolvedArgumentAlgorithm[arguments.Length]);
         var builtin = Bytes(() => _ = apply(BuiltinId.range, prepared, ctx, values));
-        // EvalNeedCallbackBody forms the Ready cells and forwards to the one asynchronous body, the dispatch
-        // over a formed supply (shared with a `reduce` step, whose accumulator cell is deferred).
-        var machine = StateMachineBytes("EvalNeedCallbackSupply");
+        // A synchronous builtin callback retains one method builder to restore its caller's host context.
+        var machine = StateMachineBytes("EvalNeedCallbackSupplyInContext");
         var allocated = Bytes(() => _ = CompleteSynchronously(callback(callee, arguments, ctx, values, "range", false)));
         Assert.Equal(machine + cells + cellArray + resolvedArray + builtin, allocated);
         GcIsolatedAllocation.Complete();

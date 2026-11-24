@@ -1774,26 +1774,52 @@ public static partial class Evaluator
     /// a user algorithm's binder, a clause family's dispatch, a builtin's argument roles — so a
     /// cell is demanded exactly where the ordinary call would demand that argument, and never
     /// here. Lean: the dispatch of a formed supply, <c>evalSuppliedCallCounted</c>.
+    /// <para>The synchronous route runs the plain <see cref="EvalNeedCallbackSupplyCounted"/>, the asynchronous
+    /// route its twin: a <c>reduce</c> step suspended while its accumulator is evaluated keeps this frame on the
+    /// host stack, where an async method run to completion would add its state machine.</para>
     /// </summary>
-    private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupply(
+    private static ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
         string name, bool asynchronous)
+        => asynchronous
+            ? EvalNeedCallbackSupplyAsync(callee, supply, ctx, values, name)
+            : EvalNeedCallbackSupplyInContext(callee, supply, ctx, values, name);
+
+    // The async method builder restores the caller's execution and synchronization contexts when a
+    // synchronous callback returns or throws, including under suppressed flow. The asynchronous driver
+    // already has its own builder. A general fold uses the accumulator demand's boundary instead.
+#pragma warning disable CS1998 // Use the builder's context boundary while completing on this thread.
+    private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupplyInContext(
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, string name)
+        => EvalNeedCallbackSupplyCounted(callee, supply, ctx, values, name);
+#pragma warning restore CS1998
+
+    // The synchronous dispatch of a formed callback supply (EvalNeedCallbackSupply).
+    private static EvalResult<CountedResult> EvalNeedCallbackSupplyCounted(
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, string name)
     {
         if (callee is Algorithm.Builtin builtin)
         {
             var resolved = ResolvedSupply(supply);
-            return NestMissingOutput(asynchronous ? await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false)
-                : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values));
+            return NestMissingOutput(ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values));
         }
         if (callee is Algorithm.Conditional)
+            return EvalNeedFamilySupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name));
+        return EvalNeedUserSupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalNeedCallbackSupplyCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalNeedCallbackSupplyAsync(
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, string name)
+    {
+        if (callee is Algorithm.Builtin builtin)
         {
-            return asynchronous
-                ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false)
-                : EvalNeedFamilySupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name));
+            var resolved = ResolvedSupply(supply);
+            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false));
         }
-        return asynchronous
-            ? await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false).ConfigureAwait(false)
-            : EvalNeedUserSupplyCounted(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false);
+        if (callee is Algorithm.Conditional)
+            return await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
+        return await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), variadicArityStyle: false).ConfigureAwait(false);
     }
 
     // One Ready cell per already-evaluated value, in order (a callback's supply).

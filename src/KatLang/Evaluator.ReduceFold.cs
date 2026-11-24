@@ -61,7 +61,7 @@ public static partial class Evaluator
     ///
     /// <para>The last step is demanded under the one reduce step frame
     /// (<see cref="ReduceStepContext"/>), whatever earlier steps and start that demand goes on to
-    /// run. One body for both evaluation routes: the synchronous caller blocks on the completed
+    /// run. One entry for both evaluation routes: the synchronous caller blocks on the completed
     /// task, the asynchronous twin awaits it. Lean: <c>evalReduceCounted</c>.</para>
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalReduceCounted(
@@ -112,7 +112,10 @@ public static partial class Evaluator
     /// (<see cref="EvaluationBudget.EnterFoldContinuation"/>: every step of the fold runs at the
     /// depth the fold began at). The asynchronous route keeps suspended steps on the heap through
     /// the cell's own stack hop (<see cref="StackHop"/>); the synchronous route continues a long
-    /// chain on a fresh stack (<see cref="FoldContinuationStack"/>).</para>
+    /// chain on a fresh stack (<see cref="FoldContinuationStack"/>). There a suspended step keeps
+    /// its reducer body's frames, a plain synchronous step and the accumulator's context boundary
+    /// (<c>Evaluate</c>). Its accumulator cell holds one computation object
+    /// (<see cref="AccumulatorComputation"/>).</para>
     ///
     /// <para><b>The streamed route</b> (C#-only implementation optimization; no Lean counterpart).
     /// A reducer whose FIRST observable act is the read of its accumulator
@@ -164,7 +167,7 @@ public static partial class Evaluator
             var entered = !asynchronous && FoldContinuationStack.Enter();
             try
             {
-                return await Step(items.Count - 1, asynchronous).ConfigureAwait(false);
+                return asynchronous ? await StepAsync(items.Count - 1).ConfigureAwait(false) : Step(items.Count - 1);
             }
             finally
             {
@@ -173,23 +176,23 @@ public static partial class Evaluator
         }
 
         // The step over element `index`: ONE ordinary invocation of the reducer over the element's
-        // Ready cell and the deferred accumulator of the elements before it.
-        private async ValueTask<EvalResult<CountedResult>> Step(int index, bool asynchronous)
+        // Ready cell and the deferred accumulator of the elements before it. A plain synchronous
+        // method with an asynchronous twin (StepAsync): a step waiting for its accumulator keeps its frames on the
+        // host stack, where an async method run to completion would add three frames (stub, builder,
+        // state machine: about a kilobyte, measured November 2026) once per suspended step, each of
+        // them walked by every garbage collection while the step stays suspended.
+        private EvalResult<CountedResult> Step(int index)
         {
             // A reducer that is an alias is its target, resolved BEFORE the invocation charge (an
             // alias is no invocation). A safety net: lookups normalize aliases first.
             if (_step is Algorithm.Alias alias)
             {
-                var target = asynchronous
-                    ? await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false)
-                    : ResolveAliasTarget(alias, ctx);
+                var target = ResolveAliasTarget(alias, ctx);
                 if (target.IsError) return target.Error;
                 _step = target.Value;
             }
 
-            // Charged dynamic invocation boundary: an executed step is one callback invocation.
-            // TWIN-ONLY (the synchronous run never hops): see StackHop.
-            if (asynchronous && StackHop.HostStackIsLow()) await new StackHop();
+            StepStackHop(asynchronous: false).GetAwaiter().GetResult();
             if (ctx.Budget.TryEnterInvocation() is { } limitError)
                 return limitError;
 
@@ -197,14 +200,46 @@ public static partial class Evaluator
             {
                 NeedCell[] supply = [NeedCell.Ready(CountedSequenceCallbackItem(items[index])), Accumulator(index)];
                 // The step's ordinary call result, whole, with its value-boundary count (HO-03).
-                return ReCountValueBoundary(
-                    await EvalNeedCallbackSupply(_step, supply, ctx, values, ReduceStepFrameName, asynchronous).ConfigureAwait(false));
+                return ReCountValueBoundary(EvalNeedCallbackSupplyCounted(_step, supply, ctx, values, ReduceStepFrameName));
             }
             finally
             {
                 ctx.Budget.ExitInvocation();
             }
         }
+
+        /// <summary>MIRROR OF <see cref="Step"/> — keep in lock-step.</summary>
+        private async ValueTask<EvalResult<CountedResult>> StepAsync(int index)
+        {
+            // A reducer that is an alias is its target, resolved BEFORE the invocation charge (an
+            // alias is no invocation). A safety net: lookups normalize aliases first.
+            if (_step is Algorithm.Alias alias)
+            {
+                var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
+                if (target.IsError) return target.Error;
+                _step = target.Value;
+            }
+
+            await StepStackHop(asynchronous: true);
+            if (ctx.Budget.TryEnterInvocation() is { } limitError)
+                return limitError;
+
+            try
+            {
+                NeedCell[] supply = [NeedCell.Ready(CountedSequenceCallbackItem(items[index])), Accumulator(index)];
+                // The step's ordinary call result, whole, with its value-boundary count (HO-03).
+                return ReCountValueBoundary(await EvalNeedCallbackSupplyAsync(_step, supply, ctx, values, ReduceStepFrameName).ConfigureAwait(false));
+            }
+            finally
+            {
+                ctx.Budget.ExitInvocation();
+            }
+        }
+
+        // Await the hop in the step itself so the invocation and its body continue on the fresh stack.
+        // An async helper could finish its hop before the step awaits it (see EnterInvocationFrameFlow).
+        private static StackHop StepStackHop(bool asynchronous)
+            => asynchronous && StackHop.HostStackIsLow() ? new StackHop() : StackHop.Skipped;
 
         // THE STREAMED ROUTE of a fold whose reducer leads with its accumulator: the sequence its
         // nested evaluation is known to take, with no step suspended.
@@ -328,16 +363,13 @@ public static partial class Evaluator
             => expression is Expr.Num or Expr.BoolLiteral
                 || (expression is Expr.Param(var name) && string.Equals(name, element, StringComparison.Ordinal));
 
-        // The deferred accumulator of the first `count` elements.
+        // The deferred accumulator of the first `count` elements: a VALUE-only cell over ONE
+        // computation object (no closure, no delegates).
         private NeedCell Accumulator(int count)
         {
             if (count == 0 && start is not null) return start;
             var budget = ctx.Budget;
-            return new NeedCell(
-                () => EvaluateOnHostStack(count),
-                () => Evaluate(count, asynchronous: true),
-                token: budget.CancellationToken,
-                budget: budget);
+            return new NeedCell(new AccumulatorComputation(this, count), budget, budget.CancellationToken);
         }
 
         // The synchronous VALUE computation of accumulator `count`: in place, or on a fresh stack
@@ -349,8 +381,7 @@ public static partial class Evaluator
             try
             {
                 if (FoldContinuationStack.MustContinueElsewhere()
-                    && FoldContinuationStack.Continue(
-                        (fold: this, count),
+                    && FoldContinuationStack.Continue((fold: this, count),
                         static state => state.fold.Evaluate(state.count, asynchronous: false).GetAwaiter().GetResult()) is { } continued)
                 {
                     return continued;
@@ -365,7 +396,9 @@ public static partial class Evaluator
         }
 
         // The VALUE of accumulator `count`: the start, or the step over the element before it.
-        // The step that demanded it is a suspended fold continuation meanwhile.
+        // The method builder restores the demanding step's execution and synchronization contexts on
+        // return, even on synchronous completion under suppressed flow. A host call in a step or in
+        // the initial value can change either context. Its caller resumes with its own ambient state.
         private async ValueTask<EvalResult<CountedResult>> Evaluate(int count, bool asynchronous)
         {
             var budget = ctx.Budget;
@@ -381,9 +414,8 @@ public static partial class Evaluator
                 }
                 else
                 {
-                    result = await Step(count - 1, asynchronous).ConfigureAwait(false);
+                    result = asynchronous ? await StepAsync(count - 1).ConfigureAwait(false) : Step(count - 1);
                 }
-
                 // The accumulator is a subordinate computation of whichever step demands it, so
                 // its own missing output is stored as nested (Q-36), like a collector's element.
                 return result.IsError ? NestMissingOutput(result.Error) : result;
@@ -392,6 +424,17 @@ public static partial class Evaluator
             {
                 budget.ExitFoldContinuation(_depth, suspendedDepth);
             }
+        }
+
+        /// <summary>
+        /// The VALUE computation of one deferred accumulator of a fold: its fold and its index, one
+        /// object for both routes (<see cref="NeedComputation"/>).
+        /// </summary>
+        private sealed class AccumulatorComputation(ReduceFold fold, int count) : NeedComputation
+        {
+            internal override EvalResult<CountedResult> Evaluate() => fold.EvaluateOnHostStack(count);
+
+            internal override ValueTask<EvalResult<CountedResult>> EvaluateAsync() => fold.Evaluate(count, asynchronous: true);
         }
     }
 }
