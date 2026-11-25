@@ -13,7 +13,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\..\dotnet\src\KatLang\KatLang.csproj" />
+		<ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

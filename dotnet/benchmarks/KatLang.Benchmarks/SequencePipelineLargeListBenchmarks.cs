@@ -19,7 +19,7 @@ namespace KatLang.Benchmarks;
 /// evaluation with the loop optimizer on (the production configuration). Filter:
 /// <c>--filter *SequencePipelineLargeList*</c>.
 /// <para>No <c>[RankColumn]</c>: BenchmarkDotNet 0.14.0's rank column throws while the summary is built
-/// under <c>--job dry</c> (benchmarks/README.md, Exit Code), so this class stays runnable with any job.
+/// under <c>--job dry</c> (dotnet/benchmarks/README.md, Exit Code), so this class stays runnable with any job.
 /// The execution order follows <see cref="SequencePipelineModeOrderConfig"/>.</para>
 /// </summary>
 [MemoryDiagnoser]

@@ -391,7 +391,7 @@ public class FrontEndOrdinaryElaborationBenchmarks
 /// <see cref="FrontEndOrdinaryElaborationBenchmarks"/> (whose meaning stays unchanged): wide
 /// properties with shallow local bodies, and independent declarations that separate
 /// per-declaration work from local-body cost. Run with
-/// <c>dotnet run -c Release --project ./benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter "*FrontEndOrdinaryWidthBenchmarks*"</c>.
+/// <c>dotnet run -c Release --project ./dotnet/benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter "*FrontEndOrdinaryWidthBenchmarks*"</c>.
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]

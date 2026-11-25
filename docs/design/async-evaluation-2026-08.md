@@ -270,7 +270,7 @@ beyond the available headroom still returns a structured resource error.
 
 ## Performance
 
-`AsyncEvaluationBenchmarks` (BenchmarkDotNet, `benchmarks/KatLang.Benchmarks`) compares
+`AsyncEvaluationBenchmarks` (BenchmarkDotNet, `dotnet/benchmarks/KatLang.Benchmarks`) compares
 four modes per scenario: SyncOptimized (production baseline), SyncGeneric (the strategy
 mode the twins mirror — fair twin baseline), AsyncFastPath (public `RunAsync`, default
 cache), AsyncTwinPath (async-capable cache, no actual suspension).

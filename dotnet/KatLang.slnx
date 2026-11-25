@@ -1,6 +1,6 @@
 <Solution>
   <Folder Name="/benchmarks/">
-    <Project Path="../benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj" />
+    <Project Path="benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/KatLang.CLI/KatLang.CLI.csproj" />

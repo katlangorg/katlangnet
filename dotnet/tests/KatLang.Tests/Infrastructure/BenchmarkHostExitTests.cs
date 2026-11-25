@@ -3,7 +3,7 @@ using KatLang.Benchmarks;
 namespace KatLang.Tests.Infrastructure;
 
 /// <summary>
-/// Pins the benchmark host's exit-code decision (<c>benchmarks/KatLang.Benchmarks/BenchmarkHostExit.cs</c>,
+/// Pins the benchmark host's exit-code decision (<c>dotnet/benchmarks/KatLang.Benchmarks/BenchmarkHostExit.cs</c>,
 /// compiled into this assembly as shared source). BenchmarkDotNet never fails the process itself, so a run
 /// whose every benchmark ended as <c>NA</c> used to exit 0 and could be cited as performance evidence.
 /// The mapping from BenchmarkDotNet's summaries and arguments onto these inputs lives in the host

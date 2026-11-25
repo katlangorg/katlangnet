@@ -225,7 +225,7 @@ internal sealed class LoopRunFrame
     /// objects. The numeric view stays available to the arithmetic fast paths.
     /// <para>This also boxes arithmetic-only temps. Selective boxing saved one atom per such temp per
     /// iteration. Its timing relative to the inline control varied with JIT tiering (KL-01 measurements
-    /// in <c>benchmarks/README.md</c>).</para>
+    /// in <c>dotnet/benchmarks/README.md</c>).</para>
     /// <para>THIS STORE IS THE ROUND'S PUBLICATION of the temp (KL-06 F01, owner decision Option A,
     /// November 21 2026): a round is an actual call of the step, and the property first establishes
     /// its reusable value in that call here, exactly where the generic strategy stores its cache
