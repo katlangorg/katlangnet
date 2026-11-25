@@ -79,7 +79,7 @@ summed into one total.
 | tutorial.md (all result claims) | `TutorialResultSweepTests` executes every fence followed by a `**Result(s):**` claim through `KatLangEngine.Run` and display-matches the claim (section 6a) | test failure |
 | tutorial.md (playground links) | `TutorialPlaygroundLinkTests` requires every fence to be followed by `[Open in Playground](https://katlang.org/#1/…)`, the code link of its exact source (section 6a) | test failure |
 | tutorial.md (semantic claims) | `TutorialSemanticContractTests` pins the ownership, binding, visibility, clause-arity, pattern-kind, call-boundary, and Grace-order FACTS behind the high-risk explanations through the elaborated AST, the semantic model, and structured codes (SYN-12B) — an output-only claim can print the right number for the wrong reason | test failure |
-| generator prompts | marker-delimited generated block in `.github/agents/katlang-generator.agent.md` AND `experimental/prompts/katlang-generator.txt`, rendered from cases flagged `IncludeInGeneratorPrompt` | staleness test failure |
+| generator prompts | marker-delimited generated block in `.github/agents/katlang-generator.agent.md` AND `docs/prompts/katlang-generator.txt`, rendered from cases flagged `IncludeInGeneratorPrompt` | staleness test failure |
 
 The Lean/C# trust boundary: the two implementations are never executed in one
 process. Both are checked against the SAME canonical neutral observation

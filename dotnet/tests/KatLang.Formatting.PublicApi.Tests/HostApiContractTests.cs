@@ -673,7 +673,7 @@ public class HostApiContractTests
             "docs/cli.md",
             "tutorial.md",
             ".github/agents/katlang-generator.agent.md",
-            "experimental/prompts/katlang-generator.txt",
+            "docs/prompts/katlang-generator.txt",
         ];
         string[] retiredNames =
         [

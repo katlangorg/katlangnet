@@ -25,7 +25,7 @@ public class LanguageSpecArtifactsGeneratorPromptTests
     private static readonly string[] PromptFiles =
     [
         ".github/agents/katlang-generator.agent.md",
-        "experimental/prompts/katlang-generator.txt",
+        "docs/prompts/katlang-generator.txt",
     ];
 
     public static TheoryData<string> PromptFilePaths()

@@ -101,7 +101,7 @@ Generated artifacts are never edited by hand and never rewritten by a verificati
 
 | Artifact | Flag | Filter |
 | --- | --- | --- |
-| `lean/LanguageSpecCases.lean` plus the `=== BEGIN GENERATED: katlang-spec-examples ===` block in `.github/agents/katlang-generator.agent.md` and `experimental/prompts/katlang-generator.txt` | `KATLANG_REGENERATE_LANGUAGE_SPEC` | `--filter LanguageSpecArtifacts` |
+| `lean/LanguageSpecCases.lean` plus the `=== BEGIN GENERATED: katlang-spec-examples ===` block in `.github/agents/katlang-generator.agent.md` and `docs/prompts/katlang-generator.txt` | `KATLANG_REGENERATE_LANGUAGE_SPEC` | `--filter LanguageSpecArtifacts` |
 | `lean/SemanticExplorerCases.lean` | `KATLANG_REGENERATE_SEMANTIC_EXPLORER` | `--filter SemanticExplorerLeanArtifact` |
 | `dotnet/tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt` | `KATLANG_REGENERATE_PUBLIC_API` | `--filter PublicApiBaseline` |
 | `lean/CoreTests/HostParentDifferential.lean` | `KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL` | `--filter HostParentDifferential` |

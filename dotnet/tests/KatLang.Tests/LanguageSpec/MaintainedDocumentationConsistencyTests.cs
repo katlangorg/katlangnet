@@ -35,7 +35,7 @@ public class MaintainedDocumentationConsistencyTests
         "tutorial.md",
         "KatLang.ebnf",
         ".github/agents/katlang-generator.agent.md",
-        "experimental/prompts/katlang-generator.txt",
+        "docs/prompts/katlang-generator.txt",
         "docs/design/language-rules/README.md",
         "docs/design/language-rules/syntax.md",
         "docs/design/language-rules/sequences-lists-and-calls.md",
@@ -528,14 +528,14 @@ public class MaintainedDocumentationConsistencyTests
     [InlineData("AGENTS.md")]
     [InlineData("docs/design/language-rules/syntax.md")]
     [InlineData(".github/agents/katlang-generator.agent.md")]
-    [InlineData("experimental/prompts/katlang-generator.txt")]
+    [InlineData("docs/prompts/katlang-generator.txt")]
     [InlineData("tutorial.md")]
     public void PrecedenceLadder_ListsTheFrozenTiersInOrder(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath)).ReplaceLineEndings("\n");
         var tokens = relativePath switch
         {
-            "experimental/prompts/katlang-generator.txt" => NumberedLadderTokens(text),
+            "docs/prompts/katlang-generator.txt" => NumberedLadderTokens(text),
             "tutorial.md" => ReferenceTableLadderTokens(text),
             _ => InlineLadderTokens(text),
         };
@@ -569,7 +569,7 @@ public class MaintainedDocumentationConsistencyTests
     [Theory]
     [InlineData("tutorial.md")]
     [InlineData(".github/agents/katlang-generator.agent.md")]
-    [InlineData("experimental/prompts/katlang-generator.txt")]
+    [InlineData("docs/prompts/katlang-generator.txt")]
     public void UserFacingGuide_StatesZeroBasedIndexing(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
@@ -580,7 +580,7 @@ public class MaintainedDocumentationConsistencyTests
     [InlineData("docs/design/language-rules/ownership-and-lookup.md")]
     [InlineData("tutorial.md")]
     [InlineData(".github/agents/katlang-generator.agent.md")]
-    [InlineData("experimental/prompts/katlang-generator.txt")]
+    [InlineData("docs/prompts/katlang-generator.txt")]
     public void GraceGroupTranslation_StatesItsZeroWeightCondition_AndTheSplitCounterexample(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
@@ -664,7 +664,7 @@ public class MaintainedDocumentationConsistencyTests
     /// </summary>
     [Theory]
     [InlineData(".github/agents/katlang-generator.agent.md")]
-    [InlineData("experimental/prompts/katlang-generator.txt")]
+    [InlineData("docs/prompts/katlang-generator.txt")]
     public void GeneratorGuidance_StatesBothLineFinalStarReadingsAndTheClosingIdioms(string relativePath)
     {
         var text = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));

@@ -66,7 +66,7 @@ public sealed class CliApplicationTests
     [InlineData("tutorial.md")]
     [InlineData("AGENTS.md")]
     [InlineData(".github/agents/katlang-generator.agent.md")]
-    [InlineData("experimental/prompts/katlang-generator.txt")]
+    [InlineData("docs/prompts/katlang-generator.txt")]
     [InlineData(".github/workflows/release.yml")]
     [InlineData("docs/design/seeded-randomness-2026-09.md")]
     [InlineData("docs/design/language-rules/evaluator-and-hosting.md")]

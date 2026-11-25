@@ -24,7 +24,7 @@ Shared instructions for AI coding agents (Codex, Claude Code and others) working
 - `dotnet/src/KatLang/` — C# AST, lexer, parser, front-end elaboration, evaluator, diagnostics, public API; `dotnet/src/KatLang/Semantics/` — editor tooling only, not the evaluator and not normative; `dotnet/src/KatLang/SEMANTIC-ALIGNMENT.md` — the Lean/C# alignment manifest; `dotnet/src/KatLang.CLI/` — the `katlang` tool.
 - `dotnet/tests/KatLang.Tests/`, `dotnet/tests/KatLang.CLI.Tests/`, `dotnet/tests/KatLang.Formatting.PublicApi.Tests/` (the deliberately non-friend public-API project).
 - `docs/design/language-rules/` — the full rules; its `README.md` maps each subsystem to the file to read first.
-- `tutorial.md`, `KatLang.ebnf`, `.github/agents/katlang-generator.agent.md`, `experimental/prompts/katlang-generator.txt` — user and generator guidance that must match real behavior.
+- `tutorial.md`, `KatLang.ebnf`, `.github/agents/katlang-generator.agent.md`, `docs/prompts/katlang-generator.txt` — user and generator guidance that must match real behavior.
 - `README.md` (front page and NuGet readme), `docs/dotnet.md` (host API), `docs/cli.md` (the `katlang` tool), `docs/testing-and-validation.md`, `docs/ci-and-releases.md`, `docs/design/executable-language-spec.md`.
 
 ## Making a change
@@ -101,7 +101,7 @@ Generated artifacts are never edited by hand, and a verification run never rewri
 ## Documentation
 
 - Update `KatLang.ebnf` when the lexer or parser grammar changes, and `tutorial.md` when user-facing behavior changes. `EbnfLexicalSyncTests` checks the EBNF's identifier and keyword claims: changing identifier characters or the keyword set updates the lexer, the EBNF and those contract tests together (harmless wrapping and reordering are not policy changes).
-- When syntax, builtins, `open`/`load` or recommended code-generation idioms change, update the generator guidance — always both `.github/agents/katlang-generator.agent.md` and `experimental/prompts/katlang-generator.txt`.
+- When syntax, builtins, `open`/`load` or recommended code-generation idioms change, update the generator guidance — always both `.github/agents/katlang-generator.agent.md` and `docs/prompts/katlang-generator.txt`.
 - `README.md` is the short front page and the NuGet readme, so its links are absolute; host API details belong in `docs/dotnet.md` and `katlang` tool details in `docs/cli.md`. Their examples, CLI lines and shipped bounds are pinned (`HostApiContractTests`, `PublicTerminalSafeDiagnosticConsumerTests`, `ProgramLinkDocumentationTests`, `SourceCommandCliTests`, `CliApplicationTests`).
 - Prose that restates a rule is checked: `MaintainedDocumentationConsistencyTests` rejects superseded formulations in the maintained documents (this file included) and requires certain restatements, such as the precedence ladder and the line-final star rule of the compact index; `SlowTierInventoryTests` reads the slow-tier bullet in § Validation.
 
