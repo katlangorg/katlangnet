@@ -1,8 +1,8 @@
 {
   "stryker-config": {
-    "solution": "dotnet/KatLang.slnx",
+    "solution": "KatLang.slnx",
     "project": "KatLang.csproj",
-    "test-projects": [ "dotnet/tests/KatLang.Tests/KatLang.Tests.csproj" ],
+    "test-projects": [ "tests/KatLang.Tests/KatLang.Tests.csproj" ],
     "mutate": [
       "**/Result.cs",
       "**/ParameterDetector.cs",

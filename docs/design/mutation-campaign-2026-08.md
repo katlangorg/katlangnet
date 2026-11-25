@@ -1,6 +1,6 @@
 # Mutation-testing campaign — semantic core (2026-08-22)
 
-Tool: Stryker.NET 4.16.0 (pinned in `dotnet-tools.json`). Config: `stryker-config.json`.
+The campaign uses Stryker.NET 4.16.0 (pinned in `dotnet-tools.json`) and [the .NET mutation configuration](../../dotnet/stryker-config.json).
 Reports (gitignored): `artifacts/stryker/{calibration,core,evalcore}/reports/`.
 Lean-side counterpart (one decision of the Lean model at a time against the generated differential
 corpora): `lean-model-mutation-campaign-2026-11.md`.
@@ -157,7 +157,7 @@ timeouts (ParameterDetector 274, 948) have no obvious mechanism and are recorded
     reported as NoCoverage (preserved at `artifacts/stryker/closure-2026-08-28-invalid-capture`).
     This retroactively explains finding 6: the 2026-08-22 capture run also died, just late
     enough in the assembly-dependent xunit order to leave usable coverage. Fix: the
-    `test-case-filter` key in `stryker-config.json` (honored by Stryker 4.16 though absent from
+    `test-case-filter` key in `dotnet/stryker-config.json` (honored by Stryker 4.16 though absent from
     `--help`) excludes the nine dedicated stack/depth-calibration suites (187 tests) from all
     Stryker test runs. A filtered NameSuggestions probe reproduced the 2026-08-22 measurement
     exactly (NoCoverage 5, score 88.62 % vs 88.6 %) with the capture run lasting the full suite
@@ -271,7 +271,7 @@ classifying them would launder measurement noise into evidence. The consolidated
 stays PENDING until the coverage channel is trustworthy; candidate paths are a test-platform /
 SDK servicing update, a Stryker release with a more robust coverage transport, or migrating the
 suite to xunit v3 + Microsoft.Testing.Platform (an infrastructure decision beyond this
-campaign). Rerun readiness is otherwise complete — recomputed offsets
+campaign). At that revision the other settings were ready for a rerun — recomputed offsets
 (`scripts/compute-stryker-offsets.ps1 -Update`), the capture-protecting `test-case-filter`, and
 the union scope — and the acceptance bar for a future run is: the report must show coverage
 attributed for roughly 10,000+ of the suite's tests (distinct `coveredBy` ids) before its
@@ -279,11 +279,17 @@ statuses may be read as measurement.
 
 ## 10. Reproducing
 
-`stryker-config.json` holds the union scope used here. Run:
+`dotnet/stryker-config.json` records the scope used in August 2026. Before rerunning the
+campaign against the current evaluator, update the offset helper and its ranges. The helper's
+first section marker (`// ── Bind parameters`) is gone, and the last recorded range extends
+beyond the end of `Evaluator.cs`.
+
+Once the ranges match the revision under test, start from the repository root and run:
 
 ```
 dotnet tool restore
-dotnet stryker --skip-version-check --output artifacts/stryker/<name>
+cd dotnet
+dotnet stryker --skip-version-check --output ../artifacts/stryker/semantic-core
 ```
 
 The `Evaluator.cs` ranges in that config are CHARACTER OFFSETS (not line numbers; UTF-16 code

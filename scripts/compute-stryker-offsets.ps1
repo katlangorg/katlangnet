@@ -1,4 +1,4 @@
-# Derives the three Evaluator.cs mutation ranges in stryker-config.json from the
+# Derives the three Evaluator.cs mutation ranges in dotnet/stryker-config.json from the
 # file's stable region banners, and validates that the known mutation-campaign
 # sites fall inside the intended ranges (see docs/design/mutation-campaign-2026-08.md).
 #
@@ -12,13 +12,13 @@
 #
 # Usage:
 #   pwsh ./scripts/compute-stryker-offsets.ps1           # print + validate
-#   pwsh ./scripts/compute-stryker-offsets.ps1 -Update   # also rewrite stryker-config.json
+#   pwsh ./scripts/compute-stryker-offsets.ps1 -Update   # also rewrite dotnet/stryker-config.json
 param([switch]$Update)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $evaluatorPath = Join-Path $repoRoot 'dotnet/src/KatLang/Evaluator.cs'
-$configPath = Join-Path $repoRoot 'stryker-config.json'
+$configPath = Join-Path $repoRoot 'dotnet/stryker-config.json'
 $text = [System.IO.File]::ReadAllText($evaluatorPath)
 
 function Find-UniqueIndex([string]$needle) {
@@ -92,9 +92,9 @@ Assert-InRegion 'Math.RandomInt bounds must not exceed 1e34 in magnitude' 2
 if ($Update) {
     $config = [System.IO.File]::ReadAllText($configPath)
     $pattern = '\*\*/Evaluator\.cs(\{\d+\.\.\d+\})+'
-    if ($config -notmatch $pattern) { throw 'Evaluator.cs mutate entry not found in stryker-config.json.' }
+    if ($config -notmatch $pattern) { throw "Evaluator.cs mutate entry not found in $configPath." }
     $updated = [System.Text.RegularExpressions.Regex]::Replace($config, $pattern, $mutatePattern.Replace('**/', '**/'))
     [System.IO.File]::WriteAllText($configPath, $updated)
     $null = (Get-Content $configPath -Raw | ConvertFrom-Json)  # must stay valid JSON
-    Write-Host "stryker-config.json updated and re-validated as JSON."
+    Write-Host "$configPath updated and re-validated as JSON."
 }
