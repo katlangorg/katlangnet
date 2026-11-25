@@ -93,6 +93,8 @@ public static partial class Evaluator
     /// <paramref name="unobserved"/> (per-site retention, <see cref="EvaluationBudget.UsesPerSiteInvocationPlans"/>)
     /// marks a slot whose resolved callee cannot pass the cell on (<see cref="IsUnobservedSupplySlot"/>): a
     /// written invocation there keeps the ordinary suspension, exactly as in a run without plans.
+    /// A <paramref name="literalElement"/> transports a parameter by the same rule. A fresh cell at
+    /// that site belongs to the literal and has only a VALUE channel.
     /// <para>THE TRANSPORT OF AN UNAVAILABLE PARAMETER IS REFUSED (EXPORTED-DETACHED, November 2026):
     /// a parameter whose lexical owner has no usable activation
     /// (<see cref="ParameterActivation.IsUnavailable"/>) has no cell to transport, and none is
@@ -104,25 +106,28 @@ public static partial class Evaluator
     /// demanded or projected by the operation that establishes them, which reports the same
     /// refusal. Lean: <c>supplyNeed</c> over <c>capturedParameterActivation?</c>.</para>
     /// </summary>
-    internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values, bool retained = false, bool unobserved = false)
+    internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values, bool retained = false,
+        bool unobserved = false, bool literalElement = false)
     {
         if (expression is Expr.Param(var name))
         {
-            var parameterCtx = ParameterContext(name, caller, ref values);
+            var parameterValues = values;
+            var parameterCtx = ParameterContext(name, caller, ref parameterValues);
             if (LookupNeed(parameterCtx.NeedEnv, name) is { } existing) return existing;
             if (UnavailableParameterRefusal(name, expression.Span, caller) is { } refusal)
                 return NeedCell.Refused(refusal, expression);
+            if (!literalElement) values = parameterValues;
         }
         ExpressionSuspension suspension;
         var runtimeProjection = false;
-        if (caller.Budget.RetainsInvocationPlans && !unobserved && IsPlannableCall(expression))
+        if (caller.Budget.RetainsInvocationPlans && !unobserved && !literalElement && IsPlannableCall(expression))
         {
             caller.Observations?.RecordInvocationPlan();
             suspension = new InvocationPlan(caller, values);
         }
         else if (expression is Expr.DotCall { Args: null } edge && IsRuntimeProjectionSource(edge, caller.Budget))
         {
-            if (!retained) NeedCell.ThrowIfAllocatingRuntimeProjectionWhileObserving();
+            if (!retained && !literalElement) NeedCell.ThrowIfAllocatingRuntimeProjectionWhileObserving();
             runtimeProjection = true;
             suspension = edge.UsesDotAlgorithmIntrinsic() ? new LinkSuspension(caller, values) : new ExpressionSuspension(caller, values);
         }
@@ -132,11 +137,20 @@ public static partial class Evaluator
             // META-S3-2: resolving this reference's identity reaches a runtime-target alias's runtime
             // projection, so the reference cell is a runtime projection from its formation — never
             // runtime work under an identity-only cell lock, and never a second wrapper cell.
-            if (!retained) NeedCell.ThrowIfAllocatingRuntimeProjectionWhileObserving();
+            if (!retained && !literalElement) NeedCell.ThrowIfAllocatingRuntimeProjectionWhileObserving();
             runtimeProjection = true;
             suspension = new ExpressionSuspension(caller, values);
         }
-        else suspension = new ExpressionSuspension(caller, values);
+        else suspension = literalElement ? new ElementSuspension(caller, values) : new ExpressionSuspension(caller, values);
+
+        if (literalElement)
+        {
+            // Keep the same run-wide classification for later paths and the same VALUE route
+            // and blame for this expression. Only the literal owns the cell we allocate here.
+            if (runtimeProjection) caller.Budget.NoteRuntimeProjection();
+            LazyStageTestSeam.NoteElementSuspension(suspension);
+            return new NeedCell(expression, suspension, caller.Budget, caller.Budget.CancellationToken);
+        }
         return new NeedCell(expression, suspension, caller.Budget, runtimeProjection, caller.Budget.CancellationToken);
     }
 
@@ -148,21 +162,15 @@ public static partial class Evaluator
     /// literal reported it when it evaluated its elements itself.
     /// </summary>
     internal static NeedCell SupplyElementCell(Expr element, EvalCtx caller, ValEnv values)
-    {
-        var cell = SupplyCell(element, caller, values, unobserved: true);
-        // Only a cell formed HERE for this element is re-suspended as an element. A parameter
-        // element resolved to the parameter's EXISTING cell (its source is the argument written
-        // at the call, never this element): that cell is the position, whatever kind of
-        // suspension the call gave it — a plain expression or an invocation plan alike.
-        return ReferenceEquals(cell.Source, element)
-            && cell.Suspension is { } suspension && suspension.GetType() == typeof(ExpressionSuspension) && !cell.HasRuntimeProjection
-            ? new NeedCell(element, new ElementSuspension(caller, values), caller.Budget, runtimeProjection: false, caller.Budget.CancellationToken)
-            : cell;
-    }
+        => SupplyCell(element, caller, values, literalElement: true);
 
     /// <summary>
     /// The suspension of a deferred LIST ELEMENT: an ordinary suspended expression whose value
-    /// boundary blames no argument slot (<see cref="FinishSuppliedValue"/>).
+    /// boundary blames no argument slot (<see cref="FinishSuppliedValue"/>). Its cell is a list
+    /// position's VALUE alone — no CALLABLE projection or META reads it and no plan executes it —
+    /// so the cell lets go of it once its VALUE computation has ended
+    /// (<see cref="NeedCell.ReleaseElementSuspension"/>, C# implementation only): a completed
+    /// element's outcome never needs the literal's environment, which can hold an earlier list.
     /// </summary>
     internal sealed class ElementSuspension(EvalCtx caller, ValEnv values) : ExpressionSuspension(caller, values);
 

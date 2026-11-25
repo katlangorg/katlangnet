@@ -310,9 +310,17 @@ internal sealed class NeedCell : NeedNode
     private ExceptionDispatchInfo? _exception;
     private EvalResult<Algorithm?>? _callable;
     // A written argument's suspension (Lean `NeedSuspension.expression source caller values`),
-    // kept as DATA rather than as closures over it. It is never cleared: CALLABLE projection may
-    // run after VALUE completion, and an invocation plan executes over it again (S0).
-    private readonly Evaluator.ExpressionSuspension? _suspension;
+    // kept as DATA rather than as closures over it. An argument's cell never clears it: CALLABLE
+    // projection may run after VALUE completion, and an invocation plan executes over it again (S0).
+    // A cell owned by a list literal is VALUE-only, so it lets go of its
+    // suspension once its VALUE computation has ended (ReleaseElementSuspension). Written only under
+    // the cell gate.
+    private Evaluator.ExpressionSuspension? _suspension;
+    // A literal position keeps a stable hash for waiters that remove their edge after completion.
+    // This value-type field fits in the cell's tail padding on .NET 11 x64.
+    private readonly bool _literalElement;
+    private readonly KeptHash _elementIdentityHash;
+    private readonly record struct KeptHash(int Value);
 
     /// <summary>
     /// The wait-for node of a cell's RUNTIME CALLABLE projection: the CALLABLE twin of the cell's
@@ -599,6 +607,16 @@ internal sealed class NeedCell : NeedNode
         if (suspension is Evaluator.InvocationPlan plan) plan.Attach(this);
     }
 
+    // A cell freshly allocated for a list position owns only its VALUE. Its suspension can still
+    // implement a specialized VALUE route, such as the receiver of a written .Algorithm link.
+    internal NeedCell(Expr source, Evaluator.ExpressionSuspension element, EvaluationBudget budget, CancellationToken token)
+        : this(source, element, budget, runtimeProjection: false, token)
+    {
+        _literalElement = true;
+        _elementIdentityHash = new(RuntimeHelpers.GetHashCode(element));
+        _callable = EvalResult<Algorithm?>.Ok(null);
+    }
+
     /// <summary>
     /// A host-built cell whose CALLABLE channel is a RUNTIME projection: <paramref name="project"/>
     /// / <paramref name="projectAsync"/> may demand other cells' VALUE and project other cells'
@@ -623,18 +641,44 @@ internal sealed class NeedCell : NeedNode
     }
 
     /// <summary>
-    /// The written argument's suspension, or <c>null</c> for a Ready, collector or host-built cell.
-    /// An <see cref="Evaluator.InvocationPlan"/> suspension marks the cell as an invocation plan (S0).
+    /// The written argument's suspension, or <c>null</c> for a Ready, collector or host-built cell
+    /// and for a list element's cell whose VALUE computation has ended (it released its suspension,
+    /// <see cref="HasReleasedSuspension"/>). An <see cref="Evaluator.InvocationPlan"/> suspension marks
+    /// the cell as an invocation plan (S0).
     /// </summary>
-    internal Evaluator.ExpressionSuspension? Suspension => _suspension;
+    internal Evaluator.ExpressionSuspension? Suspension => Volatile.Read(ref _suspension);
 
-    // The identity hash of a readonly object that belongs to this cell and that nobody locks: the
-    // written argument's suspension, the host-built cell's projection, or the collector's slice.
-    // It leaves this cell's header to its monitor. A Ready cell has none of them, but it is complete,
+    /// <summary>
+    /// Whether this cell is a list literal's element cell that let go of its suspension when its VALUE
+    /// computation ended (<see cref="ReleaseElementSuspension"/>).
+    /// </summary>
+    internal bool HasReleasedSuspension => _literalElement && Suspension is null;
+
+    // The identity hash of an object that belongs to this cell and that nobody locks: the written
+    // argument's suspension, the host-built cell's projection, or the collector's slice. It leaves this
+    // cell's header to its monitor. A list element's cell that released its suspension answers the hash
+    // that suspension had, kept at construction, so a table that keyed the cell before the release
+    // (a joiner's wait-for edge) still finds it. A Ready cell has none of them, but it is complete,
     // so no edge or resolution record ever keys on it. Only a test-built cell without a projection
     // falls back to its own header, which costs time, never correctness.
     private protected override int IdentityHash()
-        => RuntimeHelpers.GetHashCode(_suspension ?? _projection ?? (object?)Slice ?? this);
+        => _literalElement ? _elementIdentityHash.Value
+            : RuntimeHelpers.GetHashCode(_suspension ?? _projection ?? (object?)Slice ?? this);
+
+    /// <summary>
+    /// THE RELEASE OF A COMPLETED LIST ELEMENT'S EXECUTION STATE (C# implementation only, 2026-11-25).
+    /// Called under the cell gate where the VALUE computation's outcome is stored, by both completions.
+    /// A list literal's own deferred element cell is VALUE-only:
+    /// nothing projects its CALLABLE or reifies it, and no plan executes it again, so once its one VALUE
+    /// computation has ended its suspension — the literal's caller context and value environment, which
+    /// can hold an earlier round's list — is never read again. The cell keeps its outcome (a value, an
+    /// ordinary failure or a stored exception), its span and its written source, and its identity hash
+    /// stays the one it had. An argument's cell keeps its suspension.
+    /// </summary>
+    private void ReleaseElementSuspension()
+    {
+        if (_literalElement) Volatile.Write(ref _suspension, null);
+    }
 
     // Test observation only: whether this cell's VALUE has completed (successfully or not).
     internal bool HasCompletedValue
@@ -1277,6 +1321,7 @@ internal sealed class NeedCell : NeedNode
             _completed = result;
             _evaluate = null;
             _evaluateAsync = null;
+            ReleaseElementSuspension();
             var flight = _flight!;
             _flight = null;
             if (!ReferenceEquals(flight, UnjoinedFlight)) flight.TrySetResult(result);
@@ -1295,6 +1340,7 @@ internal sealed class NeedCell : NeedNode
             _exception = stored;
             _evaluate = null;
             _evaluateAsync = null;
+            ReleaseElementSuspension();
             var flight = _flight!;
             _flight = null;
             if (ReferenceEquals(flight, UnjoinedFlight)) return;

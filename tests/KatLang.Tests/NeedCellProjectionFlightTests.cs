@@ -830,6 +830,8 @@ public sealed class NeedCellProjectionFlightTests
             ["_evaluate", "_projection"],
             fields.Where(static field => field.FieldType == typeof(object)).Select(static field => field.Name).Order(StringComparer.Ordinal));
         Assert.DoesNotContain(fields, field => field.FieldType == typeof(Lock));
-        Assert.Equal(17, fields.Count);
+        // 2026-11-25: a list element's cell releases its suspension once its VALUE completed; it keeps
+        // the hash that suspension had and a flag (both in padding: the cell's size is unchanged).
+        Assert.Equal(19, fields.Count);
     }
 }

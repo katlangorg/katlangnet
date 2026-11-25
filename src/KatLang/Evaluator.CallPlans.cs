@@ -231,8 +231,10 @@ public static partial class Evaluator
     /// <summary>
     /// A written argument's suspension (Lean <c>NeedSuspension.expression source caller values</c>; the
     /// source is the owning cell's <see cref="NeedCell.Source"/>): the data the cell's VALUE and CALLABLE
-    /// projection run over. It is never rewritten after allocation and never released, exactly as the
-    /// closures it replaces were kept alive by the cell's CALLABLE projection.
+    /// projection run over. It is never rewritten after allocation, and an argument's cell never releases
+    /// it, exactly as the closures it replaces were kept alive by the cell's CALLABLE projection. Only a
+    /// list element's VALUE-only cell lets go of its suspension once its VALUE
+    /// computation has ended (<see cref="NeedCell.ReleaseElementSuspension"/>).
     /// </summary>
     internal class ExpressionSuspension(EvalCtx caller, ValEnv values)
     {

@@ -1082,6 +1082,7 @@ public static partial class Evaluator
         for (var index = 0; index < slots.Length; index++)
             slots[index] = ReferenceEquals(items[index], DeferredSlot) ? deferred[next++] : items[index];
         var positions = new KnownSlots(slots);
+        LazyStageTestSeam.NoteLiteral(positions);
         return EvalResult<CountedResult>.Ok(new CountedResult(DeferredList(positions, ctx.Budget), 1));
     }
 

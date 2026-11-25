@@ -44,7 +44,14 @@ public sealed class LazyStageRetentionTests
 
     // ── The reachability probe ────────────────────────────────────────────────────────────
 
-    private sealed record Probed(string Outcome, int Built, int Alive);
+    /// <summary>
+    /// A probed run: its outcome; the stages it built and how many are reachable at the probe; and the
+    /// same for the list literals it built with a deferred element and for their elements' suspensions
+    /// (the literals' environments).
+    /// </summary>
+    private sealed record Probed(
+        string Outcome, int Built, int Alive,
+        int LiteralsBuilt = 0, int LiteralsAlive = 0, int SuspensionsBuilt = 0, int SuspensionsAlive = 0);
 
     private static void ForceFullCollection()
     {
@@ -89,16 +96,28 @@ public sealed class LazyStageRetentionTests
     /// stage never comes back, and nothing of the run executes while the probe waits, so a stage the
     /// run itself still holds is counted in every attempt: the bound still catches every retention
     /// the release removed.</para>
+    /// <para><paramref name="settleLiteralsTo"/> and <paramref name="settleSuspensionsTo"/> bound, the same way, the
+    /// literals and the element suspensions a twin probe may still find reachable.</para>
     /// </summary>
-    private static async Task<Probed> RunProbedAsync(string source, bool twin, int? settleTo = null)
+    private static async Task<Probed> RunProbedAsync(
+        string source, bool twin, int? settleTo = null, int? settleLiteralsTo = null, int? settleSuspensionsTo = null)
     {
         using var recorder = LazyStageTestSeam.Activate();
         var alive = -1;
+        var literalsAlive = -1;
+        var suspensionsAlive = -1;
         int Count()
         {
             ForceFullCollection();
+            literalsAlive = recorder.LiteralsAlive();
+            suspensionsAlive = recorder.ElementSuspensionsAlive();
             return recorder.Alive();
         }
+
+        bool Settled()
+            => (settleTo is not { } bound || alive <= bound)
+                && (settleLiteralsTo is not { } literalBound || literalsAlive <= literalBound)
+                && (settleSuspensionsTo is not { } suspensionBound || suspensionsAlive <= suspensionBound);
 
         var operations = twin
             ? HostOperations.Create(
@@ -106,7 +125,7 @@ public sealed class LazyStageRetentionTests
                 {
                     await Task.Yield();
                     alive = Count();
-                    for (var attempt = 0; settleTo is { } bound && alive > bound && attempt < SettleAttempts; attempt++)
+                    for (var attempt = 0; !Settled() && attempt < SettleAttempts; attempt++)
                     {
                         await ThreadPoolTurnoverAsync();
                         await Task.Delay(SettleDelayMilliseconds);
@@ -134,7 +153,8 @@ public sealed class LazyStageRetentionTests
             ? await Evaluator.RunCountedAsync(program, new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations)
             : Evaluator.RunCountedObserved(program, hostOperations: operations).Result;
         var outcome = result.IsOk ? "ok " + SixRouteAgreement.Neutral(result.Value.Value) : "err " + result.Error.Code;
-        return new Probed(outcome, recorder.Built, alive);
+        return new Probed(outcome, recorder.Built, alive,
+            recorder.LiteralsBuilt, literalsAlive, recorder.ElementSuspensionsBuilt, suspensionsAlive);
     }
 
     // ── 1. A loop that reads every position of its new stage keeps only its last round ────────
@@ -293,4 +313,116 @@ public sealed class LazyStageRetentionTests
     [InlineData("Step(xs) = xs.map{x + 1}\nS = repeat(Step([1, 2]), 40)\nT = S.map{x + T[1]}\nS.sum, T.first", "err DemandCycle")]
     public async Task ADemandCycleInAStage_IsKeptAfterTheStageIsReleased(string source, string expected)
         => await Expect(source, expected);
+
+    // ── 4. List literals: a completed element lets go of the literal's environment ────────────
+
+    /// <summary>
+    /// A loop of <paramref name="rounds"/> rounds whose step builds a new LIST LITERAL from the previous
+    /// round's list, then <paramref name="reader"/> and the probe. A deferred element's suspension is the
+    /// literal's environment: the step's activation, whose parameter cell holds the previous round's list.
+    /// While a completed element's cell kept it, every earlier round stayed reachable through the newest
+    /// list, although the element's value is a number that needs none of it: about 1.2 KB per round,
+    /// 0.52 MiB of live heap after 250 rounds of a two-element literal and 1.45 MiB after 1,000 (measured
+    /// 2026-11-25; root path cell → suspension → activation → parameter cell → previous list → its cells).
+    /// A completed element's cell now keeps only its outcome (<c>NeedCell.ReleaseElementSuspension</c>).
+    /// </summary>
+    private static string LiteralLoop(string force, string step, string init, int rounds, string reader)
+        => force + "Step(xs) = Force(" + step + ")\nS = repeat(Step(" + init + "), " + Rounds(rounds) + ")\n" + reader + ", probe()";
+
+    /// <summary>
+    /// force, step, initial list, reader, literals and element suspensions each round builds, those the
+    /// initial list builds, the reader's value after 60 rounds and after 240 rounds.
+    /// </summary>
+    public static TheoryData<string, string, string, string, int, int, int, string, string> EveryRoundReadsItsLiteral() => new()
+    {
+        // The report's loop: both elements of each round's literal are read by the round itself.
+        { ForceAll, "[xs[0] + 1, xs[1] + 1]", "[1, 2]", "S.sum", 1, 2, 0, "123", "483" },
+        // Elements that suspend: each resumes on another thread (twin route) before it completes.
+        { ForceAll, "[pause(xs[0]) + 1, pause(xs[1]) + 1]", "[1, 2]", "S.sum", 1, 2, 0, "123", "483" },
+        // Both expressions can project when supplied as arguments. Here they are fresh literal
+        // positions. Their scalar results release the link receiver and the caller that bound xs.
+        { ForceAll + "One = 1\nMake(meta op, xs) = [op.Algorithm, xs.first]\n",
+            "Make(One(), xs)", "[1, 2]", "S.sum", 1, 2, 0, "2", "2" },
+        // A nested literal: the inner list is built when the outer element is read (the initial list's
+        // own nested element is one more deferred literal).
+        { "Force(l) = if(l[0][0] + l[1] >= 0, l, l)\n", "[[xs[0][0] + 1], xs[1] + 1]", "[[1], 2]", "S[0][0] + S[1]", 2, 3, 1, "123", "483" },
+        // A literal shared by two readers each round: the sum and a map stage over it.
+        { "Force(l) = if(sum(l) + l.map{x * 2}.sum >= 0, l, l)\n", "[xs[0] + 1, xs[1] + 1]", "[1, 2]", "S.sum", 1, 2, 0, "123", "483" },
+        // An explicit spread is formed with its list: the spread literal's element is read then.
+        { ForceAll, "[[xs[0] + 1]*, xs[1] + 1]", "[1, 2]", "S.sum", 2, 2, 0, "123", "483" },
+    };
+
+    [Theory]
+    [MemberData(nameof(EveryRoundReadsItsLiteral))]
+    public async Task ALoopThatReadsItsNewLiteralEveryRound_KeepsNoEarlierRoundReachable(
+        string force, string step, string init, string reader, int literalsPerRound, int elementsPerRound, int initial,
+        string fewRoundsValue, string manyRoundsValue)
+    {
+        // At most the last round's literals are reachable, and no read element keeps its suspension,
+        // however many rounds ran (before, every round's literals and suspensions were). One more
+        // literal is tolerated, as for stages: a twin probe settles to that bound (RunProbedAsync).
+        var bound = literalsPerRound + 1;
+        foreach (var twin in new[] { false, true })
+        {
+            var few = await RunProbedAsync(LiteralLoop(force, step, init, 60, reader), twin, settleLiteralsTo: bound, settleSuspensionsTo: bound);
+            var many = await RunProbedAsync(LiteralLoop(force, step, init, 240, reader), twin, settleLiteralsTo: bound, settleSuspensionsTo: bound);
+            Assert.Equal($"ok S[{fewRoundsValue}, 0]", few.Outcome);
+            Assert.Equal($"ok S[{manyRoundsValue}, 0]", many.Outcome);
+            Assert.Equal(60 * literalsPerRound + initial, few.LiteralsBuilt);
+            Assert.Equal(240 * literalsPerRound + initial, many.LiteralsBuilt);
+            Assert.Equal(60 * elementsPerRound + initial, few.SuspensionsBuilt);
+            Assert.Equal(240 * elementsPerRound + initial, many.SuspensionsBuilt);
+            Assert.InRange(few.LiteralsAlive, 1, bound);
+            Assert.InRange(many.LiteralsAlive, 1, bound);
+            Assert.InRange(few.SuspensionsAlive, 0, twin ? bound : 0);
+            Assert.InRange(many.SuspensionsAlive, 0, twin ? bound : 0);
+        }
+    }
+
+    [Fact]
+    public async Task ALoopThatLeavesElementsUnread_KeepsEveryLiteralWithItsEnvironmentUntilItIsRead()
+    {
+        const string step = "[xs[0] + 1, xs[1] + 1]";
+        foreach (var twin in new[] { false, true })
+        {
+            // Each round reads only the first element of its literal: every round's second element is
+            // still to be computed from the previous round's list, so it keeps that environment.
+            var partial = await RunProbedAsync(LiteralLoop(ForceFirst, step, "[1, 2]", 60, "S.first"), twin);
+            Assert.Equal("ok S[61, 0]", partial.Outcome);
+            Assert.Equal(60, partial.LiteralsBuilt);
+            Assert.Equal(60, partial.LiteralsAlive);
+            Assert.InRange(partial.SuspensionsAlive, 60, 120);
+
+            // The same loop read whole before the probe: every pending element is computed, from the
+            // first round's on, and lets go of its environment.
+            var whole = await RunProbedAsync(LiteralLoop(ForceFirst, step, "[1, 2]", 60, "S.sum"), twin, settleLiteralsTo: 2, settleSuspensionsTo: 2);
+            Assert.Equal("ok S[123, 0]", whole.Outcome);
+            Assert.InRange(whole.LiteralsAlive, 1, 2);
+            Assert.InRange(whole.SuspensionsAlive, 0, twin ? 2 : 0);
+
+            // Nothing is read before the probe (the result is read after it): every element is pending.
+            var unread = await RunProbedAsync("Step(xs) = " + step + "\nS = repeat(Step([1, 2]), 60)\nS, probe()", twin);
+            Assert.Equal("ok S[L[61, 62], 0]", unread.Outcome);
+            Assert.Equal(60, unread.LiteralsAlive);
+            Assert.Equal(120, unread.SuspensionsAlive);
+        }
+    }
+
+    [Fact]
+    public async Task AnElementWhoseValueIsThePreviousList_KeepsEveryListButNoEnvironment()
+    {
+        // The control whose OUTCOME keeps its input: the second element's value is the previous
+        // round's list, so every round's list stays reachable as a nested result, exactly as before.
+        // What the elements' suspensions held — every round's activation — is no longer reachable.
+        const string force = "Force(l) = if(l[0] + l[1].count >= 0, l, l)\n";
+        foreach (var twin in new[] { false, true })
+        {
+            var kept = await RunProbedAsync(LiteralLoop(force, "[xs[0] + 1, if(true, xs, xs)]", "[1, 2]", 60, "S.count"), twin, settleSuspensionsTo: 2);
+            Assert.Equal("ok S[2, 0]", kept.Outcome);
+            Assert.Equal(60, kept.LiteralsBuilt);
+            Assert.Equal(120, kept.SuspensionsBuilt);
+            Assert.Equal(60, kept.LiteralsAlive);
+            Assert.InRange(kept.SuspensionsAlive, 0, twin ? 2 : 0);
+        }
+    }
 }
