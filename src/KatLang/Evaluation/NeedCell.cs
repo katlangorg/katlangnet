@@ -1049,6 +1049,8 @@ internal sealed class NeedCell : NeedNode
                 await ProjectRuntimeComputationAsync(node).ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return ProjectionStarterOutcome(node);
             }
+            // A joined flight suspends this flow: its frames post their resumptions in an inline pump.
+            if (!task.IsCompleted) FoldTrampoline.BeginPostingUnwinding();
             try { return await task.ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
             catch
             {
@@ -1244,6 +1246,8 @@ internal sealed class NeedCell : NeedNode
                 await EvaluateAsync().ConfigureAwait(FoldTrampoline.CaptureFoldContext);
                 return StarterOutcome();
             }
+            // A joined flight suspends this flow: its frames post their resumptions in an inline pump.
+            if (!task.IsCompleted) FoldTrampoline.BeginPostingUnwinding();
             try { return await task.ConfigureAwait(FoldTrampoline.CaptureFoldContext); }
             catch
             {

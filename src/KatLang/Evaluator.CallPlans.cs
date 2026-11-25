@@ -1363,7 +1363,7 @@ public static partial class Evaluator
             var state = Volatile.Read(ref plan.Supply);
             if (state is not PlanPreparation preparing) return PlanSupplyOutcome(plan, state!);
             if (IsReentrantPlanPreparation(plan, preparing)) return new EvalError.DemandCycle { Span = plan.Source.Span };
-            if (EnsurePlanWaiters(plan, preparing) is { } waiters)
+            if (PlanWaiters(plan, preparing) is { } waiters)
                 waiters.Task.GetAwaiter().GetResult();
         }
     }
@@ -1442,8 +1442,17 @@ public static partial class Evaluator
             waiters.TrySetResult();
     }
 
-    // Returns the completion source to wait on, or null when the slot changed and must be read again.
+    // The asynchronous join's completion source (PlanWaiters). The waiting flow suspends on it, so in an inline
+    // fold pump its frames post their resumptions (FoldTrampoline.BeginPostingUnwinding).
     private static TaskCompletionSource? EnsurePlanWaiters(InvocationPlan plan, PlanPreparation preparing)
+    {
+        var waiters = PlanWaiters(plan, preparing);
+        if (waiters is not null) FoldTrampoline.BeginPostingUnwinding();
+        return waiters;
+    }
+
+    // Returns the completion source to wait on, or null when the slot changed and must be read again.
+    private static TaskCompletionSource? PlanWaiters(InvocationPlan plan, PlanPreparation preparing)
     {
         if (preparing.Waiters is { } existing) return existing;
         var waiting = new PlanPreparation(preparing.IsByInvocation, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));

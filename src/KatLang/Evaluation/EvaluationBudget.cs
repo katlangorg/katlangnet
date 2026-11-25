@@ -1230,6 +1230,54 @@ internal sealed class EvaluationBudget
     /// <summary>Counts one accumulator computation started on a fold's trampoline.</summary>
     internal void NoteHeapFoldSegment() => Interlocked.Increment(ref _heapFoldSegments);
 
+    /// <summary>
+    /// Steps of this run that a synchronous fold pump suspended with INLINE resumptions: their suspending frames
+    /// registered their continuations directly, to be resumed by the runtime in the pump's completion cascade
+    /// (<c>FoldTrampoline.TryRunSynchronously</c>). Observation only.
+    /// </summary>
+    internal long InlineFoldUnwindings => Interlocked.Read(ref _inlineFoldUnwindings);
+
+    private long _inlineFoldUnwindings;
+
+    /// <summary>Counts one step suspended with inline resumptions.</summary>
+    internal void NoteInlineFoldUnwinding() => Interlocked.Increment(ref _inlineFoldUnwindings);
+
+    /// <summary>
+    /// Of <see cref="InlineFoldUnwindings"/>, the steps whose suspending frames reached beyond the inline
+    /// allowances, so that the frames above posted their resumptions through the pump's queue instead.
+    /// Observation only.
+    /// </summary>
+    internal long InlineFoldUnwindingCuts => Interlocked.Read(ref _inlineFoldUnwindingCuts);
+
+    private long _inlineFoldUnwindingCuts;
+
+    /// <summary>Counts one inline unwinding cut by the inline allowances.</summary>
+    internal void NoteInlineFoldUnwindingCut() => Interlocked.Increment(ref _inlineFoldUnwindingCuts);
+
+    /// <summary>
+    /// Suspensions inside an inline pump's work that began posting their frames' resumptions through the pump's
+    /// queue instead (a stack hop, a joined flight, any demand other than the pump's own segment start):
+    /// <c>FoldTrampoline.BeginPostingUnwinding</c>. Observation only.
+    /// </summary>
+    internal long PostedFoldUnwindings => Interlocked.Read(ref _postedFoldUnwindings);
+
+    private long _postedFoldUnwindings;
+
+    /// <summary>Counts one posting unwinding inside an inline pump's work.</summary>
+    internal void NotePostedFoldUnwinding() => Interlocked.Increment(ref _postedFoldUnwindings);
+
+    /// <summary>
+    /// Frame resumptions this run's fold trampolines received through their scheduling context's queue: a
+    /// captured continuation the runtime posted instead of running it inline (<c>FoldTrampoline</c>). Observation
+    /// only.
+    /// </summary>
+    internal long PostedFoldResumptions => Interlocked.Read(ref _postedFoldResumptions);
+
+    private long _postedFoldResumptions;
+
+    /// <summary>Counts one frame resumption posted to a fold trampoline's queue.</summary>
+    internal void NotePostedFoldResumption() => Interlocked.Increment(ref _postedFoldResumptions);
+
     /// <summary>The enforced single-collection item limit.</summary>
     internal int MaxCollectionItems => _maxCollectionItems;
 

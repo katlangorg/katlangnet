@@ -51,6 +51,34 @@ namespace KatLang.Evaluation;
 /// (a host that suppressed it gets it back suppressed), because the heap continuations carry their flow in
 /// the execution context.</para>
 ///
+/// <para><b>Inline resumptions</b> (the cost of a heap step, November 2026). A suspended step is a chain of
+/// suspended state machines, one per evaluator frame between the step and its accumulator read (about twenty
+/// for a reducer such as <c>if(item &gt; acc, item, acc)</c>), and each one waits for the frame below it. A
+/// pump resumes them INLINE where it safely can: the frames register their continuations directly (no
+/// synchronization context captured, so no continuation object or delegate per frame), and when the step's
+/// accumulator completes, the runtime resumes them one inside the other in the pump's completion cascade, as
+/// any completed task's continuations run. The runtime does so only under the default task scheduler, with no
+/// synchronization context current, and with enough stack below the completing frame; elsewhere it would send
+/// the continuation to the thread pool. So a pump resumes inline only where all three hold for every cascade
+/// it runs (<see cref="TryRunSynchronously"/>): it starts under the default scheduler and finds the headroom
+/// below itself that the deepest admitted cascade needs; it runs its work with no synchronization context; and
+/// a step suspends inline only from the pump's own segment start, whose cascade the pump runs from its own
+/// frame, and only for its frames within <see cref="InlineResumeByteAllowance"/> and
+/// <see cref="InlineResumeFrameAllowance"/> of the demand. Every other suspension in such a pump — a frame
+/// beyond the allowances, a step that suspends again after resuming, a demand of another trampoline, a stack
+/// hop, a joined flight — registers POSTED resumptions (<see cref="BeginPostingUnwinding"/>): each suspending
+/// frame captures a pump context, chosen per unwinding and installed by <see cref="CaptureFoldContext"/> for
+/// that frame alone, because the method builder restores a frame's caller's context when the frame suspends.
+/// Posted frames that no inline frame waits above capture the CASCADING context: what they are posted runs in
+/// it, so they resume one inside the other wherever the runtime can inline them, as in every other pump. Only a
+/// resumed inline step that suspends again leaves inline frames waiting above posting ones; its posting frames
+/// capture the per-frame context, each resumes from the queue with no context current, and the inline frames
+/// above resume inline from there. The work that inline frames may wait above runs with no context current
+/// (each segment's waiting step records how it registered; <see cref="RegistersBelowInlineFrames"/>). Every
+/// other pump, and every drain loop of the asynchronous route, runs its work in its scheduling context, which
+/// every evaluator await captures, as before. Only where a frame resumes differs, never what it computes
+/// (<c>FoldInlineResumptionTests</c>).</para>
+///
 /// <para><b>Why it changes no run's meaning.</b> A segment is exactly the computation the demanding frame
 /// would have run in place, started at the demand and finished before the demanding step resumes: value,
 /// evaluation order, effects, random draws, budgets, limit verdicts and cancellation chokepoints are those of
@@ -58,9 +86,10 @@ namespace KatLang.Evaluation;
 /// under the demanding flow's execution context, so the wait-for node, the invocation preparation frames and
 /// the host's ambient state (NEED-09, <see cref="EvaluationFlow"/>) are the demander's; each resumed step
 /// continues under its own. Evaluator awaits inside a drain loop capture its private scheduling
-/// context. Deferred continuations are posted back to the calling thread, including when the runtime
-/// declines to inline at low stack. Each step keeps its own host execution and synchronization contexts
-/// for synchronous callbacks. A genuine suspension returns to its caller and resumes the queue on completion.</para>
+/// context, except where a pump resumes inline (above). Deferred continuations are posted back to the calling
+/// thread, including when the runtime declines to inline at low stack. Each step keeps its own host execution
+/// and synchronization contexts for synchronous callbacks. A genuine suspension returns to its caller and
+/// resumes the queue on completion.</para>
 /// </summary>
 internal sealed class FoldTrampoline
 {
@@ -82,8 +111,46 @@ internal sealed class FoldTrampoline
     /// </summary>
     internal const int HostStackByteAllowance = 128 * 1024;
 
+    /// <summary>
+    /// How far above its accumulator demand a pumped step's suspending frames may register INLINE resumptions
+    /// (see <see cref="TryRunSynchronously"/>), measured by stack addresses like
+    /// <see cref="HostStackByteAllowance"/>; the frames above it register posted ones. It bounds how deep the
+    /// step's completion cascade can reach below the pump. A fixed amount of host stack, never a limit.
+    /// </summary>
+    internal const int InlineResumeByteAllowance = 96 * 1024;
+
+    /// <summary>
+    /// How many of a pumped step's suspending frames may register inline resumptions, whatever their stack
+    /// addresses say: it bounds the runtime's completion frames that a cascade adds to each resumed frame.
+    /// </summary>
+    internal const int InlineResumeFrameAllowance = 128;
+
+    // The stack a pump must find below itself, beyond the runtime's own sufficient-stack reserve, to resume its
+    // steps inline: the deepest cascade the two allowances admit (measured ascents reach at most 1.3 times their
+    // descent, plus the runtime's completion frames, well under 1 KiB a frame), with a margin. Probed in steps
+    // smaller than half of the smallest reserve, so the probe never nears the end of the stack.
+    private const int InlineHeadroomStep = 32 * 1024;
+    private const int InlineHeadroomSteps = 14;
+
     // The innermost synchronous pump running on this thread, or null.
     [ThreadStatic] private static FoldTrampoline? t_pump;
+    // The pump whose segment START phase runs in the pump's own drain loop on this thread: the one place where
+    // an accumulator demand suspends a step with inline resumptions. Null everywhere else.
+    [ThreadStatic] private static FoldTrampoline? t_inlineStart;
+    // The pump whose step is unwinding with inline resumptions, the frames registered so far, and the stack
+    // position of the demand that suspended it.
+    [ThreadStatic] private static FoldTrampoline? t_inlineUnwinding;
+    [ThreadStatic] private static int t_inlineFrames;
+    [ThreadStatic] private static nint t_inlineOrigin;
+    // The pump context that every suspending frame of an inline pump's posting unwinding captures, or null.
+    [ThreadStatic] private static PumpContext? t_postingUnwinding;
+    // Whether inline-registered frames may wait above the frames the current work item of an inline pump resumes:
+    // a resumed inline step, or anything resumed from it. Its posting unwindings then post frame by frame.
+    [ThreadStatic] private static bool t_inlineFramesMayWait;
+    // A stack position of this thread known to have the inline headroom below it, and one known to lack it
+    // (0: none known). Positions above the first have it, positions below the second lack it.
+    [ThreadStatic] private static nint t_headroomAt;
+    [ThreadStatic] private static nint t_headroomLackedAt;
     // The drain loops (of any trampoline, pumping or not) running on this thread, innermost first.
     [ThreadStatic] private static DrainScope? t_drains;
     // How many fold continuations the synchronous evaluator keeps nested on this thread's stack, and the
@@ -106,12 +173,18 @@ internal sealed class FoldTrampoline
     private readonly Queue<object> _work = new();
     private bool _draining;
     private readonly PumpContext _schedulingContext;
+    // The context of an inline pump's posting unwinding that inline frames may wait above: each frame it resumes
+    // runs from the queue with no synchronization context, where a completed inline frame's waiter resumes inline.
+    // Created by the first such unwinding (only the pump's own thread reads it).
+    private PumpContext? _postingContext;
+    // Whether this trampoline's current synchronous pump resumes its steps inline: decided when the pump starts.
+    private bool _inlineResumes;
 
     /// <summary>The trampoline of one fold of the run <paramref name="run"/>.</summary>
     internal FoldTrampoline(EvaluationBudget run)
     {
         _run = run;
-        _schedulingContext = new PumpContext(this);
+        _schedulingContext = new PumpContext(this, cascading: true);
     }
 
     /// <summary>
@@ -131,8 +204,70 @@ internal sealed class FoldTrampoline
 
     internal static bool IsPumpingRun(EvaluationBudget budget) => ReferenceEquals(t_pump?._run, budget);
 
-    /// <summary>Evaluator awaits capture only a fold's ready queue. No host scheduler is captured.</summary>
-    internal static bool CaptureFoldContext => SynchronizationContext.Current is PumpContext;
+    /// <summary>
+    /// Evaluator awaits capture only a fold's ready queue. No host scheduler is captured. Inside an inline pump's
+    /// work with no synchronization context current, a frame of a step's inline unwinding captures nothing while it
+    /// stays within the inline allowances, and every frame of a posting unwinding captures the pump context the
+    /// unwinding chose, installed here for the one await that reads it: the method builder restores the frame's
+    /// caller's context when the frame suspends, so each suspending frame decides again (see
+    /// <see cref="TryRunSynchronously"/>).
+    /// </summary>
+    internal static bool CaptureFoldContext
+    {
+        get
+        {
+            if (SynchronizationContext.Current is PumpContext) return true;
+            if (t_postingUnwinding is { } posting)
+            {
+                SynchronizationContext.SetSynchronizationContext(posting);
+                return true;
+            }
+
+            return t_inlineUnwinding is { } pump && pump.LeavesInlineAllowance();
+        }
+    }
+
+    // One more frame of a pumped step's inline unwinding registers its continuation: true, turning the rest of the
+    // unwinding (this frame included) into a cascading posting one, when it lies beyond either inline allowance. A
+    // segment start's unwinding holds the step's whole chain, so no inline frame waits above its posting frames.
+    private bool LeavesInlineAllowance()
+    {
+        var frames = ++t_inlineFrames;
+        if (frames <= InlineResumeFrameAllowance && Position() - t_inlineOrigin <= InlineResumeByteAllowance)
+            return false;
+        t_inlineUnwinding = null;
+        t_postingUnwinding = _schedulingContext;
+        SynchronizationContext.SetSynchronizationContext(_schedulingContext);
+        _run.NoteInlineFoldUnwindingCut();
+        return true;
+    }
+
+    /// <summary>
+    /// Called where a suspension other than an inline-eligible accumulator demand begins inside an inline pump's
+    /// work (a stack hop, a joined flight, any other demand): every frame that now suspends registers a posted
+    /// resumption, which returns through the pump's queue wherever its awaitable completes. In work that inline
+    /// frames may wait above (a resumed inline step, see <see cref="RunItem"/>), each such frame is resumed from
+    /// the queue on its own; elsewhere they resume one inside the other wherever the runtime can inline them, as
+    /// in every other pump. Nothing changes outside an inline pump's work without a synchronization context: the
+    /// evaluator awaits capture the drain loop's context already. Only the unwinding that follows reads it: the
+    /// drain loop clears it when the work item ends.
+    /// </summary>
+    internal static void BeginPostingUnwinding()
+    {
+        if (t_pump is not { _inlineResumes: true } pump || SynchronizationContext.Current is not null || t_postingUnwinding is not null)
+            return;
+        t_inlineUnwinding = null;
+        t_postingUnwinding = t_inlineFramesMayWait
+            ? (pump._postingContext ??= new PumpContext(pump, cascading: false))
+            : pump._schedulingContext;
+        pump._run.NotePostedFoldUnwinding();
+    }
+
+    // Whether a frame registering its continuation now may have inline-registered frames waiting above it once it
+    // resumes: it registers inline itself, or in work inline frames may wait above, or without the cascading
+    // context. Read by a segment's waiting step (FoldSegment), whose resumption then runs with no context.
+    internal static bool RegistersBelowInlineFrames()
+        => t_inlineFramesMayWait || SynchronizationContext.Current is not PumpContext { Cascading: true };
 
     /// <summary>
     /// Whether a synchronous accumulator demanded at the current frame continues its fold on the heap: this
@@ -177,6 +312,47 @@ internal sealed class FoldTrampoline
         return Unsafe.ByteOffset(ref s_anchor, ref marker);
     }
 
+    // Whether stack addresses decrease as this runtime's stacks grow, which the inline allowances and the headroom
+    // memo measure by: where they do not, a pump never resumes inline.
+    private static readonly bool s_stackGrowsDown = DeeperPosition(Position());
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool DeeperPosition(nint caller) => Position() < caller;
+
+    // Whether the stack below the current frame holds the inline headroom beyond the runtime's reserve. Each
+    // thread memoizes the deepest position found to have it and the shallowest found to lack it: a thread's
+    // stack never moves, so a position above the first has it and one below the second lacks it.
+    private static bool HasInlineHeadroom()
+    {
+        if (!s_stackGrowsDown) return false;
+        var here = Position();
+        if (t_headroomAt != 0 && here >= t_headroomAt) return true;
+        if (t_headroomLackedAt != 0 && here <= t_headroomLackedAt) return false;
+        if (HasStackBeyondReserve(InlineHeadroomSteps))
+        {
+            t_headroomAt = here;
+            return true;
+        }
+
+        t_headroomLackedAt = here;
+        return false;
+    }
+
+    // Whether `steps` more InlineHeadroomStep blocks fit below the caller with the runtime's sufficient-stack
+    // reserve still below them. A block is taken only once the reserve is known to remain beneath it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool HasStackBeyondReserve(int steps)
+    {
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack()) return false;
+        if (steps == 0) return true;
+        Span<byte> block = stackalloc byte[InlineHeadroomStep];
+        return HasStackBeyondReserveBelow(block, steps - 1);
+    }
+
+    // Receives the block so the allocation stays live while the next one is probed.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool HasStackBeyondReserveBelow(Span<byte> block, int steps) => HasStackBeyondReserve(steps);
+
     /// <summary>
     /// The twin route's demand of <paramref name="segment"/>: queued here, and run now if no drain loop of
     /// this trampoline is running (this call then drains until nothing is queued). Returns the segment's
@@ -186,7 +362,24 @@ internal sealed class FoldTrampoline
     {
         segment.PrepareStart(this);
         if (Queue(segment))
+        {
             Drain(target: null, pumpContext: null);
+            if (!segment.IsCompleted) BeginPostingUnwinding();
+        }
+        else if (ReferenceEquals(t_inlineStart, this))
+        {
+            // The pump's own segment start suspends its step: the frames resume inline (see TryRunSynchronously).
+            t_inlineStart = null;
+            t_inlineUnwinding = this;
+            t_inlineFrames = 0;
+            t_inlineOrigin = Position();
+            _run.NoteInlineFoldUnwinding();
+        }
+        else
+        {
+            BeginPostingUnwinding();
+        }
+
         return new ValueTask<EvalResult<Evaluator.CountedResult>>(segment, 0);
     }
 
@@ -198,6 +391,10 @@ internal sealed class FoldTrampoline
     /// wait for work queued to that loop). A drain loop of another run — a host operation inside a heap step
     /// that starts a run of its own — does not stop it: no work of one run reaches another's trampoline.
     /// Throws the run's host exception or cancellation, the original object, when the segment ended with one.
+    /// <para>The pump RESUMES INLINE (see the class remarks) when it starts under the default task scheduler and
+    /// finds, below itself, the runtime's sufficient-stack reserve plus <c>InlineHeadroomSteps</c> blocks of
+    /// <c>InlineHeadroomStep</c> bytes — the deepest completion cascade the inline allowances admit, with a margin
+    /// (memoized per thread by stack position). Otherwise it posts every resumption, as every pump did before.</para>
     /// </summary>
     internal bool TryRunSynchronously(FoldSegment segment, EvaluationBudget budget, out EvalResult<Evaluator.CountedResult> outcome)
     {
@@ -222,6 +419,11 @@ internal sealed class FoldTrampoline
         // A host exception or a cancellation crosses many state machines on the way back: carried by value.
         var openedBoundary = !budget.CarriesHostTermination;
         if (openedBoundary) budget.OpenHostTerminationBoundary();
+        // Inline resumptions need the runtime to inline a completed task's continuations here: the default task
+        // scheduler, and the stack for the deepest cascade the inline allowances admit.
+        _inlineResumes = !FoldResumeTestSeam.WithholdsInlineResumes
+            && TaskScheduler.Current == TaskScheduler.Default
+            && HasInlineHeadroom();
         t_pump = this;
         try
         {
@@ -253,6 +455,8 @@ internal sealed class FoldTrampoline
     internal static bool TryPostHop(Action continuation)
     {
         if (t_pump is not { } pump) return false;
+        // The hop suspends its frame: the frames above it post their resumptions.
+        BeginPostingUnwinding();
         pump.QueueOrRun(new HopContinuation(continuation, EvaluationFlow.CaptureIfSuppressed()));
         return true;
     }
@@ -304,7 +508,26 @@ internal sealed class FoldTrampoline
                     work = _work.Dequeue();
                 }
 
-                Run(work, pumpContext);
+                // A pump's own segment start is where a step may suspend with inline resumptions.
+                var outerStart = t_inlineStart;
+                var outerUnwinding = t_inlineUnwinding;
+                var outerPosting = t_postingUnwinding;
+                var outerMayWait = t_inlineFramesMayWait;
+                t_inlineStart = target is not null && _inlineResumes && work is FoldSegment { IsStarting: true } ? this : null;
+                t_inlineUnwinding = null;
+                t_postingUnwinding = null;
+                t_inlineFramesMayWait = InlineFramesMayWaitAbove(work);
+                try
+                {
+                    Run(work, pumpContext);
+                }
+                finally
+                {
+                    t_inlineStart = outerStart;
+                    t_inlineUnwinding = outerUnwinding;
+                    t_postingUnwinding = outerPosting;
+                    t_inlineFramesMayWait = outerMayWait;
+                }
             }
         }
         catch
@@ -342,9 +565,27 @@ internal sealed class FoldTrampoline
         finally { SynchronizationContext.SetSynchronizationContext(synchronization); }
     }
 
+    // Whether inline-registered frames may wait above what `work` resumes (see t_inlineFramesMayWait): a segment
+    // start resumes nothing; a resumed step's waiter records how it registered; a cascading post resumes a frame
+    // whose waiters all captured the cascading context; anything else may sit below inline frames.
+    private static bool InlineFramesMayWaitAbove(object work) => work switch
+    {
+        FoldSegment segment => !segment.IsStarting && segment.InlineFramesMayWaitAbove,
+        PostedContinuation posted => !posted.Cascading,
+        _ => true,
+    };
+
+    // Every drain loop but an inline pump's runs its work in the pump's or its own scheduling context, which every
+    // evaluator await captures. An inline pump's drain loops run with no synchronization context, where the
+    // runtime inlines a completed task's continuations, the work that inline-registered frames may wait above
+    // (whose completion would resume them) and every segment start (whose demand may suspend inline); they run
+    // any other work in the pump's scheduling context, so that its posting frames resume one inside the other.
     private static readonly ContextCallback RunItem = static work =>
     {
-        SynchronizationContext.SetSynchronizationContext((t_pump ?? t_drains!.Trampoline)._schedulingContext);
+        var pump = t_pump;
+        SynchronizationContext.SetSynchronizationContext(pump is not { _inlineResumes: true }
+            ? (pump ?? t_drains!.Trampoline)._schedulingContext
+            : work is FoldSegment { IsStarting: true } || t_inlineFramesMayWait ? null : pump._schedulingContext);
         if (work is FoldSegment segment)
         {
             segment.RunPhase();
@@ -369,12 +610,20 @@ internal sealed class FoldTrampoline
         internal EvaluationFlow.Handover? Handover { get; } = handover;
     }
 
-    private sealed record PostedContinuation(SendOrPostCallback Callback, object? State);
+    private sealed record PostedContinuation(SendOrPostCallback Callback, object? State, bool Cascading);
 
-    private sealed class PumpContext(FoldTrampoline pump) : SynchronizationContext
+    // A trampoline's private scheduling context: what it is posted runs from its queue. A CASCADING context's
+    // posts run in it, so the frames that captured it resume one inside the other wherever the runtime can inline
+    // them; the other one's posts run with no synchronization context (an inline pump's per-frame posting).
+    private sealed class PumpContext(FoldTrampoline pump, bool cascading) : SynchronizationContext
     {
+        internal bool Cascading => cascading;
+
         public override void Post(SendOrPostCallback callback, object? state)
-            => pump.QueueOrRun(new PostedContinuation(callback, state));
+        {
+            pump._run.NotePostedFoldResumption();
+            pump.QueueOrRun(new PostedContinuation(callback, state, cascading));
+        }
     }
 
     /// <summary>
@@ -476,6 +725,8 @@ internal abstract class FoldSegment : IValueTaskSource<EvalResult<Evaluator.Coun
     private object? _waiterState;
     private ExecutionContext? _waiterContext;
     private EvaluationFlow.Handover? _waiterHandover;
+    // Whether inline-registered frames may wait above the waiting step's frames (see FoldTrampoline.RunItem).
+    private bool _inlineFramesMayWaitAbove;
     // Set when the resume is queued: the drain loop then resumes the waiter instead of starting.
     private Action<object?>? _resume;
     // The outcome, and the running computation while it is pending.
@@ -488,6 +739,13 @@ internal abstract class FoldSegment : IValueTaskSource<EvalResult<Evaluator.Coun
     protected abstract ValueTask<EvalResult<Evaluator.CountedResult>> RunSegment();
 
     internal bool IsCompleted => ReferenceEquals(Volatile.Read(ref _waiter), Completed);
+
+    // Whether the queued phase is the start (otherwise it resumes the waiting step).
+    internal bool IsStarting => _resume is null;
+
+    // Whether inline-registered frames may wait above the waiting step: it registered inline, or in work that
+    // inline frames may wait above, or with no cascading context.
+    internal bool InlineFramesMayWaitAbove => _inlineFramesMayWaitAbove;
 
     // The execution context of the queued phase (null: the pump's own, or none).
     internal ExecutionContext? WorkContext => _resume is null ? _startContext : _waiterContext;
@@ -605,6 +863,7 @@ internal abstract class FoldSegment : IValueTaskSource<EvalResult<Evaluator.Coun
         _waiterState = state;
         _waiterContext = ExecutionContext.Capture();
         _waiterHandover = _waiterContext is null ? EvaluationFlow.CaptureIfSuppressed() : null;
+        _inlineFramesMayWaitAbove = FoldTrampoline.RegistersBelowInlineFrames();
         if (Interlocked.CompareExchange(ref _waiter, continuation, null) is null)
             return;
 
