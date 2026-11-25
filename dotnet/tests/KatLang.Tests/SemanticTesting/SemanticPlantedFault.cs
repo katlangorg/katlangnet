@@ -3,7 +3,7 @@ using KatLang.ParserFuzz;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// The TEST-ONLY planted-fault seam of the semantic campaign (SEM-2C, fuzz/README.md § Campaigns): a
+/// The TEST-ONLY planted-fault seam of the semantic campaign (SEM-2C, dotnet/fuzz/README.md § Campaigns): a
 /// forged observation that is WRONG but WELL-FORMED for every case kind — a success, an expected
 /// runtime failure and an intended front-end refusal alike — so a supervised worker writes it and every
 /// result reader accepts it as an ordinary <see cref="SemanticVerdict.Mismatch"/>. It adds ONE host event

@@ -105,7 +105,7 @@ public sealed record SourceProcessingLimits
     /// which rejects a longer source with an <see cref="ArgumentOutOfRangeException"/>. <see cref="MaxSourceLength"/> can only request a lower limit.
     ///
     /// <para>Checked before tokenization, so an oversized submission never allocates tokens or
-    /// nodes. Calibrated by the process-isolated source probes (<c>fuzz/KatLang.ParserFuzz</c>,
+    /// nodes. Calibrated by the process-isolated source probes (<c>dotnet/fuzz/KatLang.ParserFuzz</c>,
     /// <c>source-probe</c>): measured token and ordinary node counts scale linearly once the
     /// frontend O(P^2) sibling-map passes and the wide-deconstruction elaboration were made linear
     /// and conditional clause-family duplicate checks bounded by ordered canonical keys and binder

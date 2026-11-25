@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// Exhaustive campaigns over the FINITE nested recipes and the wide nested recipe (fuzz/README.md
+/// Exhaustive campaigns over the FINITE nested recipes and the wide nested recipe (dotnet/fuzz/README.md
 /// § Campaigns, § Families and interactions). The enumeration of <c>seed-nested</c> (3,472 programs)
 /// and <c>seed-nested-wide</c> (26,064) is exact, deterministic and complete — every seeded case is
 /// one of its programs; an enumerated id is canonical and rebuilds its program; an exhaustive
@@ -336,7 +336,7 @@ public class SemanticExhaustiveCampaignTests(ITestOutputHelper output)
     /// The CI smoke of the exhaustive mode: a FIXED strided slice across the whole enumeration of both
     /// finite recipes (every 97th <c>seed-nested</c> program, every 401st <c>seed-nested-wide</c>
     /// program) runs in process under every profile and passes. The full sweeps are manual
-    /// (<c>semantic-campaign --exhaustive</c>; fuzz/README.md § Campaigns).
+    /// (<c>semantic-campaign --exhaustive</c>; dotnet/fuzz/README.md § Campaigns).
     /// </summary>
     [Fact]
     public void AStridedSliceOfBothFiniteRecipes_PassesInProcess()

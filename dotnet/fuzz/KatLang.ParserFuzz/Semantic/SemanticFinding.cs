@@ -6,7 +6,7 @@ namespace KatLang.ParserFuzz;
 /// Which check of <see cref="SemanticRunner"/> produced a finding. The set is STABLE: every member
 /// has a fixed serialized name (<see cref="SemanticFindingFacets.Name"/>) and a fixed reduction
 /// signature facet (<see cref="SemanticFindingFacets.SignatureFacet"/>). Rewording a finding's text
-/// never changes either; adding a check adds a member (fuzz/README.md § Reduction).
+/// never changes either; adding a check adds a member (dotnet/fuzz/README.md § Reduction).
 /// </summary>
 internal enum SemanticFindingFacet
 {

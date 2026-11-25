@@ -6,7 +6,7 @@ using KatLang.Tests.StructuralFuzz;
 namespace KatLang.ParserFuzz;
 
 /// <summary>
-/// The WIDER nested-pattern production of the <c>seed-nested-wider</c> recipe (fuzz/README.md
+/// The WIDER nested-pattern production of the <c>seed-nested-wider</c> recipe (dotnet/fuzz/README.md
 /// § Families and interactions). It writes what <see cref="SemanticNestedWide"/> does not:
 /// collectors at every level including the third, each collecting level's collector placed first,
 /// in the middle or last; repeated names in nested positions (NEED-04's group-aware repeated names,

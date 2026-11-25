@@ -239,7 +239,7 @@ internal sealed record SemanticCampaignResult(
 }
 
 /// <summary>
-/// <c>semantic-campaign</c> (SEM-2C, fuzz/README.md § Campaigns): a BOUNDED, deterministic search for
+/// <c>semantic-campaign</c> (SEM-2C, dotnet/fuzz/README.md § Campaigns): a BOUNDED, deterministic search for
 /// failing generated cases. It enumerates the ids <c>sem2b/v2/&lt;recipe&gt;/&lt;seed&gt;/&lt;index&gt;</c> of ONE
 /// seeded recipe (<c>--recipe seed|seed-nested|seed-nested-wide|seed-nested-wider</c>, default <c>seed</c>;
 /// <see cref="SemanticCorpus.SeededRecipes"/>) for every seed of an inclusive hex range and every

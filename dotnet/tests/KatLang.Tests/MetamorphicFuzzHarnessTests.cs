@@ -6,7 +6,7 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// Deterministic coverage for the operational-metamorphic fuzz target
-/// (<c>KATLANG_FUZZ_MODE=metamorphic</c>, <c>fuzz/KatLang.ParserFuzz/Metamorphic</c>).
+/// (<c>KATLANG_FUZZ_MODE=metamorphic</c>, <c>dotnet/fuzz/KatLang.ParserFuzz/Metamorphic</c>).
 ///
 /// <para>The harness core is compiled into this assembly as shared source, so these tests
 /// exercise the very decoder, template, executor, comparator, and replay driver the campaign
@@ -19,7 +19,7 @@ namespace KatLang.Tests;
 public class MetamorphicFuzzHarnessTests
 {
     private static string SeedDirectory =>
-        Path.Combine(RepoRoot.Find(), "fuzz", "KatLang.ParserFuzz", "MetamorphicTestcases");
+        Path.Combine(RepoRoot.Find(), "dotnet", "fuzz", "KatLang.ParserFuzz", "MetamorphicTestcases");
 
     private static List<MetamorphicParameters> AllParameters => MetamorphicTemplates.EnumerateLegacyParameters().ToList();
 

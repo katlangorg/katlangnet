@@ -8,7 +8,7 @@
 # publish produced on the Windows side by scripts/fuzz-parser.ps1.
 #
 # It needs clang and sha256sum on PATH and, on first run only, internet access to fetch
-# the driver source, which fuzz/libfuzzer-driver.sh verifies against the repository pin
+# the driver source, which dotnet/fuzz/libfuzzer-driver.sh verifies against the repository pin
 # before compiling. No .NET install is required in WSL because the harness publish is
 # self-contained (linux-x64).
 #

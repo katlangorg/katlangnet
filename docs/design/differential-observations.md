@@ -833,7 +833,7 @@ preservation are recorded in `artifacts/validation/q67-differential-observations
 
 ## Generated grammar-aware cases (SEM-2B)
 
-The SEM-2B generator (`fuzz/README.md` § Grammar-aware semantic testing) judges
+The SEM-2B generator (`dotnet/fuzz/README.md` § Grammar-aware semantic testing) judges
 every generated case with these same observations — SEM-2A's typed structural
 value and `kl-struct-v1` identity, the root emitted count as its own facet, the
 `MetamorphicErrorDetail` strict policy between profiles of one source — plus an
@@ -868,5 +868,5 @@ member reads through transparent references and forwarding carriers, and the
 per-activation lifetime of two nested parameterized owners' local properties.
 The block's three fault shapes trace their ticks: which ticks ran before the
 fault is C# host-event evidence, and Lean checks the error kind. Each shape's
-named rejected reading (`fuzz/README.md` § Families and interactions) is a C#
+named rejected reading (`dotnet/fuzz/README.md` § Families and interactions) is a C#
 control of the anchor's sensitivity. It is not a Lean mutation test.

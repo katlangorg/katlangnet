@@ -35,7 +35,7 @@
 # BACKWARD COMPATIBILITY: a payload of six bytes or fewer is a version-zero payload and always
 # decodes to the Phase 1 family with the Phase 1 tables, exactly as it did before Phase 2.
 #
-# Replay:  dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay fuzz\KatLang.ParserFuzz\MetamorphicTestcases
+# Replay:  dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- metamorphic-replay dotnet\fuzz\KatLang.ParserFuzz\MetamorphicTestcases
 
 # ── Phase 1: count(range(1, N)) against range(1, N).count (six-byte payloads) ──────────────
 family=dotted-collection-call bytes=00 00 00 01 01 00 desc=smallest valid range: range(1, 1) is one item, default limits

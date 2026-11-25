@@ -35,7 +35,7 @@ libFuzzer engine via the `libfuzzer-dotnet` fork-server driver.
 ## Layout
 
 ```
-fuzz/
+dotnet/fuzz/
   KatLang.ParserFuzz/
     KatLang.ParserFuzz.csproj   # standalone harness; NOT in dotnet/KatLang.slnx
     Program.cs                  # libFuzzer entry point + byte->source decoding
@@ -70,7 +70,7 @@ also pulls in the four harness files it reuses rather than reimplements — `Sou
 folder is shared the same way, and in the other direction this project links the test project's
 symbol-addressed grammar model (`dotnet/tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` and
 `StructuralFuzzer.cs`) so its `semantic-*` commands rebuild cases with exactly the generator the
-tests run. Nothing else in `fuzz/` is part of normal validation, and none of the shared files may
+tests run. Nothing else in `dotnet/fuzz/` is part of normal validation, and none of the shared files may
 reference SharpFuzz. The whole harness is still compiled on every pull request: the build-only
 `Standalone tool build` CI job runs `scripts/build-standalone-tools.ps1`, which builds this project in
 Debug and Release (locally: `pwsh -NoProfile -File ./scripts/build-standalone-tools.ps1`).
@@ -111,7 +111,7 @@ the harness never asserts that malformed input is rejected.
 ### SharpFuzz instrumenter (pinned local tool)
 
 The `sharpfuzz` instrumenter is a **repository-local .NET tool**: the committed root
-manifest [`dotnet-tools.json`](../dotnet-tools.json) pins `sharpfuzz.commandline` to
+manifest [`dotnet-tools.json`](../../dotnet-tools.json) pins `sharpfuzz.commandline` to
 exactly `2.3.0` with `"rollForward": false`, beside the existing `dotnet-stryker` entry.
 The launcher runs `dotnet tool restore --tool-manifest <repo>/dotnet-tools.json` and then
 `dotnet tool run sharpfuzz <publish>/KatLang.dll`, both from the repository root, so the
@@ -126,7 +126,7 @@ from the repository root:
 
 ```powershell
 dotnet tool restore
-dotnet tool run sharpfuzz fuzz\artifacts\publish-linux\KatLang.dll
+dotnet tool run sharpfuzz dotnet\fuzz\artifacts\publish-linux\KatLang.dll
 ```
 
 `dotnet tool run` finds the manifest by searching upward from the current directory, so
@@ -163,7 +163,7 @@ Both values are pinned in [`libfuzzer-driver.sh`](libfuzzer-driver.sh), the only
 to obtain the driver; `run-campaign.sh` calls it, and so should any manual workflow:
 
 ```bash
-DRIVER=$(bash fuzz/libfuzzer-driver.sh)          # optional argument: DRIVER_DIR
+DRIVER=$(bash dotnet/fuzz/libfuzzer-driver.sh)          # optional argument: DRIVER_DIR
 ```
 
 It prints the verified driver path on stdout and its `[driver]` log on stderr:
@@ -199,7 +199,7 @@ To update the driver deliberately:
    (the other of those two, or the blob SHA from the GitHub contents API).
 3. Update `LIBFUZZER_DOTNET_COMMIT` and `LIBFUZZER_DOTNET_SHA256` in `libfuzzer-driver.sh` and
    the table above together.
-4. Run `bash fuzz/tests/libfuzzer-driver.tests.sh` (offline) and a short campaign
+4. Run `bash dotnet/fuzz/tests/libfuzzer-driver.tests.sh` (offline) and a short campaign
    (`scriptsuzz-parser.ps1 -MaxTotalTime 60`); the log must show the new commit, "source
    sha256 verified", and a fresh build in a new cache directory.
 5. Review and commit the pin, digest, and documentation in one change.
@@ -231,15 +231,15 @@ an existing publish + instrumentation; it neither restores nor runs SharpFuzz),
 The script:
 
 1. Restores the pinned local tools from `dotnet-tools.json`, then `dotnet publish` the
-   harness self-contained for `linux-x64` into `fuzz/artifacts/publish-linux`.
+   harness self-contained for `linux-x64` into `dotnet/fuzz/artifacts/publish-linux`.
 2. Instruments `KatLang.dll` with the pinned local tool (`dotnet tool run sharpfuzz`).
-3. Runs `fuzz/run-campaign.sh` in WSL, which obtains the pinned, digest-verified
+3. Runs `dotnet/fuzz/run-campaign.sh` in WSL, which obtains the pinned, digest-verified
    `libfuzzer-dotnet` driver (see "Native driver" above) and launches libFuzzer with the seed
    corpus + dictionary.
 
-New coverage-increasing inputs land in `fuzz/artifacts/corpus` (the writable corpus);
+New coverage-increasing inputs land in `dotnet/fuzz/artifacts/corpus` (the writable corpus);
 the tracked `Testcases/` seeds are read-only. Crash/timeout artifacts are written to
-`fuzz/artifacts/crashes/`. Everything under `fuzz/artifacts/` is gitignored.
+`dotnet/fuzz/artifacts/crashes/`. Everything under `dotnet/fuzz/artifacts/` is gitignored.
 
 ### Manual / Linux-native equivalent
 
@@ -248,14 +248,14 @@ publish + instrument there (from the repository root) and run the driver directl
 
 ```bash
 dotnet tool restore
-dotnet publish fuzz/KatLang.ParserFuzz -c Release -r linux-x64 --self-contained -o out
+dotnet publish dotnet/fuzz/KatLang.ParserFuzz -c Release -r linux-x64 --self-contained -o out
 dotnet tool run sharpfuzz out/KatLang.dll
 # the pinned, digest-verified driver (built once, then reused from the cache):
-DRIVER=$(bash fuzz/libfuzzer-driver.sh)
+DRIVER=$(bash dotnet/fuzz/libfuzzer-driver.sh)
 "$DRIVER" --target_path=out/KatLang.ParserFuzz \
   -max_len=16384 -timeout=5 -rss_limit_mb=2048 -max_total_time=600 \
-  -dict=fuzz/katlang.dict -artifact_prefix=crashes/ -print_final_stats=1 \
-  corpus fuzz/KatLang.ParserFuzz/Testcases
+  -dict=dotnet/fuzz/katlang.dict -artifact_prefix=crashes/ -print_final_stats=1 \
+  corpus dotnet/fuzz/KatLang.ParserFuzz/Testcases
 ```
 
 ## Reproducing a finding (no fuzzing loop)
@@ -266,14 +266,14 @@ triage reproducer and a cross-platform smoke test that works with the plain .NET
 
 ```powershell
 # replay the whole seed corpus (expect: "0 failure(s)")
-dotnet run --project fuzz\KatLang.ParserFuzz -- fuzz\KatLang.ParserFuzz\Testcases
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- dotnet\fuzz\KatLang.ParserFuzz\Testcases
 
 # replay recorded crash artifacts
-dotnet run --project fuzz\KatLang.ParserFuzz -- fuzz\artifacts\crashes
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- dotnet\fuzz\artifacts\crashes
 ```
 
 **Instrumented versus ordinary replay:** The `dotnet run` commands above use an
-ordinary, uninstrumented harness. After the SharpFuzz step, `fuzz/artifacts/publish-linux`
+ordinary, uninstrumented harness. After the SharpFuzz step, `dotnet/fuzz/artifacts/publish-linux`
 and the manual `out/` publication contain an instrumented `KatLang.dll`. Passing replay
 file or directory arguments directly to an instrumented apphost enters `Replay.Run`,
 bypassing SharpFuzz's coverage-memory initialization, and may terminate the process
@@ -284,7 +284,7 @@ that apphost; this uses `Fuzzer.LibFuzzer.Run` to initialize coverage tracking.
 Minimize a crashing input with libFuzzer before triaging:
 
 ```bash
-DRIVER=$(bash fuzz/libfuzzer-driver.sh)
+DRIVER=$(bash dotnet/fuzz/libfuzzer-driver.sh)
 "$DRIVER" --target_path=out/KatLang.ParserFuzz -minimize_crash=1 \
   -exact_artifact_path=min -runs=100000 crashes/crash-<hash>
 ```
@@ -301,7 +301,7 @@ ordinary and conditional clause definitions, calls/brace-calls, dot-calls and
 leading-dot continuation, `open` declarations, `[...]` postfix selection (and the retired `:` form, kept as recovery input), `~` grace, prefix `*name` collect markers, postfix `expr*` spreading,
 deconstruction and movable-collecting patterns, and malformed delimiter/semicolon/unexpected-
 character mixtures. Keep new seeds small and reviewable; do not commit generated corpora
-(they belong in `fuzz/artifacts/corpus`).
+(they belong in `dotnet/fuzz/artifacts/corpus`).
 
 `katlang.dict` lists KatLang keywords, operator spellings, paired delimiters, and a few
 common definition/call/open shapes so the mutator can reach deeper grammar states.
@@ -313,15 +313,15 @@ grammar family (parentheses, lists, braces, mixed delimiters, calls, prefix `-`/
 right-associative `^`, clause-head patterns, and malformed/unclosed variants). Because a
 deep parse can trigger an uncatchable `StackOverflowException`, the dangerous parse runs
 in a **child** process; a **parent** coordinator uses exponential + binary search to find
-each family's boundary and records results under `fuzz/artifacts/depth-probe/`. Running
+each family's boundary and records results under `dotnet/fuzz/artifacts/depth-probe/`. Running
 each family in `parser`-only vs `parser+invariants` mode isolates a genuine parser
 overflow from an AST-walker overflow.
 
 ```powershell
 # characterize on Windows (writes depth-probe-windows.json + a table)
-dotnet run --project fuzz\KatLang.ParserFuzz -- probe --out fuzz\artifacts\depth-probe\depth-probe-windows.json --platform windows
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- probe --out dotnet\fuzz\artifacts\depth-probe\depth-probe-windows.json --platform windows
 # a single isolated parse (child mode): FAMILY DEPTH MODE MAXBYTES
-dotnet run --project fuzz\KatLang.ParserFuzz -- probe-child paren 5000 invariants 4000000
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- probe-child paren 5000 invariants 4000000
 ```
 
 Cross-platform (Linux) probing runs the self-contained publish under WSL (see
@@ -333,7 +333,7 @@ crash) on both platforms.
 The **near-boundary** campaign fuzzes around the recursion limit with generated
 (untracked) seeds at depths near `Parser.MaxNestingDepth` plus a larger `-max_len`
 (e.g. 64 KiB); the nesting diagnostic is an ordinary result, not a crash. Seeds live in
-`fuzz/artifacts/nearboundary-seeds/` and are not tracked.
+`dotnet/fuzz/artifacts/nearboundary-seeds/` and are not tracked.
 
 ## Source and module input-size probing (`SourceModuleProbe.cs`)
 
@@ -349,17 +349,17 @@ by URL.
 ```powershell
 # deterministic source shapes: per-stage counts + amplification ratios (tok/src, node/src,
 # post/raw, diag/src) for long/flat, wide, deep, many-declaration, and diagnostic-heavy sources
-dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe --out fuzz\artifacts\perf\source.json
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -c Release -- source-probe --out dotnet\fuzz\artifacts\perf\source.json
 # one big source in an isolated child (peak working set for calibration): SHAPE N
 # (N must keep the source within the 2 MiB ceiling: many_funcs 96332 is 2,097,089 code units,
 # while 130000 is 2,897,785 and measures only the length rejection.) Attribution only: the child
 # also keeps a separate raw parse alive — use the fe-mem probe below for faithful peak memory.
-dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe-child many_funcs 96332
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -c Release -- source-probe-child many_funcs 96332
 # module-graph scenarios via a fake downloader: chain, wide, diamond, repeat, cycle,
 # many-tiny, one-large, aggregate, failed; with default ceilings active
-dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- module-probe
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -c Release -- module-probe
 # isolated deep-chain no-crash/resource-error validation under production ceilings
-dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- module-depth-search --max 5000
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -c Release -- module-depth-search --max 5000
 ```
 
 The full deterministic table records source length, tokens, raw/frontend nodes, diagnostics,
@@ -397,10 +397,10 @@ before generating anything, warms the SAME route on a 1 KiB instance of the same
 the source before its baseline, then runs exactly one public operation.
 
 ```powershell
-dotnet build fuzz\KatLang.ParserFuzz -c Release
-$probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
+dotnet build dotnet\fuzz\KatLang.ParserFuzz -c Release
+$probe = "dotnet\fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
 # A — faithful: one public call per child (routes: lex, parse, parse-async, parse-async-dl, run, run-async)
-& $probe fe-mem --sizes 16k,64k,256k --routes parse --repeat 3 --out fuzz\artifacts\perf\fe-mem.txt
+& $probe fe-mem --sizes 16k,64k,256k --routes parse --repeat 3 --out dotnet\fuzz\artifacts\perf\fe-mem.txt
 & $probe fe-mem --shapes dense_props,dense_funcs,wide_decon --sizes 2m --routes parse --repeat 3 --timeout-ms 600000
 # opt-in regression envelope: fails on any child above it and on any incomplete measurement
 # (caps/envelopes use MiB despite the historical -mb spelling; on 2026-11-16 the front end measures
@@ -419,7 +419,7 @@ $probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
 # live set during the operation (forced full GCs every 5 ms: perturbs time on purpose)
 & $probe fe-mem --sizes 256k --env FE_MEM_LIVE_SAMPLE_MS=5
 # semantic differential of two builds: run with each build, then compare the two files
-& $probe fe-mem-diff hashes.txt fuzz\artifacts\corpus-frontend fuzz\artifacts\corpus
+& $probe fe-mem-diff hashes.txt dotnet\fuzz\artifacts\corpus-frontend dotnet\fuzz\artifacts\corpus
 # cancellation latency (2.06): cancel the source-processing token N ms after Parser.Parse starts;
 # open_chain sizes 159700 and 405700 are exactly 2,000 and 5,000 links
 & $probe fe-mem --shapes open_chain --sizes 159700,405700 --routes parse-cancel-500,parse-cancel-3000 --repeat 3 --timeout-ms 1200000
@@ -951,7 +951,7 @@ family. That was equally true when Phase 2 appended to Phase 1's single-entry ta
 tracked seed carries a first byte inside the family range, why version-zero payloads force index 0
 unconditionally, and why the registry's first five entries are pinned by identity *and* order
 (`TheFirstFiveRegistryEntries_KeepTheirExactIdentityAndOrder`). Untracked campaign corpora under
-`fuzz/artifacts/` are regenerated scratch data and carry no compatibility claim.
+`dotnet/fuzz/artifacts/` are regenerated scratch data and carry no compatibility claim.
 
 ### Why Lean is not an operational oracle
 
@@ -972,20 +972,20 @@ powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -Mode metamorph
 ```
 
 `-Mode` forwards `KATLANG_FUZZ_MODE` into WSL through `WSLENV` and gives the target its own
-`fuzz/artifacts/corpus-metamorphic` and `fuzz/artifacts/crashes-metamorphic` directories, so no
+`dotnet/fuzz/artifacts/corpus-metamorphic` and `dotnet/fuzz/artifacts/crashes-metamorphic` directories, so no
 other campaign's corpus is touched.
 
 Deterministic replay (no fuzzing loop, works with the plain .NET SDK on Windows):
 
 ```powershell
 # replay every curated seed; each case runs twice, so non-determinism is itself a failure
-dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay fuzz\KatLang.ParserFuzz\MetamorphicTestcases
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- metamorphic-replay dotnet\fuzz\KatLang.ParserFuzz\MetamorphicTestcases
 
 # replay one payload straight from a mismatch report
-dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay --payload 000401010100
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- metamorphic-replay --payload 000401010100
 
 # replay recorded crash/corpus artifacts, whose CONTENT is the raw payload
-dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw fuzz\artifacts\crashes-metamorphic
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw dotnet\fuzz\artifacts\crashes-metamorphic
 ```
 
 ### Seeds
@@ -1017,7 +1017,7 @@ assumption. Set `KATLANG_METAMORPHIC_READINESS_REPORT` to a path to have the dis
 out.
 
 **Staged campaign.** Each stage must be clean before the next one starts. Preserve the previous
-corpus by RENAMING it first (`fuzz/artifacts/` is gitignored, and `-FreshCorpus` deletes the
+corpus by RENAMING it first (`dotnet/fuzz/artifacts/` is gitignored, and `-FreshCorpus` deletes the
 writable corpus), then run fresh:
 
 ```powershell
@@ -1044,19 +1044,19 @@ implementation — it decodes, builds, executes, and compares through the same c
 ran, and internally runs each case twice as well:
 
 ```powershell
-dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw fuzz\artifacts\corpus-metamorphic
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw dotnet\fuzz\artifacts\corpus-metamorphic
 ```
 
 **Merging** uses libFuzzer's own workflow — there is no corpus-management layer here. Merge into a
 fresh directory, then replay it before trusting it:
 
 ```bash
-"$(bash fuzz/libfuzzer-driver.sh)" --target_path=<publish>/KatLang.ParserFuzz \
+"$(bash dotnet/fuzz/libfuzzer-driver.sh)" --target_path=<publish>/KatLang.ParserFuzz \
   -merge=1 <merged-dir> <corpus-b> <corpus-c>
 ```
 
 **Retained artifacts.** Corpora are working state, not repository content: nothing under
-`fuzz/artifacts/` is tracked. What gets tracked is a *seed* — one line in
+`dotnet/fuzz/artifacts/` is tracked. What gets tracked is a *seed* — one line in
 `MetamorphicTestcases/seeds.txt` — and a seed is added only when the payload it pins is worth
 re-running forever: a reproducer for a fixed defect, a newly covered relation or rejection path, or
 a case a reviewer should be able to reproduce by name. Everything else stays in the corpus
@@ -1336,7 +1336,7 @@ closed single-literal program. This is not general evaluator fuzzing.
 
 ### Seeds and replay
 
-Seeds live in `fuzz/KatLang.ParserFuzz/Utf16Testcases/seeds.txt` — pure ASCII, one reviewable line
+Seeds live in `dotnet/fuzz/KatLang.ParserFuzz/Utf16Testcases/seeds.txt` — pure ASCII, one reviewable line
 per case:
 
 ```
@@ -1350,13 +1350,13 @@ reported, never silently accepted.
 
 ```bash
 # replay every tracked seed; each case runs TWICE, so non-determinism is itself a failure
-dotnet run --project fuzz/KatLang.ParserFuzz -- utf16-replay fuzz/KatLang.ParserFuzz/Utf16Testcases
+dotnet run --project dotnet/fuzz/KatLang.ParserFuzz -- utf16-replay dotnet/fuzz/KatLang.ParserFuzz/Utf16Testcases
 
 # replay one payload straight from a report
-dotnet run --project fuzz/KatLang.ParserFuzz -- utf16-replay --payload "06 00 00 03 04 05 00 00"
+dotnet run --project dotnet/fuzz/KatLang.ParserFuzz -- utf16-replay --payload "06 00 00 03 04 05 00 00"
 
 # replay recorded crash/corpus artifacts, whose CONTENT is the raw payload
-dotnet run --project fuzz/KatLang.ParserFuzz -- utf16-replay --raw fuzz/artifacts/crashes-utf16
+dotnet run --project dotnet/fuzz/KatLang.ParserFuzz -- utf16-replay --raw dotnet/fuzz/artifacts/crashes-utf16
 ```
 
 Replay uses the same decoder, builder, executor and relations as the fuzzing loop, prints every
@@ -1527,13 +1527,13 @@ dotted call as one leading argument boundary, never a spread.
 
 ```powershell
 # replay every curated seed; each case runs twice, so non-determinism is itself a failure
-dotnet run --project fuzz\KatLang.ParserFuzz -- editor-replay fuzz\KatLang.ParserFuzz\EditorTestcases
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- editor-replay dotnet\fuzz\KatLang.ParserFuzz\EditorTestcases
 
 # replay one payload straight from a mismatch report
-dotnet run --project fuzz\KatLang.ParserFuzz -- editor-replay --payload 0E010000000000060000000000
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- editor-replay --payload 0E010000000000060000000000
 
 # replay recorded crash/corpus artifacts, whose CONTENT is the raw payload
-dotnet run --project fuzz\KatLang.ParserFuzz -- editor-replay --raw fuzz\artifacts\crashes-editor
+dotnet run --project dotnet\fuzz\KatLang.ParserFuzz -- editor-replay --raw dotnet\fuzz\artifacts\crashes-editor
 ```
 
 `EditorTestcases/seeds.txt` is the tracked corpus. Like the metamorphic and UTF-16 seeds it stores a
@@ -1963,8 +1963,8 @@ format is unchanged.
 Build the consumer once (it is outside `dotnet/KatLang.slnx`), then:
 
 ```powershell
-dotnet build fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj
-$fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
+dotnet build dotnet/fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj
+$fuzz = "dotnet/fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 
 # the small fixed corpus, in process, with coverage floors (exit 0 = every case passed, floors met)
 & $fuzz semantic-corpus --out artifacts/sem2b
@@ -1978,7 +1978,7 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 & $fuzz semantic-replay --supervised artifacts/sem2b/one.json    # in a supervised child
 
 # the checked-in v1 descriptors
-& $fuzz semantic-replay fuzz/KatLang.ParserFuzz/SemanticTestcases
+& $fuzz semantic-replay dotnet/fuzz/KatLang.ParserFuzz/SemanticTestcases
 
 # reduce a failing case (a recipe id or a descriptor), optionally one supervised child per candidate
 & $fuzz semantic-reduce sem2b/v2/seed/5EED2B000003/3 artifacts/sem2c-reduced --max-attempts 200
@@ -2412,7 +2412,7 @@ hard job timeout interrupts the script or the upload, the summary or artifact ca
 * **A profile** — reuse a registered `MetamorphicSurface` (add one there with honest facets if the
   entry point is new), add it to `SemanticProfiles.All`, decide its comparisons in `Pairs`, and
   document what it cannot observe.
-* **A fixture** — `semantic-export CASE_ID fuzz/KatLang.ParserFuzz/SemanticTestcases/NAME.json --run`.
+* **A fixture** — `semantic-export CASE_ID dotnet/fuzz/KatLang.ParserFuzz/SemanticTestcases/NAME.json --run`.
   The checked-in set includes one named path descriptor per thin optimizer loop path
   (`sys_path_LoopShortCircuit_dot-bare`, `sys_path_LoopFallback_clause-family-2-plain-bare`,
   `sys_path_GenericInsideOptimizedLoop_wait-1-dot-bare`); `SemanticReplayTests` replays every

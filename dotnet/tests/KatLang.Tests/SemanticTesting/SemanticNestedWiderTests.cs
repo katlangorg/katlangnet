@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// The <c>seed-nested-wider</c> recipe (<see cref="SemanticNestedWider"/>, fuzz/README.md § Families and
+/// The <c>seed-nested-wider</c> recipe (<see cref="SemanticNestedWider"/>, dotnet/fuzz/README.md § Families and
 /// interactions): collectors at every level and in every placement, repeated names in nested positions,
 /// spreads in nested data and META parameters over nested patterns. It is FINITE — a stable 8,464
 /// distinct programs, one per choice sequence, so <c>--exhaustive</c> applies — every program parses

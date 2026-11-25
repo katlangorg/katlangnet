@@ -550,7 +550,7 @@ public class Q09IndependentHostileReviewTests
         var asyncStack = File.ReadAllText(Path.Combine(root, "dotnet/tests/KatLang.Tests/AsyncEvaluation/AsyncStackDepthTests.cs"));
         Assert.DoesNotContain("SYNCHRONOUS evaluator's calibrated", asyncStack);
         Assert.DoesNotContain("recursion equal the synchronous verdicts exactly", asyncStack);
-        var registry = File.ReadAllText(Path.Combine(root, "fuzz/KatLang.ParserFuzz/Metamorphic/MetamorphicFamilyRegistry.cs"));
+        var registry = File.ReadAllText(Path.Combine(root, "dotnet/fuzz/KatLang.ParserFuzz/Metamorphic/MetamorphicFamilyRegistry.cs"));
         Assert.DoesNotContain("budget disables the sequence-pipeline optimizer", registry);
         var metamorphic = File.ReadAllText(Path.Combine(root, "dotnet/tests/KatLang.Tests/MetamorphicPhase3FamilyTests.cs"));
         Assert.DoesNotContain("A configured cumulative item budget forces", metamorphic);

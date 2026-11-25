@@ -8,5 +8,5 @@ end_of_line = lf
 
 # Parser fuzzing seed corpora keep their exact bytes (several deliberately
 # contain CRLF or lone CR) — an editor must never normalize them.
-[fuzz/KatLang.ParserFuzz/{Testcases,FrontendTestcases,EvaluatorTestcases}/**]
+[dotnet/fuzz/KatLang.ParserFuzz/{Testcases,FrontendTestcases,EvaluatorTestcases}/**]
 end_of_line = unset

@@ -17,10 +17,10 @@ Set-StrictMode -Version Latest
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $solution = "./dotnet/KatLang.slnx"
 # Every tracked project that dotnet/KatLang.slnx omits, and why it stays outside:
-# - fuzz/KatLang.ParserFuzz: the SharpFuzz harness; kept out so solution validation never depends
-#   on it (see the csproj comment and fuzz/README.md "Layout").
+# - dotnet/fuzz/KatLang.ParserFuzz: the SharpFuzz harness; kept out so solution validation never depends
+#   on it (see the csproj comment and dotnet/fuzz/README.md "Layout").
 $standaloneProjects = @(
-    "fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj"
+    "dotnet/fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj"
 )
 $configurations = @("Debug", "Release")
 

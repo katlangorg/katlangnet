@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// SEM-2C end-to-end SUPERVISED reduction (fuzz/README.md § Reduction): <c>semantic-reduce
+/// SEM-2C end-to-end SUPERVISED reduction (dotnet/fuzz/README.md § Reduction): <c>semantic-reduce
 /// --supervised</c> runs the original and every candidate in a bounded child worker, and the child
 /// here fails on a KNOWN SHAPE — a wrong value on <c>base@sync-optimized</c> whenever the source
 /// contains a <c>repeat</c> loop (<see cref="Trigger"/>), injected through the runner's observation

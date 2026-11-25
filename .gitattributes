@@ -9,17 +9,17 @@
 # Seed corpus inputs must keep their EXACT bytes — several deliberately contain
 # CRLF or lone-CR to exercise the lexer's line counting — so never normalize them,
 # and accept CR at end of line in whitespace checks (`git diff --check`).
-fuzz/KatLang.ParserFuzz/Testcases/** -text whitespace=cr-at-eol
-fuzz/KatLang.ParserFuzz/FrontendTestcases/** -text whitespace=cr-at-eol
-fuzz/KatLang.ParserFuzz/EvaluatorTestcases/** -text whitespace=cr-at-eol
+dotnet/fuzz/KatLang.ParserFuzz/Testcases/** -text whitespace=cr-at-eol
+dotnet/fuzz/KatLang.ParserFuzz/FrontendTestcases/** -text whitespace=cr-at-eol
+dotnet/fuzz/KatLang.ParserFuzz/EvaluatorTestcases/** -text whitespace=cr-at-eol
 
 # The WSL runner and the libFuzzer dictionary are consumed inside Linux/WSL.
 # The global rule already makes them LF; they stay explicit so the intent
 # survives any future change to that rule.
-fuzz/run-campaign.sh text eol=lf
-fuzz/libfuzzer-driver.sh text eol=lf
-fuzz/tests/*.sh text eol=lf
-fuzz/katlang.dict     text eol=lf
+dotnet/fuzz/run-campaign.sh text eol=lf
+dotnet/fuzz/libfuzzer-driver.sh text eol=lf
+dotnet/fuzz/tests/*.sh text eol=lf
+dotnet/fuzz/katlang.dict     text eol=lf
 
 # This test source embeds literal NUL bytes (the UTF-16 lexer contract), which
 # makes git's auto-detection call it binary; keep it under the LF policy anyway.

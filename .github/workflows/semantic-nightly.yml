@@ -1,12 +1,12 @@
 name: semantic nightly
 
 # Exhaustive sweeps of the finite semantic-campaign recipes (seed-nested, seed-nested-wide,
-# seed-nested-wider; fuzz/README.md § Campaigns). Scheduled and manual only: never on pull requests
+# seed-nested-wider; dotnet/fuzz/README.md § Campaigns). Scheduled and manual only: never on pull requests
 # or pushes, and separate from validate.yml, whose standalone-tool job stays build-only.
 # In runs through 44716956509 (2026-11-20), the longest recipe took 1,092 s and the longest
 # whole job took 1,681 s. Allow 50% over that job plus one full 2,400-s recipe budget.
 # In 90 minutes that leaves 478.5 s for finishing a batch, reporting and uploading reproducers.
-# See fuzz/README.md § Nightly sweeps for the three hosted timing rows.
+# See dotnet/fuzz/README.md § Nightly sweeps for the three hosted timing rows.
 on:
   schedule:
     - cron: "23 2 * * *"

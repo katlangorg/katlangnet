@@ -6,7 +6,7 @@ import KatLang
 
 Renders a COMPLETED Lean `Result` as `kl-struct-v1` text, byte-identical to the C# encoder
 `MetamorphicStructuralIdentity.Encode`
-(`fuzz/KatLang.ParserFuzz/Metamorphic/MetamorphicStructuralIdentity.cs`) on the values both
+(`dotnet/fuzz/KatLang.ParserFuzz/Metamorphic/MetamorphicStructuralIdentity.cs`) on the values both
 engines can represent. This is maintained TEST code: `KatLang.lean` does not use it, and the format
 belongs to the C# encoder (`docs/design/differential-observations.md`); a mismatch is fixed
 here, never by changing the format.

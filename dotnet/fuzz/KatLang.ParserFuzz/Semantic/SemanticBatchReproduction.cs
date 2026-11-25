@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace KatLang.ParserFuzz;
 
 /// <summary>
-/// How a campaign failure relates to the batch it was observed in (fuzz/README.md § Campaigns). A
+/// How a campaign failure relates to the batch it was observed in (dotnet/fuzz/README.md § Campaigns). A
 /// failure observed alone — every seeded or in-process case — is <see cref="Standalone"/>; a failure
 /// observed in a supervised batch is classified by its standalone rerun when the budget permits one.
 /// </summary>
@@ -162,7 +162,7 @@ internal static class SemanticSequenceReducer
 }
 
 /// <summary>
-/// Persisted batch SEQUENCES (fuzz/README.md § Campaigns): a directory of numbered member descriptors
+/// Persisted batch SEQUENCES (dotnet/fuzz/README.md § Campaigns): a directory of numbered member descriptors
 /// with a manifest of paths relative to it, replayable from anywhere by <c>semantic-batch-worker</c> and
 /// <c>semantic-batch-replay</c>; one supervised batch child over such a sequence; and the result the
 /// campaign records for one member of a batch run.

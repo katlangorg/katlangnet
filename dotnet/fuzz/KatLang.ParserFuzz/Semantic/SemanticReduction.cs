@@ -6,7 +6,7 @@ using KatLang;
 
 namespace KatLang.ParserFuzz;
 
-// SEM-2C automatic reduction of failing SEM-2B generated cases (fuzz/README.md § Reduction).
+// SEM-2C automatic reduction of failing SEM-2B generated cases (dotnet/fuzz/README.md § Reduction).
 //
 // A reduced case is a REAL generated case: the same builder that made the failing case runs again
 // over a smaller choice sequence, so SemanticCorpus.Assemble constructs its expectation. Nothing

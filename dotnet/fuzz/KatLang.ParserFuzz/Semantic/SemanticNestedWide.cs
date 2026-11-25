@@ -6,7 +6,7 @@ using KatLang.Tests.StructuralFuzz;
 namespace KatLang.ParserFuzz;
 
 /// <summary>
-/// The WIDE nested-pattern production of the <c>seed-nested-wide</c> recipe (fuzz/README.md
+/// The WIDE nested-pattern production of the <c>seed-nested-wide</c> recipe (dotnet/fuzz/README.md
 /// § Families and interactions). Where <see cref="SemanticGrammar.NestedPattern"/> is one two-level
 /// clause, this production writes the shapes recent nested-pattern defects lived in: a parameter
 /// list or a pattern group as the outer level, two or three levels, collectors at the outer and the

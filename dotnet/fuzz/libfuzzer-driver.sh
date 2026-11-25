@@ -4,9 +4,9 @@
 #
 # Prints the path of a driver built from ONE reviewed, immutable upstream revision whose source
 # matches the SHA-256 pinned below, building and caching it on first use. It is the only supported
-# way to obtain the driver: fuzz/run-campaign.sh calls it, and fuzz/README.md tells manual users to.
+# way to obtain the driver: dotnet/fuzz/run-campaign.sh calls it, and dotnet/fuzz/README.md tells manual users to.
 #
-# Usage:  DRIVER=$(bash fuzz/libfuzzer-driver.sh [DRIVER_DIR])     (default: $HOME/katlang-fuzz)
+# Usage:  DRIVER=$(bash dotnet/fuzz/libfuzzer-driver.sh [DRIVER_DIR])     (default: $HOME/katlang-fuzz)
 #
 # Diagnostics go to stderr; stdout carries only the verified driver path. Exit 0 = verified driver,
 # nonzero = no driver may be used (nothing is ever executed from an unverified cache).
@@ -25,10 +25,10 @@
 #   * A valid cache needs no network. Without one, the source must be downloaded; there is no
 #     other source and no fallback.
 #
-# Updating the pin is a deliberate repository change; see "Native driver" in fuzz/README.md.
+# Updating the pin is a deliberate repository change; see "Native driver" in dotnet/fuzz/README.md.
 set -euo pipefail
 
-# ---- Repository pin (reviewed; update only with the procedure in fuzz/README.md) ----------------
+# ---- Repository pin (reviewed; update only with the procedure in dotnet/fuzz/README.md) ----------------
 LIBFUZZER_DOTNET_COMMIT=bd39d4e88d715ab460a929943645be2a186cde52
 LIBFUZZER_DOTNET_SHA256=90f019e2e9ad3a0b93c7ecc2c5afb2fbfc8b5aab6aac51c7e0d349ec79354f36
 # -----------------------------------------------------------------------------------------------

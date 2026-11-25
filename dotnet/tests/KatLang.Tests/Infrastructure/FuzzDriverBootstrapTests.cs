@@ -6,20 +6,20 @@ namespace KatLang.Tests.Infrastructure;
 
 /// <summary>
 /// SEC-05: the native libFuzzer driver is built only from the reviewed upstream commit pinned in
-/// <c>fuzz/libfuzzer-driver.sh</c>, after its source matches the pinned SHA-256, and a cached
+/// <c>dotnet/fuzz/libfuzzer-driver.sh</c>, after its source matches the pinned SHA-256, and a cached
 /// driver is reused only after its identity and integrity are re-checked.
 ///
 /// <para>The source checks run everywhere. The behavioral check runs the offline Bash suite
-/// <c>fuzz/tests/libfuzzer-driver.tests.sh</c> (fake curl/clang, no network, no real cache):
+/// <c>dotnet/fuzz/tests/libfuzzer-driver.tests.sh</c> (fake curl/clang, no network, no real cache):
 /// directly under Bash on Linux or through WSL on Windows. Missing execution support fails
 /// the check explicitly so an unexecuted security suite cannot be reported as passed.</para>
 /// </summary>
 public class FuzzDriverBootstrapTests
 {
-    private const string BootstrapPath = "fuzz/libfuzzer-driver.sh";
-    private const string RunnerPath = "fuzz/run-campaign.sh";
-    private const string ReadmePath = "fuzz/README.md";
-    private const string SuitePath = "fuzz/tests/libfuzzer-driver.tests.sh";
+    private const string BootstrapPath = "dotnet/fuzz/libfuzzer-driver.sh";
+    private const string RunnerPath = "dotnet/fuzz/run-campaign.sh";
+    private const string ReadmePath = "dotnet/fuzz/README.md";
+    private const string SuitePath = "dotnet/fuzz/tests/libfuzzer-driver.tests.sh";
     private readonly ITestOutputHelper _output;
 
     public FuzzDriverBootstrapTests(ITestOutputHelper output) => _output = output;

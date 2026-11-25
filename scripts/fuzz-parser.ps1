@@ -12,16 +12,16 @@
     Pipeline:
       1. Restore the repository-local tools from dotnet-tools.json (SharpFuzz.CommandLine is
          pinned there to an exact version), then dotnet publish the harness self-contained
-         for linux-x64 (fuzz/artifacts/publish-linux).
+         for linux-x64 (dotnet/fuzz/artifacts/publish-linux).
       2. Instrument KatLang.dll (the target) with `dotnet tool run sharpfuzz`.
          A `sharpfuzz` on PATH or installed as a global tool is
          never used, and nothing is installed globally.
       3. In WSL: build/cache the pinned, SHA-256-verified libfuzzer-dotnet driver
-         (fuzz/libfuzzer-driver.sh), then run libFuzzer with the
-         seed corpus + dictionary and the campaign bounds (fuzz/run-campaign.sh).
+         (dotnet/fuzz/libfuzzer-driver.sh), then run libFuzzer with the
+         seed corpus + dictionary and the campaign bounds (dotnet/fuzz/run-campaign.sh).
 
-    Seeds (fuzz/KatLang.ParserFuzz/Testcases) are read-only during the run. New
-    coverage-increasing inputs and crash artifacts are written under fuzz/artifacts/
+    Seeds (dotnet/fuzz/KatLang.ParserFuzz/Testcases) are read-only during the run. New
+    coverage-increasing inputs and crash artifacts are written under dotnet/fuzz/artifacts/
     (gitignored). This project is NOT part of dotnet/KatLang.slnx, so normal validation is
     unaffected.
 
@@ -67,7 +67,7 @@ function Write-Section([string]$Title) {
 }
 
 $repoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$fuzzDir    = Join-Path $repoRoot 'fuzz'
+$fuzzDir    = Join-Path $repoRoot 'dotnet/fuzz'
 $proj       = Join-Path $fuzzDir 'KatLang.ParserFuzz\KatLang.ParserFuzz.csproj'
 $publishDir = Join-Path $fuzzDir 'artifacts\publish-linux'
 $dictFile   = Join-Path $fuzzDir 'katlang.dict'

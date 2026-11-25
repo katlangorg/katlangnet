@@ -9,12 +9,12 @@ param(
 
     # The longest hosted recipe took 706, 766 and 1,092 s across three successful runs
     # (seed-nested-wide each time). 2,400 s allows 2.2 times that maximum for a slower run
-    # or failure triage. A sweep stopped short of its plan fails the script (fuzz/README.md § Nightly sweeps).
+    # or failure triage. A sweep stopped short of its plan fails the script (dotnet/fuzz/README.md § Nightly sweeps).
     [ValidateRange(60, 21600)]
     [int]$MaxSecondsPerRecipe = 2400
 )
 
-# The nightly exhaustive sweeps of the finite semantic-campaign recipes (fuzz/README.md § Campaigns;
+# The nightly exhaustive sweeps of the finite semantic-campaign recipes (dotnet/fuzz/README.md § Campaigns;
 # .github/workflows/semantic-nightly.yml). It builds the standalone fuzz consumer once (Debug, so the
 # evaluator's DEBUG invariant checks run), then runs `semantic-campaign --exhaustive` for each recipe
 # with failures persisted and reduced (batch-only failures as sequences first). Every log, summary and
@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$project = "fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj"
+$project = "dotnet/fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj"
 
 function Initialize-Diagnostics {
     # A fresh directory under artifacts/validation/ once git confirms it is ignored, otherwise an
@@ -75,7 +75,7 @@ try {
         throw "the fuzz consumer build failed with exit code $buildExit (log: $buildLog)"
     }
 
-    $assembly = Join-Path $repoRoot "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.dll"
+    $assembly = Join-Path $repoRoot "dotnet/fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.dll"
     $failed = @()
     $summary = @("| Recipe | Exit | Complete | Planned | Failed | Batch-only | Batch-dependent | Unclassified | Elapsed (s) |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     foreach ($recipe in $Recipes) {
@@ -100,7 +100,7 @@ try {
             $failures = $json.failed
             $batchOnly = $json.classifications.'batch-only'
             $batchDependent = $json.classifications.'batch-dependent'
-            # Batch failures recorded without a standalone rerun once --max-reruns was spent (fuzz/README.md).
+            # Batch failures recorded without a standalone rerun once --max-reruns was spent (dotnet/fuzz/README.md).
             $unclassified = $json.classifications.unclassified
         }
 

@@ -19,7 +19,7 @@ namespace KatLang.Tests;
 public class MetamorphicPhase2FamilyTests
 {
     private static string SeedDirectory =>
-        Path.Combine(RepoRoot.Find(), "fuzz", "KatLang.ParserFuzz", "MetamorphicTestcases");
+        Path.Combine(RepoRoot.Find(), "dotnet", "fuzz", "KatLang.ParserFuzz", "MetamorphicTestcases");
 
     private static List<MetamorphicParameters> Stratified { get; } =
         MetamorphicTemplates.EnumerateStratifiedParameters().ToList();

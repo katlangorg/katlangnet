@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// SEM-2C automatic reduction of failing SEM-2B cases (fuzz/README.md § Reduction): recording and
+/// SEM-2C automatic reduction of failing SEM-2B cases (dotnet/fuzz/README.md § Reduction): recording and
 /// replaying choosers are transparent, every replayed choice sequence is a generated case with a
 /// constructed expectation, a failing case shrinks to a smaller generated case with the SAME failure
 /// signature, a passing case is refused, the work is bounded and deterministic, and the reduced

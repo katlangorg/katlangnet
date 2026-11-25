@@ -3,13 +3,13 @@
 # Offline regression tests for the verified libfuzzer-dotnet bootstrap (SEC-05).
 #
 # Never touches the network, the real clang, or the user's driver cache. Each case copies
-# fuzz/libfuzzer-driver.sh and fuzz/run-campaign.sh into a fresh sandbox whose path contains
+# dotnet/fuzz/libfuzzer-driver.sh and dotnet/fuzz/run-campaign.sh into a fresh sandbox whose path contains
 # spaces, rewrites ONLY the two pin lines of the copy to a fixture commit and the fixture's digest,
 # and puts fake `curl` and `clang` first on PATH. The fake curl serves a fixture file (or fails);
 # the fake clang "compiles" a small script driver that records its argv. The production script
 # itself has no test hook.
 #
-# Usage: bash fuzz/tests/libfuzzer-driver.tests.sh       (exit 0 and "ALL <n> CHECKS PASSED" = green)
+# Usage: bash dotnet/fuzz/tests/libfuzzer-driver.tests.sh       (exit 0 and "ALL <n> CHECKS PASSED" = green)
 set -uo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

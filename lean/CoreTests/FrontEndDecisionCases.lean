@@ -7,7 +7,7 @@ Front-end decision differential: the Lean front-end specification functions of `
 against the decisions the C# front end made on every program of four corpora: the semantic explorer
 (dotnet/tests/KatLang.Tests/SemanticExplorerCorpus.cs), the language specification
 (dotnet/tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs), the SEM-2B generated corpus
-(fuzz/KatLang.ParserFuzz/Semantic/SemanticCorpus.cs, every base, alpha-rename and declaration-reorder source with
+(dotnet/fuzz/KatLang.ParserFuzz/Semantic/SemanticCorpus.cs, every base, alpha-rename and declaration-reorder source with
 `trace(x) = x` and `wait(x) = x` prepended, as lean/CoreTests/SemanticGeneratedCases.lean encodes it) and
 the tutorial's source fences (tutorial.md, by ordinal); and on the front-end witnesses
 (dotnet/tests/KatLang.Tests/FrontEndWitnesses.cs), each a base program with its alpha-rename and its

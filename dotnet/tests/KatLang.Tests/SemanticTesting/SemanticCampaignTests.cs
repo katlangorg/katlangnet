@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// SEM-2C structure-aware reduction and the bounded <c>semantic-campaign</c> (fuzz/README.md
+/// SEM-2C structure-aware reduction and the bounded <c>semantic-campaign</c> (dotnet/fuzz/README.md
 /// § Reduction, § Campaigns): the generator's recorded spans are well-formed derived metadata that
 /// never change a replay; the span moves reduce a known multi-fragment shape strictly further than
 /// the block moves alone; a campaign over a tiny seed range is deterministic and stops at its case
@@ -730,7 +730,7 @@ public class SemanticCampaignTests(ITestOutputHelper output)
         var normalized = options.OutputDirectory.Replace('\\', '/');
         Assert.Contains("/artifacts/semantic-campaign/10-12x16-", normalized, StringComparison.Ordinal);
         Assert.False(SemanticCampaign.ContainsTrackedPaths(options.OutputDirectory));
-        Assert.True(SemanticCampaign.ContainsTrackedPaths(Path.Combine(RepoRoot.Find(), "fuzz", "KatLang.ParserFuzz", "SemanticTestcases")));
+        Assert.True(SemanticCampaign.ContainsTrackedPaths(Path.Combine(RepoRoot.Find(), "dotnet", "fuzz", "KatLang.ParserFuzz", "SemanticTestcases")));
 
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-used-");
         try

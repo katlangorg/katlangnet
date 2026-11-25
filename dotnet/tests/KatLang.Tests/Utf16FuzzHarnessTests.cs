@@ -7,7 +7,7 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// Deterministic coverage for the UTF-16 fuzz target (<c>KATLANG_FUZZ_MODE=utf16</c>,
-/// <c>fuzz/KatLang.ParserFuzz/Utf16</c>).
+/// <c>dotnet/fuzz/KatLang.ParserFuzz/Utf16</c>).
 ///
 /// <para>The harness is compiled into this assembly as shared source, so these tests exercise the
 /// very decoder, builder, executor, relations and replay driver the campaign runs. Nothing here
@@ -24,7 +24,7 @@ public class Utf16FuzzHarnessTests
     private static List<Utf16Parameters> Stratified => StratifiedPoints;
 
     private static string SeedDirectory =>
-        Path.Combine(RepoRoot.Find(), "fuzz", "KatLang.ParserFuzz", "Utf16Testcases");
+        Path.Combine(RepoRoot.Find(), "dotnet", "fuzz", "KatLang.ParserFuzz", "Utf16Testcases");
 
     // ── Decoder ──────────────────────────────────────────────────────────────
 

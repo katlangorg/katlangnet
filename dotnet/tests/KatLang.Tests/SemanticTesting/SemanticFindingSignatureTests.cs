@@ -4,7 +4,7 @@ using KatLang.ParserFuzz;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// SEM-2C structured findings (fuzz/README.md § Reduction): every runner finding carries a
+/// SEM-2C structured findings (dotnet/fuzz/README.md § Reduction): every runner finding carries a
 /// structured record beside its text, the reduction signature is classified from that record, the
 /// record survives the worker result document, and the text classifier remains only as the fallback
 /// for documents that predate the records. Faults are injected through the runner's inert

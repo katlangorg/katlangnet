@@ -14,7 +14,7 @@ namespace KatLang.Tests;
 /// single-part seeds, and a collision-validator set per visited node. Behavior around every
 /// repaired path is pinned too: equal projections, equal seed content, and per-context
 /// validation of a shared node. The process-level measurement lives in the
-/// <c>fe-mem</c> probe (<c>fuzz/KatLang.ParserFuzz</c>, see <c>fuzz/README.md</c>).
+/// <c>fe-mem</c> probe (<c>dotnet/fuzz/KatLang.ParserFuzz</c>, see <c>dotnet/fuzz/README.md</c>).
 /// </summary>
 public class FrontEndMemoryRepresentationTests
 {

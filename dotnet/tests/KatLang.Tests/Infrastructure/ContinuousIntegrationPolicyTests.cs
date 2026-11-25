@@ -922,7 +922,7 @@ public class ContinuousIntegrationPolicyTests
     // Every tracked project dotnet/KatLang.slnx omits; the build-only job compiles each of them.
     private static readonly string[] StandaloneProjects =
     [
-        "fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj",
+        "dotnet/fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj",
     ];
 
     [Fact]
@@ -1014,7 +1014,7 @@ public class ContinuousIntegrationPolicyTests
     /// <summary>
     /// A run 50% slower than the longest measured job, one full additional recipe budget, and five
     /// minutes for finishing a batch and uploading diagnostics must fit inside the nightly job.
-    /// The hosted measurements are in fuzz/README.md § Nightly sweeps.
+    /// The hosted measurements are in dotnet/fuzz/README.md § Nightly sweeps.
     /// </summary>
     [Fact]
     public void SemanticNightly_JobTimeout_LeavesRoomForOneSweepAtItsWholeBudget()

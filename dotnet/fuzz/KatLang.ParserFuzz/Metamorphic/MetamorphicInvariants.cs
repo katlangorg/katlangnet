@@ -154,7 +154,7 @@ internal static class MetamorphicInvariants
         text.Append("  left operational:       ").AppendLine(report.Execution.Left?.ToString() ?? "-");
         text.Append("  right operational:      ").AppendLine(report.Execution.Right?.ToString() ?? "-");
         text.Append("  fingerprint:            ").AppendLine(report.Fingerprint);
-        text.Append("  reproduce:              dotnet run --project fuzz\\KatLang.ParserFuzz -- metamorphic-replay --payload ")
+        text.Append("  reproduce:              dotnet run --project dotnet\\fuzz\\KatLang.ParserFuzz -- metamorphic-replay --payload ")
             .AppendLine(report.Parameters.ToHex().Replace(" ", "", StringComparison.Ordinal));
         return text.ToString();
     }

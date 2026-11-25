@@ -40,7 +40,7 @@ internal sealed class FrontEndInvariantException(string message) : Exception(mes
 internal static class FrontEndInvariants
 {
     // Sampling for the expensive extra-parse checks (deterministic per input). Documented
-    // in fuzz/README.md.
+    // in dotnet/fuzz/README.md.
     private const uint WrapperParitySampleModulus = 8;        // ~1 in 8 inputs
     private const uint InputIndependenceSampleModulus = 32;   // ~1 in 32 inputs
 

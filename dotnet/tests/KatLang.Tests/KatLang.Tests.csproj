@@ -35,14 +35,14 @@
 
   <!--
     The metamorphic fuzzing core is compiled into this test assembly as SHARED SOURCE rather
-    than referenced as a project. fuzz/KatLang.ParserFuzz is deliberately outside dotnet/KatLang.slnx
+    than referenced as a project. dotnet/fuzz/KatLang.ParserFuzz is deliberately outside dotnet/KatLang.slnx
     (and depends on SharpFuzz), while MetamorphicFuzzHarnessTests must exercise exactly the
     decoder, template, executor, comparator, and replay driver the campaign runs — a second
     copy would let fuzzing and replay drift apart. Only the self-contained Metamorphic folder
     is shared; the rest of the harness stays out of normal validation.
   -->
   <ItemGroup>
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\Metamorphic\*.cs" Link="Metamorphic\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Metamorphic\*.cs" Link="Metamorphic\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!--
@@ -52,7 +52,7 @@
     fuzz project links back as source.
   -->
   <ItemGroup>
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\Semantic\*.cs" Link="Semantic\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Semantic\*.cs" Link="Semantic\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!--
@@ -63,13 +63,13 @@
     the frontend invariants, and the structural fingerprint. All of them are SharpFuzz-free.
   -->
   <ItemGroup>
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\Utf16\*.cs" Link="Utf16\%(Filename)%(Extension)" />
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\SourceSpanValidator.cs" Link="Utf16\SourceSpanValidator.cs" />
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\FuzzInvariants.cs" Link="Utf16\FuzzInvariants.cs" />
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\FrontEndInvariants.cs" Link="Utf16\FrontEndInvariants.cs" />
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\FrontEndFingerprint.cs" Link="Utf16\FrontEndFingerprint.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Utf16\*.cs" Link="Utf16\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\SourceSpanValidator.cs" Link="Utf16\SourceSpanValidator.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FuzzInvariants.cs" Link="Utf16\FuzzInvariants.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndInvariants.cs" Link="Utf16\FrontEndInvariants.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndFingerprint.cs" Link="Utf16\FrontEndFingerprint.cs" />
     <!-- SEC-S1: the census and parity oracle are tested as the exact probe source. -->
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\FrontEndMemoryProbe.cs" Link="Probes\FrontEndMemoryProbe.cs" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndMemoryProbe.cs" Link="Probes\FrontEndMemoryProbe.cs" />
   </ItemGroup>
 
   <!--
@@ -79,7 +79,7 @@
     already included above, so nothing here is re-included.
   -->
   <ItemGroup>
-    <Compile Include="..\..\..\fuzz\KatLang.ParserFuzz\Editor\*.cs" Link="Editor\%(Filename)%(Extension)" />
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Editor\*.cs" Link="Editor\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <!--

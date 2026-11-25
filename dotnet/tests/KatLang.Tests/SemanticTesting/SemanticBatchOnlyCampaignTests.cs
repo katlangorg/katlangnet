@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace KatLang.Tests.SemanticTesting;
 
 /// <summary>
-/// Batch-only failures of exhaustive campaigns (fuzz/README.md § Campaigns), end to end through
+/// Batch-only failures of exhaustive campaigns (dotnet/fuzz/README.md § Campaigns), end to end through
 /// supervised children with the test-only planted-fault seam (<see cref="SemanticPlantedFault"/>): the
 /// planted observation is well-formed for every case kind; a planted failure is DETECTED in a supervised
 /// batch on a success and on an expected failure, and classified standalone because it recurs alone; a

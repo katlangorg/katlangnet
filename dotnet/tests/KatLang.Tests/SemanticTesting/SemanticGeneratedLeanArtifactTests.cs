@@ -532,7 +532,7 @@ public class SemanticGeneratedLeanArtifactTests
             GENERATED FILE - DO NOT EDIT BY HAND.
 
             SEM-2C: Lean/C# differential corpus of the SEM-2B generated cases
-            (fuzz/KatLang.ParserFuzz/Semantic/SemanticCorpus.cs). For every valid case the program below is
+            (dotnet/fuzz/KatLang.ParserFuzz/Semantic/SemanticCorpus.cs). For every valid case the program below is
             `LeanAstEncoder`'s encoding of the parsed IDENTITY-PRELUDE MEMBER: the case's base source with
             `trace(x) = x` and `wait(x) = x` prepended in place of the SEM-2B host operations, which Lean
             does not model. C# checked each member against the generator's constructed expectation (value

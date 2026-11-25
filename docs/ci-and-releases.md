@@ -55,7 +55,7 @@ How the GitHub workflows validate and release the repository, and the rules for 
   guarantee detection of a Windows x64-only Release stack regression; a
   Windows x64 matrix leg is the open follow-up.
 - `dotnet/KatLang.slnx` deliberately omits the standalone tool projects (today only the
-  SharpFuzz harness `fuzz/KatLang.ParserFuzz`), so the .NET phase never compiles
+  SharpFuzz harness `dotnet/fuzz/KatLang.ParserFuzz`), so the .NET phase never compiles
   them. The fourth `validate.yml` job, `Standalone tool build`
   (`standalone-tool-build`, 15 minutes), runs
   `scripts/build-standalone-tools.ps1`, which compiles each of them in Debug and
@@ -67,14 +67,14 @@ How the GitHub workflows validate and release the repository, and the rules for 
   `if: always()`). `release.yml` does not run it.
 - `.github/workflows/semantic-nightly.yml` (job `semantic-sweeps`, 90 minutes)
   runs nightly and on manual dispatch only, never on pull requests or pushes:
-  `scripts/run-semantic-sweeps.ps1` builds `fuzz/KatLang.ParserFuzz` (Debug)
+  `scripts/run-semantic-sweeps.ps1` builds `dotnet/fuzz/KatLang.ParserFuzz` (Debug)
   and runs `semantic-campaign --exhaustive` over every finite recipe
   (`SemanticCorpus.FiniteRecipes`, 40-minute budget per recipe). A failure or
   an incomplete sweep fails the job. On failure or cancellation the upload step
   attempts to preserve `artifacts/validation/semantic-sweeps-*`. This CI backstop
   runs separately from the validation levels and the build-only standalone-tool
   job. `ContinuousIntegrationPolicyTests` covers its workflow policies
-  (fuzz/README.md § Nightly sweeps).
+  (dotnet/fuzz/README.md § Nightly sweeps).
 - `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
   the version already present in `KatLangVersion.props`. A push, merge, or tag
   never publishes a release automatically.

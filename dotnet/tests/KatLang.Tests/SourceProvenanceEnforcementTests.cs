@@ -91,8 +91,8 @@ public class SourceProvenanceEnforcementTests
         var root = RepoRoot.Find();
         return Directory
             .EnumerateFiles(Path.Combine(root, "dotnet", "tests"), "*.cs", SearchOption.AllDirectories)
-            .Concat(Directory.Exists(Path.Combine(root, "fuzz"))
-                ? Directory.EnumerateFiles(Path.Combine(root, "fuzz"), "*.cs", SearchOption.AllDirectories)
+            .Concat(Directory.Exists(Path.Combine(root, "dotnet", "fuzz"))
+                ? Directory.EnumerateFiles(Path.Combine(root, "dotnet", "fuzz"), "*.cs", SearchOption.AllDirectories)
                 : [])
             .Where(static path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))

@@ -10,7 +10,7 @@ namespace KatLang.Tests.SemanticTesting;
 /// </summary>
 public class SemanticReplayTests
 {
-    private static string FixtureDirectory => Path.Combine(RepoRoot.Find(), "fuzz", "KatLang.ParserFuzz", "SemanticTestcases");
+    private static string FixtureDirectory => Path.Combine(RepoRoot.Find(), "dotnet", "fuzz", "KatLang.ParserFuzz", "SemanticTestcases");
 
     private static SemanticCase Sample(Func<SemanticCase, bool> predicate)
         => SemanticGrammarCorpusTests.Cases.First(predicate);

@@ -22,8 +22,8 @@ public class FuzzToolingPolicyTests
 {
     private const string ManifestPath = "dotnet-tools.json";
     private const string LauncherPath = "scripts/fuzz-parser.ps1";
-    private const string ReadmePath = "fuzz/README.md";
-    private const string HarnessProjectPath = "fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj";
+    private const string ReadmePath = "dotnet/fuzz/README.md";
+    private const string HarnessProjectPath = "dotnet/fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj";
     private const string PinnedSharpFuzzVersion = "2.3.0";
     private const string GlobalMarker = "GLOBAL-SHARPFUZZ";
 
@@ -312,14 +312,14 @@ public class FuzzToolingPolicyTests
 
             var source = FuzzToolingPolicyTests.RepoRootPath();
             Directory.CreateDirectory(Path.Combine(RepoRoot, "scripts"));
-            Directory.CreateDirectory(Path.Combine(RepoRoot, "fuzz", "KatLang.ParserFuzz", "Testcases"));
+            Directory.CreateDirectory(Path.Combine(RepoRoot, "dotnet", "fuzz", "KatLang.ParserFuzz", "Testcases"));
             Directory.CreateDirectory(CallerDirectory);
             Directory.CreateDirectory(_bin);
             Directory.CreateDirectory(Path.Combine(_profile, ".dotnet", "tools"));
             File.Copy(Path.Combine(source, "scripts", "fuzz-parser.ps1"), LauncherScript);
             File.Copy(Path.Combine(source, "dotnet-tools.json"), ManifestPath);
-            File.WriteAllText(Path.Combine(RepoRoot, "fuzz", "katlang.dict"), "");
-            File.WriteAllText(Path.Combine(RepoRoot, "fuzz", "run-campaign.sh"), "");
+            File.WriteAllText(Path.Combine(RepoRoot, "dotnet", "fuzz", "katlang.dict"), "");
+            File.WriteAllText(Path.Combine(RepoRoot, "dotnet", "fuzz", "run-campaign.sh"), "");
 
             WriteCmd(Path.Combine(_bin, "dotnet.cmd"),
                 "@echo off",
@@ -341,7 +341,7 @@ public class FuzzToolingPolicyTests
         public string CallerDirectory { get; }
         public string LauncherScript => Path.Combine(RepoRoot, "scripts", "fuzz-parser.ps1");
         public string ManifestPath => Path.Combine(RepoRoot, "dotnet-tools.json");
-        public string TargetDll => Path.Combine(RepoRoot, "fuzz", "artifacts", "publish-linux", "KatLang.dll");
+        public string TargetDll => Path.Combine(RepoRoot, "dotnet", "fuzz", "artifacts", "publish-linux", "KatLang.dll");
 
         public void CreatePublishedTarget()
         {
